@@ -34,3 +34,26 @@ def test_overview_graceful_on_bad_path(capsys: pytest.CaptureFixture[str]) -> No
     rc = main(["overview", "/no/such/path/here"])
     assert rc == 0
     assert capsys.readouterr().out.strip()
+
+
+# --- cli overview ---------------------------------------------------------
+
+
+def test_cli_overview_text(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["cli", "overview"])
+    assert rc == 0
+    assert "# lepenseur cli" in capsys.readouterr().out
+
+
+def test_cli_overview_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["cli", "overview", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["subject"] == "lepenseur cli"
+    assert isinstance(payload["sections"], list)
+
+
+def test_cli_noun_bare_is_non_empty(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["cli"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip()
