@@ -29,14 +29,15 @@ inherits the afi CLI shape via an already-adapted sibling rather than
 re-running `afi cli cite` from scratch.
 
 `afi`'s role in this build is therefore the **quality auditor**, not the
-scaffolder: the agent-first rubric (`afi doctor … --strict`) becomes a CI gate.
+scaffolder: the seven-bundle agent-first rubric (`afi cli doctor . --strict`)
+becomes a CI gate.
 
 The three pillars from the issue map as:
 
-- **afi** — CLI shape inherited from lecodeur (afi-pattern) + `afi doctor`
+- **afi** — CLI shape inherited from lecodeur (afi-pattern) + `afi cli doctor`
   rubric gate.
 - **pipelines** — `tests.yml` + `publish.yml` copied from lecodeur, renamed.
-- **quality** — lint + pytest/coverage + the `afi doctor --strict` gate.
+- **quality** — lint + pytest/coverage + the `afi cli doctor . --strict` gate.
 
 ### Build sequence
 
@@ -47,8 +48,9 @@ The three pillars from the issue map as:
    workflows, `culture.yaml`, and skill prose.
 3. Set packaging to bare `lepenseur` (dist == package == script), matching the
    lecodeur twin (see §6).
-4. Add the `overview` and `doctor` verbs (§4).
-5. Add the `afi doctor lepenseur --strict` gate and `afi-cli` dev-dep (§7).
+4. Add the `overview` and `doctor` verbs + a thin `cli overview` (§4). `doctor`
+   ships as a rubric-shaped **stub** (semantics deferred — see §4, §12).
+5. Add the `afi cli doctor . --strict` gate and `afi-cli` dev-dep (§7).
 6. Rewrite identity content: `AGENTS.md`, `culture.yaml` system prompt, `explain`
    catalog, `learn` text, `README.md` (§4, §8).
 7. Reframe the six `SKILL.md` files (`lecodeur`/`steward` → `lepenseur`) and add
@@ -62,7 +64,7 @@ lepenseur/
 ├── __init__.py                 # __version__ via importlib.metadata("lepenseur")
 ├── __main__.py                 # python -m lepenseur → cli.main
 └── cli/
-    ├── __init__.py             # argparse parser + _dispatch (registers 5 verbs)
+    ├── __init__.py             # argparse parser + _dispatch (registers verbs + cli noun)
     ├── _errors.py              # LepenseurError + EXIT_SUCCESS/USER/ENV
     ├── _output.py              # emit_result / emit_error / emit_diagnostic (stdout/stderr split)
     └── _commands/
@@ -70,8 +72,9 @@ lepenseur/
         ├── whoami.py           # identity probe — reads culture.yaml
         ├── learn.py            # self-teaching prompt (≥200 chars; rubric bundle 2)
         ├── explain.py          # catalog lookup (rubric bundle 5)
-        ├── overview.py         # descriptive snapshot (rubric bundle 6)
-        └── doctor.py           # self-diagnosis (rubric bundle 7)
+        ├── overview.py         # descriptive snapshot + shared section builder (rubric bundle 6)
+        ├── cli.py              # `cli` noun → `cli overview` (rubric overview_cli_noun_exists)
+        └── doctor.py           # self-diagnosis STUB (rubric bundle 7; semantics deferred)
 lepenseur/explain/
 ├── __init__.py                 # resolve() + known_paths() over ENTRIES
 └── catalog.py                  # ENTRIES dict — lepenseur's command docs
@@ -79,7 +82,7 @@ tests/
 ├── __init__.py
 └── test_cli_*.py               # per-verb smoke + json + error tests
 .github/workflows/
-├── tests.yml                   # test + lint(+afi doctor) + version-check
+├── tests.yml                   # test + lint(+afi cli doctor) + version-check
 └── publish.yml                 # PyPI (main) / TestPyPI (PR) via Trusted Publishing
 .claude/skills/{cicd,communicate,version-bump,run-tests,sonarclaude,doc-test-alignment}/
 .claude/skills.local.yaml.example
@@ -103,8 +106,9 @@ verb but no write verb ships now.
 | `whoami` | from lecodeur | Read `culture.yaml`; report suffix, backend, model | identity object |
 | `learn` | from lecodeur (afi template) | Self-teaching prompt; ≥200 chars; names purpose/commands/exit/`--json`/`explain` | `{tool, version, purpose, commands, exit_codes, json_support, explain_pointer}` |
 | `explain <path>` | from lecodeur (afi template) | Markdown catalog lookup; unknown path → `LepenseurError` | `{path, markdown}` |
-| `overview` | **new**, modeled on steward/afi | Read-only descriptive snapshot of the CLI surface; graceful (exit 0) on bad path | `{subject, sections}` |
-| `doctor` | **new**, modeled on steward/afi | Self-diagnosis; emits report; exit 0 healthy / 1 unhealthy | `{healthy: bool, checks: [{id, passed, severity, message, remediation}]}` |
+| `overview` | **new**, lepenseur-bespoke | Read-only descriptive snapshot of the agent (identity, verbs, act surface); graceful (exit 0) on a bogus path arg | `{subject, sections}` |
+| `cli overview` | **new**, thin | `cli` noun whose `overview` describes the CLI surface (verbs, `--json`, exit codes). Reuses overview's section builder | `{subject, sections}` |
+| `doctor` | **new**, **stub** | Rubric-shaped self-diagnosis. Ships as a stub returning a single passing check; real semantics deferred (see §12) | `{healthy: bool, checks: [{id, passed, severity, message, remediation}]}` |
 
 The `explain` catalog (`lepenseur/explain/catalog.py`) must include a
 `("backend",)` entry (describing the `acp`/vLLM-local runtime) so that
@@ -112,11 +116,25 @@ The `explain` catalog (`lepenseur/explain/catalog.py`) must include a
 The catalog also covers the root, `learn`, `explain`, `whoami`, `overview`,
 and `doctor`.
 
-`overview` and `doctor` are required for `afi doctor --strict` to pass: the
-rubric's bundles 6 and 7 assert their existence and `--json` shapes. Their JSON
-contracts above are exactly what the rubric checks (`subject`/`sections` for
-overview; `healthy`/`checks` with per-check `id`/`passed`/`severity`/`message`,
-plus `remediation` on failures, for doctor).
+### Why `overview` + `cli overview` + `doctor` (rubric-forced surface)
+
+The seven-bundle rubric (`afi cli doctor`) makes three **error-severity**
+demands — error-severity checks fail the gate *even without* `--strict`:
+
+- **bundle 6 (`overview`)**: `overview` exits 0 non-empty; `overview --json`
+  carries keys `subject` + `sections`; `overview <bogus-path>` exits 0
+  (graceful); **and `cli overview` exits 0 non-empty** (`overview_cli_noun_exists`
+  is unconditional — hence the thin `cli` noun).
+- **bundle 7 (`doctor`)**: `doctor` non-empty stdout; `doctor --json` →
+  `{healthy: bool, checks: [...]}`; each check has `id`/`passed`/`severity`/
+  `message`; failed checks carry non-empty `remediation`.
+
+`doctor` is shipped as an honest **stub**: its real meaning for a *non-doer*
+(a thinker that never executes) is undefined — it might later check the vLLM
+endpoint is reachable, or that `culture.yaml`/`AGENTS.md` are coherent. For now
+it returns one trivially-passing check (`healthy: true`) so the gate is green,
+with the open question tracked in §12. `overview` is implemented for real (a
+thinker describing itself is well-defined).
 
 ### Error / output contract (inherited, renamed)
 
@@ -170,8 +188,8 @@ Copied from lecodeur, renamed `lecodeur`→`lepenseur`, `paths:` filter set to
   - `test`: `uv sync` → `uv run pytest -n auto --cov=lepenseur …`; optional
     SonarCloud scan gated on `SONAR_TOKEN`.
   - `lint`: `black --check`, `isort --check-only`, `flake8`, `bandit -r
-    lepenseur`, `markdownlint-cli2`, **plus a new step `uv run afi doctor
-    lepenseur --strict`** (the agent-first rubric gate).
+    lepenseur`, `markdownlint-cli2`, **plus a new step `uv run afi cli doctor
+    . --strict`** (the seven-bundle agent-first rubric gate; blocking).
   - `version-check` (PR-only): fails if `pyproject.toml` version equals main's
     (AgentCulture every-PR-bumps rule).
 - **`publish.yml`** — push-to-`main` builds with `uv build` and publishes
@@ -214,10 +232,11 @@ verb, but no write verb is introduced in this scaffold.
 - [ ] `uv sync && uv run pytest -n auto -v` passes locally.
 - [ ] `uv run lepenseur --version`, `lepenseur whoami`, `lepenseur whoami --json`,
       `lepenseur learn`, `lepenseur explain backend`, `lepenseur overview`,
-      `lepenseur doctor` all work.
+      `lepenseur overview --json`, `lepenseur cli overview`, `lepenseur doctor`,
+      `lepenseur doctor --json` all work.
 - [ ] `black --check`, `isort --check-only`, `flake8`, `bandit -r lepenseur`
       clean.
-- [ ] `uv run afi doctor lepenseur --strict` passes (rubric quartet satisfied).
+- [ ] `uv run afi cli doctor . --strict` exits 0 (all seven bundles pass).
 - [ ] `tests.yml` + `publish.yml` present; `version-check` job in place.
 - [ ] `AGENTS.md` (runtime) and `CLAUDE.md` (dev) both present; `culture.yaml`
       declares `backend: acp` + the `vllm-local/...` Nemotron model.
@@ -228,6 +247,11 @@ verb, but no write verb is introduced in this scaffold.
 
 ## 12. Out of scope / follow-ups
 
+- **Define `doctor` semantics for a thinking ("non-doer") agent.** This scaffold
+  ships `doctor` as a rubric-shaped stub. The real checks are an open design
+  question — candidates: vLLM endpoint reachability, `culture.yaml`/`AGENTS.md`
+  coherence, model-string validity. File a follow-up issue on lepenseur to track
+  it; the stub's docstring points there.
 - **steward PR** adding `lepenseur` to `docs/skill-sources.md` "Downstream
   copies" column (steward is never edited from here).
 - **PyPI/TestPyPI Trusted Publishing setup** for the `lepenseur` project is a
@@ -239,9 +263,13 @@ verb, but no write verb is introduced in this scaffold.
 
 - Per-verb smoke tests in `tests/test_cli_*.py`: each verb exits 0 on the happy
   path, emits non-empty stdout, and `--json` parses to the documented shape.
+- `overview` tests assert `subject`/`sections` JSON keys and **exit 0 on a bogus
+  path arg** (the rubric's graceful-fallback contract); `cli overview` exits 0
+  non-empty; `doctor --json` returns `{healthy, checks}` with each check
+  carrying `id`/`passed`/`severity`/`message`.
 - Error-path tests: bad `explain` path → exit 1 + `LepenseurError` on stderr;
   unknown subcommand → structured argparse error.
 - `whoami` reads a fixture/temp `culture.yaml`.
-- The `afi doctor --strict` gate is the black-box integration check across all
-  seven rubric bundles; local tests cover the white-box behavior.
+- The `afi cli doctor . --strict` gate is the black-box integration check across
+  all seven rubric bundles; local tests cover the white-box behavior.
 - Coverage `fail_under = 60`.
