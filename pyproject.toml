@@ -1,0 +1,72 @@
+[project]
+name = "lepenseur"
+version = "0.1.0"
+description = "lepenseur — the local thinking agent of the Culture mesh."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{name = "AgentCulture"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development",
+    "Intended Audience :: Developers",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/agentculture/lepenseur"
+Issues = "https://github.com/agentculture/lepenseur/issues"
+
+[project.scripts]
+lepenseur = "lepenseur.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lepenseur"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.0",
+    "pytest-cov>=4.1",
+    "bandit>=1.7.5",
+    "flake8>=6.1",
+    "isort>=5.12.0",
+    "black>=23.7.0",
+    "afi-cli>=0.7",
+]
+
+[tool.coverage.run]
+source = ["lepenseur"]
+omit = ["lepenseur/__pycache__/*"]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["lepenseur"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101", "B404", "B603"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

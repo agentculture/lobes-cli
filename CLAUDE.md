@@ -48,13 +48,13 @@ steward's own tree as the worked example.
 
 ## Target project shape (AgentCulture sibling pattern)
 
-Distributed as **`lepenseur-cli`** on PyPI (Trusted Publishing). Python package
+Distributed as **`lepenseur`** on PyPI (Trusted Publishing). Python package
 is `lepenseur`; the binary is `lepenseur`. Layout follows the afi-cli pattern
 (top-level package, no `src/`):
 
 ```text
-lepenseur/                  # Python package (pip install lepenseur-cli)
-├── __init__.py             # __version__ via importlib.metadata("lepenseur-cli")
+lepenseur/                  # Python package (pip install lepenseur)
+├── __init__.py             # __version__ via importlib.metadata("lepenseur")
 ├── __main__.py             # python -m lepenseur
 └── cli/
     ├── __init__.py         # argparse main()
@@ -89,7 +89,7 @@ These commands are the convention across siblings; they apply once
 - **Single test:** `uv run pytest tests/test_cli_whoami.py::test_name -v`
 - **Lint:** `uv run black --check lepenseur tests`, `uv run isort --check-only lepenseur tests`, `uv run flake8`, `uv run bandit -r lepenseur`
 - **Version bump (required every PR):** `python3 .claude/skills/version-bump/scripts/bump.py {patch|minor|major}` — updates `pyproject.toml` and prepends a CHANGELOG entry. The `version-check` CI job **fails the PR if the version equals main's** (AgentCulture every-PR-bumps rule — no exceptions, even for docs/config-only changes). Version is a single source of truth in `pyproject.toml`; `lepenseur.__version__` is read from package metadata at import (no separate literal to sync).
-- **Publish:** push to `main` → `publish.yml` builds with `uv build` and publishes `lepenseur-cli` to PyPI via Trusted Publishing (no API tokens). PRs publish a `.dev<run_number>` to TestPyPI. Fork PRs are skipped (no OIDC).
+- **Publish:** push to `main` → `publish.yml` builds with `uv build` and publishes `lepenseur` to PyPI via Trusted Publishing (no API tokens). PRs publish a `.dev<run_number>` to TestPyPI. Fork PRs are skipped (no OIDC).
 
 ## Skills convention
 
