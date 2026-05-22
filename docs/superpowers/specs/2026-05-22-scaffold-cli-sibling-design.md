@@ -45,7 +45,8 @@ The three pillars from the issue map as:
    own) and lecodeur's `CHANGELOG.md` (start fresh).
 2. Rename `lecodeur` → `lepenseur` across package dir, imports, `pyproject.toml`,
    workflows, `culture.yaml`, and skill prose.
-3. Honor lepenseur's PyPI contract: dist `lepenseur-cli` (see §6).
+3. Set packaging to bare `lepenseur` (dist == package == script), matching the
+   lecodeur twin (see §6).
 4. Add the `overview` and `doctor` verbs (§4).
 5. Add the `afi doctor lepenseur --strict` gate and `afi-cli` dev-dep (§7).
 6. Rewrite identity content: `AGENTS.md`, `culture.yaml` system prompt, `explain`
@@ -58,7 +59,7 @@ The three pillars from the issue map as:
 
 ```text
 lepenseur/
-├── __init__.py                 # __version__ via importlib.metadata("lepenseur-cli")
+├── __init__.py                 # __version__ via importlib.metadata("lepenseur")
 ├── __main__.py                 # python -m lepenseur → cli.main
 └── cli/
     ├── __init__.py             # argparse parser + _dispatch (registers 5 verbs)
@@ -82,7 +83,7 @@ tests/
 └── publish.yml                 # PyPI (main) / TestPyPI (PR) via Trusted Publishing
 .claude/skills/{cicd,communicate,version-bump,run-tests,sonarclaude,doc-test-alignment}/
 .claude/skills.local.yaml.example
-pyproject.toml                  # hatchling, py≥3.12, dist lepenseur-cli
+pyproject.toml                  # hatchling, py≥3.12, dist lepenseur (bare)
 AGENTS.md                       # runtime system prompt (thinker)
 culture.yaml                    # backend: acp + Nemotron model + mirrored prompt
 CHANGELOG.md                    # Keep-a-Changelog (fresh)
@@ -143,17 +144,22 @@ plus `remediation` on failures, for doctor).
 
 ## 6. PyPI / packaging contract
 
-Follows lepenseur's own CLAUDE.md/issue, which **diverges from lecodeur's bare
-name**:
+**Bare `lepenseur`** — dist == package == script — matching the lecodeur twin.
 
-- `pyproject.toml` `[project] name = "lepenseur-cli"` (lecodeur uses bare
-  `lecodeur`; lepenseur's contract requires the `-cli` dist suffix).
+- `pyproject.toml` `[project] name = "lepenseur"`.
 - `[project.scripts] lepenseur = "lepenseur.cli:main"`.
 - `[tool.hatch.build.targets.wheel] packages = ["lepenseur"]`.
-- `lepenseur/__init__.py`: `__version__ = importlib.metadata.version("lepenseur-cli")`.
+- `lepenseur/__init__.py`: `__version__ = importlib.metadata.version("lepenseur")`.
 - Version single source of truth in `pyproject.toml`; no separate literal.
 - Coverage `source = ["lepenseur"]`, `fail_under = 60` (lecodeur's bar).
 - `dev` dependency group from lecodeur **plus `afi-cli`** (for the doctor gate).
+
+> **Doc alignment required:** the committed `CLAUDE.md` and issue #1 both say
+> dist `lepenseur-cli` / `importlib.metadata("lepenseur-cli")`. This scaffold
+> uses bare `lepenseur` instead, so `CLAUDE.md`'s "Target project shape" and
+> "Build / test / publish" sections must be updated to drop the `-cli` suffix as
+> part of this work. The issue is steward-owned and is left as-is (the PR
+> description will note the intentional deviation).
 
 ## 7. Pipelines
 
@@ -169,7 +175,7 @@ Copied from lecodeur, renamed `lecodeur`→`lepenseur`, `paths:` filter set to
   - `version-check` (PR-only): fails if `pyproject.toml` version equals main's
     (AgentCulture every-PR-bumps rule).
 - **`publish.yml`** — push-to-`main` builds with `uv build` and publishes
-  `lepenseur-cli` to PyPI via Trusted Publishing (no API tokens); PRs publish a
+  `lepenseur` to PyPI via Trusted Publishing (no API tokens); PRs publish a
   `.dev<run_number>` to TestPyPI; fork PRs skipped (no OIDC).
 
 ## 8. Lint / changelog / config
@@ -224,7 +230,7 @@ verb, but no write verb is introduced in this scaffold.
 
 - **steward PR** adding `lepenseur` to `docs/skill-sources.md` "Downstream
   copies" column (steward is never edited from here).
-- **PyPI/TestPyPI Trusted Publishing setup** for the `lepenseur-cli` project is a
+- **PyPI/TestPyPI Trusted Publishing setup** for the `lepenseur` project is a
   one-time external configuration on the PyPI side (OIDC publisher); the
   workflow ships ready but first publish requires that registration.
 - No write/mutation verbs; no MCP/HTTP surface (CLI only).
