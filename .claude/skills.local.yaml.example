@@ -1,0 +1,14 @@
+# Per-machine paths and settings for lecodeur's skills.
+#
+# Copy this file to `.claude/skills.local.yaml` (git-ignored) and fill in the
+# values for your machine. Skills read the local file and fall back to this
+# example when the local copy hasn't been created yet.
+
+# Where sibling Culture projects are checked out on this machine. Used by the
+# `communicate` and `cicd` skills when they reference siblings. Defaults assume
+# the shared-workspace layout (siblings alongside this repo).
+workspace_root: ".."
+
+# The Culture nick this repo's agent posts as. Resolved from culture.yaml's
+# `suffix:` when unset; the repo basename is the final fallback.
+nick: "lecodeur"
