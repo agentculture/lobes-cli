@@ -28,6 +28,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "cli",
         help="CLI-surface introspection (see 'lepenseur cli overview').",
     )
+    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=_no_verb, json=False)
     noun_sub = p.add_subparsers(dest="cli_command")
     ov = noun_sub.add_parser("overview", help="Describe the lepenseur CLI surface.")

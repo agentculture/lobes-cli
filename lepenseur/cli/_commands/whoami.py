@@ -69,7 +69,7 @@ def _scalar(line: str, key: str) -> str:
     return value.strip().strip("'\"") or "unknown"
 
 
-def _report() -> dict[str, object]:
+def report() -> dict[str, object]:
     fields = _read_agent_fields()
     return {
         "nick": fields["nick"],
@@ -80,16 +80,16 @@ def _report() -> dict[str, object]:
 
 
 def cmd_whoami(args: argparse.Namespace) -> None:
-    report = _report()
+    identity = report()
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
-        emit_result(report, json_mode=True)
+        emit_result(identity, json_mode=True)
         return
     text = (
-        f"nick: {report['nick']}\n"
-        f"version: {report['version']}\n"
-        f"backend: {report['backend']}\n"
-        f"model: {report['model']}"
+        f"nick: {identity['nick']}\n"
+        f"version: {identity['version']}\n"
+        f"backend: {identity['backend']}\n"
+        f"model: {identity['model']}"
     )
     emit_result(text, json_mode=False)
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 
-from lepenseur.cli._commands.whoami import _report
+from lepenseur.cli._commands.whoami import report
 from lepenseur.cli._output import emit_result
 
 _ACT_SURFACE = [
@@ -34,7 +34,7 @@ _VERBS = [
 
 def agent_sections() -> list[dict[str, object]]:
     """Sections describing lepenseur-the-agent (used by the global verb)."""
-    ident = _report()
+    ident = report()
     return [
         {
             "title": "Identity",
@@ -53,7 +53,10 @@ def agent_sections() -> list[dict[str, object]]:
 def cli_sections() -> list[dict[str, object]]:
     """Sections describing the CLI surface itself (used by `cli overview`)."""
     return [
-        {"title": "Verbs", "items": list(_VERBS)},
+        {
+            "title": "Verbs",
+            "items": list(_VERBS) + ["cli overview — describe the CLI surface (this command)"],
+        },
         {
             "title": "Conventions",
             "items": [
@@ -75,9 +78,7 @@ def render_text(subject: str, sections: list[dict[str, object]]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def emit_overview(
-    subject: str, sections: list[dict[str, object]], *, json_mode: bool
-) -> None:
+def emit_overview(subject: str, sections: list[dict[str, object]], *, json_mode: bool) -> None:
     if json_mode:
         emit_result({"subject": subject, "sections": sections}, json_mode=True)
     else:

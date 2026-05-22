@@ -8,7 +8,6 @@ import pytest
 
 from lepenseur.cli import main
 
-
 # --- overview -------------------------------------------------------------
 
 
@@ -76,4 +75,4 @@ def test_doctor_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
     assert isinstance(payload["checks"], list)
     assert payload["checks"]
     for check in payload["checks"]:
-        assert {"id", "passed", "severity", "message"} <= set(check)
+        assert {"id", "passed", "severity", "message", "remediation"} <= set(check)
