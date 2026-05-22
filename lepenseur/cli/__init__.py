@@ -65,7 +65,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser = _LepenseurArgumentParser(
         prog="lepenseur",
-        description="lepenseur — the local coding agent of the Culture mesh",
+        description="lepenseur — the local thinking agent of the Culture mesh",
     )
     parser.add_argument(
         "--version",
