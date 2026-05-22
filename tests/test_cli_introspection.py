@@ -57,3 +57,23 @@ def test_cli_noun_bare_is_non_empty(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cli"])
     assert rc == 0
     assert capsys.readouterr().out.strip()
+
+
+# --- doctor (stub) --------------------------------------------------------
+
+
+def test_doctor_text(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["doctor"])
+    assert rc == 0
+    assert "lepenseur doctor" in capsys.readouterr().out
+
+
+def test_doctor_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["doctor", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert isinstance(payload["healthy"], bool)
+    assert isinstance(payload["checks"], list)
+    assert payload["checks"]
+    for check in payload["checks"]:
+        assert {"id", "passed", "severity", "message"} <= set(check)
