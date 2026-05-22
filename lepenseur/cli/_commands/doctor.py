@@ -21,9 +21,7 @@ _STUB_CHECK: dict[str, object] = {
     "id": "doctor_stub",
     "passed": True,
     "severity": "info",
-    "message": (
-        "doctor is a stub; self-diagnosis semantics for a thinking agent are " "not yet defined"
-    ),
+    "message": "doctor is a stub; self-diagnosis semantics for a thinking agent are undefined",
     "remediation": "",
 }
 
