@@ -36,9 +36,11 @@ thinker). That backend distinction drives the two prompt files:
 
 ## Current state vs. target shape
 
-This repo is an **early scaffold**: today it contains only `README.md`,
-`LICENSE`, `.gitignore`, and `.claude/settings.local.json`. The structure
-below is the **target**, defined by GitHub issue #1 ("Scaffold lepenseur as a
+This repo is an **early scaffold**: the only tracked files today are
+`README.md`, `LICENSE`, `.gitignore`, and this `CLAUDE.md`. (A
+`.claude/settings.local.json` may exist in a working copy but is git-ignored —
+per-machine, not committed.) The structure below is the **target**, defined by
+GitHub issue #1 ("Scaffold lepenseur as a
 full CLI/PyPI AgentCulture sibling") and by steward's
 `docs/sibling-pattern.md` — those two are the authoritative contract for what to
 build. When in doubt, read `../steward/docs/sibling-pattern.md` and copy
