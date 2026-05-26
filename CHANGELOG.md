@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-27
+
+### Added
+
+- `docker-compose.yml` + `.env.example`: a local vLLM server (NGC
+  `nvcr.io/nvidia/vllm` image) that serves the runtime model as an
+  OpenAI-compatible API on `:8000` for the `acp` backend, tuned for DGX Spark
+  (GB10 Blackwell, 128 GB unified memory).
+- README "Running the model locally (vLLM)" section.
+
+### Changed
+
+- Switched lepenseur's runtime model from
+  `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` to `nvidia/Qwen3-32B-NVFP4`
+  across `culture.yaml`, `AGENTS.md`, `lepenseur/explain/catalog.py`, `README.md`,
+  and `CLAUDE.md` (32B dense NVFP4 reasoning model with a thinking mode).
+
 ## [0.1.0] - 2026-05-22
 
 ### Added

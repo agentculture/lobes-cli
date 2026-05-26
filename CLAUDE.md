@@ -22,10 +22,10 @@ alignment agent) within the Organic Development framework.
 **Runtime: local vLLM, NOT a Claude-backed agent.** lepenseur is served by a
 locally-hosted vLLM model over the `acp` backend — `daria` is the worked example
 of this runtime shape. The model is
-**`vllm-local/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`** (a 120B/12B-active
-LatentMoE reasoning model in NVFP4, 1M-token context, runs on DGX Spark; it emits
-a reasoning trace before its answer — which is exactly why it suits a deep
-thinker). That backend distinction drives the two prompt files:
+**`vllm-local/nvidia/Qwen3-32B-NVFP4`** (a 32B dense reasoning model in NVFP4,
+32K-token context extendable to ~131K via YaRN, runs on DGX Spark; it has a
+thinking mode and emits a reasoning trace before its answer — which is exactly
+why it suits a deep thinker). That backend distinction drives the two prompt files:
 
 - **`AGENTS.md`** — the runtime system prompt the `acp` backend reads. This is
   the *running agent's* identity and behavior. Mirror it with the inline
@@ -69,7 +69,7 @@ tests/                      # pytest suite (tests/test_cli_*.py)
 .github/workflows/          # tests.yml + publish.yml
 pyproject.toml              # version source-of-truth (hatchling, Python ≥3.12)
 AGENTS.md                   # runtime system prompt (acp backend)
-culture.yaml                # backend: acp + model: vllm-local/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+culture.yaml                # backend: acp + model: vllm-local/nvidia/Qwen3-32B-NVFP4
 CHANGELOG.md                # Keep-a-Changelog
 .flake8, .markdownlint-cli2.yaml   # repo-local lint configs (no home-dir configs)
 ```

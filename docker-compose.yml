@@ -1,0 +1,58 @@
+# Local vLLM server for lepenseur's runtime model.
+#
+# Serves an OpenAI-compatible API on :8000 that the Culture `acp` backend
+# (opencode's `vllm-local` provider) connects to. The served model name must
+# match the part after `vllm-local/` in culture.yaml's `model:` field.
+#
+# Quickstart:
+#   cp .env.example .env   # set HF_TOKEN if the model repo is gated
+#   docker login nvcr.io   # NGC API key; see README "Running the model locally"
+#   docker compose up -d
+#   docker compose logs -f vllm   # first run downloads ~18 GB of weights
+#
+# Tuned for DGX Spark (GB10 Grace Blackwell, SM12.1, 128 GB unified memory).
+services:
+  vllm:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the current tag)
+    container_name: lepenseur-vllm
+    restart: unless-stopped
+    # GPU access — requires the NVIDIA Container Toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host                              # vLLM needs host shared memory
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - .env                               # HF_TOKEN lives here (gitignored)
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+    volumes:
+      # Persist downloaded weights across container restarts.
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    command:
+      - vllm
+      - serve
+      - ${VLLM_MODEL:-nvidia/Qwen3-32B-NVFP4}
+      - --served-model-name=${VLLM_SERVED_NAME:-nvidia/Qwen3-32B-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=modelopt_fp4        # nvidia/ checkpoint is ModelOpt FP4 (see README for the RedHatAI fallback)
+      - --kv-cache-dtype=fp8
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
+      - --reasoning-parser=qwen3           # expose the <think> trace as reasoning_content (drop on older vLLM)
+      - --enable-prefix-caching
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s                   # allow time for the first-run weight download + load

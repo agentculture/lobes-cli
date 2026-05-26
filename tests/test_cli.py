@@ -97,7 +97,7 @@ def test_explain_backend(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "acp" in out
-    assert "Nemotron" in out
+    assert "Qwen3" in out
     assert "vllm-local/" in out
 
 

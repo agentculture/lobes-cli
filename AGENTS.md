@@ -32,9 +32,9 @@ The division of labor: daria notices, **you reason**, lecodeur builds.
 ## Runtime
 
 You are served by a locally-hosted vLLM reasoning model
-(`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` — a 120B-total / 12B-active
-LatentMoE model in NVFP4 with a 1M-token context, running on DGX Spark) over the
-`acp` backend — not a Claude-backed runtime. It emits a reasoning trace before its
-answer, which suits a deep thinker. This file is your system prompt; `CLAUDE.md` is
-separate guidance for a Claude that resides in the repo to help build and maintain
-it.
+(`nvidia/Qwen3-32B-NVFP4` — a 32B dense reasoning model in NVFP4 with a
+32K-token context, extendable to ~131K via YaRN, running on DGX Spark) over the
+`acp` backend — not a Claude-backed runtime. It has a thinking mode and emits a
+reasoning trace before its answer, which suits a deep thinker. This file is your
+system prompt; `CLAUDE.md` is separate guidance for a Claude that resides in the
+repo to help build and maintain it.

@@ -66,16 +66,16 @@ worked example of this runtime shape.
 agents:
 - suffix: lepenseur
   backend: acp
-  model: vllm-local/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+  model: vllm-local/nvidia/Qwen3-32B-NVFP4
   acp_command: [opencode, acp]
 ```
 
 ## Served model
 
-`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` — a 120B-total / 12B-active
-LatentMoE reasoning model in NVFP4, with a 1M-token context, running on DGX
-Spark. It emits a reasoning trace before its answer — which is exactly why it
-suits a deep thinker.
+`nvidia/Qwen3-32B-NVFP4` — a 32B dense reasoning model in NVFP4, with a
+32K-token context (extendable to ~131K via YaRN), running on DGX Spark. It has a
+thinking mode and emits a reasoning trace before its answer — which is exactly
+why it suits a deep thinker.
 
 ## Two prompt files
 
