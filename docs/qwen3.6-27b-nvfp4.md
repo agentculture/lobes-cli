@@ -1,8 +1,8 @@
 # Candidate model: `mmangkad/Qwen3.6-27B-NVFP4`
 
-A candidate alternative runtime model. **Architecturally supported** by the
-vLLM image lepenseur already runs, but **not yet load-tested live** — see the
-benchmark plan below. Tracked by [issue #6](https://github.com/agentculture/lepenseur/issues/6).
+A candidate alternative runtime model. **Load-tested live on DGX Spark (GB10),
+2026-05-27** — it loads and serves cleanly under the vLLM image lepenseur
+already runs. Tracked by [issue #6](https://github.com/agentculture/lepenseur/issues/6).
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-27B-NVFP4> — public, Apache-2.0.
 
@@ -13,13 +13,17 @@ Source: <https://huggingface.co/mmangkad/Qwen3.6-27B-NVFP4> — public, Apache-2
   `model_type: qwen3_5`, 64 layers, `hidden_size 5120`,
   `max_position_embeddings 262144` (**256K** context), multimodal RoPE
   (`mrope_interleaved`, `mrope_section`).
-- ~20B effective params after compression; ~20 GB on disk (BF16 / F8_E4M3 / U8
-  tensors). ModelOpt producer `0.42.0rc1.dev107` (a dev/rc build).
+- **Hybrid attention:** vLLM loads it with linear-attention / Gated-DeltaNet
+  (`gdn_linear_attn`) Mamba layers plus periodic full attention — not a plain
+  dense transformer like the 32B. It also carries a **ViT multimodal encoder**
+  (it is a vision-language model), though text-only chat serves without an image
+  path.
+- ~20B effective params; **~29 GB on disk** (BF16 / F8_E4M3 / U8 tensors).
+  ModelOpt producer `0.42.0rc1.dev107` (a dev/rc build).
 
-## Is it supported here? — Yes (architecture), pending live load
+## Is it supported here? — Yes, load-tested and serving
 
-The deciding check: query the **running** vLLM engine's model registry rather
-than guess.
+The pre-flight check (query the running engine's registry):
 
 ```text
 $ docker exec lepenseur-vllm python3 -c \
@@ -29,67 +33,74 @@ True
 ```
 
 The `nvcr.io/nvidia/vllm:26.04-py3` image (engine `0.19.0+...nv26.04`) registers
-`Qwen3_5ForConditionalGeneration` (plus `Qwen3_5MoeForConditionalGeneration` and
-`Qwen3_5MTP`) — the exact architecture this checkpoint declares. The quant flag
-(`--quantization=modelopt_fp4`) and `--reasoning-parser=qwen3` are the same ones
-already working for the 32B. So the same compose can serve it.
-
-"Registered" means vLLM can instantiate the model class; it does not prove the
-weights load and serve cleanly. That requires the live load-test below.
+`Qwen3_5ForConditionalGeneration` (plus the MoE and MTP variants) — the exact
+architecture this checkpoint declares. The live load (below) confirms it
+instantiates, loads weights, and serves with the same compose flags as the 32B
+(`--quantization=modelopt_fp4`, `--reasoning-parser=qwen3`).
 
 ## How to run (same compose, model override)
 
 ```bash
-# in .env
-VLLM_MODEL=mmangkad/Qwen3.6-27B-NVFP4
-VLLM_SERVED_NAME=mmangkad/Qwen3.6-27B-NVFP4   # must match culture.yaml's vllm-local/<name>
-# keep --quantization=modelopt_fp4 and --reasoning-parser=qwen3 (already in compose)
-docker compose up -d
+.claude/skills/model-runner/scripts/model-runner.sh \
+  switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768
+# (or edit .env: VLLM_MODEL / VLLM_SERVED_NAME / VLLM_PORT, then docker compose up -d)
 ```
 
-Memory note: at 256K context the KV cache is large. Keep
-`VLLM_MAX_MODEL_LEN=32768` (or similar) for a first load; only raise it with
-headroom to spare. The GB10 has 121 GB unified memory total.
+`VLLM_SERVED_NAME` must match the part after `vllm-local/` in `culture.yaml`.
+Memory note: native context is 256K; the KV cache at that length is large, so
+keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
 
-## Caveats to validate during the load-test
+## Caveats — validated during the load-test
 
-1. **SGLang is the blessed runtime.** The model card recommends `sglang serve`
-   (with `--tool-call-parser qwen3_coder`), not vLLM. vLLM support is present in
-   the registry but is not the card's documented path.
-2. **`ForConditionalGeneration` + multimodal RoPE.** The arch and `mrope` config
-   suggest a vision/multimodal lineage; text-only chat should still serve, but
-   confirm vLLM does not demand an image/processor path at load.
-3. **ModelOpt dev/rc producer** (`0.42.0rc1.dev107`) — verify the quant config
-   parses under this vLLM build.
+1. **SGLang is the card's blessed runtime** (recommends `sglang serve
+   --tool-call-parser qwen3_coder`). → **Resolved:** it nonetheless loads and
+   serves under our vLLM image with no special flags (`trust_remote_code=False`).
+2. **`ForConditionalGeneration` + multimodal RoPE / ViT encoder.** → **Resolved
+   for text:** vLLM initializes the ViT encoder but does not demand an
+   image/processor path for text chat; both correctness probes passed.
+3. **ModelOpt dev/rc producer** (`0.42.0rc1.dev107`). → **Resolved:** vLLM logs
+   `Detected ModelOpt NVFP4 checkpoint` and the quant config parses (flagged
+   "experimental format" by vLLM, but functional).
+4. **New — experimental Mamba prefix caching.** With `--enable-prefix-caching`,
+   vLLM sets `Mamba cache mode 'align'` and warns that prefix caching for Mamba
+   layers is experimental. Functional here; worth watching for correctness drift.
 
-## Benchmark plan (to be filled when load-tested)
+## Benchmark — 2026-05-27, DGX Spark (GB10)
 
-Run the same methodology used for the 32B (see
-[`qwen3-32b-nvfp4.md`](qwen3-32b-nvfp4.md)) so the two are comparable:
-
-- Health + `/v1/models` reachable.
-- Correctness on the same two probes (train-times, `17 × 23`), confirming the
-  `reasoning` field populates.
-- Decode throughput: 512 tokens forced (`ignore_eos`), batch=1, greedy.
-- Prefill: ~2K-token prompt, 16-token gen.
-- Record image/engine version, weights-on-disk, and GPU memory reserved.
+Image `nvcr.io/nvidia/vllm:26.04-py3`, engine `0.19.0+...nv26.04`. Served on
+`:8001` via `model-runner assess`. Engine init (download cached) ~159 s; KV
+cache 38.55 GiB allocated.
 
 | Property | Value |
 |---|---|
-| Decode throughput | _TBD_ |
-| Prefill | _TBD_ |
-| GPU memory reserved | _TBD_ |
-| Correctness | _TBD_ |
+| Health / `max_model_len` | `/health` 200; `32768` (capped; 256K native) |
+| Correctness | `17 × 23 = 391` ✅ (finish=stop, 389 tok); train 14:45→17:10 = 145 min ✅ (finish=stop, 1517 tok) |
+| Reasoning trace field | `reasoning` (4,356-char trace) |
+| **Decode throughput** | **7.9–8.0 tok/s** (batch=1, greedy, 512 tokens forced) |
+| Prefill | 2,015 prompt tokens + 16 gen in 3.19 s |
+| GPU memory reserved | ~70 GB (71,723 MiB) at `gpu-memory-utilization=0.6` |
+| Weights on disk | ~29 GB |
 
-### For comparison — 32B baseline (2026-05-27, GB10)
+### Comparison — 32B baseline (2026-05-27, GB10)
 
-~9.7 tok/s decode (batch=1), ~2,800 tok/s prefill, ~72 GB reserved at
-`gpu-memory-utilization=0.6`.
+| | 27B (this model) | 32B (`nvidia/Qwen3-32B-NVFP4`) |
+|---|---|---|
+| Decode (batch=1) | **7.9–8.0 tok/s** | **9.7 tok/s** |
+| Prefill (~2K tokens) | ~3.2 s incl. 16 gen | ~2.4 s incl. 16 gen |
+| GPU reserved (util 0.6) | ~70 GB | ~72 GB |
+| Weights | ~29 GB | ~20 GB |
+| Native context | 256K | 32K (→131K YaRN) |
+| Shape | hybrid Mamba/linear-attn + ViT (multimodal) | dense |
 
 ## Recommendation
 
-**Pending the load-test.** Until the live numbers above exist, **keep
-`nvidia/Qwen3-32B-NVFP4`** as the runtime model — it is verified end-to-end on
-this hardware. Revisit a switch only if the 27B load-test (issue #6) shows it
-loads cleanly under vLLM _and_ offers a worthwhile trade (faster decode at ~20B,
-larger usable context) without the multimodal/SGLang caveats biting.
+**Keep `nvidia/Qwen3-32B-NVFP4`.** The 27B loads cleanly and answers correctly,
+but on this GB10 it is **slower on decode** (~8 vs ~9.7 tok/s) despite being
+smaller, and it is a heavier, more-experimental path (hybrid Mamba layers with
+experimental prefix caching, plus an unused ViT encoder). For a text-only deep
+thinker, that trade does not pay off today.
+
+Switch only if a concrete need appears that the 32B cannot meet: a **much larger
+context** (256K native vs 32K/131K-YaRN) or **multimodal/vision** input. Re-run
+`model-runner assess` after any vLLM image bump — the Mamba/NVFP4 paths are young
+and likely to get faster.

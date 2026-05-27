@@ -98,6 +98,11 @@ Six skills are vendored from steward (the canonical upstream) under
 **`run-tests`**, **`sonarclaude`**, **`doc-test-alignment`**. This is
 *cite-don't-import*: copies are owned by this repo and may diverge from steward.
 
+One skill is **local to lepenseur** (not vendored): **`model-runner`** — switch
+the local vLLM runtime model and assess/benchmark it (produces the numbers in
+the per-model `docs/*.md`). It drives this repo's `docker-compose.yml` + `.env`
+and is a maintainer convenience, not something the agent runs.
+
 Each skill ships:
 
 1. `SKILL.md` — *why* and *when* to use it (frontmatter `name` must equal the

@@ -72,5 +72,9 @@ results, and caveats:
 - [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the **current** runtime
   model (`nvidia/Qwen3-32B-NVFP4`), benchmarked on DGX Spark.
 - [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — a **candidate**
-  (`mmangkad/Qwen3.6-27B-NVFP4`); architecture is supported by the current vLLM
-  image, live load-test pending.
+  (`mmangkad/Qwen3.6-27B-NVFP4`), load-tested on DGX Spark; loads under the
+  current vLLM image but is slower on decode, so the 32B stays.
+
+Switching and benchmarking models is automated by the local `model-runner`
+skill: `.claude/skills/model-runner/scripts/model-runner.sh switch <model>` then
+`… assess`. The `assess` output is the benchmark block in each per-model doc.

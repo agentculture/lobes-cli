@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-27
+
+### Added
+
+- `model-runner` skill (local, not vendored): `switch` the local vLLM runtime
+  model and `assess`/benchmark it (stdlib `_assess.py` for correctness +
+  throughput, host-side facts via the wrapper). Drives this repo's compose +
+  `.env`; documented in CLAUDE.md and README.
+
+### Changed
+
+- `docs/qwen3.6-27b-nvfp4.md`: filled with the live load-test (DGX Spark/GB10,
+  2026-05-27). `mmangkad/Qwen3.6-27B-NVFP4` loads and serves under our vLLM image
+  (no `--trust-remote-code`); ~7.9–8.0 tok/s decode, ~70 GB reserved, 29 GB
+  weights. It is a hybrid Mamba/linear-attention vision-language model and is
+  slower on decode than the 32B here — recommendation: **keep the 32B**. All
+  pre-flight caveats (SGLang-only, multimodal, ModelOpt rc) validated/resolved.
+
 ## [0.3.0] - 2026-05-27
 
 ### Added
