@@ -63,3 +63,14 @@ in-container alongside `HF_TOKEN` and the mounted cache. Add it back only for a
 model whose repo ships custom modeling code. If vLLM rejects the `nvidia/`
 ModelOpt checkpoint, set `VLLM_MODEL` to the vLLM-native `RedHatAI/Qwen3-32B-NVFP4`
 and drop `--quantization` from the compose `command`.
+
+### Per-model notes
+
+Each runtime model has a doc under `docs/` recording how to run it, live test
+results, and caveats:
+
+- [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the **current** runtime
+  model (`nvidia/Qwen3-32B-NVFP4`), benchmarked on DGX Spark.
+- [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — a **candidate**
+  (`mmangkad/Qwen3.6-27B-NVFP4`); architecture is supported by the current vLLM
+  image, live load-test pending.
