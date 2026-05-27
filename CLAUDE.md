@@ -8,20 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`model`**
 (`model switch`, `model assess`, `model serve`, …).
 
-**Two identities live in this repo — keep them distinct:**
+**`model-gear` is one identity — the tool *and* the deployed agent:**
 
 - **model-gear** is the *repo* and the *tool*. It is a normal CLI/PyPI sibling
   (Python package `model_gear`, binary `model`, distributed as `model-gear`).
-- **lepenseur** is the *agent* that gets deployed *on* the model model-gear
-  serves. `AGENTS.md` + `culture.yaml` are lepenseur's runtime identity (the
-  `acp` system prompt and the `backend: acp` / `model: vllm-local/...`
-  declaration) — they describe the deployed agent, **not** the repo. "lepenseur
-  still gets deployed for now": the agent rides on top; model-gear is the gear.
+- **model-gear** is *also* the *agent* deployed *on* the model it serves.
+  `AGENTS.md` + `culture.yaml` are that agent's runtime identity (the `acp`
+  system prompt and the `suffix: model-gear` / `backend: acp` / `model:
+  vllm-local/...` declaration). Same name, one identity: the gear runs the model
+  and the agent rides on it. (It used to be a separate agent, `lepenseur`; that
+  name is retired.)
 
 The served model is **`vllm-local/nvidia/Qwen3-32B-NVFP4`** (a 32B dense
 reasoning model in NVFP4, 32K-token context extendable to ~131K via YaRN, runs
 on DGX Spark; thinking mode with a reasoning trace). model-gear runs it; the
-`acp` `vllm-local` provider connects lepenseur to it.
+`acp` `vllm-local` provider connects the model-gear agent to it.
 
 ## Deployment model
 
@@ -100,7 +101,7 @@ Each skill ships:
 Per-machine paths live in **`.claude/skills.local.yaml`** (git-ignored); a
 committed **`.claude/skills.local.yaml.example`** documents every key. Skills
 read the local file and fall back to the example. (The Culture posting nick is
-still `lepenseur` — the deployed agent — not the repo name.)
+`model-gear` — the deployed agent shares the repo/tool name.)
 
 ## PR workflow
 
@@ -123,6 +124,7 @@ Bump the version (above) on every PR or CI's `version-check` job fails the run.
   upstream by `agentculture/devague`; see `docs/skill-sources.md`) and the
   sibling-pattern contract.
   steward files issues on siblings but never edits them — so scaffolding and
-  alignment work *for this repo happens in this repo*. The follow-up that
-  renames `lepenseur` → `model-gear` in steward's `docs/skill-sources.md`
-  "Downstream copies" column must be a **PR on steward**, not an edit from here.
+  alignment work *for this repo happens in this repo*. steward's
+  `docs/skill-sources.md` "Downstream copies" column may still list this repo
+  under its retired name (`lepenseur`); fixing that is a **PR on steward**, not
+  an edit from here.

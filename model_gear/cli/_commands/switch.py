@@ -1,9 +1,11 @@
 """``model switch <model>`` — change the served vLLM model.
 
 Mutating: dry-run by default (prints the plan, changes nothing); ``--apply``
-writes the five ``VLLM_*`` vars to ``.env`` (plus ``VLLM_TOOL_CALL_PARSER`` when
-``--tool-call-parser`` is given) then recreates the container
-(``docker compose down && up -d``) and waits for ``/health``.
+writes the five ``VLLM_*`` vars to ``.env`` (plus an auto-selected, or
+``--tool-call-parser``-overridden, ``VLLM_TOOL_CALL_PARSER``), recreates the
+container (``docker compose down && up -d``), waits for ``/health``, and then
+probes ``tool_choice:"auto"`` to confirm tool calling survived the switch
+(``--no-probe`` to skip).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import argparse
 
 from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_diagnostic, emit_result
-from model_gear.runtime import _compose, _env, _health
+from model_gear.runtime import _compose, _env, _health, _parser
 
 
 def cmd_switch(args: argparse.Namespace) -> int:
@@ -28,23 +30,41 @@ def cmd_switch(args: argparse.Namespace) -> int:
         "VLLM_MAX_MODEL_LEN": str(args.max_model_len),
         "VLLM_GPU_MEM_UTIL": str(args.gpu_mem_util),
     }
-    # Only write the tool-call parser when explicitly chosen, so a switch that
-    # just retunes (port/len/mem) doesn't clobber a previously-set parser.
+    # Pick the tool-call parser so tool calling keeps working across the switch
+    # without the caller remembering it: an explicit --tool-call-parser wins,
+    # else infer one from the model name. An unknown model leaves the existing
+    # VLLM_TOOL_CALL_PARSER untouched (override it explicitly when needed).
     if args.tool_call_parser:
-        plan["VLLM_TOOL_CALL_PARSER"] = args.tool_call_parser
+        parser, parser_note = args.tool_call_parser, "explicit"
+    else:
+        parser, parser_note = _parser.infer_parser(args.model), "auto-selected"
+    if parser:
+        plan["VLLM_TOOL_CALL_PARSER"] = parser
+        parser_msg = f"tool-call parser ({parser_note}): {parser}"
+    else:
+        parser_msg = "tool-call parser: left unchanged (unknown model; pass --tool-call-parser)"
 
     if not args.apply:
         if json_mode:
             emit_result(
-                {"dry_run": True, "deployment_dir": str(deploy_dir), "env": plan},
+                {
+                    "dry_run": True,
+                    "deployment_dir": str(deploy_dir),
+                    "env": plan,
+                    "tool_call_parser": parser,
+                    "probe": not args.no_probe,
+                },
                 json_mode=True,
             )
         else:
             lines = [f"DRY RUN — would update {env_path}:"]
             lines += [f"  {k}={v}" for k, v in plan.items()]
+            lines.append(f"  {parser_msg}")
             lines.append(
                 f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
             )
+            if not args.no_probe:
+                lines.append("  then: probe tool calling (tool_choice:auto)")
             lines.append("Re-run with --apply to execute.")
             emit_result("\n".join(lines), json_mode=False)
     else:
@@ -52,6 +72,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
             f">> switching to {args.model} (port={port} max_model_len={args.max_model_len} "
             f"served-name={served} gpu-mem-util={args.gpu_mem_util})"
         )
+        emit_diagnostic(f">> {parser_msg}")
         for key, value in plan.items():
             _env.set_env(env_path, key, value)
         _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
@@ -62,11 +83,17 @@ def cmd_switch(args: argparse.Namespace) -> int:
             "served_name": served,
             "port": port,
             "deployment_dir": str(deploy_dir),
+            "tool_call_parser": parser,
         }
+        tc = _runtime_ops.probe_tool_calling(port, served) if not args.no_probe else None
+        result["tool_calling"] = tc
         if json_mode:
             emit_result(result, json_mode=True)
         else:
-            emit_result(f">> done. assess with: model assess --port {port}", json_mode=False)
+            out = [f">> done. assess with: model assess --port {port}"]
+            if tc is not None:
+                out.append(">> " + _runtime_ops.format_tool_probe(tc))
+            emit_result("\n".join(out), json_mode=False)
     return 0
 
 
@@ -86,14 +113,19 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--tool-call-parser",
-        help="OpenAI tool-call parser (e.g. hermes for Qwen3 dense, qwen3_coder for "
-        "Qwen3-Coder/3.6). Only written when given; leaves VLLM_TOOL_CALL_PARSER otherwise.",
+        help="OpenAI tool-call parser (hermes for Qwen3 dense, qwen3_coder for "
+        "Qwen3-Coder/3.6). Overrides the per-model auto-selection.",
     )
     p.add_argument(
         "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."
     )
     p.add_argument(
         "--apply", action="store_true", help="Commit the switch (recreate the container)."
+    )
+    p.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="Skip the post-switch tool-calling probe (tool_choice:auto).",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_switch)

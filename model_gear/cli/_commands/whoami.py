@@ -2,7 +2,7 @@
 
 Reports model-gear's view of the world: the tool + version, the machine it runs
 on, the model currently served (from the deployment ``.env``), the container's
-health, and the agent that consumes the model (``lepenseur``, read from
+health, and the agent that consumes the model (``model-gear``, read from
 ``culture.yaml``). Read-only.
 """
 
@@ -16,7 +16,7 @@ from model_gear import __version__
 from model_gear.cli._output import emit_result
 from model_gear.runtime import _compose, _env, _health
 
-_FALLBACK_AGENT = "lepenseur"
+_FALLBACK_AGENT = "model-gear"
 _DEFAULT_MODEL = "nvidia/Qwen3-32B-NVFP4"
 
 

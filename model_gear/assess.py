@@ -222,6 +222,18 @@ def _tool_probe(url: str, model: str) -> dict:
         }
 
 
+def probe_tool_calls(url: str, model: str) -> dict:
+    """One-shot tool-calling probe, without the arithmetic correctness probes.
+
+    Used by ``model switch`` / ``model serve`` to verify, the moment the
+    container is healthy, that ``tool_choice:"auto"`` returns a ``tool_calls``
+    response (no HTTP 400, a ``finish`` call present). Returns the same
+    structured dict as the in-``assess`` probe (``ok``/``tool_calls``/``finish``/
+    ``error``) and never raises.
+    """
+    return _tool_probe(url.rstrip("/"), model)
+
+
 def _decode_throughput(url: str, model: str, n_tokens: int, runs: int = 2) -> list[float]:
     rates = []
     for _ in range(runs):

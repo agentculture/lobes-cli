@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from model_gear.cli import main
+from model_gear.cli import _runtime_ops, main
 from model_gear.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from model_gear.runtime import _compose, _env, _health
 
@@ -117,7 +117,7 @@ def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
     monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
 
-    rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path), "--apply"])
+    rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path), "--apply", "--no-probe"])
     assert rc == 0
     assert calls == ["down", "up"]  # frees prior model before starting new one
     env = tmp_path / ".env"
@@ -134,26 +134,97 @@ def test_switch_writes_tool_call_parser_when_given(tmp_path, monkeypatch) -> Non
     rc = main(
         [
             "switch",
-            "mmangkad/Qwen3.6-27B-NVFP4",
+            "nvidia/Qwen3-32B-NVFP4",  # would auto-infer hermes; the explicit flag must win
             "--tool-call-parser",
             "qwen3_coder",
             "--compose-dir",
             str(tmp_path),
             "--apply",
+            "--no-probe",
         ]
     )
     assert rc == 0
     assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "qwen3_coder"
 
 
-def test_switch_leaves_tool_call_parser_when_absent(tmp_path, capsys) -> None:
+def test_switch_leaves_tool_call_parser_when_unknown_model(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
-    # the scaffolded .env carries the default; a switch without the flag must
-    # neither plan nor write VLLM_TOOL_CALL_PARSER.
+    # an unknown model (no inference rule) and no --tool-call-parser must neither
+    # plan nor write VLLM_TOOL_CALL_PARSER, leaving the scaffolded default.
     rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path)])
     assert rc == 0
     assert "VLLM_TOOL_CALL_PARSER" not in capsys.readouterr().out
     assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "hermes"
+
+
+def test_switch_auto_selects_parser_for_known_model(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # Qwen3.6 needs qwen3_coder; switch must infer + plan it without the flag.
+    rc = main(["switch", "mmangkad/Qwen3.6-27B-NVFP4", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in out
+    assert "auto-selected" in out
+
+
+def test_switch_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    seen: dict = {}
+
+    def fake_probe(port, served):
+        seen["port"], seen["served"] = port, served
+        return {"ok": True, "tool_calls": ["finish"], "finish": "tool_calls", "error": None}
+
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", fake_probe)
+    rc = main(
+        ["switch", "nvidia/Qwen3-32B-NVFP4", "--compose-dir", str(tmp_path), "--apply", "--json"]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tool_call_parser"] == "hermes"  # auto-selected for the dense model
+    assert payload["tool_calling"]["ok"] is True
+    assert payload["tool_calling"]["tool_calls"] == ["finish"]
+    assert seen["served"] == "nvidia/Qwen3-32B-NVFP4"
+
+
+def test_switch_apply_no_probe_skips(tmp_path, monkeypatch, capsys) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+
+    def boom(*a, **k):  # the probe must not run with --no-probe
+        raise AssertionError("probe ran despite --no-probe")
+
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", boom)
+    rc = main(
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+            "--no-probe",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["tool_calling"] is None
+
+
+def test_probe_tool_calling_survives_unreachable(monkeypatch) -> None:
+    # _tool_probe only catches HTTPError; a connection-refused (URLError/OSError)
+    # the moment after /health flips green must still degrade to ok=False.
+    def refuse(url, model):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(_runtime_ops.assess, "probe_tool_calls", refuse)
+    result = _runtime_ops.probe_tool_calling(8000, "foo/bar")
+    assert result["ok"] is False
+    assert "unreachable" in result["error"]
 
 
 def test_switch_apply_surfaces_compose_failure(tmp_path, monkeypatch) -> None:
@@ -182,9 +253,23 @@ def test_serve_apply(tmp_path, monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
     monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
-    rc = main(["serve", "--compose-dir", str(tmp_path), "--apply"])
+    rc = main(["serve", "--compose-dir", str(tmp_path), "--apply", "--no-probe"])
     assert rc == 0
     assert calls == ["up"]
+
+
+def test_serve_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(
+        _runtime_ops,
+        "probe_tool_calling",
+        lambda port, served: {"ok": True, "tool_calls": ["finish"], "finish": None, "error": None},
+    )
+    rc = main(["serve", "--compose-dir", str(tmp_path), "--apply", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["tool_calling"]["ok"] is True
 
 
 def test_start_is_serve_alias(tmp_path, capsys) -> None:
@@ -222,3 +307,4 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["state"] == "not created"  # offline _probe → None
     assert payload["health"] == "not responding"  # offline is_healthy → False
     assert payload["model"] == "nvidia/Qwen3-32B-NVFP4"
+    assert payload["tool_call_parser"] == "hermes"  # scaffolded default

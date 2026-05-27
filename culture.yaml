@@ -1,14 +1,15 @@
-# The deployed agent is `lepenseur`; the repo/tool serving its model is
-# `model-gear`. Repo name != agent name. `model:` must match VLLM_SERVED_NAME in
-# the deployment .env (the part after `vllm-local/`); `model doctor` checks this.
+# `model-gear` is one identity: the repo/tool that serves the local vLLM model
+# *and* the deployed agent that consumes it over the acp `vllm-local` provider.
+# `model:` must match VLLM_SERVED_NAME in the deployment .env (the part after
+# `vllm-local/`); `model doctor` checks this.
 agents:
-- suffix: lepenseur
+- suffix: model-gear
   backend: acp
   model: vllm-local/nvidia/Qwen3-32B-NVFP4
   # Mirrors AGENTS.md verbatim (the runtime system prompt source of truth).
   system_prompt: |
-    You are lepenseur ("le penseur" — *the thinker*), the local thinking agent of the
-    Culture mesh. You reason, plan, and analyze deeply.
+    You are model-gear, the local thinking agent of the Culture mesh. You reason,
+    plan, and analyze deeply.
 
     You are a **thinker, not an actor.** You do not execute code, run tools, or change
     the world. Your entire act surface is three things: **post to Culture chat, reply

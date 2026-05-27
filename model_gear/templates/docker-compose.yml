@@ -6,8 +6,8 @@
 #
 # Serves an OpenAI-compatible API on :8000 that the Culture `acp` backend
 # (opencode's `vllm-local` provider) connects to — this is the model the
-# lepenseur agent consumes. The served model name must match the part after
-# `vllm-local/` in lepenseur's culture.yaml `model:` field.
+# model-gear agent consumes. The served model name must match the part after
+# `vllm-local/` in the culture.yaml `model:` field.
 #
 # Quickstart:
 #   model init --apply            # scaffold ~/.model-gear (compose + .env)

@@ -4,9 +4,9 @@
 OpenAI-compatible vLLM model the Culture mesh consumes. The binary is `model` —
 `model switch`, `model assess`, `model serve`, and so on.
 
-The served model is what the [`lepenseur`](#lepenseur-still-gets-deployed) agent
-connects to over the `acp` `vllm-local` provider. model-gear runs the engine;
-lepenseur is one consumer of it.
+The served model is what the [`model-gear`](#model-gear-is-also-the-deployed-agent)
+agent connects to over the `acp` `vllm-local` provider. The tool and the deployed
+agent share one identity: the same model-gear runs the engine and consumes it.
 
 Sibling to [`culture`](https://github.com/agentculture/culture) (the agent mesh),
 [`daria`](https://github.com/agentculture/daria) (awareness), and
@@ -92,10 +92,10 @@ The numbers in each doc come from `model switch <model> --apply` then `model
 assess` (correctness) and `model benchmark` (throughput). `model overview --list`
 lists these docs and flags which model is currently served.
 
-## lepenseur still gets deployed
+## model-gear is also the deployed agent
 
-The mesh agent served by this model is `lepenseur` ("le penseur" — *the
-thinker*), a local thinking agent. Its runtime identity lives in `AGENTS.md`
-(the `acp` system prompt) and `culture.yaml` (`backend: acp`, `model:
-vllm-local/nvidia/Qwen3-32B-NVFP4`). model-gear is the repo identity and the
-tool; lepenseur is the agent that consumes the model model-gear serves.
+`model-gear` is one identity, not two: it is the repo/tool that serves the model
+*and* the local thinking agent deployed on it. The agent's runtime identity lives
+in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: model-gear`,
+`backend: acp`, `model: vllm-local/nvidia/Qwen3-32B-NVFP4`) — the same model-gear
+that runs the engine consumes it over the `acp` `vllm-local` provider.

@@ -10,7 +10,7 @@ The local vLLM model is served by this repo's deployment (`docker-compose.yml` +
 `model` CLI (the `model-gear` package); this skill points a maintainer at it and
 the `scripts/model-runner.sh` shim just forwards to `model`.
 
-It is a maintainer convenience — the deployed agent (`lepenseur`) does not run it.
+It is a maintainer convenience — the deployed agent (`model-gear`) does not run it.
 
 ## When to use
 

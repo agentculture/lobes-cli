@@ -41,12 +41,12 @@ instantiates, loads weights, and serves with the same compose flags as the 32B
 ## How to run (same compose, model override)
 
 ```bash
-model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 \
-  --tool-call-parser qwen3_coder --apply
+model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
 # (switch is dry-run without --apply; it rewrites VLLM_MODEL / VLLM_SERVED_NAME /
-#  VLLM_PORT in .env — plus VLLM_TOOL_CALL_PARSER with --tool-call-parser — then
-#  recreates the container and waits for /health. qwen3_coder is required for
-#  tool calling on this model; see caveat 1.)
+#  VLLM_PORT in .env, auto-selects VLLM_TOOL_CALL_PARSER=qwen3_coder for this
+#  model (override with --tool-call-parser), recreates the container, waits for
+#  /health, then probes tool_choice:auto to confirm tool calling. qwen3_coder is
+#  required for tool calling on this model; see caveat 1.)
 ```
 
 `VLLM_SERVED_NAME` must match the part after `vllm-local/` in `culture.yaml`
@@ -62,9 +62,10 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
    For **OpenAI tool/function calling** this model emits the Qwen3-Coder XML
    format (`<function=finish><parameter=summary>…</parameter></function>`), which
    the default `hermes` parser cannot parse (HTTP 200 but empty `tool_calls`).
-   Serve it with `--tool-call-parser=qwen3_coder` —
-   `model switch mmangkad/Qwen3.6-27B-NVFP4 --tool-call-parser qwen3_coder --apply`
-   (sets `VLLM_TOOL_CALL_PARSER`). Verified live on `:8001`, 2026-05-27 — the
+   It must be served with `--tool-call-parser=qwen3_coder` — which `model switch`
+   now **auto-selects** for this model (`model switch mmangkad/Qwen3.6-27B-NVFP4
+   --apply` sets `VLLM_TOOL_CALL_PARSER=qwen3_coder`; override with
+   `--tool-call-parser`). Verified live on `:8001`, 2026-05-27 — the
    probe returns a `finish` tool call (see
    [issue #9](https://github.com/agentculture/model-gear/issues/9)).
 2. **`ForConditionalGeneration` + multimodal RoPE / ViT encoder.** → **Resolved

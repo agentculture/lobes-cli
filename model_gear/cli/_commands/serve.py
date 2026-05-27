@@ -1,7 +1,8 @@
 """``model serve`` (alias ``start``) — start the vLLM server.
 
 Mutating: dry-run by default; ``--apply`` runs ``docker compose up -d`` in the
-deployment dir and waits for ``/health``.
+deployment dir, waits for ``/health``, then probes ``tool_choice:"auto"`` to
+confirm tool calling is live (``--no-probe`` to skip).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import argparse
 
 from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_diagnostic, emit_result
-from model_gear.runtime import _compose, _health
+from model_gear.runtime import _compose, _env, _health
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -36,12 +37,20 @@ def cmd_serve(args: argparse.Namespace) -> int:
         _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
         _health.wait_health(port)
         result = {"serving": True, "port": port, "deployment_dir": str(deploy_dir)}
+        tc = None
+        if not args.no_probe:
+            served = _env.read_env(env_path, "VLLM_SERVED_NAME") or _env.read_env(
+                env_path, "VLLM_MODEL"
+            )
+            tc = _runtime_ops.probe_tool_calling(port, served)
+        result["tool_calling"] = tc
         if json_mode:
             emit_result(result, json_mode=True)
         else:
-            emit_result(
-                f">> serving on :{port}. assess with: model assess --port {port}", json_mode=False
-            )
+            out = [f">> serving on :{port}. assess with: model assess --port {port}"]
+            if tc is not None:
+                out.append(">> " + _runtime_ops.format_tool_probe(tc))
+            emit_result("\n".join(out), json_mode=False)
     return 0
 
 
@@ -58,5 +67,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."
     )
     p.add_argument("--apply", action="store_true", help="Actually start the server.")
+    p.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="Skip the post-start tool-calling probe (tool_choice:auto).",
+    )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_serve)

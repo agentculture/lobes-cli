@@ -17,7 +17,7 @@ model-gear — run, assess, and switch the local vLLM model.
 Purpose
 -------
 model-gear is the tooling that runs the local, OpenAI-compatible vLLM model the
-Culture mesh consumes (the lepenseur agent connects to it over the acp
+Culture mesh consumes (the model-gear agent connects to it over the acp
 `vllm-local` provider). It scaffolds a deployment, starts/stops the server,
 switches which model is served, and assesses/benchmarks whatever is running —
 producing the numbers in the per-model docs under docs/.
@@ -74,9 +74,9 @@ def _as_json_payload() -> dict[str, object]:
         "version": __version__,
         "purpose": (
             "Tooling to run, assess, and switch the local vLLM model the Culture "
-            "mesh consumes (the lepenseur agent connects over the acp vllm-local provider)."
+            "mesh consumes (the model-gear agent connects over the acp vllm-local provider)."
         ),
-        "serves": "lepenseur",
+        "serves": "model-gear",
         "commands": [
             {"path": ["init"], "summary": "Scaffold a deployment dir (dry-run; --apply)."},
             {

@@ -9,7 +9,7 @@
 # the shared-workspace layout (siblings alongside this repo).
 workspace_root: ".."
 
-# The Culture nick this repo's agent posts as. The deployed agent is `lepenseur`
-# (the repo is `model-gear` — repo name != nick). Resolved from culture.yaml's
-# `suffix:` when unset; the repo basename is the final fallback.
-nick: "lepenseur"
+# The Culture nick this repo's agent posts as. The deployed agent is `model-gear`
+# (same name as the repo/tool). Resolved from culture.yaml's `suffix:` when unset;
+# the repo basename is the final fallback.
+nick: "model-gear"

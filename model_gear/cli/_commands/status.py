@@ -23,6 +23,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         "model": _env.read_env(env_path, "VLLM_MODEL", "(unset)"),
         "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", "(unset)"),
         "port": port,
+        "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", "(unset)"),
         "deployment_dir": str(deploy_dir),
         "container": _compose.CONTAINER,
         "state": _compose.inspect_state(),
@@ -37,6 +38,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                 [
                     f"model:  {report['model']}",
                     f"served: {report['served_name']}  port: {report['port']}",
+                    f"parser: {report['tool_call_parser']}",
                     f"dir:    {report['deployment_dir']}",
                     f"state:  {report['container']} — {report['state']}",
                     f"health: {report['health']} (:{port})",

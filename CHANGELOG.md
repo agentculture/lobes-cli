@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-27
+
+### Added
+
+- **Per-model tool-call parser auto-selection.** New `model_gear/runtime/_parser.py`
+  `infer_parser()` maps a model name to its parser (`qwen3_coder` for
+  Qwen3-Coder / Qwen3.6, `hermes` for Qwen3 dense, unknown → leave untouched).
+  `model switch` now picks the right parser automatically so tool calling keeps
+  working across a switch without the caller remembering it; `--tool-call-parser`
+  still overrides ([issue #13](https://github.com/agentculture/model-gear/issues/13)).
+- **Post-switch / post-start tool-calling probe.** `model switch --apply` and
+  `model serve --apply` now probe `tool_choice:"auto"` once the container is
+  healthy and report PASS/FAIL (with the called tool names) — reusing the
+  existing `assess` probe. `--no-probe` skips it; the probe never aborts the
+  command (unreachable / HTTP 400 degrade to a FAIL result).
+- **`model status` reports the active `tool_call_parser`** (`VLLM_TOOL_CALL_PARSER`),
+  so "which gear am I in" is complete without `docker inspect`.
+
+### Changed
+
+- **`lepenseur` is retired; the deployed agent is now `model-gear`.** The tool and
+  the deployed agent share one identity. Updated `culture.yaml` (`suffix: model-gear`),
+  the `AGENTS.md` system prompt, `model whoami` / `learn` / `explain` output, the
+  posting nick (`.claude/skills.local.yaml.example`), the compose/`.env` templates,
+  `README.md`, and `CLAUDE.md` (the former "two identities" section now describes
+  one).
+
+### Fixed
+
 ## [0.7.0] - 2026-05-27
 
 ### Added

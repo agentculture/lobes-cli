@@ -43,7 +43,7 @@ def test_whoami_text(capsys: pytest.CaptureFixture[str]) -> None:
     assert "tool: model-gear" in out
     assert "served_model:" in out
     assert "container_health:" in out
-    assert "agent: lepenseur" in out
+    assert "agent: model-gear" in out
 
 
 def test_whoami_json(capsys: pytest.CaptureFixture[str]) -> None:
@@ -55,7 +55,7 @@ def test_whoami_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert isinstance(payload["machine"], dict)
     assert "host" in payload["machine"]
     assert payload["served_model"]
-    assert payload["agent"] == "lepenseur"
+    assert payload["agent"] == "model-gear"
     # Offline fixture → no container.
     assert payload["container_health"] == "not created"
 
@@ -81,7 +81,7 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["tool"] == "model-gear"
     assert payload["version"] == __version__
     assert payload["json_support"] is True
-    assert payload["serves"] == "lepenseur"
+    assert payload["serves"] == "model-gear"
     verbs = {tuple(c["path"]) for c in payload["commands"]}
     assert ("switch",) in verbs
     assert ("assess",) in verbs

@@ -15,9 +15,9 @@ _ROOT = """\
 model-gear is the tooling that **runs, assesses, and switches** the local,
 OpenAI-compatible vLLM model the Culture mesh consumes. The binary is `model`.
 
-The served model is what the **lepenseur** agent connects to over the acp
-`vllm-local` provider — model-gear runs the engine; lepenseur is one consumer of
-it.
+The served model is what the **model-gear** agent connects to over the acp
+`vllm-local` provider — the same model-gear runs the engine and consumes it (the
+tool and the deployed agent share one identity).
 
 ## Verbs
 
@@ -141,7 +141,7 @@ _BACKEND = """\
 
 model-gear runs a **local vLLM server** that exposes an OpenAI-compatible API.
 The Culture `acp` backend (opencode's `vllm-local` provider) connects to it —
-this is the model the **lepenseur** agent consumes.
+this is the model the **model-gear** agent consumes.
 
 ## Deployment
 
@@ -164,7 +164,7 @@ Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory) via
 ## The must-match invariant
 
 `VLLM_SERVED_NAME` in `.env` **must equal** the part after `vllm-local/` in
-lepenseur's `culture.yaml` `model:` field, or the acp provider won't resolve the
+the `culture.yaml` `model:` field, or the acp provider won't resolve the
 model. `model doctor` checks this.
 """
 
@@ -188,7 +188,7 @@ _WHOAMI = """\
 The smallest identity probe. Reports model-gear's view: the `tool` + `version`,
 the `machine` (hostname + GPU), the currently-`served_model` and `port` (read
 from the deployment `.env`), the `container_health`, and the `agent` that
-consumes the model (`lepenseur`, from `culture.yaml`). Read-only; supports
+consumes the model (`model-gear`, from `culture.yaml`). Read-only; supports
 `--json`.
 """
 
