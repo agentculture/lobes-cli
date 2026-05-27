@@ -160,6 +160,30 @@ def test_tool_probe_handles_malformed_200(monkeypatch) -> None:
     assert "FAIL" in A.render_correctness(r)
 
 
+def test_probe_tool_calls_degrades_on_connection_error(monkeypatch) -> None:
+    # _tool_probe only catches HTTPError; a connection failure (OSError) the
+    # moment after /health flips green must still honour the never-raises contract.
+    def _refuse(url, payload, timeout=300):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(A, "_post", _refuse)
+    r = A.probe_tool_calls("http://localhost:8000", "foo/bar")
+    assert r["ok"] is False
+    assert "connection refused" in r["error"]
+
+
+def test_probe_tool_calls_degrades_on_bad_json(monkeypatch) -> None:
+    # A 200 with an undecodable body raises JSONDecodeError inside json.load();
+    # probe_tool_calls must fold it into a structured ok=False, not propagate.
+    def _bad_json(url, payload, timeout=300):
+        raise json.JSONDecodeError("Expecting value", "<<not json>>", 0)
+
+    monkeypatch.setattr(A, "_post", _bad_json)
+    r = A.probe_tool_calls("http://localhost:8000", "foo/bar")
+    assert r["ok"] is False
+    assert r["tool_calls"] == []
+
+
 def test_run_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())

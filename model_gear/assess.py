@@ -229,9 +229,19 @@ def probe_tool_calls(url: str, model: str) -> dict:
     container is healthy, that ``tool_choice:"auto"`` returns a ``tool_calls``
     response (no HTTP 400, a ``finish`` call present). Returns the same
     structured dict as the in-``assess`` probe (``ok``/``tool_calls``/``finish``/
-    ``error``) and never raises.
+    ``error``).
+
+    Never raises. ``_tool_probe`` already folds HTTP 400 and malformed-200
+    payloads into ``ok=False``; the two failure modes it lets through —
+    a connection failure (``OSError``) or an undecodable body
+    (``JSONDecodeError``) from ``_post``/``json.load`` — are caught here and
+    likewise returned as a structured ``ok=False``, so a post-switch/post-serve
+    probe can never abort the command.
     """
-    return _tool_probe(url.rstrip("/"), model)
+    try:
+        return _tool_probe(url.rstrip("/"), model)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "tool_calls": [], "finish": None, "error": f"probe failed: {exc}"}
 
 
 def _decode_throughput(url: str, model: str, n_tokens: int, runs: int = 2) -> list[float]:

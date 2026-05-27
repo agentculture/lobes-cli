@@ -21,6 +21,11 @@ from model_gear.runtime import _parser
         ("meta-llama/Llama-3-8B", None),
         ("mistralai/Mistral-7B", None),
         ("", None),
+        # A bare "coder" must NOT trigger qwen3_coder on unrelated checkpoints —
+        # the coder marker is Qwen3-scoped (regression guard for the false positive).
+        ("deepseek-ai/deepseek-coder-6.7b-instruct", None),
+        ("codellama/CodeLlama-13b", None),
+        ("Qwen/Qwen2.5-Coder-7B-Instruct", None),
     ],
 )
 def test_infer_parser(model, expected) -> None:

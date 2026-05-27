@@ -48,19 +48,15 @@ def resolve_port_soft(args: argparse.Namespace) -> tuple[int, object]:
 
 
 def probe_tool_calling(port: int, served: str | None) -> dict:
-    """Verify tool calling on the just-(re)started server (best-effort, never raises).
+    """Verify tool calling on the just-(re)started server.
 
-    Sends one ``tool_choice:"auto"`` probe via :func:`model_gear.assess.probe_tool_calls`
-    and returns its structured result (``ok``/``tool_calls``/``finish``/``error``).
-    A server missing ``--enable-auto-tool-choice`` is reported as ``ok=False``
-    (HTTP 400). A still-unreachable endpoint (connection refused / timeout the
-    moment after ``/health`` flipped green) is likewise caught and reported,
-    never raised, so ``switch``/``serve`` always completes.
+    Thin adapter over :func:`model_gear.assess.probe_tool_calls` (which never
+    raises — HTTP 400, malformed 200, connection failure, and undecodable bodies
+    all fold into a structured result): builds the local URL and returns the
+    probe result (``ok``/``tool_calls``/``finish``/``error``), so ``switch`` /
+    ``serve`` always completes.
     """
-    try:
-        return assess.probe_tool_calls(f"http://localhost:{port}", served or "")
-    except OSError as exc:  # URLError/timeout/connection refused are OSError subclasses
-        return {"ok": False, "tool_calls": [], "finish": None, "error": f"probe unreachable: {exc}"}
+    return assess.probe_tool_calls(f"http://localhost:{port}", served or "")
 
 
 def format_tool_probe(tc: dict) -> str:

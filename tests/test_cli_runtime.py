@@ -215,16 +215,19 @@ def test_switch_apply_no_probe_skips(tmp_path, monkeypatch, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["tool_calling"] is None
 
 
-def test_probe_tool_calling_survives_unreachable(monkeypatch) -> None:
-    # _tool_probe only catches HTTPError; a connection-refused (URLError/OSError)
-    # the moment after /health flips green must still degrade to ok=False.
-    def refuse(url, model):
-        raise OSError("connection refused")
+def test_probe_tool_calling_delegates(monkeypatch) -> None:
+    # The CLI wrapper builds the local URL and forwards to assess.probe_tool_calls
+    # (which owns the never-raises contract); it just passes the result through.
+    captured: dict = {}
 
-    monkeypatch.setattr(_runtime_ops.assess, "probe_tool_calls", refuse)
-    result = _runtime_ops.probe_tool_calling(8000, "foo/bar")
-    assert result["ok"] is False
-    assert "unreachable" in result["error"]
+    def fake(url, model):
+        captured["url"], captured["model"] = url, model
+        return {"ok": True, "tool_calls": ["finish"], "finish": None, "error": None}
+
+    monkeypatch.setattr(_runtime_ops.assess, "probe_tool_calls", fake)
+    result = _runtime_ops.probe_tool_calling(8001, "foo/bar")
+    assert result["ok"] is True
+    assert captured == {"url": "http://localhost:8001", "model": "foo/bar"}
 
 
 def test_switch_apply_surfaces_compose_failure(tmp_path, monkeypatch) -> None:

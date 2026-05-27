@@ -11,6 +11,11 @@ guidance in ``templates/env.example`` (the single source of truth):
 * anything else → ``None`` (unknown; leave the configured parser untouched and
   let the caller pass ``--tool-call-parser`` explicitly)
 
+The markers are deliberately **Qwen3-scoped** — a bare ``coder`` would also match
+unrelated checkpoints (``deepseek-coder``, ``codellama``, ``Qwen2.5-Coder``) and
+silently misconfigure their parser, so the coder rule requires the ``qwen3``
+family. Anything we haven't validated returns ``None`` (the safe default).
+
 Pure string matching — no network, no model download. Extend ``_RULES`` to teach
 a new family.
 """
@@ -19,9 +24,10 @@ from __future__ import annotations
 
 # Ordered (substring-set, parser) rules, matched against the lowercased model id.
 # A model matches a rule when it contains ANY of the rule's markers. The Coder /
-# Qwen3.6 rule comes first because those ids also contain "qwen3".
+# Qwen3.6 rule comes first because those ids also contain "qwen3"; its markers are
+# Qwen3-scoped so a generic "*-coder" model doesn't get qwen3_coder.
 _RULES: list[tuple[tuple[str, ...], str]] = [
-    (("coder", "qwen3.6", "qwen3-6", "qwen3_6"), "qwen3_coder"),
+    (("qwen3-coder", "qwen3_coder", "qwen3coder", "qwen3.6", "qwen3-6", "qwen3_6"), "qwen3_coder"),
     (("qwen3", "qwen-3"), "hermes"),
 ]
 
