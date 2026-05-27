@@ -74,9 +74,21 @@ Six skills are vendored from steward (the canonical upstream) under
 **`run-tests`**, **`sonarclaude`**, **`doc-test-alignment`**. This is
 *cite-don't-import*: copies are owned by this repo and may diverge from steward.
 
+Three more are vendored from **`agentculture/devague`** (re-broadcast via
+guildmaster) — the idea→spec→plan→implementation operator chain for the
+deterministic `devague` CLI: **`think`** (idea→spec), **`spec-to-plan`**
+(spec→plan), and **`assign-to-workforce`** (plan→parallel implementation). These
+three carry **`type: command`** in their frontmatter — load-bearing on the
+culture/agex backend (a `SKILL.md` without `type:` is silently skipped when the
+repo declares an agent in `culture.yaml`). They depend on the `devague` CLI at
+runtime (`uv tool install devague`), resolved portably by the wrappers.
+
 One skill is **local to this repo** (not vendored): **`model-runner`** — a thin
 pointer/shim to the `model` CLI for switching/serving/assessing the model. The
 real implementation is the `model` package; the shim `exec`s `model`.
+
+The provenance of every vendored skill (citation path + authoring origin) is
+recorded in **`docs/skill-sources.md`**.
 
 Each skill ships:
 
@@ -107,7 +119,9 @@ Bump the version (above) on every PR or CI's `version-check` job fails the run.
 - **Culture CLI:** `culture` — server lifecycle, agent start/stop, mesh linking.
   Path references assume siblings are checked out alongside this repo
   (`../culture`, `../daria`, `../steward`).
-- **steward owns the six vendored skills** and the sibling-pattern contract.
+- **steward owns the six steward-sourced skills** (the devague trio is owned
+  upstream by `agentculture/devague`; see `docs/skill-sources.md`) and the
+  sibling-pattern contract.
   steward files issues on siblings but never edits them — so scaffolding and
   alignment work *for this repo happens in this repo*. The follow-up that
   renames `lepenseur` → `model-gear` in steward's `docs/skill-sources.md`

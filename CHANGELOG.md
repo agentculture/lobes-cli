@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-27
+
+### Added
+
+- **devague workflow trio** vendored under `.claude/skills/` (cite-don't-import):
+  `think` (idea→spec), `spec-to-plan` (spec→plan), and `assign-to-workforce`
+  (plan→parallel implementation) — the operator chain for the deterministic
+  `devague` CLI. Authored in `agentculture/devague`, vendored via guildmaster;
+  each carries `type: command` (load-bearing on the culture/agex backend, where
+  a `SKILL.md` without `type:` is silently skipped). They drive the `devague`
+  CLI at runtime (`uv tool install devague`), resolved portably by the wrappers.
+- **`docs/skill-sources.md`** — provenance ledger recording the citation path
+  and authoring origin of every vendored skill (the trio plus the six
+  steward-sourced skills).
+
 ## [0.5.0] - 2026-05-27
 
 Redesigned the repo around **running, assessing, and switching the local vLLM
