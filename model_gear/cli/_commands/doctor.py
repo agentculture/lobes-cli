@@ -117,16 +117,17 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     return {"healthy": healthy_overall, "checks": checks}
 
 
+def _mark(check: dict) -> str:
+    if check["passed"]:
+        return "ok"
+    return "FAIL" if check["severity"] == "error" else check["severity"]
+
+
 def _render_text(report: dict) -> str:
     status = "healthy" if report["healthy"] else "unhealthy"
     lines = [f"model doctor: {status}", ""]
     for check in report["checks"]:
-        mark = (
-            "ok"
-            if check["passed"]
-            else ("FAIL" if check["severity"] == "error" else check["severity"])
-        )
-        lines.append(f"[{mark}] {check['id']}: {check['message']}")
+        lines.append(f"[{_mark(check)}] {check['id']}: {check['message']}")
         if not check["passed"] and check["remediation"]:
             lines.append(f"  hint: {check['remediation']}")
     return "\n".join(lines)

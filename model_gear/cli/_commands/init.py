@@ -14,40 +14,46 @@ from model_gear.cli._output import emit_result
 from model_gear.runtime import _compose
 
 
+def _emit_dry_run(target: Path, json_mode: bool) -> None:
+    plan = _compose.scaffold_plan(target)
+    if json_mode:
+        emit_result(
+            {
+                "dry_run": True,
+                "target": str(target),
+                "files": [{"name": name, "exists": exists} for name, exists in plan],
+            },
+            json_mode=True,
+        )
+        return
+    lines = [f"DRY RUN — would scaffold into {target}:"]
+    for name, exists in plan:
+        note = " (exists; needs --force to overwrite)" if exists else ""
+        lines.append(f"  {name}{note}")
+    lines.append("Re-run with --apply to write.")
+    emit_result("\n".join(lines), json_mode=False)
+
+
+def _emit_apply(target: Path, force: bool, json_mode: bool) -> None:
+    written = _compose.write_scaffold(target, force=force)
+    if json_mode:
+        emit_result({"scaffolded": str(target), "files": [p.name for p in written]}, json_mode=True)
+        return
+    emit_result(
+        f">> scaffolded {target}:\n"
+        + "\n".join(f"  {p.name}" for p in written)
+        + "\n>> next: docker login nvcr.io && model serve --apply",
+        json_mode=False,
+    )
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
-    plan = _compose.scaffold_plan(target)
-
-    if not args.apply:
-        if json_mode:
-            emit_result(
-                {
-                    "dry_run": True,
-                    "target": str(target),
-                    "files": [{"name": name, "exists": exists} for name, exists in plan],
-                },
-                json_mode=True,
-            )
-        else:
-            lines = [f"DRY RUN — would scaffold into {target}:"]
-            for name, exists in plan:
-                note = " (exists; needs --force to overwrite)" if exists else ""
-                lines.append(f"  {name}{note}")
-            lines.append("Re-run with --apply to write.")
-            emit_result("\n".join(lines), json_mode=False)
+    if args.apply:
+        _emit_apply(target, args.force, json_mode)
     else:
-        written = _compose.write_scaffold(target, force=args.force)
-        result = {"scaffolded": str(target), "files": [p.name for p in written]}
-        if json_mode:
-            emit_result(result, json_mode=True)
-        else:
-            emit_result(
-                f">> scaffolded {target}:\n"
-                + "\n".join(f"  {p.name}" for p in written)
-                + "\n>> next: docker login nvcr.io && model serve --apply",
-                json_mode=False,
-            )
+        _emit_dry_run(target, json_mode)
     return 0
 
 
