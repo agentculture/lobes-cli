@@ -10,11 +10,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **OpenAI tool/function calling** on the served vLLM model. The packaged compose
   template (`model_gear/templates/docker-compose.yml`) now serves with
-  `--enable-auto-tool-choice --tool-call-parser=hermes`, so `tool_choice:"auto"`
-  requests return a `tool_calls` array instead of HTTP 400. Additive — plain
-  chat/reasoning is unaffected, no extra GPU/memory cost. Unblocks coder-agent
-  harnesses that drive the model entirely through tool calls
+  `--enable-auto-tool-choice` and `--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-hermes}`,
+  so `tool_choice:"auto"` requests return a `tool_calls` array instead of HTTP
+  400. Additive — plain chat/reasoning is unaffected, no extra GPU/memory cost.
+  Unblocks coder-agent harnesses that drive the model entirely through tool calls
   ([issue #9](https://github.com/agentculture/model-gear/issues/9)).
+- **`VLLM_TOOL_CALL_PARSER`** env var (default `hermes`) + **`model switch
+  --tool-call-parser`** — the parser is per-model: `hermes` fits Qwen3 dense
+  (e.g. `Qwen3-32B`), while Qwen3-Coder / Qwen3.6 checkpoints emit the XML
+  function format and need `qwen3_coder`. `switch` writes the var only when the
+  flag is given, so retuning a model never clobbers its parser.
 - **`model assess --tools`** — an opt-in tool-calling probe that verifies a
   `tool_choice:"auto"` request returns a `tool_calls` array naming a `finish`
   function. Degrades gracefully (a FAIL row, no abort) against a server that

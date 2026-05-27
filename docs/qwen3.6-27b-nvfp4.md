@@ -41,9 +41,12 @@ instantiates, loads weights, and serves with the same compose flags as the 32B
 ## How to run (same compose, model override)
 
 ```bash
-model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
+model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 \
+  --tool-call-parser qwen3_coder --apply
 # (switch is dry-run without --apply; it rewrites VLLM_MODEL / VLLM_SERVED_NAME /
-#  VLLM_PORT in .env, then recreates the container and waits for /health)
+#  VLLM_PORT in .env — plus VLLM_TOOL_CALL_PARSER with --tool-call-parser — then
+#  recreates the container and waits for /health. qwen3_coder is required for
+#  tool calling on this model; see caveat 1.)
 ```
 
 `VLLM_SERVED_NAME` must match the part after `vllm-local/` in `culture.yaml`
@@ -56,9 +59,14 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
 1. **SGLang is the card's blessed runtime** (recommends `sglang serve
    --tool-call-parser qwen3_coder`). → **Resolved:** it nonetheless loads and
    serves under our vLLM image with no special flags (`trust_remote_code=False`).
-   OpenAI tool/function calling now runs under vLLM with
-   `--enable-auto-tool-choice --tool-call-parser=hermes` (hermes is vLLM's
-   standard Qwen3-family parser; see [issue #9](https://github.com/agentculture/model-gear/issues/9)).
+   For **OpenAI tool/function calling** this model emits the Qwen3-Coder XML
+   format (`<function=finish><parameter=summary>…</parameter></function>`), which
+   the default `hermes` parser cannot parse (HTTP 200 but empty `tool_calls`).
+   Serve it with `--tool-call-parser=qwen3_coder` —
+   `model switch mmangkad/Qwen3.6-27B-NVFP4 --tool-call-parser qwen3_coder --apply`
+   (sets `VLLM_TOOL_CALL_PARSER`). Verified live on `:8001`, 2026-05-27 — the
+   probe returns a `finish` tool call (see
+   [issue #9](https://github.com/agentculture/model-gear/issues/9)).
 2. **`ForConditionalGeneration` + multimodal RoPE / ViT encoder.** → **Resolved
    for text:** vLLM initializes the ViT encoder but does not demand an
    image/processor path for text chat; both correctness probes passed.

@@ -1,7 +1,8 @@
 """``model switch <model>`` — change the served vLLM model.
 
 Mutating: dry-run by default (prints the plan, changes nothing); ``--apply``
-writes the five ``VLLM_*`` vars to ``.env`` then recreates the container
+writes the five ``VLLM_*`` vars to ``.env`` (plus ``VLLM_TOOL_CALL_PARSER`` when
+``--tool-call-parser`` is given) then recreates the container
 (``docker compose down && up -d``) and waits for ``/health``.
 """
 
@@ -27,6 +28,10 @@ def cmd_switch(args: argparse.Namespace) -> int:
         "VLLM_MAX_MODEL_LEN": str(args.max_model_len),
         "VLLM_GPU_MEM_UTIL": str(args.gpu_mem_util),
     }
+    # Only write the tool-call parser when explicitly chosen, so a switch that
+    # just retunes (port/len/mem) doesn't clobber a previously-set parser.
+    if args.tool_call_parser:
+        plan["VLLM_TOOL_CALL_PARSER"] = args.tool_call_parser
 
     if not args.apply:
         if json_mode:
@@ -78,6 +83,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--served-name", help="Name clients address (default: the model name).")
     p.add_argument(
         "--gpu-mem-util", type=float, default=0.6, help="GPU memory fraction (default 0.6)."
+    )
+    p.add_argument(
+        "--tool-call-parser",
+        help="OpenAI tool-call parser (e.g. hermes for Qwen3 dense, qwen3_coder for "
+        "Qwen3-Coder/3.6). Only written when given; leaves VLLM_TOOL_CALL_PARSER otherwise.",
     )
     p.add_argument(
         "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."

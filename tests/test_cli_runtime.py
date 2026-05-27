@@ -125,6 +125,37 @@ def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
     assert _env.read_env(env, "VLLM_SERVED_NAME") == "foo/bar"
 
 
+def test_switch_writes_tool_call_parser_when_given(tmp_path, monkeypatch) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--tool-call-parser",
+            "qwen3_coder",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+        ]
+    )
+    assert rc == 0
+    assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "qwen3_coder"
+
+
+def test_switch_leaves_tool_call_parser_when_absent(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # the scaffolded .env carries the default; a switch without the flag must
+    # neither plan nor write VLLM_TOOL_CALL_PARSER.
+    rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    assert "VLLM_TOOL_CALL_PARSER" not in capsys.readouterr().out
+    assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "hermes"
+
+
 def test_switch_apply_surfaces_compose_failure(tmp_path, monkeypatch) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(

@@ -26,9 +26,11 @@ def test_init_apply_writes_both_files(tmp_path, capsys) -> None:
     # the compose template carries the renamed container
     compose = (target / "docker-compose.yml").read_text()
     assert "model-gear-vllm" in compose
-    # OpenAI tool/function calling is enabled out of the box (issue #9)
+    # OpenAI tool/function calling is enabled out of the box (issue #9); the
+    # parser is env-driven so a switched model can override it (default hermes).
     assert "--enable-auto-tool-choice" in compose
-    assert "--tool-call-parser=hermes" in compose
+    assert "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-hermes}" in compose
+    assert "VLLM_TOOL_CALL_PARSER=hermes" in (target / ".env").read_text()
 
 
 def test_init_apply_json(tmp_path, capsys) -> None:

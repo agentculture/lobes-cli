@@ -61,7 +61,8 @@ _SWITCH = """\
 `model switch <model>` changes which vLLM model is served. **Dry-run by
 default** (prints the plan, changes nothing); `--apply` commits.
 
-On `--apply` it writes five vars to the deployment `.env` —
+On `--apply` it writes five vars to the deployment `.env` (plus
+`VLLM_TOOL_CALL_PARSER` when `--tool-call-parser` is given) —
 
 ```text
 VLLM_MODEL, VLLM_SERVED_NAME, VLLM_PORT, VLLM_MAX_MODEL_LEN, VLLM_GPU_MEM_UTIL
@@ -71,9 +72,11 @@ VLLM_MODEL, VLLM_SERVED_NAME, VLLM_PORT, VLLM_MAX_MODEL_LEN, VLLM_GPU_MEM_UTIL
 `/health` (the first run downloads weights, so this can take many minutes).
 
 Flags: `--port`, `--max-model-len` (default 32768), `--served-name` (default:
-the model name), `--gpu-mem-util` (default 0.6), `--compose-dir`, `--apply`,
-`--json`. Only one ~30B-class model fits on a single GB10 at a time, so the
-switch frees the prior model before starting the new one.
+the model name), `--gpu-mem-util` (default 0.6), `--tool-call-parser` (e.g.
+`hermes` for Qwen3 dense, `qwen3_coder` for Qwen3-Coder/3.6; written to
+`VLLM_TOOL_CALL_PARSER` only when given), `--compose-dir`, `--apply`, `--json`.
+Only one ~30B-class model fits on a single GB10 at a time, so the switch frees
+the prior model before starting the new one.
 """
 
 _SERVE = """\
@@ -151,7 +154,7 @@ as the `model-gear-vllm` container. `model init` scaffolds it into
 --kv-cache-dtype=fp8
 --reasoning-parser=qwen3      # expose the <think> trace
 --enable-auto-tool-choice     # OpenAI tool/function calling (tool_choice:"auto")
---tool-call-parser=hermes     # vLLM's standard Qwen3-family tool parser
+--tool-call-parser=hermes     # VLLM_TOOL_CALL_PARSER; qwen3_coder for Qwen3-Coder/3.6
 --enable-prefix-caching
 ```
 
