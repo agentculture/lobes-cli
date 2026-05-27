@@ -58,6 +58,8 @@ services:
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
       - --reasoning-parser=qwen3           # expose the <think> trace (field is `reasoning` on the nv26.04 build, `reasoning_content` on older vLLM; drop the flag on builds without the parser)
+      - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
+      - --tool-call-parser=hermes          # vLLM's standard parser for the Qwen3 family; coexists with --reasoning-parser on nv26.04 (tool parser wins if a build rejects combining both)
       - --enable-prefix-caching
       # NOTE: --trust-remote-code is intentionally omitted. Qwen3-32B-NVFP4 loads
       # without it; add it back only for a model whose repo ships custom modeling

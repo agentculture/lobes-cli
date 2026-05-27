@@ -56,6 +56,9 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
 1. **SGLang is the card's blessed runtime** (recommends `sglang serve
    --tool-call-parser qwen3_coder`). → **Resolved:** it nonetheless loads and
    serves under our vLLM image with no special flags (`trust_remote_code=False`).
+   OpenAI tool/function calling now runs under vLLM with
+   `--enable-auto-tool-choice --tool-call-parser=hermes` (hermes is vLLM's
+   standard Qwen3-family parser; see [issue #9](https://github.com/agentculture/model-gear/issues/9)).
 2. **`ForConditionalGeneration` + multimodal RoPE / ViT encoder.** → **Resolved
    for text:** vLLM initializes the ViT encoder but does not demand an
    image/processor path for text chat; both correctness probes passed.

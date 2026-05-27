@@ -107,6 +107,10 @@ It also detects which field carried the reasoning trace (`reasoning` on the
 nv26.04 vLLM build, `reasoning_content` on older builds) and reports its length,
 plus host-side facts (image tag, GPU memory). Throughput lives in
 `model benchmark`. Supports `--json`.
+
+`--tools` adds an OpenAI tool-calling probe: a `tool_choice:"auto"` request must
+return a `tool_calls` array naming a `finish` function (degrades gracefully to a
+FAIL row if the server lacks `--enable-auto-tool-choice`).
 """
 
 _BENCHMARK = """\
@@ -146,6 +150,8 @@ as the `model-gear-vllm` container. `model init` scaffolds it into
 --quantization=modelopt_fp4   # nvidia/ checkpoints are ModelOpt FP4
 --kv-cache-dtype=fp8
 --reasoning-parser=qwen3      # expose the <think> trace
+--enable-auto-tool-choice     # OpenAI tool/function calling (tool_choice:"auto")
+--tool-call-parser=hermes     # vLLM's standard Qwen3-family tool parser
 --enable-prefix-caching
 ```
 

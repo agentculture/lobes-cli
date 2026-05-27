@@ -30,8 +30,10 @@ curl -s http://localhost:8000/v1/models   # lists nvidia/Qwen3-32B-NVFP4
 ```
 
 Relevant compose flags: `--quantization=modelopt_fp4`, `--kv-cache-dtype=fp8`,
-`--reasoning-parser=qwen3`, `--enable-prefix-caching`,
-`--gpu-memory-utilization=0.6`. Tunables in the deployment `.env`
+`--reasoning-parser=qwen3`, `--enable-auto-tool-choice`,
+`--tool-call-parser=hermes` (OpenAI tool/function calling),
+`--enable-prefix-caching`, `--gpu-memory-utilization=0.6`. Tunables in the
+deployment `.env`
 (`VLLM_GPU_MEM_UTIL`, `VLLM_MAX_MODEL_LEN`, `HF_CACHE`, …); `model switch`
 rewrites them.
 

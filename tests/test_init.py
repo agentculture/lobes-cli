@@ -24,7 +24,11 @@ def test_init_apply_writes_both_files(tmp_path, capsys) -> None:
     assert (target / "docker-compose.yml").is_file()
     assert (target / ".env").is_file()
     # the compose template carries the renamed container
-    assert "model-gear-vllm" in (target / "docker-compose.yml").read_text()
+    compose = (target / "docker-compose.yml").read_text()
+    assert "model-gear-vllm" in compose
+    # OpenAI tool/function calling is enabled out of the box (issue #9)
+    assert "--enable-auto-tool-choice" in compose
+    assert "--tool-call-parser=hermes" in compose
 
 
 def test_init_apply_json(tmp_path, capsys) -> None:

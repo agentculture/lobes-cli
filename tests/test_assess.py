@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import urllib.error
 
@@ -23,6 +24,27 @@ def _fake_get(url, path, timeout=10):
 def _fake_chat(reasoning_key="reasoning"):
     def _post(url, payload, timeout=300):
         prompt = payload["messages"][0]["content"]
+        if payload.get("tool_choice") == "auto":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "finish",
+                                        "arguments": '{"summary": "hello"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"completion_tokens": 8, "prompt_tokens": 20},
+            }
         if "17 * 23" in prompt:
             return {
                 "choices": [
@@ -72,6 +94,53 @@ def test_run_correctness_detects_reasoning_content(monkeypatch) -> None:
     monkeypatch.setattr(A, "_post", _fake_chat("reasoning_content"))
     r = A.run_correctness("http://localhost:8000", None)
     assert r["trace_field"] == "reasoning_content"
+
+
+def test_run_correctness_tool_calling(monkeypatch) -> None:
+    monkeypatch.setattr(A, "_get", _fake_get)
+    monkeypatch.setattr(A, "_post", _fake_chat())
+    r = A.run_correctness("http://localhost:8000", None, check_tools=True)
+    assert r["passed"] is True  # content probes unaffected
+    assert r["tool_calling"]["ok"] is True
+    assert "finish" in r["tool_calling"]["tool_calls"]
+    md = A.render_correctness(r)
+    assert "tool calling" in md
+    assert "PASS — called finish" in md
+
+
+def test_run_correctness_skips_tool_probe_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(A, "_get", _fake_get)
+    monkeypatch.setattr(A, "_post", _fake_chat())
+    r = A.run_correctness("http://localhost:8000", None)
+    assert r["tool_calling"] is None
+    assert "tool calling" not in A.render_correctness(r)
+
+
+def test_tool_probe_handles_400(monkeypatch) -> None:
+    # A server without --enable-auto-tool-choice rejects tool_choice:auto with 400.
+    monkeypatch.setattr(A, "_get", _fake_get)
+
+    def _post(url, payload, timeout=300):
+        if payload.get("tool_choice") == "auto":
+            raise urllib.error.HTTPError(
+                url,
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(
+                    b'{"error":{"message":"\\"auto\\" tool choice requires '
+                    b'--enable-auto-tool-choice and --tool-call-parser to be set"}}'
+                ),
+            )
+        return _fake_chat()(url, payload, timeout)
+
+    monkeypatch.setattr(A, "_post", _post)
+    r = A.run_correctness("http://localhost:8000", None, check_tools=True)
+    # graceful degrade: the run completes, tool probe reports failure with the message
+    assert r["passed"] is True
+    assert r["tool_calling"]["ok"] is False
+    assert "HTTP 400" in r["tool_calling"]["error"]
+    assert "FAIL" in A.render_correctness(r)
 
 
 def test_run_benchmark(monkeypatch) -> None:

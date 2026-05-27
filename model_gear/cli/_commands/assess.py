@@ -2,7 +2,8 @@
 
 Read-only. Runs the two fixed correctness probes and detects the reasoning-trace
 field, then emits a markdown block (plus host-side facts) ready to paste into a
-per-model doc under ``docs/``. Throughput lives in ``model benchmark``.
+per-model doc under ``docs/``. ``--tools`` additionally probes OpenAI tool
+calling. Throughput lives in ``model benchmark``.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ def cmd_assess(args: argparse.Namespace) -> int:
         model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
     url = f"http://localhost:{port}"
-    result = _assess.run_correctness(url, model)
+    result = _assess.run_correctness(url, model, check_tools=bool(getattr(args, "tools", False)))
     host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
 
     if json_mode:
@@ -45,6 +46,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(
         "--model", help="Served model name (default: VLLM_SERVED_NAME, else first /v1/models)."
+    )
+    p.add_argument(
+        "--tools",
+        action="store_true",
+        help="Also probe OpenAI tool calling (tool_choice:auto must return a tool_calls array).",
     )
     p.add_argument(
         "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."

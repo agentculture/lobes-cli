@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-27
+
+### Added
+
+- **OpenAI tool/function calling** on the served vLLM model. The packaged compose
+  template (`model_gear/templates/docker-compose.yml`) now serves with
+  `--enable-auto-tool-choice --tool-call-parser=hermes`, so `tool_choice:"auto"`
+  requests return a `tool_calls` array instead of HTTP 400. Additive — plain
+  chat/reasoning is unaffected, no extra GPU/memory cost. Unblocks coder-agent
+  harnesses that drive the model entirely through tool calls
+  ([issue #9](https://github.com/agentculture/model-gear/issues/9)).
+- **`model assess --tools`** — an opt-in tool-calling probe that verifies a
+  `tool_choice:"auto"` request returns a `tool_calls` array naming a `finish`
+  function. Degrades gracefully (a FAIL row, no abort) against a server that
+  lacks the flags.
+
+### Changed
+
+### Fixed
+
 ## [0.6.0] - 2026-05-27
 
 ### Added
