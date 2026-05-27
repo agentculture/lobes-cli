@@ -166,11 +166,13 @@ def _probe(url: str, model: str, prompt: str, expect: str) -> dict:
 
 
 def _tool_probe(url: str, model: str) -> dict:
-    """Probe OpenAI tool calling; degrade gracefully if the server lacks the flags.
+    """Probe OpenAI tool calling; degrade gracefully, never abort the assess run.
 
     A server without ``--enable-auto-tool-choice`` rejects ``tool_choice:"auto"``
-    with HTTP 400. We surface that as ``ok=False`` with the server's message
-    rather than aborting the whole assess run.
+    with HTTP 400. A server that *has* the flags but returns an unexpected payload
+    (no ``choices``/``message``, or a wrong-shaped ``tool_calls``) would otherwise
+    raise inside :func:`run_correctness`'s ``_api_errors`` block and abort. Both
+    cases are surfaced here as a structured ``ok=False`` result with a FAIL row.
     """
     payload = {
         "model": model,
@@ -190,14 +192,34 @@ def _tool_probe(url: str, model: str) -> dict:
             "finish": None,
             "error": f"HTTP {exc.code}: {body[:200]}",
         }
-    msg = d["choices"][0]["message"]
-    names = [c["function"]["name"] for c in (msg.get("tool_calls") or []) if c.get("function")]
-    return {
-        "ok": "finish" in names,
-        "tool_calls": names,
-        "finish": d["choices"][0].get("finish_reason"),
-        "error": None,
-    }
+    # Defensive parsing: a malformed 200 must not abort the run (documented
+    # "FAIL row, no abort"). Use .get()/isinstance throughout, with a catch-all
+    # net for any remaining shape surprise.
+    try:
+        choices = d.get("choices") if isinstance(d, dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        msg = choice.get("message") or {}
+        raw_calls = msg.get("tool_calls")
+        calls = raw_calls if isinstance(raw_calls, list) else []
+        names = []
+        for c in calls:
+            fn = c.get("function") if isinstance(c, dict) else None
+            name = fn.get("name") if isinstance(fn, dict) else None
+            if name:
+                names.append(name)
+        return {
+            "ok": "finish" in names,
+            "tool_calls": names,
+            "finish": choice.get("finish_reason"),
+            "error": None,
+        }
+    except (KeyError, IndexError, TypeError, AttributeError) as exc:
+        return {
+            "ok": False,
+            "tool_calls": [],
+            "finish": None,
+            "error": f"unexpected response shape ({exc.__class__.__name__}: {exc})",
+        }
 
 
 def _decode_throughput(url: str, model: str, n_tokens: int, runs: int = 2) -> list[float]:

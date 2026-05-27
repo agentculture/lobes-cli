@@ -143,6 +143,23 @@ def test_tool_probe_handles_400(monkeypatch) -> None:
     assert "FAIL" in A.render_correctness(r)
 
 
+def test_tool_probe_handles_malformed_200(monkeypatch) -> None:
+    # A 200 with an unexpected shape (no message) must NOT abort the run.
+    monkeypatch.setattr(A, "_get", _fake_get)
+
+    def _post(url, payload, timeout=300):
+        if payload.get("tool_choice") == "auto":
+            return {"choices": [{}]}  # no "message" key
+        return _fake_chat()(url, payload, timeout)
+
+    monkeypatch.setattr(A, "_post", _post)
+    r = A.run_correctness("http://localhost:8000", None, check_tools=True)
+    assert r["passed"] is True
+    assert r["tool_calling"]["ok"] is False
+    assert r["tool_calling"]["tool_calls"] == []
+    assert "FAIL" in A.render_correctness(r)
+
+
 def test_run_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())
