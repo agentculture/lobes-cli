@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 
 from model_gear.cli import main
 from model_gear.runtime import _compose
@@ -55,6 +56,13 @@ def test_init_default_target(capsys) -> None:
     assert rc == 0
     assert (default / "docker-compose.yml").is_file()
     assert (default / ".env").is_file()
+
+
+def test_init_env_is_owner_only(tmp_path) -> None:
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    mode = stat.S_IMODE((target / ".env").stat().st_mode)
+    assert mode == 0o600  # .env may hold HF_TOKEN — not world-readable
 
 
 def test_init_local_folder(tmp_path, monkeypatch) -> None:

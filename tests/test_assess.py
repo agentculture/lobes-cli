@@ -93,6 +93,30 @@ def test_health_unreachable_raises(monkeypatch) -> None:
         A.run_correctness("http://localhost:8000", None)
 
 
+def test_models_missing_id_raises_structured(monkeypatch) -> None:
+    def _get(url, path, timeout=10):
+        if path == "/health":
+            return 200, {"status": "ok"}
+        return 200, {"data": [{"max_model_len": 100}]}  # no 'id'
+
+    monkeypatch.setattr(A, "_get", _get)
+    with pytest.raises(ModelGearError) as exc:
+        A.run_correctness("http://localhost:8000", None)
+    assert "unexpected response shape" in exc.value.message
+
+
+def test_chat_error_has_context(monkeypatch) -> None:
+    monkeypatch.setattr(A, "_get", _fake_get)  # health + models OK
+
+    def _boom(url, payload, timeout=300):
+        raise urllib.error.URLError("connection reset")
+
+    monkeypatch.setattr(A, "_post", _boom)
+    with pytest.raises(ModelGearError) as exc:
+        A.run_correctness("http://localhost:8000", None)
+    assert "correctness probe" in exc.value.message
+
+
 def test_assess_command_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())

@@ -37,6 +37,18 @@ def test_doctor_healthy_when_docker_and_scaffold_present(tmp_path, monkeypatch, 
     assert rc == 0
 
 
+def test_doctor_compose_dir_flag(tmp_path, monkeypatch, capsys) -> None:
+    # Default home is the empty tmp dir (autouse); --compose-dir points elsewhere.
+    _compose.write_scaffold(tmp_path, force=True)
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    rc = main(["doctor", "--compose-dir", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    ids = {c["id"]: c for c in payload["checks"]}
+    assert ids["compose_present"]["passed"] is True
+    assert "env_coherence" in ids  # only reachable once a dir resolves
+    assert rc == 0
+
+
 def test_doctor_env_mismatch_warns_but_passes(tmp_path, monkeypatch, capsys) -> None:
     _compose.write_scaffold(tmp_path, force=True)
     _env.set_env(tmp_path / ".env", "VLLM_SERVED_NAME", "other/model")

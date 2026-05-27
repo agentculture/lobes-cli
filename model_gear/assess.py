@@ -14,12 +14,40 @@ Host-side facts (image tag, GPU memory) are gathered by the command handlers via
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import urllib.error
 import urllib.request
 
 from model_gear.cli._errors import EXIT_ENV_ERROR, ModelGearError
+
+
+@contextlib.contextmanager
+def _api_errors(what: str):
+    """Turn raw HTTP / JSON / response-shape failures into a structured error.
+
+    Without this, an ``HTTPError``/``URLError`` or an unexpected payload
+    (``KeyError``/``JSONDecodeError``) bubbles to the dispatcher's catch-all and
+    appears as ``unexpected: ...`` with no remediation.
+    """
+    try:
+        yield
+    except ModelGearError:
+        raise
+    except (urllib.error.URLError, OSError) as exc:
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"{what} failed: {exc}",
+            remediation="check 'model status' / 'docker logs model-gear-vllm'",
+        ) from exc
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"{what}: unexpected response shape ({exc.__class__.__name__}: {exc})",
+            remediation="the served model returned an unexpected payload; check the vLLM logs",
+        ) from exc
+
 
 # (prompt, expected-substring, table-label) — the two fixed correctness probes.
 _PROBES = [
@@ -78,16 +106,17 @@ def health_status(url: str) -> int:
 
 def served_model(url: str, override: str | None = None) -> tuple[str, object]:
     """Return ``(model_id, max_model_len)`` from ``/v1/models``. Raises if none served."""
-    _, models = _get(url, "/v1/models")
-    data = models.get("data") if isinstance(models, dict) else None
-    if not data:
-        raise ModelGearError(
-            code=EXIT_ENV_ERROR,
-            message=f"/v1/models returned no models at {url}",
-            remediation="check 'model status' / 'docker logs model-gear-vllm'",
-        )
-    first = data[0]
-    return (override or first["id"]), first.get("max_model_len")
+    with _api_errors("/v1/models"):
+        _, models = _get(url, "/v1/models")
+        data = models.get("data") if isinstance(models, dict) else None
+        if not data:
+            raise ModelGearError(
+                code=EXIT_ENV_ERROR,
+                message=f"/v1/models returned no models at {url}",
+                remediation="check 'model status' / 'docker logs model-gear-vllm'",
+            )
+        first = data[0]
+        return (override or first["id"]), first.get("max_model_len")
 
 
 def _probe(url: str, model: str, prompt: str, expect: str) -> dict:
@@ -157,10 +186,11 @@ def run_correctness(url: str, model: str | None = None) -> dict:
     hstatus = health_status(url)
     model, max_len = served_model(url, model)
     probes = []
-    for prompt, expect, label in _PROBES:
-        result = _probe(url, model, prompt, expect)
-        result["label"] = label
-        probes.append(result)
+    with _api_errors("correctness probe"):
+        for prompt, expect, label in _PROBES:
+            result = _probe(url, model, prompt, expect)
+            result["label"] = label
+            probes.append(result)
     trace_field = next((p["trace_field"] for p in probes if p["trace_field"]), None)
     trace_len = max((p["trace_len"] for p in probes), default=0)
     return {
@@ -182,8 +212,9 @@ def run_benchmark(
     url = url.rstrip("/")
     health_status(url)
     model, max_len = served_model(url, model)
-    rates = _decode_throughput(url, model, decode_tokens, runs)
-    pf = _prefill(url, model)
+    with _api_errors("benchmark"):
+        rates = _decode_throughput(url, model, decode_tokens, runs)
+        pf = _prefill(url, model)
     return {
         "model": model,
         "endpoint": url,

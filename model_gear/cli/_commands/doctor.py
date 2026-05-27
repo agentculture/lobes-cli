@@ -48,7 +48,7 @@ def _check(id_: str, passed: bool, severity: str, message: str, remediation: str
     }
 
 
-def _diagnose() -> dict[str, object]:
+def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks: list[dict] = []
 
     docker_ok = _compose.docker_available()
@@ -68,7 +68,7 @@ def _diagnose() -> dict[str, object]:
 
     deploy_dir: Path | None = None
     try:
-        deploy_dir = _compose.resolve_deployment_dir(None)
+        deploy_dir = _compose.resolve_deployment_dir(compose_dir)
         checks.append(
             _check("compose_present", True, "error", f"deployment scaffolded at {deploy_dir}")
         )
@@ -102,7 +102,7 @@ def _diagnose() -> dict[str, object]:
             )
         else:
             checks.append(_check("env_coherence", True, "info", f"VLLM_SERVED_NAME = {served}"))
-        port = int(_env.read_env(env_path, "VLLM_PORT", "8000"))
+        port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
 
     healthy = _health.is_healthy(port)
     checks.append(
@@ -121,7 +121,7 @@ def _diagnose() -> dict[str, object]:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    report = _diagnose()
+    report = _diagnose(getattr(args, "compose_dir", None))
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_result(report, json_mode=True)
@@ -144,6 +144,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "doctor",
         help="Diagnose docker, the deployment scaffold, .env coherence, and /health.",
+    )
+    p.add_argument(
+        "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_doctor)

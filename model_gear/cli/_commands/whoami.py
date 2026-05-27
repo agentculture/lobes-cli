@@ -67,7 +67,7 @@ def _served_and_port() -> tuple[str, int]:
         return _DEFAULT_MODEL, 8000
     env_path = deploy_dir / _compose.ENV_FILE
     served = _env.read_env(env_path, "VLLM_SERVED_NAME", _DEFAULT_MODEL)
-    port = int(_env.read_env(env_path, "VLLM_PORT", "8000"))
+    port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
     return served, port
 
 

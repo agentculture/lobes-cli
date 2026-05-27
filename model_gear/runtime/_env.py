@@ -31,6 +31,22 @@ def read_env(env_path: os.PathLike | str, key: str, default: str | None = None) 
     return default
 
 
+def parse_port(value: object, source: str = "VLLM_PORT") -> int:
+    """Parse a port to ``int``, turning a bad value into a structured error.
+
+    Without this a non-numeric ``VLLM_PORT`` in ``.env`` (or a stray ``--port``)
+    surfaces as the dispatcher's generic ``unexpected: ValueError``.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"invalid port {value!r} from {source}",
+            remediation="set a numeric VLLM_PORT in .env, or pass --port N",
+        ) from exc
+
+
 def set_env(env_path: os.PathLike | str, key: str, value: str) -> None:
     """Update ``KEY=VALUE`` in ``.env`` (rewrite if present, append if absent)."""
     path = Path(env_path)

@@ -84,6 +84,13 @@ def write_scaffold(target: os.PathLike | str, *, force: bool) -> list[Path]:
         content = (template_root / tname).read_text(encoding="utf-8")
         dest = dest_dir / dest_name
         dest.write_text(content, encoding="utf-8")
+        # .env is meant to hold secrets (HF_TOKEN); keep it owner-only on shared
+        # hosts. Best-effort — chmod can fail on some filesystems (e.g. Windows).
+        if dest_name == ENV_FILE:
+            try:
+                dest.chmod(0o600)
+            except OSError:
+                pass
         written.append(dest)
     return written
 

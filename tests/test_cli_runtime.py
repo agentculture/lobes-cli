@@ -77,6 +77,25 @@ def test_resolve_default_missing_raises_env_error() -> None:
     assert exc.value.code == EXIT_ENV_ERROR
 
 
+# --- port parsing ---------------------------------------------------------
+
+
+def test_parse_port_invalid_raises_env_error() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        _env.parse_port("not-a-number", "VLLM_PORT")
+    assert exc.value.code == EXIT_ENV_ERROR
+
+
+def test_invalid_env_port_gives_clean_error(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    _env.set_env(tmp_path / ".env", "VLLM_PORT", "abc")
+    rc = main(["status", "--compose-dir", str(tmp_path)])
+    assert rc == EXIT_ENV_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "hint:" in err  # structured, not a generic "unexpected: ValueError"
+
+
 # --- switch ---------------------------------------------------------------
 
 
