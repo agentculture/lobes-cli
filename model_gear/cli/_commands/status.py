@@ -12,6 +12,9 @@ from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_result
 from model_gear.runtime import _compose, _env, _health
 
+# Shown when a key is absent/empty in .env (matches _env.read_env's default).
+_UNSET = "(unset)"
+
 
 def cmd_status(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
@@ -20,10 +23,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     port = _runtime_ops.resolve_port(args, env_path)
 
     report = {
-        "model": _env.read_env(env_path, "VLLM_MODEL", "(unset)"),
-        "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", "(unset)"),
+        "model": _env.read_env(env_path, "VLLM_MODEL", _UNSET),
+        "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", _UNSET),
         "port": port,
-        "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", "(unset)"),
+        "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", _UNSET),
         "deployment_dir": str(deploy_dir),
         "container": _compose.CONTAINER,
         "state": _compose.inspect_state(),

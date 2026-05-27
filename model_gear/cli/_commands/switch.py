@@ -17,6 +17,75 @@ from model_gear.cli._output import emit_diagnostic, emit_result
 from model_gear.runtime import _compose, _env, _health, _parser
 
 
+def _select_parser(args: argparse.Namespace) -> tuple[str | None, str]:
+    """Return ``(parser, message)`` so tool calling keeps working across a switch.
+
+    An explicit ``--tool-call-parser`` wins; otherwise infer one from the model
+    name. ``None`` means "unknown model" — leave the existing
+    ``VLLM_TOOL_CALL_PARSER`` untouched (override it explicitly when needed).
+    """
+    if args.tool_call_parser:
+        return args.tool_call_parser, f"tool-call parser (explicit): {args.tool_call_parser}"
+    inferred = _parser.infer_parser(args.model)
+    if inferred:
+        return inferred, f"tool-call parser (auto-selected): {inferred}"
+    return None, "tool-call parser: left unchanged (unknown model; pass --tool-call-parser)"
+
+
+def _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, json_mode) -> None:
+    if json_mode:
+        emit_result(
+            {
+                "dry_run": True,
+                "deployment_dir": str(deploy_dir),
+                "env": plan,
+                "tool_call_parser": parser,
+                "probe": not args.no_probe,
+            },
+            json_mode=True,
+        )
+        return
+    lines = [f"DRY RUN — would update {env_path}:"]
+    lines += [f"  {k}={v}" for k, v in plan.items()]
+    lines.append(f"  {parser_msg}")
+    lines.append(
+        f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
+    )
+    if not args.no_probe:
+        lines.append("  then: probe tool calling (tool_choice:auto)")
+    lines.append("Re-run with --apply to execute.")
+    emit_result("\n".join(lines), json_mode=False)
+
+
+def _apply_switch(args, deploy_dir, env_path, plan, parser, parser_msg, port, served, json_mode):
+    emit_diagnostic(
+        f">> switching to {args.model} (port={port} max_model_len={args.max_model_len} "
+        f"served-name={served} gpu-mem-util={args.gpu_mem_util})"
+    )
+    emit_diagnostic(f">> {parser_msg}")
+    for key, value in plan.items():
+        _env.set_env(env_path, key, value)
+    _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
+    _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
+    _health.wait_health(port)
+    tc = None if args.no_probe else _runtime_ops.probe_tool_calling(port, served)
+    result = {
+        "switched": args.model,
+        "served_name": served,
+        "port": port,
+        "deployment_dir": str(deploy_dir),
+        "tool_call_parser": parser,
+        "tool_calling": tc,
+    }
+    if json_mode:
+        emit_result(result, json_mode=True)
+        return
+    out = [f">> done. assess with: model assess --port {port}"]
+    if tc is not None:
+        out.append(">> " + _runtime_ops.format_tool_probe(tc))
+    emit_result("\n".join(out), json_mode=False)
+
+
 def cmd_switch(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     deploy_dir = _runtime_ops.deployment_dir(args)
@@ -30,70 +99,14 @@ def cmd_switch(args: argparse.Namespace) -> int:
         "VLLM_MAX_MODEL_LEN": str(args.max_model_len),
         "VLLM_GPU_MEM_UTIL": str(args.gpu_mem_util),
     }
-    # Pick the tool-call parser so tool calling keeps working across the switch
-    # without the caller remembering it: an explicit --tool-call-parser wins,
-    # else infer one from the model name. An unknown model leaves the existing
-    # VLLM_TOOL_CALL_PARSER untouched (override it explicitly when needed).
-    if args.tool_call_parser:
-        parser, parser_note = args.tool_call_parser, "explicit"
-    else:
-        parser, parser_note = _parser.infer_parser(args.model), "auto-selected"
+    parser, parser_msg = _select_parser(args)
     if parser:
         plan["VLLM_TOOL_CALL_PARSER"] = parser
-        parser_msg = f"tool-call parser ({parser_note}): {parser}"
-    else:
-        parser_msg = "tool-call parser: left unchanged (unknown model; pass --tool-call-parser)"
 
-    if not args.apply:
-        if json_mode:
-            emit_result(
-                {
-                    "dry_run": True,
-                    "deployment_dir": str(deploy_dir),
-                    "env": plan,
-                    "tool_call_parser": parser,
-                    "probe": not args.no_probe,
-                },
-                json_mode=True,
-            )
-        else:
-            lines = [f"DRY RUN — would update {env_path}:"]
-            lines += [f"  {k}={v}" for k, v in plan.items()]
-            lines.append(f"  {parser_msg}")
-            lines.append(
-                f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
-            )
-            if not args.no_probe:
-                lines.append("  then: probe tool calling (tool_choice:auto)")
-            lines.append("Re-run with --apply to execute.")
-            emit_result("\n".join(lines), json_mode=False)
+    if args.apply:
+        _apply_switch(args, deploy_dir, env_path, plan, parser, parser_msg, port, served, json_mode)
     else:
-        emit_diagnostic(
-            f">> switching to {args.model} (port={port} max_model_len={args.max_model_len} "
-            f"served-name={served} gpu-mem-util={args.gpu_mem_util})"
-        )
-        emit_diagnostic(f">> {parser_msg}")
-        for key, value in plan.items():
-            _env.set_env(env_path, key, value)
-        _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
-        _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
-        _health.wait_health(port)
-        result = {
-            "switched": args.model,
-            "served_name": served,
-            "port": port,
-            "deployment_dir": str(deploy_dir),
-            "tool_call_parser": parser,
-        }
-        tc = _runtime_ops.probe_tool_calling(port, served) if not args.no_probe else None
-        result["tool_calling"] = tc
-        if json_mode:
-            emit_result(result, json_mode=True)
-        else:
-            out = [f">> done. assess with: model assess --port {port}"]
-            if tc is not None:
-                out.append(">> " + _runtime_ops.format_tool_probe(tc))
-            emit_result("\n".join(out), json_mode=False)
+        _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, json_mode)
     return 0
 
 
