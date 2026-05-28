@@ -62,10 +62,11 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   (proxied), `/v1/models` (lists both backends), `/health` (gateway liveness).
 
 The gateway image is built from the scaffolded `Dockerfile.gateway`
-(`pip install model-gear==${MODEL_GEAR_VERSION}`); `model init --fleet` pins
-`MODEL_GEAR_VERSION` to the running model-gear release. From-source/dev boxes that
-run ahead of a PyPI release can point `MODEL_GEAR_VERSION` at a TestPyPI `.devN`
-build (or leave it empty to install the latest).
+(`pip install model-gear==${MODEL_GEAR_VERSION}`, as a non-root user); `model init
+--fleet` pins `MODEL_GEAR_VERSION` to the running model-gear release. The version
+is required (pinning keeps the image reproducible); from-source/dev boxes that run
+ahead of a PyPI release point `MODEL_GEAR_VERSION` at a published TestPyPI `.devN`
+build.
 
 ## Verbs
 

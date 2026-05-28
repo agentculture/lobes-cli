@@ -4,12 +4,16 @@
 # builds it as the `gateway` service. The gateway is pure Python stdlib (no
 # runtime deps), so the slim image stays tiny and `pip install` is fast.
 #
-# MODEL_GEAR_VERSION pins the gateway to the same model-gear release that
-# scaffolded the deployment (init --fleet writes the running version into .env).
-# Empty → install the latest published model-gear (dev/from-source escape hatch:
-# point MODEL_GEAR_VERSION at a TestPyPI .devN build, or bind-mount a checkout).
+# MODEL_GEAR_VERSION pins the gateway to the model-gear release that scaffolded
+# the deployment (init --fleet writes the running version into .env). It is
+# required — pinning keeps the image reproducible. Dev / from-source boxes that
+# run ahead of a PyPI release set it to a published TestPyPI `.devN` build.
 FROM python:3.12-slim
-ARG MODEL_GEAR_VERSION=
-RUN pip install --no-cache-dir "model-gear${MODEL_GEAR_VERSION:+==$MODEL_GEAR_VERSION}"
+ARG MODEL_GEAR_VERSION
+RUN pip install --no-cache-dir "model-gear==${MODEL_GEAR_VERSION}"
+# Run as a non-root user — the gateway only binds :8000 and makes outbound HTTP
+# calls to the backends on the compose network; it needs no elevated privileges.
+RUN useradd --create-home --uid 10001 gateway
+USER gateway
 EXPOSE 8000
 ENTRYPOINT ["python", "-m", "model_gear.gateway"]
