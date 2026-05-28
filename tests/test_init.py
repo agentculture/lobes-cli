@@ -76,3 +76,39 @@ def test_init_local_folder(tmp_path, monkeypatch) -> None:
     rc = main(["init", ".", "--apply"])
     assert rc == 0
     assert (tmp_path / "docker-compose.yml").is_file()
+
+
+# --- fleet scaffold -------------------------------------------------------
+
+
+def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
+    from model_gear import __version__
+
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    assert (target / "docker-compose.yml").is_file()
+    assert (target / ".env").is_file()
+    assert (target / "Dockerfile.gateway").is_file()
+    compose = (target / "docker-compose.yml").read_text()
+    assert "vllm-primary" in compose
+    assert "vllm-fallback" in compose
+    assert "model-gear-gateway" in compose
+    env = (target / ".env").read_text()
+    assert "PRIMARY_MODEL=nvidia/Qwen3-32B-NVFP4" in env
+    assert "FALLBACK_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4" in env
+    # init --fleet pins the gateway image to the running model-gear version.
+    assert f"MODEL_GEAR_VERSION={__version__}" in env
+    # coherence mirror keeps the single-model read-only verbs sensible.
+    assert "VLLM_SERVED_NAME=nvidia/Qwen3-32B-NVFP4" in env
+
+
+def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fleet"] is True
+    names = {f["name"] for f in payload["files"]}
+    assert names == {"docker-compose.yml", ".env", "Dockerfile.gateway"}
+    assert not target.exists()

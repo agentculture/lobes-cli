@@ -66,6 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from model_gear.cli._commands import cli as _cli_group
     from model_gear.cli._commands import doctor as _doctor_cmd
     from model_gear.cli._commands import explain as _explain_cmd
+    from model_gear.cli._commands import fleet as _fleet_cmd
     from model_gear.cli._commands import init as _init_cmd
     from model_gear.cli._commands import learn as _learn_cmd
     from model_gear.cli._commands import overview as _overview_cmd
@@ -96,6 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _assess_cmd.register(sub)
     _benchmark_cmd.register(sub)
     _init_cmd.register(sub)
+    _fleet_cmd.register(sub)
 
     # Agent-first / introspection verbs (sibling rubric).
     _whoami_cmd.register(sub)

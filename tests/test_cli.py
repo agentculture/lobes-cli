@@ -85,7 +85,15 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
     verbs = {tuple(c["path"]) for c in payload["commands"]}
     assert ("switch",) in verbs
     assert ("assess",) in verbs
-    assert set(payload["mutation_safety"]["write_verbs"]) == {"switch", "serve", "stop", "init"}
+    assert ("fleet",) in verbs
+    assert set(payload["mutation_safety"]["write_verbs"]) == {
+        "switch",
+        "serve",
+        "stop",
+        "init",
+        "fleet up",
+        "fleet down",
+    }
 
 
 # --- explain --------------------------------------------------------------

@@ -1,0 +1,258 @@
+"""Gateway server tests: handle_post failover decisions (no sockets) + a loopback
+integration covering the handler relay (buffered + chunked streaming) and the
+``open_upstream`` http.client path."""
+
+from __future__ import annotations
+
+import json
+import socket
+import threading
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from model_gear.gateway import server as S
+from model_gear.gateway._config import build_config
+
+
+def _cfg(**over):
+    env = {"PRIMARY_SERVED_NAME": "P", "FALLBACK_SERVED_NAME": "F", "GATEWAY_DEFAULT_MODEL": "P"}
+    env.update(over)
+    return build_config(env)
+
+
+class _FakeUpstream:
+    """Duck-typed stand-in for server._Upstream (no socket)."""
+
+    def __init__(self, status, body=b'{"ok":1}', chunks=None):
+        self.status = status
+        self.headers = [("Content-Type", "application/json")]
+        self._body = body
+        self._chunks = list(chunks) if chunks is not None else None
+        self.closed = False
+
+    def read_all(self):
+        return self._body
+
+    def read(self, _n):
+        if self._chunks is None:
+            data, self._body = self._body, b""
+            return data
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def close(self):
+        self.closed = True
+
+
+def _opener(behavior):
+    """behavior: {backend_name: status_int | Exception}. Records (name, body)."""
+    calls = []
+
+    def opener(backend, path, body, headers, *, connect_timeout, read_timeout):
+        calls.append((backend.name, body))
+        outcome = behavior[backend.name]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeUpstream(outcome)
+
+    return opener, calls
+
+
+# --- handle_post: failover / default / rewrite (no sockets) ---------------
+
+
+def test_failover_on_connection_refused() -> None:
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": S.UpstreamError("refused"), "fallback": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
+    assert [c[0] for c in calls] == ["primary", "fallback"]
+    assert resp.status == 200 and resp.upstream is not None
+
+
+def test_failover_on_5xx() -> None:
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": 503, "fallback": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
+    assert [c[0] for c in calls] == ["primary", "fallback"]
+    assert resp.status == 200
+
+
+def test_no_failover_on_4xx() -> None:
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": 400, "fallback": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
+    assert [c[0] for c in calls] == ["primary"]  # 4xx is a client error → returned verbatim
+    assert resp.status == 400
+
+
+def test_all_backends_down_returns_502() -> None:
+    table, cfg = _cfg()
+    opener, _ = _opener({"primary": S.UpstreamError("x"), "fallback": S.UpstreamError("y")})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
+    assert resp.status == 502 and resp.upstream is None
+    assert json.loads(resp.body)["error"]["attempts"] == ["x", "y"]
+
+
+def test_missing_model_routes_to_default() -> None:
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": 200, "fallback": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b"{}", opener)
+    assert calls[0][0] == "primary"  # default model's owner first
+    assert resp.status == 200
+
+
+def test_explicit_fallback_routes_to_fallback_first() -> None:
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": 200, "fallback": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"F"}', opener)
+    assert calls[0][0] == "fallback"
+    assert resp.status == 200
+
+
+def test_alias_model_is_rewritten_in_forwarded_body() -> None:
+    table, cfg = _cfg(GATEWAY_ALIASES="fast=F")
+    opener, calls = _opener({"fallback": 200, "primary": 200})
+    S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"fast"}', opener)
+    name, fwd_body = calls[0]
+    assert name == "fallback"  # alias resolved → fallback owns it
+    assert json.loads(fwd_body)["model"] == "F"  # body rewritten to the served name
+
+
+def test_streaming_flag_propagates() -> None:
+    table, cfg = _cfg()
+    opener, _ = _opener({"primary": 200, "fallback": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"P","stream":true}', opener
+    )
+    assert resp.streaming is True
+
+
+# --- loopback integration: the real handler relay + open_upstream ---------
+
+
+@pytest.fixture
+def gateway(monkeypatch):
+    """A real ThreadingHTTPServer on an ephemeral port; open_upstream is stubbed
+    so no real backend is needed. Yields the base URL."""
+    table, cfg = _cfg()
+
+    def fake_open(backend, path, body, headers, *, connect_timeout, read_timeout):
+        if S.is_streaming(body):
+            return _FakeUpstream(200, chunks=[b"data: a\n\n", b"data: b\n\n"])
+        return _FakeUpstream(200, body=b'{"echo": "' + backend.name.encode() + b'"}')
+
+    monkeypatch.setattr(S, "open_upstream", fake_open)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_integration_health_and_models(gateway) -> None:
+    with urllib.request.urlopen(gateway + "/health", timeout=5) as r:
+        assert r.status == 200
+        assert json.load(r)["status"] == "ok"
+    with urllib.request.urlopen(gateway + "/v1/models", timeout=5) as r:
+        payload = json.load(r)
+    assert [m["id"] for m in payload["data"]] == ["P", "F"]
+
+
+def test_integration_unknown_get_404(gateway) -> None:
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(gateway + "/nope", timeout=5)
+    assert exc.value.code == 404
+
+
+def test_integration_buffered_post(gateway) -> None:
+    req = urllib.request.Request(
+        gateway + "/v1/chat/completions",
+        data=b'{"model":"P"}',
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        assert r.status == 200
+        assert r.headers.get("Content-Length") is not None  # buffered → Content-Length
+        assert json.load(r)["echo"] == "primary"
+
+
+def test_integration_streaming_post_is_chunked(gateway) -> None:
+    # Raw socket so we can see the chunked framing on the wire (urllib would decode it).
+    host, port = gateway.removeprefix("http://").split(":")
+    body = b'{"model":"P","stream":true}'
+    request = (
+        b"POST /v1/chat/completions HTTP/1.1\r\n"
+        b"Host: x\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: %d\r\n\r\n" % len(body)
+    ) + body
+    with socket.create_connection((host, int(port)), timeout=5) as sock:
+        sock.sendall(request)
+        buf = b""
+        while b"0\r\n\r\n" not in buf:  # read until the chunked terminator
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+    assert b"Transfer-Encoding: chunked" in buf
+    assert b"data: a\n\n" in buf and b"data: b\n\n" in buf
+    assert buf.rstrip().endswith(b"0")  # final zero-length chunk terminates the body
+
+
+# --- open_upstream over a real loopback backend ---------------------------
+
+
+class _Backend(BaseHTTPRequestHandler):
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        code = 503 if self.path == "/boom" else 200
+        body = b'{"served": true}'
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):  # silence
+        pass
+
+
+@pytest.fixture
+def backend():
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Backend)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_open_upstream_success_and_5xx(backend) -> None:
+    from model_gear.gateway._routing import Backend
+
+    b = Backend("primary", backend, "P")
+    up = S.open_upstream(b, "/v1/chat/completions", b"{}", [], connect_timeout=2, read_timeout=5)
+    assert up.status == 200
+    assert json.loads(up.read_all())["served"] is True
+    up.close()
+
+    up = S.open_upstream(b, "/boom", b"{}", [], connect_timeout=2, read_timeout=5)
+    assert up.status == 503  # returned (not raised) so handle_post can fail over
+    up.close()
+
+
+def test_open_upstream_refused_raises_upstream_error() -> None:
+    from model_gear.gateway._routing import Backend
+
+    # Nothing is listening on this port → connect fails fast.
+    b = Backend("primary", "http://127.0.0.1:1", "P")
+    with pytest.raises(S.UpstreamError):
+        S.open_upstream(b, "/x", b"{}", [], connect_timeout=1, read_timeout=2)

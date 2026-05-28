@@ -30,6 +30,9 @@ Commands
   model stop              Stop the vLLM server. Dry-run; --apply.
   model switch <model>    Switch the served model. Dry-run; --apply recreates the
                           container and waits for /health.
+  model fleet up|down|status
+                          Drive the 2-model gateway deployment (scaffold it with
+                          'model init --fleet'). up/down are dry-run; --apply.
   model status            Read-only: current model, container state, /health.
   model assess            Read-only: correctness probes + reasoning-trace field.
   model benchmark         Read-only: decode throughput + prefill latency.
@@ -85,6 +88,10 @@ def _as_json_payload() -> dict[str, object]:
             },
             {"path": ["stop"], "summary": "Stop the vLLM server (dry-run; --apply)."},
             {"path": ["switch"], "summary": "Switch the served model (dry-run; --apply)."},
+            {
+                "path": ["fleet"],
+                "summary": "Drive the 2-model gateway deployment (up/down/status; --apply).",
+            },
             {"path": ["status"], "summary": "Current model, container state, /health."},
             {"path": ["assess"], "summary": "Correctness probes + reasoning-trace field."},
             {"path": ["benchmark"], "summary": "Decode throughput + prefill latency."},
@@ -94,7 +101,7 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["doctor"], "summary": "Diagnose docker/compose/.env/health."},
         ],
         "mutation_safety": {
-            "write_verbs": ["switch", "serve", "stop", "init"],
+            "write_verbs": ["switch", "serve", "stop", "init", "fleet up", "fleet down"],
             "rule": "dry-run by default; require --apply to commit",
         },
         "exit_codes": {

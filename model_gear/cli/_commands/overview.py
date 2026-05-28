@@ -20,9 +20,10 @@ from model_gear.cli._commands.whoami import report
 from model_gear.cli._output import emit_result
 
 _VERBS = [
-    "init [TARGET] — scaffold a deployment dir (dry-run; --apply)",
+    "init [TARGET] — scaffold a deployment dir (--fleet for the gateway; dry-run; --apply)",
     "serve / stop — start / stop the vLLM server (dry-run; --apply)",
     "switch <model> — switch the served model (dry-run; --apply)",
+    "fleet up / down / status — drive the 2-model gateway deployment (dry-run; --apply)",
     "status — current model, container state, /health",
     "assess — correctness probes against the served model",
     "benchmark — decode throughput + prefill latency",
@@ -37,6 +38,7 @@ _CAPABILITIES = [
     "assess — correctness probes against the served model",
     "switch — change the served model (dry-run by default)",
     "benchmark — decode throughput + prefill latency",
+    "fleet — front two always-warm models with one OpenAI gateway (routing + failover)",
 ]
 
 

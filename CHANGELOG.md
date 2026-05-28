@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-05-28
+
+### Added
+
+- **Fallback model + single front OpenAI gateway ("fleet").** A new
+  scaffold-based deployment runs **two always-warm vLLM backends behind one
+  stdlib gateway** that model-gear manages as three containers
+  (`model-gear-gateway`, `model-gear-vllm-primary`, `model-gear-vllm-fallback`).
+  The gateway routes each request by its `model` field, defaults an
+  unknown/missing name to the primary, and fails over to the other backend when
+  the chosen one refuses the connection or returns a 5xx **before** the response
+  body (4xx is returned verbatim; no mid-stream retry). SSE streams are relayed
+  chunk-by-chunk. Default fallback: the MoE `mmangkad/Qwen3.6-35B-A3B-NVFP4`.
+- **New gateway package `model_gear/gateway/`** — a pure-stdlib
+  (`http.server` + `http.client`, no runtime deps) reverse proxy: `_routing.py`
+  (pure name/alias/default routing + failover ordering), `_config.py` (env →
+  routing table + server config), `server.py` (the `handle_post` failover seam,
+  upstream client, and `ThreadingHTTPServer` handler), run as
+  `python -m model_gear.gateway`.
+- **`model init --fleet`** scaffolds the fleet templates
+  (`docker-compose.yml` + `.env` + `Dockerfile.gateway`) and pins
+  `MODEL_GEAR_VERSION` to the running release; **`model fleet up | down |
+  status`** drives the deployment (`up`/`down` dry-run by default, `--apply` to
+  commit; `status` is read-only and reports all three containers + the gateway
+  `/health` + `/v1/models`).
+- **Docs:** `docs/gateway-fleet.md` (topology, routing/failover, memory,
+  verbs), `docs/qwen3.6-35b-a3b-nvfp4.md` (the MoE fallback), a README "fleet"
+  section, and `model explain fleet` / `model explain gateway` entries.
+
+### Changed
+
+- `model_gear/runtime/_compose.py` gained a template registry
+  (`SINGLE_TEMPLATES` / `FLEET_TEMPLATES`), a `templates=` argument on
+  `scaffold_plan` / `write_scaffold` (single-model stays the default — existing
+  callers unchanged), a `compose_up_build` helper, and `FLEET_CONTAINERS`.
+- The fleet `.env` mirrors `VLLM_MODEL` / `VLLM_SERVED_NAME` /
+  `VLLM_TOOL_CALL_PARSER` (= the primary) so the read-only single-model verbs
+  (`status` / `whoami` / `doctor`) stay coherent on a fleet deployment.
+  `model switch` remains single-model only.
+
+### Fixed
+
 ## [0.8.1] - 2026-05-27
 
 ### Changed

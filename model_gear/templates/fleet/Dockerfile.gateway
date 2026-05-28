@@ -1,0 +1,15 @@
+# model-gear gateway — the stdlib OpenAI-compatible front of the fleet.
+#
+# `model init --fleet` scaffolds this next to the fleet docker-compose.yml, which
+# builds it as the `gateway` service. The gateway is pure Python stdlib (no
+# runtime deps), so the slim image stays tiny and `pip install` is fast.
+#
+# MODEL_GEAR_VERSION pins the gateway to the same model-gear release that
+# scaffolded the deployment (init --fleet writes the running version into .env).
+# Empty → install the latest published model-gear (dev/from-source escape hatch:
+# point MODEL_GEAR_VERSION at a TestPyPI .devN build, or bind-mount a checkout).
+FROM python:3.12-slim
+ARG MODEL_GEAR_VERSION=
+RUN pip install --no-cache-dir "model-gear${MODEL_GEAR_VERSION:+==$MODEL_GEAR_VERSION}"
+EXPOSE 8000
+ENTRYPOINT ["python", "-m", "model_gear.gateway"]

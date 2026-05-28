@@ -27,6 +27,9 @@ tool and the deployed agent share one identity).
   Dry-run by default; `--apply` to commit.
 - `model switch <model>` — switch the served model. Dry-run by default;
   `--apply` recreates the container and waits for `/health`.
+- `model fleet up|down|status` — drive the 2-model gateway deployment (one
+  OpenAI front over two always-warm models). Scaffold it with
+  `model init --fleet`. `up`/`down` are dry-run by default; `--apply` to commit.
 - `model status` — read-only: current model, container state, `/health`.
 - `model assess` — read-only correctness probes + reasoning-trace detection.
 - `model benchmark` — read-only decode throughput + prefill latency.
@@ -50,6 +53,8 @@ require `--apply` to commit. The rest are read-only.
 ## See also
 
 - `model explain switch`
+- `model explain fleet`
+- `model explain gateway`
 - `model explain assess`
 - `model explain backend`
 - `model explain models`
@@ -178,8 +183,64 @@ run on this hardware, holding the correctness + throughput numbers produced by
 - `docs/qwen3-32b-nvfp4.md` — `nvidia/Qwen3-32B-NVFP4`, the current runtime model.
 - `docs/qwen3.6-27b-nvfp4.md` — `mmangkad/Qwen3.6-27B-NVFP4`, a candidate that
   load-tested slower on decode, so the 32B stays.
+- `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, the MoE
+  fallback the gateway fleet pairs with the 32B (~3B active → fast decode).
 
-`model overview --list` lists these and flags which one is currently served.
+`model overview --list` lists these and flags which one is currently served. To
+run two side-by-side behind one OpenAI endpoint, see `model explain fleet`.
+"""
+
+_FLEET = """\
+# model fleet
+
+The fleet runs **two always-warm models behind one OpenAI-compatible gateway**,
+managed as three containers: `model-gear-vllm-primary`, `model-gear-vllm-fallback`,
+and `model-gear-gateway`. Scaffold it with `model init --fleet` (writes the fleet
+`docker-compose.yml`, `.env`, and `Dockerfile.gateway`), then:
+
+- `model fleet up` — `docker compose up -d --build` (builds the gateway image),
+  then waits for the gateway `/health`. The vLLM backends load in the background.
+- `model fleet down` — `docker compose down`.
+- `model fleet status` — read-only: each container's state, the gateway `/health`,
+  and the routed model list (`/v1/models`).
+
+`up`/`down` are **dry-run by default**; pass `--apply` to commit. `--compose-dir`
+overrides the deployment dir. Both backends stay loaded — set their
+`PRIMARY_GPU_MEM_UTIL` / `FALLBACK_GPU_MEM_UTIL` to sum well under 1.0 (both share
+the 128 GB unified memory).
+
+Note: `model switch` does **not** drive the fleet (it rewrites the single-model
+`VLLM_*` keys). Change fleet models by editing the fleet `.env` and re-running
+`model fleet up --apply`. See `model explain gateway` for routing/failover.
+"""
+
+_GATEWAY = """\
+# model-gear gateway
+
+The gateway is a stdlib (no third-party deps) OpenAI-compatible reverse proxy
+that fronts the fleet's two vLLM backends on one port — the host port the acp
+`vllm-local` provider already expects. It runs as the `model-gear-gateway`
+container (`python -m model_gear.gateway`).
+
+## Routing
+
+- **By name** — a request's `model` field routes to the backend that serves it
+  (plus any `GATEWAY_ALIASES`). The forwarded body's `model` is rewritten to the
+  backend's `--served-model-name` so the backend accepts it.
+- **Default** — a missing or unknown `model` routes to `GATEWAY_DEFAULT_MODEL`
+  (the primary), so existing single-model clients keep working unchanged.
+- **Failover** — if the chosen backend refuses the connection or returns a 5xx
+  **before any response body**, the gateway retries the request against the other
+  backend. A 4xx (client error) is returned verbatim — no failover. Once a 2xx
+  body starts streaming, there is no retry. SSE streams (`"stream": true`) are
+  relayed chunk-by-chunk with per-chunk flushing.
+
+## Endpoints
+
+`/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (proxied); `/v1/models`
+(lists both backends); `/health` (gateway liveness). Configured via the `gateway`
+service's environment in the fleet compose (`PRIMARY_URL` / `FALLBACK_URL` /
+`*_SERVED_NAME` / `GATEWAY_DEFAULT_MODEL` / `GATEWAY_ALIASES` / timeouts).
 """
 
 _WHOAMI = """\
@@ -239,6 +300,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("switch",): _SWITCH,
     ("serve",): _SERVE,
     ("stop",): _SERVE,
+    ("fleet",): _FLEET,
+    ("gateway",): _GATEWAY,
     ("status",): _STATUS,
     ("assess",): _ASSESS,
     ("benchmark",): _BENCHMARK,

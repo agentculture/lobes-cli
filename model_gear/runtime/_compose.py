@@ -18,9 +18,26 @@ from model_gear.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearErr
 CONTAINER = "model-gear-vllm"
 COMPOSE_FILE = "docker-compose.yml"
 ENV_FILE = ".env"
+DOCKERFILE_GATEWAY = "Dockerfile.gateway"
 
-# Template filename -> destination filename written by the scaffold.
-_TEMPLATES = {"docker-compose.yml": COMPOSE_FILE, "env.example": ENV_FILE}
+# Fleet container names (model init --fleet / model fleet ...): two always-warm
+# vLLM backends plus the stdlib gateway that fronts them on one OpenAI port.
+FLEET_PRIMARY = "model-gear-vllm-primary"
+FLEET_FALLBACK = "model-gear-vllm-fallback"
+FLEET_GATEWAY = "model-gear-gateway"
+FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_FALLBACK, FLEET_GATEWAY)
+
+# Template filename -> destination filename written by the scaffold. The single
+# template set is the default (every existing caller stays unchanged); the fleet
+# set scaffolds the 3-container gateway deployment (model init --fleet).
+SINGLE_TEMPLATES = {"docker-compose.yml": COMPOSE_FILE, "env.example": ENV_FILE}
+FLEET_TEMPLATES = {
+    "fleet/docker-compose.yml": COMPOSE_FILE,
+    "fleet/env.example": ENV_FILE,
+    "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
+}
+# Back-compat alias: the single set was the only one before the fleet existed.
+_TEMPLATES = SINGLE_TEMPLATES
 
 
 def default_deployment_dir() -> Path:
@@ -58,20 +75,38 @@ def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
 # --- scaffolding -----------------------------------------------------------
 
 
-def scaffold_plan(target: Path) -> list[tuple[str, bool]]:
+def _read_template(template_root, name: str) -> str:
+    """Read a packaged template by its (possibly ``fleet/``-prefixed) name.
+
+    ``importlib.resources`` traversables join one path segment per ``/`` call,
+    so split the name and chain rather than passing ``"fleet/foo"`` in one go.
+    """
+    node = template_root
+    for part in name.split("/"):
+        node = node / part
+    return node.read_text(encoding="utf-8")
+
+
+def scaffold_plan(
+    target: Path, templates: dict[str, str] = SINGLE_TEMPLATES
+) -> list[tuple[str, bool]]:
     """Return ``(dest_name, already_exists)`` for each file ``init`` would write."""
-    return [(dest, (target / dest).exists()) for dest in _TEMPLATES.values()]
+    return [(dest, (target / dest).exists()) for dest in templates.values()]
 
 
-def write_scaffold(target: os.PathLike | str, *, force: bool) -> list[Path]:
+def write_scaffold(
+    target: os.PathLike | str, *, force: bool, templates: dict[str, str] = SINGLE_TEMPLATES
+) -> list[Path]:
     """Copy the packaged templates into ``target``. Returns written paths.
 
-    Refuses to overwrite an existing file unless ``force`` is set.
+    Refuses to overwrite an existing file unless ``force`` is set. ``templates``
+    selects the template set (single-model by default, ``FLEET_TEMPLATES`` for
+    the gateway deployment).
     """
     dest_dir = Path(target).expanduser()
     template_root = files("model_gear.templates")
     written: list[Path] = []
-    for tname, dest_name in _TEMPLATES.items():
+    for tname, dest_name in templates.items():
         dest = dest_dir / dest_name
         if dest.exists() and not force:
             raise ModelGearError(
@@ -80,8 +115,8 @@ def write_scaffold(target: os.PathLike | str, *, force: bool) -> list[Path]:
                 remediation="re-run with --force to overwrite",
             )
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for tname, dest_name in _TEMPLATES.items():
-        content = (template_root / tname).read_text(encoding="utf-8")
+    for tname, dest_name in templates.items():
+        content = _read_template(template_root, tname)
         dest = dest_dir / dest_name
         dest.write_text(content, encoding="utf-8")
         # .env is meant to hold secrets (HF_TOKEN); keep it owner-only on shared
@@ -128,6 +163,13 @@ def compose_down(deploy_dir: os.PathLike | str):
 
 def compose_up_detached(deploy_dir: os.PathLike | str):
     return _run(["docker", "compose", "up", "-d"], cwd=str(deploy_dir))
+
+
+def compose_up_build(deploy_dir: os.PathLike | str):
+    """``docker compose up -d --build`` — used by the fleet, whose gateway service
+    is built from a local ``Dockerfile.gateway`` (``--build`` picks up a new image
+    on a re-run; first run builds either way)."""
+    return _run(["docker", "compose", "up", "-d", "--build"], cwd=str(deploy_dir))
 
 
 def docker_available() -> bool:
