@@ -107,7 +107,7 @@ def test_switch_dry_run_changes_nothing(tmp_path, capsys) -> None:
     assert "DRY RUN" in out
     assert "VLLM_MODEL=foo/bar" in out
     # .env untouched
-    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "nvidia/Qwen3-32B-NVFP4"
+    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "mmangkad/Qwen3.6-27B-NVFP4"
 
 
 def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
@@ -154,7 +154,7 @@ def test_switch_leaves_tool_call_parser_when_unknown_model(tmp_path, capsys) -> 
     rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path)])
     assert rc == 0
     assert "VLLM_TOOL_CALL_PARSER" not in capsys.readouterr().out
-    assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "hermes"
+    assert _env.read_env(tmp_path / ".env", "VLLM_TOOL_CALL_PARSER") == "qwen3_coder"
 
 
 def test_switch_auto_selects_parser_for_known_model(tmp_path, capsys) -> None:
@@ -309,5 +309,5 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["container"] == "model-gear-vllm"
     assert payload["state"] == "not created"  # offline _probe → None
     assert payload["health"] == "not responding"  # offline is_healthy → False
-    assert payload["model"] == "nvidia/Qwen3-32B-NVFP4"
-    assert payload["tool_call_parser"] == "hermes"  # scaffolded default
+    assert payload["model"] == "mmangkad/Qwen3.6-27B-NVFP4"
+    assert payload["tool_call_parser"] == "qwen3_coder"  # scaffolded default

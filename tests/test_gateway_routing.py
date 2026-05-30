@@ -10,6 +10,7 @@ from model_gear.gateway._routing import (
     list_models_payload,
     order_backends,
     resolve_model,
+    supported_models_payload,
 )
 
 
@@ -56,14 +57,32 @@ def test_list_models_payload_shape() -> None:
     assert all(m["object"] == "model" for m in payload["data"])
 
 
+def test_supported_models_payload_annotates_loaded_and_default() -> None:
+    t = _table()  # backends serve "P" and "F"; default "P"
+    catalog = [
+        {"id": "P", "role_hint": "primary", "shape": "dense"},
+        {"id": "F", "role_hint": "fallback", "shape": "MoE"},
+        {"id": "X", "role_hint": "candidate", "shape": "dense"},  # supported but not loaded
+    ]
+    payload = supported_models_payload(t, catalog)
+    assert payload["object"] == "model-gear.supported_models"
+    assert payload["default_model"] == "P"
+    by_id = {e["id"]: e for e in payload["data"]}
+    assert by_id["P"]["loaded"] is True and by_id["P"]["default"] is True
+    assert by_id["F"]["loaded"] is True and by_id["F"]["default"] is False
+    assert by_id["X"]["loaded"] is False and by_id["X"]["default"] is False
+    assert by_id["F"]["shape"] == "MoE"  # original catalog fields preserved
+    assert "loaded" not in catalog[0]  # the input catalog is not mutated
+
+
 # --- build_config / aliases ----------------------------------------------
 
 
 def test_build_config_defaults() -> None:
     table, cfg = build_config({})
-    assert table.backends[0].served_name == "nvidia/Qwen3-32B-NVFP4"
+    assert table.backends[0].served_name == "mmangkad/Qwen3.6-27B-NVFP4"
     assert table.backends[1].served_name == "mmangkad/Qwen3.6-35B-A3B-NVFP4"
-    assert table.default_model == "nvidia/Qwen3-32B-NVFP4"  # defaults to primary
+    assert table.default_model == "mmangkad/Qwen3.6-27B-NVFP4"  # defaults to primary
     assert table.backends[0].base_url == "http://vllm-primary:8000"
     assert cfg.host == "0.0.0.0"
     assert cfg.port == 8000

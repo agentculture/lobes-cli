@@ -27,10 +27,11 @@ def test_init_apply_writes_both_files(tmp_path, capsys) -> None:
     compose = (target / "docker-compose.yml").read_text()
     assert "model-gear-vllm" in compose
     # OpenAI tool/function calling is enabled out of the box (issue #9); the
-    # parser is env-driven so a switched model can override it (default hermes).
+    # parser is env-driven so a switched model can override it (default qwen3_coder
+    # for the Qwen3.6-27B primary).
     assert "--enable-auto-tool-choice" in compose
-    assert "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-hermes}" in compose
-    assert "VLLM_TOOL_CALL_PARSER=hermes" in (target / ".env").read_text()
+    assert "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}" in compose
+    assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in (target / ".env").read_text()
 
 
 def test_init_apply_json(tmp_path, capsys) -> None:
@@ -95,12 +96,12 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     assert "vllm-fallback" in compose
     assert "model-gear-gateway" in compose
     env = (target / ".env").read_text()
-    assert "PRIMARY_MODEL=nvidia/Qwen3-32B-NVFP4" in env
+    assert "PRIMARY_MODEL=mmangkad/Qwen3.6-27B-NVFP4" in env
     assert "FALLBACK_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4" in env
     # init --fleet pins the gateway image to the running model-gear version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
-    assert "VLLM_SERVED_NAME=nvidia/Qwen3-32B-NVFP4" in env
+    assert "VLLM_SERVED_NAME=mmangkad/Qwen3.6-27B-NVFP4" in env
 
 
 def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:

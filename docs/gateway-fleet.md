@@ -18,8 +18,8 @@ puts one OpenAI endpoint in front of them, so:
 - if the chosen backend is down, the gateway fails over to the other one.
 
 On the DGX Spark (GB10, 128 GB unified memory) both ~30B-class NVFP4 models fit at
-once; the fleet pairs the dense primary with an **MoE** fallback (`A3B` ≈ 3B active
-params) that decodes much faster, so the fast model stays fast.
+once; the fleet pairs a hybrid-Mamba **27B** primary with an **MoE** fallback
+(`A3B` ≈ 3B active params) that decodes much faster, so the fast model stays fast.
 
 ## Topology
 
@@ -35,7 +35,7 @@ Three containers, all `restart: unless-stopped`:
 | Container | Role | Host port |
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
-| `model-gear-vllm-primary` | primary model (default: `nvidia/Qwen3-32B-NVFP4`) | internal only |
+| `model-gear-vllm-primary` | primary model (default: `mmangkad/Qwen3.6-27B-NVFP4`) | internal only |
 | `model-gear-vllm-fallback` | MoE fallback (default: `mmangkad/Qwen3.6-35B-A3B-NVFP4`) | internal only |
 
 The backends are reachable only on the compose network
@@ -59,7 +59,9 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
 - **Streaming** — `"stream": true` (SSE) is relayed chunk-by-chunk with per-chunk
   flushing; normal JSON is buffered with `Content-Length`.
 - **Endpoints** — `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`
-  (proxied), `/v1/models` (lists both backends), `/health` (gateway liveness).
+  (proxied), `/v1/models` (OpenAI-standard, lists the two loaded backends),
+  `/v1/models/supported` (the full supported-model catalog — every gear you can
+  change to, each flagged `loaded` / `default`), `/health` (gateway liveness).
 
 The gateway image is built from the scaffolded `Dockerfile.gateway`
 (`pip install model-gear==${MODEL_GEAR_VERSION}`, as a non-root user); `model init
@@ -89,10 +91,12 @@ model fleet down --apply          # docker compose down
 ## Memory (both warm)
 
 Both models stay resident, so `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL`
-must sum well under 1.0 of the 128 GB. The scaffolded defaults are **0.40** +
-**0.35** (≈ 96 GB reserved, leaving headroom for the OS and KV growth). These are
-estimates for a dense 32B + a 35B-A3B MoE — **validate live** (watch `nvidia-smi`
-at `model fleet up`; OOM is the top operational risk) and tune the two values.
+must sum well under 1.0 of the 128 GB. The scaffolded defaults are **0.55** +
+**0.30** (≈ 109 GB reserved, leaving headroom for the OS and KV growth). The 27B
+primary is heavier than the old 32B (~70 GB at util 0.6), so its share rises and
+the fallback's drops to keep the sum in a safe band. These are estimates for a
+hybrid-Mamba 27B + a 35B-A3B MoE — **validate live** (watch `nvidia-smi` at
+`model fleet up`; OOM is the top operational risk) and tune the two values.
 
 Note the throughput trade-off: decode is memory-bandwidth bound and the bandwidth
 (~273 GB/s) is **shared**. The MoE reads only its active experts per token, so it
@@ -104,5 +108,5 @@ gateway routes one request to one backend, so a single client sees full speed.
 The fleet `.env` mirrors `VLLM_MODEL` / `VLLM_SERVED_NAME` / `VLLM_TOOL_CALL_PARSER`
 (= the primary's) so the read-only single-model verbs (`model status`,
 `model whoami`, `model doctor`'s `env_coherence` check) stay sensible on a fleet
-deployment. `culture.yaml` needs no change: its `model: vllm-local/nvidia/Qwen3-32B-NVFP4`
+deployment. `culture.yaml`'s `model: vllm-local/mmangkad/Qwen3.6-27B-NVFP4`
 resolves through the gateway on `:8000` as the default.

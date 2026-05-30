@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-05-30
+
+### Added
+
+- **`GET /v1/models/supported` gateway endpoint — the "change gears" catalog.**
+  Alongside the OpenAI-standard `/v1/models` (which lists only the two *loaded*
+  backends), the gateway now serves the full catalog of supported models a client
+  can change gears to, each flagged `loaded` (a backend serves it now) and
+  `default` (the gateway routes unknown/missing names there). Non-OpenAI shape
+  (`"object": "model-gear.supported_models"`) so `/v1/models` stays standard for
+  existing clients. Pure `supported_models_payload()` in `gateway/_routing.py`.
+- **New packaged catalog `model_gear/catalog.py`** — a dependency-free
+  `SUPPORTED_MODELS` tuple (the 27B primary, the 32B dense candidate, the 35B-A3B
+  MoE fallback) that is the single source of truth for both the gateway (which
+  runs from a wheel and can't read `docs/`) and the CLI. `model overview --list`
+  is now catalog-backed, so it is populated even in a wheel install.
+
+### Changed
+
+- **Fleet (and single-model) default primary → `mmangkad/Qwen3.6-27B-NVFP4`.**
+  The scaffolded default served model is now the Qwen3.6 27B (hybrid
+  Mamba/linear-attn + ViT, 256K native context) with `--tool-call-parser=qwen3_coder`
+  — matching what runs on the DGX Spark and convertible's parent model. The dense
+  `nvidia/Qwen3-32B-NVFP4` remains a supported candidate (`PRIMARY_MODEL` /
+  `model switch`). Recomputed co-resident GPU memory: `PRIMARY_GPU_MEM_UTIL=0.55`
+  and `FALLBACK_GPU_MEM_UTIL=0.30` (the 27B is heavier than the 32B). Updated the
+  fleet + single-model templates, `gateway/_config.py`, `whoami` default,
+  `culture.yaml` / `AGENTS.md` / `CLAUDE.md` (served-model coherence chain), and
+  the per-model + gateway-fleet docs.
+
+### Fixed
+
 ## [0.9.0] - 2026-05-28
 
 ### Added

@@ -115,7 +115,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "switch",
         help="Switch the served vLLM model (dry-run by default; --apply to commit).",
     )
-    p.add_argument("model", help="Model to serve, e.g. nvidia/Qwen3-32B-NVFP4.")
+    p.add_argument("model", help="Model to serve, e.g. mmangkad/Qwen3.6-27B-NVFP4.")
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(
         "--max-model-len", type=int, default=32768, help="Context window (default 32768)."
