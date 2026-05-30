@@ -7,10 +7,17 @@ the fleet.
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-35B-A3B-NVFP4>.
 
-> **Status: configured, not yet load-tested on this hardware.** The numbers below
-> are *expectations* from the architecture, not measured values. Fill in the
-> Benchmark table from a live `model fleet up` → `model assess` / `model benchmark`
-> run (and confirm the quantization/parser caveats) before relying on them.
+> **Status: load-tested 2026-05-30 — does NOT load reliably on this GB10.** First
+> live `model fleet up` on `spark-f8a9`: co-resident with the 27B primary it hit
+> `CUDA error: out of memory` on engine init and crash-looped (14+ restarts);
+> *solo* (65 GiB free) it still crashed/restarted and then stalled at "Loading
+> safetensors checkpoint shards: 0%" with the GPU idle, never reaching `/health`
+> in 8+ min. **No benchmark obtained.** The architecture-derived expectations
+> below are *unconfirmed*. Two root causes are entangled and need separating:
+> (1) co-residence with another ~30B model overruns the 121.7 GiB unified pool
+> (see [`docs/gateway-fleet.md`](gateway-fleet.md)); (2) the checkpoint's own
+> load path (MoE + multimodal ViT + Mamba, single 24 GiB safetensors) stalls/OOMs
+> even solo under swap pressure. Re-test on a quiet box before relying on it.
 
 ## What it is
 
@@ -31,7 +38,7 @@ Configured via the `FALLBACK_*` keys in the fleet `.env` (scaffolded by
 FALLBACK_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4
 FALLBACK_SERVED_NAME=mmangkad/Qwen3.6-35B-A3B-NVFP4
 FALLBACK_MAX_MODEL_LEN=32768
-FALLBACK_GPU_MEM_UTIL=0.30          # both models warm: keep primary+fallback well under 1.0
+FALLBACK_GPU_MEM_UTIL=0.35          # both models warm: keep primary+fallback well under 1.0 (dedicated box)
 FALLBACK_TOOL_CALL_PARSER=qwen3_coder
 FALLBACK_QUANTIZATION=modelopt_fp4
 ```
@@ -65,18 +72,22 @@ curl -s http://localhost:8000/v1/chat/completions \
    vllm.model_executor.models.registry import ModelRegistry;
    print(ModelRegistry.get_supported_archs())"`.
 
-## Benchmark — pending
+## Benchmark — blocked (model would not load), 2026-05-30
 
-Fill from a live run (`model fleet up --apply`, then `model assess` / `model
-benchmark` against `:8000` with this model's name):
+A live run was attempted (`model fleet up --apply` on `spark-f8a9`, then
+`model benchmark --model mmangkad/Qwen3.6-35B-A3B-NVFP4`). The model never reached
+`/health`, so no numbers exist yet:
 
 | Property | Value |
 |---|---|
-| Health / `max_model_len` | *pending* |
-| Correctness (`17×23`, train 14:45→17:10) | *pending* |
-| Reasoning trace field | *pending* |
-| Tool calling (`tool_choice:auto`, `qwen3_coder`) | *pending* |
-| **Decode throughput** | *pending* (expected ≫ the dense 32B's ~9.7 tok/s) |
-| Prefill (~2K tokens) | *pending* |
-| GPU memory reserved (at `FALLBACK_GPU_MEM_UTIL`) | *pending* |
-| Co-resident total (primary + fallback) | *pending* — watch for OOM |
+| Health / `max_model_len` | **never healthy** — crash-looped co-resident; stalled at safetensors 0 % solo |
+| Weights on disk | 24 GiB (single `model.safetensors`; `Qwen3_5MoeForConditionalGeneration`) |
+| Decode throughput | *blocked* — `model benchmark` returned HTTP 502 (backend not up) |
+| Prefill / correctness / tool calling | *blocked* |
+| Co-resident with 27B (util 0.55/0.30, then 0.40/0.35) | **OOM** — `CUDA error: out of memory` on engine init |
+| Solo (util 0.30, 65 GiB free) | crashed/restarted, then stalled loading the 24 GiB shard with GPU idle |
+
+Next: re-test on a **dedicated/quiet** GB10 (stop other GPU services first), and
+isolate whether the failure is co-residence pressure or the checkpoint's own
+load path. Consider `--enforce-eager` (skip CUDA-graph capture) and disabling
+`--enable-prefix-caching` to shrink the warmup footprint on the first load.

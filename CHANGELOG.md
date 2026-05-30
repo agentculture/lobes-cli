@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-05-30
+
+### Changed
+
+- **Fleet default GPU-mem utilisations rebalanced `0.55`/`0.30` → `0.40`/`0.35`.**
+  Live validation on a DGX Spark (GB10) showed `0.55`/`0.30` OOM-crash-loops the
+  fallback: the 27B primary alone takes ~75 GiB at util 0.6, and `--gpu-memory-utilization`
+  is fraction-of-total *per process* (the two backends don't coordinate). The new
+  values are a dedicated-box estimate; the templates and docs now state plainly
+  that co-residence of two ~30B models needs a dedicated box.
+
+### Fixed
+
+- **Docs corrected against live findings (2026-05-30):** `docs/gateway-fleet.md`
+  gains a "Live validation findings" section (27B warm-up ~7 min, ~75 GiB footprint,
+  8.0 tok/s decode; co-residence not viable on a shared GB10).
+  `docs/qwen3.6-35b-a3b-nvfp4.md` updated from "not yet load-tested" to the actual
+  result — the MoE fallback does **not** load reliably on this box (OOM co-resident;
+  crash/stall even solo). `docs/qwen3.6-27b-nvfp4.md` reframed as the fleet default
+  primary (was "candidate") with the warm-up measurement and a corrected
+  recommendation.
+
 ## [0.10.0] - 2026-05-30
 
 ### Added

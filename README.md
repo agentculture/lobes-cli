@@ -54,7 +54,7 @@ to pull the `nvcr.io/nvidia/vllm` image.
 ```bash
 model init --apply          # writes ~/.model-gear/{docker-compose.yml,.env}
 # edit ~/.model-gear/.env to set HF_TOKEN if the model repo is gated
-model serve --apply         # first run downloads ~18 GB of weights
+model serve --apply         # first run downloads ~28 GB of weights (the 27B primary)
 model status                # waits/reports until /health is up
 ```
 
@@ -62,7 +62,7 @@ Verify it is up:
 
 ```bash
 curl -fsS http://localhost:8000/health
-curl -s http://localhost:8000/v1/models   # lists nvidia/Qwen3-32B-NVFP4
+curl -s http://localhost:8000/v1/models   # lists mmangkad/Qwen3.6-27B-NVFP4
 ```
 
 Tunables live in the deployment `.env` (`VLLM_MODEL`, `VLLM_GPU_MEM_UTIL`,
@@ -112,14 +112,17 @@ in the fleet `.env` to sum well under 1.0 (they share the 128 GB unified memory)
 Each runtime model has a doc under `docs/` recording how to run it, live test
 results, and caveats:
 
-- [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the **current** runtime
-  model (`nvidia/Qwen3-32B-NVFP4`), benchmarked on DGX Spark.
-- [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — a **candidate**
-  (`mmangkad/Qwen3.6-27B-NVFP4`), load-tested on DGX Spark; loads under the
-  current vLLM image but is slower on decode, so the 32B stays.
-- [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the **MoE
-  fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`) the gateway fleet pairs with the
-  32B; ~3B active params decode much faster on this box.
+- [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — the **current**
+  runtime model and fleet default primary (`mmangkad/Qwen3.6-27B-NVFP4`), since
+  0.10.0; load-tested on DGX Spark (~8 tok/s decode, ~7 min warm-up).
+- [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the dense **candidate**
+  (`nvidia/Qwen3-32B-NVFP4`), faster on decode (~9.7 tok/s); swap in via
+  `PRIMARY_MODEL` / `model switch` when throughput matters more than context/vision.
+- [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the intended
+  **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`) the gateway fleet pairs with
+  the primary. Load-tested 2026-05-30: it does **not** load reliably on a GB10
+  shared with other services, and two ~30B models do not co-reside there — see
+  [`docs/gateway-fleet.md`](docs/gateway-fleet.md).
 
 The numbers in each doc come from `model switch <model> --apply` then `model
 assess` (correctness) and `model benchmark` (throughput). `model overview --list`
@@ -130,5 +133,5 @@ lists these docs and flags which model is currently served.
 `model-gear` is one identity, not two: it is the repo/tool that serves the model
 *and* the local thinking agent deployed on it. The agent's runtime identity lives
 in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: model-gear`,
-`backend: acp`, `model: vllm-local/nvidia/Qwen3-32B-NVFP4`) — the same model-gear
-that runs the engine consumes it over the `acp` `vllm-local` provider.
+`backend: acp`, `model: vllm-local/mmangkad/Qwen3.6-27B-NVFP4`) — the same
+model-gear that runs the engine consumes it over the `acp` `vllm-local` provider.

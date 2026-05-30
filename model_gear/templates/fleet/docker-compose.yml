@@ -49,7 +49,7 @@ services:
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt_fp4}
       - --kv-cache-dtype=fp8
       - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.55}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.40}
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
@@ -95,7 +95,7 @@ services:
       - --quantization=${FALLBACK_QUANTIZATION:-modelopt_fp4}
       - --kv-cache-dtype=fp8
       - --max-model-len=${FALLBACK_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.30}
+      - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.35}
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-qwen3_coder}
