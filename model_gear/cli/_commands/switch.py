@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 
+from model_gear.catalog import supported_models
 from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_diagnostic, emit_result
 from model_gear.runtime import _compose, _env, _health, _parser
@@ -32,7 +33,26 @@ def _select_parser(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "tool-call parser: left unchanged (unknown model; pass --tool-call-parser)"
 
 
-def _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, json_mode) -> None:
+def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
+    """Return ``(quantization, message)`` so the right vLLM ``--quantization`` is set.
+
+    Quantization is a per-checkpoint property (ModelOpt FP4 vs compressed-tensors),
+    so it can't be inferred from the model *family* the way the tool-call parser
+    can. An explicit ``--quantization`` wins; otherwise it is read from the catalog
+    for a known model. ``None`` means "uncatalogued" — leave the existing
+    ``VLLM_QUANTIZATION`` untouched (override it explicitly when needed).
+    """
+    if args.quantization:
+        return args.quantization, f"quantization (explicit): {args.quantization}"
+    for model in supported_models():
+        if model.id == args.model:
+            return model.quantization, f"quantization (from catalog): {model.quantization}"
+    return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
+
+
+def _emit_dry_run(
+    args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, json_mode
+) -> None:
     if json_mode:
         emit_result(
             {
@@ -40,6 +60,7 @@ def _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, js
                 "deployment_dir": str(deploy_dir),
                 "env": plan,
                 "tool_call_parser": parser,
+                "quantization": quant,
                 "probe": not args.no_probe,
             },
             json_mode=True,
@@ -48,6 +69,7 @@ def _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, js
     lines = [f"DRY RUN — would update {env_path}:"]
     lines += [f"  {k}={v}" for k, v in plan.items()]
     lines.append(f"  {parser_msg}")
+    lines.append(f"  {quant_msg}")
     lines.append(
         f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
     )
@@ -57,12 +79,15 @@ def _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, js
     emit_result("\n".join(lines), json_mode=False)
 
 
-def _apply_switch(args, deploy_dir, env_path, plan, parser, parser_msg, port, served, json_mode):
+def _apply_switch(
+    args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, served, json_mode
+):
     emit_diagnostic(
         f">> switching to {args.model} (port={port} max_model_len={args.max_model_len} "
         f"served-name={served} gpu-mem-util={args.gpu_mem_util})"
     )
     emit_diagnostic(f">> {parser_msg}")
+    emit_diagnostic(f">> {quant_msg}")
     for key, value in plan.items():
         _env.set_env(env_path, key, value)
     _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
@@ -75,6 +100,7 @@ def _apply_switch(args, deploy_dir, env_path, plan, parser, parser_msg, port, se
         "port": port,
         "deployment_dir": str(deploy_dir),
         "tool_call_parser": parser,
+        "quantization": quant,
         "tool_calling": tc,
     }
     if json_mode:
@@ -102,11 +128,28 @@ def cmd_switch(args: argparse.Namespace) -> int:
     parser, parser_msg = _select_parser(args)
     if parser:
         plan["VLLM_TOOL_CALL_PARSER"] = parser
+    quant, quant_msg = _select_quantization(args)
+    if quant:
+        plan["VLLM_QUANTIZATION"] = quant
 
     if args.apply:
-        _apply_switch(args, deploy_dir, env_path, plan, parser, parser_msg, port, served, json_mode)
+        _apply_switch(
+            args,
+            deploy_dir,
+            env_path,
+            plan,
+            parser,
+            parser_msg,
+            quant,
+            quant_msg,
+            port,
+            served,
+            json_mode,
+        )
     else:
-        _emit_dry_run(args, deploy_dir, env_path, plan, parser, parser_msg, port, json_mode)
+        _emit_dry_run(
+            args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, json_mode
+        )
     return 0
 
 
@@ -127,7 +170,12 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--tool-call-parser",
         help="OpenAI tool-call parser (hermes for Qwen3 dense, qwen3_coder for "
-        "Qwen3-Coder/3.6). Overrides the per-model auto-selection.",
+        "Qwen3-Coder/3.6, mistral for Mistral). Overrides the per-model auto-selection.",
+    )
+    p.add_argument(
+        "--quantization",
+        help="vLLM --quantization (modelopt_fp4 for nvidia/mmangkad NVFP4, "
+        "compressed-tensors for RedHatAI NVFP4). Overrides the catalog value.",
     )
     p.add_argument(
         "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."

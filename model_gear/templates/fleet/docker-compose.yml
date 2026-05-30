@@ -88,17 +88,34 @@ services:
     command:
       - vllm
       - serve
-      - ${FALLBACK_MODEL:-mmangkad/Qwen3.6-35B-A3B-NVFP4}
-      - --served-model-name=${FALLBACK_SERVED_NAME:-mmangkad/Qwen3.6-35B-A3B-NVFP4}
+      # Default fallback is the dense Mistral-Small-3.2-24B (NVFP4): it loads
+      # reliably on the GB10, unlike the Qwen3.6-35B-A3B MoE it replaced (which
+      # OOM'd/stalled here — see docs/qwen3.6-35b-a3b-nvfp4.md).
+      - ${FALLBACK_MODEL:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
+      - --served-model-name=${FALLBACK_SERVED_NAME:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${FALLBACK_QUANTIZATION:-modelopt_fp4}
+      # Mistral NVFP4 is compressed-tensors (vLLM auto-detects, but pass it
+      # explicitly so a switch back to a modelopt_fp4 checkpoint is one env var).
+      - --quantization=${FALLBACK_QUANTIZATION:-compressed-tensors}
       - --kv-cache-dtype=fp8
       - --max-model-len=${FALLBACK_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.35}
-      - --reasoning-parser=qwen3
+      # Mistral-Small-3.2 is multimodal (Mistral3/Pixtral). On the nv26.04 build the
+      # mistral tokenizer is REQUIRED for tool-call parsing, but it crashes the
+      # Pixtral dummy-input profiler unless images are limited to 0 — so: mistral
+      # tokenizer + no image inputs (text + tools only; vision is unused by the
+      # fallback). With the HF tokenizer the model's [TOOL_CALLS] markup leaks into
+      # content unparsed. No --reasoning-parser: Mistral is an instruct model.
+      # Tuned for the Mistral default. tokenizer-mode is env-overridable
+      # (FALLBACK_TOKENIZER_MODE=auto for a non-Mistral fallback). --limit-mm-per-prompt
+      # stays fixed: compose can't conditionally omit a flag, and the flag is invalid
+      # for a text-only fallback — swapping to a different model *family* is a compose
+      # edit. See docs/mistral-small-3.2-24b-nvfp4.md.
+      - --tokenizer-mode=${FALLBACK_TOKENIZER_MODE:-mistral}
+      - --limit-mm-per-prompt={"image":0}
       - --enable-auto-tool-choice
-      - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-qwen3_coder}
+      - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-mistral}
       - --enable-prefix-caching
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -125,7 +142,7 @@ services:
       - PRIMARY_URL=http://vllm-primary:8000
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
       - FALLBACK_URL=http://vllm-fallback:8000
-      - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-mmangkad/Qwen3.6-35B-A3B-NVFP4}
+      - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}

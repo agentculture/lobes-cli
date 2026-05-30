@@ -81,7 +81,7 @@ def test_supported_models_payload_annotates_loaded_and_default() -> None:
 def test_build_config_defaults() -> None:
     table, cfg = build_config({})
     assert table.backends[0].served_name == "mmangkad/Qwen3.6-27B-NVFP4"
-    assert table.backends[1].served_name == "mmangkad/Qwen3.6-35B-A3B-NVFP4"
+    assert table.backends[1].served_name == "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
     assert table.default_model == "mmangkad/Qwen3.6-27B-NVFP4"  # defaults to primary
     assert table.backends[0].base_url == "http://vllm-primary:8000"
     assert cfg.host == "0.0.0.0"

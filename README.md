@@ -80,7 +80,7 @@ and drop `--quantization` from the compose `command`.
 ## Running two models behind one gateway (fleet)
 
 `model init --fleet` scaffolds a **three-container** deployment instead of one:
-two always-warm vLLM backends (a primary + an MoE fallback) and a single stdlib
+two always-warm vLLM backends (a primary + a dense fallback) and a single stdlib
 **gateway** that fronts them on the host port the acp `vllm-local` provider
 already expects. The gateway routes each request by its `model` field, defaults an
 unknown/missing name to the primary, and fails over to the other backend if the
@@ -97,7 +97,7 @@ model fleet status                # container states + gateway /health + /v1/mod
 ```bash
 curl -s http://localhost:8000/v1/models       # lists BOTH served models
 # route explicitly by name; an unknown/missing model falls back to the primary
-curl -s http://localhost:8000/v1/chat/completions -d '{"model":"mmangkad/Qwen3.6-35B-A3B-NVFP4","messages":[...]}'
+curl -s http://localhost:8000/v1/chat/completions -d '{"model":"RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4","messages":[...]}'
 ```
 
 Both models stay loaded, so set `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL`
@@ -118,11 +118,15 @@ results, and caveats:
 - [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the dense **candidate**
   (`nvidia/Qwen3-32B-NVFP4`), faster on decode (~9.7 tok/s); swap in via
   `PRIMARY_MODEL` / `model switch` when throughput matters more than context/vision.
-- [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the intended
-  **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`) the gateway fleet pairs with
-  the primary. Load-tested 2026-05-30: it does **not** load reliably on a GB10
-  shared with other services, and two ~30B models do not co-reside there — see
-  [`docs/gateway-fleet.md`](docs/gateway-fleet.md).
+- [`docs/mistral-small-3.2-24b-nvfp4.md`](docs/mistral-small-3.2-24b-nvfp4.md) —
+  the dense **fallback** (`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) the
+  gateway fleet pairs with the primary, since 0.11.0. Load-tested 2026-05-30:
+  loads reliably (~15 GiB, ~14.9 tok/s decode), text + tool calls (serve with the
+  mistral tokenizer + images disabled). Replaced the 35B MoE that never loaded.
+- [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the former
+  **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`), now a candidate. It does
+  **not** load reliably on a GB10 shared with other services, and two ~30B models
+  do not co-reside there — see [`docs/gateway-fleet.md`](docs/gateway-fleet.md).
 
 The numbers in each doc come from `model switch <model> --apply` then `model
 assess` (correctness) and `model benchmark` (throughput). `model overview --list`

@@ -167,6 +167,53 @@ def test_switch_auto_selects_parser_for_known_model(tmp_path, capsys) -> None:
     assert "auto-selected" in out
 
 
+def test_switch_auto_selects_quantization_from_catalog(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # The RedHatAI Mistral fallback is compressed-tensors, not modelopt_fp4 —
+    # switch must read that from the catalog and plan it without an explicit flag.
+    rc = main(
+        [
+            "switch",
+            "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_QUANTIZATION=compressed-tensors" in out
+    assert "from catalog" in out
+
+
+def test_switch_quantization_explicit_wins(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # An explicit --quantization overrides the catalog value (here for the 27B,
+    # whose catalog value is modelopt_fp4).
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--quantization",
+            "compressed-tensors",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_QUANTIZATION=compressed-tensors" in out
+    assert "explicit" in out
+
+
+def test_switch_leaves_quantization_when_uncatalogued(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # An uncatalogued model with no --quantization must neither plan nor write
+    # VLLM_QUANTIZATION, leaving the scaffolded default.
+    rc = main(["switch", "foo/bar", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    assert "VLLM_QUANTIZATION" not in capsys.readouterr().out
+
+
 def test_switch_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())

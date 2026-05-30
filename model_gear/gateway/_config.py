@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from model_gear.gateway._routing import Backend, RoutingTable
 
 _DEFAULT_PRIMARY = "mmangkad/Qwen3.6-27B-NVFP4"
-_DEFAULT_FALLBACK = "mmangkad/Qwen3.6-35B-A3B-NVFP4"
+_DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 
 
 @dataclass(frozen=True)

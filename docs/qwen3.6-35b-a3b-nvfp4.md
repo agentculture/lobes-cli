@@ -1,9 +1,11 @@
-# Fallback model: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
+# MoE candidate: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
 
-The **MoE fallback** the gateway fleet pairs with the default primary
-(`mmangkad/Qwen3.6-27B-NVFP4`). See [`docs/gateway-fleet.md`](gateway-fleet.md) for
-the fleet topology; this doc records what the model is and how it is configured in
-the fleet.
+A **MoE candidate** — the *former* fleet fallback. It has been **replaced as the
+default fallback** by the dense `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
+([`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md)), because
+this checkpoint never loaded on the GB10 (see the status note below). It remains
+in the catalog as a candidate to re-test on a quiet/dedicated box. See
+[`docs/gateway-fleet.md`](gateway-fleet.md) for the fleet topology.
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-35B-A3B-NVFP4>.
 
