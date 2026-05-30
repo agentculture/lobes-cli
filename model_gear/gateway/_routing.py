@@ -73,3 +73,36 @@ def list_models_payload(table: RoutingTable) -> dict:
             for backend in table.backends
         ],
     }
+
+
+def supported_models_payload(table: RoutingTable, catalog) -> dict:
+    """The full supported-model catalog annotated with current fleet state.
+
+    A model-gear-specific (non-OpenAI) shape — ``object`` is
+    ``"model-gear.supported_models"`` so a client never mistakes it for the
+    standard ``/v1/models`` list. Each catalog entry (a dict; see
+    :mod:`model_gear.catalog`) is returned as-is plus two flags computed against
+    the live routing table:
+
+    * ``loaded`` — this model's id is the ``served_name`` of a current backend
+      (so a request naming it routes to a warm engine right now);
+    * ``default`` — it is the gateway's default model (where unknown/missing
+      names route).
+
+    Matching is by served name (the truth of what the gateway will accept),
+    independent of the catalog's ``role_hint``. Pure: the catalog is injected so
+    this is unit-testable without sockets or the package import.
+    """
+    loaded = {backend.served_name for backend in table.backends}
+    return {
+        "object": "model-gear.supported_models",
+        "default_model": table.default_model,
+        "data": [
+            {
+                **entry,
+                "loaded": entry["id"] in loaded,
+                "default": entry["id"] == table.default_model,
+            }
+            for entry in catalog
+        ],
+    }

@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
+from model_gear.catalog import as_dicts as supported_models_catalog
 from model_gear.gateway._config import ServerConfig
 from model_gear.gateway._routing import (
     Backend,
@@ -30,6 +31,7 @@ from model_gear.gateway._routing import (
     list_models_payload,
     order_backends,
     resolve_model,
+    supported_models_payload,
 )
 
 _CHUNK = 65536
@@ -294,13 +296,17 @@ class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
-    # --- GET: /health, /v1/models ---
+    # --- GET: /health, /v1/models, /v1/models/supported ---
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
         if route == "/health":
             self._send_json(200, {"status": "ok", "service": "model-gear-gateway"})
         elif route == "/v1/models":
             self._send_json(200, list_models_payload(self.table))
+        elif route == "/v1/models/supported":
+            # The full catalog of gears you can change to (loaded + the rest),
+            # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
+            self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
 

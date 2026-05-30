@@ -19,10 +19,13 @@ OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`model`*
   and the agent rides on it. (It used to be a separate agent, `lepenseur`; that
   name is retired.)
 
-The served model is **`vllm-local/nvidia/Qwen3-32B-NVFP4`** (a 32B dense
-reasoning model in NVFP4, 32K-token context extendable to ~131K via YaRN, runs
-on DGX Spark; thinking mode with a reasoning trace). model-gear runs it; the
-`acp` `vllm-local` provider connects the model-gear agent to it.
+The served model is **`vllm-local/mmangkad/Qwen3.6-27B-NVFP4`** (a Qwen3.6 27B
+with hybrid Mamba/linear-attention layers and a multimodal ViT encoder, in NVFP4,
+256K native context capped to 32K for the first load, runs on DGX Spark; thinking
+mode with a reasoning trace). model-gear runs it; the `acp` `vllm-local` provider
+connects the model-gear agent to it. (It is the fleet's default primary; the
+`nvidia/Qwen3-32B-NVFP4` dense model remains a supported candidate — see
+`docs/qwen3-32b-nvfp4.md` and `model overview --list`.)
 
 ## Deployment model
 

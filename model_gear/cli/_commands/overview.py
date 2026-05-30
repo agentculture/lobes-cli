@@ -1,9 +1,9 @@
 """``model overview`` — read-only descriptive snapshot of the tool.
 
 Describes model-gear to an agent reader: identity (tool/version/machine), the
-verb surface, capabilities, the currently-served model, and the candidate-model
-list from ``docs/``. ``--current`` shows only the served-model block; ``--list``
-shows only the candidate list.
+verb surface, capabilities, the currently-served model, and the supported-model
+catalog (the gears you can change to). ``--current`` shows only the served-model
+block; ``--list`` shows only the supported-model catalog.
 
 The shared section/render helpers here are reused by the ``cli`` noun's
 ``overview`` (see :mod:`model_gear.cli._commands.cli`). Descriptive verbs never
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from model_gear.catalog import supported_models
 from model_gear.cli._commands.whoami import report
 from model_gear.cli._output import emit_result
 
@@ -62,11 +63,22 @@ def _first_heading(path: Path) -> str:
 
 
 def candidate_models() -> list[dict[str, str]]:
-    """Per-model docs under ``docs/`` (top-level ``*.md`` only). Empty in a wheel."""
-    d = _docs_dir()
-    if d is None:
-        return []
-    return [{"doc": md.name, "title": _first_heading(md)} for md in sorted(d.glob("*.md"))]
+    """The supported-model catalog — the gears you can change to.
+
+    Sourced from the packaged :mod:`model_gear.catalog` so it is populated even in
+    a wheel install (where ``docs/`` is not shipped). When a source-tree ``docs/``
+    is present, each title is enriched from the per-model doc's first heading.
+    """
+    docs = _docs_dir()
+    out: list[dict[str, str]] = []
+    for model in supported_models():
+        doc_path = docs / model.doc if docs is not None else None
+        if doc_path is not None and doc_path.is_file():
+            title = _first_heading(doc_path)
+        else:
+            title = f"{model.id} — {model.role_hint}, {model.shape}"
+        out.append({"doc": model.doc, "title": title})
+    return out
 
 
 def _served_section(ident: dict) -> dict[str, object]:
@@ -88,8 +100,8 @@ def _candidates_section(ident: dict, candidates: list[dict[str, str]]) -> dict[s
         served = base and (base in stem or stem in base)
         items.append(f"{c['doc']} — {c['title']}" + (" (served)" if served else ""))
     if not items:
-        items = ["(no per-model docs found)"]
-    return {"title": "Candidate models (docs/)", "items": items}
+        items = ["(no supported models in the catalog)"]
+    return {"title": "Supported models", "items": items}
 
 
 def tool_sections(*, current: bool = False, listing: bool = False) -> list[dict[str, object]]:

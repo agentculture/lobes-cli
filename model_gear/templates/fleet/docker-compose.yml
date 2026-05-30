@@ -42,17 +42,18 @@ services:
     command:
       - vllm
       - serve
-      - ${PRIMARY_MODEL:-nvidia/Qwen3-32B-NVFP4}
-      - --served-model-name=${PRIMARY_SERVED_NAME:-nvidia/Qwen3-32B-NVFP4}
+      - ${PRIMARY_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
+      - --served-model-name=${PRIMARY_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt_fp4}
       - --kv-cache-dtype=fp8
       - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.40}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.55}
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
-      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-hermes}
+      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
+      # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
       - --enable-prefix-caching
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -94,7 +95,7 @@ services:
       - --quantization=${FALLBACK_QUANTIZATION:-modelopt_fp4}
       - --kv-cache-dtype=fp8
       - --max-model-len=${FALLBACK_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.35}
+      - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.30}
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-qwen3_coder}
@@ -122,10 +123,10 @@ services:
     environment:
       - GATEWAY_PORT=8000
       - PRIMARY_URL=http://vllm-primary:8000
-      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-nvidia/Qwen3-32B-NVFP4}
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
       - FALLBACK_URL=http://vllm-fallback:8000
       - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-mmangkad/Qwen3.6-35B-A3B-NVFP4}
-      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-nvidia/Qwen3-32B-NVFP4}
+      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}

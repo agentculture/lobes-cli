@@ -42,7 +42,7 @@ def test_overview_list_only(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     titles = [s["title"] for s in payload["sections"]]
-    assert titles == ["Candidate models (docs/)"]
+    assert titles == ["Supported models"]
 
 
 def test_overview_graceful_on_bad_path(capsys: pytest.CaptureFixture[str]) -> None:

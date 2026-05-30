@@ -164,6 +164,23 @@ def test_integration_health_and_models(gateway) -> None:
     assert [m["id"] for m in payload["data"]] == ["P", "F"]
 
 
+def test_integration_supported_models(gateway) -> None:
+    # The non-OpenAI discovery endpoint: the full supported catalog with flags.
+    with urllib.request.urlopen(gateway + "/v1/models/supported", timeout=5) as r:
+        assert r.status == 200
+        payload = json.load(r)
+    assert payload["object"] == "model-gear.supported_models"
+    assert payload["default_model"] == "P"  # the fixture's default served name
+    assert len(payload["data"]) >= 1
+    for entry in payload["data"]:
+        assert {"id", "loaded", "default"} <= set(entry)
+    # The OpenAI-standard /v1/models must stay standard — no catalog fields leak in.
+    with urllib.request.urlopen(gateway + "/v1/models", timeout=5) as r:
+        std = json.load(r)
+    assert [m["id"] for m in std["data"]] == ["P", "F"]
+    assert all(set(m) == {"id", "object", "owned_by"} for m in std["data"])
+
+
 def test_integration_unknown_get_404(gateway) -> None:
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(gateway + "/nope", timeout=5)

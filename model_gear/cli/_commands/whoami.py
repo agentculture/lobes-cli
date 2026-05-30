@@ -17,7 +17,7 @@ from model_gear.cli._output import emit_result
 from model_gear.runtime import _compose, _env, _health
 
 _FALLBACK_AGENT = "model-gear"
-_DEFAULT_MODEL = "nvidia/Qwen3-32B-NVFP4"
+_DEFAULT_MODEL = "mmangkad/Qwen3.6-27B-NVFP4"
 
 
 def _find_culture_yaml() -> Path | None:
