@@ -107,9 +107,12 @@ services:
       # tokenizer + no image inputs (text + tools only; vision is unused by the
       # fallback). With the HF tokenizer the model's [TOOL_CALLS] markup leaks into
       # content unparsed. No --reasoning-parser: Mistral is an instruct model.
-      # These two flags are tuned for the Mistral default — a non-Mistral fallback
-      # (e.g. a Qwen3 checkpoint) needs them adjusted. See docs/mistral-small-3.2-24b-nvfp4.md.
-      - --tokenizer-mode=mistral
+      # Tuned for the Mistral default. tokenizer-mode is env-overridable
+      # (FALLBACK_TOKENIZER_MODE=auto for a non-Mistral fallback). --limit-mm-per-prompt
+      # stays fixed: compose can't conditionally omit a flag, and the flag is invalid
+      # for a text-only fallback — swapping to a different model *family* is a compose
+      # edit. See docs/mistral-small-3.2-24b-nvfp4.md.
+      - --tokenizer-mode=${FALLBACK_TOKENIZER_MODE:-mistral}
       - --limit-mm-per-prompt={"image":0}
       - --enable-auto-tool-choice
       - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-mistral}

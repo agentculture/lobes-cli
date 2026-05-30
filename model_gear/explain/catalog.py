@@ -184,7 +184,8 @@ run on this hardware, holding the correctness + throughput numbers produced by
   model and the fleet's default primary (hybrid Mamba/linear-attn + ViT, 256K native).
 - `docs/mistral-small-3.2-24b-nvfp4.md` — `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`,
   the dense fallback the gateway fleet pairs with the primary (loads reliably on
-  the GB10; serve with the HF tokenizer, NOT --tokenizer-mode mistral).
+  the GB10; serve with the mistral tokenizer + images disabled — required for
+  tool-call parsing on this build; see the doc).
 - `docs/qwen3-32b-nvfp4.md` — `nvidia/Qwen3-32B-NVFP4`, a dense candidate (faster
   decode; swap in via `PRIMARY_MODEL` / `model switch`).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
