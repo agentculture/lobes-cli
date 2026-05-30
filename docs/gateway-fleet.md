@@ -78,10 +78,12 @@ build.
 
 Two questions that look alike but aren't:
 
-- **What's warm right now?** — the model(s) actually loaded in GPU memory. Read it
-  from `GET /v1/models` (OpenAI-standard; one model in single-model mode, both
-  backends in the fleet), `model status`, or `model fleet status`. This is runtime
-  truth — it changes when you `model switch` or bring the fleet up/down.
+- **What's loaded right now?** — the model(s) actually in GPU memory. The live
+  source is `GET /v1/models` (OpenAI-standard; one model in single-model mode, both
+  backends in the fleet); `model fleet status` queries it. It changes when you
+  `model switch` or bring the fleet up/down. (`model status` / `model whoami`
+  instead report the model the deployment is *configured* to serve — from `.env` —
+  plus container health, which is configuration, not a live `/v1/models` query.)
 - **What's *supported* (what can I warm up)?** — the curated catalog of "gears"
   model-gear knows how to serve, from `model overview --list` or
   `GET /v1/models/supported`. Each entry is tagged `load-tested` (proven on this

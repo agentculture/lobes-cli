@@ -186,7 +186,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="Ignored — overview always describes model-gear itself.",
     )
     p.add_argument(
-        "--current", action="store_true", help="Show only the currently-served (warm) model."
+        "--current", action="store_true", help="Show only the configured served model (from .env)."
     )
     p.add_argument(
         "--list",

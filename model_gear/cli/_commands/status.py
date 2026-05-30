@@ -2,8 +2,8 @@
 
 Reports the configured model/served-name/port (from ``.env``), the container
 lifecycle + health state, and whether ``/health`` is responding. This is the
-*warm* model (what's loaded now); for the full supported catalog you can switch
-to, use ``model overview --list``.
+*configured* served model (from ``.env``) + health — not a live ``/v1/models``
+query; for the full supported catalog you can switch to, use ``model overview --list``.
 """
 
 from __future__ import annotations
@@ -57,8 +57,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "status",
-        help="Read-only: the warm (served) model, container state, /health "
-        "(catalog: model overview --list).",
+        help="Read-only: the configured served model (from .env), container state, "
+        "/health (catalog: model overview --list).",
     )
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(

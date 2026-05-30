@@ -1,10 +1,10 @@
 """``model whoami`` — the smallest identity probe.
 
 Reports model-gear's view of the world: the tool + version, the machine it runs
-on, the model currently served (the *warm* model, from the deployment ``.env`` —
-``model overview --list`` shows the full supported catalog), the container's
-health, and the agent that consumes the model (``model-gear``, read from
-``culture.yaml``). Read-only.
+on, the *configured* served model (from the deployment ``.env`` — not a live
+``/v1/models`` query; ``model overview --list`` shows the full supported catalog),
+the container's health, and the agent that consumes the model (``model-gear``, read
+from ``culture.yaml``). Read-only.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "whoami",
-        help="Report the tool, machine, warm (served) model, container health, and deployed agent.",
+        help="Report the tool, machine, configured served model, container health, and agent.",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_whoami)

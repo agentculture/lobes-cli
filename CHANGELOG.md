@@ -6,17 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.11.1] - 2026-05-30
 
+### Added
+
+- **`model learn --json` now includes a `models` object** (`supported_catalog` /
+  `loaded_now`) — a machine-readable version of the catalog-vs-loaded explainer for
+  agent consumers. (Additive field; the only observable behavior change in this
+  release.)
+
 ### Changed
 
-- **Documented "supported catalog vs. warm" consistently** across the README,
+- **Documented "supported catalog vs. loaded now" consistently** across the README,
   `docs/gateway-fleet.md` (new "Supported catalog vs. warm backends" subsection),
   the per-model docs, and the CLI teaching surfaces (`model learn`,
   `model explain models`/`overview`/`status`/`whoami`/root, and the
   `overview`/`status`/`whoami`/`fleet status` help strings). The distinction:
   `model overview --list` / `GET /v1/models/supported` = the gears you *can* switch
-  to (tagged `load-tested`/`configured`); `GET /v1/models` / `model status` /
-  `model fleet status` = what's *warm* right now. Docs/help text only — no behavior
-  change.
+  to (tagged `load-tested`/`configured`, static); the live `GET /v1/models` (which
+  `model fleet status` queries) = what's actually *loaded* now. `model status` /
+  `model whoami` report the *configured* served model (from `.env`) + health — not
+  a live `/v1/models` query. Docs + help text (no serving/runtime behavior change).
 
 ## [0.11.0] - 2026-05-30
 

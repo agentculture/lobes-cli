@@ -141,15 +141,18 @@ Two questions that look alike but aren't:
   `configured` (declared, not yet proven). It's **static** — defined in
   `model_gear/catalog.py`, shipped in the wheel, unchanged by what's running.
   Read it with `model overview --list` or the gateway's `GET /v1/models/supported`.
-- **What's warm right now?** — the model(s) actually loaded in GPU memory this
-  instant (one in single-model mode, two in the fleet). Read it with
-  `GET /v1/models` (OpenAI-standard), `model status`, or `model fleet status`.
-  It's runtime truth — it changes when you `model switch` or run the fleet.
+- **What's loaded right now?** — the model(s) actually in GPU memory this instant
+  (one in single-model mode, two in the fleet). The live source is `GET /v1/models`
+  (OpenAI-standard); `model fleet status` queries it. `model status` /
+  `model whoami` instead report the model the deployment is *configured* to serve
+  (from `.env`) plus container health — normally the same model, but it's
+  configuration (which can be stale), not a live query.
 
 | Question | CLI | HTTP |
 |---|---|---|
-| What *can* I warm up? (catalog) | `model overview --list` | `GET /v1/models/supported` |
-| What's warm *now*? | `model status` / `model fleet status` | `GET /v1/models` |
+| What *can* I run? (catalog) | `model overview --list` | `GET /v1/models/supported` |
+| What's *loaded* right now? | `model fleet status` | `GET /v1/models` |
+| What's the deployment *set* to serve? | `model status` / `model whoami` | — |
 
 Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 `/v1/models` is *what's hot now*. See

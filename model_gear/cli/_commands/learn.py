@@ -33,12 +33,12 @@ Commands
   model fleet up|down|status
                           Drive the 2-model gateway deployment (scaffold it with
                           'model init --fleet'). up/down are dry-run; --apply.
-  model status            Read-only: the warm (served) model, container state,
-                          /health. (Catalog you can switch to: overview --list.)
+  model status            Read-only: the configured served model (.env), container
+                          state, /health. (Catalog to switch to: overview --list.)
   model assess            Read-only: correctness probes + reasoning-trace field.
   model benchmark         Read-only: decode throughput + prefill latency.
   model overview          Snapshot of the tool, the served model, and the supported
-                          catalog (--current = warm model; --list = catalog).
+                          catalog (--current = configured model; --list = catalog).
   model whoami            Tool + machine + served model + container health.
   model explain <path>... Markdown docs for a topic (e.g. 'model explain switch').
   model doctor            Diagnose docker / compose / .env / health.
@@ -55,10 +55,11 @@ Models: supported vs. warm
 Two different questions. The SUPPORTED CATALOG — the gears you can switch to, each
 tagged load-tested or configured — is `model overview --list` (and the gateway's
 GET /v1/models/supported); it is static, defined in model_gear/catalog.py and
-shipped in the wheel. What's WARM right now (actually loaded in GPU memory) is GET
-/v1/models, `model status`, or `model fleet status` — runtime truth that changes
-when you switch or run the fleet. Mnemonic: the catalog is the menu; /v1/models is
-what's hot now.
+shipped in the wheel. What's LOADED right now (actually in GPU memory) is the live
+GET /v1/models (which `model fleet status` queries). `model status` / `model whoami`
+instead report the model the deployment is configured to serve (from .env) + health
+— config, not a live list. Mnemonic: the catalog is the menu; /v1/models is what's
+hot now.
 
 Machine-readable output
 -----------------------
@@ -105,7 +106,7 @@ def _as_json_payload() -> dict[str, object]:
             },
             {
                 "path": ["status"],
-                "summary": "Warm (served) model, state, /health; catalog: overview --list.",
+                "summary": "Configured served model, state, /health; catalog: overview --list.",
             },
             {"path": ["assess"], "summary": "Correctness probes + reasoning-trace field."},
             {"path": ["benchmark"], "summary": "Decode throughput + prefill latency."},
@@ -133,9 +134,10 @@ def _as_json_payload() -> dict[str, object]:
                 "(model_gear/catalog.py, shipped in the wheel). Read: 'model overview --list' "
                 "or gateway GET /v1/models/supported."
             ),
-            "warm_now": (
-                "Model(s) actually loaded in GPU memory right now. Read: GET /v1/models, "
-                "'model status', or 'model fleet status'. Changes when you switch or run the fleet."
+            "loaded_now": (
+                "Model(s) actually in GPU memory right now. Live source: GET /v1/models "
+                "(which 'model fleet status' queries). 'model status'/'model whoami' report the "
+                "configured served model (from .env) + health, not a live list."
             ),
         },
         "explain_pointer": "model explain <path> (e.g. 'model explain switch')",
