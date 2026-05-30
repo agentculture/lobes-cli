@@ -53,7 +53,7 @@ services:
       - --served-model-name=${VLLM_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=modelopt_fp4        # mmangkad/ + nvidia/ checkpoints are ModelOpt FP4 (see README for the RedHatAI fallback)
+      - --quantization=${VLLM_QUANTIZATION:-modelopt_fp4}   # mmangkad/ + nvidia/ are ModelOpt FP4; RedHatAI NVFP4 (e.g. Mistral) is compressed-tensors (`model switch` sets this from the catalog)
       - --kv-cache-dtype=fp8
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}

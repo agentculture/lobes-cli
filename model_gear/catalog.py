@@ -46,6 +46,16 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         doc="qwen3.6-27b-nvfp4.md",
     ),
     SupportedModel(
+        id="RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4",
+        role_hint="fallback",
+        shape="dense (vision-capable)",
+        context="128K native (capped to 32K for the first load)",
+        tool_parser="mistral",
+        quantization="compressed-tensors",
+        status="load-tested",
+        doc="mistral-small-3.2-24b-nvfp4.md",
+    ),
+    SupportedModel(
         id="nvidia/Qwen3-32B-NVFP4",
         role_hint="candidate",
         shape="dense",
@@ -57,7 +67,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="mmangkad/Qwen3.6-35B-A3B-NVFP4",
-        role_hint="fallback",
+        role_hint="candidate",
         shape="MoE (~3B active per token)",
         context="32K",
         tool_parser="qwen3_coder",

@@ -17,9 +17,11 @@ puts one OpenAI endpoint in front of them, so:
 - a second model is addressable by name in the same `/v1/...` calls;
 - if the chosen backend is down, the gateway fails over to the other one.
 
-On the DGX Spark (GB10, 128 GB unified memory) both ~30B-class NVFP4 models fit at
-once; the fleet pairs a hybrid-Mamba **27B** primary with an **MoE** fallback
-(`A3B` ≈ 3B active params) that decodes much faster, so the fast model stays fast.
+On the DGX Spark (GB10, 128 GB unified memory) the fleet pairs a hybrid-Mamba
+**27B** primary with a dense **24B** fallback
+(`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) that loads reliably and
+decodes a little faster (~15 vs ~10 tok/s). It replaced the Qwen3.6-35B-A3B MoE,
+which never reached `/health` on this box (see "Live validation findings").
 
 ## Topology
 
@@ -36,7 +38,7 @@ Three containers, all `restart: unless-stopped`:
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
 | `model-gear-vllm-primary` | primary model (default: `mmangkad/Qwen3.6-27B-NVFP4`) | internal only |
-| `model-gear-vllm-fallback` | MoE fallback (default: `mmangkad/Qwen3.6-35B-A3B-NVFP4`) | internal only |
+| `model-gear-vllm-fallback` | dense fallback (default: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) | internal only |
 
 The backends are reachable only on the compose network
 (`http://vllm-primary:8000`, `http://vllm-fallback:8000`); only the gateway is
@@ -116,8 +118,9 @@ also running, ~12–20 GiB baseline). Measured with `dgx-spark-cli` (`spark`):
 | **27B (primary) solo load → `/health`** | **~423 s (~7 min)**: weight load 160 s (28.25 GiB), profiling/warmup 55 s, CUDA-graph capture + KV ~200 s |
 | 27B decode (batch=1, 512 tok) | **8.0 tok/s**; prefill 2,015 tok in 3.29 s |
 | 27B footprint | **~75.5 GiB at util 0.6** (≈ 28 GiB weights + 42 GiB KV + 3.7 GiB CUDA graphs) |
-| **35B-A3B (fallback) load** | **Did not complete.** Co-resident: `CUDA error: out of memory` on engine init → 14+ restart crash-loop. Even *solo* (65 GiB free): crashed/stalled at "Loading safetensors 0%", never `/health` in 8+ min. No benchmark obtained. |
+| **35B-A3B (old fallback) load** | **Did not complete.** Co-resident: `CUDA error: out of memory` on engine init → 14+ restart crash-loop. Even *solo* (65 GiB free): crashed/stalled at "Loading safetensors 0%", never `/health` in 8+ min. No benchmark obtained. |
 | Co-residence (27B + 35B-A3B) | **Not viable on this box.** 27B alone (~75 GiB) + 35B-A3B (~24 GiB weights + KV) + baseline services exceed the 121.7 GiB unified pool → OOM + swap thrash (swap hit 68 %). |
+| **Mistral-24B (new fallback) solo load → `/health`** | **Loaded cleanly** (port 8001, util 0.4): 15.05 GiB weights, 30.69 GiB KV, ~49.6 GiB total. Decode **14.9 tok/s**; prefill 2,009 tok in 1.49 s; tool calling ✅. See [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md). |
 
 **Conclusion — the "two always-warm models" premise needs a dedicated box.** On a
 GB10 shared with other services, two ~30B NVFP4 models do not co-fit with usable
@@ -127,6 +130,13 @@ time) instead of the fleet. The `0.55`/`0.30` default shipped in 0.10.0 OOM-loop
 the fallback and was corrected to `0.40`/`0.35` (a dedicated-box estimate). The
 35B-A3B's own load instability (crash/stall even solo) is tracked in
 [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
+
+**Fallback default changed to a dense 24B (2026-05-30).** Because the 35B-A3B
+never loaded, the default fallback is now
+`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` — dense, loads reliably, and
+smaller (~15 GiB weights vs the 27B's ~28 GiB), which also makes co-residence less
+of a stretch. Even so, two warm models on a *shared* GB10 remains tight; the
+dedicated-box guidance above still stands.
 
 ## Coherence with the single-model verbs
 

@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-05-30
+
+### Added
+
+- **`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` support** — added to the
+  supported-model catalog (`model overview --list`, `GET /v1/models/supported`)
+  with a per-model doc, [`docs/mistral-small-3.2-24b-nvfp4.md`](docs/mistral-small-3.2-24b-nvfp4.md).
+  Load-tested on the DGX Spark (GB10): ~15 GiB weights, **~14.9 tok/s** decode,
+  prefill 2,009 tok in 1.49 s, tool calling ✅.
+- **`mistral` tool-call parser inference** — `model_gear.runtime._parser` now maps
+  Mistral-family ids (incl. the `mistralai/` org) to the `mistral` parser; `model
+  switch` auto-selects it.
+- **`model switch --quantization`** — the served `--quantization` is now set per
+  model (read from the catalog for a known model, e.g. `compressed-tensors` for the
+  RedHatAI NVFP4 Mistral vs `modelopt_fp4` for the nvidia/mmangkad checkpoints);
+  `--quantization` overrides it. The single-model compose reads `VLLM_QUANTIZATION`.
+
+### Changed
+
+- **Fleet default fallback is now the dense Mistral-Small-3.2-24B**, replacing the
+  `mmangkad/Qwen3.6-35B-A3B-NVFP4` MoE, which never loaded on the GB10 (OOM
+  co-resident, stall solo — no benchmark obtained). Mistral is dense, loads
+  reliably, and is smaller (~15 GiB weights). The fleet compose serves it with the
+  **mistral tokenizer + images limited to 0** (required for tool-call parsing on
+  the nv26.04 build; the HF tokenizer leaks `[TOOL_CALLS]` markup, and the mistral
+  tokenizer alone crashes the Pixtral profiler) and **no** `--reasoning-parser`
+  (instruct model). The 35B MoE is demoted to a catalogue candidate.
+- `model_gear.gateway._config._DEFAULT_FALLBACK`, the fleet `docker-compose.yml` /
+  `env.example` `FALLBACK_*` defaults, `docs/gateway-fleet.md`, and `README.md`
+  updated for the new fallback.
+
+### Fixed
+
 ## [0.10.1] - 2026-05-30
 
 ### Changed

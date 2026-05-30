@@ -97,7 +97,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     assert "model-gear-gateway" in compose
     env = (target / ".env").read_text()
     assert "PRIMARY_MODEL=mmangkad/Qwen3.6-27B-NVFP4" in env
-    assert "FALLBACK_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4" in env
+    assert "FALLBACK_MODEL=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4" in env
     # init --fleet pins the gateway image to the running model-gear version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
