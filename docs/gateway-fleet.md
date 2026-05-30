@@ -91,17 +91,42 @@ model fleet down --apply          # docker compose down
 ## Memory (both warm)
 
 Both models stay resident, so `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL`
-must sum well under 1.0 of the 128 GB. The scaffolded defaults are **0.55** +
-**0.30** (≈ 109 GB reserved, leaving headroom for the OS and KV growth). The 27B
-primary is heavier than the old 32B (~70 GB at util 0.6), so its share rises and
-the fallback's drops to keep the sum in a safe band. These are estimates for a
-hybrid-Mamba 27B + a 35B-A3B MoE — **validate live** (watch `nvidia-smi` at
-`model fleet up`; OOM is the top operational risk) and tune the two values.
+must sum well under 1.0 of the 128 GB. The scaffolded defaults are **0.40** +
+**0.35** (≈ 96 GB reserved on a dedicated box, leaving ~32 GB for the OS, other
+processes, and the load/warmup spike). These are **estimates that require a
+dedicated box** — `--gpu-memory-utilization` is a fraction of *total* unified
+memory and each vLLM process computes it independently (they don't coordinate),
+so on a GB10 that is also running other services the two backends OOM. **Validate
+live** (watch `spark memory` / `nvidia-smi` at `model fleet up`; OOM is the top
+operational risk) and lower further on a shared box. See the findings below.
 
 Note the throughput trade-off: decode is memory-bandwidth bound and the bandwidth
 (~273 GB/s) is **shared**. The MoE reads only its active experts per token, so it
 stays fast; two backends decoding *simultaneously* split the bandwidth. The
 gateway routes one request to one backend, so a single client sees full speed.
+
+## Live validation findings — DGX Spark (GB10), 2026-05-30
+
+First live `model fleet up` of the 27B-primary + 35B-A3B-fallback pair on
+`spark-f8a9` (a **shared** box: tritonserver/realtime-api, nova, reachy, mongo
+also running, ~12–20 GiB baseline). Measured with `dgx-spark-cli` (`spark`):
+
+| What | Result |
+|---|---|
+| **27B (primary) solo load → `/health`** | **~423 s (~7 min)**: weight load 160 s (28.25 GiB), profiling/warmup 55 s, CUDA-graph capture + KV ~200 s |
+| 27B decode (batch=1, 512 tok) | **8.0 tok/s**; prefill 2,015 tok in 3.29 s |
+| 27B footprint | **~75.5 GiB at util 0.6** (≈ 28 GiB weights + 42 GiB KV + 3.7 GiB CUDA graphs) |
+| **35B-A3B (fallback) load** | **Did not complete.** Co-resident: `CUDA error: out of memory` on engine init → 14+ restart crash-loop. Even *solo* (65 GiB free): crashed/stalled at "Loading safetensors 0%", never `/health` in 8+ min. No benchmark obtained. |
+| Co-residence (27B + 35B-A3B) | **Not viable on this box.** 27B alone (~75 GiB) + 35B-A3B (~24 GiB weights + KV) + baseline services exceed the 121.7 GiB unified pool → OOM + swap thrash (swap hit 68 %). |
+
+**Conclusion — the "two always-warm models" premise needs a dedicated box.** On a
+GB10 shared with other services, two ~30B NVFP4 models do not co-fit with usable
+KV caches. Options: (a) run the fleet on a dedicated machine; (b) pair two
+genuinely small models; or (c) use single-model `model switch` (one warm at a
+time) instead of the fleet. The `0.55`/`0.30` default shipped in 0.10.0 OOM-looped
+the fallback and was corrected to `0.40`/`0.35` (a dedicated-box estimate). The
+35B-A3B's own load instability (crash/stall even solo) is tracked in
+[`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
 
 ## Coherence with the single-model verbs
 

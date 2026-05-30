@@ -1,8 +1,16 @@
-# Candidate model: `mmangkad/Qwen3.6-27B-NVFP4`
+# Runtime model: `mmangkad/Qwen3.6-27B-NVFP4`
 
-A candidate alternative runtime model. **Load-tested live on DGX Spark (GB10),
-2026-05-27** — it loads and serves cleanly under the vLLM image model-gear
-already runs. Tracked by [issue #6](https://github.com/agentculture/model-gear/issues/6).
+The **fleet's default primary** and current single-model default (since 0.10.0).
+**Load-tested live on DGX Spark (GB10),** first 2026-05-27 and re-confirmed
+2026-05-30 — it loads and serves cleanly under the vLLM image model-gear already
+runs. Tracked by [issue #6](https://github.com/agentculture/model-gear/issues/6).
+
+**Warm-up (solo, 2026-05-30): ~423 s (~7 min)** from container start to `/health`
+— weight load 160 s (28.25 GiB), profiling/warmup 55 s, then CUDA-graph capture +
+KV allocation. Plan for a multi-minute cold start. Decode re-confirmed at
+**8.0 tok/s** (batch=1, 512 tokens); prefill 2,015 tokens in 3.29 s.
+
+Source: <https://huggingface.co/mmangkad/Qwen3.6-27B-NVFP4> — public, Apache-2.0.
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-27B-NVFP4> — public, Apache-2.0.
 
@@ -107,13 +115,14 @@ Image `nvcr.io/nvidia/vllm:26.04-py3`, engine `0.19.0+...nv26.04`. Served on
 
 ## Recommendation
 
-**Keep `nvidia/Qwen3-32B-NVFP4`.** The 27B loads cleanly and answers correctly,
-but on this GB10 it is **slower on decode** (~8 vs ~9.7 tok/s) despite being
-smaller, and it is a heavier, more-experimental path (hybrid Mamba layers with
-experimental prefix caching, plus an unused ViT encoder). For a text-only deep
-thinker, that trade does not pay off today.
+**The 27B is the default primary (since 0.10.0)** — it is the model the consumer
+agent (convertible) runs as its parent, and it brings a **much larger native
+context** (256K vs the 32B's 32K/131K-YaRN) plus a **multimodal/vision** path. The
+trade-off is decode speed: on this GB10 the 27B is **slower** (~8 vs ~9.7 tok/s)
+despite being smaller, and it is a heavier, more-experimental path (hybrid Mamba
+layers with experimental prefix caching, plus a ViT encoder unused for text).
 
-Switch only if a concrete need appears that the 32B cannot meet: a **much larger
-context** (256K native vs 32K/131K-YaRN) or **multimodal/vision** input. Re-run
-`model assess` / `model benchmark` after any vLLM image bump — the Mamba/NVFP4
-paths are young and likely to get faster.
+**`nvidia/Qwen3-32B-NVFP4` remains the speed-optimised candidate** — swap it in via
+`PRIMARY_MODEL` / `model switch` when raw text decode throughput matters more than
+context length or vision. Re-run `model assess` / `model benchmark` after any vLLM
+image bump — the Mamba/NVFP4 paths are young and likely to get faster.
