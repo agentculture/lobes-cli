@@ -231,7 +231,7 @@ def _apply_switch(
     emit_result("\n".join(out), json_mode=False)
 
 
-def _apply_env_only(model, env_path, plan, messages, notices, served, port, json_mode) -> None:
+def _apply_env_only(model, env_path, plan, notices, served, port, json_mode) -> None:
     """``--apply`` blocked on a required compose edit: write ``.env`` but DON'T restart.
 
     Switching to a model the shared template can't serve unedited (a non-MTP model,
@@ -276,7 +276,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
     if args.apply:
         if notices and not args.force:
             # Required compose edit pending — don't take a healthy deployment down.
-            _apply_env_only(args.model, env_path, plan, messages, notices, served, port, json_mode)
+            _apply_env_only(args.model, env_path, plan, notices, served, port, json_mode)
         else:
             _apply_switch(
                 args.model,
