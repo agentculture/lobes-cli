@@ -91,7 +91,8 @@ def _serve_notices(model_id: str) -> list[str]:
                 "MTP/text-only model — add these to the compose `command` by hand "
                 "(not written to .env; see docs/qwen3.6-27b-text-nvfp4-mtp.md): "
                 f"--speculative-config '{model.speculative_config}' --trust-remote-code "
-                "--language-model-only; and set VLLM_MAX_NUM_SEQS=2 (4 OOMs at n=3/256K)"
+                "--language-model-only --tokenizer=mmangkad/Qwen3.6-27B-NVFP4; and set "
+                "VLLM_MAX_NUM_SEQS=2 (4 OOMs at n=3/256K)"
             )
     return notices
 

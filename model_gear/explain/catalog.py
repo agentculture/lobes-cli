@@ -212,7 +212,8 @@ run on this hardware, holding the correctness + throughput numbers produced by
 - `docs/qwen3.6-27b-text-nvfp4-mtp.md` — `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`,
   a text-only MTP candidate: the 27B re-exported with its MTP draft head restored so
   vLLM speculative decoding works (the baseline NVFP4 export drops it). Carries a
-  catalog `--speculative-config`; switch surfaces it as a compose edit (issue #26).
+  catalog `--speculative-config`; switch surfaces it as a compose edit. Load-tested
+  on the GB10: 19.1 tok/s decode (~2.4x the baseline 27B) at 72% MTP acceptance (#26).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
   candidate (the former fallback; OOM'd/stalled on the GB10, never load-tested).
 

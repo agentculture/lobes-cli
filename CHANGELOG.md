@@ -16,11 +16,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   installable on the aarch64 GB10 — so the fix is *a checkpoint that ships the MTP
   weights*, not a newer engine. Carries a catalog `speculative_config`
   (`{"method":"qwen3_5_mtp","num_speculative_tokens":3}`); quantization is
-  `modelopt`. Status `configured` (the live load-test runs on the DGX Spark).
+  `modelopt`. **Load-tested on the DGX Spark (GB10) 2026-05-31: 19.1 tok/s decode
+  (~2.4× the baseline 27B's ~8 tok/s) at 72 % MTP draft acceptance on vLLM
+  0.19.0+nv26.04** — the open risk (does the stock image accept `qwen3_5_mtp`?) is
+  cleared (it resolves the `Qwen3_5MTP` draft head). One tokenizer override is
+  required: the checkpoint declares the newer `TokenizersBackend` class (absent from
+  nv26.04), so serve with `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4` (the cached
+  sibling, same vocab); `model switch` prints it.
   - New per-model doc `docs/qwen3.6-27b-text-nvfp4-mtp.md` with the serve recipe,
-    a live-test checklist (confirm the unsloth baseline gives ~0 % MTP acceptance,
-    then benchmark sakamakismile), and the caveats (`--max-num-seqs 2` or it
-    silently OOMs; verify `qwen3_5_mtp` loads on the nv26.04 image — the #1 risk).
+    the live benchmark table (decode tok/s + acceptance vs the baseline), and the
+    caveats (`--max-num-seqs 2` or it silently OOMs; the tokenizer override).
 
 ### Changed
 

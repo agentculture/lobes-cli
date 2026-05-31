@@ -320,6 +320,7 @@ def test_switch_mtp_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
     assert "qwen3_5_mtp" in out
     assert "--trust-remote-code" in out
     assert "--language-model-only" in out
+    assert "--tokenizer=mmangkad/Qwen3.6-27B-NVFP4" in out
     assert "VLLM_MAX_NUM_SEQS=2" in out
     # quantization comes from the catalog (modelopt, not modelopt_fp4)
     assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
