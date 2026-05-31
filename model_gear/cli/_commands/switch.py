@@ -1,19 +1,30 @@
-"""``model switch <model>`` — change the served vLLM model.
+"""``model switch <model>`` — change the served vLLM model (and its gear).
 
 Mutating: dry-run by default (prints the plan, changes nothing); ``--apply``
-writes the five ``VLLM_*`` vars to ``.env`` (plus an auto-selected, or
-``--tool-call-parser``-overridden, ``VLLM_TOOL_CALL_PARSER``), recreates the
-container (``docker compose down && up -d``), waits for ``/health``, and then
-probes ``tool_choice:"auto"`` to confirm tool calling survived the switch
-(``--no-probe`` to skip).
+writes the resolved ``VLLM_*`` vars to ``.env``, recreates the container
+(``docker compose down && up -d``), waits for ``/health``, and then probes
+``tool_choice:"auto"`` to confirm tool calling survived the switch (``--no-probe``
+to skip).
+
+The serve config is resolved from three layers (explicit CLI flags win):
+
+* the **machine** profile (``--machine``, default auto-detected) → GPU memory
+  fraction, max context, attention backend;
+* the **workload** profile (``--purpose``, default ``balanced``) → batching knobs
+  (and the shape ``model benchmark`` exercises); and
+* the **model** catalog entry → quantization + tool-call parser, plus a printed
+  reminder for the MoE-only compose flags (which can't be defaulted safely).
 """
 
 from __future__ import annotations
 
 import argparse
+import socket
 
+from model_gear import profiles
 from model_gear.catalog import supported_models
 from model_gear.cli import _runtime_ops
+from model_gear.cli._commands.whoami import _gpu_name
 from model_gear.cli._output import emit_diagnostic, emit_result
 from model_gear.runtime import _compose, _env, _health, _parser
 
@@ -50,57 +61,122 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
 
-def _emit_dry_run(
-    args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, json_mode
-) -> None:
+def _moe_notice(model_id: str) -> str | None:
+    """Reminder that an MoE model needs an extra compose flag (from the catalog).
+
+    ``--moe-backend`` can't be defaulted in the single-model template (compose
+    can't conditionally omit a flag, and an empty ``--moe-backend=`` token breaks
+    vLLM), so ``model switch`` surfaces it for a manual compose edit instead. The
+    flag is emitted bare (no surrounding quotes) so it pastes verbatim as a compose
+    ``command:`` list item. (MTP ``--speculative-config`` is intentionally not in
+    the catalog — it fails to load on the catalogued checkpoint; see the doc.)
+    """
+    for model in supported_models():
+        if model.id == model_id and model.moe_backend:
+            return (
+                "MoE model — add this to the compose `command` by hand (not written "
+                "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
+                f"--moe-backend={model.moe_backend}"
+            )
+    return None
+
+
+def _resolve_machine_name(machine_arg: str) -> str:
+    """Resolve ``--machine`` to a concrete profile name (``auto`` → detect).
+
+    Only shells out to ``nvidia-smi`` when detection is actually needed (an
+    explicit ``--machine`` skips it).
+    """
+    raw = (machine_arg or "auto").strip().lower()
+    gpu = _gpu_name() if raw in ("", "auto") else None
+    return profiles.resolve_machine(machine_arg, gpu_name=gpu, hostname=socket.gethostname())
+
+
+def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict, list[str]]:
+    """Build the ``VLLM_*`` env plan + the human messages (parser/quant lines)."""
+    machine = _resolve_machine_name(args.machine)
+    serve_cfg = profiles.resolve_serve_config(
+        args.purpose,
+        machine,
+        max_model_len=args.max_model_len,
+        gpu_mem_util=args.gpu_mem_util,
+    )
+    plan = {
+        "VLLM_MODEL": args.model,
+        "VLLM_SERVED_NAME": served,
+        "VLLM_PORT": str(port),
+        **serve_cfg,
+    }
+    messages: list[str] = []
+    parser, parser_msg = _select_parser(args)
+    messages.append(parser_msg)
+    if parser:
+        plan["VLLM_TOOL_CALL_PARSER"] = parser
+    quant, quant_msg = _select_quantization(args)
+    messages.append(quant_msg)
+    if quant:
+        plan["VLLM_QUANTIZATION"] = quant
+    return plan, messages
+
+
+def _emit_dry_run(deploy_dir, env_path, plan, messages, moe_msg, port, probe, json_mode) -> None:
     if json_mode:
         emit_result(
             {
                 "dry_run": True,
                 "deployment_dir": str(deploy_dir),
                 "env": plan,
-                "tool_call_parser": parser,
-                "quantization": quant,
-                "probe": not args.no_probe,
+                "purpose": plan.get("VLLM_PURPOSE"),
+                "machine": plan.get("VLLM_MACHINE"),
+                "tool_call_parser": plan.get("VLLM_TOOL_CALL_PARSER"),
+                "quantization": plan.get("VLLM_QUANTIZATION"),
+                "moe_notice": moe_msg,
+                "probe": probe,
             },
             json_mode=True,
         )
         return
     lines = [f"DRY RUN — would update {env_path}:"]
     lines += [f"  {k}={v}" for k, v in plan.items()]
-    lines.append(f"  {parser_msg}")
-    lines.append(f"  {quant_msg}")
+    lines += [f"  {m}" for m in messages]
+    if moe_msg:
+        lines.append(f"  NOTE: {moe_msg}")
     lines.append(
         f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
     )
-    if not args.no_probe:
+    if probe:
         lines.append("  then: probe tool calling (tool_choice:auto)")
     lines.append("Re-run with --apply to execute.")
     emit_result("\n".join(lines), json_mode=False)
 
 
 def _apply_switch(
-    args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, served, json_mode
+    model, deploy_dir, env_path, plan, messages, moe_msg, port, served, probe, json_mode
 ):
     emit_diagnostic(
-        f">> switching to {args.model} (port={port} max_model_len={args.max_model_len} "
-        f"served-name={served} gpu-mem-util={args.gpu_mem_util})"
+        f">> switching to {model} (port={port} purpose={plan['VLLM_PURPOSE']} "
+        f"machine={plan['VLLM_MACHINE']} max_model_len={plan['VLLM_MAX_MODEL_LEN']} "
+        f"gpu-mem-util={plan['VLLM_GPU_MEM_UTIL']} served-name={served})"
     )
-    emit_diagnostic(f">> {parser_msg}")
-    emit_diagnostic(f">> {quant_msg}")
+    for msg in messages:
+        emit_diagnostic(f">> {msg}")
+    if moe_msg:
+        emit_diagnostic(f">> NOTE: {moe_msg}")
     for key, value in plan.items():
         _env.set_env(env_path, key, value)
     _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
     _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
     _health.wait_health(port)
-    tc = None if args.no_probe else _runtime_ops.probe_tool_calling(port, served)
+    tc = None if not probe else _runtime_ops.probe_tool_calling(port, served)
     result = {
-        "switched": args.model,
+        "switched": model,
         "served_name": served,
         "port": port,
         "deployment_dir": str(deploy_dir),
-        "tool_call_parser": parser,
-        "quantization": quant,
+        "purpose": plan["VLLM_PURPOSE"],
+        "machine": plan["VLLM_MACHINE"],
+        "tool_call_parser": plan.get("VLLM_TOOL_CALL_PARSER"),
+        "quantization": plan.get("VLLM_QUANTIZATION"),
         "tool_calling": tc,
     }
     if json_mode:
@@ -118,37 +194,25 @@ def cmd_switch(args: argparse.Namespace) -> int:
     env_path = deploy_dir / _compose.ENV_FILE
     port = _runtime_ops.resolve_port(args, env_path)
     served = args.served_name or args.model
-    plan = {
-        "VLLM_MODEL": args.model,
-        "VLLM_SERVED_NAME": served,
-        "VLLM_PORT": str(port),
-        "VLLM_MAX_MODEL_LEN": str(args.max_model_len),
-        "VLLM_GPU_MEM_UTIL": str(args.gpu_mem_util),
-    }
-    parser, parser_msg = _select_parser(args)
-    if parser:
-        plan["VLLM_TOOL_CALL_PARSER"] = parser
-    quant, quant_msg = _select_quantization(args)
-    if quant:
-        plan["VLLM_QUANTIZATION"] = quant
+    plan, messages = _build_plan(args, port, served)
+    moe_msg = _moe_notice(args.model)
 
     if args.apply:
         _apply_switch(
-            args,
+            args.model,
             deploy_dir,
             env_path,
             plan,
-            parser,
-            parser_msg,
-            quant,
-            quant_msg,
+            messages,
+            moe_msg,
             port,
             served,
+            not args.no_probe,
             json_mode,
         )
     else:
         _emit_dry_run(
-            args, deploy_dir, env_path, plan, parser, parser_msg, quant, quant_msg, port, json_mode
+            deploy_dir, env_path, plan, messages, moe_msg, port, not args.no_probe, json_mode
         )
     return 0
 
@@ -161,11 +225,30 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument("model", help="Model to serve, e.g. mmangkad/Qwen3.6-27B-NVFP4.")
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(
-        "--max-model-len", type=int, default=32768, help="Context window (default 32768)."
+        "--purpose",
+        choices=[wp.name for wp in profiles.WORKLOAD_PROFILES],
+        default=profiles.DEFAULT_PURPOSE,
+        help="Workload profile — tunes batching + the benchmark shape (default balanced).",
+    )
+    p.add_argument(
+        "--machine",
+        choices=["auto"] + [mp.name for mp in profiles.MACHINE_PROFILES],
+        default=profiles.DEFAULT_MACHINE,
+        help="Machine profile — sets GPU mem / context / attention defaults "
+        "(default auto: detect from nvidia-smi + hostname).",
+    )
+    p.add_argument(
+        "--max-model-len",
+        type=int,
+        default=None,
+        help="Context window (default: the machine profile, e.g. 32768 on spark).",
     )
     p.add_argument("--served-name", help="Name clients address (default: the model name).")
     p.add_argument(
-        "--gpu-mem-util", type=float, default=0.6, help="GPU memory fraction (default 0.6)."
+        "--gpu-mem-util",
+        type=float,
+        default=None,
+        help="GPU memory fraction (default: the machine profile, e.g. 0.6 on spark).",
     )
     p.add_argument(
         "--tool-call-parser",

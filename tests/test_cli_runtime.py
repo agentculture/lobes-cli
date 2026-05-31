@@ -214,6 +214,118 @@ def test_switch_leaves_quantization_when_uncatalogued(tmp_path, capsys) -> None:
     assert "VLLM_QUANTIZATION" not in capsys.readouterr().out
 
 
+def test_switch_purpose_machine_resolve_into_plan(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # decode-heavy purpose + blackwell machine → the resolved VLLM_* knobs.
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--purpose",
+            "decode-heavy",
+            "--machine",
+            "blackwell",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_PURPOSE=decode-heavy" in out
+    assert "VLLM_MACHINE=blackwell" in out
+    assert "VLLM_MAX_NUM_SEQS=8" in out  # decode-heavy
+    assert "VLLM_MAX_NUM_BATCHED_TOKENS=4096" in out  # decode-heavy
+    assert "VLLM_GPU_MEM_UTIL=0.85" in out  # blackwell machine default
+    assert "VLLM_MAX_MODEL_LEN=65536" in out  # blackwell machine default
+    assert "VLLM_ATTENTION_BACKEND=flashinfer" in out
+
+
+def test_switch_defaults_to_balanced(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_PURPOSE=balanced" in out  # default purpose
+    assert "VLLM_MAX_NUM_SEQS=4" in out
+    assert "NOTE:" not in out  # the 27B hybrid is not MoE — no compose-edit notice
+
+
+def test_switch_explicit_overrides_machine_defaults(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--machine",
+            "blackwell",  # would default 0.85 / 65536
+            "--gpu-mem-util",
+            "0.5",
+            "--max-model-len",
+            "16384",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_GPU_MEM_UTIL=0.5" in out
+    assert "VLLM_MAX_MODEL_LEN=16384" in out
+
+
+def test_switch_moe_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-35B-A3B-NVFP4",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "--moe-backend=marlin" in out
+    # MTP --speculative-config is not carried (fails to load on this checkpoint)
+    assert "speculative-config" not in out
+
+
+def test_switch_apply_writes_purpose_machine_env(tmp_path, monkeypatch) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--purpose",
+            "prompt-heavy",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+            "--no-probe",
+        ]
+    )
+    assert rc == 0
+    env = tmp_path / ".env"
+    assert _env.read_env(env, "VLLM_PURPOSE") == "prompt-heavy"
+    assert _env.read_env(env, "VLLM_MACHINE") == "spark"
+    assert _env.read_env(env, "VLLM_MAX_NUM_BATCHED_TOKENS") == "16384"
+
+
 def test_switch_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())

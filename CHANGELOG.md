@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-05-31
+
+### Added
+
+- **Workload `purpose` + machine tuning profiles.** `model switch` now resolves
+  the serve config from three layers — a **machine** profile (`--machine`,
+  default auto-detected from `nvidia-smi` + hostname: GPU-memory fraction,
+  context, attention backend), a **workload** profile (`--purpose`, default
+  `balanced`: the batching knobs and the shape `model benchmark` exercises), and
+  the model's catalog entry — with explicit `--max-model-len` / `--gpu-mem-util`
+  flags overriding the machine defaults.
+  - **New `model_gear/profiles.py`** (pure data module, like `catalog.py`):
+    `WorkloadProfile` (`balanced` ≈1K/1K, `prompt-heavy` ≈8K/1K, `decode-heavy`
+    ≈1K/8K) and `MachineProfile` (`spark` load-tested, `thor`/`blackwell`/`generic`
+    configured), guarded by `tests/test_profiles.py`.
+  - **Richer single-model template** — the serve command now passes
+    `--attention-backend`, `--max-num-seqs`, `--max-num-batched-tokens` (env-driven),
+    plus static `--enable-chunked-prefill` / `--async-scheduling`. New `.env` keys:
+    `VLLM_PURPOSE`, `VLLM_MACHINE`, `VLLM_ATTENTION_BACKEND`, `VLLM_MAX_NUM_SEQS`,
+    `VLLM_MAX_NUM_BATCHED_TOKENS`.
+  - **Per-model MoE serve extras** — the catalog gains `moe_backend` /
+    `speculative_config` (set only on the `Qwen3.6-35B-A3B` MoE candidate).
+    `model switch` to the MoE prints them as a documented compose edit (they break
+    the dense/hybrid models and can't be defaulted in the shared template).
+  - **`model benchmark` is tied to the config** — its workload shape defaults to
+    the configured `VLLM_PURPOSE` (overridable with `--purpose` / `--input-len` /
+    `--output-len`).
+  - `model whoami` / `model overview` surface the active `gear` (purpose/machine);
+    `model explain tuning` documents the layering; `docs/tuning-profiles.md` is new.
+  - Credit: the serve tuning and the three workload shapes follow **shahizat**'s
+    cross-machine NVFP4 benchmark (NVIDIA Developer Forums) — see the README
+    Acknowledgements and `docs/tuning-profiles.md`.
+  - **Live-replicated on the shared DGX Spark (2026-05-31)** rather than trusting
+    the post: with the new flags the **35B MoE candidate loads solo** (util 0.70,
+    marlin) and runs **single-stream decode ~35 tok/s vs the 27B's ~7.8 — ~4.6×
+    faster** (the MoE's ~3B-active advantage). Numbers + method in
+    `docs/tuning-profiles.md` and `docs/qwen3.6-35b-a3b-nvfp4.md`.
+
+### Changed
+
+- `model switch` `--max-model-len` / `--gpu-mem-util` now default to the machine
+  profile (was a fixed 32768 / 0.6); pass them explicitly to override.
+- `model benchmark` replaces `--decode-tokens` with purpose-driven
+  `--input-len` / `--output-len`.
+- **Catalog: dropped the MTP `speculative_config` from the `mmangkad/Qwen3.6-35B-A3B-NVFP4`
+  entry** (kept `--moe-backend=marlin`). Live testing showed shahizat's MTP draft
+  fails to load on the `mmangkad/` copy (`qwen3_5_mtp.py` weight-shape mismatch on
+  vLLM nv26.04) — it is tied to his `nvidia/` checkpoint. `model switch` no longer
+  prints a recipe that wouldn't load.
+
+### Fixed
+
 ## [0.12.0] - 2026-05-30
 
 ### Added

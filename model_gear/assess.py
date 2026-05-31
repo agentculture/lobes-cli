@@ -266,8 +266,12 @@ def _decode_throughput(url: str, model: str, n_tokens: int, runs: int = 2) -> li
     return rates
 
 
-def _prefill(url: str, model: str) -> dict:
-    prompt = "Summarize this. " + "The system processes events. " * 400
+def _prefill(url: str, model: str, input_len: int = 2000) -> dict:
+    # ~6 tokens per "The system processes events. " phrase — scale the repeat
+    # count so the prompt approximates the requested input_len (the actual
+    # prompt_tokens is measured and reported, so the estimate need only be close).
+    reps = max(1, input_len // 6)
+    prompt = "Summarize this. " + "The system processes events. " * reps
     t0 = time.monotonic()
     d = _post(
         url,
@@ -317,20 +321,33 @@ def run_correctness(url: str, model: str | None = None, check_tools: bool = Fals
 
 
 def run_benchmark(
-    url: str, model: str | None = None, decode_tokens: int = 512, runs: int = 2
+    url: str,
+    model: str | None = None,
+    *,
+    purpose: str = "balanced",
+    input_len: int = 1000,
+    output_len: int = 1000,
+    runs: int = 2,
 ) -> dict:
-    """Measure decode throughput + prefill latency; return a structured result."""
+    """Measure decode throughput + prefill latency for a workload shape.
+
+    The shape (``input_len`` prompt, ``output_len`` decode) is the workload
+    *purpose* — ``model benchmark`` derives it from the configured ``VLLM_PURPOSE``
+    so the numbers track the serve config (see :mod:`model_gear.profiles`).
+    """
     url = url.rstrip("/")
     health_status(url)
     model, max_len = served_model(url, model)
     with _api_errors("benchmark"):
-        rates = _decode_throughput(url, model, decode_tokens, runs)
-        pf = _prefill(url, model)
+        rates = _decode_throughput(url, model, output_len, runs)
+        pf = _prefill(url, model, input_len)
     return {
         "model": model,
         "endpoint": url,
         "max_model_len": max_len,
-        "decode_tokens": decode_tokens,
+        "purpose": purpose,
+        "input_len": input_len,
+        "output_len": output_len,
         "decode_rates": rates,
         "prefill": pf,
     }
@@ -373,14 +390,15 @@ def render_benchmark(result: dict) -> str:
     pf = result["prefill"]
     return "\n".join(
         [
-            f"## Benchmark — `{result['model']}`",
+            f"## Benchmark — `{result['model']}` ({result['purpose']})",
             "",
-            f"- Endpoint: `{result['endpoint']}` · `max_model_len` {result['max_model_len']}",
+            f"- Endpoint: `{result['endpoint']}` · `max_model_len` {result['max_model_len']} · "
+            f"shape {result['input_len']} in / {result['output_len']} out",
             "",
             "| Metric | Result |",
             "|---|---|",
             f"| **decode throughput** | **{rates} tok/s** (batch=1, greedy, "
-            f"{result['decode_tokens']} tok forced) |",
+            f"{result['output_len']} tok forced) |",
             f"| prefill | {pf['prompt_tokens']} prompt tokens + 16 gen in {pf['seconds']} s |",
         ]
     )

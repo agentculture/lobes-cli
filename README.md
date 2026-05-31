@@ -24,9 +24,10 @@ uv tool install model-gear
 model init --apply          # scaffold a deployment dir (default ~/.model-gear)
 model serve --apply         # start the vLLM server (alias: start)
 model switch nvidia/Qwen3-32B-NVFP4 --apply   # switch the served model
+model switch nvidia/Qwen3-32B-NVFP4 --purpose decode-heavy --machine spark --apply  # ...in a tuned gear
 model status                # current model, container state, /health
 model assess                # correctness probes (markdown for a per-model doc)
-model benchmark             # decode throughput + prefill latency
+model benchmark             # decode throughput + prefill latency (shape follows --purpose)
 model stop --apply          # stop the server
 
 model overview              # tool snapshot + served model + candidate list
@@ -69,6 +70,27 @@ Tunables live in the deployment `.env` (`VLLM_MODEL`, `VLLM_GPU_MEM_UTIL`,
 `VLLM_MAX_MODEL_LEN`, `HF_CACHE`, …). `VLLM_SERVED_NAME` must match the part
 after `vllm-local/` in `culture.yaml` — `model doctor` checks this. `model
 switch` rewrites these keys for you.
+
+### Tuning the gear (purpose + machine)
+
+`model switch` resolves the serve config from three layers — the **machine**
+profile (`--machine`, default auto-detected: GPU-memory fraction, context,
+attention backend), the **workload** profile (`--purpose`, default `balanced`:
+the batching knobs and the shape `model benchmark` exercises), and the model's
+catalog entry (quantization, tool parser). Explicit `--max-model-len` /
+`--gpu-mem-util` flags override the machine defaults.
+
+```bash
+model switch mmangkad/Qwen3.6-27B-NVFP4 --purpose decode-heavy --machine spark --apply
+model benchmark --purpose decode-heavy   # shape defaults to the configured VLLM_PURPOSE
+model explain tuning                     # the full layering
+```
+
+Purposes: `balanced` (≈1K in/1K out), `prompt-heavy` (≈8K in/1K out),
+`decode-heavy` (≈1K in/8K out). Machines: `spark` (load-tested), `thor`,
+`blackwell`, `generic` (configured). The throughput flags and these shapes follow
+shahizat's cross-machine NVFP4 benchmark — see
+[`docs/tuning-profiles.md`](docs/tuning-profiles.md).
 
 The compose `command` intentionally omits `--trust-remote-code`: Qwen3-32B-NVFP4
 loads without it, and enabling it would let a model repo's custom code run
@@ -165,3 +187,14 @@ Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: model-gear`,
 `backend: acp`, `model: vllm-local/mmangkad/Qwen3.6-27B-NVFP4`) — the same
 model-gear that runs the engine consumes it over the `acp` `vllm-local` provider.
+
+## Acknowledgements
+
+The serve tuning (the flashinfer attention backend, chunked prefill, async
+scheduling, `--max-num-seqs` / `--max-num-batched-tokens`, and the MoE marlin +
+MTP speculative-decode flags) and the prompt-heavy / decode-heavy / balanced
+workload shapes follow **[shahizat](https://forums.developer.nvidia.com/u/shahizat)**'s
+cross-machine NVFP4 benchmark of `Qwen3.6-35B-A3B-NVFP4` on DGX Spark, Jetson
+Thor, and Blackwell 6000 Pro:
+[*Benchmark Report: Qwen3.6-35B-A3B-NVFP4 on NVIDIA DGX Spark / Jetson Thor / Blackwell 6000 Pro*](https://forums.developer.nvidia.com/t/benchmark-report-qwen3-6-35b-a3b-nvfp4-on-nvidia-dgx-spark-jetson-thor-blackwell-6000-pro/371810)
+(NVIDIA Developer Forums, 2026). See [`docs/tuning-profiles.md`](docs/tuning-profiles.md).
