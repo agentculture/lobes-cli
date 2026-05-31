@@ -62,22 +62,21 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
 
 
 def _moe_notice(model_id: str) -> str | None:
-    """Reminder that an MoE model needs extra compose flags (from the catalog).
+    """Reminder that an MoE model needs an extra compose flag (from the catalog).
 
-    The MoE serve flags can't be defaulted in the single-model template (compose
+    ``--moe-backend`` can't be defaulted in the single-model template (compose
     can't conditionally omit a flag, and an empty ``--moe-backend=`` token breaks
-    vLLM), so ``model switch`` surfaces them for a manual compose edit instead.
+    vLLM), so ``model switch`` surfaces it for a manual compose edit instead. The
+    flag is emitted bare (no surrounding quotes) so it pastes verbatim as a compose
+    ``command:`` list item. (MTP ``--speculative-config`` is intentionally not in
+    the catalog — it fails to load on the catalogued checkpoint; see the doc.)
     """
     for model in supported_models():
-        if model.id == model_id and (model.moe_backend or model.speculative_config):
-            flags = []
-            if model.moe_backend:
-                flags.append(f"--moe-backend={model.moe_backend}")
-            if model.speculative_config:
-                flags.append(f"--speculative-config='{model.speculative_config}'")
+        if model.id == model_id and model.moe_backend:
             return (
-                "MoE model — add to the compose `command` by hand (not written to "
-                ".env; see docs/qwen3.6-35b-a3b-nvfp4.md): " + " ".join(flags)
+                "MoE model — add this to the compose `command` by hand (not written "
+                "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
+                f"--moe-backend={model.moe_backend}"
             )
     return None
 

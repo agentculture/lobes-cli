@@ -118,7 +118,10 @@ MACHINE_PROFILES: tuple[MachineProfile, ...] = (
     MachineProfile(
         name="blackwell",
         summary="Blackwell 6000 Pro (RTX PRO 6000, dedicated VRAM)",
-        gpu_markers=("rtx pro 6000", "6000 pro", "rtx 6000"),
+        # Specific to the RTX PRO 6000 Blackwell — NOT a bare "rtx 6000" (which
+        # would false-match the older RTX 6000 Ada / Quadro RTX 6000, non-Blackwell).
+        # "rtx pro 6000" = the nvidia-smi name; "6000 pro" = shahizat's marketing name.
+        gpu_markers=("rtx pro 6000", "6000 pro"),
         gpu_mem_util=0.85,  # dedicated discrete GPU — can reserve aggressively
         max_model_len=65536,  # dedicated VRAM allows the report's longer context
         attention_backend="flashinfer",
