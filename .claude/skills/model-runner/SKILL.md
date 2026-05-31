@@ -29,8 +29,8 @@ model init --apply                 # scaffold ~/.model-gear (compose + .env)
 
 # switch the served model (edits .env, recreates the container, waits for health).
 # DRY-RUN by default: prints the plan and changes nothing. Add --apply to execute.
-model switch mmangkad/Qwen3.6-27B-NVFP4 --max-model-len 32768          # preview
-model switch mmangkad/Qwen3.6-27B-NVFP4 --max-model-len 32768 --apply
+model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --max-model-len 32768          # preview
+model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --max-model-len 32768 --apply
 
 model serve --apply                # start the server (alias: start)
 model stop --apply                 # stop + remove the container

@@ -201,19 +201,21 @@ Per-model notes live under `docs/` — one markdown file per model that has been
 run on this hardware, holding the correctness + throughput numbers produced by
 `model assess` and `model benchmark`.
 
-- `docs/qwen3.6-27b-nvfp4.md` — `mmangkad/Qwen3.6-27B-NVFP4`, the current runtime
-  model and the fleet's default primary (hybrid Mamba/linear-attn + ViT, 256K native).
+- `docs/qwen3.6-27b-text-nvfp4-mtp.md` — `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`,
+  the fleet's **default primary** (promoted 2026-05-31): the 27B re-exported with its
+  MTP draft head restored so vLLM speculative decoding works (the baseline NVFP4
+  export drops it). Text-only; its MTP serve flags are baked into the compose
+  template. Load-tested on the GB10: ~18.7-19.1 tok/s decode (~2.4x the archived
+  baseline 27B) at ~72-79% MTP acceptance, tool calling + reasoning verified (#26).
+- `docs/qwen3.6-27b-nvfp4.md` — `mmangkad/Qwen3.6-27B-NVFP4`, the **archived** former
+  primary (hybrid Mamba/linear-attn + ViT, 256K native). Retained as the MTP
+  primary's tokenizer source and the only vision-capable 27B.
 - `docs/mistral-small-3.2-24b-nvfp4.md` — `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`,
   the dense fallback the gateway fleet pairs with the primary (loads reliably on
   the GB10; serve with the mistral tokenizer + images disabled — required for
   tool-call parsing on this build; see the doc).
 - `docs/qwen3-32b-nvfp4.md` — `nvidia/Qwen3-32B-NVFP4`, a dense candidate (faster
   decode; swap in via `PRIMARY_MODEL` / `model switch`).
-- `docs/qwen3.6-27b-text-nvfp4-mtp.md` — `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`,
-  a text-only MTP candidate: the 27B re-exported with its MTP draft head restored so
-  vLLM speculative decoding works (the baseline NVFP4 export drops it). Carries a
-  catalog `--speculative-config`; switch surfaces it as a compose edit. Load-tested
-  on the GB10: 19.1 tok/s decode (~2.4x the baseline 27B) at 72% MTP acceptance (#26).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
   candidate (the former fallback; OOM'd/stalled on the GB10, never load-tested).
 

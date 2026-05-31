@@ -22,7 +22,7 @@ import argparse
 import socket
 
 from model_gear import profiles
-from model_gear.catalog import supported_models
+from model_gear.catalog import mtp_compose_command_items, supported_models
 from model_gear.cli import _runtime_ops
 from model_gear.cli._commands.whoami import _gpu_name
 from model_gear.cli._output import emit_diagnostic, emit_result
@@ -61,45 +61,58 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
 
+def _mtp_primary():
+    """The MTP default primary (the model whose serve flags the template bakes in)."""
+    return next(
+        (m for m in supported_models() if m.role_hint == "primary" and m.speculative_config),
+        None,
+    )
+
+
 def _serve_notices(model_id: str) -> list[str]:
-    """Reminders for catalog serve-extras a model needs as a manual compose edit.
+    """Reminders for compose ``command:`` edits a switch implies.
 
-    Some flags can't be defaulted in the single-model template — compose can't
-    conditionally omit a flag, and an empty ``--moe-backend=`` / ``--speculative-config=``
-    token breaks vLLM — so ``model switch`` surfaces them for a hand edit instead:
+    The single-model template ships the **MTP default primary's** serve flags
+    baked into ``command:`` (``--speculative-config`` + ``--trust-remote-code`` +
+    ``--language-model-only`` + the ``--tokenizer`` override) so a fresh deploy of
+    the default just works. But those flags are MTP-only — the ``--tokenizer``
+    override and ``--language-model-only`` break every non-MTP checkpoint — and
+    compose can't conditionally omit a list item, so switching *away* from the MTP
+    primary needs those four lines removed by hand. Conversely an MoE checkpoint
+    needs ``--moe-backend`` *added*. ``model switch`` surfaces both:
 
-    * ``--moe-backend`` for an MoE checkpoint (emitted bare so it pastes verbatim as
-      a compose ``command:`` list item); and
-    * ``--speculative-config`` (MTP draft) for a checkpoint that ships MTP weights,
-      together with the ``--trust-remote-code`` / ``--language-model-only`` flags and
-      the ``VLLM_MAX_NUM_SEQS=2`` cap that MTP-grafted text-only build also needs.
+    * switching to a **non-MTP** model → "remove these 4 MTP lines"; and
+    * switching to the **MoE** candidate → also "add ``--moe-backend=...``".
 
-    Returns one line per applicable extra (empty list for a plain model).
+    Returns one line per applicable edit (empty list for the MTP primary itself).
     """
     notices: list[str] = []
     for model in supported_models():
         if model.id != model_id:
             continue
+        if not model.speculative_config:
+            # Non-MTP target: the template's baked MTP flags must come back out. The
+            # item list is the single source of truth in the catalog (so it can't
+            # drift from the templates); render each as a YAML `command:` list item —
+            # --speculative-config is single-quoted because its JSON value has `: `/`{`.
+            rendered = "".join(
+                (
+                    f"\n      - '{item}'"
+                    if item.startswith("--speculative-config=")
+                    else f"\n      - {item}"
+                )
+                for item in mtp_compose_command_items()
+            )
+            notices.append(
+                "non-MTP model — the template ships the MTP default primary's flags; "
+                "REMOVE these `command:` list items by hand to serve this model (see "
+                "docs/qwen3.6-27b-text-nvfp4-mtp.md):" + rendered
+            )
         if model.moe_backend:
             notices.append(
                 "MoE model — add this to the compose `command` by hand (not written "
                 "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
                 f"--moe-backend={model.moe_backend}"
-            )
-        if model.speculative_config:
-            # Emit each flag as its own argv-safe `command:` list item (the compose
-            # command is a YAML list — one argv token per item). --speculative-config
-            # uses the `=` form (no space) and is single-quoted because its JSON value
-            # contains `: ` / `{`; the others are bare tokens. VLLM_MAX_NUM_SEQS is an
-            # .env var, kept as a separate human note (not a compose token).
-            notices.append(
-                "MTP/text-only model — add these `command:` list items by hand (see "
-                "docs/qwen3.6-27b-text-nvfp4-mtp.md), then set VLLM_MAX_NUM_SEQS=2 in "
-                ".env (4 OOMs at n=3/256K):"
-                f"\n      - '--speculative-config={model.speculative_config}'"
-                "\n      - --trust-remote-code"
-                "\n      - --language-model-only"
-                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
             )
     return notices
 
@@ -139,6 +152,14 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
     messages.append(quant_msg)
     if quant:
         plan["VLLM_QUANTIZATION"] = quant
+    # The MTP primary caps decode slots at 2 — the balanced profile's 4 OOMs at
+    # high context with n=3 spec-decode (see docs/qwen3.6-27b-text-nvfp4-mtp.md).
+    # Force it over the profile so switching to the MTP primary matches the
+    # validated config; an explicit --max-num-seqs is not a switch flag.
+    primary = _mtp_primary()
+    if primary and args.model == primary.id:
+        plan["VLLM_MAX_NUM_SEQS"] = "2"
+        messages.append("max-num-seqs (MTP primary cap): 2")
     return plan, messages
 
 
@@ -210,6 +231,39 @@ def _apply_switch(
     emit_result("\n".join(out), json_mode=False)
 
 
+def _apply_env_only(model, env_path, plan, notices, served, port, json_mode) -> None:
+    """``--apply`` blocked on a required compose edit: write ``.env`` but DON'T restart.
+
+    Switching to a model the shared template can't serve unedited (a non-MTP model,
+    while the template ships the MTP primary's flags; or the MoE backend flag) would
+    take a healthy container down and fail to bring it back. So we persist the plan
+    to ``.env`` and stop, printing the edits to make by hand. The user applies them
+    and then runs ``model serve --apply`` — or re-runs ``switch --apply --force`` to
+    recreate the container anyway.
+    """
+    for key, value in plan.items():
+        _env.set_env(env_path, key, value)
+    if json_mode:
+        emit_result(
+            {
+                "switched": model,
+                "served_name": served,
+                "port": port,
+                "restarted": False,
+                "blocked_on_compose_edits": True,
+                "compose_edits": notices,
+                "next": "apply the compose edits, then: model serve --apply"
+                " (or re-run switch --apply --force)",
+            },
+            json_mode=True,
+        )
+        return
+    lines = [f">> wrote .env for {model} but did NOT restart — a manual compose edit is required:"]
+    lines += [f">> NOTE: {notice}" for notice in notices]
+    lines.append(">> then: model serve --apply  (or re-run: model switch ... --apply --force)")
+    emit_result("\n".join(lines), json_mode=False)
+
+
 def cmd_switch(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     deploy_dir = _runtime_ops.deployment_dir(args)
@@ -220,18 +274,22 @@ def cmd_switch(args: argparse.Namespace) -> int:
     notices = _serve_notices(args.model)
 
     if args.apply:
-        _apply_switch(
-            args.model,
-            deploy_dir,
-            env_path,
-            plan,
-            messages,
-            notices,
-            port,
-            served,
-            not args.no_probe,
-            json_mode,
-        )
+        if notices and not args.force:
+            # Required compose edit pending — don't take a healthy deployment down.
+            _apply_env_only(args.model, env_path, plan, notices, served, port, json_mode)
+        else:
+            _apply_switch(
+                args.model,
+                deploy_dir,
+                env_path,
+                plan,
+                messages,
+                notices,
+                port,
+                served,
+                not args.no_probe,
+                json_mode,
+            )
     else:
         _emit_dry_run(
             deploy_dir, env_path, plan, messages, notices, port, not args.no_probe, json_mode
@@ -244,7 +302,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "switch",
         help="Switch the served vLLM model (dry-run by default; --apply to commit).",
     )
-    p.add_argument("model", help="Model to serve, e.g. mmangkad/Qwen3.6-27B-NVFP4.")
+    p.add_argument("model", help="Model to serve, e.g. sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP.")
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(
         "--purpose",
@@ -287,6 +345,13 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--apply", action="store_true", help="Commit the switch (recreate the container)."
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="With --apply, recreate the container even when a manual compose edit "
+        "is required (default: write .env but skip the restart so a healthy "
+        "deployment isn't taken down by an incompatible compose file).",
     )
     p.add_argument(
         "--no-probe",

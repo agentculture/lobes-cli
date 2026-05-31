@@ -44,7 +44,12 @@ class SupportedModel:
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     SupportedModel(
         id="mmangkad/Qwen3.6-27B-NVFP4",
-        role_hint="primary",
+        # Archived former primary (superseded 2026-05-31 by the MTP build below).
+        # Kept in the catalog for two reasons: (1) it is the tokenizer source the
+        # MTP primary serves with (--tokenizer=mmangkad/Qwen3.6-27B-NVFP4), and
+        # (2) it is the only *vision-capable* 27B — the MTP primary is text-only,
+        # so this is the fallback when an image path is needed.
+        role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
         context="256K native (capped to 32K for the first load)",
         tool_parser="qwen3_coder",
@@ -74,14 +79,19 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
-        role_hint="candidate",
+        # Fleet default primary since 2026-05-31 (promoted from candidate after the
+        # tool-calling gate passed: a valid qwen3_coder tool call + full tool
+        # round-trip + reasoning trace, all under the production compose, with MTP
+        # spec-decode active at 78.6% draft acceptance and 18.7 tok/s decode —
+        # ~2.4x the archived baseline 27B). Replaces mmangkad/Qwen3.6-27B-NVFP4.
+        role_hint="primary",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
         context="256K native (capped to 32K for the first load)",
         tool_parser="qwen3_coder",
         quantization="modelopt",
         status="load-tested",
         doc="qwen3.6-27b-text-nvfp4-mtp.md",
-        # MTP candidate (issue #26): an MTP-grafted re-export of the 27B primary —
+        # MTP primary (issue #26): an MTP-grafted re-export of the archived 27B —
         # the baseline NVFP4 export drops the MTP draft head (0% draft acceptance),
         # so this repo restores it in bf16 for vLLM speculative decoding. The
         # --speculative-config is catalog data (like moe_backend): compose can't omit
@@ -122,3 +132,33 @@ def supported_models() -> tuple[SupportedModel, ...]:
 def as_dicts() -> list[dict[str, str]]:
     """The catalog as plain dicts — for JSON emission without importing the dataclass."""
     return [asdict(model) for model in SUPPORTED_MODELS]
+
+
+# The tokenizer the MTP primary serves with — a base-checkpoint override (the MTP
+# checkpoint's tokenizer_config declares a class absent from the nv26.04 image; see
+# docs/qwen3.6-27b-text-nvfp4-mtp.md caveat 1). Drop once fixed upstream (issue #29).
+MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
+
+
+def mtp_compose_command_items() -> list[str]:
+    """The extra compose ``command:`` items the MTP default primary needs.
+
+    These four flags are baked into the packaged compose templates *and* named by
+    ``model switch`` as the lines to remove when switching to a non-MTP model. This
+    is the single source of truth so the two cannot drift — ``tests/test_catalog.py``
+    asserts the packaged templates contain exactly these items, and the speculative
+    config is pulled from the primary catalog entry rather than re-typed.
+
+    Returns argv tokens (no YAML quoting) in compose ``command:`` order.
+    """
+    primary = next(
+        (m for m in SUPPORTED_MODELS if m.role_hint == "primary" and m.speculative_config),
+        None,
+    )
+    spec = primary.speculative_config if primary else '{"method": "..."}'
+    return [
+        f"--speculative-config={spec}",
+        "--trust-remote-code",
+        "--language-model-only",
+        f"--tokenizer={MTP_TOKENIZER_OVERRIDE}",
+    ]

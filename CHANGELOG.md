@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-05-31
+
+### Changed
+
+- **Fleet default primary → `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** (the MTP
+  build), replacing `mmangkad/Qwen3.6-27B-NVFP4` (issue #26 follow-up). The
+  tool-calling gate that kept it a candidate is now **closed**: served through the
+  production compose it emits a valid `qwen3_coder` tool call, completes a full
+  tool round-trip, keeps its reasoning trace, and runs MTP spec-decode at **78.6%
+  draft acceptance with tool calling on** — ~2.4× single-stream decode (8 → ~19
+  tok/s), ~71 GB footprint, both `model assess` probes `finish=stop`. Promoted
+  across the catalog (`role_hint`), the gateway default (`_DEFAULT_PRIMARY`),
+  `whoami`, both template `env.example`/`docker-compose.yml` files, and
+  `culture.yaml`.
+- **The MTP serve flags are now baked into the compose templates** (single-model +
+  fleet `vllm-primary`): `--speculative-config`, `--trust-remote-code`,
+  `--language-model-only`, the `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4` override,
+  and `--max-num-seqs=2`. A fresh `model init && model serve` of the default now
+  works out of the box. Quantization default is `modelopt`.
+- **`model switch` notices inverted.** Because the template ships the MTP primary's
+  flags, switching to a **non-MTP** model now prints "REMOVE these 4 `command:`
+  lines" (was "add" for the MTP candidate); the MoE `--moe-backend` add-notice is
+  unchanged. Switching to the MTP primary force-caps `--max-num-seqs` to 2.
+- **`mmangkad/Qwen3.6-27B-NVFP4` archived to a candidate** — retained as the MTP
+  primary's tokenizer source and the only vision-capable 27B in the catalog.
+
+### Fixed
+
+- **`model switch --apply` no longer takes a healthy deployment down when a manual
+  compose edit is required** (Qodo review). Switching to a non-MTP model (the
+  template ships the MTP primary's incompatible flags) now writes `.env` and
+  **stops before the restart**, printing the lines to remove; `--force` overrides
+  to recreate the container anyway.
+- **MTP compose flags are a single source of truth** (`catalog.mtp_compose_command_items()`) —
+  consumed by both `model switch`'s removal notice and guarded against drift from
+  the packaged templates by a new test (Qodo review).
+- **Security guidance for the now-default `--trust-remote-code`** added to both
+  compose templates and `env.example`: HF_TOKEN is only needed for gated repos
+  (defaults are public) — leave it empty or use a minimal-scope read-only token, and
+  pin trusted revisions (Qodo review). Tracking the upstream tokenizer fix that would
+  let us drop the override in #29.
+
 ## [0.14.0] - 2026-05-31
 
 ### Added

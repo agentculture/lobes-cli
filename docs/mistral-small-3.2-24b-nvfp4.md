@@ -1,7 +1,7 @@
 # Fallback model: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
 
 The **dense fallback** the gateway fleet pairs with the default primary
-(`mmangkad/Qwen3.6-27B-NVFP4`). It **replaces the Qwen3.6-35B-A3B MoE**, which
+(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`). It **replaces the Qwen3.6-35B-A3B MoE**, which
 never loaded on this GB10 (OOM co-resident, stall solo — see
 [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). Mistral is dense,
 loads reliably, and serves text + tool calls. It is one entry in model-gear's
