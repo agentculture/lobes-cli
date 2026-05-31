@@ -300,6 +300,40 @@ def test_switch_moe_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
     assert "speculative-config" not in out
 
 
+def test_switch_mtp_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # the MTP candidate carries a catalog --speculative-config + the text-only flags,
+    # surfaced as a hand compose edit (compose can't omit an empty flag). Each flag
+    # must be an argv-safe `command:` list item: --speculative-config uses the `=`
+    # form (no space) so it pastes as one YAML item, not the shell space form that
+    # would split into a broken token (Qodo #27).
+    assert "--speculative-config=" in out
+    assert "--speculative-config '" not in out  # no shell space form
+    assert "qwen3_5_mtp" in out
+    assert "--trust-remote-code" in out
+    assert "--language-model-only" in out
+    assert "--tokenizer=mmangkad/Qwen3.6-27B-NVFP4" in out
+    # the value is rendered as a single quoted YAML list item
+    assert "- '--speculative-config=" in out
+    assert "VLLM_MAX_NUM_SEQS=2" in out
+    # quantization comes from the catalog (modelopt, not modelopt_fp4)
+    assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
+    # not an MoE checkpoint — no --moe-backend
+    assert "--moe-backend" not in out
+
+
 def test_switch_apply_writes_purpose_machine_env(tmp_path, monkeypatch) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())

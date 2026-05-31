@@ -12,6 +12,7 @@ from model_gear.runtime import _parser
     [
         # Qwen3-Coder / Qwen3.6 emit the XML function format → qwen3_coder
         ("mmangkad/Qwen3.6-27B-NVFP4", "qwen3_coder"),
+        ("sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP", "qwen3_coder"),
         ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "qwen3_coder"),
         ("some/qwen3_6-foo", "qwen3_coder"),
         # Qwen3 dense → hermes

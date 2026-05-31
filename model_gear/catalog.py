@@ -73,6 +73,28 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         doc="qwen3-32b-nvfp4.md",
     ),
     SupportedModel(
+        id="sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+        role_hint="candidate",
+        shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
+        context="256K native (capped to 32K for the first load)",
+        tool_parser="qwen3_coder",
+        quantization="modelopt",
+        status="load-tested",
+        doc="qwen3.6-27b-text-nvfp4-mtp.md",
+        # MTP candidate (issue #26): an MTP-grafted re-export of the 27B primary —
+        # the baseline NVFP4 export drops the MTP draft head (0% draft acceptance),
+        # so this repo restores it in bf16 for vLLM speculative decoding. The
+        # --speculative-config is catalog data (like moe_backend): compose can't omit
+        # an empty flag, so `model switch` surfaces it as a hand edit. Load-tested on
+        # the GB10 2026-05-31: 19.1 tok/s decode (~2.4x the baseline 27B) at 72% MTP
+        # acceptance on vLLM 0.19.0+nv26.04. Also needs --trust-remote-code +
+        # --language-model-only, VLLM_MAX_NUM_SEQS=2 (4 OOMs at n=3/256K), and a
+        # tokenizer override (--tokenizer=mmangkad/Qwen3.6-27B-NVFP4 — the checkpoint's
+        # tokenizer_config declares TokenizersBackend, absent from the nv26.04 image).
+        # Quantization `modelopt` resolves to modelopt_fp4. See the doc.
+        speculative_config='{"method": "qwen3_5_mtp", "num_speculative_tokens": 3}',
+    ),
+    SupportedModel(
         id="mmangkad/Qwen3.6-35B-A3B-NVFP4",
         role_hint="candidate",
         shape="MoE (~3B active per token)",

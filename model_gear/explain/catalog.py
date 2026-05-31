@@ -90,9 +90,12 @@ Flags: `--port`, `--purpose {balanced,prompt-heavy,decode-heavy}` (tunes batchin
 context / attention defaults), `--max-model-len` / `--gpu-mem-util` (explicit
 overrides of the machine profile), `--served-name`, `--tool-call-parser` (e.g.
 `hermes` for Qwen3 dense, `qwen3_coder` for Qwen3-Coder/3.6), `--quantization`,
-`--compose-dir`, `--apply`, `--json`. Switching to the Qwen3.6-35B-A3B MoE prints
-a reminder for its compose-only `--moe-backend=marlin` flag (its MTP
-speculative-config is not carried — it fails to load on that checkpoint).
+`--compose-dir`, `--apply`, `--json`. Switching to a model with catalog serve-extras
+prints a reminder for the compose-only flags that can't be defaulted in the shared
+template: the Qwen3.6-35B-A3B MoE wants `--moe-backend=marlin` (its MTP
+speculative-config is *not* carried — it fails to load on that checkpoint), and the
+`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` candidate carries an MTP
+`--speculative-config` (plus `--trust-remote-code` / `--language-model-only`).
 Only one ~30B-class model fits on a single GB10 at a time, so the switch frees
 the prior model before starting the new one.
 """
@@ -206,6 +209,11 @@ run on this hardware, holding the correctness + throughput numbers produced by
   tool-call parsing on this build; see the doc).
 - `docs/qwen3-32b-nvfp4.md` — `nvidia/Qwen3-32B-NVFP4`, a dense candidate (faster
   decode; swap in via `PRIMARY_MODEL` / `model switch`).
+- `docs/qwen3.6-27b-text-nvfp4-mtp.md` — `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`,
+  a text-only MTP candidate: the 27B re-exported with its MTP draft head restored so
+  vLLM speculative decoding works (the baseline NVFP4 export drops it). Carries a
+  catalog `--speculative-config`; switch surfaces it as a compose edit. Load-tested
+  on the GB10: 19.1 tok/s decode (~2.4x the baseline 27B) at 72% MTP acceptance (#26).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
   candidate (the former fallback; OOM'd/stalled on the GB10, never load-tested).
 
@@ -348,10 +356,12 @@ _TUNING = """\
    `VLLM_MAX_NUM_BATCHED_TOKENS`, and the shape `model benchmark` exercises:
    `balanced` 4/8192 (≈1K in/1K out), `prompt-heavy` 4/16384 (≈8K in/1K out),
    `decode-heavy` 8/4096 (≈1K in/8K out).
-3. **model** (the catalog) → `VLLM_QUANTIZATION`, `VLLM_TOOL_CALL_PARSER`, and —
-   for the MoE candidate only — a printed reminder for the compose-only
-   `--moe-backend=marlin` flag (can't be defaulted in the shared template; its MTP
-   speculative-config is not carried — it fails to load on that checkpoint).
+3. **model** (the catalog) → `VLLM_QUANTIZATION`, `VLLM_TOOL_CALL_PARSER`, and a
+   printed reminder for any compose-only serve-extras (can't be defaulted in the
+   shared template): `--moe-backend=marlin` for the MoE candidate (whose own MTP
+   speculative-config is not carried — it fails to load on that checkpoint), and the
+   MTP `--speculative-config` for the `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
+   candidate (plus its `--trust-remote-code` / `--language-model-only`).
 
 `model benchmark` defaults its workload shape to the configured `VLLM_PURPOSE`, so
 the numbers track the serve config. Override with `--purpose` / `--input-len` /

@@ -128,3 +128,10 @@ layers with experimental prefix caching, plus a ViT encoder unused for text).
 `PRIMARY_MODEL` / `model switch` when raw text decode throughput matters more than
 context length or vision. Re-run `model assess` / `model benchmark` after any vLLM
 image bump — the Mamba/NVFP4 paths are young and likely to get faster.
+
+**For MTP (speculative decoding) on the 27B,** the baseline NVFP4 export here drops
+the MTP draft head (~0 % acceptance). The MTP-grafted, text-only re-export
+`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
+([`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md)) restores it for
+vLLM speculative decoding — a candidate to benchmark against this baseline
+([issue #26](https://github.com/agentculture/model-gear/issues/26)).

@@ -61,24 +61,47 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
 
-def _moe_notice(model_id: str) -> str | None:
-    """Reminder that an MoE model needs an extra compose flag (from the catalog).
+def _serve_notices(model_id: str) -> list[str]:
+    """Reminders for catalog serve-extras a model needs as a manual compose edit.
 
-    ``--moe-backend`` can't be defaulted in the single-model template (compose
-    can't conditionally omit a flag, and an empty ``--moe-backend=`` token breaks
-    vLLM), so ``model switch`` surfaces it for a manual compose edit instead. The
-    flag is emitted bare (no surrounding quotes) so it pastes verbatim as a compose
-    ``command:`` list item. (MTP ``--speculative-config`` is intentionally not in
-    the catalog — it fails to load on the catalogued checkpoint; see the doc.)
+    Some flags can't be defaulted in the single-model template — compose can't
+    conditionally omit a flag, and an empty ``--moe-backend=`` / ``--speculative-config=``
+    token breaks vLLM — so ``model switch`` surfaces them for a hand edit instead:
+
+    * ``--moe-backend`` for an MoE checkpoint (emitted bare so it pastes verbatim as
+      a compose ``command:`` list item); and
+    * ``--speculative-config`` (MTP draft) for a checkpoint that ships MTP weights,
+      together with the ``--trust-remote-code`` / ``--language-model-only`` flags and
+      the ``VLLM_MAX_NUM_SEQS=2`` cap that MTP-grafted text-only build also needs.
+
+    Returns one line per applicable extra (empty list for a plain model).
     """
+    notices: list[str] = []
     for model in supported_models():
-        if model.id == model_id and model.moe_backend:
-            return (
+        if model.id != model_id:
+            continue
+        if model.moe_backend:
+            notices.append(
                 "MoE model — add this to the compose `command` by hand (not written "
                 "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
                 f"--moe-backend={model.moe_backend}"
             )
-    return None
+        if model.speculative_config:
+            # Emit each flag as its own argv-safe `command:` list item (the compose
+            # command is a YAML list — one argv token per item). --speculative-config
+            # uses the `=` form (no space) and is single-quoted because its JSON value
+            # contains `: ` / `{`; the others are bare tokens. VLLM_MAX_NUM_SEQS is an
+            # .env var, kept as a separate human note (not a compose token).
+            notices.append(
+                "MTP/text-only model — add these `command:` list items by hand (see "
+                "docs/qwen3.6-27b-text-nvfp4-mtp.md), then set VLLM_MAX_NUM_SEQS=2 in "
+                ".env (4 OOMs at n=3/256K):"
+                f"\n      - '--speculative-config={model.speculative_config}'"
+                "\n      - --trust-remote-code"
+                "\n      - --language-model-only"
+                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
+            )
+    return notices
 
 
 def _resolve_machine_name(machine_arg: str) -> str:
@@ -119,7 +142,7 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
     return plan, messages
 
 
-def _emit_dry_run(deploy_dir, env_path, plan, messages, moe_msg, port, probe, json_mode) -> None:
+def _emit_dry_run(deploy_dir, env_path, plan, messages, notices, port, probe, json_mode) -> None:
     if json_mode:
         emit_result(
             {
@@ -130,7 +153,7 @@ def _emit_dry_run(deploy_dir, env_path, plan, messages, moe_msg, port, probe, js
                 "machine": plan.get("VLLM_MACHINE"),
                 "tool_call_parser": plan.get("VLLM_TOOL_CALL_PARSER"),
                 "quantization": plan.get("VLLM_QUANTIZATION"),
-                "moe_notice": moe_msg,
+                "compose_edits": notices,
                 "probe": probe,
             },
             json_mode=True,
@@ -139,8 +162,7 @@ def _emit_dry_run(deploy_dir, env_path, plan, messages, moe_msg, port, probe, js
     lines = [f"DRY RUN — would update {env_path}:"]
     lines += [f"  {k}={v}" for k, v in plan.items()]
     lines += [f"  {m}" for m in messages]
-    if moe_msg:
-        lines.append(f"  NOTE: {moe_msg}")
+    lines += [f"  NOTE: {notice}" for notice in notices]
     lines.append(
         f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
     )
@@ -151,7 +173,7 @@ def _emit_dry_run(deploy_dir, env_path, plan, messages, moe_msg, port, probe, js
 
 
 def _apply_switch(
-    model, deploy_dir, env_path, plan, messages, moe_msg, port, served, probe, json_mode
+    model, deploy_dir, env_path, plan, messages, notices, port, served, probe, json_mode
 ):
     emit_diagnostic(
         f">> switching to {model} (port={port} purpose={plan['VLLM_PURPOSE']} "
@@ -160,8 +182,8 @@ def _apply_switch(
     )
     for msg in messages:
         emit_diagnostic(f">> {msg}")
-    if moe_msg:
-        emit_diagnostic(f">> NOTE: {moe_msg}")
+    for notice in notices:
+        emit_diagnostic(f">> NOTE: {notice}")
     for key, value in plan.items():
         _env.set_env(env_path, key, value)
     _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
@@ -195,7 +217,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
     port = _runtime_ops.resolve_port(args, env_path)
     served = args.served_name or args.model
     plan, messages = _build_plan(args, port, served)
-    moe_msg = _moe_notice(args.model)
+    notices = _serve_notices(args.model)
 
     if args.apply:
         _apply_switch(
@@ -204,7 +226,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
             env_path,
             plan,
             messages,
-            moe_msg,
+            notices,
             port,
             served,
             not args.no_probe,
@@ -212,7 +234,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
         )
     else:
         _emit_dry_run(
-            deploy_dir, env_path, plan, messages, moe_msg, port, not args.no_probe, json_mode
+            deploy_dir, env_path, plan, messages, notices, port, not args.no_probe, json_mode
         )
     return 0
 

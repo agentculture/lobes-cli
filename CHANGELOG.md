@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-05-31
+
+### Added
+
+- **MTP (Multi-Token Prediction) candidate for the 27B** (issue #26). New catalog
+  entry `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` — a text-only re-export of the
+  27B primary with its **MTP draft head restored in bf16** so vLLM speculative
+  decoding actually works. The lesson from the 35B MoE applied: the baseline NVFP4
+  export drops the MTP head (~0 % draft acceptance), and a newer vLLM isn't
+  installable on the aarch64 GB10 — so the fix is *a checkpoint that ships the MTP
+  weights*, not a newer engine. Carries a catalog `speculative_config`
+  (`{"method":"qwen3_5_mtp","num_speculative_tokens":3}`); quantization is
+  `modelopt`. **Load-tested on the DGX Spark (GB10) 2026-05-31: 19.1 tok/s decode
+  (~2.4× the baseline 27B's ~8 tok/s) at 72 % MTP draft acceptance on vLLM
+  0.19.0+nv26.04** — the open risk (does the stock image accept `qwen3_5_mtp`?) is
+  cleared (it resolves the `Qwen3_5MTP` draft head). One tokenizer override is
+  required: the checkpoint declares the newer `TokenizersBackend` class (absent from
+  nv26.04), so serve with `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4` (the cached
+  sibling, same vocab); `model switch` prints it.
+  - New per-model doc `docs/qwen3.6-27b-text-nvfp4-mtp.md` with the serve recipe,
+    the live benchmark table (decode tok/s + acceptance vs the baseline), and the
+    caveats (`--max-num-seqs 2` or it silently OOMs; the tokenizer override).
+
+### Changed
+
+- **`model switch` surfaces MTP serve-extras, not just MoE.** `_moe_notice` →
+  `_serve_notices` (now a list): a model with a catalog `speculative_config` prints
+  the exact `--speculative-config` / `--trust-remote-code` / `--language-model-only`
+  compose edits (+ the `VLLM_MAX_NUM_SEQS=2` reminder), the same hand-edit pattern
+  as `--moe-backend`. The `--json` dry-run replaces the `moe_notice` key with a
+  `compose_edits` list. `env.example` + the `explain` catalog prose updated to match.
+
+### Fixed
+
 ## [0.13.0] - 2026-05-31
 
 ### Added
