@@ -198,3 +198,12 @@ copy** (loads on the stock NGC `26.04-py3` image with `--moe-backend marlin`,
 right loader ships for aarch64 (a newer NGC image, or upstream ≥0.22 gaining
 aarch64 wheels). The image stays **NGC `26.04-py3`** (latest tag; vLLM
 0.19.0 + torch 2.12.0a0.nv26.04 + CUDA 13.2, all Blackwell-patched).
+
+> **The 27B took the other route.** Rather than wait for a newer engine, the 27B
+> gets MTP from a checkpoint that *ships the MTP draft weights*
+> (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`,
+> [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md), issue #26). The
+> same strategy could unblock MTP here — a 35B re-export with the draft head
+> grafted back, loadable on the stock `0.19.0` image — without the `nvidia/`
+> NVFP4-MoE loader. Re-testing `nvidia/Qwen3.6-35B-A3B-NVFP4` + MTP is tracked as a
+> follow-up.

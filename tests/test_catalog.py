@@ -3,6 +3,7 @@ drift from the docs, the parser inference, and the gateway's default primary."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -59,18 +60,30 @@ def test_gateway_default_primary_and_fallback_are_in_catalog() -> None:
     assert _config._DEFAULT_FALLBACK in ids
 
 
-def test_moe_serve_extras_align_with_shape() -> None:
-    # The MoE-only serve flags (--moe-backend / --speculative-config MTP) belong
-    # to MoE checkpoints alone — they break the dense/hybrid models and must stay
-    # off them. Tie the invariant to the architecture phrase so the two can't drift.
+def test_moe_backend_aligns_with_shape() -> None:
+    # --moe-backend belongs to MoE checkpoints alone — it breaks the dense/hybrid
+    # models. Tie the invariant to the architecture phrase so the two can't drift.
     for model in SUPPORTED_MODELS:
         is_moe = model.shape.lower().startswith("moe")
         assert bool(model.moe_backend) == is_moe, f"{model.id}: moe_backend vs shape"
-        if not is_moe:
-            assert model.speculative_config == "", f"{model.id}: stray speculative_config"
-    # the 35B MoE candidate carries the marlin MoE kernel (verified to load),
-    # but NOT the MTP speculative-config — that fails on the mmangkad checkpoint
-    # (verified live 2026-05-31); see docs/qwen3.6-35b-a3b-nvfp4.md.
     moe = next(m for m in SUPPORTED_MODELS if m.shape.lower().startswith("moe"))
     assert moe.moe_backend == "marlin"
+    # the 35B MoE candidate does NOT carry the MTP speculative-config — it fails on
+    # the mmangkad checkpoint (verified live 2026-05-31); see its doc.
     assert moe.speculative_config == ""
+
+
+def test_speculative_config_only_on_mtp_checkpoints() -> None:
+    # --speculative-config (MTP draft) is carried only by a checkpoint that ships
+    # MTP draft weights — flagged by the -MTP suffix in its id. A baseline NVFP4
+    # export drops the draft head (0% acceptance), so it must stay empty elsewhere.
+    for model in SUPPORTED_MODELS:
+        if model.speculative_config:
+            assert "MTP" in model.id.upper(), f"{model.id}: speculative_config on a non-MTP id"
+            method = json.loads(model.speculative_config).get("method")
+            assert method, f"{model.id}: speculative_config missing 'method'"
+    # the MTP-grafted 27B candidate (issue #26) carries the qwen3_5_mtp draft config.
+    sak = next(m for m in SUPPORTED_MODELS if m.id == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP")
+    cfg = json.loads(sak.speculative_config)
+    assert cfg["method"] == "qwen3_5_mtp"
+    assert cfg["num_speculative_tokens"] == 3

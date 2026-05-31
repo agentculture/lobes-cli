@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-05-31
+
+### Added
+
+- **MTP (Multi-Token Prediction) candidate for the 27B** (issue #26). New catalog
+  entry `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` — a text-only re-export of the
+  27B primary with its **MTP draft head restored in bf16** so vLLM speculative
+  decoding actually works. The lesson from the 35B MoE applied: the baseline NVFP4
+  export drops the MTP head (~0 % draft acceptance), and a newer vLLM isn't
+  installable on the aarch64 GB10 — so the fix is *a checkpoint that ships the MTP
+  weights*, not a newer engine. Carries a catalog `speculative_config`
+  (`{"method":"qwen3_5_mtp","num_speculative_tokens":3}`); quantization is
+  `modelopt`. Status `configured` (the live load-test runs on the DGX Spark).
+  - New per-model doc `docs/qwen3.6-27b-text-nvfp4-mtp.md` with the serve recipe,
+    a live-test checklist (confirm the unsloth baseline gives ~0 % MTP acceptance,
+    then benchmark sakamakismile), and the caveats (`--max-num-seqs 2` or it
+    silently OOMs; verify `qwen3_5_mtp` loads on the nv26.04 image — the #1 risk).
+
+### Changed
+
+- **`model switch` surfaces MTP serve-extras, not just MoE.** `_moe_notice` →
+  `_serve_notices` (now a list): a model with a catalog `speculative_config` prints
+  the exact `--speculative-config` / `--trust-remote-code` / `--language-model-only`
+  compose edits (+ the `VLLM_MAX_NUM_SEQS=2` reminder), the same hand-edit pattern
+  as `--moe-backend`. The `--json` dry-run replaces the `moe_notice` key with a
+  `compose_edits` list. `env.example` + the `explain` catalog prose updated to match.
+
+### Fixed
+
 ## [0.13.0] - 2026-05-31
 
 ### Added
