@@ -60,6 +60,9 @@ services:
       # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
       # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
       # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
+      # is only needed to download gated repos (these defaults are public) — leave it
+      # empty or use a minimal-scope read-only token; pin revisions you trust.
       - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
       - --trust-remote-code
       - --language-model-only

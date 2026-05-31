@@ -8,11 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from model_gear.catalog import SUPPORTED_MODELS, as_dicts, supported_models
+from model_gear.catalog import (
+    SUPPORTED_MODELS,
+    as_dicts,
+    mtp_compose_command_items,
+    supported_models,
+)
 from model_gear.gateway import _config
 from model_gear.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
+_TEMPLATES = Path(__file__).resolve().parents[1] / "model_gear" / "templates"
 
 _FIELDS = ("id", "role_hint", "shape", "context", "tool_parser", "quantization", "status", "doc")
 
@@ -82,8 +88,21 @@ def test_speculative_config_only_on_mtp_checkpoints() -> None:
             assert "MTP" in model.id.upper(), f"{model.id}: speculative_config on a non-MTP id"
             method = json.loads(model.speculative_config).get("method")
             assert method, f"{model.id}: speculative_config missing 'method'"
-    # the MTP-grafted 27B candidate (issue #26) carries the qwen3_5_mtp draft config.
+    # the MTP-grafted 27B primary (issue #26) carries the qwen3_5_mtp draft config.
     sak = next(m for m in SUPPORTED_MODELS if m.id == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP")
     cfg = json.loads(sak.speculative_config)
     assert cfg["method"] == "qwen3_5_mtp"
     assert cfg["num_speculative_tokens"] == 3
+
+
+def test_mtp_command_items_match_packaged_templates() -> None:
+    # The MTP primary's extra command items are baked into the compose templates AND
+    # named by `model switch` as the lines to remove for a non-MTP model. The catalog
+    # helper is the single source of truth — guard it against drift from the packaged
+    # templates (both single-model and the fleet vllm-primary service must ship them).
+    items = mtp_compose_command_items()
+    assert items[0].startswith("--speculative-config=")
+    for template in ("docker-compose.yml", "fleet/docker-compose.yml"):
+        text = (_TEMPLATES / template).read_text(encoding="utf-8")
+        for item in items:
+            assert item in text, f"{item!r} missing from templates/{template} (drift)"

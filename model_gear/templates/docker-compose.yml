@@ -79,8 +79,13 @@ services:
       # conditionally omit a list item — so to serve a NON-MTP model, REMOVE these 4
       # lines by hand (`model switch <non-mtp-model>` prints them). See
       # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # SECURITY: --trust-remote-code runs the model repo's code in-container with
+      # access to whatever .env carries. HF_TOKEN is only needed to *download* gated
+      # repos (these defaults are public) — leave it empty, or use a minimal-scope
+      # read-only token and clear it once weights are cached. Pin model revisions you
+      # trust; the blast radius of a compromised repo is arbitrary code, not just weights.
       - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
-      - --trust-remote-code                # MTP build ships custom modeling code (also lets it run alongside HF_TOKEN + the cache mount)
+      - --trust-remote-code                # MTP build ships custom modeling code (see SECURITY note above)
       - --language-model-only              # MTP build is text-only (ViT tower removed)
       - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4   # MTP checkpoint's tokenizer_config declares TokenizersBackend (absent from nv26.04); point at the cached base tokenizer (same vocab)
       # NOTE: the MoE-only flag is NOT here. The Qwen3.6-35B-A3B MoE candidate also

@@ -149,9 +149,15 @@ the first load should cap `--max-model-len 32768`.
 
 ## Live-test (run on `spark-f8a9`, 2026-05-31) — how to reproduce
 
-1. **Premise (unsloth).** The baseline NVFP4 export drops the MTP head → ~0 %
-   acceptance (established by the unsloth + sakamakismile model cards; not re-run
-   live to avoid a redundant ~28 GB download). The grafted re-export is what makes
+1. **Premise (unsloth baseline).** The ticket ([#26](https://github.com/agentculture/model-gear/issues/26))
+   names a baseline serve command —
+   `vllm serve unsloth/Qwen3.6-27B-NVFP4 --trust-remote-code --dtype bfloat16 --max-model-len 4096`.
+   We deliberately **deviate**: that baseline NVFP4 export *drops the MTP head* →
+   ~0 % draft acceptance (established by the unsloth + sakamakismile model cards),
+   so running it cannot exercise MTP — which is the whole point. It was not re-run
+   live to avoid a redundant ~28 GB download. The decode comparison below is against
+   the **already-load-tested `mmangkad/Qwen3.6-27B-NVFP4`** (same arch + NVFP4, the
+   archived primary), not the unsloth artifact. The grafted re-export is what makes
    MTP work.
 2. **The real test (sakamakismile).** Stop the primary first (one ~30B model fits
    on the GB10 at a time), serve with the compose edits above + `VLLM_MAX_NUM_SEQS=2`,

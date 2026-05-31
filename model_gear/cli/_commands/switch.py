@@ -22,7 +22,7 @@ import argparse
 import socket
 
 from model_gear import profiles
-from model_gear.catalog import supported_models
+from model_gear.catalog import mtp_compose_command_items, supported_models
 from model_gear.cli import _runtime_ops
 from model_gear.cli._commands.whoami import _gpu_name
 from model_gear.cli._output import emit_diagnostic, emit_result
@@ -91,19 +91,22 @@ def _serve_notices(model_id: str) -> list[str]:
         if model.id != model_id:
             continue
         if not model.speculative_config:
-            # Non-MTP target: the template's baked MTP flags must come back out.
-            # Show the exact lines (spec-config pulled from the primary so it stays
-            # in sync); the JSON value is single-quoted because it contains `: `/`{`.
-            primary = _mtp_primary()
-            spec = primary.speculative_config if primary else '{"method": "..."}'
+            # Non-MTP target: the template's baked MTP flags must come back out. The
+            # item list is the single source of truth in the catalog (so it can't
+            # drift from the templates); render each as a YAML `command:` list item —
+            # --speculative-config is single-quoted because its JSON value has `: `/`{`.
+            rendered = "".join(
+                (
+                    f"\n      - '{item}'"
+                    if item.startswith("--speculative-config=")
+                    else f"\n      - {item}"
+                )
+                for item in mtp_compose_command_items()
+            )
             notices.append(
                 "non-MTP model — the template ships the MTP default primary's flags; "
                 "REMOVE these `command:` list items by hand to serve this model (see "
-                "docs/qwen3.6-27b-text-nvfp4-mtp.md):"
-                f"\n      - '--speculative-config={spec}'"
-                "\n      - --trust-remote-code"
-                "\n      - --language-model-only"
-                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
+                "docs/qwen3.6-27b-text-nvfp4-mtp.md):" + rendered
             )
         if model.moe_backend:
             notices.append(
@@ -228,6 +231,39 @@ def _apply_switch(
     emit_result("\n".join(out), json_mode=False)
 
 
+def _apply_env_only(model, env_path, plan, messages, notices, served, port, json_mode) -> None:
+    """``--apply`` blocked on a required compose edit: write ``.env`` but DON'T restart.
+
+    Switching to a model the shared template can't serve unedited (a non-MTP model,
+    while the template ships the MTP primary's flags; or the MoE backend flag) would
+    take a healthy container down and fail to bring it back. So we persist the plan
+    to ``.env`` and stop, printing the edits to make by hand. The user applies them
+    and then runs ``model serve --apply`` — or re-runs ``switch --apply --force`` to
+    recreate the container anyway.
+    """
+    for key, value in plan.items():
+        _env.set_env(env_path, key, value)
+    if json_mode:
+        emit_result(
+            {
+                "switched": model,
+                "served_name": served,
+                "port": port,
+                "restarted": False,
+                "blocked_on_compose_edits": True,
+                "compose_edits": notices,
+                "next": "apply the compose edits, then: model serve --apply"
+                " (or re-run switch --apply --force)",
+            },
+            json_mode=True,
+        )
+        return
+    lines = [f">> wrote .env for {model} but did NOT restart — a manual compose edit is required:"]
+    lines += [f">> NOTE: {notice}" for notice in notices]
+    lines.append(">> then: model serve --apply  (or re-run: model switch ... --apply --force)")
+    emit_result("\n".join(lines), json_mode=False)
+
+
 def cmd_switch(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     deploy_dir = _runtime_ops.deployment_dir(args)
@@ -238,18 +274,22 @@ def cmd_switch(args: argparse.Namespace) -> int:
     notices = _serve_notices(args.model)
 
     if args.apply:
-        _apply_switch(
-            args.model,
-            deploy_dir,
-            env_path,
-            plan,
-            messages,
-            notices,
-            port,
-            served,
-            not args.no_probe,
-            json_mode,
-        )
+        if notices and not args.force:
+            # Required compose edit pending — don't take a healthy deployment down.
+            _apply_env_only(args.model, env_path, plan, messages, notices, served, port, json_mode)
+        else:
+            _apply_switch(
+                args.model,
+                deploy_dir,
+                env_path,
+                plan,
+                messages,
+                notices,
+                port,
+                served,
+                not args.no_probe,
+                json_mode,
+            )
     else:
         _emit_dry_run(
             deploy_dir, env_path, plan, messages, notices, port, not args.no_probe, json_mode
@@ -305,6 +345,13 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--apply", action="store_true", help="Commit the switch (recreate the container)."
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="With --apply, recreate the container even when a manual compose edit "
+        "is required (default: write .env but skip the restart so a healthy "
+        "deployment isn't taken down by an incompatible compose file).",
     )
     p.add_argument(
         "--no-probe",

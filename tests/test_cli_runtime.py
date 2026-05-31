@@ -397,8 +397,18 @@ def test_switch_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
         return {"ok": True, "tool_calls": ["finish"], "finish": "tool_calls", "error": None}
 
     monkeypatch.setattr(_runtime_ops, "probe_tool_calling", fake_probe)
+    # nvidia/Qwen3-32B is a non-MTP catalog model, so --apply alone would block on
+    # the compose edit; --force restarts (and runs the probe) anyway.
     rc = main(
-        ["switch", "nvidia/Qwen3-32B-NVFP4", "--compose-dir", str(tmp_path), "--apply", "--json"]
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+            "--force",
+            "--json",
+        ]
     )
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -425,12 +435,56 @@ def test_switch_apply_no_probe_skips(tmp_path, monkeypatch, capsys) -> None:
             "--compose-dir",
             str(tmp_path),
             "--apply",
+            "--force",  # non-MTP model: --force restarts past the compose-edit block
             "--no-probe",
             "--json",
         ]
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["tool_calling"] is None
+
+
+def test_switch_apply_non_mtp_blocks_and_force_overrides(tmp_path, monkeypatch, capsys) -> None:
+    # The template ships the MTP primary's flags. Switching --apply to a non-MTP
+    # model must write .env but NOT recreate the container (the compose file is
+    # incompatible until the MTP lines are removed) — otherwise it takes a healthy
+    # deployment down and fails to come back. --force overrides.
+    _scaffold(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(_compose, "compose_down", lambda d: (calls.append("down"), _ok())[1])
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", lambda *a, **k: None)
+
+    # --apply alone on a non-MTP model: writes .env, blocks the restart.
+    rc = main(
+        ["switch", "nvidia/Qwen3-32B-NVFP4", "--compose-dir", str(tmp_path), "--apply", "--json"]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restarted"] is False
+    assert payload["blocked_on_compose_edits"] is True
+    assert payload["compose_edits"]  # the REMOVE-these-lines notice
+    assert calls == []  # the container was NOT recreated
+    assert (
+        _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "nvidia/Qwen3-32B-NVFP4"
+    )  # .env written
+
+    # --force overrides: now it recreates the container.
+    rc = main(
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+            "--force",
+            "--no-probe",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    assert calls == ["down", "up"]
 
 
 def test_probe_tool_calling_delegates(monkeypatch) -> None:

@@ -132,3 +132,33 @@ def supported_models() -> tuple[SupportedModel, ...]:
 def as_dicts() -> list[dict[str, str]]:
     """The catalog as plain dicts — for JSON emission without importing the dataclass."""
     return [asdict(model) for model in SUPPORTED_MODELS]
+
+
+# The tokenizer the MTP primary serves with — a base-checkpoint override (the MTP
+# checkpoint's tokenizer_config declares a class absent from the nv26.04 image; see
+# docs/qwen3.6-27b-text-nvfp4-mtp.md caveat 1). Drop once fixed upstream (issue #29).
+MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
+
+
+def mtp_compose_command_items() -> list[str]:
+    """The extra compose ``command:`` items the MTP default primary needs.
+
+    These four flags are baked into the packaged compose templates *and* named by
+    ``model switch`` as the lines to remove when switching to a non-MTP model. This
+    is the single source of truth so the two cannot drift — ``tests/test_catalog.py``
+    asserts the packaged templates contain exactly these items, and the speculative
+    config is pulled from the primary catalog entry rather than re-typed.
+
+    Returns argv tokens (no YAML quoting) in compose ``command:`` order.
+    """
+    primary = next(
+        (m for m in SUPPORTED_MODELS if m.role_hint == "primary" and m.speculative_config),
+        None,
+    )
+    spec = primary.speculative_config if primary else '{"method": "..."}'
+    return [
+        f"--speculative-config={spec}",
+        "--trust-remote-code",
+        "--language-model-only",
+        f"--tokenizer={MTP_TOKENIZER_OVERRIDE}",
+    ]

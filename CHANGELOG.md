@@ -30,6 +30,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`mmangkad/Qwen3.6-27B-NVFP4` archived to a candidate** — retained as the MTP
   primary's tokenizer source and the only vision-capable 27B in the catalog.
 
+### Fixed
+
+- **`model switch --apply` no longer takes a healthy deployment down when a manual
+  compose edit is required** (Qodo review). Switching to a non-MTP model (the
+  template ships the MTP primary's incompatible flags) now writes `.env` and
+  **stops before the restart**, printing the lines to remove; `--force` overrides
+  to recreate the container anyway.
+- **MTP compose flags are a single source of truth** (`catalog.mtp_compose_command_items()`) —
+  consumed by both `model switch`'s removal notice and guarded against drift from
+  the packaged templates by a new test (Qodo review).
+- **Security guidance for the now-default `--trust-remote-code`** added to both
+  compose templates and `env.example`: HF_TOKEN is only needed for gated repos
+  (defaults are public) — leave it empty or use a minimal-scope read-only token, and
+  pin trusted revisions (Qodo review). Tracking the upstream tokenizer fix that would
+  let us drop the override in #29.
+
 ## [0.14.0] - 2026-05-31
 
 ### Added
