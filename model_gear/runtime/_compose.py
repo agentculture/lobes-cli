@@ -27,6 +27,14 @@ FLEET_FALLBACK = "model-gear-vllm-fallback"
 FLEET_GATEWAY = "model-gear-gateway"
 FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_FALLBACK, FLEET_GATEWAY)
 
+# Audio overlay (model init --fleet --audio): STT + TTS + the realtime bridge,
+# layered on the base fleet via a compose override and fronted by the gateway.
+AUDIO_OVERLAY = "docker-compose.audio.yml"
+FLEET_STT = "model-gear-stt"
+FLEET_TTS = "model-gear-tts"
+FLEET_REALTIME = "model-gear-realtime"
+FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
+
 # Template filename -> destination filename written by the scaffold. The single
 # template set is the default (every existing caller stays unchanged); the fleet
 # set scaffolds the 3-container gateway deployment (model init --fleet).
@@ -36,6 +44,17 @@ FLEET_TEMPLATES = {
     "fleet/env.example": ENV_FILE,
     "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
 }
+# The --audio extras layered on FLEET_TEMPLATES: the compose override, the two
+# image build files, and the vendored Parakeet server. The audio .env keys are
+# appended to .env separately (env.audio.example → AUDIO_ENV_TEMPLATE) so they
+# extend the fleet .env instead of clobbering it.
+AUDIO_TEMPLATES = {
+    "fleet/docker-compose.audio.yml": AUDIO_OVERLAY,
+    "fleet/Dockerfile.realtime": "Dockerfile.realtime",
+    "fleet/Dockerfile.parakeet": "Dockerfile.parakeet",
+    "fleet/listen_server.py": "listen_server.py",
+}
+AUDIO_ENV_TEMPLATE = "fleet/env.audio.example"
 # Back-compat alias: the single set was the only one before the fleet existed.
 _TEMPLATES = SINGLE_TEMPLATES
 
@@ -130,7 +149,44 @@ def write_scaffold(
     return written
 
 
+def append_audio_env(target: os.PathLike | str) -> Path:
+    """Append the audio overlay's env keys (``env.audio.example``) to ``.env``.
+
+    The fleet ``.env`` is written first (``write_scaffold``); ``--audio`` then
+    appends its keys (NGC_API_KEY, ports, voices, AUDIO_URL …) so they extend the
+    fleet config rather than overwrite it. Returns the ``.env`` path.
+    """
+    env_path = Path(target).expanduser() / ENV_FILE
+    content = _read_template(files("model_gear.templates"), AUDIO_ENV_TEMPLATE)
+    with env_path.open("a", encoding="utf-8") as fh:
+        fh.write(content if content.startswith("\n") else "\n" + content)
+    return env_path
+
+
 # --- docker compose --------------------------------------------------------
+
+
+def audio_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the ``--audio`` overlay (``docker-compose.audio.yml``) is scaffolded."""
+    return (Path(deploy_dir) / AUDIO_OVERLAY).is_file()
+
+
+def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
+    """Fleet container names, including the audio trio when the overlay is present."""
+    if audio_overlay_present(deploy_dir):
+        return FLEET_CONTAINERS + FLEET_AUDIO_CONTAINERS
+    return FLEET_CONTAINERS
+
+
+def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
+    """``-f`` args: just the base file, or base + audio overlay when present.
+
+    Returns ``[]`` when no overlay (``docker compose`` finds docker-compose.yml on
+    its own), so a plain fleet keeps its current argv unchanged.
+    """
+    if audio_overlay_present(deploy_dir):
+        return ["-f", COMPOSE_FILE, "-f", AUDIO_OVERLAY]
+    return []
 
 
 def _run(argv: list[str], *, cwd: str | None = None, timeout: int | None = None):
@@ -158,7 +214,7 @@ def _probe(argv: list[str], *, timeout: int = 10):
 
 
 def compose_down(deploy_dir: os.PathLike | str):
-    return _run(["docker", "compose", "down"], cwd=str(deploy_dir))
+    return _run(["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir))
 
 
 def compose_up_detached(deploy_dir: os.PathLike | str):
@@ -168,8 +224,13 @@ def compose_up_detached(deploy_dir: os.PathLike | str):
 def compose_up_build(deploy_dir: os.PathLike | str):
     """``docker compose up -d --build`` — used by the fleet, whose gateway service
     is built from a local ``Dockerfile.gateway`` (``--build`` picks up a new image
-    on a re-run; first run builds either way)."""
-    return _run(["docker", "compose", "up", "-d", "--build"], cwd=str(deploy_dir))
+    on a re-run; first run builds either way). When the ``--audio`` overlay is
+    scaffolded, the audio services (built from ``Dockerfile.realtime`` /
+    ``Dockerfile.parakeet``) are layered in via ``-f docker-compose.audio.yml``."""
+    return _run(
+        ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d", "--build"],
+        cwd=str(deploy_dir),
+    )
 
 
 def docker_available() -> bool:

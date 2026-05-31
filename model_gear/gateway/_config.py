@@ -25,6 +25,9 @@ class ServerConfig:
     port: int
     connect_timeout: float  # short: a refused/down backend fails over fast
     read_timeout: float  # long: a reasoning model's first token is slow
+    # The audio/realtime backend that serves /v1/audio/* (+ /v1/realtime in PR2).
+    # None on a text-only fleet → those paths 404. Set by the --audio overlay.
+    audio_url: str | None = None
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -79,5 +82,6 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         port=_as_int(env, "GATEWAY_PORT", 8000),
         connect_timeout=_as_float(env, "GATEWAY_CONNECT_TIMEOUT", 5.0),
         read_timeout=_as_float(env, "GATEWAY_READ_TIMEOUT", 600.0),
+        audio_url=(env.get("AUDIO_URL") or "").rstrip("/") or None,
     )
     return table, server

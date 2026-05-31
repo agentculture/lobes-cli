@@ -68,7 +68,7 @@ def cmd_fleet_up(args: argparse.Namespace) -> int:
             "serving": True,
             "port": port,
             "deployment_dir": str(deploy_dir),
-            "containers": list(_compose.FLEET_CONTAINERS),
+            "containers": list(_compose.fleet_containers(deploy_dir)),
         }
         text = (
             f">> gateway up on :{port}. Backends load in the background — "
@@ -106,7 +106,8 @@ def cmd_fleet_status(args: argparse.Namespace) -> int:
     port = _runtime_ops.resolve_port(args, env_path)
 
     containers = [
-        {"name": name, "state": _compose.inspect_state(name)} for name in _compose.FLEET_CONTAINERS
+        {"name": name, "state": _compose.inspect_state(name)}
+        for name in _compose.fleet_containers(deploy_dir)
     ]
     report = {
         "deployment_dir": str(deploy_dir),

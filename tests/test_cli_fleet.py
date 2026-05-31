@@ -18,6 +18,12 @@ def _scaffold_fleet(path):
     return path
 
 
+def _scaffold_fleet_audio(path):
+    templates = {**_compose.FLEET_TEMPLATES, **_compose.AUDIO_TEMPLATES}
+    _compose.write_scaffold(path, force=True, templates=templates)
+    return path
+
+
 # --- fleet up -------------------------------------------------------------
 
 
@@ -117,3 +123,61 @@ def test_fleet_status_unscaffolded_errors(capsys) -> None:
     rc = main(["fleet", "status"])
     assert rc == 2  # EXIT_ENV_ERROR
     assert "hint:" in capsys.readouterr().err
+
+
+# --- audio overlay awareness ----------------------------------------------
+
+
+def test_compose_files_only_adds_overlay_when_present(tmp_path) -> None:
+    _scaffold_fleet(tmp_path)  # no audio overlay
+    assert _compose._compose_files(tmp_path) == []
+    assert _compose.audio_overlay_present(tmp_path) is False
+    _scaffold_fleet_audio(tmp_path)  # now with the overlay
+    assert _compose.audio_overlay_present(tmp_path) is True
+    assert _compose._compose_files(tmp_path) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+    ]
+
+
+def test_compose_up_build_includes_overlay_argv(tmp_path, monkeypatch) -> None:
+    _scaffold_fleet_audio(tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(
+        _compose, "_run", lambda argv, **kw: captured.setdefault("argv", argv) or _ok()
+    )
+    _compose.compose_up_build(tmp_path)
+    assert captured["argv"] == [
+        "docker",
+        "compose",
+        "-f",
+        "docker-compose.yml",
+        "-f",
+        "docker-compose.audio.yml",
+        "up",
+        "-d",
+        "--build",
+    ]
+
+
+def test_fleet_status_includes_audio_containers_with_overlay(tmp_path, capsys) -> None:
+    _scaffold_fleet_audio(tmp_path)
+    rc = main(["fleet", "status", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    names = [c["name"] for c in payload["containers"]]
+    assert names == list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
+
+
+def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, capsys) -> None:
+    _scaffold_fleet_audio(tmp_path)
+    monkeypatch.setattr(_compose, "compose_up_build", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    rc = main(["fleet", "up", "--compose-dir", str(tmp_path), "--apply", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["containers"] == (
+        list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
+    )

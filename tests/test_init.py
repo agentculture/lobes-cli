@@ -113,3 +113,57 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
     names = {f["name"] for f in payload["files"]}
     assert names == {"docker-compose.yml", ".env", "Dockerfile.gateway"}
     assert not target.exists()
+
+
+# --- audio overlay (--fleet --audio) --------------------------------------
+
+
+def test_init_audio_requires_fleet(capsys) -> None:
+    rc = main(
+        ["init", "--audio", "/tmp/nope", "--json"]
+    )  # nosec B108 - never written (errors first)
+    assert rc == 1  # EXIT_USER_ERROR
+    assert "--audio requires --fleet" in capsys.readouterr().err
+
+
+def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None:
+    target = tmp_path / "fa"
+    rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
+    assert rc == 0
+    # fleet files + the four audio overlay files
+    for name in (
+        "docker-compose.yml",
+        "Dockerfile.gateway",
+        "docker-compose.audio.yml",
+        "Dockerfile.realtime",
+        "Dockerfile.parakeet",
+        "listen_server.py",
+    ):
+        assert (target / name).is_file(), name
+    env = (target / ".env").read_text()
+    # fleet keys still present, audio keys appended (not clobbered).
+    assert "PRIMARY_MODEL=mmangkad/Qwen3.6-27B-NVFP4" in env
+    assert "NGC_API_KEY=" in env
+    assert "AUDIO_URL=http://realtime:8080" in env
+    assert "MAGPIE_TTS_PORT=9000" in env
+
+
+def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:
+    target = tmp_path / "fa"
+    rc = main(["init", "--fleet", "--audio", str(target), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fleet"] is True and payload["audio"] is True
+    names = {f["name"] for f in payload["files"]}
+    assert {"docker-compose.audio.yml", "Dockerfile.realtime", "listen_server.py"} <= names
+    assert not target.exists()
+
+
+def test_init_fleet_audio_dry_run_text_mentions_appended_env(tmp_path, capsys) -> None:
+    target = tmp_path / "fa"
+    rc = main(["init", "--fleet", "--audio", str(target)])  # text mode, no --apply
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert ".env (+ audio keys appended)" in out
+    assert "Re-run with --apply to write." in out
+    assert not target.exists()

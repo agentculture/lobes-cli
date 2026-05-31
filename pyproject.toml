@@ -1,6 +1,6 @@
 [project]
 name = "model-gear"
-version = "0.11.1"
+version = "0.12.0"
 description = "model-gear — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "MIT"
@@ -14,6 +14,21 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+# The realtime audio container (model init --fleet --audio → the `realtime`
+# service) installs this; the base wheel + the stdlib gateway never do. Keeps
+# torch/fastapi out of every other install. Pulled by templates/fleet/Dockerfile.realtime.
+realtime = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "python-multipart>=0.0.9",
+    "silero-vad>=5.1",
+    "torch>=2.5",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/model-gear"
@@ -43,7 +58,20 @@ dev = [
 
 [tool.coverage.run]
 source = ["model_gear"]
-omit = ["model_gear/__pycache__/*"]
+omit = [
+    "model_gear/__pycache__/*",
+    # Scaffolded templates are shipped data, not package runtime code — they run
+    # inside the deployment's own containers (e.g. listen_server.py in the Parakeet
+    # image, which imports nemo). Not unit-imported here.
+    "model_gear/templates/*",
+    # Realtime modules that import the [realtime] extra (fastapi / httpx / torch /
+    # uvicorn) are not installed in the offline CI env, so they cannot be
+    # unit-imported. They are integration-tested live (see docs/realtime-pipeline.md).
+    # The stdlib-only realtime helpers (_settings, protocol, audio_facade) stay measured.
+    "model_gear/realtime/app.py",
+    "model_gear/realtime/__main__.py",
+    "model_gear/realtime/tts_client.py",
+]
 
 [tool.coverage.report]
 fail_under = 60

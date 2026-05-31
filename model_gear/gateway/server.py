@@ -28,6 +28,7 @@ from model_gear.gateway._config import ServerConfig
 from model_gear.gateway._routing import (
     Backend,
     RoutingTable,
+    is_audio_path,
     list_models_payload,
     order_backends,
     resolve_model,
@@ -284,6 +285,54 @@ def handle_post(
     )
 
 
+def handle_audio_post(
+    cfg: ServerConfig,
+    path: str,
+    req_headers: Iterable[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+) -> GatewayResponse:
+    """Proxy an ``/v1/audio/*`` POST to the fixed audio backend.
+
+    Unlike :func:`handle_post` this does **no** model parse/rewrite and **no**
+    failover: the body is multipart (transcriptions) or TTS JSON (speech) and is
+    forwarded verbatim to the one audio backend, whose response (a whole audio
+    file or a small JSON) is relayed **streamed** (chunked). Returns 404 when no
+    audio backend is configured (a text-only fleet leaves ``AUDIO_URL`` unset).
+    ``open_upstream`` is injected so this is unit-testable without sockets.
+    """
+    if not cfg.audio_url:
+        return GatewayResponse(
+            status=404,
+            headers=[("Content-Type", "application/json")],
+            body=_error_body("audio endpoints are not configured on this deployment", []),
+        )
+    backend = Backend(name="audio", base_url=cfg.audio_url, served_name="")
+    fwd_headers = filter_headers(req_headers)
+    try:
+        up = open_upstream(
+            backend,
+            path,
+            body,
+            fwd_headers,
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        return GatewayResponse(
+            status=502,
+            headers=[("Content-Type", "application/json")],
+            body=_error_body("audio backend is unavailable", [str(exc)]),
+        )
+    # 2xx, 4xx or 5xx — relay whatever the single audio backend says (no failover).
+    # Stream the body through (chunked) rather than read_all()'ing it: a TTS WAV
+    # can be many MB, and the gateway is the fleet's single front door — buffering
+    # every audio response whole would let one large synthesis exhaust its memory.
+    # up.headers is already hop-by-hop-filtered by open_upstream (Content-Length /
+    # Transfer-Encoding dropped), so the chunked relay frames cleanly.
+    return GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -313,14 +362,20 @@ class _Handler(BaseHTTPRequestHandler):
     # --- POST: proxy /v1/* to a backend ---
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         body = self._read_body()
-        resp = handle_post(
-            self.table,
-            self.server_config,
-            self.path,
-            list(self.headers.items()),
-            body,
-            open_upstream,
-        )
+        if is_audio_path(self.path):
+            # /v1/audio/* → the audio backend, path-routed (no model rewrite/failover).
+            resp = handle_audio_post(
+                self.server_config, self.path, list(self.headers.items()), body, open_upstream
+            )
+        else:
+            resp = handle_post(
+                self.table,
+                self.server_config,
+                self.path,
+                list(self.headers.items()),
+                body,
+                open_upstream,
+            )
         if resp.upstream is None:
             self._send_simple(resp.status, resp.headers, resp.body or b"")
             return

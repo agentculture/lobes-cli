@@ -28,6 +28,16 @@ class RoutingTable:
     aliases: dict[str, str]  # alias -> served_name
 
 
+def is_audio_path(path: str) -> bool:
+    """True for the OpenAI audio endpoints (``/v1/audio/...``).
+
+    These are *path*-routed to the single audio backend, not *model*-routed like
+    chat/completions — the bodies are multipart or plain TTS JSON, never a model
+    the routing table knows about.
+    """
+    return path.split("?", 1)[0].startswith("/v1/audio/")
+
+
 def resolve_model(table: RoutingTable, requested: str | None) -> str:
     """Map a requested model name to a served model name.
 

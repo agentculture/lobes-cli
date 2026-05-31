@@ -1,0 +1,131 @@
+# model-gear FLEET — audio overlay (STT + TTS + the realtime bridge).
+#
+# A docker-compose *override*: layer it on top of the base fleet with
+#   docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d --build
+# `model init --fleet --audio` scaffolds it; `model fleet up --apply` auto-includes
+# it when this file is present. It adds three internal services and teaches the
+# gateway to route /v1/audio/* (and, in a later release, /v1/realtime) to them.
+#
+# Same models as the standalone realtime-api stack used to run — Magpie TTS NIM +
+# Parakeet STT — but consolidated here: the realtime bridge's LLM is the fleet
+# *gateway* (no extra vLLM container). All three expose internal ports only; the
+# gateway fronts them on the one host port (VLLM_PORT).
+#
+# CO-RESIDENCE: these share the GPU with the two LLM backends. The base fleet
+# already warns two ~30B NVFP4 models barely co-fit a GB10 — adding audio
+# realistically wants a dedicated box or a single LLM. See docs/realtime-pipeline.md.
+services:
+  # --- Magpie TTS (NVIDIA NIM, proprietary /v1/audio/synthesize) -------------
+  tts:
+    image: nvcr.io/nim/nvidia/magpie-tts-multilingual:latest
+    container_name: model-gear-tts
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - NGC_API_KEY=${NGC_API_KEY}
+      - NIM_HTTP_API_PORT=${MAGPIE_TTS_PORT:-9000}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+      - ${NIM_CACHE:-${HOME:-/root}/.cache/nim}:/opt/nim/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    # Internal only — reachable as http://tts:9000 on the compose network.
+    expose:
+      - "${MAGPIE_TTS_PORT:-9000}"
+    healthcheck:
+      test:
+        ["CMD", "curl", "-f", "http://localhost:${MAGPIE_TTS_PORT:-9000}/v1/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # --- Parakeet STT (NeMo ASR, already OpenAI /v1/audio/transcriptions) ------
+  stt:
+    build:
+      context: .
+      dockerfile: Dockerfile.parakeet
+    container_name: model-gear-stt
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - PARAKEET_PORT=${PARAKEET_PORT:-9002}
+      - PARAKEET_MODEL=${PARAKEET_MODEL:-nvidia/parakeet-tdt-0.6b-v2}
+      - HF_HOME=/root/.cache/huggingface
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    expose:
+      - "${PARAKEET_PORT:-9002}"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:${PARAKEET_PORT:-9002}/v1/health/ready')
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+
+  # --- realtime bridge (model_gear.realtime, shipped in the wheel) -----------
+  # Serves the OpenAI /v1/audio/* facade now (+ /v1/realtime WS in a later
+  # release). Its LLM is the gateway — reuses the warm fleet, no extra vLLM.
+  realtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.realtime
+      args:
+        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+    container_name: model-gear-realtime
+    restart: unless-stopped
+    # Start order only — the facade tolerates a backend still loading (it returns
+    # 502 per request), so it must not block on backend health.
+    depends_on:
+      - gateway
+      - stt
+      - tts
+    environment:
+      - REALTIME_HOST=0.0.0.0
+      - REALTIME_PORT=${REALTIME_PORT:-8080}
+      - STT_URL=http://stt:${PARAKEET_PORT:-9002}
+      - TTS_URL=http://tts:${MAGPIE_TTS_PORT:-9000}
+      - OPENAI_BASE_URL=http://gateway:8000
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-EMPTY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-}
+      - DEFAULT_VOICE=${DEFAULT_VOICE:-Mia.Calm}
+      - TTS_SPEED=${TTS_SPEED:-125}
+    expose:
+      - "${REALTIME_PORT:-8080}"
+    healthcheck:
+      # python:3.12-slim has no curl — probe /health with stdlib urllib.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=3).status==200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # --- gateway override: teach the front to route /v1/audio/* to realtime ----
+  # Merged onto the base fleet's gateway service (compose appends environment).
+  gateway:
+    environment:
+      - AUDIO_URL=${AUDIO_URL:-http://realtime:8080}
