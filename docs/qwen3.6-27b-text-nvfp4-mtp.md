@@ -1,18 +1,22 @@
-# MTP candidate: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
+# Default primary: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
 
-A **text-only MTP candidate** — the 27B primary re-exported so vLLM **speculative
-decoding (Multi-Token Prediction)** actually works. The fleet's default primary
+The **fleet's default primary since 2026-05-31** — a **text-only MTP build**: the
+27B re-exported so vLLM **speculative decoding (Multi-Token Prediction)** actually
+works. The archived baseline
 (`mmangkad/Qwen3.6-27B-NVFP4`, [`qwen3.6-27b-nvfp4.md`](qwen3.6-27b-nvfp4.md)) is
 slow single-stream on the GB10 (~8 tok/s decode); MTP drafts several tokens per
-forward pass and is the lever that speeds that up. Filed as
+forward pass and roughly doubles that. Promoted from candidate after the
+tool-calling gate passed (see "Tool calling — verified" below). Filed as
 [issue #26](https://github.com/agentculture/model-gear/issues/26).
 
-> **Status: load-tested 2026-05-31 on this GB10 — MTP works.** Loaded and served
-> on `spark-f8a9` (vLLM `0.19.0+nv26.04`) at **19.1 tok/s decode (~2.4× the
-> baseline 27B's ~8 tok/s)** with **72 % MTP draft acceptance** — see the
-> benchmark table below. One packaging fix was needed (a tokenizer override —
-> caveat 1). It is in the **supported catalog** (`model overview --list`) as a
-> candidate. For the catalog-vs-warm distinction — what you *can* load vs. what's
+> **Status: the fleet default primary (promoted 2026-05-31 on this GB10).**
+> Loaded and served on `spark-f8a9` (vLLM `0.19.0+nv26.04`) at **18.7–19.1 tok/s
+> decode (~2.4× the archived baseline 27B's ~8 tok/s)** with **72–79 % MTP draft
+> acceptance**, and the **tool-calling gate passed** under the production compose
+> (valid `qwen3_coder` tool call + full round-trip + reasoning trace, MTP active)
+> — see the benchmark and "Tool calling — verified" sections below. One packaging
+> fix is needed (a tokenizer override — caveat 1), baked into the compose
+> template. For the catalog-vs-warm distinction — what you *can* load vs. what's
 > loaded *now* — see
 > [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
@@ -138,9 +142,10 @@ the first load should cap `--max-model-len 32768`.
    detection under structured output
    ([vLLM #34650](https://github.com/vllm-project/vllm/issues/34650)). Watch
    JSON-schema responses.
-6. **Tool calling not exercised in this run.** The minimal load recipe omitted
-   `--enable-auto-tool-choice`; add it + `--tool-call-parser=qwen3_coder` to test
-   `tool_choice:"auto"` (additive; the primary 27B uses qwen3_coder).
+6. **Tool calling — verified (2026-05-31), gate closed.** The first run's minimal
+   recipe omitted `--enable-auto-tool-choice`; the promotion run served through the
+   compose template (which enables it + `--tool-call-parser=qwen3_coder`) and the
+   tool path passed — see "Tool calling — verified" below.
 
 ## Live-test (run on `spark-f8a9`, 2026-05-31) — how to reproduce
 
@@ -189,15 +194,41 @@ acceptance is MTP's best case). One assess probe (the 145-min word problem) hit
 `finish=length` at the 2,048-token cap mid-reasoning — a reasoning-verbosity
 artifact, not a wrong answer.
 
+## Tool calling — verified (2026-05-31)
+
+The promotion gate was tool calling: the mesh agent rides on this model over the
+`acp` backend and uses tool calls, so MTP speculative decoding must not break the
+tool path. Served through the **production compose** (so the flags the original
+minimal recipe omitted were all present: `--enable-auto-tool-choice`,
+`--tool-call-parser=qwen3_coder`, plus `--async-scheduling` / `--enable-chunked-prefill`
+/ `--enable-prefix-caching`), at `--max-model-len 32768 --gpu-memory-utilization 0.6
+--max-num-seqs 2`:
+
+| Gate | Result |
+|---|---|
+| Tool call emission (`tool_choice:"auto"`) | ✅ valid `qwen3_coder` call `get_weather({"city":"Tokyo"})`, parseable JSON |
+| Full tool round-trip (result → final answer) | ✅ `finish=stop`, correct natural-language answer |
+| Reasoning + tool calling coexist (vLLM [#34650](https://github.com/vllm-project/vllm/issues/34650)) | ✅ reasoning trace present, no `</think>` breakage |
+| MTP spec-decode active **with tools on** | ✅ **78.6 %** draft acceptance (276/351) — not silently disabled |
+| Correctness (`model assess`) | ✅ both probes `finish=stop` (the 145-min word problem that hit `length` in the minimal run now completes) |
+| Decode throughput (`model benchmark`, production flags) | ✅ **18.7 tok/s** — the ~2.4× win survives the full flag set |
+| GPU footprint | ~71.2 GiB (72,915 MiB) at util 0.6 — fits the shared box |
+
+The one packaging caveat (the `--tokenizer` override, caveat 1) is handled by
+baking it into the compose template, so a fresh deploy works out of the box.
+Reproduce with `model assess` + `model benchmark` and a `tool_choice:"auto"`
+request (or `model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply`, which
+runs the tool-call probe automatically).
+
 ## Recommendation
 
-The live test landed the win: **~2.4× single-stream decode (8 → 19 tok/s) at 72 %
-MTP acceptance**, same ~71 GB footprint, on the stock nv26.04 image. This is a
-strong candidate to **promote to primary** — text-only is no loss for the fleet —
-once two gaps close: (1) tool calling exercised with `--enable-auto-tool-choice`
-(the mesh agent uses tool calls), and (2) the tokenizer override handled cleanly
-(works via `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`; ideally fix the checkpoint's
-`tokenizer_config.json` upstream so no override is needed). Until then
-`mmangkad/Qwen3.6-27B-NVFP4` stays the primary and this is a load-tested candidate.
-The same MTP-grafted-checkpoint strategy is the path to MTP on the 35B (see the 35B
+Promoted to **fleet default primary (2026-05-31)** — both gates the earlier draft
+called out are closed: tool calling is verified (above) and the tokenizer override
+is handled in the template. The win: **~2.4× single-stream decode (8 → ~19 tok/s)
+at 72–79 % MTP acceptance**, same ~71 GB footprint, on the stock nv26.04 image;
+text-only is no loss (the fleet runs the 27B text-only anyway). The archived
+baseline `mmangkad/Qwen3.6-27B-NVFP4` stays a candidate (the tokenizer source here
+and the only vision-capable 27B). Ideally fix the checkpoint's
+`tokenizer_config.json` upstream so no `--tokenizer` override is needed. The same
+MTP-grafted-checkpoint strategy is the path to MTP on the 35B (see the 35B
 follow-up).

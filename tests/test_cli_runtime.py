@@ -107,7 +107,9 @@ def test_switch_dry_run_changes_nothing(tmp_path, capsys) -> None:
     assert "DRY RUN" in out
     assert "VLLM_MODEL=foo/bar" in out
     # .env untouched
-    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "mmangkad/Qwen3.6-27B-NVFP4"
+    assert (
+        _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+    )
 
 
 def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
@@ -255,8 +257,9 @@ def test_switch_defaults_to_balanced(tmp_path, capsys) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "VLLM_PURPOSE=balanced" in out  # default purpose
+    # mmangkad is a non-MTP candidate now, so the balanced profile's seqs (4) stands
+    # (only the MTP primary is force-capped to 2).
     assert "VLLM_MAX_NUM_SEQS=4" in out
-    assert "NOTE:" not in out  # the 27B hybrid is not MoE — no compose-edit notice
 
 
 def test_switch_explicit_overrides_machine_defaults(tmp_path, capsys) -> None:
@@ -295,13 +298,19 @@ def test_switch_moe_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
     )
     assert rc == 0
     out = capsys.readouterr().out
+    # the MoE candidate needs --moe-backend ADDED (its own catalog extra)...
     assert "--moe-backend=marlin" in out
-    # MTP --speculative-config is not carried (fails to load on this checkpoint)
-    assert "speculative-config" not in out
+    # ...and, being non-MTP, it also gets the inverted notice to REMOVE the MTP
+    # primary's baked-in flags (the template ships them by default now).
+    assert "--speculative-config=" in out
+    assert "REMOVE these" in out
 
 
-def test_switch_mtp_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
+def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
+    # The MTP build is the default primary now: its serve flags are baked into the
+    # compose template, so switching TO it needs NO hand edit. switch should print
+    # no compose-edit NOTE, force the MTP seq cap (2), and set the modelopt quant.
     rc = main(
         [
             "switch",
@@ -314,22 +323,38 @@ def test_switch_mtp_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
     )
     assert rc == 0
     out = capsys.readouterr().out
-    # the MTP candidate carries a catalog --speculative-config + the text-only flags,
-    # surfaced as a hand compose edit (compose can't omit an empty flag). Each flag
-    # must be an argv-safe `command:` list item: --speculative-config uses the `=`
-    # form (no space) so it pastes as one YAML item, not the shell space form that
-    # would split into a broken token (Qodo #27).
-    assert "--speculative-config=" in out
+    assert "NOTE:" not in out  # MTP primary's flags are template defaults — nothing to edit
+    assert "VLLM_MAX_NUM_SEQS=2" in out  # forced MTP cap (overrides the balanced 4)
+    assert "MTP primary cap" in out
+    # quantization comes from the catalog (modelopt, not modelopt_fp4)
+    assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
+
+
+def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # The template ships the MTP primary's flags by default. Switching to a non-MTP
+    # model must surface the inverse hand edit: REMOVE those 4 `command:` items.
+    # Each is shown as an argv-safe YAML list item — --speculative-config uses the
+    # `=` form (no shell space that would split into a broken token, Qodo #27).
+    rc = main(
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",  # a dense, non-MTP candidate
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "REMOVE these" in out
+    assert "- '--speculative-config=" in out  # single quoted YAML list item
     assert "--speculative-config '" not in out  # no shell space form
     assert "qwen3_5_mtp" in out
     assert "--trust-remote-code" in out
     assert "--language-model-only" in out
     assert "--tokenizer=mmangkad/Qwen3.6-27B-NVFP4" in out
-    # the value is rendered as a single quoted YAML list item
-    assert "- '--speculative-config=" in out
-    assert "VLLM_MAX_NUM_SEQS=2" in out
-    # quantization comes from the catalog (modelopt, not modelopt_fp4)
-    assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
     # not an MoE checkpoint — no --moe-backend
     assert "--moe-backend" not in out
 
@@ -502,5 +527,5 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["container"] == "model-gear-vllm"
     assert payload["state"] == "not created"  # offline _probe → None
     assert payload["health"] == "not responding"  # offline is_healthy → False
-    assert payload["model"] == "mmangkad/Qwen3.6-27B-NVFP4"
+    assert payload["model"] == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
     assert payload["tool_call_parser"] == "qwen3_coder"  # scaffolded default

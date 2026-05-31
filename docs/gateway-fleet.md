@@ -37,7 +37,7 @@ Three containers, all `restart: unless-stopped`:
 | Container | Role | Host port |
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
-| `model-gear-vllm-primary` | primary model (default: `mmangkad/Qwen3.6-27B-NVFP4`) | internal only |
+| `model-gear-vllm-primary` | primary model (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
 | `model-gear-vllm-fallback` | dense fallback (default: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) | internal only |
 
 The backends are reachable only on the compose network
@@ -168,5 +168,5 @@ dedicated-box guidance above still stands.
 The fleet `.env` mirrors `VLLM_MODEL` / `VLLM_SERVED_NAME` / `VLLM_TOOL_CALL_PARSER`
 (= the primary's) so the read-only single-model verbs (`model status`,
 `model whoami`, `model doctor`'s `env_coherence` check) stay sensible on a fleet
-deployment. `culture.yaml`'s `model: vllm-local/mmangkad/Qwen3.6-27B-NVFP4`
+deployment. `culture.yaml`'s `model: vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
 resolves through the gateway on `:8000` as the default.

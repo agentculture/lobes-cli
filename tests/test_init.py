@@ -96,12 +96,12 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     assert "vllm-fallback" in compose
     assert "model-gear-gateway" in compose
     env = (target / ".env").read_text()
-    assert "PRIMARY_MODEL=mmangkad/Qwen3.6-27B-NVFP4" in env
+    assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
     assert "FALLBACK_MODEL=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4" in env
     # init --fleet pins the gateway image to the running model-gear version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
-    assert "VLLM_SERVED_NAME=mmangkad/Qwen3.6-27B-NVFP4" in env
+    assert "VLLM_SERVED_NAME=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
 
 
 def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
@@ -142,7 +142,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
         assert (target / name).is_file(), name
     env = (target / ".env").read_text()
     # fleet keys still present, audio keys appended (not clobbered).
-    assert "PRIMARY_MODEL=mmangkad/Qwen3.6-27B-NVFP4" in env
+    assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
     assert "NGC_API_KEY=" in env
     assert "AUDIO_URL=http://realtime:8080" in env
     assert "MAGPIE_TTS_PORT=9000" in env

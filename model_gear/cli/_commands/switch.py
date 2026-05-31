@@ -61,45 +61,55 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
 
+def _mtp_primary():
+    """The MTP default primary (the model whose serve flags the template bakes in)."""
+    return next(
+        (m for m in supported_models() if m.role_hint == "primary" and m.speculative_config),
+        None,
+    )
+
+
 def _serve_notices(model_id: str) -> list[str]:
-    """Reminders for catalog serve-extras a model needs as a manual compose edit.
+    """Reminders for compose ``command:`` edits a switch implies.
 
-    Some flags can't be defaulted in the single-model template — compose can't
-    conditionally omit a flag, and an empty ``--moe-backend=`` / ``--speculative-config=``
-    token breaks vLLM — so ``model switch`` surfaces them for a hand edit instead:
+    The single-model template ships the **MTP default primary's** serve flags
+    baked into ``command:`` (``--speculative-config`` + ``--trust-remote-code`` +
+    ``--language-model-only`` + the ``--tokenizer`` override) so a fresh deploy of
+    the default just works. But those flags are MTP-only — the ``--tokenizer``
+    override and ``--language-model-only`` break every non-MTP checkpoint — and
+    compose can't conditionally omit a list item, so switching *away* from the MTP
+    primary needs those four lines removed by hand. Conversely an MoE checkpoint
+    needs ``--moe-backend`` *added*. ``model switch`` surfaces both:
 
-    * ``--moe-backend`` for an MoE checkpoint (emitted bare so it pastes verbatim as
-      a compose ``command:`` list item); and
-    * ``--speculative-config`` (MTP draft) for a checkpoint that ships MTP weights,
-      together with the ``--trust-remote-code`` / ``--language-model-only`` flags and
-      the ``VLLM_MAX_NUM_SEQS=2`` cap that MTP-grafted text-only build also needs.
+    * switching to a **non-MTP** model → "remove these 4 MTP lines"; and
+    * switching to the **MoE** candidate → also "add ``--moe-backend=...``".
 
-    Returns one line per applicable extra (empty list for a plain model).
+    Returns one line per applicable edit (empty list for the MTP primary itself).
     """
     notices: list[str] = []
     for model in supported_models():
         if model.id != model_id:
             continue
+        if not model.speculative_config:
+            # Non-MTP target: the template's baked MTP flags must come back out.
+            # Show the exact lines (spec-config pulled from the primary so it stays
+            # in sync); the JSON value is single-quoted because it contains `: `/`{`.
+            primary = _mtp_primary()
+            spec = primary.speculative_config if primary else '{"method": "..."}'
+            notices.append(
+                "non-MTP model — the template ships the MTP default primary's flags; "
+                "REMOVE these `command:` list items by hand to serve this model (see "
+                "docs/qwen3.6-27b-text-nvfp4-mtp.md):"
+                f"\n      - '--speculative-config={spec}'"
+                "\n      - --trust-remote-code"
+                "\n      - --language-model-only"
+                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
+            )
         if model.moe_backend:
             notices.append(
                 "MoE model — add this to the compose `command` by hand (not written "
                 "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
                 f"--moe-backend={model.moe_backend}"
-            )
-        if model.speculative_config:
-            # Emit each flag as its own argv-safe `command:` list item (the compose
-            # command is a YAML list — one argv token per item). --speculative-config
-            # uses the `=` form (no space) and is single-quoted because its JSON value
-            # contains `: ` / `{`; the others are bare tokens. VLLM_MAX_NUM_SEQS is an
-            # .env var, kept as a separate human note (not a compose token).
-            notices.append(
-                "MTP/text-only model — add these `command:` list items by hand (see "
-                "docs/qwen3.6-27b-text-nvfp4-mtp.md), then set VLLM_MAX_NUM_SEQS=2 in "
-                ".env (4 OOMs at n=3/256K):"
-                f"\n      - '--speculative-config={model.speculative_config}'"
-                "\n      - --trust-remote-code"
-                "\n      - --language-model-only"
-                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
             )
     return notices
 
@@ -139,6 +149,14 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
     messages.append(quant_msg)
     if quant:
         plan["VLLM_QUANTIZATION"] = quant
+    # The MTP primary caps decode slots at 2 — the balanced profile's 4 OOMs at
+    # high context with n=3 spec-decode (see docs/qwen3.6-27b-text-nvfp4-mtp.md).
+    # Force it over the profile so switching to the MTP primary matches the
+    # validated config; an explicit --max-num-seqs is not a switch flag.
+    primary = _mtp_primary()
+    if primary and args.model == primary.id:
+        plan["VLLM_MAX_NUM_SEQS"] = "2"
+        messages.append("max-num-seqs (MTP primary cap): 2")
     return plan, messages
 
 
@@ -244,7 +262,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "switch",
         help="Switch the served vLLM model (dry-run by default; --apply to commit).",
     )
-    p.add_argument("model", help="Model to serve, e.g. mmangkad/Qwen3.6-27B-NVFP4.")
+    p.add_argument("model", help="Model to serve, e.g. sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP.")
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(
         "--purpose",

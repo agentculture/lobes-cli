@@ -19,13 +19,18 @@ OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`model`*
   and the agent rides on it. (It used to be a separate agent, `lepenseur`; that
   name is retired.)
 
-The served model is **`vllm-local/mmangkad/Qwen3.6-27B-NVFP4`** (a Qwen3.6 27B
-with hybrid Mamba/linear-attention layers and a multimodal ViT encoder, in NVFP4,
-256K native context capped to 32K for the first load, runs on DGX Spark; thinking
-mode with a reasoning trace). model-gear runs it; the `acp` `vllm-local` provider
-connects the model-gear agent to it. (It is the fleet's default primary; the
-`nvidia/Qwen3-32B-NVFP4` dense model remains a supported candidate — see
-`docs/qwen3-32b-nvfp4.md` and `model overview --list`.)
+The served model is **`vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** (a
+Qwen3.6 27B with hybrid Mamba/linear-attention layers, re-exported with its MTP
+draft head restored so vLLM speculative decoding (Multi-Token Prediction) works;
+text-only (ViT vision tower removed), NVFP4, 256K native context capped to 32K for
+the first load, runs on DGX Spark; thinking mode with a reasoning trace; ~2.4x
+single-stream decode over the archived baseline). model-gear runs it; the `acp`
+`vllm-local` provider connects the model-gear agent to it. (It is the fleet's
+default primary. `mmangkad/Qwen3.6-27B-NVFP4` is the archived former primary,
+demoted to a candidate but kept — it is the tokenizer source the MTP primary
+serves with (`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`) and the only vision-capable
+27B; the `nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate —
+see `docs/qwen3-32b-nvfp4.md` and `model overview --list`.)
 
 ## Deployment model
 

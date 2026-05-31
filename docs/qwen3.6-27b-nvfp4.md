@@ -1,6 +1,15 @@
-# Runtime model: `mmangkad/Qwen3.6-27B-NVFP4`
+# Archived former primary: `mmangkad/Qwen3.6-27B-NVFP4`
 
-The **fleet's default primary** and current single-model default (since 0.10.0).
+The **fleet's default primary from 0.10.0 until 2026-05-31**, when it was
+superseded by the MTP build
+[`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`](qwen3.6-27b-text-nvfp4-mtp.md)
+(~2.4× single-stream decode via speculative decoding). It is **retained as a
+candidate**, not removed, for two reasons: (1) it is the **tokenizer source** the
+MTP primary serves with (`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4` — the MTP
+checkpoint's `tokenizer_config` declares a class absent from the nv26.04 image),
+and (2) it is the **only vision-capable 27B** in the catalog (the MTP primary is
+text-only), so it is the fallback when an image path is needed.
+
 **Load-tested live on DGX Spark (GB10),** first 2026-05-27 and re-confirmed
 2026-05-30 — it loads and serves cleanly under the vLLM image model-gear already
 runs. Tracked by [issue #6](https://github.com/agentculture/model-gear/issues/6).

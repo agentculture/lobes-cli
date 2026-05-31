@@ -42,19 +42,28 @@ services:
     command:
       - vllm
       - serve
-      - ${PRIMARY_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
-      - --served-model-name=${PRIMARY_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
+      - ${PRIMARY_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --served-model-name=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${PRIMARY_QUANTIZATION:-modelopt_fp4}
+      - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
       - --kv-cache-dtype=fp8
       - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.40}
+      - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
       # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
       - --enable-prefix-caching
+      # MTP default primary: speculative decoding (~2.4x decode) + the text-only /
+      # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
+      # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
+      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - --trust-remote-code
+      - --language-model-only
+      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -140,10 +149,10 @@ services:
     environment:
       - GATEWAY_PORT=8000
       - PRIMARY_URL=http://vllm-primary:8000
-      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       - FALLBACK_URL=http://vllm-fallback:8000
       - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
-      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
+      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}

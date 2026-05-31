@@ -44,7 +44,12 @@ class SupportedModel:
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     SupportedModel(
         id="mmangkad/Qwen3.6-27B-NVFP4",
-        role_hint="primary",
+        # Archived former primary (superseded 2026-05-31 by the MTP build below).
+        # Kept in the catalog for two reasons: (1) it is the tokenizer source the
+        # MTP primary serves with (--tokenizer=mmangkad/Qwen3.6-27B-NVFP4), and
+        # (2) it is the only *vision-capable* 27B — the MTP primary is text-only,
+        # so this is the fallback when an image path is needed.
+        role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
         context="256K native (capped to 32K for the first load)",
         tool_parser="qwen3_coder",
@@ -74,14 +79,19 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
-        role_hint="candidate",
+        # Fleet default primary since 2026-05-31 (promoted from candidate after the
+        # tool-calling gate passed: a valid qwen3_coder tool call + full tool
+        # round-trip + reasoning trace, all under the production compose, with MTP
+        # spec-decode active at 78.6% draft acceptance and 18.7 tok/s decode —
+        # ~2.4x the archived baseline 27B). Replaces mmangkad/Qwen3.6-27B-NVFP4.
+        role_hint="primary",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
         context="256K native (capped to 32K for the first load)",
         tool_parser="qwen3_coder",
         quantization="modelopt",
         status="load-tested",
         doc="qwen3.6-27b-text-nvfp4-mtp.md",
-        # MTP candidate (issue #26): an MTP-grafted re-export of the 27B primary —
+        # MTP primary (issue #26): an MTP-grafted re-export of the archived 27B —
         # the baseline NVFP4 export drops the MTP draft head (0% draft acceptance),
         # so this repo restores it in bf16 for vLLM speculative decoding. The
         # --speculative-config is catalog data (like moe_backend): compose can't omit

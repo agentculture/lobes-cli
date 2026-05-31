@@ -81,7 +81,7 @@ catalog entry (quantization, tool parser). Explicit `--max-model-len` /
 `--gpu-mem-util` flags override the machine defaults.
 
 ```bash
-model switch mmangkad/Qwen3.6-27B-NVFP4 --purpose decode-heavy --machine spark --apply
+model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --purpose decode-heavy --machine spark --apply
 model benchmark --purpose decode-heavy   # shape defaults to the configured VLLM_PURPOSE
 model explain tuning                     # the full layering
 ```
@@ -134,9 +134,19 @@ in the fleet `.env` to sum well under 1.0 (they share the 128 GB unified memory)
 Each runtime model has a doc under `docs/` recording how to run it, live test
 results, and caveats:
 
-- [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — the **current**
-  runtime model and fleet default primary (`mmangkad/Qwen3.6-27B-NVFP4`), since
-  0.10.0; load-tested on DGX Spark (~8 tok/s decode, ~7 min warm-up).
+- [`docs/qwen3.6-27b-text-nvfp4-mtp.md`](docs/qwen3.6-27b-text-nvfp4-mtp.md) — the
+  **current** runtime model and fleet default primary
+  (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`), the 27B re-exported with its MTP
+  draft head restored so vLLM speculative decoding (Multi-Token Prediction) works.
+  Text-only (ViT vision tower removed), NVFP4 (`modelopt`); served with
+  `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`. Verified 2026-05-31: ~2.4x
+  single-stream decode (8 → ~19 tok/s) at ~72-79% MTP draft acceptance, tool
+  calling + reasoning confirmed.
+- [`docs/qwen3.6-27b-nvfp4.md`](docs/qwen3.6-27b-nvfp4.md) — the **archived former
+  primary** (`mmangkad/Qwen3.6-27B-NVFP4`), default primary 0.10.0–0.14.0; load-tested
+  on DGX Spark (~8 tok/s decode, ~7 min warm-up). Kept as a candidate: it is the
+  tokenizer source the MTP primary serves with and the only vision-capable 27B (the
+  MTP primary is text-only).
 - [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the dense **candidate**
   (`nvidia/Qwen3-32B-NVFP4`), faster on decode (~9.7 tok/s); swap in via
   `PRIMARY_MODEL` / `model switch` when throughput matters more than context/vision.
@@ -185,7 +195,7 @@ Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 `model-gear` is one identity, not two: it is the repo/tool that serves the model
 *and* the local thinking agent deployed on it. The agent's runtime identity lives
 in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: model-gear`,
-`backend: acp`, `model: vllm-local/mmangkad/Qwen3.6-27B-NVFP4`) — the same
+`backend: acp`, `model: vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) — the same
 model-gear that runs the engine consumes it over the `acp` `vllm-local` provider.
 
 ## Acknowledgements

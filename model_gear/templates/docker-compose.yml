@@ -54,16 +54,16 @@ services:
     command:
       - vllm
       - serve
-      - ${VLLM_MODEL:-mmangkad/Qwen3.6-27B-NVFP4}
-      - --served-model-name=${VLLM_SERVED_NAME:-mmangkad/Qwen3.6-27B-NVFP4}
+      - ${VLLM_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --served-model-name=${VLLM_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${VLLM_QUANTIZATION:-modelopt_fp4}   # mmangkad/ + nvidia/ are ModelOpt FP4; RedHatAI NVFP4 (e.g. Mistral) is compressed-tensors (`model switch` sets this from the catalog)
+      - --quantization=${VLLM_QUANTIZATION:-modelopt}   # MTP primary is ModelOpt NVFP4 (`modelopt` → modelopt_fp4); mmangkad/nvidia are modelopt_fp4, RedHatAI (Mistral) is compressed-tensors (`model switch` sets this from the catalog)
       - --kv-cache-dtype=fp8
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
       - --attention-backend=${VLLM_ATTENTION_BACKEND:-flashinfer}   # Blackwell-class kernel (ships in the nv26.04 image); `model switch --machine` sets this
-      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-4}                      # concurrent decode slots — `model switch --purpose` tunes this
+      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-2}                      # concurrent decode slots — capped at 2 for the MTP primary (4 OOMs at n=3/high-context); `model switch --purpose` tunes this for non-MTP models
       - --max-num-batched-tokens=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}  # prefill chunk budget — `model switch --purpose` tunes this
       - --enable-chunked-prefill           # interleave prefill with decode (default-on in recent vLLM; pairs with max-num-batched-tokens)
       - --async-scheduling                 # overlap scheduling with the forward pass; drop on older vLLM builds without the flag
@@ -71,16 +71,22 @@ services:
       - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
       - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
       - --enable-prefix-caching
-      # NOTE: --trust-remote-code is intentionally omitted. Qwen3-32B-NVFP4 loads
-      # without it; add it back only for a model whose repo ships custom modeling
-      # code (it lets that code run in-container alongside HF_TOKEN + the cache mount).
+      # --- MTP default primary (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) ---------
+      # These four serve the speculative-decoding MTP primary out of the box (~2.4x
+      # decode vs the archived baseline 27B; 78.6% draft acceptance, tool calling +
+      # reasoning verified 2026-05-31). They are MTP-only: --language-model-only and
+      # the --tokenizer override break every non-MTP checkpoint, and compose can't
+      # conditionally omit a list item — so to serve a NON-MTP model, REMOVE these 4
+      # lines by hand (`model switch <non-mtp-model>` prints them). See
+      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - --trust-remote-code                # MTP build ships custom modeling code (also lets it run alongside HF_TOKEN + the cache mount)
+      - --language-model-only              # MTP build is text-only (ViT tower removed)
+      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4   # MTP checkpoint's tokenizer_config declares TokenizersBackend (absent from nv26.04); point at the cached base tokenizer (same vocab)
       # NOTE: the MoE-only flag is NOT here. The Qwen3.6-35B-A3B MoE candidate also
       # wants `--moe-backend=marlin` (verified to load it solo on the GB10). It is
-      # catalog data, not a default — it breaks the 27B hybrid / dense models, and
-      # compose can't conditionally omit a flag. Add it by hand when serving the MoE
-      # (`model switch` prints the exact line). shahizat's MTP `--speculative-config`
-      # is NOT recommended for this checkpoint — it fails to load on the mmangkad
-      # copy (works only on his nvidia/ checkpoint). See docs/qwen3.6-35b-a3b-nvfp4.md.
+      # catalog data, not a default — add it by hand when serving the MoE
+      # (`model switch` prints the exact line). See docs/qwen3.6-35b-a3b-nvfp4.md.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
