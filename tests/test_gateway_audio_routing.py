@@ -84,7 +84,9 @@ def test_forwards_body_verbatim_without_model_rewrite() -> None:
     assert name == "audio" and url == "http://realtime:8080"
     assert path == "/v1/audio/transcriptions"
     assert fwd_body == multipart  # verbatim — never JSON-parsed or model-rewritten
-    assert resp.status == 200 and resp.streaming is False and resp.upstream is not None
+    # Streamed (chunked), not buffered: a large audio body must not be read whole
+    # into the gateway's memory.
+    assert resp.status == 200 and resp.streaming is True and resp.upstream is not None
 
 
 def test_no_failover_relays_single_backend_status() -> None:
@@ -145,7 +147,10 @@ def test_integration_audio_speech_routes_to_audio_backend(audio_gateway) -> None
     with urllib.request.urlopen(req, timeout=5) as r:
         assert r.status == 200
         assert r.headers.get("Content-Type") == "audio/wav"
-        assert r.headers.get("Content-Length") is not None  # buffered relay
+        # Streamed relay → chunked transfer, no Content-Length (urllib still
+        # transparently de-chunks the body for us).
+        assert r.headers.get("Transfer-Encoding") == "chunked"
+        assert r.headers.get("Content-Length") is None
         assert r.read() == b"RIFFwav-bytes"
     assert seen["backend"] == "audio"  # path-routed to the audio backend, not a vLLM
     assert seen["path"] == "/v1/audio/speech"

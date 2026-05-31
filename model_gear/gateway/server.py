@@ -297,9 +297,9 @@ def handle_audio_post(
     Unlike :func:`handle_post` this does **no** model parse/rewrite and **no**
     failover: the body is multipart (transcriptions) or TTS JSON (speech) and is
     forwarded verbatim to the one audio backend, whose response (a whole audio
-    file or a small JSON) is relayed buffered. Returns 404 when no audio backend
-    is configured (a text-only fleet leaves ``AUDIO_URL`` unset). ``open_upstream``
-    is injected so this is unit-testable without sockets.
+    file or a small JSON) is relayed **streamed** (chunked). Returns 404 when no
+    audio backend is configured (a text-only fleet leaves ``AUDIO_URL`` unset).
+    ``open_upstream`` is injected so this is unit-testable without sockets.
     """
     if not cfg.audio_url:
         return GatewayResponse(
@@ -325,7 +325,12 @@ def handle_audio_post(
             body=_error_body("audio backend is unavailable", [str(exc)]),
         )
     # 2xx, 4xx or 5xx — relay whatever the single audio backend says (no failover).
-    return GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=False)
+    # Stream the body through (chunked) rather than read_all()'ing it: a TTS WAV
+    # can be many MB, and the gateway is the fleet's single front door — buffering
+    # every audio response whole would let one large synthesis exhaust its memory.
+    # up.headers is already hop-by-hop-filtered by open_upstream (Content-Length /
+    # Transfer-Encoding dropped), so the chunked relay frames cleanly.
+    return GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
 
 
 # --- the HTTP handler ------------------------------------------------------

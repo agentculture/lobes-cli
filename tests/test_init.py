@@ -157,3 +157,13 @@ def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:
     names = {f["name"] for f in payload["files"]}
     assert {"docker-compose.audio.yml", "Dockerfile.realtime", "listen_server.py"} <= names
     assert not target.exists()
+
+
+def test_init_fleet_audio_dry_run_text_mentions_appended_env(tmp_path, capsys) -> None:
+    target = tmp_path / "fa"
+    rc = main(["init", "--fleet", "--audio", str(target)])  # text mode, no --apply
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert ".env (+ audio keys appended)" in out
+    assert "Re-run with --apply to write." in out
+    assert not target.exists()

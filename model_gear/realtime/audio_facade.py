@@ -22,6 +22,13 @@ from .protocol import TTS_SAMPLE_RATE
 SUPPORTED_FORMATS = ("wav", "pcm")
 _MEDIA_TYPE = {"wav": "audio/wav", "pcm": "audio/pcm"}
 
+# OpenAI's documented /v1/audio/speech ``speed`` multiplier range. Out-of-range
+# values are clamped (not rejected) so naive callers keep working — mirroring the
+# response_format-defaults-to-wav philosophy above — while a clamp stops a
+# negative/huge speed from reaching Magpie as SSML rate="{n}%" and 502ing.
+_OPENAI_SPEED_MIN = 0.25
+_OPENAI_SPEED_MAX = 4.0
+
 
 class SpeechRequestError(ValueError):
     """The ``/v1/audio/speech`` request was invalid or unsupported (→ HTTP 400)."""
@@ -43,7 +50,8 @@ def parse_speech_request(body: object) -> SpeechParams:
     ``input`` is required. ``response_format`` defaults to ``wav`` (OpenAI's
     default is mp3, which we cannot encode yet — defaulting to wav keeps naive
     callers working instead of 400ing them). OpenAI ``speed`` is a 0.25–4.0
-    multiplier; Magpie wants a percentage, so ``1.0 → 100``.
+    multiplier (clamped to that range here); Magpie wants a percentage, so
+    ``1.0 → 100``.
     """
     if not isinstance(body, dict):
         raise SpeechRequestError("request body must be a JSON object")
@@ -66,9 +74,12 @@ def parse_speech_request(body: object) -> SpeechParams:
     speed: int | None = None
     if raw_speed is not None:
         try:
-            speed = int(round(float(raw_speed) * 100))
+            multiplier = float(raw_speed)
         except (TypeError, ValueError):
             raise SpeechRequestError("'speed' must be a number") from None
+        # Clamp to OpenAI's 0.25–4.0 range before converting to a Magpie percentage.
+        multiplier = max(_OPENAI_SPEED_MIN, min(_OPENAI_SPEED_MAX, multiplier))
+        speed = int(round(multiplier * 100))
     return SpeechParams(input=text, voice=voice, response_format=fmt, speed=speed)
 
 

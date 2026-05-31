@@ -87,6 +87,32 @@ def test_non_object_body_is_rejected() -> None:
         parse_speech_request(["not", "a", "dict"])
 
 
+def test_non_string_voice_is_rejected() -> None:
+    with pytest.raises(SpeechRequestError):
+        parse_speech_request({"input": "hi", "voice": 123})
+
+
+def test_non_string_response_format_is_rejected() -> None:
+    with pytest.raises(SpeechRequestError):
+        parse_speech_request({"input": "hi", "response_format": 7})
+
+
 def test_non_numeric_speed_is_rejected() -> None:
     with pytest.raises(SpeechRequestError):
         parse_speech_request({"input": "hi", "speed": "fast"})
+
+
+def test_speed_within_range_is_converted_unchanged() -> None:
+    assert parse_speech_request({"input": "hi", "speed": 0.25}).speed == 25
+    assert parse_speech_request({"input": "hi", "speed": 4.0}).speed == 400
+
+
+def test_too_fast_speed_is_clamped_to_the_max() -> None:
+    # OpenAI's max is 4.0 (→ 400%); a huge value must not reach Magpie as-is.
+    assert parse_speech_request({"input": "hi", "speed": 100}).speed == 400
+
+
+def test_negative_or_tiny_speed_is_clamped_to_the_min() -> None:
+    # Below 0.25 (→ 25%); negatives would otherwise emit SSML rate="-…%".
+    assert parse_speech_request({"input": "hi", "speed": -3}).speed == 25
+    assert parse_speech_request({"input": "hi", "speed": 0.01}).speed == 25

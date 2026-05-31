@@ -71,8 +71,11 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
         default_voice=env.get("DEFAULT_VOICE") or "Mia.Calm",
-        tts_speed=_as_int(env, "TTS_SPEED", 125),
-        tts_concurrency=_as_int(env, "TTS_CONCURRENCY", 1),
+        # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
+        # (or negative) blocks every TTS request forever; tts_speed is a percentage,
+        # where 0/negative would emit nonsensical SSML rate="0%" → backend 502s.
+        tts_speed=max(1, _as_int(env, "TTS_SPEED", 125)),
+        tts_concurrency=max(1, _as_int(env, "TTS_CONCURRENCY", 1)),
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),

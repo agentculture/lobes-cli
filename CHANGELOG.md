@@ -22,7 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     wheel and the gateway stay stdlib-only — torch/fastapi never leak into them.
   - **Gateway audio routing** — `/v1/audio/*` is path-routed to the audio backend
     (`AUDIO_URL`) with no model rewrite and no failover; binary responses relayed
-    buffered. Unset `AUDIO_URL` (a text-only fleet) → those paths 404, unchanged.
+    **streamed** (chunked) so a large TTS body never buffers whole in the gateway.
+    Unset `AUDIO_URL` (a text-only fleet) → those paths 404, unchanged.
   - **`model init --fleet --audio`** scaffolds the audio overlay
     (`docker-compose.audio.yml` + `Dockerfile.realtime` + a vendored
     `Dockerfile.parakeet`/`listen_server.py`) and appends the audio keys to `.env`.
@@ -36,6 +37,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 ### Fixed
+
+- **Audio review hardening (PR #24 review).**
+  - **Gateway no longer buffers whole audio bodies** — `/v1/audio/*` responses are
+    relayed chunked instead of `read_all()`'d into memory, so one large TTS WAV can't
+    OOM the fleet's single front door.
+  - **`TTS_CONCURRENCY` / `TTS_SPEED` clamped to ≥ 1** — `TTS_CONCURRENCY=0` previously
+    seeded an `asyncio.Semaphore(0)` that hung every TTS request; a 0/negative speed
+    emitted nonsensical `rate="0%"` SSML.
+  - **`/v1/audio/speech` `speed` clamped to OpenAI's 0.25–4.0 range** before the Magpie
+    percentage conversion, so out-of-range values no longer reach the backend as
+    `rate="{huge|negative}%"` and 502.
+  - **SonarCloud config** — coverage exclusions now mirror `coverage.run` `omit` (the
+    `[realtime]`-extra modules can't be unit-imported offline), and the deployment
+    *scaffolds* under `model_gear/templates/**` are excluded from analysis (container
+    Dockerfiles + the vendored Parakeet server aren't package runtime). Added unit
+    tests for `realtime.protocol`, the settings clamps, the speed clamp, and the
+    streamed audio relay.
 
 ## [0.11.1] - 2026-05-30
 

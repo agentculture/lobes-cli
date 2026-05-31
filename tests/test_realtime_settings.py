@@ -43,3 +43,17 @@ def test_bad_numbers_fall_back_to_defaults() -> None:
     assert s.port == 8080
     assert s.tts_speed == 125
     assert s.vad_threshold == 0.5
+
+
+def test_tts_concurrency_is_clamped_to_at_least_one() -> None:
+    # Semaphore(0)/Semaphore(<0) would block every TTS request forever.
+    assert build_settings({"TTS_CONCURRENCY": "0"}).tts_concurrency == 1
+    assert build_settings({"TTS_CONCURRENCY": "-5"}).tts_concurrency == 1
+    assert build_settings({"TTS_CONCURRENCY": "4"}).tts_concurrency == 4
+
+
+def test_tts_speed_is_clamped_to_at_least_one() -> None:
+    # A 0/negative percentage would emit SSML rate="0%" → backend 502.
+    assert build_settings({"TTS_SPEED": "0"}).tts_speed == 1
+    assert build_settings({"TTS_SPEED": "-100"}).tts_speed == 1
+    assert build_settings({"TTS_SPEED": "150"}).tts_speed == 150
