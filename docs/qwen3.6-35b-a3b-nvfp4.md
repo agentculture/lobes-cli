@@ -168,3 +168,33 @@ roughly doubles per-stream decode); our run is the `mmangkad/` copy on a *shared
 box, single-stream, **without** MTP (it does not load here). The qualitative
 result — MoE = much faster decode — replicates; the headline tok/s does not, and
 the gap is explained by box, concurrency, and the missing MTP draft.
+
+## Why we serve the `mmangkad/` copy, not `nvidia/` (vLLM version, 2026-05-31)
+
+shahizat used `nvidia/Qwen3.6-35B-A3B-NVFP4`. We tried to switch to it (and to a
+newer vLLM) to get MTP working — and hit a hard wall on the GB10:
+
+- **The `nvidia/` checkpoint will not load on the NGC image's vLLM 0.19.0.** Its
+  NVFP4-MoE experts fail every backend: `marlin` / `flashinfer_trtllm` → "not
+  supported for unquantized MoE"; `triton` / auto → `KeyError:
+  layers.0.mlp.experts.w2_input_scale`. Both `--quantization modelopt` and
+  `modelopt_fp4` behave the same.
+- **A newer vLLM *does* run on the GB10.** A derived image with
+  `pip install vllm==0.21.0` pulls upstream torch 2.11.0 + CUDA-13 wheels
+  (aarch64 wheels exist); torch 2.11.0 works on the GB10 (`device_capability
+  (12,1)`; `sm_121` is forward-compatible with its `sm_120` kernels — a GPU
+  matmul ran). On 0.21.0 the quant is now **recognized** (`modelopt_mixed`), but
+  the MoE expert loader still fails the same way (`marlin` → "unquantized";
+  `triton`/auto → missing `w2_input_scale`).
+- **0.22.0 / nightly are not pip-installable here** (aarch64): a
+  `nvidia-cutlass-dsl[cu13]` dependency conflict with no matching distribution.
+
+Net: the `nvidia/` checkpoint's MoE export needs a vLLM build with NVFP4-MoE
+expert support that isn't installable on this Grace/Blackwell (aarch64) box yet.
+shahizat's dedicated boxes were almost certainly x86, where a suitable vLLM
+installs cleanly. **The working NVFP4 MoE on the GB10 remains the `mmangkad/`
+copy** (loads on the stock NGC `26.04-py3` image with `--moe-backend marlin`,
+~35 tok/s single-stream — above). Revisit `nvidia/` + MTP when a vLLM with the
+right loader ships for aarch64 (a newer NGC image, or upstream ≥0.22 gaining
+aarch64 wheels). The image stays **NGC `26.04-py3`** (latest tag; vLLM
+0.19.0 + torch 2.12.0a0.nv26.04 + CUDA 13.2, all Blackwell-patched).
