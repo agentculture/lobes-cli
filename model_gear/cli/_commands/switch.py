@@ -228,7 +228,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--purpose",
         choices=[wp.name for wp in profiles.WORKLOAD_PROFILES],
         default=profiles.DEFAULT_PURPOSE,
-        help="Workload profile — tunes batching + the model benchmark shape " "(default balanced).",
+        help="Workload profile — tunes batching + the benchmark shape (default balanced).",
     )
     p.add_argument(
         "--machine",
