@@ -32,6 +32,13 @@ class SupportedModel:
     quantization: str  # vLLM --quantization
     status: str  # "load-tested" (measured on this hardware) | "configured" (not yet)
     doc: str  # per-model markdown under docs/ (filename only)
+    # Per-model serve extras for MoE checkpoints. Empty for dense/hybrid models;
+    # set only where the architecture needs them. These are NOT in the default
+    # single-model template (docker compose can't conditionally omit a flag, and
+    # an empty `--moe-backend=` token breaks vLLM) — `model switch` surfaces them
+    # as a documented compose edit. See docs/qwen3.6-35b-a3b-nvfp4.md.
+    moe_backend: str = ""  # vLLM --moe-backend (e.g. "marlin") for MoE models
+    speculative_config: str = ""  # vLLM --speculative-config JSON (e.g. MTP draft)
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -74,6 +81,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         quantization="modelopt_fp4",
         status="configured",
         doc="qwen3.6-35b-a3b-nvfp4.md",
+        # MoE-only serve extras from shahizat's benchmark (the marlin MoE kernel +
+        # the MTP speculative-decode draft). model switch surfaces these as a
+        # compose edit; they must not land on the dense/hybrid models.
+        moe_backend="marlin",
+        speculative_config='{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}',
     ),
 )
 

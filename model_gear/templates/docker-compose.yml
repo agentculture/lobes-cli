@@ -16,6 +16,11 @@
 #   model status                  # container state + /health
 #
 # Tuned for DGX Spark (GB10 Grace Blackwell, SM12.1, 128 GB unified memory).
+# The throughput/batching flags below (flashinfer attention backend, chunked
+# prefill, async scheduling, max-num-seqs/batched-tokens) follow shahizat's
+# cross-machine NVFP4 benchmark — see docs/tuning-profiles.md. `model switch
+# --purpose {balanced,prompt-heavy,decode-heavy} --machine {spark,thor,blackwell}`
+# rewrites the VLLM_* values these default to.
 services:
   vllm:
     image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the current tag)
@@ -57,6 +62,11 @@ services:
       - --kv-cache-dtype=fp8
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
+      - --attention-backend=${VLLM_ATTENTION_BACKEND:-flashinfer}   # Blackwell-class kernel (ships in the nv26.04 image); `model switch --machine` sets this
+      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-4}                      # concurrent decode slots — `model switch --purpose` tunes this
+      - --max-num-batched-tokens=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}  # prefill chunk budget — `model switch --purpose` tunes this
+      - --enable-chunked-prefill           # interleave prefill with decode (default-on in recent vLLM; pairs with max-num-batched-tokens)
+      - --async-scheduling                 # overlap scheduling with the forward pass; drop on older vLLM builds without the flag
       - --reasoning-parser=qwen3           # expose the <think> trace (field is `reasoning` on the nv26.04 build, `reasoning_content` on older vLLM; drop the flag on builds without the parser)
       - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
       - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
@@ -64,6 +74,13 @@ services:
       # NOTE: --trust-remote-code is intentionally omitted. Qwen3-32B-NVFP4 loads
       # without it; add it back only for a model whose repo ships custom modeling
       # code (it lets that code run in-container alongside HF_TOKEN + the cache mount).
+      # NOTE: MoE-only flags are NOT here. The Qwen3.6-35B-A3B MoE candidate also
+      # wants `--moe-backend=marlin` and `--speculative-config=
+      # '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'` (per
+      # shahizat's benchmark). They are catalog data, not defaults — they break the
+      # 27B hybrid / dense models, and compose can't conditionally omit a flag. Add
+      # them here by hand when serving the MoE (`model switch` prints the exact
+      # lines). See docs/qwen3.6-35b-a3b-nvfp4.md.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

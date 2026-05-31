@@ -56,6 +56,7 @@ require `--apply` to commit. The rest are read-only.
 ## See also
 
 - `model explain switch`
+- `model explain tuning` (purpose + machine profiles)
 - `model explain fleet`
 - `model explain gateway`
 - `model explain assess`
@@ -69,20 +70,28 @@ _SWITCH = """\
 `model switch <model>` changes which vLLM model is served. **Dry-run by
 default** (prints the plan, changes nothing); `--apply` commits.
 
-On `--apply` it writes five vars to the deployment `.env` (plus
-`VLLM_TOOL_CALL_PARSER` when `--tool-call-parser` is given) —
+On `--apply` it resolves a serve config from three layers — the **machine**
+profile (`--machine`, default auto-detected), the **workload** profile
+(`--purpose`, default `balanced`), and the model's catalog entry (quantization,
+tool parser) — and writes the `VLLM_*` vars to the deployment `.env` —
 
 ```text
-VLLM_MODEL, VLLM_SERVED_NAME, VLLM_PORT, VLLM_MAX_MODEL_LEN, VLLM_GPU_MEM_UTIL
+VLLM_MODEL, VLLM_SERVED_NAME, VLLM_PORT, VLLM_PURPOSE, VLLM_MACHINE,
+VLLM_MAX_MODEL_LEN, VLLM_GPU_MEM_UTIL, VLLM_ATTENTION_BACKEND,
+VLLM_MAX_NUM_SEQS, VLLM_MAX_NUM_BATCHED_TOKENS
+(+ VLLM_TOOL_CALL_PARSER / VLLM_QUANTIZATION for a known/overridden model)
 ```
 
 — then recreates the container (`docker compose down && up -d`) and waits for
 `/health` (the first run downloads weights, so this can take many minutes).
 
-Flags: `--port`, `--max-model-len` (default 32768), `--served-name` (default:
-the model name), `--gpu-mem-util` (default 0.6), `--tool-call-parser` (e.g.
-`hermes` for Qwen3 dense, `qwen3_coder` for Qwen3-Coder/3.6; written to
-`VLLM_TOOL_CALL_PARSER` only when given), `--compose-dir`, `--apply`, `--json`.
+Flags: `--port`, `--purpose {balanced,prompt-heavy,decode-heavy}` (tunes batching
++ the benchmark shape), `--machine {auto,spark,thor,blackwell,generic}` (GPU mem /
+context / attention defaults), `--max-model-len` / `--gpu-mem-util` (explicit
+overrides of the machine profile), `--served-name`, `--tool-call-parser` (e.g.
+`hermes` for Qwen3 dense, `qwen3_coder` for Qwen3-Coder/3.6), `--quantization`,
+`--compose-dir`, `--apply`, `--json`. Switching to the Qwen3.6-35B-A3B MoE prints
+a reminder for its compose-only `--moe-backend` / `--speculative-config` flags.
 Only one ~30B-class model fits on a single GB10 at a time, so the switch frees
 the prior model before starting the new one.
 """
@@ -130,10 +139,13 @@ _BENCHMARK = """\
 # model benchmark
 
 Read-only **throughput** measurement, emitted as a markdown block for a per-model
-doc: decode throughput (`--decode-tokens`, default 512, forced over `--runs`
-repetitions, batch=1 greedy) and prefill latency (a ~2K-token prompt). Reports
-host-side facts (image tag, GPU memory) too. Correctness lives in
-`model assess`. Supports `--json`.
+doc. The workload shape is the active **purpose** — it defaults to the configured
+`VLLM_PURPOSE` (so the numbers track the serve config) and is overridable with
+`--purpose {balanced,prompt-heavy,decode-heavy}` or explicit `--input-len` /
+`--output-len`. Measures decode throughput (the output length forced over
+`--runs` repetitions, batch=1 greedy) and prefill latency (a prompt sized to the
+input length). Reports host-side facts (image tag, GPU memory) too. Correctness
+lives in `model assess`. Supports `--json`.
 """
 
 _INIT = """\
@@ -321,11 +333,39 @@ failure — only missing docker or an un-scaffolded deployment make the run exit
 non-zero. JSON contract: `{"healthy", "checks"}`. Supports `--json`.
 """
 
+_TUNING = """\
+# model tuning — purpose + machine profiles
+
+`model switch` resolves the serve config from three layers (explicit flags win):
+
+1. **machine** (`--machine`, default auto-detected from nvidia-smi + hostname) →
+   `VLLM_GPU_MEM_UTIL`, `VLLM_MAX_MODEL_LEN`, `VLLM_ATTENTION_BACKEND`.
+   `spark` 0.6/32768 (shared GB10), `blackwell` 0.85/65536 (dedicated VRAM),
+   `thor` 0.6/32768, `generic` 0.6/32768. spark is load-tested; the rest are
+   configured estimates.
+2. **purpose** (`--purpose`, default `balanced`) → `VLLM_MAX_NUM_SEQS`,
+   `VLLM_MAX_NUM_BATCHED_TOKENS`, and the shape `model benchmark` exercises:
+   `balanced` 4/8192 (≈1K in/1K out), `prompt-heavy` 4/16384 (≈8K in/1K out),
+   `decode-heavy` 8/4096 (≈1K in/8K out).
+3. **model** (the catalog) → `VLLM_QUANTIZATION`, `VLLM_TOOL_CALL_PARSER`, and —
+   for the MoE candidate only — a printed reminder for the compose-only
+   `--moe-backend` / `--speculative-config` flags (these can't be defaulted in the
+   shared template).
+
+`model benchmark` defaults its workload shape to the configured `VLLM_PURPOSE`, so
+the numbers track the serve config. Override with `--purpose` / `--input-len` /
+`--output-len`. The throughput flags follow shahizat's cross-machine NVFP4
+benchmark — see `docs/tuning-profiles.md`.
+"""
+
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
     ("model-gear",): _ROOT,
     ("model",): _ROOT,
     ("switch",): _SWITCH,
+    ("tuning",): _TUNING,
+    ("purpose",): _TUNING,
+    ("machine",): _TUNING,
     ("serve",): _SERVE,
     ("stop",): _SERVE,
     ("fleet",): _FLEET,

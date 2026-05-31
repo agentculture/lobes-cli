@@ -60,16 +60,23 @@ def _gpu_name() -> str:
     return r.stdout.splitlines()[0].strip() or "unknown"
 
 
-def _served_and_port() -> tuple[str, int]:
-    """The currently-served model + port, read from the deployment ``.env``."""
+def _deployment_facts() -> dict[str, object]:
+    """Served model/port and active gear (purpose/machine), from the deployment ``.env``.
+
+    Configuration (which can be stale), not a live query — mirrors the rest of
+    ``whoami``. Falls back to the scaffold defaults when nothing is deployed.
+    """
     try:
         deploy_dir = _compose.resolve_deployment_dir(None)
     except Exception:  # noqa: BLE001 - no deployment scaffolded yet
-        return _DEFAULT_MODEL, 8000
+        return {"served": _DEFAULT_MODEL, "port": 8000, "purpose": "balanced", "machine": "spark"}
     env_path = deploy_dir / _compose.ENV_FILE
-    served = _env.read_env(env_path, "VLLM_SERVED_NAME", _DEFAULT_MODEL)
-    port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
-    return served, port
+    return {
+        "served": _env.read_env(env_path, "VLLM_SERVED_NAME", _DEFAULT_MODEL),
+        "port": _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000")),
+        "purpose": _env.read_env(env_path, "VLLM_PURPOSE", "balanced"),
+        "machine": _env.read_env(env_path, "VLLM_MACHINE", "spark"),
+    }
 
 
 def _container_health(port: int) -> str:
@@ -80,13 +87,15 @@ def _container_health(port: int) -> str:
 
 
 def report() -> dict[str, object]:
-    served, port = _served_and_port()
+    facts = _deployment_facts()
+    port = facts["port"]
     return {
         "tool": "model-gear",
         "version": __version__,
         "machine": {"host": socket.gethostname(), "gpu": _gpu_name()},
-        "served_model": served,
+        "served_model": facts["served"],
         "port": port,
+        "gear": {"purpose": facts["purpose"], "machine": facts["machine"]},
         "container_health": _container_health(port),
         "agent": _agent_nick(),
     }
@@ -99,11 +108,13 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         emit_result(identity, json_mode=True)
         return
     machine = identity["machine"]
+    gear = identity["gear"]
     text = (
         f"tool: {identity['tool']}\n"
         f"version: {identity['version']}\n"
         f"machine: {machine['host']} ({machine['gpu']})\n"
         f"served_model: {identity['served_model']}  port: {identity['port']}\n"
+        f"gear: {gear['purpose']} / {gear['machine']}\n"
         f"container_health: {identity['container_health']}\n"
         f"agent: {identity['agent']}"
     )

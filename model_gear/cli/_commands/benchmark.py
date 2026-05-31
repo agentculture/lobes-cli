@@ -1,8 +1,11 @@
 """``model benchmark`` — decode throughput + prefill latency for the served model.
 
-Read-only. Forces a fixed decode length over a couple of runs and measures a
-large-prompt prefill, then emits a markdown block (plus host-side facts) for a
-per-model doc under ``docs/``. Correctness lives in ``model assess``.
+Read-only. The workload shape is the active *purpose*: it defaults to the
+configured ``VLLM_PURPOSE`` (so the numbers track the serve config) and can be
+overridden with ``--purpose`` or explicit ``--input-len`` / ``--output-len``.
+Forces a fixed decode length over a couple of runs and measures a prompt-sized
+prefill, then emits a markdown block (plus host-side facts) for a per-model doc
+under ``docs/``. Correctness lives in ``model assess``.
 """
 
 from __future__ import annotations
@@ -10,9 +13,23 @@ from __future__ import annotations
 import argparse
 
 from model_gear import assess as _assess
+from model_gear import profiles
 from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_result
 from model_gear.runtime import _compose, _env
+
+
+def _resolve_shape(args, deploy_dir) -> tuple[profiles.WorkloadProfile, int, int]:
+    """Resolve the (purpose, input_len, output_len) shape — flag > .env > default."""
+    purpose = args.purpose
+    if purpose is None and deploy_dir is not None:
+        purpose = _env.read_env(
+            deploy_dir / _compose.ENV_FILE, "VLLM_PURPOSE", profiles.DEFAULT_PURPOSE
+        )
+    wl = profiles.workload_profile(purpose or profiles.DEFAULT_PURPOSE)
+    input_len = args.input_len if args.input_len is not None else wl.bench_input_len
+    output_len = args.output_len if args.output_len is not None else wl.bench_output_len
+    return wl, input_len, output_len
 
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
@@ -22,8 +39,17 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     if model is None and deploy_dir is not None:
         model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
+    wl, input_len, output_len = _resolve_shape(args, deploy_dir)
+
     url = f"http://localhost:{port}"
-    result = _assess.run_benchmark(url, model, decode_tokens=args.decode_tokens, runs=args.runs)
+    result = _assess.run_benchmark(
+        url,
+        model,
+        purpose=wl.name,
+        input_len=input_len,
+        output_len=output_len,
+        runs=args.runs,
+    )
     host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
 
     if json_mode:
@@ -47,7 +73,22 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--model", help="Served model name (default: VLLM_SERVED_NAME, else first /v1/models)."
     )
     p.add_argument(
-        "--decode-tokens", type=int, default=512, help="Forced decode length (default 512)."
+        "--purpose",
+        choices=[wp.name for wp in profiles.WORKLOAD_PROFILES],
+        default=None,
+        help="Workload shape (default: the configured VLLM_PURPOSE, else balanced).",
+    )
+    p.add_argument(
+        "--input-len",
+        type=int,
+        default=None,
+        help="Override prompt length (default: the purpose's shape).",
+    )
+    p.add_argument(
+        "--output-len",
+        type=int,
+        default=None,
+        help="Override forced decode length (default: the purpose's shape).",
     )
     p.add_argument("--runs", type=int, default=2, help="Decode-throughput repetitions (default 2).")
     p.add_argument(

@@ -96,3 +96,42 @@ Next: re-test on a **dedicated/quiet** GB10 (stop other GPU services first), and
 isolate whether the failure is co-residence pressure or the checkpoint's own
 load path. Consider `--enforce-eager` (skip CUDA-graph capture) and disabling
 `--enable-prefix-caching` to shrink the warmup footprint on the first load.
+
+## Reference serve recipe + benchmark (shahizat, dedicated boxes)
+
+shahizat benchmarked this model — the **`nvidia/Qwen3.6-35B-A3B-NVFP4`** checkpoint
+(a different repo from the catalogued `mmangkad/` copy above) — on dedicated DGX
+Spark, Jetson Thor, and Blackwell 6000 Pro boxes, where it **did** load and serve:
+[NVIDIA Developer Forums, 2026-05-31](https://forums.developer.nvidia.com/t/benchmark-report-qwen3-6-35b-a3b-nvfp4-on-nvidia-dgx-spark-jetson-thor-blackwell-6000-pro/371810).
+This is the serve recipe to try when re-testing on a quiet box. The two
+**MoE-only** flags (`--moe-backend=marlin` and the MTP `--speculative-config`) are
+what make the MoE perform — they are recorded as catalog data
+([`model_gear/catalog.py`](../model_gear/catalog.py)) and printed by
+`model switch mmangkad/Qwen3.6-35B-A3B-NVFP4`, but are **not** in the default
+single-model template (they break the dense/hybrid models, and compose can't
+conditionally omit a flag). Add them to the compose `command` by hand:
+
+```bash
+vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 \
+  --port 8000 --tensor-parallel-size 1 --trust-remote-code --dtype auto \
+  --quantization modelopt --kv-cache-dtype fp8 \
+  --attention-backend flashinfer --moe-backend marlin \
+  --gpu-memory-utilization 0.85 --max-model-len 65536 \
+  --max-num-seqs 4 --max-num-batched-tokens 8192 \
+  --enable-chunked-prefill --async-scheduling --enable-prefix-caching \
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
+```
+
+Output-token throughput across the three workloads (16 concurrent requests):
+
+| workload | Blackwell 6000 Pro | DGX Spark | Jetson Thor |
+|---|---|---|---|
+| prompt-heavy (8K/1K) | 343.8 tok/s | 171.6 tok/s | 124.2 tok/s |
+| decode-heavy (1K/8K) | 1052.7 tok/s | 268.2 tok/s | 239.1 tok/s |
+| balanced (1K/1K) | 817.5 tok/s | 249.5 tok/s | 190.7 tok/s |
+
+MTP speculative-decode acceptance was highest on the decode-heavy workload
+(~80–84 %), lowest on balanced (~57–59 %). These are shahizat's numbers on
+dedicated boxes — see [`tuning-profiles.md`](tuning-profiles.md) for how the
+`--purpose` knob maps to these shapes. model-gear's own GB10 numbers for the
+`mmangkad/` copy remain blocked on a reliable load (above).

@@ -187,11 +187,16 @@ def test_probe_tool_calls_degrades_on_bad_json(monkeypatch) -> None:
 def test_run_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())
-    r = A.run_benchmark("http://localhost:8000", None, decode_tokens=64, runs=2)
+    r = A.run_benchmark(
+        "http://localhost:8000", None, purpose="decode-heavy", input_len=1000, output_len=64, runs=2
+    )
     assert len(r["decode_rates"]) == 2
     assert r["prefill"]["prompt_tokens"] == 2015
+    assert r["purpose"] == "decode-heavy"
+    assert r["output_len"] == 64
     md = A.render_benchmark(r)
     assert "decode throughput" in md
+    assert "decode-heavy" in md
 
 
 def test_health_unreachable_raises(monkeypatch) -> None:
@@ -240,8 +245,21 @@ def test_assess_command_json(monkeypatch, capsys) -> None:
 def test_benchmark_command_text(monkeypatch, capsys) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())
-    rc = main(["benchmark", "--port", "8000", "--decode-tokens", "32"])
+    rc = main(["benchmark", "--port", "8000", "--output-len", "32"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "Benchmark" in out
     assert "Host-side" in out
+
+
+def test_benchmark_command_purpose_selects_shape(monkeypatch, capsys) -> None:
+    # --purpose drives the (input_len, output_len) shape (the benchmark tied to
+    # the serving purpose). decode-heavy → 1000 in / 8000 out.
+    monkeypatch.setattr(A, "_get", _fake_get)
+    monkeypatch.setattr(A, "_post", _fake_chat())
+    rc = main(["benchmark", "--port", "8000", "--purpose", "decode-heavy", "--runs", "1", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["purpose"] == "decode-heavy"
+    assert payload["input_len"] == 1000
+    assert payload["output_len"] == 8000

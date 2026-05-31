@@ -82,11 +82,13 @@ def candidate_models() -> list[dict[str, str]]:
 
 
 def _served_section(ident: dict) -> dict[str, object]:
+    gear = ident.get("gear", {})
     return {
         "title": "Currently served",
         "items": [
             f"model: {ident['served_model']}",
             f"port: {ident['port']}",
+            f"gear: {gear.get('purpose', 'balanced')} / {gear.get('machine', 'spark')}",
             f"container health: {ident['container_health']}",
         ],
     }

@@ -57,3 +57,18 @@ def test_gateway_default_primary_and_fallback_are_in_catalog() -> None:
     ids = {m.id for m in SUPPORTED_MODELS}
     assert _config._DEFAULT_PRIMARY in ids
     assert _config._DEFAULT_FALLBACK in ids
+
+
+def test_moe_serve_extras_align_with_shape() -> None:
+    # The MoE-only serve flags (--moe-backend / --speculative-config MTP) belong
+    # to MoE checkpoints alone — they break the dense/hybrid models and must stay
+    # off them. Tie the invariant to the architecture phrase so the two can't drift.
+    for model in SUPPORTED_MODELS:
+        is_moe = model.shape.lower().startswith("moe")
+        assert bool(model.moe_backend) == is_moe, f"{model.id}: moe_backend vs shape"
+        if not is_moe:
+            assert model.speculative_config == "", f"{model.id}: stray speculative_config"
+    # and the 35B MoE candidate actually carries shahizat's flags
+    moe = next(m for m in SUPPORTED_MODELS if m.shape.lower().startswith("moe"))
+    assert moe.moe_backend == "marlin"
+    assert "mtp" in moe.speculative_config
