@@ -75,18 +75,23 @@ acceptance came out at **72 %** (see the benchmark table).
 `model switch` writes the `VLLM_*` keys to `.env`, but the MTP draft and the
 text-only flags **can't be defaulted in the shared template** (compose can't omit
 an empty flag, and they break the dense/hybrid models). So `model switch` resolves
-the env and then **prints the exact compose `command:` lines to add by hand** —
-the same mechanism the MoE `--moe-backend` uses:
+the env and then **prints the exact compose `command:` list items to add by hand** —
+the same mechanism the MoE `--moe-backend` uses. The compose `command:` is a YAML
+list (one argv token per item), so each flag is a separate item and the
+`--speculative-config` JSON uses the `=` form, single-quoted (its value contains
+`{` and `:` characters):
 
-```bash
-model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --port 8001 --apply
-# auto-selects VLLM_TOOL_CALL_PARSER=qwen3_coder + VLLM_QUANTIZATION=modelopt,
-# then prints: add to the compose `command` by hand —
-#   --speculative-config '{"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
-#   --trust-remote-code
-#   --language-model-only
-# and set VLLM_MAX_NUM_SEQS=2  (see the OOM caveat below)
+```yaml
+# add to the vLLM service `command:` list in docker-compose.yml
+      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - --trust-remote-code
+      - --language-model-only
+      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4
 ```
+
+`model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply` also auto-selects
+`VLLM_TOOL_CALL_PARSER=qwen3_coder` + `VLLM_QUANTIZATION=modelopt`; separately set
+`VLLM_MAX_NUM_SEQS=2` in `.env` (see the OOM caveat below).
 
 Reference serve recipe (from the card) once those lines are in the compose file:
 

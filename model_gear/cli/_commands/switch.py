@@ -87,12 +87,19 @@ def _serve_notices(model_id: str) -> list[str]:
                 f"--moe-backend={model.moe_backend}"
             )
         if model.speculative_config:
+            # Emit each flag as its own argv-safe `command:` list item (the compose
+            # command is a YAML list — one argv token per item). --speculative-config
+            # uses the `=` form (no space) and is single-quoted because its JSON value
+            # contains `: ` / `{`; the others are bare tokens. VLLM_MAX_NUM_SEQS is an
+            # .env var, kept as a separate human note (not a compose token).
             notices.append(
-                "MTP/text-only model — add these to the compose `command` by hand "
-                "(not written to .env; see docs/qwen3.6-27b-text-nvfp4-mtp.md): "
-                f"--speculative-config '{model.speculative_config}' --trust-remote-code "
-                "--language-model-only --tokenizer=mmangkad/Qwen3.6-27B-NVFP4; and set "
-                "VLLM_MAX_NUM_SEQS=2 (4 OOMs at n=3/256K)"
+                "MTP/text-only model — add these `command:` list items by hand (see "
+                "docs/qwen3.6-27b-text-nvfp4-mtp.md), then set VLLM_MAX_NUM_SEQS=2 in "
+                ".env (4 OOMs at n=3/256K):"
+                f"\n      - '--speculative-config={model.speculative_config}'"
+                "\n      - --trust-remote-code"
+                "\n      - --language-model-only"
+                "\n      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4"
             )
     return notices
 
