@@ -24,6 +24,17 @@ Source: <https://huggingface.co/mmangkad/Qwen3.6-35B-A3B-NVFP4>.
 > load path (MoE + multimodal ViT + Mamba, single 24 GiB safetensors) stalls/OOMs
 > even solo under swap pressure. Re-test on a quiet box before relying on it.
 
+**Update — load-tested 2026-05-31 — DOES load solo with the right flags.** With
+the 27B primary stopped (so the 35B had the GB10 to itself) and shahizat's tuning
+(`--moe-backend marlin`, flashinfer, async scheduling, chunked prefill) at
+`--gpu-memory-utilization 0.70 --max-model-len 32768`, it loaded healthy in ~6 min
+(~84 GiB resident) and served. Two caveats found: (1) `0.85` util fails the
+pre-flight reservation on this *shared* box (only ~90 of 121.7 GiB free — the
+audio NIMs + reachy hold the rest), so `0.70` is the working value; (2) the MTP
+`--speculative-config` from shahizat's recipe **fails to load** on this `mmangkad/`
+copy (`qwen3_5_mtp.py` weight-shape mismatch on vLLM nv26.04) — it is tied to his
+`nvidia/` checkpoint. Measured numbers under "Live replication" below.
+
 ## What it is
 
 - An **NVFP4 (Mixture-of-Experts)** checkpoint: ~35B total parameters, **~3B
@@ -132,6 +143,28 @@ Output-token throughput across the three workloads (16 concurrent requests):
 
 MTP speculative-decode acceptance was highest on the decode-heavy workload
 (~80–84 %), lowest on balanced (~57–59 %). These are shahizat's numbers on
-dedicated boxes — see [`tuning-profiles.md`](tuning-profiles.md) for how the
-`--purpose` knob maps to these shapes. model-gear's own GB10 numbers for the
-`mmangkad/` copy remain blocked on a reliable load (above).
+dedicated boxes (the `nvidia/` checkpoint, concurrency 16, **with** MTP) — see
+[`tuning-profiles.md`](tuning-profiles.md) for how the `--purpose` knob maps to
+these shapes.
+
+## Live replication on this GB10 (2026-05-31)
+
+We did not trust the posted numbers — we measured. On the shared DGX Spark
+`spark-f8a9` (single GB10, 121.7 GiB unified, shared with the audio NIMs + reachy;
+vLLM 0.19.0+nv26.04), with the 27B stopped and the recipe above **minus MTP** at
+util 0.70 / 32768:
+
+| Metric (single-stream, batch=1) | 35B MoE (no MTP) | 27B hybrid (primary) |
+|---|---|---|
+| decode throughput | **35.0 / 36.1 tok/s** | 7.8 / 7.9 tok/s |
+| prefill (845 tok + 16 gen) | **0.62 s** | 2.33 s |
+
+So the 35B MoE is **~4.6× faster on single-stream decode and ~3.8× faster on
+prefill** than the 27B on the same box — the MoE's ~3B-active-params advantage,
+reproduced. (`vllm bench serve` at concurrency 1 agrees: 34.7 tok/s, TTFT 0.70 s,
+TPOT 28 ms.) We could **not** reproduce shahizat's exact figures — he ran the
+`nvidia/` checkpoint on *dedicated* boxes at concurrency 16 **with** MTP (which
+roughly doubles per-stream decode); our run is the `mmangkad/` copy on a *shared*
+box, single-stream, **without** MTP (it does not load here). The qualitative
+result — MoE = much faster decode — replicates; the headline tok/s does not, and
+the gap is explained by box, concurrency, and the missing MTP draft.

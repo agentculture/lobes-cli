@@ -81,11 +81,13 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         quantization="modelopt_fp4",
         status="configured",
         doc="qwen3.6-35b-a3b-nvfp4.md",
-        # MoE-only serve extras from shahizat's benchmark (the marlin MoE kernel +
-        # the MTP speculative-decode draft). model switch surfaces these as a
-        # compose edit; they must not land on the dense/hybrid models.
+        # MoE-only serve extra: the marlin MoE kernel — verified to load this
+        # checkpoint *solo* on the GB10 (2026-05-31, util 0.70). model switch
+        # surfaces it as a compose edit; it must not land on the dense/hybrid models.
+        # shahizat's MTP --speculative-config is intentionally NOT carried: it is
+        # tied to the nvidia/ checkpoint and FAILS to load on this mmangkad copy
+        # (qwen3_5_mtp.py weight-shape mismatch on vLLM nv26.04). See the doc.
         moe_backend="marlin",
-        speculative_config='{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}',
     ),
 )
 

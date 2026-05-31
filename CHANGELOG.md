@@ -36,6 +36,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Credit: the serve tuning and the three workload shapes follow **shahizat**'s
     cross-machine NVFP4 benchmark (NVIDIA Developer Forums) — see the README
     Acknowledgements and `docs/tuning-profiles.md`.
+  - **Live-replicated on the shared DGX Spark (2026-05-31)** rather than trusting
+    the post: with the new flags the **35B MoE candidate loads solo** (util 0.70,
+    marlin) and runs **single-stream decode ~35 tok/s vs the 27B's ~7.8 — ~4.6×
+    faster** (the MoE's ~3B-active advantage). Numbers + method in
+    `docs/tuning-profiles.md` and `docs/qwen3.6-35b-a3b-nvfp4.md`.
 
 ### Changed
 
@@ -43,6 +48,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   profile (was a fixed 32768 / 0.6); pass them explicitly to override.
 - `model benchmark` replaces `--decode-tokens` with purpose-driven
   `--input-len` / `--output-len`.
+- **Catalog: dropped the MTP `speculative_config` from the `mmangkad/Qwen3.6-35B-A3B-NVFP4`
+  entry** (kept `--moe-backend=marlin`). Live testing showed shahizat's MTP draft
+  fails to load on the `mmangkad/` copy (`qwen3_5_mtp.py` weight-shape mismatch on
+  vLLM nv26.04) — it is tied to his `nvidia/` checkpoint. `model switch` no longer
+  prints a recipe that wouldn't load.
 
 ### Fixed
 

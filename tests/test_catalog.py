@@ -68,7 +68,9 @@ def test_moe_serve_extras_align_with_shape() -> None:
         assert bool(model.moe_backend) == is_moe, f"{model.id}: moe_backend vs shape"
         if not is_moe:
             assert model.speculative_config == "", f"{model.id}: stray speculative_config"
-    # and the 35B MoE candidate actually carries shahizat's flags
+    # the 35B MoE candidate carries the marlin MoE kernel (verified to load),
+    # but NOT the MTP speculative-config — that fails on the mmangkad checkpoint
+    # (verified live 2026-05-31); see docs/qwen3.6-35b-a3b-nvfp4.md.
     moe = next(m for m in SUPPORTED_MODELS if m.shape.lower().startswith("moe"))
     assert moe.moe_backend == "marlin"
-    assert "mtp" in moe.speculative_config
+    assert moe.speculative_config == ""

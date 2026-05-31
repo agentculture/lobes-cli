@@ -91,7 +91,8 @@ context / attention defaults), `--max-model-len` / `--gpu-mem-util` (explicit
 overrides of the machine profile), `--served-name`, `--tool-call-parser` (e.g.
 `hermes` for Qwen3 dense, `qwen3_coder` for Qwen3-Coder/3.6), `--quantization`,
 `--compose-dir`, `--apply`, `--json`. Switching to the Qwen3.6-35B-A3B MoE prints
-a reminder for its compose-only `--moe-backend` / `--speculative-config` flags.
+a reminder for its compose-only `--moe-backend=marlin` flag (its MTP
+speculative-config is not carried — it fails to load on that checkpoint).
 Only one ~30B-class model fits on a single GB10 at a time, so the switch frees
 the prior model before starting the new one.
 """
@@ -349,8 +350,8 @@ _TUNING = """\
    `decode-heavy` 8/4096 (≈1K in/8K out).
 3. **model** (the catalog) → `VLLM_QUANTIZATION`, `VLLM_TOOL_CALL_PARSER`, and —
    for the MoE candidate only — a printed reminder for the compose-only
-   `--moe-backend` / `--speculative-config` flags (these can't be defaulted in the
-   shared template).
+   `--moe-backend=marlin` flag (can't be defaulted in the shared template; its MTP
+   speculative-config is not carried — it fails to load on that checkpoint).
 
 `model benchmark` defaults its workload shape to the configured `VLLM_PURPOSE`, so
 the numbers track the serve config. Override with `--purpose` / `--input-len` /

@@ -296,7 +296,8 @@ def test_switch_moe_model_prints_compose_edit_notice(tmp_path, capsys) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "--moe-backend=marlin" in out
-    assert "speculative-config" in out
+    # MTP --speculative-config is not carried (fails to load on this checkpoint)
+    assert "speculative-config" not in out
 
 
 def test_switch_apply_writes_purpose_machine_env(tmp_path, monkeypatch) -> None:

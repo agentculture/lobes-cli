@@ -74,13 +74,13 @@ services:
       # NOTE: --trust-remote-code is intentionally omitted. Qwen3-32B-NVFP4 loads
       # without it; add it back only for a model whose repo ships custom modeling
       # code (it lets that code run in-container alongside HF_TOKEN + the cache mount).
-      # NOTE: MoE-only flags are NOT here. The Qwen3.6-35B-A3B MoE candidate also
-      # wants `--moe-backend=marlin` and `--speculative-config=
-      # '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'` (per
-      # shahizat's benchmark). They are catalog data, not defaults — they break the
-      # 27B hybrid / dense models, and compose can't conditionally omit a flag. Add
-      # them here by hand when serving the MoE (`model switch` prints the exact
-      # lines). See docs/qwen3.6-35b-a3b-nvfp4.md.
+      # NOTE: the MoE-only flag is NOT here. The Qwen3.6-35B-A3B MoE candidate also
+      # wants `--moe-backend=marlin` (verified to load it solo on the GB10). It is
+      # catalog data, not a default — it breaks the 27B hybrid / dense models, and
+      # compose can't conditionally omit a flag. Add it by hand when serving the MoE
+      # (`model switch` prints the exact line). shahizat's MTP `--speculative-config`
+      # is NOT recommended for this checkpoint — it fails to load on the mmangkad
+      # copy (works only on his nvidia/ checkpoint). See docs/qwen3.6-35b-a3b-nvfp4.md.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

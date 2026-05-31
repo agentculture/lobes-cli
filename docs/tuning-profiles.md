@@ -78,6 +78,37 @@ shahizat ran **one** serve config across all three machines and three workloads
 | balanced (1K/1K) | 817.5 | 249.5 | 190.7 |
 
 These are a cross-machine **reference baseline** (dedicated boxes, the `nvidia/`
-checkpoint), not model-gear's own measurements. model-gear's per-purpose numbers
-on the shared DGX Spark are filled in by running `model benchmark` against the
-live server.
+checkpoint, concurrency 16, with MTP) — **not** model-gear's own measurements.
+
+## Our own replication (shared DGX Spark, 2026-05-31)
+
+We did not trust the post — we measured on `spark-f8a9` (single GB10, 121.7 GiB
+unified, shared with the audio NIMs + reachy; vLLM 0.19.0+nv26.04), with the new
+config. Single-stream decode (batch=1, identical probe — 1000 in / 512 out):
+
+| model (new config) | decode tok/s | prefill (845 tok + 16 gen) |
+|---|---|---|
+| 35B MoE candidate (marlin, no MTP, util 0.70) | **35.0 / 36.1** | **0.62 s** |
+| 27B hybrid primary (util 0.6) | 7.8 / 7.9 | 2.33 s |
+
+The 35B MoE is **~4.6× faster on single-stream decode** than the 27B on the same
+box (the MoE's ~3B-active advantage). The 27B itself gains a little from the new
+flags (~7.1 → ~7.8 tok/s, prefill 2.51 → 2.33 s — a shippable bonus; decode is
+memory-bandwidth bound, so the batching/scheduling flags help it less).
+
+Findings that drove config choices:
+
+- **util 0.85 fails the pre-flight on this shared box** — only ~90 of 121.7 GiB is
+  free (other services hold the rest), so the `spark` profile's conservative `0.6`
+  is correct; the 35B needed `0.70` solo (with the 27B stopped).
+- **shahizat's MTP `--speculative-config` does not transfer** to the cached
+  `mmangkad/` checkpoint (`qwen3_5_mtp.py` weight-shape mismatch on vLLM nv26.04) —
+  so the catalog carries only `--moe-backend=marlin` for the MoE, not MTP. See
+  [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
+- The GB10 reports **no native FP4 compute** → vLLM falls back to the Marlin
+  weight-only FP4 kernel (a perf caveat on this image).
+
+We could not reproduce shahizat's exact tok/s (his were dedicated boxes,
+concurrency 16, `nvidia/` checkpoint, with MTP), but the qualitative result —
+MoE = much faster decode — replicates. Re-run with `model benchmark --purpose <p>`
+to refresh these on the live server.
