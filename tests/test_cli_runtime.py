@@ -326,6 +326,7 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     assert "NOTE:" not in out  # MTP primary's flags are template defaults — nothing to edit
     assert "VLLM_MAX_NUM_SEQS=2" in out  # forced MTP cap (overrides the balanced 4)
     assert "MTP primary cap" in out
+    assert "VLLM_MAX_MODEL_LEN=131072" in out  # spark serves 128K by default (load-tested)
     # quantization comes from the catalog (modelopt, not modelopt_fp4)
     assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
 

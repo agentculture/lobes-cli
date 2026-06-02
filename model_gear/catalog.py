@@ -51,7 +51,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # so this is the fallback when an image path is needed.
         role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
-        context="256K native (capped to 32K for the first load)",
+        context="256K native",
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
         status="load-tested",
@@ -61,7 +61,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         id="RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4",
         role_hint="fallback",
         shape="dense (vision-capable)",
-        context="128K native (capped to 32K for the first load)",
+        context="128K native",
         tool_parser="mistral",
         quantization="compressed-tensors",
         status="load-tested",
@@ -86,7 +86,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # ~2.4x the archived baseline 27B). Replaces mmangkad/Qwen3.6-27B-NVFP4.
         role_hint="primary",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
-        context="256K native (capped to 32K for the first load)",
+        context="256K native (served at 128K on the shared GB10)",
         tool_parser="qwen3_coder",
         quantization="modelopt",
         status="load-tested",

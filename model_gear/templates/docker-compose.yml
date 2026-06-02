@@ -60,7 +60,7 @@ services:
       - --port=8000
       - --quantization=${VLLM_QUANTIZATION:-modelopt}   # MTP primary is ModelOpt NVFP4 (`modelopt` → modelopt_fp4); mmangkad/nvidia are modelopt_fp4, RedHatAI (Mistral) is compressed-tensors (`model switch` sets this from the catalog)
       - --kv-cache-dtype=fp8
-      - --max-model-len=${VLLM_MAX_MODEL_LEN:-32768}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-131072}   # 256K native; served at 128K (load-tested on the shared GB10 — ~70 GiB at util 0.6); raise toward 256K with headroom
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
       - --attention-backend=${VLLM_ATTENTION_BACKEND:-flashinfer}   # Blackwell-class kernel (ships in the nv26.04 image); `model switch --machine` sets this
       - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-2}                      # concurrent decode slots — capped at 2 for the MTP primary (4 OOMs at n=3/high-context); `model switch --purpose` tunes this for non-MTP models

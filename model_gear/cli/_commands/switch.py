@@ -321,7 +321,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--max-model-len",
         type=int,
         default=None,
-        help="Context window (default: the machine profile, e.g. 32768 on spark).",
+        help="Context window (default: the machine profile, e.g. 131072 on spark).",
     )
     p.add_argument("--served-name", help="Name clients address (default: the model name).")
     p.add_argument(

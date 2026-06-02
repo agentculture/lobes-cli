@@ -113,8 +113,12 @@ vllm serve sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP \
 ```
 
 On the **shared GB10** keep `--gpu-memory-utilization` at the machine profile's
-`0.6` (not `0.9` — the audio NIMs + reachy hold the rest of the 121.7 GiB), and
-the first load should cap `--max-model-len 32768`.
+`0.6` (not `0.9` — the audio NIMs + reachy hold the rest of the 121.7 GiB). The
+served default is now **128K** (`--max-model-len 131072`), load-tested 2026-06-03
+(see the 128K benchmark below): same ~70 GiB footprint as 32K at util 0.6 — util
+fixes the KV-pool reservation, and the pool still holds **9.6× a full 128K
+request** — so 32K→128K costs no extra memory. Raise toward the full 256K only
+with headroom for the co-resident agents.
 
 ## Caveats — validated on the live load (2026-05-31)
 
@@ -129,8 +133,10 @@ the first load should cap `--max-model-len 32768`.
 2. **`--max-num-seqs 2` is load-bearing.** The card warns that `--max-num-seqs 4`
    with KV-FP8, `n=3`, and 256K context **silently OOMs during CUDA-graph capture**.
    No `--purpose` profile yields 2 (balanced/prompt-heavy=4, decode-heavy=8), so
-   set `VLLM_MAX_NUM_SEQS=2` in `.env` by hand. Tested at 32768 context / util 0.6
-   on the shared box (~71.5 GiB resident).
+   set `VLLM_MAX_NUM_SEQS=2` in `.env` by hand (`model switch` to this primary
+   forces it). Tested at 32768 context / util 0.6 on the shared box (~71.5 GiB
+   resident); the **128K** (`131072`) served default was load-tested too
+   (2026-06-03) — boots clean at seqs=2, same ~70 GiB footprint.
 3. **Quantization.** `--quantization modelopt` works — vLLM resolves it to
    `modelopt_fp4` (NVFP4) on load. The catalog sets `modelopt`.
 4. **`--trust-remote-code` + `--language-model-only` are required** (custom
@@ -199,6 +205,32 @@ card's 1.74× (which was concurrency 2 on a Blackwell box; single-stream with 72
 acceptance is MTP's best case). One assess probe (the 145-min word problem) hit
 `finish=length` at the 2,048-token cap mid-reasoning — a reasoning-verbosity
 artifact, not a wrong answer.
+
+## Benchmark — 2026-06-03, 128K context (the new served default)
+
+Re-tested on the same shared GB10 at the **128K** default (`--max-model-len
+131072`), otherwise the same image and flags as the 2026-05-31 run (util 0.6,
+`--max-num-seqs 2`, KV-FP8, MTP n=3, `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`).
+Reproduce with `model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+--max-model-len 131072 --apply`, then `model assess` + `model benchmark`.
+
+| Property | Value |
+|---|---|
+| Health / `max_model_len` | `/health` 200; `131072` |
+| Boots clean (no capture OOM) | ✅ CUDA-graph pool 0.49 GiB; loaded in 6m46s |
+| KV cache | **48.39 GiB** available; **372,800 tokens**; **9.61×** max concurrency at 131,072 tokens/request |
+| Correctness | `17 × 23 = 391` ✅ (391 tok); 14:45→17:10 = 145 min ✅ (692 tok, completes — no `finish=length` this time); reasoning trace `reasoning` (1,639 chars) |
+| **Decode throughput** | **18.3 tok/s** (batch=1, greedy, 1000 tok forced) |
+| Prefill | 845 prompt tokens + 16 gen in 1.22 s |
+| **MTP draft acceptance** | **73.3 %** (2,176 / 2,967 draft tokens; ~2.20 of 3 accepted per step) |
+| GPU memory (EngineCore) | **71,963 MiB (~70 GiB)** at util 0.6 — same as 32K |
+| Tool calling | ✅ post-switch probe passed (`tool_choice:"auto"`, finish=tool_calls) |
+
+The 2026-05-31 32K table above remains the original promotion measurement; 128K
+matches it on throughput, draft acceptance, and footprint, and is now the served
+default. Because util fixes the KV-pool reservation, the resident footprint is
+unchanged from 32K — only the addressable context grows (and the pool still holds
+9.6× a full 128K request, so there is room to push higher with headroom).
 
 ## Tool calling — verified (2026-05-31)
 
