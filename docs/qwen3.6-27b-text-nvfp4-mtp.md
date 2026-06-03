@@ -114,11 +114,13 @@ vllm serve sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP \
 
 On the **shared GB10** keep `--gpu-memory-utilization` at the machine profile's
 `0.6` (not `0.9` — the audio NIMs + reachy hold the rest of the 121.7 GiB). The
-served default is now **128K** (`--max-model-len 131072`), load-tested 2026-06-03
-(see the 128K benchmark below): same ~70 GiB footprint as 32K at util 0.6 — util
-fixes the KV-pool reservation, and the pool still holds **9.6× a full 128K
-request** — so 32K→128K costs no extra memory. Raise toward the full 256K only
-with headroom for the co-resident agents.
+served default is now the **full 256K** (`--max-model-len 262144`), load-tested
+2026-06-03 (see the 256K benchmark below): same ~70 GiB footprint as 32K/128K at
+util 0.6 — `--gpu-memory-utilization` fixes the KV-pool reservation, so context
+length doesn't change resident memory; only the addressable window grows. vLLM
+reports **5.3× max concurrency at a full 256K request** — well above the seqs=2
+decode cap, so there is no practical concurrency loss. Lower the context only if
+heavier co-resident agents need the headroom.
 
 ## Caveats — validated on the live load (2026-05-31)
 
@@ -135,8 +137,10 @@ with headroom for the co-resident agents.
    No `--purpose` profile yields 2 (balanced/prompt-heavy=4, decode-heavy=8), so
    set `VLLM_MAX_NUM_SEQS=2` in `.env` by hand (`model switch` to this primary
    forces it). Tested at 32768 context / util 0.6 on the shared box (~71.5 GiB
-   resident); the **128K** (`131072`) served default was load-tested too
-   (2026-06-03) — boots clean at seqs=2, same ~70 GiB footprint.
+   resident); the **full 256K** (`262144`) served default was load-tested too
+   (2026-06-03) — boots clean **at seqs=2** (the seqs=2 cap is exactly what keeps
+   the capture OOM off at full context), same ~70 GiB footprint. The OOM warning
+   above is specifically about seqs=4.
 3. **Quantization.** `--quantization modelopt` works — vLLM resolves it to
    `modelopt_fp4` (NVFP4) on load. The catalog sets `modelopt`.
 4. **`--trust-remote-code` + `--language-model-only` are required** (custom
@@ -227,10 +231,47 @@ Reproduce with `model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
 | Tool calling | ✅ post-switch probe passed (`tool_choice:"auto"`, finish=tool_calls) |
 
 The 2026-05-31 32K table above remains the original promotion measurement; 128K
-matches it on throughput, draft acceptance, and footprint, and is now the served
-default. Because util fixes the KV-pool reservation, the resident footprint is
-unchanged from 32K — only the addressable context grows (and the pool still holds
-9.6× a full 128K request, so there is room to push higher with headroom).
+matches it on throughput, draft acceptance, and footprint. Because util fixes the
+KV-pool reservation, the resident footprint is unchanged from 32K — only the
+addressable context grows (and the pool still holds 9.6× a full 128K request, so
+there is room to push higher with headroom). That headroom was then spent: 256K is
+the served default since 2026-06-03 (next section).
+
+## Benchmark — 2026-06-03, 256K context (the new served default)
+
+Re-tested on the same shared GB10 at the **full 256K** native context
+(`--max-model-len 262144`), otherwise the same image and flags as the 128K run
+(util 0.6, `--max-num-seqs 2`, KV-FP8, MTP n=3,
+`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`). Reproduce with `model switch
+sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --max-model-len 262144 --apply`, then
+`model assess --tools` + `model benchmark`.
+
+| Property | Value |
+|---|---|
+| Health / `max_model_len` | `/health` 200; `262144` |
+| Boots clean (no capture OOM) | ✅ CUDA-graph capture (PIECEWISE) 0.71 GiB in 2 s |
+| KV cache | **49.14 GiB** available; **377,600 tokens**; **5.29×** max concurrency at 262,144 tokens/request |
+| Correctness | `17 × 23 = 391` ✅ (329 tok); 14:45→17:10 = 145 min ✅ (701 tok, completes); reasoning trace `reasoning` (1,589 chars) |
+| **Decode throughput** | **17.8 tok/s** (batch=1, greedy, 1000 tok forced) |
+| Prefill | 845 prompt tokens + 16 gen in 1.25 s |
+| **MTP draft acceptance** | **74.0 %** (2,282 / 3,084 draft tokens; ~2.22 of 3 accepted per step) |
+| GPU memory (EngineCore) | **71,601 MiB (~70 GiB)** at util 0.6 — same as 32K/128K |
+| Tool calling | ✅ post-switch probe passed (`tool_choice:"auto"`, finish=tool_calls) |
+
+256K matches the 32K and 128K runs on footprint, throughput (the gentle
+context-decline 19.1→18.3→17.8 tok/s continues), and draft acceptance (~74 %), and
+adds the full native window at no extra resident memory — `--gpu-memory-utilization`
+fixes the KV-pool reservation, so only the addressable context grows. The KV pool
+gives **5.29×** concurrency at a full 256K request, well above the `--max-num-seqs 2`
+decode cap, so there is no practical concurrency cost vs the 128K default. The
+seqs=2 cap is what holds off the capture OOM the seqs=4 caveat warns about.
+
+**Boot note:** one engine-core attempt hit a transient
+`InductorError: CUDA driver error: operation not permitted` during torch-inductor
+autotuning (a CUDA forward-compatibility-mode artifact on this box — the driver is
+in compat mode), *after* weights loaded. It is **not** an OOM and **not**
+context-related; the engine retried and booted clean (adding ~3 min to the boot).
+Watch for it on a cold boot, but it self-recovers.
 
 ## Tool calling — verified (2026-05-31)
 

@@ -31,7 +31,7 @@ class SupportedModel:
     # The largest --max-model-len this checkpoint serves with vLLM's *default* rope
     # (no YaRN/rope-scaling override) — a hard ceiling: vLLM refuses a larger value
     # and the container fails to boot. `model switch` clamps the machine-profile
-    # context default DOWN to this, so a high machine default (e.g. spark's 128K)
+    # context default DOWN to this, so a high machine default (e.g. spark's 256K)
     # can't silently boot-fail a 32K-native model. An explicit --max-model-len wins.
     native_max_model_len: int
     tool_parser: str  # vLLM --tool-call-parser (must match runtime._parser.infer_parser)
@@ -97,7 +97,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # ~2.4x the archived baseline 27B). Replaces mmangkad/Qwen3.6-27B-NVFP4.
         role_hint="primary",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
-        context="256K native (served at 128K on the shared GB10)",
+        context="256K native (served at full 256K on the shared GB10)",
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt",

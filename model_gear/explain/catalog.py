@@ -185,7 +185,7 @@ as the `model-gear-vllm` container. `model init` scaffolds it into
 ```
 
 Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory) via
-`VLLM_GPU_MEM_UTIL` (default 0.6) and `VLLM_MAX_MODEL_LEN` (default 131072).
+`VLLM_GPU_MEM_UTIL` (default 0.6) and `VLLM_MAX_MODEL_LEN` (default 262144).
 
 ## The must-match invariant
 
@@ -351,7 +351,7 @@ _TUNING = """\
 
 1. **machine** (`--machine`, default auto-detected from nvidia-smi + hostname) →
    `VLLM_GPU_MEM_UTIL`, `VLLM_MAX_MODEL_LEN`, `VLLM_ATTENTION_BACKEND`.
-   `spark` 0.6/131072 (shared GB10), `blackwell` 0.85/65536 (dedicated VRAM),
+   `spark` 0.6/262144 (shared GB10), `blackwell` 0.85/65536 (dedicated VRAM),
    `thor` 0.6/32768, `generic` 0.6/32768. spark is load-tested; the rest are
    configured estimates.
 2. **purpose** (`--purpose`, default `balanced`) → `VLLM_MAX_NUM_SEQS`,

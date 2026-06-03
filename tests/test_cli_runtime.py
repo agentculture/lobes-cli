@@ -326,7 +326,7 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     assert "NOTE:" not in out  # MTP primary's flags are template defaults — nothing to edit
     assert "VLLM_MAX_NUM_SEQS=2" in out  # forced MTP cap (overrides the balanced 4)
     assert "MTP primary cap" in out
-    assert "VLLM_MAX_MODEL_LEN=131072" in out  # spark serves 128K by default (load-tested)
+    assert "VLLM_MAX_MODEL_LEN=262144" in out  # spark serves the full 256K by default (load-tested)
     # quantization comes from the catalog (modelopt, not modelopt_fp4)
     assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
 
@@ -362,8 +362,8 @@ def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
 
 def test_switch_clamps_context_to_model_native_ceiling(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
-    # spark's machine default is 131072 (128K, for the 256K-native MTP primary), but
-    # nvidia/Qwen3-32B-NVFP4 is 32K-native — vLLM would refuse 131072 (no YaRN) and
+    # spark's machine default is 262144 (256K, for the 256K-native MTP primary), but
+    # nvidia/Qwen3-32B-NVFP4 is 32K-native — vLLM would refuse 262144 (no YaRN) and
     # fail to boot. switch must clamp the machine default DOWN to the model ceiling.
     rc = main(
         [
@@ -377,14 +377,14 @@ def test_switch_clamps_context_to_model_native_ceiling(tmp_path, capsys) -> None
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "VLLM_MAX_MODEL_LEN=32768" in out  # clamped from spark's 131072 default
-    assert "VLLM_MAX_MODEL_LEN=131072" not in out
+    assert "VLLM_MAX_MODEL_LEN=32768" in out  # clamped from spark's 262144 default
+    assert "VLLM_MAX_MODEL_LEN=262144" not in out
     assert "clamped to model native ceiling" in out
 
 
 def test_switch_no_clamp_when_model_fits_machine_default(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
-    # The 256K-native MTP primary clears spark's 128K default — no clamp, no notice.
+    # The 256K-native MTP primary exactly meets spark's 256K default — no clamp, no notice.
     rc = main(
         [
             "switch",
@@ -397,7 +397,7 @@ def test_switch_no_clamp_when_model_fits_machine_default(tmp_path, capsys) -> No
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "VLLM_MAX_MODEL_LEN=131072" in out  # full machine default stands
+    assert "VLLM_MAX_MODEL_LEN=262144" in out  # full machine default stands
     assert "clamped to model native ceiling" not in out
 
 
