@@ -326,6 +326,7 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     assert "NOTE:" not in out  # MTP primary's flags are template defaults — nothing to edit
     assert "VLLM_MAX_NUM_SEQS=2" in out  # forced MTP cap (overrides the balanced 4)
     assert "MTP primary cap" in out
+    assert "VLLM_MAX_MODEL_LEN=131072" in out  # spark serves 128K by default (load-tested)
     # quantization comes from the catalog (modelopt, not modelopt_fp4)
     assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
 
@@ -357,6 +358,69 @@ def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
     assert "--tokenizer=mmangkad/Qwen3.6-27B-NVFP4" in out
     # not an MoE checkpoint — no --moe-backend
     assert "--moe-backend" not in out
+
+
+def test_switch_clamps_context_to_model_native_ceiling(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # spark's machine default is 131072 (128K, for the 256K-native MTP primary), but
+    # nvidia/Qwen3-32B-NVFP4 is 32K-native — vLLM would refuse 131072 (no YaRN) and
+    # fail to boot. switch must clamp the machine default DOWN to the model ceiling.
+    rc = main(
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_MAX_MODEL_LEN=32768" in out  # clamped from spark's 131072 default
+    assert "VLLM_MAX_MODEL_LEN=131072" not in out
+    assert "clamped to model native ceiling" in out
+
+
+def test_switch_no_clamp_when_model_fits_machine_default(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # The 256K-native MTP primary clears spark's 128K default — no clamp, no notice.
+    rc = main(
+        [
+            "switch",
+            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_MAX_MODEL_LEN=131072" in out  # full machine default stands
+    assert "clamped to model native ceiling" not in out
+
+
+def test_switch_explicit_max_model_len_overrides_clamp(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # An explicit --max-model-len wins even past the native ceiling: the operator is
+    # opting into a YaRN/rope-scaling config (their responsibility), so don't clamp.
+    rc = main(
+        [
+            "switch",
+            "nvidia/Qwen3-32B-NVFP4",
+            "--machine",
+            "spark",
+            "--max-model-len",
+            "131072",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_MAX_MODEL_LEN=131072" in out  # explicit value respected, not clamped
+    assert "clamped to model native ceiling" not in out
 
 
 def test_switch_apply_writes_purpose_machine_env(tmp_path, monkeypatch) -> None:

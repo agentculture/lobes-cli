@@ -74,6 +74,20 @@ def test_machine_attention_backend_is_always_set() -> None:
         assert mp.attention_backend
 
 
+def test_spark_serves_128k_by_default() -> None:
+    # Load-tested 2026-06-03 on the shared GB10: the 256K-native MTP primary serves
+    # at 128K (~70 GiB resident at util 0.6, same as 32K — the KV pool holds 9.6x a
+    # full 128K request). Guard the shipped default so it can't drift back to the old
+    # 32K first-load cap, while util stays conservative (the box is shared).
+    spark = profiles.machine_profile("spark")
+    assert spark.max_model_len == 131072
+    assert spark.gpu_mem_util == 0.6
+    # The other machines keep their own contexts — only spark was measured at 128K.
+    assert profiles.machine_profile("blackwell").max_model_len == 65536
+    assert profiles.machine_profile("thor").max_model_len == 32768
+    assert profiles.machine_profile("generic").max_model_len == 32768
+
+
 def test_machine_profile_unknown_raises_user_error() -> None:
     with pytest.raises(ModelGearError) as exc:
         profiles.machine_profile("h100")

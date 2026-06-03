@@ -46,6 +46,14 @@ def test_status_values_are_known() -> None:
     assert {m.status for m in SUPPORTED_MODELS} <= {"load-tested", "configured"}
 
 
+def test_native_max_model_len_is_a_positive_int() -> None:
+    # The clamp `model switch` applies relies on a real, positive ceiling per model;
+    # a missing/zero value would silently disable the boot-safety clamp.
+    for model in SUPPORTED_MODELS:
+        assert isinstance(model.native_max_model_len, int), model.id
+        assert model.native_max_model_len > 0, model.id
+
+
 @pytest.mark.skipif(not _DOCS.is_dir(), reason="docs/ not shipped (wheel install)")
 def test_every_doc_file_exists() -> None:
     # The machine catalog and the human prose must not silently diverge.

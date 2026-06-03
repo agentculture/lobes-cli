@@ -102,7 +102,7 @@ MACHINE_PROFILES: tuple[MachineProfile, ...] = (
         summary="DGX Spark (GB10 Grace Blackwell, 128 GB unified, usually shared)",
         gpu_markers=("gb10", "dgx spark", "spark"),
         gpu_mem_util=0.6,  # conservative: the GB10 is shared with other mesh agents
-        max_model_len=32768,  # 256K-native primary capped for the first load
+        max_model_len=131072,  # 256K-native primary served at 128K (load-tested 2026-06-03)
         attention_backend="flashinfer",
         status="load-tested",
     ),
