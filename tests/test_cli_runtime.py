@@ -423,6 +423,30 @@ def test_switch_explicit_max_model_len_overrides_clamp(tmp_path, capsys) -> None
     assert "clamped to model native ceiling" not in out
 
 
+def test_switch_warns_on_uncatalogued_context_unclamped(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    # An uncatalogued model (switch supports arbitrary IDs) has no native_max_model_len
+    # to clamp against, so it inherits spark's 262144 default. vLLM would refuse to boot
+    # if the checkpoint's native context is smaller — switch must NOT silently apply the
+    # high default; it must warn and tell the user to pass --max-model-len. (Qodo #34.)
+    rc = main(
+        [
+            "switch",
+            "foo/bar-7b",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_MAX_MODEL_LEN=262144" in out  # machine default applied unclamped
+    assert "uncatalogued model" in out  # the boot-safety warning fired
+    assert "--max-model-len" in out  # and it points at the override
+    assert "clamped to model native ceiling" not in out  # nothing to clamp
+
+
 def test_switch_apply_writes_purpose_machine_env(tmp_path, monkeypatch) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(_compose, "compose_down", lambda d: _ok())

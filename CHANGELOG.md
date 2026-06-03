@@ -34,6 +34,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   candidates (`nvidia/Qwen3-32B-NVFP4`, `mmangkad/Qwen3.6-35B-A3B-NVFP4`) down to
   their own ceilings under the new 256K spark default.
 
+### Fixed
+
+- **`model switch` warns when an uncatalogued model would inherit an unclamped
+  machine context default.** The native-ceiling clamp only protects catalogued
+  models; an uncatalogued model ID (which `switch` supports) inherits the machine
+  default (now spark's 262144) and would boot-fail if the checkpoint's native
+  context is smaller. `switch` now emits a clear warning pointing at
+  `--max-model-len` / cataloguing, rather than silently applying the high default
+  (no silent clamp — an uncatalogued ceiling is unknown, so guessing one is wrong
+  both ways). Addresses a Qodo reliability finding on #34.
+
 ## [0.16.0] - 2026-06-03
 
 ### Changed
