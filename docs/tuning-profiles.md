@@ -42,7 +42,7 @@ explicit `--machine`.
 
 | machine | `--gpu-memory-utilization` | `--max-model-len` | `--attention-backend` | status |
 |---|---|---|---|---|
-| **spark** (GB10, 128 GB unified, usually shared) | 0.6 | 131072 | flashinfer | load-tested |
+| **spark** (GB10, 128 GB unified, usually shared) | 0.6 | 262144 | flashinfer | load-tested |
 | thor (Jetson Thor, unified) | 0.6 | 32768 | flashinfer | configured |
 | blackwell (RTX PRO 6000, dedicated VRAM) | 0.85 | 65536 | flashinfer | configured |
 | generic (unknown Blackwell-class) | 0.6 | 32768 | flashinfer | configured |

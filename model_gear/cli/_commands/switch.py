@@ -156,18 +156,27 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
     # context is a hard ceiling — vLLM refuses --max-model-len above it (no YaRN) and
     # the container fails to boot. When no explicit --max-model-len was given, clamp
     # the machine default DOWN to the catalogued model's native ceiling so a high
-    # machine default (e.g. spark's 128K) can't boot-fail a 32K-native model.
+    # machine default (e.g. spark's 256K) can't boot-fail a 32K-native model. An
+    # *uncatalogued* model has no known ceiling to clamp against (and switch supports
+    # them — see _select_parser/_select_quantization), so it inherits the machine
+    # default; warn rather than silently cap, since guessing a ceiling is wrong both ways.
     if args.max_model_len is None:
-        for model in supported_models():
-            if model.id == args.model and model.native_max_model_len:
-                machine_default = int(plan["VLLM_MAX_MODEL_LEN"])
-                if machine_default > model.native_max_model_len:
-                    plan["VLLM_MAX_MODEL_LEN"] = str(model.native_max_model_len)
-                    messages.append(
-                        "max-model-len (clamped to model native ceiling): "
-                        f"{model.native_max_model_len}"
-                    )
-                break
+        catalogued = next((m for m in supported_models() if m.id == args.model), None)
+        if catalogued is not None:
+            machine_default = int(plan["VLLM_MAX_MODEL_LEN"])
+            if machine_default > catalogued.native_max_model_len:
+                plan["VLLM_MAX_MODEL_LEN"] = str(catalogued.native_max_model_len)
+                messages.append(
+                    "max-model-len (clamped to model native ceiling): "
+                    f"{catalogued.native_max_model_len}"
+                )
+        else:
+            messages.append(
+                f"max-model-len: machine default {plan['VLLM_MAX_MODEL_LEN']} applied "
+                "unclamped (uncatalogued model — native ceiling unknown); if the "
+                "checkpoint's native context is smaller, vLLM will refuse to boot — pass "
+                "--max-model-len or add the model to the catalog with native_max_model_len"
+            )
     # The MTP primary caps decode slots at 2 — the balanced profile's 4 OOMs at
     # high context with n=3 spec-decode (see docs/qwen3.6-27b-text-nvfp4-mtp.md).
     # Force it over the profile so switching to the MTP primary matches the
@@ -337,7 +346,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--max-model-len",
         type=int,
         default=None,
-        help="Context window (default: the machine profile, e.g. 131072 on spark, "
+        help="Context window (default: the machine profile, e.g. 262144 on spark, "
         "clamped down to the model's native ceiling for 32K-native catalog models).",
     )
     p.add_argument("--served-name", help="Name clients address (default: the model name).")

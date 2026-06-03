@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-06-03
+
+### Changed
+
+- **Served context raised 128K → full 256K (native) for the MTP primary on DGX
+  Spark.** The `spark` machine profile's `max_model_len` default is now `262144`
+  (was `131072`), with matching changes to the single-model `env.example` /
+  `docker-compose.yml` defaults and the `model switch --help` / `model explain`
+  text. Load-tested 2026-06-03 on the shared GB10 (util 0.6, `--max-num-seqs 2`,
+  KV-FP8, MTP n=3): boots clean (CUDA-graph capture, PIECEWISE, **0.71 GiB** in 2 s
+  — **no OOM**), **17.8 tok/s** decode, **74.0 %** MTP draft acceptance, both
+  `model assess` probes `finish=stop`, tool-calling probe passes, and **71,601 MiB
+  (~70 GiB)** resident — the *same* footprint as 32K/128K, because
+  `--gpu-memory-utilization` fixes the KV-pool reservation (only the addressable
+  context grows). vLLM reports **5.29× max concurrency at a full 256K request**,
+  well above the `--max-num-seqs 2` decode cap, so **there is no practical
+  concurrency cost** versus the 128K default. `model switch --max-model-len <N>`
+  still overrides per deployment, and util stays a conservative `0.6` (shared box).
+  See `docs/qwen3.6-27b-text-nvfp4-mtp.md` (new 256K benchmark) and
+  `docs/tuning-profiles.md`.
+- **Catalog `context` string updated.** The MTP primary now reads
+  `"256K native (served at full 256K on the shared GB10)"`.
+- **Scope — deliberately left at the old contexts:** fleet templates stay at 32K
+  (co-residence with the 24B fallback is a different, still-unvalidated memory
+  regime; `fleet/env.example` notes this), and the `thor` / `generic` machine
+  profiles stay at 32K (unmeasured estimates) with `blackwell` at 64K. The
+  `model switch` native-ceiling clamp (added in 0.16.0) still pins 32K-native
+  candidates (`nvidia/Qwen3-32B-NVFP4`, `mmangkad/Qwen3.6-35B-A3B-NVFP4`) down to
+  their own ceilings under the new 256K spark default.
+
+### Fixed
+
+- **`model switch` warns when an uncatalogued model would inherit an unclamped
+  machine context default.** The native-ceiling clamp only protects catalogued
+  models; an uncatalogued model ID (which `switch` supports) inherits the machine
+  default (now spark's 262144) and would boot-fail if the checkpoint's native
+  context is smaller. `switch` now emits a clear warning pointing at
+  `--max-model-len` / cataloguing, rather than silently applying the high default
+  (no silent clamp — an uncatalogued ceiling is unknown, so guessing one is wrong
+  both ways). Addresses a Qodo reliability finding on #34.
+
 ## [0.16.0] - 2026-06-03
 
 ### Changed
