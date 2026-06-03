@@ -28,6 +28,12 @@ class SupportedModel:
     role_hint: str  # "primary" | "fallback" | "candidate" (the fleet's default role)
     shape: str  # architecture in a phrase, e.g. "dense" / "MoE (~3B active)"
     context: str  # native context window, human-readable
+    # The largest --max-model-len this checkpoint serves with vLLM's *default* rope
+    # (no YaRN/rope-scaling override) — a hard ceiling: vLLM refuses a larger value
+    # and the container fails to boot. `model switch` clamps the machine-profile
+    # context default DOWN to this, so a high machine default (e.g. spark's 128K)
+    # can't silently boot-fail a 32K-native model. An explicit --max-model-len wins.
+    native_max_model_len: int
     tool_parser: str  # vLLM --tool-call-parser (must match runtime._parser.infer_parser)
     quantization: str  # vLLM --quantization
     status: str  # "load-tested" (measured on this hardware) | "configured" (not yet)
@@ -52,6 +58,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
         context="256K native",
+        native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
         status="load-tested",
@@ -62,6 +69,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="fallback",
         shape="dense (vision-capable)",
         context="128K native",
+        native_max_model_len=131072,
         tool_parser="mistral",
         quantization="compressed-tensors",
         status="load-tested",
@@ -72,6 +80,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="candidate",
         shape="dense",
         context="32K (→131K via YaRN)",
+        # 32K native: 131K needs an explicit YaRN --rope-scaling override (pass
+        # --max-model-len 131072 with it). Without that, 32768 is the boot ceiling.
+        native_max_model_len=32768,
         tool_parser="hermes",
         quantization="modelopt_fp4",
         status="load-tested",
@@ -87,6 +98,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="primary",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
         context="256K native (served at 128K on the shared GB10)",
+        native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt",
         status="load-tested",
@@ -109,6 +121,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="candidate",
         shape="MoE (~3B active per token)",
         context="32K",
+        native_max_model_len=32768,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
         status="configured",

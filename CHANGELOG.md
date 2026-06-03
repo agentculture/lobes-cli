@@ -24,14 +24,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `"256K native (served at 128K on the shared GB10)"`; the non-served candidate /
   fallback entries (`mmangkad/Qwen3.6-27B-NVFP4`, the Mistral fallback) drop the
   stale per-model "capped to 32K" note and state native context only.
+- **Scope — deliberately left at the old contexts:** fleet templates stay at 32K
+  (the fleet runs the primary co-resident with a 24B fallback at lower util — a
+  different memory regime the single-model 128K test does not validate;
+  `fleet/env.example` notes this), and the `thor` / `generic` machine profiles
+  stay at 32K (unmeasured estimates) with `blackwell` at 64K.
 
-### Unchanged (intentionally)
+### Fixed
 
-- **Fleet templates stay at 32K.** The fleet runs the primary co-resident with a
-  24B fallback at lower util — a different memory regime the single-model 128K test
-  does not validate. `fleet/env.example` notes this.
-- **`thor` / `generic` machine profiles stay at 32K** (unmeasured estimates), and
-  `blackwell` stays at 64K.
+- **`model switch` clamps the machine context default to a model's native ceiling.**
+  Raising spark's `max_model_len` default to `131072` made it apply to *every* model
+  switched to on spark — including the 32K-native catalog candidates
+  (`nvidia/Qwen3-32B-NVFP4`, `mmangkad/Qwen3.6-35B-A3B-NVFP4`), where vLLM refuses a
+  `--max-model-len` above the checkpoint's native limit (no YaRN) and the container
+  fails to boot. `SupportedModel` now carries a numeric `native_max_model_len`, and
+  `model switch` clamps the resolved context *down* to it when no explicit
+  `--max-model-len` is given (an explicit value still wins, for opted-in YaRN
+  configs). Fixes a Qodo correctness finding on #33.
 
 ## [0.15.0] - 2026-05-31
 
