@@ -111,8 +111,11 @@ run-token never live in committed config.
 > internet. Set `CULTURE_VLLM_API_KEY` in `$HOME/.model-gear/.env` **before** running
 > `model tunnel` — vLLM then requires `Authorization: Bearer $CULTURE_VLLM_API_KEY`
 > on every request. Empty leaves the API open; that is only safe for local dev.
-> You can also set `VLLM_SERVED_NAME` to a generic alias (e.g. `default`) to keep
-> the backend checkpoint name out of the public `GET /v1/models`.
+> Generate or rotate the key with `python3 scripts/gen-api-key.py` (writes it to
+> the gitignored deployment `.env`; `--show` to print, `--force` to rotate), then
+> `model serve --apply` to enforce it. You can also set `VLLM_SERVED_NAME` to a
+> generic alias (e.g. `default`) to keep the backend checkpoint name out of the
+> public `GET /v1/models`.
 
 Two steps — the Cloudflare side once, then the local side:
 
