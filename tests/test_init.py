@@ -40,7 +40,7 @@ def test_init_apply_json(tmp_path, capsys) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scaffolded"] == str(target)
-    assert set(payload["files"]) == {"docker-compose.yml", ".env"}
+    assert set(payload["files"]) == {"docker-compose.yml", ".env", "cf-tunnel.env.example"}
 
 
 def test_init_refuses_overwrite_without_force(tmp_path) -> None:
@@ -111,7 +111,7 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["fleet"] is True
     names = {f["name"] for f in payload["files"]}
-    assert names == {"docker-compose.yml", ".env", "Dockerfile.gateway"}
+    assert names == {"docker-compose.yml", ".env", "Dockerfile.gateway", "cf-tunnel.env.example"}
     assert not target.exists()
 
 

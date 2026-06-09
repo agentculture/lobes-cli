@@ -149,6 +149,10 @@ activemq-data/
 
 # Environments
 .env
+# Cloudflare Tunnel run config (model tunnel) — holds the public hostname + the
+# cloudflared run-token; the `.env` rule above does NOT match this name. The
+# cloudflared pid/log are covered by *.pid / *.log.
+.cf-tunnel.env
 .envrc
 .venv
 env/

@@ -33,6 +33,8 @@ Commands
   model fleet up|down|status
                           Drive the 2-model gateway deployment (scaffold it with
                           'model init --fleet'). up/down are dry-run; --apply.
+  model tunnel            Expose the local API at a public hostname via a Cloudflare
+                          Tunnel (--stop to tear down). Dry-run; --apply.
   model status            Read-only: the configured served model (.env), container
                           state, /health. (Catalog to switch to: overview --list.)
   model assess            Read-only: correctness probes + reasoning-trace field.
@@ -46,7 +48,7 @@ Commands
 Mutation safety
 ---------------
 Write verbs default to DRY RUN and require --apply to commit: `switch`, `serve`,
-`stop`, `init`. Agents call CLIs in loops, so safe-by-default is mandatory. The
+`stop`, `init`, `tunnel`. Agents call CLIs in loops, so safe-by-default is mandatory. The
 read-only verbs (`status`, `assess`, `benchmark`, `overview`, `whoami`,
 `explain`, `doctor`) never change the world.
 
@@ -105,6 +107,11 @@ def _as_json_payload() -> dict[str, object]:
                 "summary": "Drive the 2-model gateway deployment (up/down/status; --apply).",
             },
             {
+                "path": ["tunnel"],
+                "summary": "Expose the local API at a public hostname via a Cloudflare Tunnel "
+                "(--stop; --apply).",
+            },
+            {
                 "path": ["status"],
                 "summary": "Configured served model, state, /health; catalog: overview --list.",
             },
@@ -119,7 +126,15 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["doctor"], "summary": "Diagnose docker/compose/.env/health."},
         ],
         "mutation_safety": {
-            "write_verbs": ["switch", "serve", "stop", "init", "fleet up", "fleet down"],
+            "write_verbs": [
+                "switch",
+                "serve",
+                "stop",
+                "init",
+                "fleet up",
+                "fleet down",
+                "tunnel",
+            ],
             "rule": "dry-run by default; require --apply to commit",
         },
         "exit_codes": {

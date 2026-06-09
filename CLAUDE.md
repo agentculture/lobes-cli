@@ -49,18 +49,18 @@ model_gear/                 # Python package (pip install model-gear)
 ├── __main__.py             # python -m model_gear
 ├── assess.py               # correctness probes + throughput/prefill (stdlib urllib)
 ├── templates/              # packaged docker-compose.yml + env.example (model init)
-├── runtime/                # _env (.env r/w) · _compose (dir resolve + docker) · _health
+├── runtime/                # _env (.env r/w) · _compose (dir resolve + docker) · _health · _tunnel (cloudflared)
 └── cli/
     ├── __init__.py         # argparse main(); registers every verb
     ├── _errors.py          # ModelGearError + EXIT_USER_ERROR / EXIT_ENV_ERROR
     ├── _output.py          # strict stdout/stderr split; --json result emitter
     ├── _runtime_ops.py     # shared glue (deployment dir, port, compose_check)
     └── _commands/          # one module per verb: register(sub) + handler
-        ├── switch.py serve.py stop.py status.py assess.py benchmark.py init.py
-        └── whoami.py learn.py explain.py overview.py doctor.py cli.py
+        ├── switch.py serve.py stop.py status.py assess.py benchmark.py init.py fleet.py
+        └── tunnel.py whoami.py learn.py explain.py overview.py doctor.py cli.py
 ```
 
-**Mutation safety:** write verbs (`switch`, `serve`, `stop`, `init`) default to
+**Mutation safety:** write verbs (`switch`, `serve`, `stop`, `init`, `tunnel`) default to
 **dry-run**; require `--apply` to commit. Agents call CLIs in loops, so
 safe-by-default is mandatory. The read-only verbs (`status`, `assess`,
 `benchmark`, `overview`, `whoami`, `explain`, `doctor`) never change the world.

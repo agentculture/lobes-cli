@@ -99,6 +99,73 @@ model whose repo ships custom modeling code. If vLLM rejects the `nvidia/`
 ModelOpt checkpoint, set `VLLM_MODEL` to the vLLM-native `RedHatAI/Qwen3-32B-NVFP4`
 and drop `--quantization` from the compose `command`.
 
+## Expose the API from anywhere (Cloudflare Tunnel)
+
+`model tunnel` publishes the local OpenAI-compatible API at an owner-chosen
+hostname through a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
+so Culture/AgentCulture agents can call it from anywhere as an ordinary provider
+(`base_url` + `api_key`) — no inbound ports, no static IP. The hostname and the
+run-token never live in committed config.
+
+> ⚠️ **Gate it first.** A tunnel makes the model reachable from the public
+> internet. Set `CULTURE_VLLM_API_KEY` in `~/.model-gear/.env` **before** running
+> `model tunnel` — vLLM then requires `Authorization: Bearer $CULTURE_VLLM_API_KEY`
+> on every request. Empty leaves the API open; that is only safe for local dev.
+> You can also set `VLLM_SERVED_NAME` to a generic alias (e.g. `default`) to keep
+> the backend checkpoint name out of the public `GET /v1/models`.
+
+Two steps — the Cloudflare side once, then the local side:
+
+```bash
+# 1) Cloudflare side, ONCE — provision the tunnel + ingress + DNS and seal the
+#    run-token in shushu (tunnel-only mode; the backend authenticates itself):
+cultureflare remote-login setup \
+  --hostname your-host.example \
+  --service http://127.0.0.1:8000 \
+  --no-access --shushu --apply
+
+# 2) Local side — copy the scaffolded example, fill in hostname + token source:
+cp ~/.model-gear/cf-tunnel.env.example ~/.model-gear/.cf-tunnel.env
+# edit ~/.model-gear/.cf-tunnel.env (it is gitignored — never commit it):
+#   CULTURE_VLLM_PUBLIC_HOSTNAME=your-host.example
+#   CULTURE_CF_TUNNEL_TOKEN_SHUSHU=<shushu-secret-name>
+
+model serve --apply         # serve (with CULTURE_VLLM_API_KEY set in .env)
+model tunnel                # DRY RUN: prints the cloudflared command + public URL
+model tunnel --apply        # start the tunnel in the background
+# ... later:
+model tunnel --stop --apply # tear it down
+```
+
+The hostname resolves from `--hostname` → `$CULTURE_VLLM_PUBLIC_HOSTNAME` →
+`CULTURE_VLLM_PUBLIC_HOSTNAME` in `.cf-tunnel.env`; the run-token from
+`CULTURE_CF_TUNNEL_TOKEN_SHUSHU` (a shushu-sealed secret name, preferred) or
+`CULTURE_CF_TUNNEL_TOKEN` (plaintext fallback). `--apply` preflights that
+`cloudflared` (and `shushu`) is on PATH and that the local server answers
+`/health` first. `cloudflared` + `shushu` are runtime deps on the serving box.
+
+Call it from anywhere — use your hostname and the alias you served (placeholders
+shown):
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://your-host.example/v1", api_key="$CULTURE_VLLM_API_KEY")
+client.chat.completions.create(model="default", messages=[{"role": "user", "content": "hi"}])
+```
+
+```bash
+curl -s https://your-host.example/v1/chat/completions \
+  -H "Authorization: Bearer $CULTURE_VLLM_API_KEY" \
+  -d '{"model":"default","messages":[{"role":"user","content":"hi"}]}'
+```
+
+**Hardening (future).** The bearer key is the minimum bar. For stronger exposure,
+layer Cloudflare Access (SSO/service tokens), a WAF rule or IP allowlist, and/or
+mTLS in front of the tunnel. Bearer auth currently gates the single-model
+deployment; the fleet gateway is not yet auth-aware (planned). See `model explain
+tunnel` for the full flow.
+
 ## Running two models behind one gateway (fleet)
 
 `model init --fleet` scaffolds a **three-container** deployment instead of one:

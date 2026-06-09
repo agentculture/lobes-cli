@@ -1,7 +1,7 @@
 """Unified CLI entry point for model-gear (binary: ``model``).
 
 The model-ops verbs (``switch``, ``serve``/``stop``, ``status``, ``assess``,
-``benchmark``, ``init``) are the heart of the tool; the agent-first verbs
+``benchmark``, ``init``, ``tunnel``) are the heart of the tool; the agent-first verbs
 (``whoami``, ``learn``, ``explain``, ``overview``, ``doctor``, ``cli``) keep the
 sibling rubric satisfied. Each verb module exposes ``register(sub)`` following
 the same pattern.
@@ -74,6 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from model_gear.cli._commands import status as _status_cmd
     from model_gear.cli._commands import stop as _stop_cmd
     from model_gear.cli._commands import switch as _switch_cmd
+    from model_gear.cli._commands import tunnel as _tunnel_cmd
     from model_gear.cli._commands import whoami as _whoami_cmd
 
     parser = _ModelGearArgumentParser(
@@ -98,6 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _benchmark_cmd.register(sub)
     _init_cmd.register(sub)
     _fleet_cmd.register(sub)
+    _tunnel_cmd.register(sub)
 
     # Agent-first / introspection verbs (sibling rubric).
     _whoami_cmd.register(sub)
