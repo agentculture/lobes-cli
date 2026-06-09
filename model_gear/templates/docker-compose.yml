@@ -44,6 +44,11 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Bearer key for the OpenAI-compatible API. Empty (default) = open local dev;
+      # set CULTURE_VLLM_API_KEY in .env and every request must carry
+      # `Authorization: Bearer $CULTURE_VLLM_API_KEY`. REQUIRED before exposing the
+      # API publicly (e.g. `model tunnel`). See env.example + README "Expose the API".
+      - VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
     volumes:
       # Persist downloaded weights across restarts. HF_CACHE overrides the host
       # path; otherwise ~/.cache/huggingface, with /root as the fallback if HOME

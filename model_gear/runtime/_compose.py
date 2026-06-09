@@ -38,11 +38,20 @@ FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 # Template filename -> destination filename written by the scaffold. The single
 # template set is the default (every existing caller stays unchanged); the fleet
 # set scaffolds the 3-container gateway deployment (model init --fleet).
-SINGLE_TEMPLATES = {"docker-compose.yml": COMPOSE_FILE, "env.example": ENV_FILE}
+# Cloudflare Tunnel example scaffolded alongside both deployments (the tunnel
+# fronts the single-model :8000 or the fleet gateway). Copied verbatim as an
+# `.example`; the owner copies it to the gitignored `.cf-tunnel.env` and edits.
+CF_TUNNEL_EXAMPLE = "cf-tunnel.env.example"
+SINGLE_TEMPLATES = {
+    "docker-compose.yml": COMPOSE_FILE,
+    "env.example": ENV_FILE,
+    CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
+}
 FLEET_TEMPLATES = {
     "fleet/docker-compose.yml": COMPOSE_FILE,
     "fleet/env.example": ENV_FILE,
     "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
+    CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
 # The --audio extras layered on FLEET_TEMPLATES: the compose override, the two
 # image build files, and the vendored Parakeet server. The audio .env keys are

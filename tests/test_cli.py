@@ -86,6 +86,7 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert ("switch",) in verbs
     assert ("assess",) in verbs
     assert ("fleet",) in verbs
+    assert ("tunnel",) in verbs
     assert set(payload["mutation_safety"]["write_verbs"]) == {
         "switch",
         "serve",
@@ -93,6 +94,7 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
         "init",
         "fleet up",
         "fleet down",
+        "tunnel",
     }
 
 

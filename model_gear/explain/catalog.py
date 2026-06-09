@@ -30,6 +30,8 @@ tool and the deployed agent share one identity).
 - `model fleet up|down|status` — drive the 2-model gateway deployment (one
   OpenAI front over two always-warm models). Scaffold it with
   `model init --fleet`. `up`/`down` are dry-run by default; `--apply` to commit.
+- `model tunnel` — expose the local API at a public hostname via a Cloudflare
+  Tunnel (`--stop` to tear down). Dry-run by default; `--apply` to commit.
 - `model status` — read-only: the configured served model (from `.env`), container
   state, `/health`. (For the full set you can switch to, use `model overview --list`;
   for what's actually loaded now, the live `/v1/models`.)
@@ -59,6 +61,7 @@ require `--apply` to commit. The rest are read-only.
 - `model explain tuning` (purpose + machine profiles)
 - `model explain fleet`
 - `model explain gateway`
+- `model explain tunnel` (expose the API from anywhere)
 - `model explain assess`
 - `model explain backend`
 - `model explain models`
@@ -288,6 +291,41 @@ environment in the fleet compose (`PRIMARY_URL` / `FALLBACK_URL` / `*_SERVED_NAM
 / `GATEWAY_DEFAULT_MODEL` / `GATEWAY_ALIASES` / timeouts).
 """
 
+_TUNNEL = """\
+# model tunnel
+
+`model tunnel` exposes the local OpenAI-compatible vLLM API (`127.0.0.1:8000`) at
+an owner-chosen public hostname through a **Cloudflare Tunnel**, so Culture agents
+can call it from anywhere as an ordinary provider (`base_url` + `api_key`).
+**Dry-run by default** (prints the exact `cloudflared` command — plaintext tokens
+redacted — and the public `https://<host>/v1` URL); `--apply` starts a standalone
+`cloudflared tunnel run` in the background (logging to `cloudflared.log` in the
+deployment dir), and `--stop --apply` terminates it.
+
+## Config (never committed)
+
+- **Hostname** — `--hostname`, else `$CULTURE_VLLM_PUBLIC_HOSTNAME`, else
+  `CULTURE_VLLM_PUBLIC_HOSTNAME` in the gitignored `.cf-tunnel.env` (deployment dir).
+- **Run-token** — from `.cf-tunnel.env`: `CULTURE_CF_TUNNEL_TOKEN_SHUSHU` (a
+  shushu-sealed secret name, preferred) or `CULTURE_CF_TUNNEL_TOKEN` (plaintext
+  fallback). `model init` scaffolds `cf-tunnel.env.example`; copy it to
+  `.cf-tunnel.env` and edit.
+
+## Two-step flow
+
+1. **Cloudflare side, once** — the sibling `cultureflare` tool provisions the
+   tunnel + ingress + DNS and seals the run-token:
+   `cultureflare remote-login setup --hostname <host> --service http://127.0.0.1:8000
+   --no-access --shushu --apply`.
+2. **Local side** — `model serve --apply` (with `CULTURE_VLLM_API_KEY` set in
+   `.env` so the API is bearer-gated) then `model tunnel --apply`.
+
+`--apply` preflights that `cloudflared` (and `shushu`, for the sealed token) is on
+PATH and that the local server answers `/health` first. **Set `CULTURE_VLLM_API_KEY`
+before exposing the API** — without it the tunnel publishes an unauthenticated model.
+See `model explain backend` and the README "Expose the API" section.
+"""
+
 _WHOAMI = """\
 # model whoami
 
@@ -383,6 +421,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("stop",): _SERVE,
     ("fleet",): _FLEET,
     ("gateway",): _GATEWAY,
+    ("tunnel",): _TUNNEL,
     ("status",): _STATUS,
     ("assess",): _ASSESS,
     ("benchmark",): _BENCHMARK,

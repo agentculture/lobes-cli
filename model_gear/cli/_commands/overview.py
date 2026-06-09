@@ -25,6 +25,8 @@ _VERBS = [
     "serve / stop — start / stop the vLLM server (dry-run; --apply)",
     "switch <model> — switch the served model (dry-run; --apply)",
     "fleet up / down / status — drive the 2-model gateway deployment (dry-run; --apply)",
+    "tunnel — expose the local API at a public hostname via a Cloudflare Tunnel "
+    "(--stop; dry-run; --apply)",
     "status — current model, container state, /health",
     "assess — correctness probes against the served model",
     "benchmark — decode throughput + prefill latency",
@@ -143,7 +145,8 @@ def cli_sections() -> list[dict[str, object]]:
             "title": "Conventions",
             "items": [
                 "every command supports --json",
-                "write verbs (switch/serve/stop/init) are dry-run by default; --apply to commit",
+                "write verbs (switch/serve/stop/init/tunnel) are dry-run by default; "
+                "--apply to commit",
                 "results to stdout, errors/diagnostics to stderr (never mixed)",
                 "exit codes: 0 success, 1 user error, 2 environment error, 3+ reserved",
             ],

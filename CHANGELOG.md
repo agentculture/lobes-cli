@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-06-09
+
+### Added
+
+- **`model tunnel` — expose the local OpenAI-compatible API from anywhere via a
+  Cloudflare Tunnel** (#35). Dry-run by default (prints the `cloudflared` command
+  and the public `https://<host>/v1` URL); `--apply` starts a standalone
+  `cloudflared tunnel run` in the background (logging to `cloudflared.log` in the
+  deployment dir), and `--stop --apply` tears it down. The public hostname resolves
+  `--hostname` → `$CULTURE_VLLM_PUBLIC_HOSTNAME` → `CULTURE_VLLM_PUBLIC_HOSTNAME` in
+  a **gitignored** `.cf-tunnel.env`; the run-token comes from
+  `CULTURE_CF_TUNNEL_TOKEN_SHUSHU` (a shushu-sealed secret name, preferred) or
+  `CULTURE_CF_TUNNEL_TOKEN` (plaintext fallback). The token is **never placed on the
+  process argv** (so it can't leak via `ps` or the log) — cloudflared reads it from
+  the `TUNNEL_TOKEN` environment variable, which `shushu` injects (sealed mode) or
+  the launcher sets directly (fallback). The resolved hostname and sealed-secret
+  name are validated against a conservative charset before they reach the argv (an
+  argument-injection guard). `--apply` preflights that `cloudflared` (and `shushu`)
+  is on PATH, that no tunnel is already running for the deployment, and that the
+  local server answers `/health`; `--stop` signals the recorded process *group* and
+  confirms exit (SIGTERM → SIGKILL) before clearing a PID-reuse-safe pidfile (the
+  recorded pid is identity-checked against `/proc` so a reused pid can't be killed).
+  No hostname, token, or backend checkpoint id is committed. The Cloudflare side
+  (tunnel + ingress + DNS) is provisioned once by `cultureflare remote-login
+  --no-access`.
+- **Optional bearer auth on the served API** via `CULTURE_VLLM_API_KEY`, wired into
+  the single-model `docker-compose.yml` as `VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}`.
+  Empty (default) leaves local dev open; set it and vLLM requires `Authorization:
+  Bearer` — the gate for any public exposure. Documented in `env.example` alongside
+  a note that `VLLM_SERVED_NAME` can be a generic alias to keep the checkpoint name
+  out of the public `/v1/models`.
+- **`cf-tunnel.env.example`** scaffolded by `model init` (single + fleet), a
+  placeholder-only template the owner copies to the gitignored `.cf-tunnel.env`.
+- README "Expose the API from anywhere (Cloudflare Tunnel)" section and a
+  `model explain tunnel` catalog entry.
+
 ## [0.17.0] - 2026-06-03
 
 ### Changed
