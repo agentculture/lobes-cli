@@ -31,6 +31,7 @@ from pathlib import Path
 
 KEY = "CULTURE_VLLM_API_KEY"
 PREFIX = "mg-"  # human-readable provenance marker; not a secret
+MIN_BYTES = 16  # 128-bit floor — below this the key is too weak to gate a public API
 
 
 def _deploy_dir(explicit: str | None) -> Path:
@@ -68,7 +69,11 @@ def _write_key(env_path: Path, value: str) -> None:
     if not seen:
         out.append(f"{KEY}={value}")
     env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    os.chmod(env_path, 0o600)  # the .env holds a secret — keep it owner-only
+    try:
+        os.chmod(env_path, 0o600)  # the .env holds a secret — keep it owner-only
+    except OSError:
+        # best-effort hardening; some filesystems / platforms don't support chmod
+        print(f">> note: could not set 0o600 on {env_path} (left as-is)", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear).")
     parser.add_argument("--force", action="store_true", help="Rotate even if a key already exists.")
     parser.add_argument(
-        "--bytes", type=int, default=32, help="Token entropy in bytes (default: 32)."
+        "--bytes",
+        type=int,
+        default=32,
+        help=f"Token entropy in bytes (default: 32, min: {MIN_BYTES}).",
     )
     parser.add_argument(
         "--show", action="store_true", help="Print the key on stdout (else hidden)."
@@ -93,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("hint: run 'model init --apply' to scaffold it first", file=sys.stderr)
         return 2
+    if env_path.exists() and not env_path.is_file():
+        print(f"error: {env_path} exists but is not a regular file", file=sys.stderr)
+        return 2
+    if args.bytes < MIN_BYTES:
+        print(f"error: --bytes must be at least {MIN_BYTES} (got {args.bytes})", file=sys.stderr)
+        return 1
 
     existing = _read_key(env_path)
     if existing and not args.force:
@@ -101,7 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     token = PREFIX + secrets.token_urlsafe(args.bytes)
-    _write_key(env_path, token)
+    try:
+        _write_key(env_path, token)
+    except OSError as exc:
+        print(f"error: could not write {env_path}: {exc}", file=sys.stderr)
+        return 2
 
     verb = "rotated" if existing else "set"
     print(f">> {verb} {KEY} in {env_path}", file=sys.stderr)

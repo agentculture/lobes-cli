@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.18.1] - 2026-06-09
+## [0.19.0] - 2026-06-09
 
 ### Added
 
@@ -12,10 +12,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`CULTURE_VLLM_API_KEY`) that gates the served API. The secret is created with
   the stdlib `secrets` module and **never hardcoded**, so the script is safe in the
   open-source repo; the key only ever lands in the gitignored deployment `.env`
-  (written `0o600`). Hidden by default (no echo into logs/scrollback); `--show`
-  prints it, `--force` rotates an existing key. Resolves the deployment dir like
-  the `model` CLI (`--dir` → `$MODEL_GEAR_DIR` → `~/.model-gear`). Referenced from
-  the README "Expose the API" section.
+  (written `0o600`, best-effort). Hidden by default (no echo into logs/scrollback);
+  `--show` prints it, `--force` rotates an existing key, and `--bytes` (min 16) is
+  validated. Resolves the deployment dir like the `model` CLI (`--dir` →
+  `$MODEL_GEAR_DIR` → `$HOME/.model-gear`), degrades gracefully on an unreadable or
+  non-regular `.env`, and runs from a wheel install (no `model_gear` import).
+  Referenced from the README "Expose the API" section.
 
 ## [0.18.0] - 2026-06-09
 

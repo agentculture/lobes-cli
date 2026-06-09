@@ -72,3 +72,16 @@ def test_env_perms_are_owner_only(tmp_path) -> None:
     env.write_text("", encoding="utf-8")
     gen.main(["--dir", str(tmp_path)])
     assert (env.stat().st_mode & 0o777) == 0o600
+
+
+def test_rejects_too_few_bytes(tmp_path, capsys) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    assert gen.main(["--dir", str(tmp_path), "--bytes", "4"]) == 1
+    assert "at least" in capsys.readouterr().err
+    assert gen._read_key(tmp_path / ".env") is None  # nothing written
+
+
+def test_non_regular_env_is_env_error(tmp_path, capsys) -> None:
+    (tmp_path / ".env").mkdir()  # a directory where a regular .env is expected
+    assert gen.main(["--dir", str(tmp_path)]) == 2
+    assert "not a regular file" in capsys.readouterr().err
