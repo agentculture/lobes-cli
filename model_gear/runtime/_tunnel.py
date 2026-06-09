@@ -55,6 +55,10 @@ TOKEN_ENV_VAR = "TUNNEL_TOKEN"  # nosec B105
 # plaintext token is passed via the environment, never argv, so it is not constrained.
 _SAFE_VALUE = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._:/-]*[A-Za-z0-9])?\Z")
 
+# Labels for the validated values (named so the error wording lives in one place).
+_HOSTNAME_LABEL = "public hostname"
+_SHUSHU_LABEL = "shushu secret name"
+
 INSTALL_HINT = (
     "install cloudflared and put it on PATH: https://developers.cloudflare.com/"
     "cloudflare-one/connections/connect-networks/downloads/"
@@ -108,13 +112,13 @@ def resolve_hostname(explicit: str | None, deploy_dir: os.PathLike | str) -> str
     and validates the resolved value against the safe charset.
     """
     if explicit:
-        return _require_safe(explicit, what="public hostname")
+        return _require_safe(explicit, what=_HOSTNAME_LABEL)
     env_val = os.environ.get(HOSTNAME_KEY)
     if env_val:
-        return _require_safe(env_val, what="public hostname")
+        return _require_safe(env_val, what=_HOSTNAME_LABEL)
     file_val = _env.read_env(tunnel_env_path(deploy_dir), HOSTNAME_KEY)
     if file_val:
-        return _require_safe(file_val, what="public hostname")
+        return _require_safe(file_val, what=_HOSTNAME_LABEL)
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message="no public hostname set",
@@ -136,7 +140,7 @@ def resolve_token(deploy_dir: os.PathLike | str) -> tuple[str, str]:
     env_path = tunnel_env_path(deploy_dir)
     shushu_name = _env.read_env(env_path, TOKEN_SHUSHU_KEY)
     if shushu_name:
-        return ("shushu", _require_safe(shushu_name, what="shushu secret name"))
+        return ("shushu", _require_safe(shushu_name, what=_SHUSHU_LABEL))
     plain = _env.read_env(env_path, TOKEN_PLAIN_KEY)
     if plain:
         return ("plain", plain)
@@ -308,7 +312,7 @@ def _still_running(pid: int) -> bool:
     """Liveness for the stop loop; reaps the process first if it is our own zombie child."""
     try:
         os.waitpid(pid, os.WNOHANG)  # reap a dead-but-unreaped child so kill(0) reflects reality
-    except (ChildProcessError, OSError):
+    except OSError:
         pass  # not our child (the common case — cloudflared was reparented to init)
     try:
         os.kill(pid, 0)
