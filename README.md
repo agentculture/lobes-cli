@@ -21,7 +21,7 @@ uv tool install model-gear
 ## Usage
 
 ```bash
-model init --apply          # scaffold a deployment dir (default ~/.model-gear)
+model init --apply          # scaffold a deployment dir (default $HOME/.model-gear)
 model serve --apply         # start the vLLM server (alias: start)
 model switch nvidia/Qwen3-32B-NVFP4 --apply   # switch the served model
 model switch nvidia/Qwen3-32B-NVFP4 --purpose decode-heavy --machine spark --apply  # ...in a tuned gear
@@ -42,7 +42,7 @@ CLIs in loops, so safe-by-default is mandatory.
 
 ## Running the model locally (vLLM)
 
-`model init` scaffolds a deployment directory (default `~/.model-gear`) from the
+`model init` scaffolds a deployment directory (default `$HOME/.model-gear`) from the
 packaged templates: a `docker-compose.yml` that stands up the vLLM model as an
 OpenAI-compatible server on `:8000`, plus a `.env`. Tuned for DGX Spark (GB10
 Grace Blackwell, 128 GB unified memory) per
@@ -53,8 +53,8 @@ and `docker login nvcr.io` with an [NGC API key](https://org.ngc.nvidia.com/setu
 to pull the `nvcr.io/nvidia/vllm` image.
 
 ```bash
-model init --apply          # writes ~/.model-gear/{docker-compose.yml,.env}
-# edit ~/.model-gear/.env to set HF_TOKEN if the model repo is gated
+model init --apply          # writes $HOME/.model-gear/{docker-compose.yml,.env}
+# edit $HOME/.model-gear/.env to set HF_TOKEN if the model repo is gated
 model serve --apply         # first run downloads ~28 GB of weights (the 27B primary)
 model status                # waits/reports until /health is up
 ```
@@ -108,7 +108,7 @@ so Culture/AgentCulture agents can call it from anywhere as an ordinary provider
 run-token never live in committed config.
 
 > ⚠️ **Gate it first.** A tunnel makes the model reachable from the public
-> internet. Set `CULTURE_VLLM_API_KEY` in `~/.model-gear/.env` **before** running
+> internet. Set `CULTURE_VLLM_API_KEY` in `$HOME/.model-gear/.env` **before** running
 > `model tunnel` — vLLM then requires `Authorization: Bearer $CULTURE_VLLM_API_KEY`
 > on every request. Empty leaves the API open; that is only safe for local dev.
 > You can also set `VLLM_SERVED_NAME` to a generic alias (e.g. `default`) to keep
@@ -125,8 +125,8 @@ cultureflare remote-login setup \
   --no-access --shushu --apply
 
 # 2) Local side — copy the scaffolded example, fill in hostname + token source:
-cp ~/.model-gear/cf-tunnel.env.example ~/.model-gear/.cf-tunnel.env
-# edit ~/.model-gear/.cf-tunnel.env (it is gitignored — never commit it):
+cp $HOME/.model-gear/cf-tunnel.env.example $HOME/.model-gear/.cf-tunnel.env
+# edit $HOME/.model-gear/.cf-tunnel.env (it is gitignored — never commit it):
 #   CULTURE_VLLM_PUBLIC_HOSTNAME=your-host.example
 #   CULTURE_CF_TUNNEL_TOKEN_SHUSHU=<shushu-secret-name>
 
@@ -177,7 +177,7 @@ chosen one is down — so existing single-model clients keep working unchanged w
 a second model becomes addressable by name.
 
 ```bash
-model init --fleet --apply        # ~/.model-gear/{docker-compose.yml,.env,Dockerfile.gateway}
+model init --fleet --apply        # $HOME/.model-gear/{docker-compose.yml,.env,Dockerfile.gateway}
 docker login nvcr.io              # NGC API key for the vLLM image
 model fleet up --apply            # builds the gateway image + starts all three
 model fleet status                # container states + gateway /health + /v1/models

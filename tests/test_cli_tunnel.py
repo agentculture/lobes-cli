@@ -8,6 +8,7 @@ process (not cloudflared) so the real Popen/killpg path is still covered.
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 import pytest
@@ -43,28 +44,28 @@ def _clear_tunnel_env(monkeypatch):
 
 
 def test_build_command_shushu() -> None:
+    # The token never rides on argv: shushu injects it as $TUNNEL_TOKEN, which
+    # cloudflared reads natively (no literal $TOKEN, no --token, no shell).
     assert _tunnel.build_command("shushu", "sealed") == [
         "shushu",
         "run",
         "--inject",
-        "TOKEN=sealed",
+        "TUNNEL_TOKEN=sealed",
         "--",
         "cloudflared",
         "tunnel",
         "run",
-        "--token",
-        "$TOKEN",
     ]
 
 
 def test_build_command_plain() -> None:
-    assert _tunnel.build_command("plain", "tok") == [
-        "cloudflared",
-        "tunnel",
-        "run",
-        "--token",
-        "tok",
-    ]
+    # Plain mode carries no token on argv either — it goes via token_env().
+    assert _tunnel.build_command("plain", "tok") == ["cloudflared", "tunnel", "run"]
+
+
+def test_token_env() -> None:
+    assert _tunnel.token_env("plain", "tok") == {"TUNNEL_TOKEN": "tok"}
+    assert _tunnel.token_env("shushu", "sealed") == {}  # shushu injects it itself
 
 
 def test_redacted_masks_plaintext_only() -> None:
@@ -93,14 +94,15 @@ def test_tunnel_dry_run(tmp_path, capsys) -> None:
     assert "https://host.example/v1" in out
 
 
-def test_tunnel_dry_run_redacts_plaintext_token(tmp_path, capsys) -> None:
+def test_tunnel_dry_run_keeps_plaintext_token_off_argv(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
     _write_cf(tmp_path, shushu=None, plain="SUPER-SECRET-TOKEN")
     rc = main(["tunnel", "--compose-dir", str(tmp_path)])
     assert rc == 0
     out = capsys.readouterr().out
+    # the plaintext token is passed via the environment, so it never appears on argv
     assert "SUPER-SECRET-TOKEN" not in out
-    assert "***" in out
+    assert "cloudflared tunnel run" in out
 
 
 def test_tunnel_dry_run_json(tmp_path, capsys) -> None:
@@ -112,7 +114,8 @@ def test_tunnel_dry_run_json(tmp_path, capsys) -> None:
     assert payload["dry_run"] is True
     assert payload["url"] == "https://host.example/v1"
     assert payload["token_source"] == "shushu"
-    assert "$TOKEN" in payload["command"]
+    assert payload["command"][-3:] == ["cloudflared", "tunnel", "run"]
+    assert "$TOKEN" not in payload["command"]
 
 
 # --- hostname resolution ---------------------------------------------------
@@ -155,6 +158,23 @@ def test_hostname_missing_is_user_error(tmp_path, capsys) -> None:
 
 
 # --- token resolution ------------------------------------------------------
+
+
+def test_invalid_hostname_is_user_error(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    _write_cf(tmp_path)
+    # `=` form so argparse takes the leading-dash value rather than reading it as a flag
+    rc = main(["tunnel", "--compose-dir", str(tmp_path), "--hostname=bad host"])
+    assert rc == EXIT_USER_ERROR
+    assert "invalid public hostname" in capsys.readouterr().err
+
+
+def test_invalid_shushu_name_is_user_error(tmp_path, capsys) -> None:
+    _scaffold(tmp_path)
+    _write_cf(tmp_path, shushu="--evil")  # would be argument injection on the argv
+    rc = main(["tunnel", "--compose-dir", str(tmp_path)])
+    assert rc == EXIT_USER_ERROR
+    assert "invalid shushu secret name" in capsys.readouterr().err
 
 
 def test_token_missing_is_user_error(tmp_path, capsys) -> None:
@@ -219,7 +239,9 @@ def test_apply_starts_tunnel(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setattr(_health, "is_healthy", lambda *a, **k: True)
     calls: dict = {}
     monkeypatch.setattr(
-        _tunnel, "start_tunnel", lambda d, cmd: (calls.update(dir=str(d), cmd=cmd), 4242)[1]
+        _tunnel,
+        "start_tunnel",
+        lambda d, cmd, env=None: (calls.update(dir=str(d), cmd=cmd, env=env), 4242)[1],
     )
     rc = main(["tunnel", "--compose-dir", str(tmp_path), "--apply", "--json"])
     assert rc == 0
@@ -228,6 +250,21 @@ def test_apply_starts_tunnel(tmp_path, capsys, monkeypatch) -> None:
     assert payload["pid"] == 4242
     assert payload["url"] == "https://host.example/v1"
     assert calls["cmd"][0] == "shushu"  # the resolved command was passed through
+    assert calls["env"] == {}  # shushu injects the token itself — none added here
+
+
+def test_apply_refuses_when_already_running(tmp_path, capsys, monkeypatch) -> None:
+    _scaffold(tmp_path)
+    _write_cf(tmp_path)
+    monkeypatch.setattr(_tunnel, "tunnel_pid", lambda d: 4321)
+    monkeypatch.setattr(_tunnel, "cloudflared_present", lambda: True)
+    monkeypatch.setattr(_tunnel, "shushu_present", lambda: True)
+    monkeypatch.setattr(_health, "is_healthy", lambda *a, **k: True)
+    rc = main(["tunnel", "--compose-dir", str(tmp_path), "--apply"])
+    assert rc == EXIT_USER_ERROR
+    err = capsys.readouterr().err
+    assert "already running" in err
+    assert "4321" in err
 
 
 # --- stop ------------------------------------------------------------------
@@ -245,28 +282,37 @@ def test_stop_dry_run(tmp_path, capsys, monkeypatch) -> None:
 
 def test_stop_apply(tmp_path, capsys, monkeypatch) -> None:
     _scaffold(tmp_path)
-    monkeypatch.setattr(_tunnel, "stop_tunnel", lambda d: 999)
+    monkeypatch.setattr(_tunnel, "stop_tunnel", lambda d: ("stopped", 999))
     rc = main(["tunnel", "--stop", "--compose-dir", str(tmp_path), "--apply", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["stopped"] is True
+    assert payload["status"] == "stopped"
     assert payload["pid"] == 999
 
 
 def test_stop_apply_no_running(tmp_path, capsys, monkeypatch) -> None:
     _scaffold(tmp_path)
-    monkeypatch.setattr(_tunnel, "stop_tunnel", lambda d: None)
+    monkeypatch.setattr(_tunnel, "stop_tunnel", lambda d: ("idle", None))
     rc = main(["tunnel", "--stop", "--compose-dir", str(tmp_path), "--apply"])
     assert rc == 0
     assert "no running tunnel" in capsys.readouterr().out
+
+
+def test_stop_apply_failed_is_env_error(tmp_path, capsys, monkeypatch) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(_tunnel, "stop_tunnel", lambda d: ("failed", 999))
+    rc = main(["tunnel", "--stop", "--compose-dir", str(tmp_path), "--apply"])
+    assert rc == EXIT_ENV_ERROR
+    err = capsys.readouterr().err
+    assert "did not exit" in err
+    assert "999" in err
 
 
 # --- lifecycle helpers (real process, NOT cloudflared) ---------------------
 
 
 def test_tunnel_pid_states(tmp_path) -> None:
-    import os
-
     # missing pidfile → None
     assert _tunnel.tunnel_pid(tmp_path) is None
     # a live pid (this test process) → returned
@@ -277,9 +323,20 @@ def test_tunnel_pid_states(tmp_path) -> None:
     assert _tunnel.tunnel_pid(tmp_path) is None
 
 
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="identity guard needs Linux procfs")
+def test_tunnel_pid_rejects_mismatched_identity(tmp_path) -> None:
+    # A live pid (this test process) recorded as some *other* program: the PID-reuse
+    # guard must reject it so stop never signals an unrelated process.
+    _tunnel.pid_path(tmp_path).write_text(
+        json.dumps({"pid": os.getpid(), "pgid": os.getpgid(0), "argv0": "cloudflared"}),
+        encoding="utf-8",
+    )
+    assert _tunnel.tunnel_pid(tmp_path) is None
+
+
 def test_stop_tunnel_clears_stale_pidfile(tmp_path) -> None:
     _tunnel.pid_path(tmp_path).write_text("2147480000\n", encoding="utf-8")
-    assert _tunnel.stop_tunnel(tmp_path) is None
+    assert _tunnel.stop_tunnel(tmp_path) == ("idle", None)
     assert not _tunnel.pid_path(tmp_path).exists()
 
 
@@ -291,6 +348,6 @@ def test_start_and_stop_tunnel_roundtrip(tmp_path) -> None:
         assert _tunnel.log_path(tmp_path).is_file()
         assert _tunnel.tunnel_pid(tmp_path) == pid
     finally:
-        stopped = _tunnel.stop_tunnel(tmp_path)
-    assert stopped == pid
+        status, stopped = _tunnel.stop_tunnel(tmp_path)
+    assert (status, stopped) == ("stopped", pid)
     assert not _tunnel.pid_path(tmp_path).exists()

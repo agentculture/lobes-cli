@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 
 from model_gear.cli import _runtime_ops
-from model_gear.cli._errors import EXIT_ENV_ERROR, ModelGearError
+from model_gear.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR, ModelGearError
 from model_gear.cli._output import emit_diagnostic, emit_result
 from model_gear.runtime import _compose, _health, _tunnel
 
@@ -38,20 +38,29 @@ def _cmd_stop(args: argparse.Namespace, deploy_dir, json_mode: bool) -> int:
                 "Re-run with --apply to execute.",
                 json_mode=False,
             )
-        return 0
+        return EXIT_SUCCESS
     emit_diagnostic(f">> stopping the cloudflared tunnel in {deploy_dir}")
-    pid = _tunnel.stop_tunnel(deploy_dir)
+    status, pid = _tunnel.stop_tunnel(deploy_dir)
     if json_mode:
         emit_result(
-            {"stopped": pid is not None, "pid": pid, "deployment_dir": str(deploy_dir)},
+            {
+                "stopped": status == "stopped",
+                "status": status,
+                "pid": pid,
+                "deployment_dir": str(deploy_dir),
+            },
             json_mode=True,
         )
-    else:
-        emit_result(
-            f">> stopped pid {pid}." if pid else ">> no running tunnel to stop.",
-            json_mode=False,
+    elif status == "stopped":
+        emit_result(f">> stopped pid {pid}.", json_mode=False)
+    elif status == "idle":
+        emit_result(">> no running tunnel to stop.", json_mode=False)
+    else:  # "failed" — signalled but still alive; pidfile kept for a retry
+        emit_diagnostic(
+            f">> pid {pid} did not exit after SIGTERM/SIGKILL; the pidfile is kept.\n"
+            ">> inspect it (ps) and retry: model tunnel --stop --apply"
         )
-    return 0
+    return EXIT_ENV_ERROR if status == "failed" else EXIT_SUCCESS
 
 
 def cmd_tunnel(args: argparse.Namespace) -> int:
@@ -90,9 +99,17 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
                 "Re-run with --apply to execute.",
                 json_mode=False,
             )
-        return 0
+        return EXIT_SUCCESS
 
-    # --apply: preflight (cloudflared / shushu on PATH, local server up) then start.
+    # --apply: refuse to orphan an already-running tunnel, then preflight
+    # (cloudflared / shushu on PATH, local server up) and start.
+    running = _tunnel.tunnel_pid(deploy_dir)
+    if running:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"a tunnel is already running (pid {running})",
+            remediation="stop it first: model tunnel --stop --apply",
+        )
     if not _tunnel.cloudflared_present():
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
@@ -116,7 +133,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
             "(a tunnel to a down server just serves errors)",
         )
     emit_diagnostic(f">> starting cloudflared tunnel for :{port} -> {url}")
-    pid = _tunnel.start_tunnel(deploy_dir, command)
+    pid = _tunnel.start_tunnel(deploy_dir, command, _tunnel.token_env(mode, value))
     log = _tunnel.log_path(deploy_dir)
     if json_mode:
         emit_result(
@@ -138,7 +155,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
             f">> logs: {log}; stop with: model tunnel --stop --apply",
             json_mode=False,
         )
-    return 0
+    return EXIT_SUCCESS
 
 
 def register(sub: argparse._SubParsersAction) -> None:
