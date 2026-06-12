@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-06-12
+
+### Added
+
+- **`docs/realtime-pipeline.md`** — the previously-missing runbook for the audio
+  surface: that model-gear owns the live `:8080` realtime facade, the
+  `model init --fleet --audio` / `model fleet up` bring-up, the topology
+  (gateway path-routes `/v1/audio/*` → realtime → Parakeet/Magpie), the drift it
+  fixed (#39/#40), the cheap readiness probe, and the stale-Parakeet-CUDA restart
+  runbook. Resolves a doc referenced from `pyproject.toml`, the audio overlay,
+  and the realtime app docstring but never written.
+- **`scripts/audio-smoke.py`** — a stdlib-only live smoke test for the audio
+  routes: asserts `GET :8080/openapi.json` lists both `/v1/audio/transcriptions`
+  and `/v1/audio/speech`, then POSTs an in-memory 16 kHz WAV and asserts
+  `200 {text: …}`. Reproduces issue #39's repro to confirm the 500→200 fix.
+  Requires a running GPU box (not a CI unit test).
+- **`model_gear/realtime/_readiness.py`** — a stdlib-only `evaluate_readiness()`
+  helper backing the Parakeet `/v1/health/ready` cheap probe; unit-tested in CI
+  without torch/nemo/GPU.
+
+### Fixed
+
+- **Parakeet STT healthcheck now reflects real model readiness (#39).** The
+  vendored `templates/fleet/listen_server.py` `/v1/health/ready` returned
+  `{"status": "ready"}` unconditionally — process liveness only — so a container
+  whose CUDA context had gone stale (`CUDA error: unknown error`, every
+  transcription 500ing) still reported Docker "healthy". The probe now reports
+  ready **only** when the NeMo model is loaded **and** a trivial CUDA tensor op
+  succeeds, returning `503` otherwise (a cheap probe, not a full transcription
+  each interval). The pure decision is vendored into the Parakeet build context
+  and `COPY`'d into the image so it resolves without the wheel.
+
 ## [0.19.0] - 2026-06-09
 
 ### Added
