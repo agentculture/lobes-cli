@@ -1,0 +1,279 @@
+{
+  "slug": "model-gear-owns-the-audio-i-o-surface-end-to-end-m",
+  "title": "model-gear owns the audio I/O surface end-to-end: `model fleet up` brings up Parakeet STT plus the OpenAI-compatible `/v1/audio/transcriptions` (and `/v1/audio/speech`) facade on :8080 from model-gear's own vendored realtime app and compose template, with a healthcheck that reflects model readiness \u2014 unblocking reachy-mini-cli's 'hey reachy' wake-word (closes #39 + #40).",
+  "frame_slug": "model-gear-owns-the-audio-i-o-surface-end-to-end-m",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-12T09:28:27Z",
+  "updated": "2026-06-12T09:35:12Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "model-gear owns the audio I/O surface end-to-end: `model fleet up` brings up Parakeet STT plus the OpenAI-compatible `/v1/audio/transcriptions` (and `/v1/audio/speech`) facade on :8080 from model-gear's own vendored realtime app and compose template, with a healthcheck that reflects model readiness \u2014 unblocking reachy-mini-cli's 'hey reachy' wake-word (closes #39 + #40)."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "After 'model fleet up', :8080 serves the REST audio routes from model-gear's own vendored app (not the sibling build), verified by /openapi.json + a 200 transcription."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "reachy-mini-cli (the wake-word client) and any client wanting the documented OpenAI /v1/audio/* surface behind :8080; secondarily model-gear operators running 'model fleet up'"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "reachy-mini-cli can point REACHY_STT_URL at the :8080 facade (or :9002) and get a 'hey reachy' transcription back."
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "The live :8080 facade is the realtime-api sibling build exposing only / , /health, /v1/realtime (WS) \u2014 404 on REST /v1/audio/transcriptions. Parakeet (:9002) 500s on every transcription with CUDA error: unknown error after long uptime on the contended GB10, while its healthcheck still reports 'healthy'. model-gear's vendored facade has the REST routes but is not in its compose template, so it never reaches the box."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The drift is real and reproducible today: live :8080 /openapi.json shows only / and /health; :9002 transcription 500s with CUDA-unknown."
+    },
+    {
+      "id": "c4",
+      "kind": "after_state",
+      "text": "model-gear's compose template + 'model fleet up' bring up Parakeet STT and the vendored realtime facade; GET :8080/openapi.json lists /v1/audio/transcriptions and /v1/audio/speech; POST a multipart WAV to :8080/v1/audio/transcriptions forwards to Parakeet and returns the OpenAI-shaped {text:...}; Parakeet's healthcheck exercises a real transcription so 'healthy' means actually-serving."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Each after-state assertion is independently checkable by a curl/WAV smoke test documented in the realtime-pipeline doc."
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "reachy-mini-cli Tier-2 wake-word ('hey reachy') is blocked on a working STT endpoint; today the only working STT is raw Parakeet :9002 (when not 500ing), bypassing the OpenAI-compatible facade. Ending the vendored-vs-deployed drift gives one owned, documented audio surface."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "With the facade route live and Parakeet serving, reachy-mini-cli's Tier-2 wake-word path stops returning 404/500."
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Not building a new STT/TTS engine \u2014 Parakeet (NeMo) and Magpie stay the backends. Not solving GPU contention generally; the #39 scope is restart-to-clear-context + a readiness-reflecting healthcheck (a documented co-residency memory split is explicitly out of scope here). Not changing the /v1/realtime WebSocket protocol. Not making the gateway auth-aware."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The spec touches only the REST audio facade, Parakeet serving, and its healthcheck \u2014 it does not modify the /v1/realtime WS protocol, the TTS/STT engines, or gateway auth."
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "GET :8080/openapi.json lists /v1/audio/transcriptions and /v1/audio/speech; the issue-#39 repro WAV POST returns 200 with {text:...}; a real 'hey reachy' WAV transcribes to text containing the phrase; Parakeet's Docker healthcheck flips unhealthy when the model can't transcribe; docs state model-gear owns the live :8080 facade and 'model fleet up' brings up the audio routes."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Every success signal is a concrete, runnable check (curl, WAV POST, healthcheck flip, doc statement) with a pass/fail outcome."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "model-gear's packaged compose template (model_gear/templates/docker-compose.yml) gains a Parakeet STT service and a realtime-facade service built from the vendored model_gear/realtime app, so 'model init' + 'model fleet up' materialise and start them."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "'model fleet up --apply' on a clean box brings up parakeet + facade services healthy, and 'model init' materialises them into the deployment dir without manual compose edits."
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "The realtime facade service serves POST /v1/audio/transcriptions (forward to Parakeet) and POST /v1/audio/speech (forward to Magpie) on :8080, and its /openapi.json lists both routes."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "curl :8080/openapi.json lists both /v1/audio/transcriptions and /v1/audio/speech, and a multipart WAV POST to /v1/audio/transcriptions returns 200 with {text:...} sourced from Parakeet."
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "The Parakeet container's Docker healthcheck exercises real model readiness (a tiny transcription or equivalent model-ready probe), so the container only reports 'healthy' when it can actually transcribe."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "When the Parakeet model is loaded and serving, the healthcheck passes; when the model path is broken (e.g. CUDA-unknown 500s), the healthcheck reports unhealthy within its retry window."
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Documentation (a docs/realtime-pipeline.md and/or README 'Audio I/O' section) states that model-gear owns the live :8080 facade, how 'model fleet up' brings up the audio routes, and the runbook for clearing a stale Parakeet CUDA context (restart)."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "A reader following only the doc can stand up the audio surface and recover a wedged Parakeet without reading source, and the doc names which project owns the live :8080 container."
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "model-gear's compose template gains a Magpie TTS service (NGC NIM, NGC_API_KEY from .env) so the facade's /v1/audio/speech route resolves to a fleet-owned backend."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "'model fleet up' brings up Magpie healthy and POST :8080/v1/audio/speech returns audio; 'model init' env.example documents NGC_API_KEY."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Vendor the Parakeet ASR server into model-gear with a cheap model-ready health probe",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model_gear/realtime/parakeet_server.py exposes POST /v1/audio/transcriptions and GET /v1/health/ready",
+        "GET /v1/health/ready returns 200 only when the NeMo model is loaded AND a trivial CUDA tensor op succeeds, else 503 \u2014 a cheap probe, NOT a full multipart transcription each interval (decision c16 supersedes the 'real transcription' wording in c4/c7)",
+        "A unit test stubs the model to assert 200-when-ready and 503-when-model-None/CUDA-fails, with no GPU required in CI"
+      ],
+      "deps": [],
+      "covers": [
+        "c13",
+        "h3"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Package build Dockerfiles for the facade and Parakeet services under templates/",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model_gear/templates/Dockerfile.realtime installs the [realtime] extra and runs model_gear.realtime.app; Dockerfile.parakeet installs NeMo ASR and copies parakeet_server.py",
+        "docker build succeeds for both from a clean checkout (smoke-built in the PR or documented as built)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c11"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Wire the full audio stack into the compose template + env.example (sole owner of docker-compose.yml)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model_gear/templates/docker-compose.yml gains parakeet-stt, magpie-tts, and realtime-facade services; the facade env points STT_URL->parakeet and TTS_URL->magpie and binds host :8080",
+        "env.example documents NGC_API_KEY (Magpie) and the audio service ports; 'model init' materialises them with no manual compose edits",
+        "The realtime-facade service builds from Dockerfile.realtime (the vendored model_gear app), NOT the realtime-api sibling image",
+        "Parakeet service healthcheck calls GET /v1/health/ready (the cheap probe from t1)"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c11",
+        "c12",
+        "c17",
+        "c4",
+        "h1",
+        "h2",
+        "h5",
+        "h12"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Bring the audio services up via 'model fleet up' (gating + ownership)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "'model fleet up --apply' starts parakeet + magpie + facade and they report healthy on a box with the GPU available",
+        "'model fleet status' lists the audio services and the facade /health; the audio surface is served from model-gear's deployment dir, not the sibling project",
+        "A dry-run (no --apply) prints the planned audio services without starting them (mutation-safety default honoured)"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "h5"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Author docs/realtime-pipeline.md (ownership, fleet-up, drift, CUDA restart runbook) + README Audio I/O",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/realtime-pipeline.md states model-gear owns the live :8080 facade, shows the 'model fleet up' bring-up, and gives the restart runbook for a stale Parakeet CUDA context",
+        "The doc records the prior drift (sibling :8080 build had only / and /health; :9002 500'd with CUDA-unknown) and the boundary (no /v1/realtime WS change, engines unchanged, no gateway auth)",
+        "A reader can stand up the audio surface and recover a wedged Parakeet following only the doc, without reading source"
+      ],
+      "deps": [],
+      "covers": [
+        "c14",
+        "h4",
+        "c3",
+        "h7",
+        "c6",
+        "h10"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Smoke-test + acceptance harness for the audio routes (curl/WAV, openapi, healthcheck flip)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A scripts/ smoke test asserts GET :8080/openapi.json lists /v1/audio/transcriptions and /v1/audio/speech, and a multipart WAV POST returns 200 {text:...}",
+        "The harness reproduces issue #39's WAV repro (200, not 500) and a 'hey reachy' WAV transcribes to text containing the phrase; REACHY_STT_URL=:8080 works for the wake-word client",
+        "A test asserts the Parakeet healthcheck flips unhealthy when the model can't transcribe and POST :8080/v1/audio/speech returns audio (Magpie up)"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c2",
+        "c5",
+        "c7",
+        "h6",
+        "h8",
+        "h9",
+        "h11",
+        "h2",
+        "h3",
+        "h12",
+        "c4",
+        "c12"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Parakeet CUDA-unknown root cause is unconfirmed \u2014 restart is the working hypothesis; if it recurs under co-residency with vllm+magpie, deeper driver/contention diagnosis is needed (frame v1)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6"
+    },
+    {
+      "id": "r2",
+      "text": "How 'model fleet up' gates the audio services (always-on vs a --audio profile/flag) on the shared GB10 memory budget is unsettled \u2014 t4 must choose; adding parakeet+magpie raises the very contention #39 implicates (frame v2 + risk q2)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r3",
+      "text": "Spec wording reconciliation: c4/c7 say the healthcheck 'exercises a real transcription' but decision c16 supersedes with a cheap model-ready probe \u2014 t1/t5 acceptance must reflect the cheap probe, not full transcription",
+      "kind": "follow_up",
+      "task_id": "t1"
+    }
+  ]
+}
