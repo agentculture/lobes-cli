@@ -67,13 +67,21 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         base_url=(env.get("PRIMARY_URL") or "http://vllm-primary:8000").rstrip("/"),
         served_name=env.get("PRIMARY_SERVED_NAME") or _DEFAULT_PRIMARY,
     )
-    fallback = Backend(
-        name="fallback",
-        base_url=(env.get("FALLBACK_URL") or "http://vllm-fallback:8000").rstrip("/"),
-        served_name=env.get("FALLBACK_SERVED_NAME") or _DEFAULT_FALLBACK,
-    )
+    # The fleet defaults to a single backend (Qwen primary only). A fallback is
+    # added ONLY when the env explicitly configures one (FALLBACK_URL or
+    # FALLBACK_SERVED_NAME) — so a two-backend fleet still works for anyone who
+    # wires one up, but the default gateway serves the primary alone.
+    backends = [primary]
+    if env.get("FALLBACK_URL") or env.get("FALLBACK_SERVED_NAME"):
+        backends.append(
+            Backend(
+                name="fallback",
+                base_url=(env.get("FALLBACK_URL") or "http://vllm-fallback:8000").rstrip("/"),
+                served_name=env.get("FALLBACK_SERVED_NAME") or _DEFAULT_FALLBACK,
+            )
+        )
     table = RoutingTable(
-        backends=(primary, fallback),
+        backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
         aliases=_parse_aliases(env.get("GATEWAY_ALIASES")),
     )

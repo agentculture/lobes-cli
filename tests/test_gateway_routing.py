@@ -78,16 +78,27 @@ def test_supported_models_payload_annotates_loaded_and_default() -> None:
 # --- build_config / aliases ----------------------------------------------
 
 
-def test_build_config_defaults() -> None:
+def test_build_config_defaults_single_backend() -> None:
+    # The default fleet is single-backend (Qwen primary only) — no fallback is
+    # configured, so the gateway serves the primary alone.
     table, cfg = build_config({})
+    assert len(table.backends) == 1
     assert table.backends[0].served_name == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
-    assert table.backends[1].served_name == "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
     assert table.default_model == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # defaults to primary
     assert table.backends[0].base_url == "http://vllm-primary:8000"
     assert cfg.host == "0.0.0.0"
     assert cfg.port == 8000
     assert cfg.connect_timeout == 5.0
     assert cfg.read_timeout == 600.0
+
+
+def test_build_config_adds_fallback_only_when_configured() -> None:
+    # No fallback env → single backend.
+    assert len(build_config({})[0].backends) == 1
+    # FALLBACK_SERVED_NAME alone is enough to wire a second backend.
+    table, _ = build_config({"FALLBACK_SERVED_NAME": "beta"})
+    assert [b.name for b in table.backends] == ["primary", "fallback"]
+    assert table.backends[1].served_name == "beta"
 
 
 def test_build_config_overrides_and_url_normalised() -> None:

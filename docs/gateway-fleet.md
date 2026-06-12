@@ -1,49 +1,61 @@
-# Fleet: two models behind one OpenAI gateway
+# Fleet: the Qwen primary behind one OpenAI gateway (with an optional fallback)
 
-The **fleet** runs two always-warm vLLM models behind a single stdlib
-OpenAI-compatible gateway, managed by model-gear as three Docker containers. It is
-an alternative to the single-model deployment — scaffold it with
+The **fleet** runs the always-warm Qwen primary behind a single stdlib
+OpenAI-compatible gateway, managed by model-gear as two Docker containers. It is
+an alternative to the bare single-model deployment — scaffold it with
 `model init --fleet` (the single-model `model init` is unchanged and remains the
-default).
+default). The fleet is **single-backend by default**; a warm fallback is opt-in
+(see "Adding a fallback").
 
 ## Why
 
 The single-model deployment serves one model on `:8000` and `model switch` swaps
-it (freeing the prior model). The fleet instead keeps **both** models loaded and
-puts one OpenAI endpoint in front of them, so:
+it (freeing the prior model). The fleet instead puts a stable OpenAI endpoint in
+front of the primary, so:
 
-- existing clients (the acp `vllm-local` provider, `curl`, …) keep pointing at
-  `:8000` and keep working — an unknown/missing `model` defaults to the primary;
-- a second model is addressable by name in the same `/v1/...` calls;
-- if the chosen backend is down, the gateway fails over to the other one.
+- existing clients (the acp `vllm-local` provider, `curl`, …) point at `:8000`
+  and keep working — an unknown/missing `model` defaults to the primary;
+- the gateway can route additional models by name and fail over **if** a second
+  backend is wired up;
+- the same front fans `/v1/audio/*` out to the audio overlay (`--audio`).
 
-On the DGX Spark (GB10, 128 GB unified memory) the fleet pairs a hybrid-Mamba
-**27B** primary with a dense **24B** fallback
-(`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) that loads reliably and
-decodes a little faster (~15 vs ~10 tok/s). It replaced the Qwen3.6-35B-A3B MoE,
-which never reached `/health` on this box (see "Live validation findings").
+On the DGX Spark (GB10, 128 GB unified memory) the primary — a hybrid-Mamba
+**27B** — runs solo at its load-tested headroom (util 0.6, full 256K context,
+~75 GiB), owning the box. The prior co-resident dense **24B** Mistral fallback was
+removed (two ~30B NVFP4 models do not co-fit a shared GB10 — see "Live validation
+findings"); Mistral stays a selectable catalog candidate (`model overview --list`)
+and the opt-in fallback example.
 
 ## Topology
 
 ```text
 client / acp ──:8000──▶ model-gear-gateway   (python -m model_gear.gateway)
-                          │  route by `model` → default → failover
-                          ├──▶ model-gear-vllm-primary   :8000 (internal)
-                          └──▶ model-gear-vllm-fallback  :8000 (internal)
+                          │  route by `model` → default (→ failover if a fallback is wired)
+                          └──▶ model-gear-vllm-primary   :8000 (internal)
 ```
 
-Three containers, all `restart: unless-stopped`:
+Two containers by default, all `restart: unless-stopped`:
 
 | Container | Role | Host port |
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
 | `model-gear-vllm-primary` | primary model (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
-| `model-gear-vllm-fallback` | dense fallback (default: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) | internal only |
 
-The backends are reachable only on the compose network
-(`http://vllm-primary:8000`, `http://vllm-fallback:8000`); only the gateway is
-published to the host. The gateway needs no Docker socket access — compose owns
-the lifecycle; the gateway only routes.
+The backend is reachable only on the compose network
+(`http://vllm-primary:8000`); only the gateway is published to the host. The
+gateway needs no Docker socket access — compose owns the lifecycle; the gateway
+only routes.
+
+### Adding a fallback
+
+The gateway adds a second backend **only** when `FALLBACK_URL` or
+`FALLBACK_SERVED_NAME` is set. To add a warm fallback: define a `vllm-fallback`
+service in the fleet compose (mirror `vllm-primary` with the fallback's model /
+quantization / tokenizer / tool-parser), add it to the gateway's `depends_on`,
+set `FALLBACK_URL` + `FALLBACK_SERVED_NAME` on the gateway, and **drop both
+`*_GPU_MEM_UTIL` values** so they sum well under 1.0. The archived dense Mistral
+fallback config is in git history and
+[`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md).
 
 ## The gateway
 
@@ -54,14 +66,15 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   backend's `--served-model-name` so the backend accepts aliased/default routes.
 - **Default model** — a missing or unknown `model` routes to
   `GATEWAY_DEFAULT_MODEL` (the primary).
-- **Failover** — if the chosen backend refuses the connection or returns a 5xx
-  **before any response body**, the request is retried against the other backend.
-  A 4xx is a client error (returned verbatim, no failover). Once a 2xx body starts
-  streaming there is no retry — the client already has bytes.
+- **Failover** — when a fallback is wired up, a chosen backend that refuses the
+  connection or returns a 5xx **before any response body** is retried against the
+  other backend. (Single-backend by default → nothing to fail over to.) A 4xx is a
+  client error (returned verbatim, no failover). Once a 2xx body starts streaming
+  there is no retry — the client already has bytes.
 - **Streaming** — `"stream": true` (SSE) is relayed chunk-by-chunk with per-chunk
   flushing; normal JSON is buffered with `Content-Length`.
 - **Endpoints** — `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`
-  (proxied), `/v1/models` (OpenAI-standard, lists the two loaded backends),
+  (proxied), `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
   `/v1/models/supported` (the full supported-model catalog — every gear you can
   change to, each flagged `loaded` / `default`), `/health` (gateway liveness).
   See [Supported catalog vs. warm backends](#supported-catalog-vs-warm-backends)
@@ -106,31 +119,35 @@ model fleet down --apply          # docker compose down
 
 `model fleet up` / `down` are **dry-run by default**; pass `--apply` to commit.
 `--compose-dir` overrides the deployment dir (default `$MODEL_GEAR_DIR` or
-`~/.model-gear`). `model fleet status` is read-only — it reports the *warm*
-backends (`/v1/models`); for the full set you can switch to, use
+`$HOME/.model-gear`). `model fleet status` is read-only — it reports the *warm*
+backend(s) (`/v1/models`); for the full set you can switch to, use
 `model overview --list` / `/v1/models/supported` (see above).
 
 **`model switch` does not drive the fleet** — it rewrites the single-model
-`VLLM_*` keys. Change fleet models by editing the fleet `.env`
-(`PRIMARY_MODEL` / `FALLBACK_MODEL` and their `*_SERVED_NAME` / `*_GPU_MEM_UTIL`
-/ `*_TOOL_CALL_PARSER` / `*_QUANTIZATION`) and re-running `model fleet up --apply`.
+`VLLM_*` keys. Change the fleet primary by editing the fleet `.env`
+(`PRIMARY_MODEL` and its `PRIMARY_SERVED_NAME` / `PRIMARY_GPU_MEM_UTIL`
+/ `PRIMARY_TOOL_CALL_PARSER` / `PRIMARY_QUANTIZATION`) and re-running `model fleet
+up --apply`. (A fallback, when wired up, uses the parallel `FALLBACK_*` keys.)
 
-## Memory (both warm)
+## Memory
 
-Both models stay resident, so `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL`
-must sum well under 1.0 of the 128 GB. The scaffolded defaults are **0.40** +
-**0.35** (≈ 96 GB reserved on a dedicated box, leaving ~32 GB for the OS, other
-processes, and the load/warmup spike). These are **estimates that require a
-dedicated box** — `--gpu-memory-utilization` is a fraction of *total* unified
-memory and each vLLM process computes it independently (they don't coordinate),
-so on a GB10 that is also running other services the two backends OOM. **Validate
-live** (watch `spark memory` / `nvidia-smi` at `model fleet up`; OOM is the top
-operational risk) and lower further on a shared box. See the findings below.
+The fleet is **single-backend by default**: the primary owns the box at
+`PRIMARY_GPU_MEM_UTIL=0.6` (~75 GiB of the 128 GB), serving the full 256K context
+— the load-tested solo footprint (see findings below). That leaves ample headroom
+for the OS and other processes.
 
-Note the throughput trade-off: decode is memory-bandwidth bound and the bandwidth
-(~273 GB/s) is **shared**. The MoE reads only its active experts per token, so it
-stays fast; two backends decoding *simultaneously* split the bandwidth. The
-gateway routes one request to one backend, so a single client sees full speed.
+`--gpu-memory-utilization` is a fraction of *total* unified memory, computed
+independently per vLLM process (they don't coordinate). So **if you add a warm
+fallback**, `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL` must sum well under
+1.0 — two ~30B NVFP4 models do **not** co-fit a GB10 that is also running other
+services (the prior `0.40` + `0.35` co-residence default OOM-looped; that's why
+the fallback was removed). **Validate live** (watch `spark memory` / `nvidia-smi`
+at `model fleet up`; OOM is the top operational risk).
+
+Note the throughput trade-off if you do co-resident two backends: decode is
+memory-bandwidth bound and the bandwidth (~273 GB/s) is **shared** — two backends
+decoding *simultaneously* split it. The gateway routes one request to one backend,
+so a single client sees full speed.
 
 ## Live validation findings — DGX Spark (GB10), 2026-05-30
 
@@ -147,21 +164,24 @@ also running, ~12–20 GiB baseline). Measured with `dgx-spark-cli` (`spark`):
 | Co-residence (27B + 35B-A3B) | **Not viable on this box.** 27B alone (~75 GiB) + 35B-A3B (~24 GiB weights + KV) + baseline services exceed the 121.7 GiB unified pool → OOM + swap thrash (swap hit 68 %). |
 | **Mistral-24B (new fallback) solo load → `/health`** | **Loaded cleanly** (port 8001, util 0.4): 15.05 GiB weights, 30.69 GiB KV, ~49.6 GiB total. Decode **14.9 tok/s**; prefill 2,009 tok in 1.49 s; tool calling ✅. See [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md). |
 
-**Conclusion — the "two always-warm models" premise needs a dedicated box.** On a
-GB10 shared with other services, two ~30B NVFP4 models do not co-fit with usable
-KV caches. Options: (a) run the fleet on a dedicated machine; (b) pair two
-genuinely small models; or (c) use single-model `model switch` (one warm at a
-time) instead of the fleet. The `0.55`/`0.30` default shipped in 0.10.0 OOM-looped
-the fallback and was corrected to `0.40`/`0.35` (a dedicated-box estimate). The
-35B-A3B's own load instability (crash/stall even solo) is tracked in
-[`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
+**Conclusion — the "two always-warm models" premise needs a dedicated box, so the
+default is now single-backend.** On a GB10 shared with other services, two ~30B
+NVFP4 models do not co-fit with usable KV caches. The default fleet therefore
+serves the **Qwen primary alone** at its load-tested solo headroom (util 0.6, full
+256K, ~75 GiB). If you genuinely need two warm models, run on a dedicated machine,
+pair two small models, or wire the opt-in fallback (see "Adding a fallback") and
+drop both utils. Single-model `model switch` (one warm at a time) remains the
+other path.
 
-**Fallback default changed to a dense 24B (2026-05-30).** Because the 35B-A3B
-never loaded, the default fallback is now
-`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` — dense, loads reliably, and
-smaller (~15 GiB weights vs the 27B's ~28 GiB), which also makes co-residence less
-of a stretch. Even so, two warm models on a *shared* GB10 remains tight; the
-dedicated-box guidance above still stands.
+**Fallback history.** The original 35B-A3B MoE fallback never loaded
+([`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)); it was replaced
+(2026-05-30) by the dense `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
+(loads reliably, ~15 GiB weights —
+[`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md)). Even the
+dense 24B stayed tight on a shared box, so the warm fallback was **removed from
+the default fleet** — Mistral remains a selectable catalog candidate and the
+documented opt-in fallback. The `0.55`/`0.30` → `0.40`/`0.35` util history above is
+the record of that co-residence struggle.
 
 ## Coherence with the single-model verbs
 

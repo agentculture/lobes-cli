@@ -2,9 +2,9 @@
 
 Copies the packaged ``docker-compose.yml`` + ``env.example``→``.env`` into
 ``TARGET`` (default ``~/.model-gear``; ``model init .`` for the local folder).
-``--fleet`` scaffolds the 3-container gateway deployment instead (two always-warm
-vLLM backends + a single OpenAI front). Mutating: dry-run by default; ``--apply``
-writes, ``--force`` overwrites.
+``--fleet`` scaffolds the gateway deployment instead (the always-warm Qwen
+primary + a single OpenAI front; single-backend by default, opt-in fallback).
+Mutating: dry-run by default; ``--apply`` writes, ``--force`` overwrites.
 """
 
 from __future__ import annotations
@@ -116,8 +116,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--fleet",
         action="store_true",
-        help="Scaffold the 3-container gateway deployment (2 vLLM backends + 1 front) "
-        "instead of a single model.",
+        help="Scaffold the gateway deployment (the Qwen primary + 1 OpenAI front; "
+        "single-backend by default, opt-in fallback) instead of a single model.",
     )
     p.add_argument(
         "--audio",

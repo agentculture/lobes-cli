@@ -1,8 +1,9 @@
-"""``model fleet up | down | status`` — drive the 3-container gateway deployment.
+"""``model fleet up | down | status`` — drive the gateway deployment.
 
-The fleet is two always-warm vLLM backends behind one stdlib gateway (scaffolded
-by ``model init --fleet``). These verbs are the fleet-lane counterparts of the
-single-model ``serve`` / ``stop`` / ``status``:
+The fleet is the always-warm Qwen primary behind one stdlib gateway (scaffolded
+by ``model init --fleet``); it is single-backend by default, with an opt-in warm
+fallback. These verbs are the fleet-lane counterparts of the single-model
+``serve`` / ``stop`` / ``status``:
 
 - ``model fleet up`` — ``docker compose up -d --build`` (builds the gateway image),
   then waits for the gateway ``/health``. Dry-run by default; ``--apply`` commits.

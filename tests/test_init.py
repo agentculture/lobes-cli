@@ -93,11 +93,17 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     assert (target / "Dockerfile.gateway").is_file()
     compose = (target / "docker-compose.yml").read_text()
     assert "vllm-primary" in compose
-    assert "vllm-fallback" in compose
     assert "model-gear-gateway" in compose
+    # Single-backend by default: no fallback service is scaffolded (the compose
+    # may mention vllm-fallback in "how to add one" comments, so check the
+    # service's container_name, which only appears when the service is defined).
+    assert "model-gear-vllm-fallback" not in compose
     env = (target / ".env").read_text()
     assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
-    assert "FALLBACK_MODEL=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4" in env
+    assert "FALLBACK_MODEL=" not in env
+    # The primary is restored to its solo headroom (util 0.6, full 256K).
+    assert "PRIMARY_GPU_MEM_UTIL=0.6" in env
+    assert "PRIMARY_MAX_MODEL_LEN=262144" in env
     # init --fleet pins the gateway image to the running model-gear version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.

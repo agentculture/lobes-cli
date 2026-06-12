@@ -169,34 +169,37 @@ mTLS in front of the tunnel. Bearer auth currently gates the single-model
 deployment; the fleet gateway is not yet auth-aware (planned). See `model explain
 tunnel` for the full flow.
 
-## Running two models behind one gateway (fleet)
+## Running the model behind a gateway (fleet)
 
-`model init --fleet` scaffolds a **three-container** deployment instead of one:
-two always-warm vLLM backends (a primary + a dense fallback) and a single stdlib
-**gateway** that fronts them on the host port the acp `vllm-local` provider
-already expects. The gateway routes each request by its `model` field, defaults an
-unknown/missing name to the primary, and fails over to the other backend if the
-chosen one is down — so existing single-model clients keep working unchanged while
-a second model becomes addressable by name.
+`model init --fleet` scaffolds a **two-container** deployment instead of one: the
+always-warm Qwen primary and a single stdlib **gateway** that fronts it on the
+host port the acp `vllm-local` provider already expects. The gateway routes each
+request by its `model` field and defaults an unknown/missing name to the primary —
+so existing single-model clients keep working unchanged, the same front fans
+`/v1/audio/*` out to the `--audio` overlay, and a warm fallback can be wired in
+later (the gateway adds a second backend, with failover, only when one is
+configured).
 
 ```bash
 model init --fleet --apply        # $HOME/.model-gear/{docker-compose.yml,.env,Dockerfile.gateway}
 docker login nvcr.io              # NGC API key for the vLLM image
-model fleet up --apply            # builds the gateway image + starts all three
+model fleet up --apply            # builds the gateway image + starts the backend
 model fleet status                # container states + gateway /health + /v1/models
 ```
 
 ```bash
-curl -s http://localhost:8000/v1/models       # the two WARM backends (not the full catalog — see below)
-# route explicitly by name; an unknown/missing model falls back to the primary
-curl -s http://localhost:8000/v1/chat/completions -d '{"model":"RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4","messages":[...]}'
+curl -s http://localhost:8000/v1/models       # the WARM backend(s) (not the full catalog — see below)
+# an unknown/missing model defaults to the primary; route explicitly by name:
+curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP","messages":[...]}'
 ```
 
-Both models stay loaded, so set `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL`
-in the fleet `.env` to sum well under 1.0 (they share the 128 GB unified memory).
-`model switch` is single-model only — change fleet models by editing the fleet
-`.env` and re-running `model fleet up --apply`. See `model explain fleet` /
-`model explain gateway` for the routing and failover semantics, and
+The fleet is single-backend by default, so the primary runs at its load-tested
+solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K context) on the 128 GB
+unified memory. To add a warm fallback, wire a `vllm-fallback` service + the
+`FALLBACK_*` env and drop both utils so they sum well under 1.0 (two ~30B NVFP4
+models barely co-fit a GB10). `model switch` is single-model only — change the
+fleet primary by editing the fleet `.env` and re-running `model fleet up --apply`.
+See `model explain fleet` / `model explain gateway` for the routing semantics, and
 [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the full topology.
 
 ### Per-model notes
@@ -221,10 +224,12 @@ results, and caveats:
   (`nvidia/Qwen3-32B-NVFP4`), faster on decode (~9.7 tok/s); swap in via
   `PRIMARY_MODEL` / `model switch` when throughput matters more than context/vision.
 - [`docs/mistral-small-3.2-24b-nvfp4.md`](docs/mistral-small-3.2-24b-nvfp4.md) —
-  the dense **fallback** (`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`) the
-  gateway fleet pairs with the primary, since 0.11.0. Load-tested 2026-05-30:
-  loads reliably (~15 GiB, ~14.9 tok/s decode), text + tool calls (serve with the
-  mistral tokenizer + images disabled). Replaced the 35B MoE that never loaded.
+  the dense **fallback candidate** (`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`);
+  the default fleet's warm fallback in 0.11.0–0.19.x, since removed (the fleet is
+  single-backend by default — two ~30B NVFP4 models don't co-fit a shared GB10).
+  Kept selectable: load-tested 2026-05-30, loads reliably (~15 GiB, ~14.9 tok/s
+  decode), text + tool calls (serve with the mistral tokenizer + images disabled).
+  Wire it back via the opt-in `FALLBACK_*` fleet config.
 - [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the former
   **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`), now a candidate. It does
   **not** load reliably on a GB10 shared with other services, and two ~30B models
