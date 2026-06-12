@@ -4,6 +4,63 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-06-12
+
+### Fixed
+
+Qodo review of #41:
+
+- **`model init --fleet --audio` now scaffolds `_readiness.py`** — added
+  `fleet/_readiness.py → _readiness.py` to `_compose.AUDIO_TEMPLATES`. The
+  Parakeet `Dockerfile.parakeet` `COPY _readiness.py` requires it at the
+  deployment-dir root, so a clean audio init previously produced a tree where
+  `docker compose build stt` would fail. Covered by `test_init.py`.
+- **Parakeet readiness drift guard + simplification** — removed the third
+  (inline) copy of the readiness decision from `listen_server.py` (the scaffold
+  now guarantees the vendored `_readiness.py` is present), and added a test
+  asserting the vendored twin stays behaviourally identical to the canonical
+  `model_gear/realtime/_readiness.py`.
+- **CUDA readiness probe failures are now logged** — `listen_server.health()`
+  emits a `logger.warning` with the exception type/message before returning
+  `503`, so operators can distinguish driver-down / OOM / stale-context.
+- **`scripts/audio-smoke.py` now exercises `/v1/audio/speech`** (it previously
+  claimed both routes but only tested transcriptions) and wires the formerly
+  unused `--stt-url` to a direct-Parakeet transcription check.
+- **`docs/realtime-pipeline.md`** uses `$HOME/.model-gear` instead of the
+  non-portable `~/.model-gear`.
+
+## [0.20.0] - 2026-06-12
+
+### Added
+
+- **`docs/realtime-pipeline.md`** — the previously-missing runbook for the audio
+  surface: that model-gear owns the live `:8080` realtime facade, the
+  `model init --fleet --audio` / `model fleet up` bring-up, the topology
+  (gateway path-routes `/v1/audio/*` → realtime → Parakeet/Magpie), the drift it
+  fixed (#39/#40), the cheap readiness probe, and the stale-Parakeet-CUDA restart
+  runbook. Resolves a doc referenced from `pyproject.toml`, the audio overlay,
+  and the realtime app docstring but never written.
+- **`scripts/audio-smoke.py`** — a stdlib-only live smoke test for the audio
+  routes: asserts `GET :8080/openapi.json` lists both `/v1/audio/transcriptions`
+  and `/v1/audio/speech`, then POSTs an in-memory 16 kHz WAV and asserts
+  `200 {text: …}`. Reproduces issue #39's repro to confirm the 500→200 fix.
+  Requires a running GPU box (not a CI unit test).
+- **`model_gear/realtime/_readiness.py`** — a stdlib-only `evaluate_readiness()`
+  helper backing the Parakeet `/v1/health/ready` cheap probe; unit-tested in CI
+  without torch/nemo/GPU.
+
+### Fixed
+
+- **Parakeet STT healthcheck now reflects real model readiness (#39).** The
+  vendored `templates/fleet/listen_server.py` `/v1/health/ready` returned
+  `{"status": "ready"}` unconditionally — process liveness only — so a container
+  whose CUDA context had gone stale (`CUDA error: unknown error`, every
+  transcription 500ing) still reported Docker "healthy". The probe now reports
+  ready **only** when the NeMo model is loaded **and** a trivial CUDA tensor op
+  succeeds, returning `503` otherwise (a cheap probe, not a full transcription
+  each interval). The pure decision is vendored into the Parakeet build context
+  and `COPY`'d into the image so it resolves without the wheel.
+
 ## [0.19.0] - 2026-06-09
 
 ### Added

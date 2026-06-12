@@ -62,6 +62,10 @@ AUDIO_TEMPLATES = {
     "fleet/Dockerfile.realtime": "Dockerfile.realtime",
     "fleet/Dockerfile.parakeet": "Dockerfile.parakeet",
     "fleet/listen_server.py": "listen_server.py",
+    # _readiness.py is COPY'd into the Parakeet image (Dockerfile.parakeet), so
+    # it MUST land at the deployment-dir root or `docker compose build stt`
+    # fails on the COPY. Vendored twin of model_gear/realtime/_readiness.py.
+    "fleet/_readiness.py": "_readiness.py",
 }
 AUDIO_ENV_TEMPLATE = "fleet/env.audio.example"
 # Back-compat alias: the single set was the only one before the fleet existed.

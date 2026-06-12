@@ -20,3 +20,8 @@ ignores:
   # Internal planning artifacts (design specs, implementation plans) embed nested
   # fenced code blocks that trigger markdownlint violations not worth reformatting.
   - "docs/superpowers/**"
+  # devague-generated artifacts: the H1 is the verbatim announcement sentence
+  # (ends in a period → MD026) and the body mirrors confirmed claims as-is.
+  # Generated, not hand-authored — like docs/superpowers above.
+  - "docs/specs/**"
+  - "docs/plans/**"

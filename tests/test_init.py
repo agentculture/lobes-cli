@@ -130,7 +130,8 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
     target = tmp_path / "fa"
     rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
     assert rc == 0
-    # fleet files + the four audio overlay files
+    # fleet files + the audio overlay files. _readiness.py MUST be scaffolded:
+    # Dockerfile.parakeet COPYs it, so a missing scaffold breaks `build stt`.
     for name in (
         "docker-compose.yml",
         "Dockerfile.gateway",
@@ -138,6 +139,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
         "Dockerfile.realtime",
         "Dockerfile.parakeet",
         "listen_server.py",
+        "_readiness.py",
     ):
         assert (target / name).is_file(), name
     env = (target / ".env").read_text()
