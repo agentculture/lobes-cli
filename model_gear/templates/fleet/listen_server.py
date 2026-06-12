@@ -39,6 +39,7 @@ except ImportError:
                 return 503, {"status": "not_ready", "reason": "CUDA not available"}
             return 200, {"status": "ready"}
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
