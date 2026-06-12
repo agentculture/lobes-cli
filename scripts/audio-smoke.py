@@ -7,7 +7,8 @@ running model-gear fleet with the audio overlay. This is NOT an offline CI test
 
 Reproduces the issue #39 repro to confirm the 500→200 fix: generates a 2s 440 Hz
 tone (16 kHz mono PCM16 WAV), posts it to /v1/audio/transcriptions, and asserts
-HTTP 200 + a JSON response with a `text` key.
+HTTP 200 + a JSON response with a `text` key. Also exercises /v1/audio/speech
+(Magpie TTS) and, when --stt-url is given, the Parakeet backend directly.
 
 Exit code 0 if all checks pass; non-zero on any failure.
 """
@@ -153,6 +154,42 @@ def check_transcription(base_url: str) -> bool:
         return False
 
 
+def check_speech(base_url: str) -> bool:
+    """Test POST /v1/audio/speech (OpenAI TTS → Magpie) returns audio.
+
+    Args:
+        base_url: base URL (e.g., http://localhost:8080).
+
+    Returns:
+        True if the endpoint returns 200 with a non-empty audio body; else False.
+    """
+    url = f"{base_url.rstrip('/')}/v1/audio/speech"
+    payload = json.dumps({"input": "hey reachy", "voice": "Mia.Calm"}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status != 200:
+                print(f"FAIL: speech returned {resp.status}")
+                return False
+            content_type = resp.headers.get("Content-Type", "")
+            body_len = len(resp.read())
+    except URLError as exc:
+        print(f"FAIL: speech request failed: {exc}")
+        return False
+
+    if body_len > 0 and "audio" in content_type:
+        print(f"PASS: speech returned 200 ({body_len} bytes, {content_type})")
+        return True
+    else:
+        print(
+            f"FAIL: speech returned 200 but body/type unexpected "
+            f"(bytes={body_len}, content_type={content_type!r})"
+        )
+        return False
+
+
 def main() -> int:
     """Run all smoke tests.
 
@@ -181,8 +218,17 @@ def main() -> int:
     # Test 1: OpenAPI schema
     results.append(("openapi.json", check_openapi(args.base_url)))
 
-    # Test 2: Transcription endpoint
+    # Test 2: Transcription endpoint (facade → Parakeet)
     results.append(("transcriptions", check_transcription(args.base_url)))
+
+    # Test 3: Speech endpoint (facade → Magpie)
+    results.append(("speech", check_speech(args.base_url)))
+
+    # Test 4 (optional): Parakeet STT directly, when --stt-url is given. This is
+    # the issue-#39 repro against the backend itself, bypassing the facade.
+    if args.stt_url:
+        print(f"\nTesting Parakeet STT directly at {args.stt_url}")
+        results.append(("stt-direct", check_transcription(args.stt_url)))
 
     print()
     print("=" * 60)

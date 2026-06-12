@@ -59,7 +59,7 @@ Both STT and TTS share the GPU with the two LLM backends.
 model init --fleet --audio --apply
 
 # 2. Set NGC_API_KEY in the .env file
-# Locate ~/.model-gear/.env (or your --compose-dir) and edit:
+# Locate $HOME/.model-gear/.env (or your --compose-dir) and edit:
 #   NGC_API_KEY=<your-key>
 
 # 3. Bring up the full audio stack (dry-run by default; --apply commits)
@@ -73,7 +73,7 @@ Each `model init` and `model fleet` verb defaults to **dry-run**; omit `--apply`
 to see what would happen, or add `--apply` to execute. This ensures safe-by-default
 operation (useful when agents call CLIs in loops).
 
-To customize the compose dir (default `$MODEL_GEAR_DIR` or `~/.model-gear`):
+To customize the compose dir (default `$MODEL_GEAR_DIR` or `$HOME/.model-gear`):
 
 ```bash
 model init --fleet --audio --compose-dir /path/to/deployment --apply

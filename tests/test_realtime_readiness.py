@@ -7,9 +7,26 @@ Mirrors the style of tests/test_realtime_settings.py.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from model_gear.realtime._readiness import evaluate_readiness
+
+# The vendored twin COPY'd into the Parakeet image / scaffolded by
+# `model init --fleet --audio`. It must stay behaviourally identical to the
+# canonical module (cite-don't-import — two copies, one truth).
+_VENDORED_TWIN = (
+    Path(__file__).resolve().parents[1] / "model_gear" / "templates" / "fleet" / "_readiness.py"
+)
+
+
+def _load_vendored_evaluate_readiness():
+    spec = importlib.util.spec_from_file_location("_fleet_readiness", _VENDORED_TWIN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.evaluate_readiness
 
 
 def test_both_ok_returns_200_ready() -> None:
@@ -52,3 +69,15 @@ def test_neither_loaded_reports_503_model_reason_first() -> None:
 def test_status_code_matrix(model_loaded: bool, cuda_ok: bool, expected_code: int) -> None:
     code, _body = evaluate_readiness(model_loaded=model_loaded, cuda_ok=cuda_ok)
     assert code == expected_code
+
+
+@pytest.mark.parametrize(
+    "model_loaded, cuda_ok",
+    [(True, True), (True, False), (False, True), (False, False)],
+)
+def test_vendored_twin_matches_canonical(model_loaded: bool, cuda_ok: bool) -> None:
+    """The fleet-template copy must not drift from the canonical decision."""
+    vendored = _load_vendored_evaluate_readiness()
+    assert vendored(model_loaded=model_loaded, cuda_ok=cuda_ok) == evaluate_readiness(
+        model_loaded=model_loaded, cuda_ok=cuda_ok
+    )

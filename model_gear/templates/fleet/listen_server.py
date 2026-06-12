@@ -20,24 +20,16 @@ import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
-# Import the readiness decision logic.  The Dockerfile COPYs _readiness.py
-# next to listen_server.py (as a top-level module in /app), so this import
-# works whether or not the model_gear wheel is installed in the container.
-# Falls back gracefully if neither is present (shouldn't happen, but defensive).
+# Import the readiness decision from the single source of truth. The Dockerfile
+# COPYs _readiness.py next to listen_server.py (top-level module in /app) and
+# `model init --fleet --audio` scaffolds it via AUDIO_TEMPLATES, so the
+# container-local import always resolves; the wheel path is a dev fallback. No
+# inline copy — a third copy would invite drift from the CI-tested canonical
+# model_gear/realtime/_readiness.py.
 try:
     from _readiness import evaluate_readiness  # container-local copy (top-level)
 except ImportError:
-    try:
-        from model_gear.realtime._readiness import evaluate_readiness  # wheel install
-    except ImportError:
-        # Last-resort inline fallback — keeps the container functional even if
-        # both import paths fail (e.g. a dev build without the COPY step).
-        def evaluate_readiness(model_loaded: bool, cuda_ok: bool):  # type: ignore[misc]
-            if not model_loaded:
-                return 503, {"status": "not_ready", "reason": "model not loaded"}
-            if not cuda_ok:
-                return 503, {"status": "not_ready", "reason": "CUDA not available"}
-            return 200, {"status": "ready"}
+    from model_gear.realtime._readiness import evaluate_readiness  # wheel install
 
 
 logging.basicConfig(level=logging.INFO)
@@ -87,7 +79,10 @@ async def health():
         torch.zeros(1, device="cuda")
         torch.cuda.synchronize()
         cuda_ok = True
-    except Exception:
+    except Exception as exc:
+        # Log the failure so operators can tell driver-down from OOM from a
+        # stale CUDA context (the #39 symptom) instead of a silent 503.
+        logger.warning("CUDA readiness probe failed: %s: %s", type(exc).__name__, exc)
         cuda_ok = False
 
     status_code, body = evaluate_readiness(model_loaded, cuda_ok)
