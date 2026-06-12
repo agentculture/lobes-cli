@@ -41,7 +41,7 @@ _CAPABILITIES = [
     "assess — correctness probes against the served model",
     "switch — change the served model (dry-run by default)",
     "benchmark — decode throughput + prefill latency",
-    "fleet — front two always-warm models with one OpenAI gateway (routing + failover)",
+    "fleet — front the always-warm Qwen primary with one OpenAI gateway (opt-in fallback)",
 ]
 
 

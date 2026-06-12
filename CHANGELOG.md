@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-06-12
+
+### Changed
+
+- **The fleet is now single-backend by default (Qwen primary only); the Mistral
+  fallback is removed.** Live validation showed two ~30B NVFP4 models don't co-fit
+  a shared GB10, so the warm dense Mistral-Small-3.2-24B fallback has been dropped
+  from the default fleet and the primary restored to its **load-tested solo
+  headroom**: `PRIMARY_GPU_MEM_UTIL` `0.40 → 0.6` and `PRIMARY_MAX_MODEL_LEN`
+  `32768 → 262144` (full 256K). The `vllm-fallback` service is gone from
+  `fleet/docker-compose.yml`, and `FLEET_CONTAINERS` no longer includes it.
+- **The gateway makes the fallback optional.** `build_config` now adds a second
+  backend **only** when `FALLBACK_URL` or `FALLBACK_SERVED_NAME` is set in env —
+  so the default gateway serves the primary alone (no failover target), and a
+  two-backend fleet still works for anyone who wires one up. Routing/failover
+  primitives are unchanged; `order_backends` returns just the primary when solo.
+- **Mistral stays a selectable catalog candidate** (`model overview --list`) and
+  the documented opt-in fallback — only its role as the *default* fleet fallback
+  is removed. README, `docs/gateway-fleet.md`, and the `model explain
+  fleet/gateway` / `model init --help` text are updated to the single-backend
+  default (with an "Adding a fallback" guide).
+
+### Fixed
+
+- `docs/gateway-fleet.md` uses `$HOME/.model-gear` instead of the non-portable
+  `~/.model-gear`.
+
 ## [0.20.1] - 2026-06-12
 
 ### Fixed

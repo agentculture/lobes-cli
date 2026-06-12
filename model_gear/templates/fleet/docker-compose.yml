@@ -1,19 +1,22 @@
-# model-gear FLEET — two always-warm vLLM backends behind one stdlib gateway.
+# model-gear FLEET — the always-warm Qwen primary behind one stdlib gateway.
 #
 # `model init --fleet` copies this file (+ env.example -> .env, + Dockerfile.gateway)
 # into a deployment directory; `model fleet up --apply` drives `docker compose
 # up -d --build` there. The gateway serves an OpenAI-compatible API on the host
 # port the acp `vllm-local` provider expects; it routes by the request's `model`
-# field, defaults unknown/missing names to GATEWAY_DEFAULT_MODEL, and fails over
-# to the other backend when the chosen one is down.
+# field and defaults unknown/missing names to GATEWAY_DEFAULT_MODEL.
 #
 #   model init --fleet --apply     # scaffold (writes the running version into .env)
 #   docker login nvcr.io           # NGC API key for the vLLM image
-#   model fleet up --apply         # build the gateway + start all three
+#   model fleet up --apply         # build the gateway + start the backend
 #   model fleet status             # container states + gateway /health + /v1/models
 #
-# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). Both models
-# stay loaded — keep PRIMARY_GPU_MEM_UTIL + FALLBACK_GPU_MEM_UTIL well under 1.0.
+# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). The fleet is
+# single-backend by default: the Qwen primary runs solo at its load-tested
+# headroom (util 0.6, full 256K context). To add a warm fallback, wire a
+# vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway (the
+# gateway adds a second backend when those are set) and drop both GPU utils so
+# the two sum well under 1.0 — two ~30B NVFP4 models barely co-fit a GB10.
 services:
   vllm-primary:
     image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
@@ -48,8 +51,8 @@ services:
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
       - --kv-cache-dtype=fp8
-      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.40}
+      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-262144}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.6}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
@@ -74,67 +77,15 @@ services:
       retries: 5
       start_period: 600s
 
-  vllm-fallback:
-    image: nvcr.io/nvidia/vllm:26.04-py3
-    container_name: model-gear-vllm-fallback
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - { driver: nvidia, count: all, capabilities: [gpu] }
-    ipc: host
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
-      stack: { soft: 67108864, hard: 67108864 }
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      - HF_HOME=/root/.cache/huggingface
-      - TOKENIZERS_PARALLELISM=false
-    volumes:
-      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
-    expose:
-      - "8000"
-    command:
-      - vllm
-      - serve
-      # Default fallback is the dense Mistral-Small-3.2-24B (NVFP4): it loads
-      # reliably on the GB10, unlike the Qwen3.6-35B-A3B MoE it replaced (which
-      # OOM'd/stalled here — see docs/qwen3.6-35b-a3b-nvfp4.md).
-      - ${FALLBACK_MODEL:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
-      - --served-model-name=${FALLBACK_SERVED_NAME:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
-      - --host=0.0.0.0
-      - --port=8000
-      # Mistral NVFP4 is compressed-tensors (vLLM auto-detects, but pass it
-      # explicitly so a switch back to a modelopt_fp4 checkpoint is one env var).
-      - --quantization=${FALLBACK_QUANTIZATION:-compressed-tensors}
-      - --kv-cache-dtype=fp8
-      - --max-model-len=${FALLBACK_MAX_MODEL_LEN:-32768}
-      - --gpu-memory-utilization=${FALLBACK_GPU_MEM_UTIL:-0.35}
-      # Mistral-Small-3.2 is multimodal (Mistral3/Pixtral). On the nv26.04 build the
-      # mistral tokenizer is REQUIRED for tool-call parsing, but it crashes the
-      # Pixtral dummy-input profiler unless images are limited to 0 — so: mistral
-      # tokenizer + no image inputs (text + tools only; vision is unused by the
-      # fallback). With the HF tokenizer the model's [TOOL_CALLS] markup leaks into
-      # content unparsed. No --reasoning-parser: Mistral is an instruct model.
-      # Tuned for the Mistral default. tokenizer-mode is env-overridable
-      # (FALLBACK_TOKENIZER_MODE=auto for a non-Mistral fallback). --limit-mm-per-prompt
-      # stays fixed: compose can't conditionally omit a flag, and the flag is invalid
-      # for a text-only fallback — swapping to a different model *family* is a compose
-      # edit. See docs/mistral-small-3.2-24b-nvfp4.md.
-      - --tokenizer-mode=${FALLBACK_TOKENIZER_MODE:-mistral}
-      - --limit-mm-per-prompt={"image":0}
-      - --enable-auto-tool-choice
-      - --tool-call-parser=${FALLBACK_TOOL_CALL_PARSER:-mistral}
-      - --enable-prefix-caching
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 600s
+  # A warm fallback backend can be added here. The default fleet is
+  # single-backend (Qwen primary only) so the primary gets the full GB10. To add
+  # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
+  # your fallback model with its own quantization / tokenizer / parser), add it to
+  # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the
+  # gateway, and lower both GPU utils so they sum well under 1.0. The archived
+  # dense Mistral-Small-3.2-24B (NVFP4) fallback config is in git history (the
+  # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
+  # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
 
   gateway:
     build:
@@ -148,13 +99,12 @@ services:
     # and fails over per request), so it must not block on backend health.
     depends_on:
       - vllm-primary
-      - vllm-fallback
     environment:
       - GATEWAY_PORT=8000
       - PRIMARY_URL=http://vllm-primary:8000
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
-      - FALLBACK_URL=http://vllm-fallback:8000
-      - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4}
+      # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
+      # gateway wires a second backend only when these are present).
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}

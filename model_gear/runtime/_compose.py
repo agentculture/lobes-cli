@@ -20,12 +20,14 @@ COMPOSE_FILE = "docker-compose.yml"
 ENV_FILE = ".env"
 DOCKERFILE_GATEWAY = "Dockerfile.gateway"
 
-# Fleet container names (model init --fleet / model fleet ...): two always-warm
-# vLLM backends plus the stdlib gateway that fronts them on one OpenAI port.
+# Fleet container names (model init --fleet / model fleet ...): the always-warm
+# Qwen primary plus the stdlib gateway that fronts it on one OpenAI port. The
+# fleet is single-backend by default; a fallback (FLEET_FALLBACK) is opt-in (see
+# the fleet compose), so it is not in the default container set.
 FLEET_PRIMARY = "model-gear-vllm-primary"
-FLEET_FALLBACK = "model-gear-vllm-fallback"
+FLEET_FALLBACK = "model-gear-vllm-fallback"  # opt-in; not started by default
 FLEET_GATEWAY = "model-gear-gateway"
-FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_FALLBACK, FLEET_GATEWAY)
+FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_GATEWAY)
 
 # Audio overlay (model init --fleet --audio): STT + TTS + the realtime bridge,
 # layered on the base fleet via a compose override and fronted by the gateway.
@@ -37,7 +39,7 @@ FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
 # Template filename -> destination filename written by the scaffold. The single
 # template set is the default (every existing caller stays unchanged); the fleet
-# set scaffolds the 3-container gateway deployment (model init --fleet).
+# set scaffolds the gateway deployment (model init --fleet; single-backend default).
 # Cloudflare Tunnel example scaffolded alongside both deployments (the tunnel
 # fronts the single-model :8000 or the fleet gateway). Copied verbatim as an
 # `.example`; the owner copies it to the gitignored `.cf-tunnel.env` and edits.
