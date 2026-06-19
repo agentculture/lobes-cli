@@ -72,6 +72,10 @@ def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
     """
     owner = _backend_for(table, served_name) or _backend_for(table, table.default_model)
     ordered: list[Backend] = []
+    # Invariant: a built table always has a primary backend and default_model
+    # resolves to it, so owner is non-None in practice. We degrade gracefully (an
+    # empty list → handle_post returns a 502) rather than assert, so a malformed
+    # table can never crash the long-lived gateway process.
     if owner is not None:
         ordered.append(owner)
         ordered.extend(b for b in table.backends if b is not owner and b.task == owner.task)

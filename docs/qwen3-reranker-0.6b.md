@@ -40,6 +40,10 @@ The gateway routes `/v1/rerank` and `/v1/score` to this backend by matching
 `"model": "Qwen/Qwen3-Reranker-0.6B"` — the same gateway port as chat and
 embeddings.
 
+> **The `model` field is required.** Routing is by model name, so a request
+> without `model` falls through to the gateway's default (the chat primary),
+> which can't score (returns a 400). Always send `model` in the request body.
+
 ### Rerank (Jina / Cohere shape — sorted best-first)
 
 Use `/v1/rerank` when you want results ranked from most to least relevant. The

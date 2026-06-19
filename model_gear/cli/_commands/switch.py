@@ -142,11 +142,16 @@ def _serve_notices(model_id: str) -> list[str]:
                 f"--moe-backend={model.moe_backend}"
             )
         if model.task in ("embed", "score"):
+            # Render as YAML `command:` list items the operator can paste verbatim.
+            # --hf-overrides is single-quoted because its JSON value has `: `/`{`/`[`
+            # (unquoted, `docker compose` fails to parse it) — the same rule the
+            # --speculative-config item above follows and the fleet template applies.
             notices.append(
-                f"embed/score gear — add `--task={model.task}` and "
-                f"`--hf-overrides={model.hf_overrides}` to the compose `command:`, "
-                "and REMOVE the MTP lines (the single-model template ships the MTP "
-                "primary's flags)"
+                "embed/score gear — add these `command:` list items by hand (and "
+                "REMOVE the MTP lines; the single-model template ships the MTP "
+                "primary's flags):"
+                f"\n      - --task={model.task}"
+                f"\n      - '--hf-overrides={model.hf_overrides}'"
             )
     return notices
 

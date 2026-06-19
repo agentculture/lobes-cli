@@ -216,3 +216,21 @@ def test_as_dicts_includes_new_fields() -> None:
     for entry in as_dicts():
         missing = required_new_fields - entry.keys()
         assert not missing, f"{entry.get('id')}: as_dicts() missing fields {missing}"
+
+
+def test_embed_score_hf_overrides_match_fleet_template() -> None:
+    # The fleet compose hardcodes --hf-overrides for the vllm-embed / vllm-rerank
+    # services; the catalog stores the same JSON in each gear's hf_overrides field.
+    # Guard against the two drifting (mirrors test_mtp_command_items_match_packaged_
+    # templates): every embed/score gear's hf_overrides must appear *verbatim* in the
+    # fleet template, so a catalog edit that forgets the compose (or vice versa) fails
+    # the build instead of silently serving with stale overrides.
+    fleet = (_TEMPLATES / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
+    pooling = [m for m in SUPPORTED_MODELS if m.task in ("embed", "score")]
+    assert pooling, "expected at least one embed/score gear in the catalog"
+    for model in pooling:
+        assert model.hf_overrides, f"{model.id}: embed/score gear has empty hf_overrides"
+        assert model.hf_overrides in fleet, (
+            f"{model.id}: hf_overrides not found verbatim in "
+            "templates/fleet/docker-compose.yml (catalog<->compose drift)"
+        )

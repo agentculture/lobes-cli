@@ -40,6 +40,11 @@ Key compose flags:
 The gateway routes `/v1/embeddings` to this backend by matching
 `"model": "Qwen/Qwen3-Embedding-0.6B"` — the same gateway port as chat.
 
+> **The `model` field is required.** Routing is by model name, so a request
+> without `model` falls through to the gateway's default (the chat primary),
+> which can't serve embeddings (returns a 400). The OpenAI embeddings API marks
+> `model` required, so a spec-compliant client always sends it.
+
 ### Basic embedding (native 1024-dim)
 
 ```bash
