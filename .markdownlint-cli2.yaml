@@ -25,3 +25,8 @@ ignores:
   # Generated, not hand-authored — like docs/superpowers above.
   - "docs/specs/**"
   - "docs/plans/**"
+  # Skill prompt templates are model-facing content fed verbatim to a backend
+  # (first line is `$ARGUMENTS` or a prose instruction), not human-rendered docs.
+  # MD041 (first-line H1) is actively wrong here — a heading would be injected
+  # into the prompt. SKILL.md itself is still linted; only `prompts/` is exempt.
+  - ".claude/skills/**/prompts/**"
