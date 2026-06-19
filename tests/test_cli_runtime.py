@@ -601,6 +601,152 @@ def test_switch_apply_surfaces_compose_failure(tmp_path, monkeypatch) -> None:
     assert rc == EXIT_ENV_ERROR
 
 
+# --- switch --task (embed/score) ------------------------------------------
+
+
+def test_switch_embed_model_auto_detects_task_json(tmp_path, capsys) -> None:
+    # Qwen3-Embedding-0.6B is an embed catalog entry; switch must auto-detect
+    # task=embed, set VLLM_TASK, apply the tiny-KV defaults, skip the tool-call
+    # parser, skip quantization (empty catalog value), and add the compose notice.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "Qwen/Qwen3-Embedding-0.6B",
+            "--machine",
+            "spark",
+            "--json",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    env = payload["env"]
+    # Task must be set in the plan.
+    assert env.get("VLLM_TASK") == "embed"
+    # Tiny-KV defaults for a pooling model.
+    assert env.get("VLLM_MAX_MODEL_LEN") == "8192"
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.05)
+    # No tool-call parser (pooling model).
+    assert "VLLM_TOOL_CALL_PARSER" not in env
+    assert payload.get("tool_call_parser") is None
+    # No quantization (catalog entry has quantization="").
+    assert "VLLM_QUANTIZATION" not in env
+    # Probe is suppressed for embed/score.
+    assert payload["probe"] is False
+    # Compose edit notice must mention --task=embed and --hf-overrides.
+    compose_edits = payload["compose_edits"]
+    assert any("--task=embed" in n for n in compose_edits), compose_edits
+    assert any("--hf-overrides=" in n for n in compose_edits), compose_edits
+    assert any("is_matryoshka" in n for n in compose_edits), compose_edits
+
+
+def test_switch_generate_model_unchanged_by_task_feature(tmp_path, capsys) -> None:
+    # A normal generate model (mmangkad/Qwen3.6-27B-NVFP4) must be byte-for-byte
+    # unaffected: still gets a tool-call parser, no VLLM_TASK, no embed defaults.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "mmangkad/Qwen3.6-27B-NVFP4",
+            "--machine",
+            "spark",
+            "--json",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    env = payload["env"]
+    # Tool-call parser must be resolved (qwen3_coder for this model).
+    assert env.get("VLLM_TOOL_CALL_PARSER") == "qwen3_coder"
+    assert payload.get("tool_call_parser") == "qwen3_coder"
+    # No pooling task.
+    assert "VLLM_TASK" not in env
+    # Context must be the 256K machine default (the model is 256K-native; no clamp).
+    assert env.get("VLLM_MAX_MODEL_LEN") == "262144"
+    # GPU util must be the spark machine default (0.6), not the embed/score 0.05.
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.6)
+    # Probe enabled (no --no-probe, not an embed/score model).
+    assert payload["probe"] is True
+
+
+def test_switch_embed_explicit_task_flag_wins(tmp_path, capsys) -> None:
+    # An explicit --task embed on an unknown model (no catalog entry) must still
+    # activate the pooling path: VLLM_TASK set, tiny-KV defaults, no parser.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "some/unknown-embed-model",
+            "--task",
+            "embed",
+            "--machine",
+            "spark",
+            "--json",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    env = payload["env"]
+    assert env.get("VLLM_TASK") == "embed"
+    assert env.get("VLLM_MAX_MODEL_LEN") == "8192"
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.05)
+    assert "VLLM_TOOL_CALL_PARSER" not in env
+    assert payload["probe"] is False
+
+
+def test_switch_embed_explicit_overrides_win_over_defaults(tmp_path, capsys) -> None:
+    # When --max-model-len and --gpu-mem-util are passed explicitly they must win
+    # over the embed/score defaults (8192 / 0.05).
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "Qwen/Qwen3-Embedding-0.6B",
+            "--machine",
+            "spark",
+            "--max-model-len",
+            "4096",
+            "--gpu-mem-util",
+            "0.10",
+            "--json",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    env = payload["env"]
+    assert env.get("VLLM_MAX_MODEL_LEN") == "4096"
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.10)
+
+
+def test_switch_embed_skips_probe_even_without_no_probe(tmp_path, capsys) -> None:
+    # Without --no-probe a generate model would run the probe; an embed/score
+    # model must suppress it regardless.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "Qwen/Qwen3-Embedding-0.6B",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "probe tool calling" not in out
+    assert "post-switch probe: skipped" in out
+    assert "/v1/embeddings" in out
+
+
 # --- serve / stop ---------------------------------------------------------
 
 

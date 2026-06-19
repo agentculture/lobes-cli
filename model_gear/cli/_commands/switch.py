@@ -14,6 +14,11 @@ The serve config is resolved from three layers (explicit CLI flags win):
   (and the shape ``model benchmark`` exercises); and
 * the **model** catalog entry → quantization + tool-call parser, plus a printed
   reminder for the MoE-only compose flags (which can't be defaulted safely).
+
+For embed/score gears (``--task embed`` or ``--task score``, or auto-detected
+from the catalog), the plan skips tool-call parser and caps ``VLLM_MAX_MODEL_LEN``
+to 8192 and ``VLLM_GPU_MEM_UTIL`` to 0.05 by default (tiny KV cache for a
+pooling model). The post-switch tool-calling probe is also skipped.
 """
 
 from __future__ import annotations
@@ -61,6 +66,24 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
 
+def _resolve_task(args: argparse.Namespace) -> str:
+    """Return the effective vLLM task for this switch.
+
+    An explicit ``--task`` (anything other than the default ``"generate"``) always
+    wins.  When the flag was not explicitly passed (still the argparse default
+    ``"generate"``), check the catalog: embed/score models declare their task there
+    and it is inferred automatically — so ``model switch Qwen/Qwen3-Embedding-0.6B``
+    auto-detects ``task=embed`` without requiring the flag.
+    """
+    if args.task != "generate":
+        # Operator provided an explicit --task; honour it unconditionally.
+        return args.task
+    for model in supported_models():
+        if model.id == args.model and model.task != "generate":
+            return model.task
+    return "generate"
+
+
 def _mtp_primary():
     """The MTP default primary (the model whose serve flags the template bakes in)."""
     return next(
@@ -79,10 +102,14 @@ def _serve_notices(model_id: str) -> list[str]:
     override and ``--language-model-only`` break every non-MTP checkpoint — and
     compose can't conditionally omit a list item, so switching *away* from the MTP
     primary needs those four lines removed by hand. Conversely an MoE checkpoint
-    needs ``--moe-backend`` *added*. ``model switch`` surfaces both:
+    needs ``--moe-backend`` *added*, and an embed/score gear needs ``--task`` +
+    ``--hf-overrides`` *added* with the MTP lines *removed*. ``model switch``
+    surfaces all three:
 
     * switching to a **non-MTP** model → "remove these 4 MTP lines"; and
-    * switching to the **MoE** candidate → also "add ``--moe-backend=...``".
+    * switching to the **MoE** candidate → also "add ``--moe-backend=...``"; and
+    * switching to an **embed/score** model → "add ``--task=<task>`` and
+      ``--hf-overrides=<json>`` and remove the MTP lines".
 
     Returns one line per applicable edit (empty list for the MTP primary itself).
     """
@@ -114,6 +141,13 @@ def _serve_notices(model_id: str) -> list[str]:
                 "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
                 f"--moe-backend={model.moe_backend}"
             )
+        if model.task in ("embed", "score"):
+            notices.append(
+                f"embed/score gear — add `--task={model.task}` and "
+                f"`--hf-overrides={model.hf_overrides}` to the compose `command:`, "
+                "and REMOVE the MTP lines (the single-model template ships the MTP "
+                "primary's flags)"
+            )
     return notices
 
 
@@ -131,11 +165,19 @@ def _resolve_machine_name(machine_arg: str) -> str:
 def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict, list[str]]:
     """Build the ``VLLM_*`` env plan + the human messages (parser/quant lines)."""
     machine = _resolve_machine_name(args.machine)
+    effective_task = _resolve_task(args)
+    is_pooling = effective_task != "generate"
+    # For embed/score gears default to a tiny KV cache (no prefill/decode headroom
+    # needed for a pooling model); an explicit --max-model-len / --gpu-mem-util wins.
     serve_cfg = profiles.resolve_serve_config(
         args.purpose,
         machine,
-        max_model_len=args.max_model_len,
-        gpu_mem_util=args.gpu_mem_util,
+        max_model_len=(
+            args.max_model_len if args.max_model_len is not None else (8192 if is_pooling else None)
+        ),
+        gpu_mem_util=(
+            args.gpu_mem_util if args.gpu_mem_util is not None else (0.05 if is_pooling else None)
+        ),
     )
     plan = {
         "VLLM_MODEL": args.model,
@@ -144,39 +186,62 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
         **serve_cfg,
     }
     messages: list[str] = []
-    parser, parser_msg = _select_parser(args)
-    messages.append(parser_msg)
-    if parser:
-        plan["VLLM_TOOL_CALL_PARSER"] = parser
+
+    if is_pooling:
+        # Embed/score models don't use tool calling — skip parser entirely.
+        plan["VLLM_TASK"] = effective_task
+        messages.append(f"tool-call parser: skipped (task={effective_task})")
+    else:
+        parser, parser_msg = _select_parser(args)
+        messages.append(parser_msg)
+        if parser:
+            plan["VLLM_TOOL_CALL_PARSER"] = parser
+
+    # Quantization: embed/score models with empty catalog quantization serve
+    # unquantized — do NOT set VLLM_QUANTIZATION in that case.
     quant, quant_msg = _select_quantization(args)
-    messages.append(quant_msg)
-    if quant:
-        plan["VLLM_QUANTIZATION"] = quant
-    # The machine profile's max_model_len is a memory budget, but a model's native
-    # context is a hard ceiling — vLLM refuses --max-model-len above it (no YaRN) and
-    # the container fails to boot. When no explicit --max-model-len was given, clamp
-    # the machine default DOWN to the catalogued model's native ceiling so a high
-    # machine default (e.g. spark's 256K) can't boot-fail a 32K-native model. An
-    # *uncatalogued* model has no known ceiling to clamp against (and switch supports
-    # them — see _select_parser/_select_quantization), so it inherits the machine
-    # default; warn rather than silently cap, since guessing a ceiling is wrong both ways.
-    if args.max_model_len is None:
-        catalogued = next((m for m in supported_models() if m.id == args.model), None)
-        if catalogued is not None:
-            machine_default = int(plan["VLLM_MAX_MODEL_LEN"])
-            if machine_default > catalogued.native_max_model_len:
-                plan["VLLM_MAX_MODEL_LEN"] = str(catalogued.native_max_model_len)
+    if is_pooling and quant == "":
+        messages.append(f"quantization: none (task={effective_task})")
+    else:
+        messages.append(quant_msg)
+        if quant:
+            plan["VLLM_QUANTIZATION"] = quant
+
+    if is_pooling:
+        # For pooling models the embed/score defaults are already baked into
+        # resolve_serve_config above (we passed explicit values for both knobs).
+        # Just note them if they came from our default rather than a CLI flag.
+        if args.max_model_len is None:
+            messages.append("max-model-len (embed/score default): 8192")
+        if args.gpu_mem_util is None:
+            messages.append("gpu-mem-util (embed/score default): 0.05")
+    else:
+        # The machine profile's max_model_len is a memory budget, but a model's native
+        # context is a hard ceiling — vLLM refuses --max-model-len above it (no YaRN)
+        # and the container fails to boot. When no explicit --max-model-len was given,
+        # clamp the machine default DOWN to the catalogued model's native ceiling so a
+        # high machine default (e.g. spark's 256K) can't boot-fail a 32K-native model.
+        # An *uncatalogued* model has no known ceiling to clamp against (and switch
+        # supports them — see _select_parser/_select_quantization), so it inherits the
+        # machine default; warn rather than silently cap, since guessing is wrong both ways.
+        if args.max_model_len is None:
+            catalogued = next((m for m in supported_models() if m.id == args.model), None)
+            if catalogued is not None:
+                machine_default = int(plan["VLLM_MAX_MODEL_LEN"])
+                if machine_default > catalogued.native_max_model_len:
+                    plan["VLLM_MAX_MODEL_LEN"] = str(catalogued.native_max_model_len)
+                    messages.append(
+                        "max-model-len (clamped to model native ceiling): "
+                        f"{catalogued.native_max_model_len}"
+                    )
+            else:
                 messages.append(
-                    "max-model-len (clamped to model native ceiling): "
-                    f"{catalogued.native_max_model_len}"
+                    f"max-model-len: machine default {plan['VLLM_MAX_MODEL_LEN']} applied "
+                    "unclamped (uncatalogued model — native ceiling unknown); if the "
+                    "checkpoint's native context is smaller, vLLM will refuse to boot — pass "
+                    "--max-model-len or add the model to the catalog with native_max_model_len"
                 )
-        else:
-            messages.append(
-                f"max-model-len: machine default {plan['VLLM_MAX_MODEL_LEN']} applied "
-                "unclamped (uncatalogued model — native ceiling unknown); if the "
-                "checkpoint's native context is smaller, vLLM will refuse to boot — pass "
-                "--max-model-len or add the model to the catalog with native_max_model_len"
-            )
+
     # The MTP primary caps decode slots at 2 — the balanced profile's 4 OOMs at
     # high context with n=3 spec-decode (see docs/qwen3.6-27b-text-nvfp4-mtp.md).
     # Force it over the profile so switching to the MTP primary matches the
@@ -298,6 +363,19 @@ def cmd_switch(args: argparse.Namespace) -> int:
     plan, messages = _build_plan(args, port, served)
     notices = _serve_notices(args.model)
 
+    effective_task = _resolve_task(args)
+    is_pooling = effective_task != "generate"
+    if is_pooling:
+        # Embed/score gears have no tool calling — skip the probe unconditionally and
+        # surface a curl hint so the operator can verify via the right endpoint.
+        probe = False
+        messages.append(
+            "post-switch probe: skipped (embed/score has no tool calling) — "
+            "verify with curl /v1/embeddings or /v1/score"
+        )
+    else:
+        probe = not args.no_probe
+
     if args.apply:
         if notices and not args.force:
             # Required compose edit pending — don't take a healthy deployment down.
@@ -312,13 +390,11 @@ def cmd_switch(args: argparse.Namespace) -> int:
                 notices,
                 port,
                 served,
-                not args.no_probe,
+                probe,
                 json_mode,
             )
     else:
-        _emit_dry_run(
-            deploy_dir, env_path, plan, messages, notices, port, not args.no_probe, json_mode
-        )
+        _emit_dry_run(deploy_dir, env_path, plan, messages, notices, port, probe, json_mode)
     return 0
 
 
@@ -383,6 +459,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--no-probe",
         action="store_true",
         help="Skip the post-switch tool-calling probe (tool_choice:auto).",
+    )
+    p.add_argument(
+        "--task",
+        choices=["generate", "embed", "score"],
+        default="generate",
+        help="vLLM task; embed/score serve a pooling model (no tool calling, "
+        "small context + low GPU fraction). Auto-detected from the catalog for "
+        "known embed/score models; an explicit flag always wins.",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_switch)
