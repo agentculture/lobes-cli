@@ -27,10 +27,10 @@ tool and the deployed agent share one identity).
   Dry-run by default; `--apply` to commit.
 - `model switch <model>` — switch the served model. Dry-run by default;
   `--apply` recreates the container and waits for `/health`.
-- `model fleet up|down|status` — drive the gateway deployment (one OpenAI front
-  over the always-warm Qwen primary; single-backend by default, opt-in fallback).
-  Scaffold it with `model init --fleet`. `up`/`down` are dry-run by default;
-  `--apply` to commit.
+- `model fleet up|down|status` — drive the gateway fleet (one OpenAI front over
+  the generate primary plus co-resident embedding + reranker gears, routed by task
+  family; a generate fallback is opt-in). Scaffold it with `model init --fleet`.
+  `up`/`down` are dry-run by default; `--apply` to commit.
 - `model tunnel` — expose the local API at a public hostname via a Cloudflare
   Tunnel (`--stop` to tear down). Dry-run by default; `--apply` to commit.
 - `model status` — read-only: the configured served model (from `.env`), container
@@ -251,11 +251,14 @@ and `model explain fleet` to run two side-by-side behind one OpenAI endpoint.
 _FLEET = """\
 # model fleet
 
-The fleet runs the **always-warm Qwen primary behind one OpenAI-compatible
-gateway**, managed as two containers by default: `model-gear-vllm-primary` and
-`model-gear-gateway` (a warm fallback, `model-gear-vllm-fallback`, is opt-in).
-Scaffold it with `model init --fleet` (writes the fleet `docker-compose.yml`,
-`.env`, and `Dockerfile.gateway`), then:
+The fleet runs the **always-warm Qwen primary plus co-resident embedding and
+reranker gears behind one OpenAI-compatible gateway**, managed as four containers
+by default: `model-gear-vllm-primary`, `model-gear-vllm-embed`,
+`model-gear-vllm-rerank`, and `model-gear-gateway` (a warm *generate* fallback,
+`model-gear-vllm-fallback`, is opt-in). The gateway routes each request to the
+right backend by task family (generate / embed / score / rerank). Scaffold it
+with `model init --fleet` (writes the fleet `docker-compose.yml`, `.env`, and
+`Dockerfile.gateway`), then:
 
 - `model fleet up` — `docker compose up -d --build` (builds the gateway image),
   then waits for the gateway `/health`. The vLLM backend loads in the background.
@@ -264,10 +267,12 @@ Scaffold it with `model init --fleet` (writes the fleet `docker-compose.yml`,
   and the routed model list (`/v1/models`).
 
 `up`/`down` are **dry-run by default**; pass `--apply` to commit. `--compose-dir`
-overrides the deployment dir. Single-backend by default, so the primary runs at
-its solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K). If you add a warm
-fallback, set `PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL` to sum well under
-1.0 (they share the 128 GB unified memory).
+overrides the deployment dir. There is **one generate backend** by default, so the
+primary runs at its solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K); the
+embedding + reranker gears are ~0.6B (`*_GPU_MEM_UTIL=0.06` each), so they
+co-reside without crowding it. If you add a warm *generate* fallback, set
+`PRIMARY_GPU_MEM_UTIL` + `FALLBACK_GPU_MEM_UTIL` to sum well under 1.0 (they share
+the 128 GB unified memory).
 
 Note: `model switch` does **not** drive the fleet (it rewrites the single-model
 `VLLM_*` keys). Change the fleet primary by editing the fleet `.env` and

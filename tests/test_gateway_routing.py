@@ -79,8 +79,9 @@ def test_supported_models_payload_annotates_loaded_and_default() -> None:
 
 
 def test_build_config_defaults_single_backend() -> None:
-    # The default fleet is single-backend (Qwen primary only) — no fallback is
-    # configured, so the gateway serves the primary alone.
+    # Empty env: no embed / rerank / fallback backends opt in, so build_config
+    # wires the generate primary alone (the compose default fleet sets EMBED_URL /
+    # RERANK_URL, which is exercised separately below).
     table, cfg = build_config({})
     assert len(table.backends) == 1
     assert table.backends[0].served_name == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
@@ -93,7 +94,7 @@ def test_build_config_defaults_single_backend() -> None:
 
 
 def test_build_config_adds_fallback_only_when_configured() -> None:
-    # No fallback env → single backend.
+    # No optional-backend env → just the generate primary.
     assert len(build_config({})[0].backends) == 1
     # FALLBACK_SERVED_NAME alone is enough to wire a second backend.
     table, _ = build_config({"FALLBACK_SERVED_NAME": "beta"})

@@ -1,8 +1,9 @@
 """``model fleet up | down | status`` — drive the gateway deployment.
 
-The fleet is the always-warm Qwen primary behind one stdlib gateway (scaffolded
-by ``model init --fleet``); it is single-backend by default, with an opt-in warm
-fallback. These verbs are the fleet-lane counterparts of the single-model
+The fleet is the always-warm Qwen generate primary plus co-resident embedding and
+reranker gears behind one stdlib gateway (scaffolded by ``model init --fleet``),
+routed by task family; there is one generate backend by default, with an opt-in
+warm generate fallback. These verbs are the fleet-lane counterparts of the single-model
 ``serve`` / ``stop`` / ``status``:
 
 - ``model fleet up`` — ``docker compose up -d --build`` (builds the gateway image),

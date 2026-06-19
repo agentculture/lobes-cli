@@ -24,7 +24,8 @@ _VERBS = [
     "init [TARGET] — scaffold a deployment dir (--fleet for the gateway; dry-run; --apply)",
     "serve / stop — start / stop the vLLM server (dry-run; --apply)",
     "switch <model> — switch the served model (dry-run; --apply)",
-    "fleet up / down / status — drive the 2-model gateway deployment (dry-run; --apply)",
+    "fleet up / down / status — drive the gateway fleet: generate primary + co-resident "
+    "embedding + reranker gears, routed by task family (dry-run; --apply)",
     "tunnel — expose the local API at a public hostname via a Cloudflare Tunnel "
     "(--stop; dry-run; --apply)",
     "status — current model, container state, /health",
@@ -41,7 +42,8 @@ _CAPABILITIES = [
     "assess — correctness probes against the served model",
     "switch — change the served model (dry-run by default)",
     "benchmark — decode throughput + prefill latency",
-    "fleet — front the always-warm Qwen primary with one OpenAI gateway (opt-in fallback)",
+    "fleet — front the Qwen primary plus co-resident embedding + reranker gears with one "
+    "OpenAI gateway, routed by task family (a generate fallback is opt-in)",
 ]
 
 

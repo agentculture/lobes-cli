@@ -11,12 +11,13 @@
 #   model fleet up --apply         # build the gateway + start the backend
 #   model fleet status             # container states + gateway /health + /v1/models
 #
-# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). The fleet is
-# single-backend by default: the Qwen primary runs solo at its load-tested
-# headroom (util 0.6, full 256K context). To add a warm fallback, wire a
-# vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway (the
-# gateway adds a second backend when those are set) and drop both GPU utils so
-# the two sum well under 1.0 — two ~30B NVFP4 models barely co-fit a GB10.
+# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). One generate
+# backend by default: the Qwen primary keeps its load-tested headroom (util 0.6,
+# full 256K context), with the ~0.6B embed/rerank gears (util 0.06 each) co-resident.
+# To add a warm *generate* fallback, wire a vllm-fallback service +
+# FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway (the gateway adds the second
+# generate backend when those are set) and drop both generate GPU utils so they
+# sum well under 1.0 — two ~30B NVFP4 models barely co-fit a GB10.
 services:
   vllm-primary:
     image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
@@ -77,8 +78,9 @@ services:
       retries: 5
       start_period: 600s
 
-  # A warm fallback backend can be added here. The default fleet is
-  # single-backend (Qwen primary only) so the primary gets the full GB10. To add
+  # A warm *generate* fallback backend can be added here. The default fleet runs
+  # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
+  # the primary keeps its solo generate headroom. To add
   # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
   # your fallback model with its own quantization / tokenizer / parser), add it to
   # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the

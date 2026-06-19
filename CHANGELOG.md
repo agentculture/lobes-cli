@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-06-19
+
+### Fixed
+
+- **`model fleet status` now reports the embedding + reranker gears.**
+  `FLEET_CONTAINERS` listed only `vllm-primary` + `gateway`, so `model fleet
+  status` silently omitted the `vllm-embed` / `vllm-rerank` containers the default
+  fleet (#44/#47) actually runs. Added `FLEET_EMBED` / `FLEET_RERANK` to the
+  default container set — status now lists all four (the opt-in generate fallback
+  stays excluded, as it is not in the default compose).
+
+### Changed
+
+- **Aligned the agent/human-facing prose with the co-resident gears (#44/#47).**
+  `model learn`, `model overview`, `model explain` (root + fleet), `model init
+  --fleet` help, the `fleet` docstring, the scaffolded `env.example` /
+  `docker-compose.yml` comments, `README.md`, `CLAUDE.md`, and
+  `docs/gateway-fleet.md` still described the fleet as a "2-model" /
+  "two-container" / "single-backend" deployment. They now describe the default
+  fleet as the generate primary plus co-resident embedding + reranker gears behind
+  one gateway, routed by task family (generate / embed / score / rerank), with the
+  *generate* fallback as the only opt-in backend. Added a "Task families & gears"
+  section + `explain embeddings` / `explain rerank` pointers to `model learn`.
+
 ## [0.22.0] - 2026-06-19
 
 ### Added
