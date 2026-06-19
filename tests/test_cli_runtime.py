@@ -627,7 +627,7 @@ def test_switch_embed_model_auto_detects_task_json(tmp_path, capsys) -> None:
     assert env.get("VLLM_TASK") == "embed"
     # Tiny-KV defaults for a pooling model.
     assert env.get("VLLM_MAX_MODEL_LEN") == "8192"
-    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.05)
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.06)
     # No tool-call parser (pooling model).
     assert "VLLM_TOOL_CALL_PARSER" not in env
     assert payload.get("tool_call_parser") is None
@@ -635,9 +635,11 @@ def test_switch_embed_model_auto_detects_task_json(tmp_path, capsys) -> None:
     assert "VLLM_QUANTIZATION" not in env
     # Probe is suppressed for embed/score.
     assert payload["probe"] is False
-    # Compose edit notice must mention --task=embed and --hf-overrides.
+    # Compose edit notice must give the pooling serve flags for this vLLM build
+    # (--runner pooling --convert embed) plus the Matryoshka --hf-overrides.
     compose_edits = payload["compose_edits"]
-    assert any("--task=embed" in n for n in compose_edits), compose_edits
+    assert any("--runner=pooling" in n for n in compose_edits), compose_edits
+    assert any("--convert=embed" in n for n in compose_edits), compose_edits
     assert any("--hf-overrides=" in n for n in compose_edits), compose_edits
     assert any("is_matryoshka" in n for n in compose_edits), compose_edits
 
@@ -667,7 +669,7 @@ def test_switch_generate_model_unchanged_by_task_feature(tmp_path, capsys) -> No
     assert "VLLM_TASK" not in env
     # Context must be the 256K machine default (the model is 256K-native; no clamp).
     assert env.get("VLLM_MAX_MODEL_LEN") == "262144"
-    # GPU util must be the spark machine default (0.6), not the embed/score 0.05.
+    # GPU util must be the spark machine default (0.6), not the embed/score 0.06.
     assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.6)
     # Probe enabled (no --no-probe, not an embed/score model).
     assert payload["probe"] is True
@@ -695,14 +697,14 @@ def test_switch_embed_explicit_task_flag_wins(tmp_path, capsys) -> None:
     env = payload["env"]
     assert env.get("VLLM_TASK") == "embed"
     assert env.get("VLLM_MAX_MODEL_LEN") == "8192"
-    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.05)
+    assert float(env.get("VLLM_GPU_MEM_UTIL", 0)) == pytest.approx(0.06)
     assert "VLLM_TOOL_CALL_PARSER" not in env
     assert payload["probe"] is False
 
 
 def test_switch_embed_explicit_overrides_win_over_defaults(tmp_path, capsys) -> None:
     # When --max-model-len and --gpu-mem-util are passed explicitly they must win
-    # over the embed/score defaults (8192 / 0.05).
+    # over the embed/score defaults (8192 / 0.06).
     _scaffold(tmp_path)
     rc = main(
         [

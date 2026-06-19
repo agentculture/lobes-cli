@@ -227,11 +227,12 @@ run on this hardware, holding the correctness + throughput numbers produced by
   candidate (the former fallback; OOM'd/stalled on the GB10, never load-tested).
 - `docs/qwen3-embedding-0.6b.md` — `Qwen/Qwen3-Embedding-0.6B`, the **embedding
   gear**: 0.6B dense text embedder, 1024-dim (Matryoshka-truncatable), 32K context,
-  served via `/v1/embeddings` (`--task embed`). Warm fleet backend — co-resident
-  with the 27B primary on the GB10.
+  served via `/v1/embeddings` (`--runner pooling --convert embed`). Warm fleet
+  backend — co-resident with the 27B primary on the GB10.
 - `docs/qwen3-reranker-0.6b.md` — `Qwen/Qwen3-Reranker-0.6B`, the **reranker
-  gear**: 0.6B cross-encoder, served via `/v1/rerank` + `/v1/score` (`--task score`).
-  Same backend handles both endpoints. Warm fleet backend — co-resident on the GB10.
+  gear**: 0.6B cross-encoder, served via `/v1/rerank` + `/v1/score`
+  (`--runner pooling --convert classify`). Same backend handles both endpoints.
+  Warm fleet backend — co-resident on the GB10.
 
 These models *are* the **supported catalog** — the gears you can switch to, each
 tagged `load-tested` (proven on this box) or `configured` (declared, not yet
@@ -447,8 +448,9 @@ Omit to get the native **1024-dim** output.
 ## Key facts
 
 - **Dimension:** 1024 (native); request `"dimensions": N` for Matryoshka truncation.
-- **Context:** 32K tokens (`--max-model-len 32768`).
-- **Task:** `--task embed` (vLLM pooling mode, not a chat model).
+- **Context:** 32K native, served at `--max-model-len 8192` (tiny KV footprint).
+- **Serving:** `--runner pooling --convert embed` (vLLM pooling mode, not a chat
+  model; this build's replacement for the old `--task embed`).
 - **Served name == catalog id:** `Qwen/Qwen3-Embedding-0.6B`.
 - **Warm fleet backend:** co-resident with the 27B primary on the GB10; its small
   `--max-model-len` keeps the KV footprint tiny so all three backends (primary +
@@ -468,7 +470,7 @@ _RERANK = """\
 
 `POST /v1/rerank` — Jina / Cohere-compatible re-ranking served by the warm
 **Qwen3-Reranker-0.6B** fleet backend (same backend as `/v1/score` — vLLM
-`--task score`), routed by model name through the gateway.
+`--runner pooling --convert classify`), routed by model name through the gateway.
 
 ## Request
 
@@ -502,10 +504,11 @@ refers to the position in the original `documents` list.
 ## Key facts
 
 - **Shape:** Jina / Cohere `/v1/rerank` — sorted by relevance, best-first.
-- **Backend:** `Qwen3-Reranker-0.6B` with `--task score` (cross-encoder, yes/no logit head).
+- **Backend:** `Qwen3-Reranker-0.6B` with `--runner pooling --convert classify`
+  (cross-encoder via the `Qwen3ForSequenceClassification` hf-override).
 - **Rerank + score share one backend** — `/v1/rerank` and `/v1/score` both route
   to the same running container; `/v1/rerank` applies the Jina/Cohere sort + shape.
-- **Context:** 32K tokens (`--max-model-len 32768`).
+- **Context:** 32K native, served at `--max-model-len 8192`.
 - **Warm fleet backend:** co-resident on the GB10; tiny KV footprint (0.6B, 32K window).
 - **Gateway port:** same port as chat — routed by `model` field.
 
@@ -521,7 +524,7 @@ _SCORE = """\
 
 `POST /v1/score` — OpenAI / vLLM cross-encoder scoring served by the warm
 **Qwen3-Reranker-0.6B** fleet backend (same backend as `/v1/rerank` — vLLM
-`--task score`), routed by model name through the gateway.
+`--runner pooling --convert classify`), routed by model name through the gateway.
 
 ## Request
 
@@ -553,10 +556,11 @@ Results are returned in input order (not sorted — use `/v1/rerank` for sorted 
 ## Key facts
 
 - **Shape:** vLLM `/v1/score` — raw scores in input order (no sorting).
-- **Backend:** `Qwen3-Reranker-0.6B` with `--task score` (cross-encoder, yes/no logit head).
+- **Backend:** `Qwen3-Reranker-0.6B` with `--runner pooling --convert classify`
+  (cross-encoder via the `Qwen3ForSequenceClassification` hf-override).
 - **Rerank + score share one backend** — `/v1/score` and `/v1/rerank` both route
   to the same running container; use `/v1/rerank` for Jina/Cohere sorted output.
-- **Context:** 32K tokens (`--max-model-len 32768`).
+- **Context:** 32K native, served at `--max-model-len 8192`.
 - **Warm fleet backend:** co-resident on the GB10; tiny KV footprint (0.6B, 32K window).
 - **Gateway port:** same port as chat — routed by `model` field.
 

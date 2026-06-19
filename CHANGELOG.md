@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-06-19
+
+### Added
+
+- **Embedding + reranker gears (closes #44).** model-gear now serves two pooling
+  gears alongside the chat primary, reachable through the same OpenAI-compatible
+  gateway and routed by the request's `model` field:
+  - `Qwen/Qwen3-Embedding-0.6B` — `POST /v1/embeddings` (vLLM `--task embed`),
+    native **1024-dim**, MRL-truncatable via the `dimensions` param (Matryoshka
+    `--hf-overrides`).
+  - `Qwen/Qwen3-Reranker-0.6B` — `POST /v1/rerank` + `/v1/score` (vLLM
+    `--task score`, served via the `Qwen3ForSequenceClassification` `--hf-overrides`).
+  - **Catalog:** `SupportedModel` gains `task` (`generate`/`embed`/`score`),
+    `dimension`, and `hf_overrides`; both gears surface in `model overview --list`
+    and `GET /v1/models/supported`.
+  - **Fleet:** `vllm-embed` + `vllm-rerank` services in the fleet compose
+    (always-warm, small `--max-model-len`/`--gpu-memory-utilization` so they
+    co-reside with the 27B on a single GB10), wired as gateway backends.
+  - **Gateway:** task-aware failover — an embed/score request never fails over to
+    a generate backend (and vice versa); chat primary↔fallback failover preserved.
+  - **CLI:** `model switch --task {generate,embed,score}` for solo serving;
+    `model explain embeddings` / `rerank` / `score` document the call shapes;
+    per-model docs under `docs/`.
+  - **Boundary:** model-gear *serves* the gears only — no vector store, index,
+    chunker, or retrieval lands here (guarded by a test); storage + retrieval are
+    the consumer's half (eidetic-cli).
+
+### Changed
+
+### Fixed
+
 ## [0.21.1] - 2026-06-19
 
 ### Fixed

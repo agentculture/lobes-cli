@@ -9,10 +9,10 @@
 - 0.6B **dense cross-encoder** from the Qwen3 family — a
   `Qwen3ForSequenceClassification` model with a binary **yes / no** logit head.
 - Scores (query, passage) pairs for retrieval re-ranking.
-- **32K native** context (`--max-model-len 32768`).
-- Served via vLLM's `--task score` mode — one backend handles both `/v1/rerank`
-  (Jina/Cohere shape, sorted best-first) and `/v1/score` (raw pairwise scores,
-  input order).
+- **32K native** context, served at `--max-model-len 8192` (tiny KV footprint).
+- Served via vLLM's pooling/scoring mode (`--runner pooling --convert classify` on
+  the nv26.04 build) — one backend handles both `/v1/rerank` (Jina/Cohere shape,
+  sorted best-first) and `/v1/score` (raw pairwise scores, input order).
 - No tool parser, no quantization flag — this is a scoring model, not a chat model.
 - **Served name == catalog id:** `Qwen/Qwen3-Reranker-0.6B`.
 
@@ -22,17 +22,18 @@ Served as a **warm fleet backend** alongside the 27B primary and the embedder on
 the DGX Spark GB10 (128 GB unified memory). Its small footprint (0.6B weights,
 32K KV window) keeps the KV cache tiny so all three backends co-fit.
 
-```bash
-model switch --model Qwen/Qwen3-Reranker-0.6B --apply
-model serve --apply
-model status
-```
+The warm path is the **fleet** (`model init --fleet` then `model fleet up --apply`).
+To serve it *solo* for testing, `model switch Qwen/Qwen3-Reranker-0.6B` (the task is
+auto-detected from the catalog) prints the exact compose edits to apply.
 
 Key compose flags:
 
-- `--task score` — vLLM cross-encoder scoring mode
+- `--runner pooling --convert classify` — vLLM scoring mode on this build (replaces
+  the old `--task score`; vLLM auto-resolves `--convert auto` to `classify` for a
+  `*ForSequenceClassification` arch, but pass it explicitly to silence the notice)
 - `--hf-overrides '{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'`
-- `--max-model-len 32768`
+- `--max-model-len 8192`
+- `--gpu-memory-utilization 0.06`
 
 ## API call shapes
 
@@ -140,10 +141,19 @@ the same GB10 gateway port, so neither adds a new service or port to the client.
 
 ## Assessment / Benchmark
 
-<!-- measured numbers pasted in by the load-test (#44) -->
+**Load-tested 2026-06-19 on the DGX Spark (GB10, 128 GB unified)** — served warm
+under `--runner pooling --convert classify` + the `Qwen3ForSequenceClassification`
+hf-override, `--gpu-memory-utilization 0.06`, `--max-model-len 8192`, **co-resident
+with the 27B primary and the embedder** (all three simultaneously healthy):
 
-Run `model assess` after serving to measure correctness. Run `model benchmark`
-for throughput. The assessment suite probes `/v1/score` and reports tokens/s
-and score distribution over a reference (query, passage) pair set. Tool-calling
-probes (`--tools`) are not applicable to this scoring model and are silently
-skipped.
+| Metric | Result |
+|---|---|
+| endpoints | `/v1/rerank` (sorted) + `/v1/score` (input order) — one backend |
+| rerank latency (warm, 1 query × 5 docs) | ~25 ms |
+| ranking quality | relevant docs ranked first (e.g. France-capital query: Paris doc top at 0.98) |
+| score endpoint | `/v1/score` returns per-pair scores ✓ |
+| co-residency | 27B chat unaffected while the reranker served |
+
+Served on this vLLM build (`0.19.0+nv26.04`) with `--runner pooling --convert
+classify` — the older `--task score` is rejected (`unrecognized arguments`). The
+probes use plain `curl` against `/v1/rerank` and `/v1/score`.

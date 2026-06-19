@@ -11,8 +11,9 @@
   nesting at 32 / 64 / 128 / 256 / 512 / 768 / 1024 dimensions — consumers can
   request a smaller embedding with the `"dimensions"` request parameter, without
   re-serving the model.
-- **32K native** context (`--max-model-len 32768`).
-- Served via vLLM's `/v1/embeddings` endpoint (`--task embed` pooling mode).
+- **32K native** context, served at `--max-model-len 8192` (tiny KV footprint).
+- Served via vLLM's `/v1/embeddings` endpoint in pooling mode
+  (`--runner pooling --convert embed` on the nv26.04 build).
 - No tool parser, no quantization flag — this is a pooling model, not a chat model.
 - **Served name == catalog id:** `Qwen/Qwen3-Embedding-0.6B`.
 
@@ -23,17 +24,19 @@ the DGX Spark GB10 (128 GB unified memory). Its small footprint (0.6B weights,
 32K KV window) keeps the KV cache tiny so all three backends co-fit without
 memory pressure.
 
-```bash
-model switch --model Qwen/Qwen3-Embedding-0.6B --apply
-model serve --apply
-model status
-```
+The warm path is the **fleet** (`model init --fleet` then `model fleet up --apply`),
+which brings up `vllm-embed` + `vllm-rerank` + the primary behind one gateway. To
+serve it *solo* for isolated testing, `model switch Qwen/Qwen3-Embedding-0.6B` (the
+task is auto-detected from the catalog) prints the exact compose edits to apply.
 
 Key compose flags:
 
-- `--task embed` — vLLM embedding (pooling) serving mode
+- `--runner pooling --convert embed` — vLLM pooling/embedding mode on this build
+  (replaces the old `--task embed`, which is rejected as an unknown argument)
 - `--hf-overrides '{"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'`
-- `--max-model-len 32768`
+- `--max-model-len 8192`
+- `--gpu-memory-utilization 0.06` — 0.025 fails with "No available memory for the
+  cache blocks" (the pooling runner still reserves a cache-block budget)
 
 ## API call shapes
 
@@ -127,9 +130,20 @@ the resulting vectors. Typical pipeline:
 
 ## Assessment / Benchmark
 
-<!-- measured numbers pasted in by the load-test (#44) -->
+**Load-tested 2026-06-19 on the DGX Spark (GB10, 128 GB unified)** — served warm
+under `--runner pooling --convert embed`, `--gpu-memory-utilization 0.06`,
+`--max-model-len 8192`, **co-resident with the 27B primary and the reranker** (all
+three backends simultaneously healthy on the one GB10):
 
-Run `model assess` after serving to measure correctness. Run `model benchmark`
-for throughput. The assessment suite probes `/v1/embeddings` and reports
-tokens/s, embedding dimension, and (if `--tools` is passed) tool-call behaviour
-(not applicable to this pooling model — `--tools` is silently skipped).
+| Metric | Result |
+|---|---|
+| embedding dimension | **1024** (native) |
+| MRL truncation | `"dimensions": 256` → 256-dim vector ✓ (32/64/128/256/512/768/1024) |
+| single-text latency (warm) | ~28 ms |
+| batch throughput | 16 texts ≈ 107 ms (~150 texts/s) |
+| co-residency | 27B chat still answered normally while the embedder served |
+
+Served on this vLLM build (`0.19.0+nv26.04`) with `--runner pooling --convert embed`
+— the older `--task embed` is rejected (`unrecognized arguments`). The probes use
+plain `curl` against `/v1/embeddings` (the `model assess` arithmetic/tool probes are
+chat-oriented and not applicable to a pooling model).

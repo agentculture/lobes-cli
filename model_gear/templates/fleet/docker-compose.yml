@@ -89,11 +89,11 @@ services:
 
   # --- Embedding + reranker gears (co-resident on the GB10) -----------------
   # Co-residency budget: primary at util 0.6 (~75 GiB) + two 0.6B gears at
-  # util 0.05 each (tiny; ~1-2 GiB apiece) sum well under 1.0 on the 128 GB
-  # GB10. The gears are served at --max-model-len 8192 so KV cache stays tiny
-  # — these are short-context workloads (embed/rerank, not generation).
-  # No quantization, tool, reasoning, or speculative flags — they are not
-  # needed for embedding/scoring tasks and would interfere with --task=embed/score.
+  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) sum well
+  # under 1.0 on the 128 GB GB10. The gears are served at --max-model-len 8192 so
+  # KV cache stays tiny — these are short-context workloads (embed/rerank, not
+  # generation). No quantization, tool, reasoning, or speculative flags — they are
+  # not needed for the pooling runner and would interfere with --runner/--convert.
 
   vllm-embed:
     image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
@@ -125,10 +125,16 @@ services:
       - --served-model-name=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
       - --host=0.0.0.0
       - --port=8000
-      - --task=embed
+      # This vLLM build (0.19.0+nv26.04) replaced the old --task with --runner +
+      # --convert: an embedding gear is --runner pooling --convert embed (load-tested
+      # 2026-06-19 on the GB10). --task embed is rejected ("unrecognized arguments").
+      - --runner=pooling
+      - --convert=embed
       - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
       - --max-model-len=${EMBED_MAX_MODEL_LEN:-8192}
-      - --gpu-memory-utilization=${EMBED_GPU_MEM_UTIL:-0.05}
+      # util 0.06 (~7 GiB budget): 0.025 fails with "No available memory for the cache
+      # blocks" — vLLM's pooling runner still reserves a cache-block budget. Load-tested.
+      - --gpu-memory-utilization=${EMBED_GPU_MEM_UTIL:-0.06}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -166,10 +172,14 @@ services:
       - --served-model-name=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
       - --host=0.0.0.0
       - --port=8000
-      - --task=score
+      # --runner pooling --convert classify is the score/rerank gear on this vLLM
+      # build (replaces --task score; vLLM auto-resolves --convert auto to classify
+      # for a *ForSequenceClassification arch, but pass it explicitly). Load-tested.
+      - --runner=pooling
+      - --convert=classify
       - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
       - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
-      - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.05}
+      - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

@@ -15,10 +15,13 @@ The serve config is resolved from three layers (explicit CLI flags win):
 * the **model** catalog entry → quantization + tool-call parser, plus a printed
   reminder for the MoE-only compose flags (which can't be defaulted safely).
 
-For embed/score gears (``--task embed`` or ``--task score``, or auto-detected
-from the catalog), the plan skips tool-call parser and caps ``VLLM_MAX_MODEL_LEN``
-to 8192 and ``VLLM_GPU_MEM_UTIL`` to 0.05 by default (tiny KV cache for a
-pooling model). The post-switch tool-calling probe is also skipped.
+For embed/score gears (``--task embed`` / ``--task score``, or auto-detected from
+the catalog), the plan skips tool-call parser and caps ``VLLM_MAX_MODEL_LEN`` to
+8192 and ``VLLM_GPU_MEM_UTIL`` to 0.06 by default (tiny footprint for a pooling
+model; 0.025 OOMs the cache blocks — load-tested 2026-06-19). The post-switch
+tool-calling probe is skipped. ``--task`` is the friendly surface; on this vLLM
+build the actual serve flags are ``--runner pooling`` + ``--convert {embed,
+classify}`` (the notice prints them — the single-model template can't default them).
 """
 
 from __future__ import annotations
@@ -102,14 +105,15 @@ def _serve_notices(model_id: str) -> list[str]:
     override and ``--language-model-only`` break every non-MTP checkpoint — and
     compose can't conditionally omit a list item, so switching *away* from the MTP
     primary needs those four lines removed by hand. Conversely an MoE checkpoint
-    needs ``--moe-backend`` *added*, and an embed/score gear needs ``--task`` +
-    ``--hf-overrides`` *added* with the MTP lines *removed*. ``model switch``
-    surfaces all three:
+    needs ``--moe-backend`` *added*, and an embed/score gear needs
+    ``--runner pooling`` + ``--convert {embed,classify}`` + ``--hf-overrides``
+    *added* with the MTP lines *removed*. ``model switch`` surfaces all three:
 
     * switching to a **non-MTP** model → "remove these 4 MTP lines"; and
     * switching to the **MoE** candidate → also "add ``--moe-backend=...``"; and
-    * switching to an **embed/score** model → "add ``--task=<task>`` and
-      ``--hf-overrides=<json>`` and remove the MTP lines".
+    * switching to an **embed/score** model → "add ``--runner=pooling`` +
+      ``--convert={embed,classify}`` + ``--hf-overrides=<json>`` and remove the
+      MTP lines".
 
     Returns one line per applicable edit (empty list for the MTP primary itself).
     """
@@ -142,15 +146,20 @@ def _serve_notices(model_id: str) -> list[str]:
                 f"--moe-backend={model.moe_backend}"
             )
         if model.task in ("embed", "score"):
-            # Render as YAML `command:` list items the operator can paste verbatim.
+            # This vLLM build (0.19.0+nv26.04) serves pooling models with
+            # --runner pooling + --convert {embed,classify} (the old --task is
+            # rejected). embed -> --convert embed; score -> --convert classify.
+            # Render as YAML `command:` list items the operator can paste verbatim;
             # --hf-overrides is single-quoted because its JSON value has `: `/`{`/`[`
             # (unquoted, `docker compose` fails to parse it) — the same rule the
             # --speculative-config item above follows and the fleet template applies.
+            convert = "embed" if model.task == "embed" else "classify"
             notices.append(
                 "embed/score gear — add these `command:` list items by hand (and "
                 "REMOVE the MTP lines; the single-model template ships the MTP "
                 "primary's flags):"
-                f"\n      - --task={model.task}"
+                "\n      - --runner=pooling"
+                f"\n      - --convert={convert}"
                 f"\n      - '--hf-overrides={model.hf_overrides}'"
             )
     return notices
@@ -181,7 +190,7 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
             args.max_model_len if args.max_model_len is not None else (8192 if is_pooling else None)
         ),
         gpu_mem_util=(
-            args.gpu_mem_util if args.gpu_mem_util is not None else (0.05 if is_pooling else None)
+            args.gpu_mem_util if args.gpu_mem_util is not None else (0.06 if is_pooling else None)
         ),
     )
     plan = {
@@ -219,7 +228,7 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
         if args.max_model_len is None:
             messages.append("max-model-len (embed/score default): 8192")
         if args.gpu_mem_util is None:
-            messages.append("gpu-mem-util (embed/score default): 0.05")
+            messages.append("gpu-mem-util (embed/score default): 0.06")
     else:
         # The machine profile's max_model_len is a memory budget, but a model's native
         # context is a hard ceiling — vLLM refuses --max-model-len above it (no YaRN)

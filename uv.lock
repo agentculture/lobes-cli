@@ -533,7 +533,7 @@ wheels = [
 
 [[package]]
 name = "model-gear"
-version = "0.21.1"
+version = "0.22.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
