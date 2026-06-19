@@ -60,6 +60,32 @@ def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
         return int(default)
 
 
+def _optional_backend(
+    env: Mapping[str, str],
+    *,
+    name: str,
+    url_key: str,
+    name_key: str,
+    default_url: str,
+    default_name: str,
+    task: str = "generate",
+) -> Backend | None:
+    """A fleet backend wired only when its env (``url_key`` or ``name_key``) is set.
+
+    Returns ``None`` when neither is present — so the default gateway serves the
+    primary alone, and each extra backend (fallback / embed / rerank) opts in
+    independently via its own env pair.
+    """
+    if not (env.get(url_key) or env.get(name_key)):
+        return None
+    return Backend(
+        name=name,
+        base_url=(env.get(url_key) or default_url).rstrip("/"),
+        served_name=env.get(name_key) or default_name,
+        task=task,
+    )
+
+
 def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, ServerConfig]:
     """Construct the routing table and server config from environment variables."""
     env = os.environ if env is None else env
@@ -69,37 +95,38 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         base_url=(env.get("PRIMARY_URL") or "http://vllm-primary:8000").rstrip("/"),
         served_name=env.get("PRIMARY_SERVED_NAME") or _DEFAULT_PRIMARY,
     )
-    # The fleet defaults to a single backend (Qwen primary only). A fallback is
-    # added ONLY when the env explicitly configures one (FALLBACK_URL or
-    # FALLBACK_SERVED_NAME) — so a two-backend fleet still works for anyone who
-    # wires one up, but the default gateway serves the primary alone.
-    backends = [primary]
-    if env.get("FALLBACK_URL") or env.get("FALLBACK_SERVED_NAME"):
-        backends.append(
-            Backend(
-                name="fallback",
-                base_url=(env.get("FALLBACK_URL") or "http://vllm-fallback:8000").rstrip("/"),
-                served_name=env.get("FALLBACK_SERVED_NAME") or _DEFAULT_FALLBACK,
-            )
-        )
-    if env.get("EMBED_URL") or env.get("EMBED_SERVED_NAME"):
-        backends.append(
-            Backend(
-                name="embed",
-                base_url=(env.get("EMBED_URL") or "http://vllm-embed:8000").rstrip("/"),
-                served_name=env.get("EMBED_SERVED_NAME") or _DEFAULT_EMBED,
-                task="embed",
-            )
-        )
-    if env.get("RERANK_URL") or env.get("RERANK_SERVED_NAME"):
-        backends.append(
-            Backend(
-                name="rerank",
-                base_url=(env.get("RERANK_URL") or "http://vllm-rerank:8000").rstrip("/"),
-                served_name=env.get("RERANK_SERVED_NAME") or _DEFAULT_RERANK,
-                task="score",
-            )
-        )
+    # The primary is always present; fallback / embed / rerank are each wired only
+    # when their own env pair is set (so the default gateway serves the primary
+    # alone, and a pooling/fallback backend opts in independently).
+    optional = (
+        _optional_backend(
+            env,
+            name="fallback",
+            url_key="FALLBACK_URL",
+            name_key="FALLBACK_SERVED_NAME",
+            default_url="http://vllm-fallback:8000",
+            default_name=_DEFAULT_FALLBACK,
+        ),
+        _optional_backend(
+            env,
+            name="embed",
+            url_key="EMBED_URL",
+            name_key="EMBED_SERVED_NAME",
+            default_url="http://vllm-embed:8000",
+            default_name=_DEFAULT_EMBED,
+            task="embed",
+        ),
+        _optional_backend(
+            env,
+            name="rerank",
+            url_key="RERANK_URL",
+            name_key="RERANK_SERVED_NAME",
+            default_url="http://vllm-rerank:8000",
+            default_name=_DEFAULT_RERANK,
+            task="score",
+        ),
+    )
+    backends = [primary, *(b for b in optional if b is not None)]
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,

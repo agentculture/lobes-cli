@@ -96,82 +96,79 @@ def _mtp_primary():
     )
 
 
+def _mtp_removal_notice(model) -> str | None:
+    """Non-MTP target: the template's baked MTP flags must be removed by hand.
+
+    The item list is the single source of truth in the catalog (so it can't drift
+    from the templates); each renders as a YAML ``command:`` list item —
+    ``--speculative-config`` is single-quoted because its JSON value has ``: ``/``{``.
+    """
+    if model.speculative_config:
+        return None
+    rendered = "".join(
+        (f"\n      - '{item}'" if item.startswith("--speculative-config=") else f"\n      - {item}")
+        for item in mtp_compose_command_items()
+    )
+    return (
+        "non-MTP model — the template ships the MTP default primary's flags; "
+        "REMOVE these `command:` list items by hand to serve this model (see "
+        "docs/qwen3.6-27b-text-nvfp4-mtp.md):" + rendered
+    )
+
+
+def _moe_notice(model) -> str | None:
+    """MoE checkpoint: ``--moe-backend`` must be added by hand (not written to .env)."""
+    if not model.moe_backend:
+        return None
+    return (
+        "MoE model — add this to the compose `command` by hand (not written "
+        "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
+        f"--moe-backend={model.moe_backend}"
+    )
+
+
+def _pooling_notice(model) -> str | None:
+    """Embed/score gear: the turnkey path is the fleet; solo serving on the
+    single-model template needs the full pooling add + chat/MTP-flag removal.
+
+    This vLLM build (0.19.0+nv26.04) serves pooling models with
+    ``--runner pooling`` + ``--convert {embed,classify}`` (the old ``--task`` is
+    rejected). ``--hf-overrides`` is single-quoted because its JSON value has
+    ``: ``/``{``/``[`` (unquoted, ``docker compose`` fails to parse it).
+    """
+    if model.task not in ("embed", "score"):
+        return None
+    convert = "embed" if model.task == "embed" else "classify"
+    service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
+    return (
+        "embed/score gear — the TURNKEY path is the fleet: `model init --fleet` "
+        f"+ `model fleet up` serves it via the dedicated {service} service "
+        "(already task-aware). To solo-serve on the single-model template "
+        "instead, ADD these `command:` list items —"
+        "\n      - --runner=pooling"
+        f"\n      - --convert={convert}"
+        f"\n      - '--hf-overrides={model.hf_overrides}'"
+        "\n    and REMOVE the chat/MTP flags the single-model template bakes in "
+        "(they break or are ignored by a pooling model): --quantization, "
+        "--reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and "
+        "the 4 MTP lines (--speculative-config / --trust-remote-code / "
+        "--language-model-only / --tokenizer). VLLM_TASK in .env is a record only; "
+        "the single-model template does not consume it."
+    )
+
+
 def _serve_notices(model_id: str) -> list[str]:
     """Reminders for compose ``command:`` edits a switch implies.
 
-    The single-model template ships the **MTP default primary's** serve flags
-    baked into ``command:`` (``--speculative-config`` + ``--trust-remote-code`` +
-    ``--language-model-only`` + the ``--tokenizer`` override) so a fresh deploy of
-    the default just works. But those flags are MTP-only — the ``--tokenizer``
-    override and ``--language-model-only`` break every non-MTP checkpoint — and
-    compose can't conditionally omit a list item, so switching *away* from the MTP
-    primary needs those four lines removed by hand. Conversely an MoE checkpoint
-    needs ``--moe-backend`` *added*, and an embed/score gear needs
-    ``--runner pooling`` + ``--convert {embed,classify}`` + ``--hf-overrides``
-    *added* with the MTP lines *removed*. ``model switch`` surfaces all three:
-
-    * switching to a **non-MTP** model → "remove these 4 MTP lines"; and
-    * switching to the **MoE** candidate → also "add ``--moe-backend=...``"; and
-    * switching to an **embed/score** model → "add ``--runner=pooling`` +
-      ``--convert={embed,classify}`` + ``--hf-overrides=<json>`` and remove the
-      MTP lines".
-
-    Returns one line per applicable edit (empty list for the MTP primary itself).
+    Empty for the MTP default primary itself and for an uncatalogued model. The
+    three applicable edits — non-MTP flag removal, MoE backend add, and embed/score
+    pooling serve — are each built by a dedicated helper (see those for detail).
     """
-    notices: list[str] = []
-    for model in supported_models():
-        if model.id != model_id:
-            continue
-        if not model.speculative_config:
-            # Non-MTP target: the template's baked MTP flags must come back out. The
-            # item list is the single source of truth in the catalog (so it can't
-            # drift from the templates); render each as a YAML `command:` list item —
-            # --speculative-config is single-quoted because its JSON value has `: `/`{`.
-            rendered = "".join(
-                (
-                    f"\n      - '{item}'"
-                    if item.startswith("--speculative-config=")
-                    else f"\n      - {item}"
-                )
-                for item in mtp_compose_command_items()
-            )
-            notices.append(
-                "non-MTP model — the template ships the MTP default primary's flags; "
-                "REMOVE these `command:` list items by hand to serve this model (see "
-                "docs/qwen3.6-27b-text-nvfp4-mtp.md):" + rendered
-            )
-        if model.moe_backend:
-            notices.append(
-                "MoE model — add this to the compose `command` by hand (not written "
-                "to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): "
-                f"--moe-backend={model.moe_backend}"
-            )
-        if model.task in ("embed", "score"):
-            # This vLLM build (0.19.0+nv26.04) serves pooling models with
-            # --runner pooling + --convert {embed,classify} (the old --task is
-            # rejected). embed -> --convert embed; score -> --convert classify.
-            # Render as YAML `command:` list items the operator can paste verbatim;
-            # --hf-overrides is single-quoted because its JSON value has `: `/`{`/`[`
-            # (unquoted, `docker compose` fails to parse it) — the same rule the
-            # --speculative-config item above follows and the fleet template applies.
-            convert = "embed" if model.task == "embed" else "classify"
-            service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
-            notices.append(
-                "embed/score gear — the TURNKEY path is the fleet: `model init --fleet` "
-                f"+ `model fleet up` serves it via the dedicated {service} service "
-                "(already task-aware). To solo-serve on the single-model template "
-                "instead, ADD these `command:` list items —"
-                "\n      - --runner=pooling"
-                f"\n      - --convert={convert}"
-                f"\n      - '--hf-overrides={model.hf_overrides}'"
-                "\n    and REMOVE the chat/MTP flags the single-model template bakes in "
-                "(they break or are ignored by a pooling model): --quantization, "
-                "--reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and "
-                "the 4 MTP lines (--speculative-config / --trust-remote-code / "
-                "--language-model-only / --tokenizer). VLLM_TASK in .env is a record only; "
-                "the single-model template does not consume it."
-            )
-    return notices
+    model = next((m for m in supported_models() if m.id == model_id), None)
+    if model is None:
+        return []
+    candidates = (_mtp_removal_notice(model), _moe_notice(model), _pooling_notice(model))
+    return [notice for notice in candidates if notice]
 
 
 def _resolve_machine_name(machine_arg: str) -> str:
@@ -185,109 +182,131 @@ def _resolve_machine_name(machine_arg: str) -> str:
     return profiles.resolve_machine(machine_arg, gpu_name=gpu, hostname=socket.gethostname())
 
 
-def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict, list[str]]:
-    """Build the ``VLLM_*`` env plan + the human messages (parser/quant lines)."""
-    machine = _resolve_machine_name(args.machine)
-    effective_task = _resolve_task(args)
-    is_pooling = effective_task != "generate"
-    # For embed/score gears default to a tiny KV cache (no prefill/decode headroom
-    # needed for a pooling model); an explicit --max-model-len / --gpu-mem-util wins.
-    serve_cfg = profiles.resolve_serve_config(
-        args.purpose,
-        machine,
-        max_model_len=(
-            args.max_model_len if args.max_model_len is not None else (8192 if is_pooling else None)
-        ),
-        gpu_mem_util=(
-            args.gpu_mem_util if args.gpu_mem_util is not None else (0.06 if is_pooling else None)
-        ),
-    )
-    plan = {
-        "VLLM_MODEL": args.model,
-        "VLLM_SERVED_NAME": served,
-        "VLLM_PORT": str(port),
-        **serve_cfg,
-    }
-    messages: list[str] = []
+def _serve_cfg(args: argparse.Namespace, machine: str, is_pooling: bool) -> dict:
+    """Resolve the ``VLLM_*`` serve config from the purpose/machine profiles.
 
-    if is_pooling:
-        # Embed/score models don't use tool calling — skip parser entirely.
-        plan["VLLM_TASK"] = effective_task
-        messages.append(f"tool-call parser: skipped (task={effective_task})")
-        # Guard the forced-task edge: an explicit --task on a model the catalog
-        # does NOT declare as that task (e.g. --task embed on a chat model) gets the
-        # pooling serve defaults but no compose-edit notice (the notice keys off the
-        # catalog task). Warn so the operator isn't left without the --runner/--convert
-        # guidance — the catalogued embed/score gears (auto-detected) are unaffected.
-        catalogued = next((m for m in supported_models() if m.id == args.model), None)
-        if args.task is not None and (catalogued is None or catalogued.task != effective_task):
-            messages.append(
-                f"WARNING: --task={effective_task} was forced but the catalog does not "
-                f"declare {args.model} as a {effective_task} model — serving with pooling "
-                "defaults, but you must add `--runner pooling --convert "
-                f"{'embed' if effective_task == 'embed' else 'classify'}` + the model's "
-                "`--hf-overrides` to the compose `command:` by hand (no notice is emitted "
-                "for an uncatalogued task)."
-            )
-    else:
+    Embed/score gears default to a tiny KV cache (8192 context, util 0.06 — no
+    prefill/decode headroom needed for a pooling model); an explicit
+    ``--max-model-len`` / ``--gpu-mem-util`` still wins. A chat model passes
+    ``None`` so the machine profile's own defaults apply.
+    """
+    default_mml = 8192 if is_pooling else None
+    default_util = 0.06 if is_pooling else None
+    max_model_len = args.max_model_len if args.max_model_len is not None else default_mml
+    gpu_mem_util = args.gpu_mem_util if args.gpu_mem_util is not None else default_util
+    return profiles.resolve_serve_config(
+        args.purpose, machine, max_model_len=max_model_len, gpu_mem_util=gpu_mem_util
+    )
+
+
+def _forced_task_warning(args: argparse.Namespace, effective_task: str) -> str | None:
+    """Warn when an explicit ``--task`` is forced on a model the catalog does not
+    declare as that task — pooling serve defaults apply but no compose-edit notice
+    fires (the notice keys off the catalog task). Catalogued auto-detected gears
+    are unaffected (``args.task`` is ``None`` for them)."""
+    if args.task is None:
+        return None
+    catalogued = next((m for m in supported_models() if m.id == args.model), None)
+    if catalogued is not None and catalogued.task == effective_task:
+        return None
+    convert = "embed" if effective_task == "embed" else "classify"
+    return (
+        f"WARNING: --task={effective_task} was forced but the catalog does not "
+        f"declare {args.model} as a {effective_task} model — serving with pooling "
+        f"defaults, but you must add `--runner pooling --convert {convert}` + the "
+        "model's `--hf-overrides` to the compose `command:` by hand (no notice is "
+        "emitted for an uncatalogued task)."
+    )
+
+
+def _task_messages(
+    plan: dict, args: argparse.Namespace, effective_task: str, is_pooling: bool
+) -> list[str]:
+    """Set ``VLLM_TASK`` / the tool-call parser; return the human messages."""
+    if not is_pooling:
         parser, parser_msg = _select_parser(args)
-        messages.append(parser_msg)
         if parser:
             plan["VLLM_TOOL_CALL_PARSER"] = parser
+        return [parser_msg]
+    # Embed/score models don't use tool calling — skip the parser entirely.
+    plan["VLLM_TASK"] = effective_task
+    messages = [f"tool-call parser: skipped (task={effective_task})"]
+    warning = _forced_task_warning(args, effective_task)
+    if warning:
+        messages.append(warning)
+    return messages
 
-    # Quantization: embed/score models with empty catalog quantization serve
-    # unquantized — do NOT set VLLM_QUANTIZATION in that case.
+
+def _quant_messages(
+    plan: dict, args: argparse.Namespace, effective_task: str, is_pooling: bool
+) -> list[str]:
+    """Set ``VLLM_QUANTIZATION``; embed/score gears with an empty catalog
+    quantization stay unquantized (no flag written)."""
     quant, quant_msg = _select_quantization(args)
     if is_pooling and quant == "":
-        messages.append(f"quantization: none (task={effective_task})")
-    else:
-        messages.append(quant_msg)
-        if quant:
-            plan["VLLM_QUANTIZATION"] = quant
+        return [f"quantization: none (task={effective_task})"]
+    if quant:
+        plan["VLLM_QUANTIZATION"] = quant
+    return [quant_msg]
 
+
+def _context_messages(plan: dict, args: argparse.Namespace, is_pooling: bool) -> list[str]:
+    """Pooling: note the embed/score context defaults. Chat: clamp ``--max-model-len``
+    DOWN to the catalogued native ceiling — vLLM refuses a larger value (no YaRN) and
+    the container fails to boot, so a high machine default (spark's 256K) can't
+    boot-fail a 32K-native model. An uncatalogued model has no ceiling to clamp
+    against, so it inherits the machine default with a warning."""
     if is_pooling:
-        # For pooling models the embed/score defaults are already baked into
-        # resolve_serve_config above (we passed explicit values for both knobs).
-        # Just note them if they came from our default rather than a CLI flag.
+        messages = []
         if args.max_model_len is None:
             messages.append("max-model-len (embed/score default): 8192")
         if args.gpu_mem_util is None:
             messages.append("gpu-mem-util (embed/score default): 0.06")
-    else:
-        # The machine profile's max_model_len is a memory budget, but a model's native
-        # context is a hard ceiling — vLLM refuses --max-model-len above it (no YaRN)
-        # and the container fails to boot. When no explicit --max-model-len was given,
-        # clamp the machine default DOWN to the catalogued model's native ceiling so a
-        # high machine default (e.g. spark's 256K) can't boot-fail a 32K-native model.
-        # An *uncatalogued* model has no known ceiling to clamp against (and switch
-        # supports them — see _select_parser/_select_quantization), so it inherits the
-        # machine default; warn rather than silently cap, since guessing is wrong both ways.
-        if args.max_model_len is None:
-            catalogued = next((m for m in supported_models() if m.id == args.model), None)
-            if catalogued is not None:
-                machine_default = int(plan["VLLM_MAX_MODEL_LEN"])
-                if machine_default > catalogued.native_max_model_len:
-                    plan["VLLM_MAX_MODEL_LEN"] = str(catalogued.native_max_model_len)
-                    messages.append(
-                        "max-model-len (clamped to model native ceiling): "
-                        f"{catalogued.native_max_model_len}"
-                    )
-            else:
-                messages.append(
-                    f"max-model-len: machine default {plan['VLLM_MAX_MODEL_LEN']} applied "
-                    "unclamped (uncatalogued model — native ceiling unknown); if the "
-                    "checkpoint's native context is smaller, vLLM will refuse to boot — pass "
-                    "--max-model-len or add the model to the catalog with native_max_model_len"
-                )
+        return messages
+    if args.max_model_len is not None:
+        return []
+    catalogued = next((m for m in supported_models() if m.id == args.model), None)
+    if catalogued is None:
+        return [
+            f"max-model-len: machine default {plan['VLLM_MAX_MODEL_LEN']} applied "
+            "unclamped (uncatalogued model — native ceiling unknown); if the "
+            "checkpoint's native context is smaller, vLLM will refuse to boot — pass "
+            "--max-model-len or add the model to the catalog with native_max_model_len"
+        ]
+    if int(plan["VLLM_MAX_MODEL_LEN"]) <= catalogued.native_max_model_len:
+        return []
+    plan["VLLM_MAX_MODEL_LEN"] = str(catalogued.native_max_model_len)
+    return [f"max-model-len (clamped to model native ceiling): {catalogued.native_max_model_len}"]
 
-    # The MTP primary caps decode slots at 2 — the balanced profile's 4 OOMs at
-    # high context with n=3 spec-decode (see docs/qwen3.6-27b-text-nvfp4-mtp.md).
-    # Force it over the profile so switching to the MTP primary matches the
-    # validated config; an explicit --max-num-seqs is not a switch flag.
+
+def _mtp_cap_messages(plan: dict, args: argparse.Namespace) -> list[str]:
+    """The MTP primary caps decode slots at 2 (the balanced profile's 4 OOMs at high
+    context with n=3 spec-decode); force it over the profile."""
     primary = _mtp_primary()
     if primary and args.model == primary.id:
         plan["VLLM_MAX_NUM_SEQS"] = "2"
-        messages.append("max-num-seqs (MTP primary cap): 2")
+        return ["max-num-seqs (MTP primary cap): 2"]
+    return []
+
+
+def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict, list[str]]:
+    """Build the ``VLLM_*`` env plan + the human messages (one helper per concern:
+    serve config, task/parser, quantization, context clamp, MTP cap)."""
+    machine = _resolve_machine_name(args.machine)
+    effective_task = _resolve_task(args)
+    is_pooling = effective_task != "generate"
+    plan = {
+        "VLLM_MODEL": args.model,
+        "VLLM_SERVED_NAME": served,
+        "VLLM_PORT": str(port),
+        **_serve_cfg(args, machine, is_pooling),
+    }
+    messages = [
+        *_task_messages(plan, args, effective_task, is_pooling),
+        *_quant_messages(plan, args, effective_task, is_pooling),
+        *_context_messages(plan, args, is_pooling),
+        *_mtp_cap_messages(plan, args),
+    ]
     return plan, messages
 
 
