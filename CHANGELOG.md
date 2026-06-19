@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-06-19
+
+### Fixed
+
+- **markdownlint:** exempt skill prompt templates (`.claude/skills/**/prompts/**`)
+  from markdownlint. These are model-facing prompts fed verbatim to a backend
+  (first line is `$ARGUMENTS` or a prose instruction), so MD041 (first-line H1)
+  and MD032 are inapplicable — a heading would be injected into the prompt.
+  `SKILL.md` is still linted; only `prompts/` is exempt. Unblocks the `lint` CI
+  job after the `ask-colleague` skill was vendored in.
+
 ## [0.21.0] - 2026-06-12
 
 ### Changed
