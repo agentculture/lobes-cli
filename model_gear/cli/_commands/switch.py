@@ -205,6 +205,21 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
         # Embed/score models don't use tool calling — skip parser entirely.
         plan["VLLM_TASK"] = effective_task
         messages.append(f"tool-call parser: skipped (task={effective_task})")
+        # Guard the forced-task edge: an explicit --task on a model the catalog
+        # does NOT declare as that task (e.g. --task embed on a chat model) gets the
+        # pooling serve defaults but no compose-edit notice (the notice keys off the
+        # catalog task). Warn so the operator isn't left without the --runner/--convert
+        # guidance — the catalogued embed/score gears (auto-detected) are unaffected.
+        catalogued = next((m for m in supported_models() if m.id == args.model), None)
+        if args.task != "generate" and (catalogued is None or catalogued.task != effective_task):
+            messages.append(
+                f"WARNING: --task={effective_task} was forced but the catalog does not "
+                f"declare {args.model} as a {effective_task} model — serving with pooling "
+                "defaults, but you must add `--runner pooling --convert "
+                f"{'embed' if effective_task == 'embed' else 'classify'}` + the model's "
+                "`--hf-overrides` to the compose `command:` by hand (no notice is emitted "
+                "for an uncatalogued task)."
+            )
     else:
         parser, parser_msg = _select_parser(args)
         messages.append(parser_msg)

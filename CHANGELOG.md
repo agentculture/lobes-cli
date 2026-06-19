@@ -11,11 +11,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Embedding + reranker gears (closes #44).** model-gear now serves two pooling
   gears alongside the chat primary, reachable through the same OpenAI-compatible
   gateway and routed by the request's `model` field:
-  - `Qwen/Qwen3-Embedding-0.6B` — `POST /v1/embeddings` (vLLM `--task embed`),
-    native **1024-dim**, MRL-truncatable via the `dimensions` param (Matryoshka
-    `--hf-overrides`).
+  - `Qwen/Qwen3-Embedding-0.6B` — `POST /v1/embeddings` (vLLM
+    `--runner pooling --convert embed`), native **1024-dim**, MRL-truncatable via
+    the `dimensions` param (Matryoshka `--hf-overrides`).
   - `Qwen/Qwen3-Reranker-0.6B` — `POST /v1/rerank` + `/v1/score` (vLLM
-    `--task score`, served via the `Qwen3ForSequenceClassification` `--hf-overrides`).
+    `--runner pooling --convert classify`, served via the
+    `Qwen3ForSequenceClassification` `--hf-overrides`).
   - **Catalog:** `SupportedModel` gains `task` (`generate`/`embed`/`score`),
     `dimension`, and `hf_overrides`; both gears surface in `model overview --list`
     and `GET /v1/models/supported`.
