@@ -20,7 +20,11 @@ from model_gear.runtime._parser import infer_parser
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _TEMPLATES = Path(__file__).resolve().parents[1] / "model_gear" / "templates"
 
-_FIELDS = ("id", "role_hint", "shape", "context", "tool_parser", "quantization", "status", "doc")
+# Fields required non-empty for ALL models (task-agnostic).
+_FIELDS_ALL = ("id", "role_hint", "shape", "context", "status", "doc")
+# Fields required non-empty ONLY for generate (chat/completion) models.
+# Embedding and reranker gears have no tool parser and no quantization flag.
+_FIELDS_GENERATE = ("tool_parser", "quantization")
 
 
 def test_catalog_is_nonempty_and_accessors_agree() -> None:
@@ -33,8 +37,11 @@ def test_catalog_is_nonempty_and_accessors_agree() -> None:
 
 def test_every_entry_has_all_fields_nonempty() -> None:
     for entry in as_dicts():
-        for field in _FIELDS:
+        for field in _FIELDS_ALL:
             assert entry.get(field), f"{entry.get('id')}: empty/missing {field}"
+        if entry.get("task", "generate") == "generate":
+            for field in _FIELDS_GENERATE:
+                assert entry.get(field), f"{entry.get('id')}: empty/missing {field}"
 
 
 def test_catalog_ids_are_unique() -> None:
@@ -64,8 +71,12 @@ def test_every_doc_file_exists() -> None:
 def test_tool_parser_matches_infer_parser() -> None:
     # The catalog must agree with the runtime's parser inference (the source of
     # truth model switch uses), or a fleet backend would be misconfigured.
+    # Restrict to generate (chat/completion) models: embed/score gears have no
+    # tool parser (tool_parser="") but infer_parser would return "hermes" for
+    # any Qwen3 id — those models don't do tool calling, so the field is empty.
     for model in SUPPORTED_MODELS:
-        assert infer_parser(model.id) == model.tool_parser, model.id
+        if model.task == "generate":
+            assert infer_parser(model.id) == model.tool_parser, model.id
 
 
 def test_gateway_default_primary_and_fallback_are_in_catalog() -> None:

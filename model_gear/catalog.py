@@ -45,6 +45,9 @@ class SupportedModel:
     # as a documented compose edit. See docs/qwen3.6-35b-a3b-nvfp4.md.
     moe_backend: str = ""  # vLLM --moe-backend (e.g. "marlin") for MoE models
     speculative_config: str = ""  # vLLM --speculative-config JSON (e.g. MTP draft)
+    task: str = "generate"  # "generate" | "embed" | "score"
+    dimension: int = 0  # embedding output dimension; 0 for non-embedding models
+    hf_overrides: str = ""  # vLLM --hf-overrides JSON string
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -133,6 +136,51 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # tied to the nvidia/ checkpoint and FAILS to load on this mmangkad copy
         # (qwen3_5_mtp.py weight-shape mismatch on vLLM nv26.04). See the doc.
         moe_backend="marlin",
+    ),
+    SupportedModel(
+        id="Qwen/Qwen3-Embedding-0.6B",
+        # Embedding gear (issue #44): 1024-dim dense text embeddings with Matryoshka
+        # nesting (32/64/128/256/512/768/1024). Zero tool-parser and quantization —
+        # this is a pooling model, not a chat/completion model. Served via vLLM's
+        # embedding endpoint (/v1/embeddings). The hf_overrides enables Matryoshka
+        # truncation so consumers can request sub-1024 dimensions without re-serving.
+        role_hint="embedding",
+        shape="dense embedding (text)",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="qwen3-embedding-0.6b.md",
+        task="embed",
+        dimension=1024,
+        hf_overrides=(
+            '{"is_matryoshka": true,'
+            ' "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
+        ),
+    ),
+    SupportedModel(
+        id="Qwen/Qwen3-Reranker-0.6B",
+        # Reranker gear (issue #44): cross-encoder that scores (query, passage) pairs.
+        # Built on Qwen3ForSequenceClassification with a binary yes/no logit head;
+        # served via vLLM's score endpoint (/v1/score). The hf_overrides declare the
+        # non-standard architecture class and the two classifier tokens so vLLM can
+        # load the head correctly. Zero tool-parser and quantization (score-only model).
+        role_hint="reranker",
+        shape="dense cross-encoder (Qwen3ForSequenceClassification)",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="qwen3-reranker-0.6b.md",
+        task="score",
+        dimension=0,
+        hf_overrides=(
+            '{"architectures": ["Qwen3ForSequenceClassification"],'
+            ' "classifier_from_token": ["no", "yes"],'
+            ' "is_original_qwen3_reranker": true}'
+        ),
     ),
 )
 
