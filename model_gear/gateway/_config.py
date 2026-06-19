@@ -88,6 +88,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
                 name="embed",
                 base_url=(env.get("EMBED_URL") or "http://vllm-embed:8000").rstrip("/"),
                 served_name=env.get("EMBED_SERVED_NAME") or _DEFAULT_EMBED,
+                task="embed",
             )
         )
     if env.get("RERANK_URL") or env.get("RERANK_SERVED_NAME"):
@@ -96,6 +97,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
                 name="rerank",
                 base_url=(env.get("RERANK_URL") or "http://vllm-rerank:8000").rstrip("/"),
                 served_name=env.get("RERANK_SERVED_NAME") or _DEFAULT_RERANK,
+                task="score",
             )
         )
     table = RoutingTable(
