@@ -72,13 +72,14 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
 def _resolve_task(args: argparse.Namespace) -> str:
     """Return the effective vLLM task for this switch.
 
-    An explicit ``--task`` (anything other than the default ``"generate"``) always
-    wins.  When the flag was not explicitly passed (still the argparse default
-    ``"generate"``), check the catalog: embed/score models declare their task there
-    and it is inferred automatically — so ``model switch Qwen/Qwen3-Embedding-0.6B``
-    auto-detects ``task=embed`` without requiring the flag.
+    An explicit ``--task`` always wins — the flag defaults to ``None`` (not
+    ``"generate"``) so an explicit ``--task generate`` is distinguishable from
+    "flag omitted" and can override a catalogued embed/score model. When the flag
+    was omitted (``None``), the catalog is consulted: embed/score models declare
+    their task there and it is inferred automatically — so ``model switch
+    Qwen/Qwen3-Embedding-0.6B`` auto-detects ``task=embed`` without the flag.
     """
-    if args.task != "generate":
+    if args.task is not None:
         # Operator provided an explicit --task; honour it unconditionally.
         return args.task
     for model in supported_models():
@@ -154,13 +155,21 @@ def _serve_notices(model_id: str) -> list[str]:
             # (unquoted, `docker compose` fails to parse it) — the same rule the
             # --speculative-config item above follows and the fleet template applies.
             convert = "embed" if model.task == "embed" else "classify"
+            service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
             notices.append(
-                "embed/score gear — add these `command:` list items by hand (and "
-                "REMOVE the MTP lines; the single-model template ships the MTP "
-                "primary's flags):"
+                "embed/score gear — the TURNKEY path is the fleet: `model init --fleet` "
+                f"+ `model fleet up` serves it via the dedicated {service} service "
+                "(already task-aware). To solo-serve on the single-model template "
+                "instead, ADD these `command:` list items —"
                 "\n      - --runner=pooling"
                 f"\n      - --convert={convert}"
                 f"\n      - '--hf-overrides={model.hf_overrides}'"
+                "\n    and REMOVE the chat/MTP flags the single-model template bakes in "
+                "(they break or are ignored by a pooling model): --quantization, "
+                "--reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and "
+                "the 4 MTP lines (--speculative-config / --trust-remote-code / "
+                "--language-model-only / --tokenizer). VLLM_TASK in .env is a record only; "
+                "the single-model template does not consume it."
             )
     return notices
 
@@ -211,7 +220,7 @@ def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict,
         # catalog task). Warn so the operator isn't left without the --runner/--convert
         # guidance — the catalogued embed/score gears (auto-detected) are unaffected.
         catalogued = next((m for m in supported_models() if m.id == args.model), None)
-        if args.task != "generate" and (catalogued is None or catalogued.task != effective_task):
+        if args.task is not None and (catalogued is None or catalogued.task != effective_task):
             messages.append(
                 f"WARNING: --task={effective_task} was forced but the catalog does not "
                 f"declare {args.model} as a {effective_task} model — serving with pooling "
@@ -492,10 +501,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--task",
         choices=["generate", "embed", "score"],
-        default="generate",
+        default=None,
         help="vLLM task; embed/score serve a pooling model (no tool calling, "
-        "small context + low GPU fraction). Auto-detected from the catalog for "
-        "known embed/score models; an explicit flag always wins.",
+        "small context + low GPU fraction). Default unset: auto-detected from the "
+        "catalog for known embed/score models. An explicit flag (incl. "
+        "--task generate) always wins, so it can override the catalogued task.",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_switch)
