@@ -3,7 +3,8 @@
 Copies the packaged ``docker-compose.yml`` + ``env.example``→``.env`` into
 ``TARGET`` (default ``~/.model-gear``; ``model init .`` for the local folder).
 ``--fleet`` scaffolds the gateway deployment instead (the always-warm Qwen
-primary + a single OpenAI front; single-backend by default, opt-in fallback).
+primary + co-resident embedding/reranker gears behind one OpenAI front, routed by
+task family; one generate backend by default, opt-in generate fallback).
 Mutating: dry-run by default; ``--apply`` writes, ``--force`` overwrites.
 """
 
@@ -116,8 +117,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--fleet",
         action="store_true",
-        help="Scaffold the gateway deployment (the Qwen primary + 1 OpenAI front; "
-        "single-backend by default, opt-in fallback) instead of a single model.",
+        help="Scaffold the gateway deployment (the Qwen primary + co-resident "
+        "embedding/reranker gears behind 1 OpenAI front; one generate backend by "
+        "default, opt-in generate fallback) instead of a single model.",
     )
     p.add_argument(
         "--audio",

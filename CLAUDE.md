@@ -32,6 +32,16 @@ serves with (`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`) and the only vision-capab
 27B; the `nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate —
 see `docs/qwen3-32b-nvfp4.md` and `model overview --list`.)
 
+Beyond the generate primary, the **fleet** co-resides two tiny pooling gears
+behind the gateway, routed by **task family** (`generate` / `embed` / `score` /
+`rerank`): an **embedding** gear (`Qwen/Qwen3-Embedding-0.6B` → `POST
+/v1/embeddings`, served `--runner pooling --convert embed`) and a **reranker**
+gear (`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`, `--convert
+classify`). At ~0.6B and `*_GPU_MEM_UTIL=0.06` each they sit alongside the 27B
+primary without crowding it; a second *generate* backend (warm fallback) is the
+only opt-in piece. See `docs/qwen3-embedding-0.6b.md`,
+`docs/qwen3-reranker-0.6b.md`, and `docs/gateway-fleet.md`.
+
 ## Deployment model
 
 model-gear is **scaffold-based, not checkout-based.** The canonical

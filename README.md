@@ -171,14 +171,16 @@ tunnel` for the full flow.
 
 ## Running the model behind a gateway (fleet)
 
-`model init --fleet` scaffolds a **two-container** deployment instead of one: the
-always-warm Qwen primary and a single stdlib **gateway** that fronts it on the
-host port the acp `vllm-local` provider already expects. The gateway routes each
-request by its `model` field and defaults an unknown/missing name to the primary —
-so existing single-model clients keep working unchanged, the same front fans
-`/v1/audio/*` out to the `--audio` overlay, and a warm fallback can be wired in
-later (the gateway adds a second backend, with failover, only when one is
-configured).
+`model init --fleet` scaffolds a **multi-container** deployment instead of one: the
+always-warm Qwen generate primary, two tiny co-resident **embedding** and
+**reranker** gears, and a single stdlib **gateway** that fronts them on the host
+port the acp `vllm-local` provider already expects. The gateway routes each
+request by its `model` field — to the primary, the embedder, or the reranker by
+task family (generate / embed / score / rerank) — and defaults an unknown/missing
+name to the primary, so existing single-model clients keep working unchanged. The
+same front fans `/v1/audio/*` out to the `--audio` overlay, and a warm *generate*
+fallback can be wired in later (the gateway adds it, with failover, only when one
+is configured).
 
 ```bash
 model init --fleet --apply        # $HOME/.model-gear/{docker-compose.yml,.env,Dockerfile.gateway}
@@ -193,13 +195,18 @@ curl -s http://localhost:8000/v1/models       # the WARM backend(s) (not the ful
 curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP","messages":[...]}'
 ```
 
-The fleet is single-backend by default, so the primary runs at its load-tested
-solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K context) on the 128 GB
-unified memory. To add a warm fallback, wire a `vllm-fallback` service + the
-`FALLBACK_*` env and drop both utils so they sum well under 1.0 (two ~30B NVFP4
-models barely co-fit a GB10). `model switch` is single-model only — change the
-fleet primary by editing the fleet `.env` and re-running `model fleet up --apply`.
-See `model explain fleet` / `model explain gateway` for the routing semantics, and
+The fleet runs **one generate backend** by default, so the primary keeps its
+load-tested solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K context) on the
+128 GB unified memory; the embedding + reranker gears are ~0.6B (util `0.06`
+each), so they co-reside without crowding it. To add a warm *generate* fallback,
+wire a `vllm-fallback` service + the `FALLBACK_*` env and drop both generate utils
+so they sum well under 1.0 (two ~30B NVFP4 models barely co-fit a GB10). `model
+switch` drives the single-model deployment (it can also serve an embed/score gear
+solo — auto-detected from the catalog, or forced with `--task embed|score`);
+change the fleet primary by editing the fleet `.env` and re-running `model fleet
+up --apply`. See `model explain fleet` / `model explain gateway` for the routing
+semantics, [`docs/qwen3-embedding-0.6b.md`](docs/qwen3-embedding-0.6b.md) +
+[`docs/qwen3-reranker-0.6b.md`](docs/qwen3-reranker-0.6b.md) for the gears, and
 [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the full topology.
 
 ### Per-model notes
@@ -225,8 +232,8 @@ results, and caveats:
   `PRIMARY_MODEL` / `model switch` when throughput matters more than context/vision.
 - [`docs/mistral-small-3.2-24b-nvfp4.md`](docs/mistral-small-3.2-24b-nvfp4.md) —
   the dense **fallback candidate** (`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`);
-  the default fleet's warm fallback in 0.11.0–0.19.x, since removed (the fleet is
-  single-backend by default — two ~30B NVFP4 models don't co-fit a shared GB10).
+  the default fleet's warm fallback in 0.11.0–0.19.x, since removed (the fleet runs
+  one *generate* backend by default — two ~30B NVFP4 models don't co-fit a shared GB10).
   Kept selectable: load-tested 2026-05-30, loads reliably (~15 GiB, ~14.9 tok/s
   decode), text + tool calls (serve with the mistral tokenizer + images disabled).
   Wire it back via the opt-in `FALLBACK_*` fleet config.
@@ -249,7 +256,8 @@ Two questions that look alike but aren't:
   `model_gear/catalog.py`, shipped in the wheel, unchanged by what's running.
   Read it with `model overview --list` or the gateway's `GET /v1/models/supported`.
 - **What's loaded right now?** — the model(s) actually in GPU memory this instant
-  (one in single-model mode, two in the fleet). The live source is `GET /v1/models`
+  (one in single-model mode; in the fleet, the generate primary plus the
+  co-resident embedding + reranker gears). The live source is `GET /v1/models`
   (OpenAI-standard); `model fleet status` queries it. `model status` /
   `model whoami` instead report the model the deployment is *configured* to serve
   (from `.env`) plus container health — normally the same model, but it's

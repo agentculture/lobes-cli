@@ -80,13 +80,21 @@ def test_fleet_down_apply(tmp_path, monkeypatch) -> None:
 # --- fleet status ---------------------------------------------------------
 
 
-def test_fleet_status_json_reports_three_containers(tmp_path, capsys) -> None:
+def test_fleet_status_json_reports_default_containers(tmp_path, capsys) -> None:
     _scaffold_fleet(tmp_path)
     rc = main(["fleet", "status", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     names = [c["name"] for c in payload["containers"]]
+    # The default fleet runs four containers: generate primary, embedding +
+    # reranker gears, and the gateway (the generate fallback is opt-in, excluded).
     assert names == list(_compose.FLEET_CONTAINERS)
+    assert names == [
+        "model-gear-vllm-primary",
+        "model-gear-vllm-embed",
+        "model-gear-vllm-rerank",
+        "model-gear-gateway",
+    ]
     # offline fixture: _probe → None (state "not created"), is_healthy → False.
     assert all(c["state"] == "not created" for c in payload["containers"])
     assert payload["gateway_health"] == "not responding"

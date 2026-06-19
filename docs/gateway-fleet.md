@@ -1,11 +1,13 @@
-# Fleet: the Qwen primary behind one OpenAI gateway (with an optional fallback)
+# Fleet: the Qwen primary + embedding/reranker gears behind one OpenAI gateway
 
-The **fleet** runs the always-warm Qwen primary behind a single stdlib
-OpenAI-compatible gateway, managed by model-gear as two Docker containers. It is
+The **fleet** runs the always-warm Qwen generate primary — plus two tiny
+co-resident **embedding** and **reranker** gears — behind a single stdlib
+OpenAI-compatible gateway, managed by model-gear as four Docker containers. It is
 an alternative to the bare single-model deployment — scaffold it with
 `model init --fleet` (the single-model `model init` is unchanged and remains the
-default). The fleet is **single-backend by default**; a warm fallback is opt-in
-(see "Adding a fallback").
+default). The gateway routes by **task family** (generate / embed / score /
+rerank); there is **one generate backend by default** and a warm *generate*
+fallback is opt-in (see "Adding a fallback").
 
 ## Why
 
@@ -30,19 +32,23 @@ and the opt-in fallback example.
 
 ```text
 client / acp ──:8000──▶ model-gear-gateway   (python -m model_gear.gateway)
-                          │  route by `model` → default (→ failover if a fallback is wired)
-                          └──▶ model-gear-vllm-primary   :8000 (internal)
+                          │  route by `model` / task family
+                          ├──▶ model-gear-vllm-primary  :8000  generate (→ failover if a fallback is wired)
+                          ├──▶ model-gear-vllm-embed     :8000  embed (/v1/embeddings)
+                          └──▶ model-gear-vllm-rerank    :8000  score/rerank (/v1/rerank, /v1/score)
 ```
 
-Two containers by default, all `restart: unless-stopped`:
+Four containers by default, all `restart: unless-stopped`:
 
 | Container | Role | Host port |
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
-| `model-gear-vllm-primary` | primary model (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
+| `model-gear-vllm-primary` | generate primary (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
+| `model-gear-vllm-embed` | embedding gear (`Qwen/Qwen3-Embedding-0.6B`, `/v1/embeddings`) | internal only |
+| `model-gear-vllm-rerank` | reranker gear (`Qwen/Qwen3-Reranker-0.6B`, `/v1/rerank` + `/v1/score`) | internal only |
 
-The backend is reachable only on the compose network
-(`http://vllm-primary:8000`); only the gateway is published to the host. The
+The backends are reachable only on the compose network (`http://vllm-primary:8000`,
+`vllm-embed:8000`, `vllm-rerank:8000`); only the gateway is published to the host. The
 gateway needs no Docker socket access — compose owns the lifecycle; the gateway
 only routes.
 
@@ -68,13 +74,15 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   `GATEWAY_DEFAULT_MODEL` (the primary).
 - **Failover** — when a fallback is wired up, a chosen backend that refuses the
   connection or returns a 5xx **before any response body** is retried against the
-  other backend. (Single-backend by default → nothing to fail over to.) A 4xx is a
+  other backend. (One generate backend by default → no generate peer to fail over
+  to; the embed/rerank gears are separate task families, not failover targets.) A 4xx is a
   client error (returned verbatim, no failover). Once a 2xx body starts streaming
   there is no retry — the client already has bytes.
 - **Streaming** — `"stream": true` (SSE) is relayed chunk-by-chunk with per-chunk
   flushing; normal JSON is buffered with `Content-Length`.
-- **Endpoints** — `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`
-  (proxied), `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
+- **Endpoints** — `/v1/chat/completions`, `/v1/completions` (generate primary),
+  `/v1/embeddings` (the embedding gear), `/v1/rerank` + `/v1/score` (the reranker
+  gear), `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
   `/v1/models/supported` (the full supported-model catalog — every gear you can
   change to, each flagged `loaded` / `default`), `/health` (gateway liveness).
   See [Supported catalog vs. warm backends](#supported-catalog-vs-warm-backends)
@@ -92,8 +100,9 @@ build.
 Two questions that look alike but aren't:
 
 - **What's loaded right now?** — the model(s) actually in GPU memory. The live
-  source is `GET /v1/models` (OpenAI-standard; one model in single-model mode, both
-  backends in the fleet); `model fleet status` queries it. It changes when you
+  source is `GET /v1/models` (OpenAI-standard; one model in single-model mode; the
+  generate primary plus the embedding + reranker gears in the fleet); `model fleet
+  status` queries it. It changes when you
   `model switch` or bring the fleet up/down. (`model status` / `model whoami`
   instead report the model the deployment is *configured* to serve — from `.env` —
   plus container health, which is configuration, not a live `/v1/models` query.)
@@ -131,9 +140,12 @@ up --apply`. (A fallback, when wired up, uses the parallel `FALLBACK_*` keys.)
 
 ## Memory
 
-The fleet is **single-backend by default**: the primary owns the box at
+The fleet runs **one generate backend by default**: the primary owns the box at
 `PRIMARY_GPU_MEM_UTIL=0.6` (~75 GiB of the 128 GB), serving the full 256K context
-— the load-tested solo footprint (see findings below). That leaves ample headroom
+— the load-tested solo footprint (see findings below). The co-resident embedding
+and reranker gears are ~0.6B each at `*_GPU_MEM_UTIL=0.06` (a couple GiB apiece),
+so they tuck into the remaining headroom without crowding the primary; what does
+**not** co-fit is a second ~30B *generate* model (below). That still leaves room
 for the OS and other processes.
 
 `--gpu-memory-utilization` is a fraction of *total* unified memory, computed
@@ -164,11 +176,12 @@ also running, ~12–20 GiB baseline). Measured with `dgx-spark-cli` (`spark`):
 | Co-residence (27B + 35B-A3B) | **Not viable on this box.** 27B alone (~75 GiB) + 35B-A3B (~24 GiB weights + KV) + baseline services exceed the 121.7 GiB unified pool → OOM + swap thrash (swap hit 68 %). |
 | **Mistral-24B (new fallback) solo load → `/health`** | **Loaded cleanly** (port 8001, util 0.4): 15.05 GiB weights, 30.69 GiB KV, ~49.6 GiB total. Decode **14.9 tok/s**; prefill 2,009 tok in 1.49 s; tool calling ✅. See [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md). |
 
-**Conclusion — the "two always-warm models" premise needs a dedicated box, so the
-default is now single-backend.** On a GB10 shared with other services, two ~30B
-NVFP4 models do not co-fit with usable KV caches. The default fleet therefore
-serves the **Qwen primary alone** at its load-tested solo headroom (util 0.6, full
-256K, ~75 GiB). If you genuinely need two warm models, run on a dedicated machine,
+**Conclusion — the "two always-warm *generate* models" premise needs a dedicated
+box, so the default is one generate backend.** On a GB10 shared with other
+services, two ~30B NVFP4 models do not co-fit with usable KV caches. The default
+fleet therefore serves the **Qwen generate primary** at its load-tested solo
+headroom (util 0.6, full 256K, ~75 GiB), with the tiny embedding + reranker gears
+co-resident (util 0.06 each). If you genuinely need two warm models, run on a dedicated machine,
 pair two small models, or wire the opt-in fallback (see "Adding a fallback") and
 drop both utils. Single-model `model switch` (one warm at a time) remains the
 other path.

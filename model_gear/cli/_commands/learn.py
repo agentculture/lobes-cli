@@ -31,8 +31,10 @@ Commands
   model switch <model>    Switch the served model. Dry-run; --apply recreates the
                           container and waits for /health.
   model fleet up|down|status
-                          Drive the 2-model gateway deployment (scaffold it with
-                          'model init --fleet'). up/down are dry-run; --apply.
+                          Drive the gateway fleet: the generate primary plus
+                          co-resident embedding + reranker gears behind one OpenAI
+                          port, routed by task family (a generate fallback is opt-in).
+                          Scaffold with 'model init --fleet'. up/down dry-run; --apply.
   model tunnel            Expose the local API at a public hostname via a Cloudflare
                           Tunnel (--stop to tear down). Dry-run; --apply.
   model status            Read-only: the configured served model (.env), container
@@ -63,6 +65,17 @@ instead report the model the deployment is configured to serve (from .env) + hea
 — config, not a live list. Mnemonic: the catalog is the menu; /v1/models is what's
 hot now.
 
+Task families & gears
+---------------------
+The fleet serves four task families behind the one gateway, routed by the
+request's `model` field: `generate` (the always-warm Qwen primary), `embed`
+(Qwen3-Embedding-0.6B → POST /v1/embeddings), and `score` / `rerank`
+(Qwen3-Reranker-0.6B → POST /v1/rerank + /v1/score). The embedding and reranker
+gears are tiny (~0.6B, util 0.06 each) and co-reside with the 27B primary on one
+GB10; a second *generate* backend (warm fallback) is the only opt-in piece.
+`model switch` can also serve a single embed/score gear solo (auto-detected from
+the catalog, or forced with `--task embed|score`).
+
 Machine-readable output
 -----------------------
 Every command supports --json. Errors in JSON mode emit
@@ -80,6 +93,8 @@ More detail
   model explain model-gear
   model explain switch
   model explain backend
+  model explain embeddings   (POST /v1/embeddings — the embedding gear)
+  model explain rerank       (POST /v1/rerank + /v1/score — the reranker gear)
 
 Homepage: https://github.com/agentculture/model-gear
 """
@@ -104,7 +119,10 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["switch"], "summary": "Switch the served model (dry-run; --apply)."},
             {
                 "path": ["fleet"],
-                "summary": "Drive the 2-model gateway deployment (up/down/status; --apply).",
+                "summary": (
+                    "Drive the gateway fleet: generate primary + co-resident embedding "
+                    "and reranker gears, routed by task family (up/down/status; --apply)."
+                ),
             },
             {
                 "path": ["tunnel"],
@@ -153,6 +171,13 @@ def _as_json_payload() -> dict[str, object]:
                 "Model(s) actually in GPU memory right now. Live source: GET /v1/models "
                 "(which 'model fleet status' queries). 'model status'/'model whoami' report the "
                 "configured served model (from .env) + health, not a live list."
+            ),
+            "task_families": (
+                "The fleet routes by task family on one gateway port: 'generate' (the "
+                "Qwen primary), 'embed' (Qwen3-Embedding-0.6B → /v1/embeddings), and "
+                "'score'/'rerank' (Qwen3-Reranker-0.6B → /v1/rerank + /v1/score). The "
+                "embedding + reranker gears co-reside with the primary (util 0.06 each); "
+                "a second generate backend (warm fallback) is opt-in."
             ),
         },
         "explain_pointer": "model explain <path> (e.g. 'model explain switch')",
