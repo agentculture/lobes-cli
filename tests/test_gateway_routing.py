@@ -195,3 +195,57 @@ def test_read_chunked_body() -> None:
     assert S.read_chunked_body(io.BytesIO(b"zz\r\n")) == b""
     # empty / truncated stream → empty body
     assert S.read_chunked_body(io.BytesIO(b"")) == b""
+
+
+# --- embed / rerank backends in build_config ---------------------------------
+
+
+def test_build_config_embed_rerank_backends_added_when_configured() -> None:
+    # All four env vars supplied → four backends: primary, embed, rerank.
+    # (no fallback vars → no fallback backend)
+    embed_name = "Qwen/Qwen3-Embedding-0.6B"
+    rerank_name = "Qwen/Qwen3-Reranker-0.6B"
+    table, _ = build_config(
+        {
+            "EMBED_URL": "http://vllm-embed:8000/",
+            "EMBED_SERVED_NAME": embed_name,
+            "RERANK_URL": "http://vllm-rerank:8000/",
+            "RERANK_SERVED_NAME": rerank_name,
+        }
+    )
+    served_names = [b.served_name for b in table.backends]
+    assert embed_name in served_names
+    assert rerank_name in served_names
+    # trailing slash is stripped from URLs
+    embed_backend = next(b for b in table.backends if b.name == "embed")
+    rerank_backend = next(b for b in table.backends if b.name == "rerank")
+    assert embed_backend.base_url == "http://vllm-embed:8000"
+    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    # resolve_model routes each served name to itself
+    assert resolve_model(table, embed_name) == embed_name
+    assert resolve_model(table, rerank_name) == rerank_name
+
+
+def test_build_config_embed_url_alone_triggers_embed_backend() -> None:
+    # EMBED_URL alone (no EMBED_SERVED_NAME) → embed backend added with default name.
+    table, _ = build_config({"EMBED_URL": "http://vllm-embed:9999"})
+    assert any(b.name == "embed" for b in table.backends)
+    embed_backend = next(b for b in table.backends if b.name == "embed")
+    assert embed_backend.served_name == "Qwen/Qwen3-Embedding-0.6B"
+
+
+def test_build_config_rerank_served_name_alone_triggers_rerank_backend() -> None:
+    # RERANK_SERVED_NAME alone → rerank backend added with default URL.
+    table, _ = build_config({"RERANK_SERVED_NAME": "custom/reranker"})
+    assert any(b.name == "rerank" for b in table.backends)
+    rerank_backend = next(b for b in table.backends if b.name == "rerank")
+    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    assert rerank_backend.served_name == "custom/reranker"
+
+
+def test_build_config_no_embed_rerank_vars_leaves_single_primary() -> None:
+    # Critical invariant: when none of the embed/rerank/fallback vars are present,
+    # build_config produces exactly one backend named "primary" — same as before.
+    table, _ = build_config({})
+    assert len(table.backends) == 1
+    assert table.backends[0].name == "primary"

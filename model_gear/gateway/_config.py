@@ -15,6 +15,8 @@ from model_gear.gateway._routing import Backend, RoutingTable
 
 _DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
+_DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
+_DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,22 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
                 name="fallback",
                 base_url=(env.get("FALLBACK_URL") or "http://vllm-fallback:8000").rstrip("/"),
                 served_name=env.get("FALLBACK_SERVED_NAME") or _DEFAULT_FALLBACK,
+            )
+        )
+    if env.get("EMBED_URL") or env.get("EMBED_SERVED_NAME"):
+        backends.append(
+            Backend(
+                name="embed",
+                base_url=(env.get("EMBED_URL") or "http://vllm-embed:8000").rstrip("/"),
+                served_name=env.get("EMBED_SERVED_NAME") or _DEFAULT_EMBED,
+            )
+        )
+    if env.get("RERANK_URL") or env.get("RERANK_SERVED_NAME"):
+        backends.append(
+            Backend(
+                name="rerank",
+                base_url=(env.get("RERANK_URL") or "http://vllm-rerank:8000").rstrip("/"),
+                served_name=env.get("RERANK_SERVED_NAME") or _DEFAULT_RERANK,
             )
         )
     table = RoutingTable(
