@@ -17,6 +17,7 @@ class Backend:
     name: str  # logical role: "primary" / "fallback"
     base_url: str  # e.g. "http://vllm-primary:8000"
     served_name: str  # the OpenAI model id this backend serves
+    task: str = "generate"  # task family: "generate" | "embed" | "score"
 
 
 @dataclass(frozen=True)
@@ -61,16 +62,19 @@ def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
 
 
 def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
-    """Attempt order for ``served_name``: its owner first, then the rest.
+    """Attempt order for ``served_name``: its owner first, then same-task failovers.
 
-    The owner is tried first; the remaining backends are failover targets. An
-    unmatched ``served_name`` falls back to the default model's owner first.
+    The owner is tried first; failover candidates are restricted to backends
+    with the same ``task`` as the owner. This prevents an embed request from
+    falling over to a generate backend (which would return a confusing 400 for
+    ``/v1/embeddings``). An unmatched ``served_name`` falls back to the default
+    model's owner (a generate backend) with same-task (generate) failovers.
     """
     owner = _backend_for(table, served_name) or _backend_for(table, table.default_model)
     ordered: list[Backend] = []
     if owner is not None:
         ordered.append(owner)
-    ordered.extend(b for b in table.backends if b is not owner)
+        ordered.extend(b for b in table.backends if b is not owner and b.task == owner.task)
     return ordered
 
 

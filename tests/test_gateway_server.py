@@ -308,3 +308,49 @@ def test_open_upstream_malformed_url_raises_upstream_error() -> None:
     b = Backend("primary", "http://host:not-a-port", "P")
     with pytest.raises(S.UpstreamError):
         S.open_upstream(b, "/x", b"{}", [], connect_timeout=1, read_timeout=2)
+
+
+# --- embed / rerank routing via handle_post (task-aware, no sockets) ---------
+
+_EMBED_SERVED = "Qwen/Qwen3-Embedding-0.6B"
+_RERANK_SERVED = "Qwen/Qwen3-Reranker-0.6B"
+
+
+def _task_cfg():
+    """A table with primary (generate) + embed + rerank backends."""
+    return build_config(
+        {
+            "PRIMARY_SERVED_NAME": "P",
+            "EMBED_URL": "http://vllm-embed:8000",
+            "EMBED_SERVED_NAME": _EMBED_SERVED,
+            "RERANK_URL": "http://vllm-rerank:8000",
+            "RERANK_SERVED_NAME": _RERANK_SERVED,
+        }
+    )
+
+
+def test_handle_post_embeddings_path_routes_to_embed_backend() -> None:
+    # POST /v1/embeddings with the embed served_name in the body must reach the
+    # embed backend. /v1/embeddings is NOT special-cased — routing is by model name.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"embed": 200, "primary": 200})
+    body = json.dumps({"model": _EMBED_SERVED, "input": "hello"}).encode()
+    resp = S.handle_post(table, cfg, "/v1/embeddings", [], body, opener)
+    assert resp.status == 200
+    # embed backend was called, not the primary generate backend.
+    assert calls[0][0] == "embed"
+    # The forwarded body's model field is the embed backend's served_name.
+    assert json.loads(calls[0][1])["model"] == _EMBED_SERVED
+
+
+def test_handle_post_rerank_path_routes_to_rerank_backend() -> None:
+    # POST /v1/rerank with the rerank served_name must reach the rerank backend.
+    # /v1/rerank is NOT special-cased — routing is purely by model name.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"rerank": 200, "primary": 200})
+    body = json.dumps({"model": _RERANK_SERVED, "query": "q", "documents": []}).encode()
+    resp = S.handle_post(table, cfg, "/v1/rerank", [], body, opener)
+    assert resp.status == 200
+    # rerank backend was called, not the primary.
+    assert calls[0][0] == "rerank"
+    assert json.loads(calls[0][1])["model"] == _RERANK_SERVED
