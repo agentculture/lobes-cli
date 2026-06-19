@@ -195,3 +195,135 @@ def test_read_chunked_body() -> None:
     assert S.read_chunked_body(io.BytesIO(b"zz\r\n")) == b""
     # empty / truncated stream → empty body
     assert S.read_chunked_body(io.BytesIO(b"")) == b""
+
+
+# --- embed / rerank backends in build_config ---------------------------------
+
+
+def test_build_config_embed_rerank_backends_added_when_configured() -> None:
+    # All four env vars supplied → four backends: primary, embed, rerank.
+    # (no fallback vars → no fallback backend)
+    embed_name = "Qwen/Qwen3-Embedding-0.6B"
+    rerank_name = "Qwen/Qwen3-Reranker-0.6B"
+    table, _ = build_config(
+        {
+            "EMBED_URL": "http://vllm-embed:8000/",
+            "EMBED_SERVED_NAME": embed_name,
+            "RERANK_URL": "http://vllm-rerank:8000/",
+            "RERANK_SERVED_NAME": rerank_name,
+        }
+    )
+    served_names = [b.served_name for b in table.backends]
+    assert embed_name in served_names
+    assert rerank_name in served_names
+    # trailing slash is stripped from URLs
+    embed_backend = next(b for b in table.backends if b.name == "embed")
+    rerank_backend = next(b for b in table.backends if b.name == "rerank")
+    assert embed_backend.base_url == "http://vllm-embed:8000"
+    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    # resolve_model routes each served name to itself
+    assert resolve_model(table, embed_name) == embed_name
+    assert resolve_model(table, rerank_name) == rerank_name
+
+
+def test_build_config_embed_url_alone_triggers_embed_backend() -> None:
+    # EMBED_URL alone (no EMBED_SERVED_NAME) → embed backend added with default name.
+    table, _ = build_config({"EMBED_URL": "http://vllm-embed:9999"})
+    assert any(b.name == "embed" for b in table.backends)
+    embed_backend = next(b for b in table.backends if b.name == "embed")
+    assert embed_backend.served_name == "Qwen/Qwen3-Embedding-0.6B"
+
+
+def test_build_config_rerank_served_name_alone_triggers_rerank_backend() -> None:
+    # RERANK_SERVED_NAME alone → rerank backend added with default URL.
+    table, _ = build_config({"RERANK_SERVED_NAME": "custom/reranker"})
+    assert any(b.name == "rerank" for b in table.backends)
+    rerank_backend = next(b for b in table.backends if b.name == "rerank")
+    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    assert rerank_backend.served_name == "custom/reranker"
+
+
+def test_build_config_no_embed_rerank_vars_leaves_single_primary() -> None:
+    # Critical invariant: when none of the embed/rerank/fallback vars are present,
+    # build_config produces exactly one backend named "primary" — same as before.
+    table, _ = build_config({})
+    assert len(table.backends) == 1
+    assert table.backends[0].name == "primary"
+
+
+# --- task-aware failover (t5) -----------------------------------------------
+
+_EMBED_SERVED = "Qwen/Qwen3-Embedding-0.6B"
+_RERANK_SERVED = "Qwen/Qwen3-Reranker-0.6B"
+
+
+def _full_table() -> RoutingTable:
+    """A four-backend routing table: primary + fallback (generate), embed, rerank."""
+    return RoutingTable(
+        backends=(
+            Backend("primary", "http://vllm-primary:8000", "P"),
+            Backend("fallback", "http://vllm-fallback:8000", "F"),
+            Backend("embed", "http://vllm-embed:8000", _EMBED_SERVED, task="embed"),
+            Backend("rerank", "http://vllm-rerank:8000", _RERANK_SERVED, task="score"),
+        ),
+        default_model="P",
+        aliases={},
+    )
+
+
+def test_order_backends_embed_returns_only_embed_backend() -> None:
+    # An embed request must NOT fail over to generate backends: a chat model
+    # returns a confusing 400 for /v1/embeddings.
+    t = _full_table()
+    result = order_backends(t, _EMBED_SERVED)
+    assert len(result) == 1
+    assert result[0].name == "embed"
+    # Confirm: no generate backend snuck in.
+    assert all(b.task == "embed" for b in result)
+
+
+def test_order_backends_rerank_returns_only_rerank_backend() -> None:
+    # A score/rerank request must stay within its own task family.
+    t = _full_table()
+    result = order_backends(t, _RERANK_SERVED)
+    assert len(result) == 1
+    assert result[0].name == "rerank"
+    assert all(b.task == "score" for b in result)
+
+
+def test_order_backends_generate_still_failovers_between_generate_backends() -> None:
+    # The generate failover contract must not regress: primary owns "P", then
+    # falls over to fallback (also generate), but NOT to embed or rerank.
+    t = _full_table()
+    result = order_backends(t, "P")
+    names = [b.name for b in result]
+    assert names == ["primary", "fallback"]
+    # Embed and rerank must be absent from the generate failover chain.
+    assert "embed" not in names
+    assert "rerank" not in names
+
+
+def test_resolve_model_routes_embed_rerank_served_names_to_themselves() -> None:
+    # resolve_model must recognise embed/rerank served names as owned and return
+    # them unchanged (they are present as served_name in the table).
+    t = _full_table()
+    assert resolve_model(t, _EMBED_SERVED) == _EMBED_SERVED
+    assert resolve_model(t, _RERANK_SERVED) == _RERANK_SERVED
+
+
+def test_before_state_without_embed_backend_embed_name_hits_generate() -> None:
+    # BEFORE-STATE (honesty h4): when no embed backend is configured, a request
+    # naming the embed served_name falls through to the default (generate) backend.
+    # This is exactly why the embed backend must be configured — without it, an
+    # embeddings request silently hits the chat model and gets a 400.
+    generate_only = RoutingTable(
+        backends=(Backend("primary", "http://vllm-primary:8000", "P"),),
+        default_model="P",
+        aliases={},
+    )
+    # resolve_model: unknown name → default (the generate primary's served_name).
+    assert resolve_model(generate_only, _EMBED_SERVED) == "P"
+    # order_backends: owner is the primary (generate) backend — confirmed fallback
+    # to chat model in the embed-backend-absent case.
+    result = order_backends(generate_only, _EMBED_SERVED)
+    assert result[0].name == "primary"

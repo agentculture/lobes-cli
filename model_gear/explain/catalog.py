@@ -66,6 +66,9 @@ require `--apply` to commit. The rest are read-only.
 - `model explain assess`
 - `model explain backend`
 - `model explain models`
+- `model explain embeddings` (POST /v1/embeddings — 1024-dim Qwen3 embedder)
+- `model explain rerank` (POST /v1/rerank — Jina/Cohere reranking)
+- `model explain score` (POST /v1/score — cross-encoder raw scoring)
 """
 
 _SWITCH = """\
@@ -222,6 +225,14 @@ run on this hardware, holding the correctness + throughput numbers produced by
   decode; swap in via `PRIMARY_MODEL` / `model switch`).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
   candidate (the former fallback; OOM'd/stalled on the GB10, never load-tested).
+- `docs/qwen3-embedding-0.6b.md` — `Qwen/Qwen3-Embedding-0.6B`, the **embedding
+  gear**: 0.6B dense text embedder, 1024-dim (Matryoshka-truncatable), 32K context,
+  served via `/v1/embeddings` (`--runner pooling --convert embed`). Warm fleet
+  backend — co-resident with the 27B primary on the GB10.
+- `docs/qwen3-reranker-0.6b.md` — `Qwen/Qwen3-Reranker-0.6B`, the **reranker
+  gear**: 0.6B cross-encoder, served via `/v1/rerank` + `/v1/score`
+  (`--runner pooling --convert classify`). Same backend handles both endpoints.
+  Warm fleet backend — co-resident on the GB10.
 
 These models *are* the **supported catalog** — the gears you can switch to, each
 tagged `load-tested` (proven on this box) or `configured` (declared, not yet
@@ -286,12 +297,24 @@ container (`python -m model_gear.gateway`).
 
 ## Endpoints
 
-`/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (proxied); `/v1/models`
-(OpenAI-standard, lists the two loaded backends); `/v1/models/supported` (the full
-supported-model catalog — every gear you can change to, each flagged `loaded` /
-`default`); `/health` (gateway liveness). Configured via the `gateway` service's
-environment in the fleet compose (`PRIMARY_URL` / `FALLBACK_URL` / `*_SERVED_NAME`
-/ `GATEWAY_DEFAULT_MODEL` / `GATEWAY_ALIASES` / timeouts).
+- `/v1/chat/completions`, `/v1/completions` — chat and completion requests;
+  routed to the primary (or fallback, if configured) by `model` field.
+- `/v1/embeddings` — dense text embeddings; served by the warm
+  **Qwen3-Embedding-0.6B** fleet backend, routed by `model` field
+  (`"model": "Qwen/Qwen3-Embedding-0.6B"`).
+- `/v1/rerank` — Jina/Cohere-compatible re-ranking; served by the warm
+  **Qwen3-Reranker-0.6B** fleet backend, routed by `model` field.
+- `/v1/score` — vLLM cross-encoder raw scoring; same warm **Qwen3-Reranker-0.6B**
+  backend as `/v1/rerank`, routed by `model` field.
+- `/v1/models` — OpenAI-standard model list (lists all loaded backends).
+- `/v1/models/supported` — the full supported-model catalog (every gear you can
+  switch to, each flagged `loaded` / `default`).
+- `/health` — gateway liveness check.
+
+All endpoints are reached at the same gateway port — routing is by the request's
+`model` field. Configured via the `gateway` service's environment in the fleet
+compose (`PRIMARY_URL` / `FALLBACK_URL` / `*_SERVED_NAME` / `GATEWAY_DEFAULT_MODEL`
+/ `GATEWAY_ALIASES` / timeouts).
 """
 
 _TUNNEL = """\
@@ -385,6 +408,169 @@ failure — only missing docker or an un-scaffolded deployment make the run exit
 non-zero. JSON contract: `{"healthy", "checks"}`. Supports `--json`.
 """
 
+_EMBEDDINGS = """\
+# model explain embeddings
+
+`POST /v1/embeddings` — OpenAI-compatible text embeddings served by the warm
+**Qwen3-Embedding-0.6B** fleet backend, routed by model name through the gateway.
+
+## Request
+
+```json
+{
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "input": ["text a", "text b"]
+}
+```
+
+`input` accepts a string or a list of strings. The served name `Qwen/Qwen3-Embedding-0.6B`
+is the catalog id — the gateway routes to this backend by matching the `model` field.
+
+Optional: `"dimensions": 512` — truncate the output embedding to any Matryoshka
+sub-dimension (32 / 64 / 128 / 256 / 512 / 768 / 1024). Enabled via the
+`--hf-overrides '{"is_matryoshka": true, "matryoshka_dimensions": [...]}'` serve flag.
+Omit to get the native **1024-dim** output.
+
+## Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"object": "embedding", "index": 0, "embedding": [/* 1024 floats */]},
+    {"object": "embedding", "index": 1, "embedding": [/* 1024 floats */]}
+  ],
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "usage": {"prompt_tokens": 4, "total_tokens": 4}
+}
+```
+
+## Key facts
+
+- **Dimension:** 1024 (native); request `"dimensions": N` for Matryoshka truncation.
+- **Context:** 32K native, served at `--max-model-len 8192` (tiny KV footprint).
+- **Serving:** `--runner pooling --convert embed` (vLLM pooling mode, not a chat
+  model; this build's replacement for the old `--task embed`).
+- **Served name == catalog id:** `Qwen/Qwen3-Embedding-0.6B`.
+- **Warm fleet backend:** co-resident with the 27B primary on the GB10; its small
+  `--max-model-len` keeps the KV footprint tiny so all three backends (primary +
+  embedder + reranker) co-fit in 128 GB unified memory.
+- **Gateway port:** same port as chat — the gateway routes by `model` field.
+- **No quantization flag, no tool parser** — pooling model, not a chat model.
+
+## See also
+
+- `model explain rerank` — reranking via `/v1/rerank`
+- `model explain score` — raw cross-encoder scoring via `/v1/score`
+- `model explain models` — full model catalog
+"""
+
+_RERANK = """\
+# model explain rerank
+
+`POST /v1/rerank` — Jina / Cohere-compatible re-ranking served by the warm
+**Qwen3-Reranker-0.6B** fleet backend (same backend as `/v1/score` — vLLM
+`--runner pooling --convert classify`), routed by model name through the gateway.
+
+## Request
+
+```json
+{
+  "model": "Qwen/Qwen3-Reranker-0.6B",
+  "query": "What is the capital of France?",
+  "documents": ["Paris is the capital.", "Berlin is the capital.", "Rome is the capital."]
+}
+```
+
+`query` is a string; `documents` is a list of strings. The gateway routes to this
+backend by matching `"model": "Qwen/Qwen3-Reranker-0.6B"` — the catalog id and
+served name are the same.
+
+## Response
+
+Results are sorted **best-first** (highest relevance score first). The `index`
+refers to the position in the original `documents` list.
+
+```json
+{
+  "results": [
+    {"index": 0, "relevance_score": 0.91},
+    {"index": 2, "relevance_score": 0.18},
+    {"index": 1, "relevance_score": 0.07}
+  ]
+}
+```
+
+## Key facts
+
+- **Shape:** Jina / Cohere `/v1/rerank` — sorted by relevance, best-first.
+- **Backend:** `Qwen3-Reranker-0.6B` with `--runner pooling --convert classify`
+  (cross-encoder via the `Qwen3ForSequenceClassification` hf-override).
+- **Rerank + score share one backend** — `/v1/rerank` and `/v1/score` both route
+  to the same running container; `/v1/rerank` applies the Jina/Cohere sort + shape.
+- **Context:** 32K native, served at `--max-model-len 8192`.
+- **Warm fleet backend:** co-resident on the GB10; tiny KV footprint (0.6B, 32K window).
+- **Gateway port:** same port as chat — routed by `model` field.
+
+## See also
+
+- `model explain score` — raw pairwise scoring via `/v1/score`
+- `model explain embeddings` — dense embeddings via `/v1/embeddings`
+- `model explain gateway` — how routing works
+"""
+
+_SCORE = """\
+# model explain score
+
+`POST /v1/score` — OpenAI / vLLM cross-encoder scoring served by the warm
+**Qwen3-Reranker-0.6B** fleet backend (same backend as `/v1/rerank` — vLLM
+`--runner pooling --convert classify`), routed by model name through the gateway.
+
+## Request
+
+```json
+{
+  "model": "Qwen/Qwen3-Reranker-0.6B",
+  "text_1": "What is the capital of France?",
+  "text_2": ["Paris is the capital.", "Berlin is the capital."]
+}
+```
+
+`text_1` is the query string; `text_2` is a string or list of strings (the passages
+to score). The gateway routes to the backend by matching the `model` field.
+
+## Response
+
+Results are returned in input order (not sorted — use `/v1/rerank` for sorted output).
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"index": 0, "score": 0.91},
+    {"index": 1, "score": 0.07}
+  ]
+}
+```
+
+## Key facts
+
+- **Shape:** vLLM `/v1/score` — raw scores in input order (no sorting).
+- **Backend:** `Qwen3-Reranker-0.6B` with `--runner pooling --convert classify`
+  (cross-encoder via the `Qwen3ForSequenceClassification` hf-override).
+- **Rerank + score share one backend** — `/v1/score` and `/v1/rerank` both route
+  to the same running container; use `/v1/rerank` for Jina/Cohere sorted output.
+- **Context:** 32K native, served at `--max-model-len 8192`.
+- **Warm fleet backend:** co-resident on the GB10; tiny KV footprint (0.6B, 32K window).
+- **Gateway port:** same port as chat — routed by `model` field.
+
+## See also
+
+- `model explain rerank` — sorted re-ranking via `/v1/rerank`
+- `model explain embeddings` — dense embeddings via `/v1/embeddings`
+- `model explain gateway` — how routing works
+"""
+
 _TUNING = """\
 # model tuning — purpose + machine profiles
 
@@ -436,4 +622,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("explain",): _EXPLAIN,
     ("overview",): _OVERVIEW,
     ("doctor",): _DOCTOR,
+    ("embeddings",): _EMBEDDINGS,
+    ("embedding",): _EMBEDDINGS,
+    ("rerank",): _RERANK,
+    ("score",): _SCORE,
 }

@@ -87,6 +87,106 @@ services:
   # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
   # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
 
+  # --- Embedding + reranker gears (co-resident on the GB10) -----------------
+  # Co-residency budget: primary at util 0.6 (~75 GiB) + two 0.6B gears at
+  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) sum well
+  # under 1.0 on the 128 GB GB10. The gears are served at --max-model-len 8192 so
+  # KV cache stays tiny — these are short-context workloads (embed/rerank, not
+  # generation). No quantization, tool, reasoning, or speculative flags — they are
+  # not needed for the pooling runner and would interfere with --runner/--convert.
+
+  vllm-embed:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-embed
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+    expose:
+      - "8000"
+    command:
+      - vllm
+      - serve
+      - ${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - --served-model-name=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # This vLLM build (0.19.0+nv26.04) replaced the old --task with --runner +
+      # --convert: an embedding gear is --runner pooling --convert embed (load-tested
+      # 2026-06-19 on the GB10). --task embed is rejected ("unrecognized arguments").
+      - --runner=pooling
+      - --convert=embed
+      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
+      - --max-model-len=${EMBED_MAX_MODEL_LEN:-8192}
+      # util 0.06 (~7 GiB budget): 0.025 fails with "No available memory for the cache
+      # blocks" — vLLM's pooling runner still reserves a cache-block budget. Load-tested.
+      - --gpu-memory-utilization=${EMBED_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  vllm-rerank:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-rerank
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+    expose:
+      - "8000"
+    command:
+      - vllm
+      - serve
+      - ${RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      - --served-model-name=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # --runner pooling --convert classify is the score/rerank gear on this vLLM
+      # build (replaces --task score; vLLM auto-resolves --convert auto to classify
+      # for a *ForSequenceClassification arch, but pass it explicitly). Load-tested.
+      - --runner=pooling
+      - --convert=classify
+      - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -99,6 +199,8 @@ services:
     # and fails over per request), so it must not block on backend health.
     depends_on:
       - vllm-primary
+      - vllm-embed
+      - vllm-rerank
     environment:
       - GATEWAY_PORT=8000
       - PRIMARY_URL=http://vllm-primary:8000
@@ -106,6 +208,12 @@ services:
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
       # gateway wires a second backend only when these are present).
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
+      # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
+      - EMBED_URL=${EMBED_URL:-http://vllm-embed:8000}
+      - EMBED_SERVED_NAME=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - RERANK_URL=${RERANK_URL:-http://vllm-rerank:8000}
+      - RERANK_SERVED_NAME=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}

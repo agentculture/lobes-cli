@@ -1,0 +1,227 @@
+{
+  "slug": "model-gear-now-serves-an-embedding-gear-qwen3-embe-2",
+  "title": "model-gear now serves an embedding gear (Qwen3-Embedding-0.6B, 1024-dim) and a reranker gear (Qwen3-Reranker-0.6B) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark, and every consumer reaches all three through one OpenAI-compatible gateway routed by the request model field.",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-19T08:48:07Z",
+  "updated": "2026-06-19T08:48:52Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "model-gear now serves an embedding gear (Qwen3-Embedding-0.6B, 1024-dim) and a reranker gear (Qwen3-Reranker-0.6B) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark, and every consumer reaches all three through one OpenAI-compatible gateway routed by the request model field.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "All three backends (27B chat, Qwen3-Embedding-0.6B, Qwen3-Reranker-0.6B) are simultaneously healthy on the GB10, and one gateway port serves chat + /v1/embeddings + /v1/rerank, each routed by the request model field.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "jetson-ai-lab-cli (primary; filed #44, building its Discord+docs index) and eidetic-cli (storage+retrieval, second consumer); both call it as an ordinary OpenAI-compatible provider (base_url + api_key + model name), no model-gear-specific SDK.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "A consumer using only an OpenAI-style client (base_url + api_key + model name) can call all three gears with no model-gear-specific code.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "an indexing client POSTs /v1/embeddings {model,input:[...]} and gets 1024-dim vectors, and POSTs /v1/rerank {model,query,documents:[...]} and gets ranked scores, both served warm by model-gear through the same gateway port the chat primary already uses.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "curl /v1/embeddings {model,input:[hi]} returns data[0].embedding of length 1024, and curl /v1/rerank {model,query,documents} returns results sorted by relevance_score, on the same gateway port as chat.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "the gateway already proxies /v1/embeddings but nothing warm sits behind it; the catalog holds only generative chat gears; there is no reranker anywhere in model-gear.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "On main today, /v1/embeddings is forwarded by the gateway but yields no vector because no embed backend is in the routing table, and grep finds no rerank/score code.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "this unblocks the indexing half of jetson-ai-lab-cli and the retrieval half of eidetic: model-gear vectorizes, eidetic stores and retrieves, the two compose cleanly.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "jetson-ai-lab-cli and eidetic-cli can each point an embed/rerank client at this endpoint and index/retrieve without model-gear owning any storage.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "model-gear only SERVES the gears (embeddings + scores over HTTP); it does NOT store vectors, build or own an index, chunk text, or do retrieval (that is eidetic). No vector DB lands here.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "No vector store, chunker, or retrieval code is added to model-gear; the diff only adds serving (catalog + compose + gateway routing + docs + tests).",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "model overview --list shows the embedding + reranker gears; curl /v1/embeddings returns a 1024-len vector; curl /v1/rerank returns ranked scores; the 27B still answers chat with all three warm; per-model docs record measured dimension + throughput + co-residency; model explain embeddings/rerank/score document the call shapes.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "model overview --list shows both gears; the curl checks pass on the box; per-model docs contain measured numbers; model explain embeddings/rerank/score all resolve.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "decision",
+      "text": "Topology: embedding + reranker run as ADDITIONAL always-warm fleet backends (extra vllm services + gateway routing by model name), not via single-model swaps. model switch also gains embed/score (--task) support so a gear can be served solo for isolated load-testing.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "decision",
+      "text": "Models: Qwen3-Embedding-0.6B at its native 1024-dim, and Qwen3-Reranker-0.6B (smallest, leaves the most 27B headroom). Qwen3-Embedding-4B / Reranker-4B are documented upgrade paths, not warmed.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The catalog SupportedModel must express task (generate|embed|score), embedding dimension, and per-model hf-overrides / vLLM serve-extras, so embed and score gears are first-class catalog rows alongside chat gears, with the wheel-shipped catalog the single source of truth.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "SupportedModel carries task + dimension + hf_overrides; overview --list and /v1/models/supported show the embed+score gears with task+dim; tests assert catalog<->template<->doc consistency for the new fields.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The gateway must route embedding + score/rerank requests to the right backend by model name and list the warm embed+score backends in /v1/models; embed/score/rerank bodies all carry a model field so handle_post model-routing should cover them (verify, do not assume).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "with the fleet up, embeddings + chat are both answered warm via one gateway; any handle_post change is justified by a failing case; /v1/models lists the embed+score served names.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "model explain must document the embeddings, rerank, and score call shapes (request + response + dimension + served model names) so a consumer wires it from the docs alone; model overview --list and /v1/models/supported must surface the new gears.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "a consumer wires the integration using only model explain embeddings + rerank (request+response+dim+served names); documented served names equal the catalog ids.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Both gears are proven WARM on the DGX Spark before the PR lands: curl /v1/embeddings returns a 1024-len vector and curl /v1/rerank returns ranked scores while the 27B primary still answers chat (all three simultaneously healthy); per-model docs carry real measured numbers, not estimates.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the measured curl results (1024-len vector; ranked scores; 27B chat OK simultaneously) are captured from the actual DGX Spark deployment and pasted into the per-model docs.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "Not adding a vector database, not changing any consumer code, not building a generic multi-task autoscaler, not removing or demoting the 27B chat primary.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "Two 0.6B gears (~1.2GB each) co-fit easily alongside the 27B primary (~70GB at util 0.6) within the GB10 128GB unified memory; lowering the primary gpu-mem-util to make room is acceptable if measurement shows it is needed.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": []
+}
