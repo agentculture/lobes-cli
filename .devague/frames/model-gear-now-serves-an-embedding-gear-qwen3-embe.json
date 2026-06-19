@@ -1,0 +1,189 @@
+{
+  "slug": "model-gear-now-serves-an-embedding-gear-qwen3-embe",
+  "title": "model-gear now serves an embedding gear (Qwen3-Embedding-4B) and a reranker gear (Qwen3-Reranker) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark \u2014 every consumer reaches all three through one OpenAI-compatible gateway, routed by the request's model field.",
+  "schema_version": 1,
+  "status": "drafting",
+  "created": "2026-06-19T08:39:58Z",
+  "updated": "2026-06-19T08:41:38Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "model-gear now serves an embedding gear (Qwen3-Embedding-4B) and a reranker gear (Qwen3-Reranker) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark \u2014 every consumer reaches all three through one OpenAI-compatible gateway, routed by the request's model field.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "All three backends (27B chat, Qwen3-Embedding-4B, Qwen3-Reranker) are simultaneously healthy on the shared GB10, and one gateway port serves chat + /v1/embeddings + /v1/rerank, each routed by the request's model field.",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "jetson-ai-lab-cli (primary; filed #44, building its Discord+docs index) and eidetic-cli (storage+retrieval, second consumer); both call it as an ordinary OpenAI-compatible provider \u2014 base_url + api_key + model name, no model-gear-specific SDK.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "an indexing client POSTs /v1/embeddings {model,input:[...]} and gets vectors, and POSTs /v1/rerank {model,query,documents:[...]} and gets ranked scores \u2014 both served warm by model-gear through the same gateway port the chat primary already uses.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "the gateway already proxies /v1/embeddings but nothing warm sits behind it; the catalog holds only generative chat gears; there is no reranker anywhere in model-gear.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "this unblocks the indexing half of jetson-ai-lab-cli and eidetic's retrieval \u2014 model-gear vectorizes, eidetic stores and retrieves; the two compose cleanly.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "model-gear only SERVES the gears (embeddings + scores over HTTP); it does NOT store vectors, build/own an index, chunk text, or do retrieval \u2014 that is eidetic's half. No vector DB lands here.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "model overview --list shows the embedding + reranker gears (tagged load-tested/configured); curl /v1/embeddings returns a vector of the documented dimension; curl /v1/rerank returns ranked scores; per-model docs record dimension + throughput + co-residency; model explain embeddings/rerank/score document the call shapes.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "decision",
+      "text": "Topology: the embedding + reranker run as ADDITIONAL always-warm fleet backends (extra vllm services + gateway routing by model name), not via single-model swaps. model switch also gains embed/score (--task) support so an embed gear can be served solo for isolated load-testing and to satisfy the curl acceptance test.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "decision",
+      "text": "Models: Qwen3-Embedding-4B served at native 2560-dim (MRL-truncatable down to 32 via hf-overrides/dimensions); reranker is Qwen3-Reranker-0.6B (smallest \u2014 leaves the most 27B headroom), with Qwen3-Reranker-4B documented as an upgrade path.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "risk: Qwen3-Reranker-0.6B is a CausalLM needing the Qwen3ForSequenceClassification hf-override to use the efficient score API; if the override fails on the pinned nv26.04 image the reranker stays configured-not-load-tested (acceptable \u2014 issue #44's second priority).",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The catalog SupportedModel must express task (generate|embed|score), embedding dimension, and per-model hf-overrides / vLLM serve-extras, so embed and score gears are first-class catalog rows alongside chat gears (and the wheel-shipped catalog stays the single source of truth).",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "model overview --list and /v1/models/supported show the embed+score gears with their task + dimension; tests assert catalog<->compose-template<->per-model-doc consistency for the new task/dim/hf_overrides fields (mirroring the existing test_catalog invariants).",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The gateway must route embedding + score/rerank requests to the right backend by model name and list the warm embed+score backends in /v1/models; embed/score/rerank bodies all carry a model field, so handle_post's existing model-routing covers them \u2014 verify, do not assume.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "with the fleet up, curl /v1/embeddings {model:<embed>,input:[hi]} returns data[0].embedding of the documented length AND curl /v1/chat/completions still answers from the 27B \u2014 both warm, same gateway; any handle_post change is shown necessary by a failing case, not assumed.",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "model explain must document the embeddings, rerank, and score call shapes (request + response + dimension + served model names) so a consumer wires it from the docs alone; model overview --list and /v1/models/supported must surface the new gears.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "a consumer wires the integration using only 'model explain embeddings' + 'model explain rerank' (request+response+dimension+served names) with no other reference; the documented served names equal the catalog ids.",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "non_goal",
+      "text": "Not adding a vector database, not changing any consumer's code, not building a generic multi-task autoscaler, not removing or demoting the 27B chat primary.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "The embedder (~4B) + reranker (~0.6B) co-fit alongside the 27B primary (~70GB at util 0.6) within the GB10's 128GB unified memory; lowering the primary's gpu-mem-util to make room is acceptable headroom if measurement shows it is needed.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether Qwen3-Reranker loads under the Qwen3ForSequenceClassification hf-override on the pinned nv26.04 vLLM image (its score-converter may postdate that build); the reranker ships 'configured' until proven on the box. The embedding gear (the primary ask) does not depend on it.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    }
+  ]
+}

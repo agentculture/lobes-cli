@@ -1,0 +1,281 @@
+{
+  "slug": "model-gear-now-serves-an-embedding-gear-qwen3-embe-2",
+  "title": "model-gear now serves an embedding gear (Qwen3-Embedding-0.6B, 1024-dim) and a reranker gear (Qwen3-Reranker-0.6B) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark, and every consumer reaches all three through one OpenAI-compatible gateway routed by the request model field.",
+  "frame_slug": "model-gear-now-serves-an-embedding-gear-qwen3-embe-2",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-19T08:51:24Z",
+  "updated": "2026-06-19T08:59:02Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "model-gear now serves an embedding gear (Qwen3-Embedding-0.6B, 1024-dim) and a reranker gear (Qwen3-Reranker-0.6B) as always-warm fleet backends co-resident with the Qwen3.6-27B primary on the shared DGX Spark, and every consumer reaches all three through one OpenAI-compatible gateway routed by the request model field."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "All three backends (27B chat, Qwen3-Embedding-0.6B, Qwen3-Reranker-0.6B) are simultaneously healthy on the GB10, and one gateway port serves chat + /v1/embeddings + /v1/rerank, each routed by the request model field."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "jetson-ai-lab-cli (primary; filed #44, building its Discord+docs index) and eidetic-cli (storage+retrieval, second consumer); both call it as an ordinary OpenAI-compatible provider (base_url + api_key + model name), no model-gear-specific SDK."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A consumer using only an OpenAI-style client (base_url + api_key + model name) can call all three gears with no model-gear-specific code."
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "an indexing client POSTs /v1/embeddings {model,input:[...]} and gets 1024-dim vectors, and POSTs /v1/rerank {model,query,documents:[...]} and gets ranked scores, both served warm by model-gear through the same gateway port the chat primary already uses."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "curl /v1/embeddings {model,input:[hi]} returns data[0].embedding of length 1024, and curl /v1/rerank {model,query,documents} returns results sorted by relevance_score, on the same gateway port as chat."
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "the gateway already proxies /v1/embeddings but nothing warm sits behind it; the catalog holds only generative chat gears; there is no reranker anywhere in model-gear."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "On main today, /v1/embeddings is forwarded by the gateway but yields no vector because no embed backend is in the routing table, and grep finds no rerank/score code."
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "this unblocks the indexing half of jetson-ai-lab-cli and the retrieval half of eidetic: model-gear vectorizes, eidetic stores and retrieves, the two compose cleanly."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "jetson-ai-lab-cli and eidetic-cli can each point an embed/rerank client at this endpoint and index/retrieve without model-gear owning any storage."
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "model-gear only SERVES the gears (embeddings + scores over HTTP); it does NOT store vectors, build or own an index, chunk text, or do retrieval (that is eidetic). No vector DB lands here."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "No vector store, chunker, or retrieval code is added to model-gear; the diff only adds serving (catalog + compose + gateway routing + docs + tests)."
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "model overview --list shows the embedding + reranker gears; curl /v1/embeddings returns a 1024-len vector; curl /v1/rerank returns ranked scores; the 27B still answers chat with all three warm; per-model docs record measured dimension + throughput + co-residency; model explain embeddings/rerank/score document the call shapes."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "model overview --list shows both gears; the curl checks pass on the box; per-model docs contain measured numbers; model explain embeddings/rerank/score all resolve."
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The catalog SupportedModel must express task (generate|embed|score), embedding dimension, and per-model hf-overrides / vLLM serve-extras, so embed and score gears are first-class catalog rows alongside chat gears, with the wheel-shipped catalog the single source of truth."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "SupportedModel carries task + dimension + hf_overrides; overview --list and /v1/models/supported show the embed+score gears with task+dim; tests assert catalog<->template<->doc consistency for the new fields."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The gateway must route embedding + score/rerank requests to the right backend by model name and list the warm embed+score backends in /v1/models; embed/score/rerank bodies all carry a model field so handle_post model-routing should cover them (verify, do not assume)."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "with the fleet up, embeddings + chat are both answered warm via one gateway; any handle_post change is justified by a failing case; /v1/models lists the embed+score served names."
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "model explain must document the embeddings, rerank, and score call shapes (request + response + dimension + served model names) so a consumer wires it from the docs alone; model overview --list and /v1/models/supported must surface the new gears."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "a consumer wires the integration using only model explain embeddings + rerank (request+response+dim+served names); documented served names equal the catalog ids."
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Both gears are proven WARM on the DGX Spark before the PR lands: curl /v1/embeddings returns a 1024-len vector and curl /v1/rerank returns ranked scores while the 27B primary still answers chat (all three simultaneously healthy); per-model docs carry real measured numbers, not estimates."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the measured curl results (1024-len vector; ranked scores; 27B chat OK simultaneously) are captured from the actual DGX Spark deployment and pasted into the per-model docs."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Extend the catalog model: add task (generate|embed|score), dimension, and hf_overrides fields to SupportedModel; add Qwen/Qwen3-Embedding-0.6B (task=embed, dimension=1024) and Qwen/Qwen3-Reranker-0.6B (task=score) catalog entries.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "SupportedModel gains task (default 'generate'), dimension (int|None, default None), hf_overrides (str, default '') fields; the two 0.6B gears appear in SUPPORTED_MODELS with correct task/dimension/hf_overrides; every existing chat entry keeps task='generate' with dimension=None; as_dicts() includes the new fields; black/isort/flake8 clean. File: model_gear/catalog.py."
+      ],
+      "deps": [],
+      "covers": [
+        "c10"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Catalog-consistency tests for the new fields: a task=embed model must have a non-null dimension and a docs/ file; a task=score model must carry the Qwen3ForSequenceClassification hf_overrides; generate models keep dimension=None.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_catalog.py asserts: every embed model has dimension>0 and an existing docs/ file; every score model has non-empty hf_overrides; no generate model sets a dimension; uv run pytest tests/test_catalog.py passes. File: tests/test_catalog.py."
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h8"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Fleet compose: add vllm-embed (--task embed + MRL hf-overrides) and vllm-rerank (--task score + Qwen3ForSequenceClassification hf-overrides) services to the fleet template, and add their gateway env wiring; set GPU mem utils to sum < 1.0 alongside the 27B primary.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "templates/fleet/docker-compose.yml defines vllm-embed + vllm-rerank services (correct model, --task, --hf-overrides, expose:8000, healthcheck) and adds EMBED_URL/EMBED_SERVED_NAME + RERANK_URL/RERANK_SERVED_NAME to the gateway environment; env.example documents the new vars; the three GPU utils sum < 1.0; docker compose config parses. Files: templates/fleet/docker-compose.yml, templates/fleet/env.example.",
+        "embed + rerank services set a small --max-model-len (e.g. 8192) and small --gpu-memory-utilization so KV cache stays tiny and all three backends co-fit the GB10."
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "c3"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Gateway config: build_config in gateway/_config.py learns an embed backend (EMBED_URL/EMBED_SERVED_NAME) and a rerank backend (RERANK_URL/RERANK_SERVED_NAME), added to the RoutingTable only when their env is present, so resolve_model routes those served names to their backends.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "build_config appends an embed and/or rerank Backend when the env vars are set; RoutingTable.backends includes them; existing primary/fallback behavior is byte-for-byte unchanged when the new vars are absent; unit test passes with a dict env. File: model_gear/gateway/_config.py."
+      ],
+      "deps": [],
+      "covers": [
+        "c11"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Gateway routing verification + minimal fix: prove handle_post forwards POST /v1/embeddings, /v1/score, /v1/rerank to the backend named by the body's model field; document the before-state (no warm embed backend); add a server.py fix ONLY if a failing test proves one is needed; chat + audio routing unchanged.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/ post embed/score/rerank bodies (each carrying model) through handle_post and assert they route to the embed/rerank backend and rewrite model to the served name; a test documents that without an embed backend the request 502s/own-errors (before-state); /v1/models lists embed+score served names; chat & /v1/audio tests still pass; any server.py change has a test that fails without it. Files: tests/test_gateway_routing.py (+ gateway/server.py iff justified).",
+        "an embed/score request is NOT failed over to a chat backend (task-aware / owner-only failover), so a down embed backend gives a clear error rather than a confusing 400 from the 27B; chat failover unchanged."
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c4",
+        "h1",
+        "h4",
+        "h9"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "model switch --task: add a --task {generate,embed,score} flag that writes VLLM_TASK and surfaces the per-model hf-overrides as a compose-edit notice (same mechanism as the MoE/MTP serve-extras), so an embed or score gear can be served solo in the single-model deployment for isolated load-testing.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model switch <embed-model> --apply writes VLLM_TASK=embed and prints the hf-overrides notice; the single-model template threads  into the vllm command; switch dry-run shows the plan; existing chat switch output unchanged when task=generate; unit test covers the new flag. Files: model_gear/cli/_commands/switch.py, model_gear/templates/docker-compose.yml.",
+        "for --task embed|score, switch uses a small max-model-len + gpu-mem-util and skips the tool-calling probe (embed/score have no tool calling)."
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c7"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "Document the call shapes: add model explain embeddings / rerank / score entries (request+response+dimension+served names) and write per-model docs docs/qwen3-embedding-0.6b.md + docs/qwen3-reranker-0.6b.md (OpenAI-style usage, composition with eidetic, no model-gear SDK).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model explain embeddings, model explain rerank, model explain score each resolve to a body documenting the exact request/response + dimension + served model name; docs/qwen3-embedding-0.6b.md and docs/qwen3-reranker-0.6b.md exist with a placeholder for measured numbers; documented served names equal the catalog ids; markdownlint clean. Files: model_gear/explain/catalog.py, docs/qwen3-embedding-0.6b.md, docs/qwen3-reranker-0.6b.md.",
+        "the explain _GATEWAY entry drops the 'nothing warm behind /v1/embeddings' line and the _MODELS entry lists the two new per-model docs."
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "c5",
+        "c12",
+        "h2",
+        "h5",
+        "h10"
+      ]
+    },
+    {
+      "id": "t8",
+      "summary": "Boundary guard: a test asserting model-gear adds no vector store / index / chunker / retrieval \u2014 pyproject dependencies are unchanged (still no vector-DB deps) and no new module under model_gear/ implements storage/retrieval.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/ assert the diff adds no vector-DB dependency to pyproject.toml and no module named like store/index/retrieve/chunk under model_gear/; test passes. File: tests/test_boundary_serves_only.py."
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h6"
+      ]
+    },
+    {
+      "id": "t9",
+      "summary": "Load-test both gears WARM on the DGX Spark: bring up the fleet, curl /v1/embeddings (assert 1024-len vector) and /v1/rerank (assert sorted relevance_score) while /v1/chat/completions still answers from the 27B; paste the measured dimension + throughput + co-residency numbers into the per-model docs.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with the fleet up on the GB10: curl /v1/embeddings returns data[0].embedding of length 1024; curl /v1/rerank returns results sorted by relevance_score; /v1/chat/completions returns a 27B completion in the same window; the three containers are simultaneously healthy; docs/qwen3-embedding-0.6b.md + docs/qwen3-reranker-0.6b.md carry the real measured numbers (not placeholders). Files: docs/qwen3-embedding-0.6b.md, docs/qwen3-reranker-0.6b.md (+ optional smoke note)."
+      ],
+      "deps": [
+        "t3",
+        "t4",
+        "t5",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c7",
+        "c13",
+        "h1",
+        "h3",
+        "h7",
+        "h11"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "vLLM nv26.04 image (vllm:26.04-py3) is assumed to honor --task embed and --task score; if it does not, the serve flags change \u2014 verified empirically at the t9 load-test.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9"
+    }
+  ]
+}
