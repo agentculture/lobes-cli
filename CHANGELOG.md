@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-06-20
+
+### Added
+
+- **`model overview --live` — a live fleet dashboard.** `overview` was a static
+  description; `--live` now probes the running deployment and reports the five
+  "what is it doing right now" views: **online** (per-backend health), **offered**
+  (served + candidate models, task families, the endpoint list), **busy**
+  (in-flight / queued requests), **usage** (cumulative prompt/generation tokens and
+  finished requests by reason), and **endpoints**. It is read-only and HTTP-only —
+  it works against a local deployment or a `model tunnel` hostname alike, and
+  degrades gracefully when a backend or its metrics is unreachable.
+- **Gateway `GET /status`** — a model-gear-native JSON aggregate. The fleet's
+  backends are internal-only, so the gateway fans out to each one's `/health` +
+  `/metrics` and returns `{object: "model-gear.fleet_status", default_model,
+  busy: {running, waiting}, backends: [...], endpoints: [...]}`. This is the source
+  `model overview --live` reads in the fleet (a bare single-model server is read
+  directly from its `/metrics` + `/health`).
+- **`model_gear._metrics`** — a small stdlib-only helper that parses vLLM's
+  Prometheus `/metrics` (running/waiting, prompt/generation tokens,
+  `request_success_total` by finish reason, KV-cache usage) and best-effort HTTP
+  probes that never raise.
+
+### Changed
+
+### Fixed
+
 ## [0.23.0] - 2026-06-20
 
 ### Added
