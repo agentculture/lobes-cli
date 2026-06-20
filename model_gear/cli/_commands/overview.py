@@ -29,6 +29,7 @@ _VERBS = [
     "tunnel — expose the local API at a public hostname via a Cloudflare Tunnel "
     "(--stop; dry-run; --apply)",
     "status — current model, container state, /health",
+    "logs — read-only: list/tail the durable vLLM logs that survive restart (issue #50)",
     "assess — correctness probes against the served model",
     "benchmark — decode throughput + prefill latency",
     "overview — this snapshot (--current / --list to filter)",

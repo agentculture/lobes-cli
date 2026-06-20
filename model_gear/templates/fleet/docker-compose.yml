@@ -38,11 +38,19 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     # No host port — reachable only as http://vllm-primary:8000 on the compose net.
     expose:
       - "8000"
+    # mg-logwrap tees output to /logs/model-gear, then `exec`s the command (vLLM stays
+    # the signal target). The command list below is unchanged.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
     command:
       - vllm
       - serve
@@ -116,10 +124,16 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     expose:
       - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
     command:
       - vllm
       - serve
@@ -163,10 +177,16 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     expose:
       - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
     command:
       - vllm
       - serve

@@ -32,6 +32,14 @@ def test_init_apply_writes_both_files(tmp_path, capsys) -> None:
     assert "--enable-auto-tool-choice" in compose
     assert "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}" in compose
     assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in (target / ".env").read_text()
+    # Durable logs (issue #50): the wrapper is scaffolded, the log dir is pre-created
+    # (user-owned), and the vllm service runs the wrapper as its entrypoint + tees to
+    # a host-mounted log dir.
+    assert (target / "mg-logwrap.sh").is_file()
+    assert (target / "logs").is_dir()
+    assert 'entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]' in compose
+    assert "MG_LOG_NAME=vllm" in compose
+    assert "/logs/model-gear" in compose
 
 
 def test_init_apply_json(tmp_path, capsys) -> None:
@@ -40,7 +48,12 @@ def test_init_apply_json(tmp_path, capsys) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scaffolded"] == str(target)
-    assert set(payload["files"]) == {"docker-compose.yml", ".env", "cf-tunnel.env.example"}
+    assert set(payload["files"]) == {
+        "docker-compose.yml",
+        ".env",
+        "mg-logwrap.sh",
+        "cf-tunnel.env.example",
+    }
 
 
 def test_init_refuses_overwrite_without_force(tmp_path) -> None:
@@ -98,6 +111,13 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     # may mention vllm-fallback in "how to add one" comments, so check the
     # service's container_name, which only appears when the service is defined).
     assert "model-gear-vllm-fallback" not in compose
+    # Durable logs (issue #50): wrapper scaffolded + each vLLM gear runs it + names
+    # its own per-boot log file (primary/embed/rerank).
+    assert (target / "mg-logwrap.sh").is_file()
+    assert (target / "logs").is_dir()
+    assert 'entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]' in compose
+    for svc in ("primary", "embed", "rerank"):
+        assert f"MG_LOG_NAME={svc}" in compose
     env = (target / ".env").read_text()
     assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
     assert "FALLBACK_MODEL=" not in env
@@ -117,7 +137,13 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["fleet"] is True
     names = {f["name"] for f in payload["files"]}
-    assert names == {"docker-compose.yml", ".env", "Dockerfile.gateway", "cf-tunnel.env.example"}
+    assert names == {
+        "docker-compose.yml",
+        ".env",
+        "Dockerfile.gateway",
+        "mg-logwrap.sh",
+        "cf-tunnel.env.example",
+    }
     assert not target.exists()
 
 

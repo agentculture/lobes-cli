@@ -69,6 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from model_gear.cli._commands import fleet as _fleet_cmd
     from model_gear.cli._commands import init as _init_cmd
     from model_gear.cli._commands import learn as _learn_cmd
+    from model_gear.cli._commands import logs as _logs_cmd
     from model_gear.cli._commands import overview as _overview_cmd
     from model_gear.cli._commands import serve as _serve_cmd
     from model_gear.cli._commands import status as _status_cmd
@@ -99,6 +100,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _benchmark_cmd.register(sub)
     _init_cmd.register(sub)
     _fleet_cmd.register(sub)
+    _logs_cmd.register(sub)
     _tunnel_cmd.register(sub)
 
     # Agent-first / introspection verbs (sibling rubric).

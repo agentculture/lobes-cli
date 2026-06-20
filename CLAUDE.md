@@ -67,13 +67,13 @@ model_gear/                 # Python package (pip install model-gear)
     ├── _runtime_ops.py     # shared glue (deployment dir, port, compose_check)
     └── _commands/          # one module per verb: register(sub) + handler
         ├── switch.py serve.py stop.py status.py assess.py benchmark.py init.py fleet.py
-        └── tunnel.py whoami.py learn.py explain.py overview.py doctor.py cli.py
+        └── logs.py tunnel.py whoami.py learn.py explain.py overview.py doctor.py cli.py
 ```
 
 **Mutation safety:** write verbs (`switch`, `serve`, `stop`, `init`, `tunnel`) default to
 **dry-run**; require `--apply` to commit. Agents call CLIs in loops, so
 safe-by-default is mandatory. The read-only verbs (`status`, `assess`,
-`benchmark`, `overview`, `whoami`, `explain`, `doctor`) never change the world.
+`benchmark`, `logs`, `overview`, `whoami`, `explain`, `doctor`) never change the world.
 
 ## Build / test / publish
 

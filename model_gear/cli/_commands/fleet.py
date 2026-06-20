@@ -24,7 +24,7 @@ import argparse
 from model_gear import assess
 from model_gear.cli import _runtime_ops
 from model_gear.cli._output import emit_diagnostic, emit_result
-from model_gear.runtime import _compose, _health
+from model_gear.runtime import _compose, _env, _health
 
 _UNSET = "(unset)"
 _JSON_HELP = "Emit structured JSON."
@@ -58,6 +58,8 @@ def cmd_fleet_up(args: argparse.Namespace) -> int:
         emit_result(payload if json_mode else msg, json_mode=json_mode)
     else:
         emit_diagnostic(f">> building + starting the fleet in {deploy_dir}")
+        # Ensure the durable-log dir exists (user-owned) before compose bind-mounts it.
+        _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
         _runtime_ops.compose_check(
             _compose.compose_up_build(deploy_dir), "docker compose up -d --build"
         )

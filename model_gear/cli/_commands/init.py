@@ -55,6 +55,10 @@ def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> No
 
 def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: bool) -> None:
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
+    # Create the durable-log dir now (as the invoking user) so the compose bind-mount
+    # source exists before `model serve` / `fleet up` — otherwise Docker makes it
+    # root-owned. The mg-logwrap entrypoint writes per-boot logs here (issue #50).
+    _compose.ensure_log_dir(target)
     if fleet:
         # Pin the gateway image to the model-gear release that scaffolded this.
         _env.set_env(target / _compose.ENV_FILE, "MODEL_GEAR_VERSION", __version__)
