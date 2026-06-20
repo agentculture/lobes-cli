@@ -94,53 +94,54 @@ def _human_size(n: int) -> str:
     return f"{int(size)}G"
 
 
-def cmd_logs(args: argparse.Namespace) -> int:
-    json_mode = bool(getattr(args, "json", False))
-    log_dir = _resolve_log_dir(args)
-    service = getattr(args, "service", None)
-    entries = collect_logs(log_dir, service)
+def _emit_tail(args, log_dir: Path, service: str, entries: list[dict], json_mode: bool) -> None:
+    """Tail mode: show the latest boot for ``service`` (or the crashed one with --previous)."""
+    if not entries:
+        msg = f"no logs for '{service}' in {log_dir}"
+        emit_result(
+            {"log_dir": str(log_dir), "service": service, "files": []} if json_mode else msg,
+            json_mode=json_mode,
+        )
+        return
+    # --previous tails the boot *before* the latest — i.e. the boot that crashed,
+    # the one to investigate after a restart created a fresh (healthy) boot file.
+    want_prev = bool(getattr(args, "previous", False))
+    idx = 1 if want_prev and len(entries) > 1 else 0
+    chosen = entries[idx]
+    # Flag the case where --previous was asked but there is no earlier boot, so the
+    # reader isn't misled into thinking the only boot is the crashed one.
+    only_one = want_prev and len(entries) == 1
+    n = int(getattr(args, "lines", 40))
+    body = tail_lines(Path(chosen["path"]), n)
+    if json_mode:
+        emit_result(
+            {
+                "log_dir": str(log_dir),
+                "service": service,
+                "file": chosen["path"],
+                "lines": n,
+                "only_boot": only_one,
+                "tail": body,
+            },
+            json_mode=True,
+        )
+    else:
+        note = " (only 1 boot — showing latest)" if only_one else ""
+        emit_result(f">> {chosen['path']} (last {n} lines){note}\n{body}", json_mode=False)
 
-    # Tail mode: a service was named (and not --list) → show the latest boot's tail.
-    if service and not getattr(args, "list", False):
-        if not entries:
-            msg = f"no logs for '{service}' in {log_dir}"
-            emit_result(
-                {"log_dir": str(log_dir), "service": service, "files": []} if json_mode else msg,
-                json_mode=json_mode,
-            )
-            return 0
-        # --previous tails the boot *before* the latest — i.e. the boot that crashed,
-        # the one to investigate after a restart created a fresh (healthy) boot file.
-        idx = 1 if getattr(args, "previous", False) and len(entries) > 1 else 0
-        latest = entries[idx]
-        n = int(getattr(args, "lines", 40))
-        body = tail_lines(Path(latest["path"]), n)
-        if json_mode:
-            emit_result(
-                {
-                    "log_dir": str(log_dir),
-                    "service": service,
-                    "file": latest["path"],
-                    "lines": n,
-                    "tail": body,
-                },
-                json_mode=True,
-            )
-        else:
-            emit_result(f">> {latest['path']} (last {n} lines)\n{body}", json_mode=False)
-        return 0
 
-    # Listing mode (default, or --list).
+def _emit_listing(log_dir: Path, entries: list[dict], json_mode: bool) -> None:
+    """Listing mode (default / --list): per-boot files, newest first, latest flagged."""
     if json_mode:
         emit_result({"log_dir": str(log_dir), "files": entries}, json_mode=True)
-        return 0
+        return
     if not entries:
         emit_result(
             f"no durable logs yet in {log_dir}\n"
             ">> they appear once a vLLM service starts (model serve / fleet up).",
             json_mode=False,
         )
-        return 0
+        return
     lines = [f"log dir: {log_dir}", "boots (newest first):"]
     seen_services: set[str] = set()
     for e in entries:
@@ -149,6 +150,17 @@ def cmd_logs(args: argparse.Namespace) -> int:
         lines.append(f"  {e['name']:<34} {_human_size(e['size']):>6}{latest}")
     lines.append(">> tail one with: model logs <service>  (e.g. model logs vllm)")
     emit_result("\n".join(lines), json_mode=False)
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    json_mode = bool(getattr(args, "json", False))
+    log_dir = _resolve_log_dir(args)
+    service = getattr(args, "service", None)
+    entries = collect_logs(log_dir, service)
+    if service and not getattr(args, "list", False):
+        _emit_tail(args, log_dir, service, entries, json_mode)
+    else:
+        _emit_listing(log_dir, entries, json_mode)
     return 0
 
 

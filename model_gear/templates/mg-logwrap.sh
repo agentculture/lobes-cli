@@ -33,10 +33,14 @@ log="${dir}/${name}-${ts}.log"
 if mkdir -p "$dir" 2>/dev/null && : 2>/dev/null >>"$log"; then
     ln -sf "${name}-${ts}.log" "${dir}/${name}-latest.log" 2>/dev/null || true
     printf '=== model-gear %s :: boot %s :: %s ===\n' "$name" "$ts" "$*" >>"$log"
-    # Tee fd1+fd2 to the durable file *and* pass through to the original stdout, so
-    # `docker logs` keeps working too; then exec so "$@" becomes the signal target.
-    # The tee child gets EOF when the server exits and flushes its buffer.
+    # exec with redirections only (no command): this does NOT replace the shell — it
+    # rewires THIS shell's fd1+fd2 to a tee that writes the durable file *and* passes
+    # output through to the original stdout, so `docker logs` keeps working too. The
+    # tee child gets EOF when the server exits and flushes its buffer.
     exec > >(tee -a "$log") 2>&1
 fi
 
+# exec the real command: this DOES replace the shell, so the server (not bash) is
+# the container's main process — it receives SIGTERM directly (graceful shutdown)
+# and its exit code becomes the container's (so `restart:` behaves as before).
 exec "$@"

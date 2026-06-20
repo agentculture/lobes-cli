@@ -59,14 +59,14 @@ CF_TUNNEL_EXAMPLE = "cf-tunnel.env.example"
 SINGLE_TEMPLATES = {
     "docker-compose.yml": COMPOSE_FILE,
     "env.example": ENV_FILE,
-    "mg-logwrap.sh": LOG_WRAPPER,
+    LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
 FLEET_TEMPLATES = {
     "fleet/docker-compose.yml": COMPOSE_FILE,
     "fleet/env.example": ENV_FILE,
     "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
-    "mg-logwrap.sh": LOG_WRAPPER,
+    LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
 # The --audio extras layered on FLEET_TEMPLATES: the compose override, the two

@@ -49,7 +49,10 @@ services:
       # `Authorization: Bearer $CULTURE_VLLM_API_KEY`. REQUIRED before exposing the
       # API publicly (e.g. `model tunnel`). See env.example + README "Expose the API".
       - VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
-      # Names this service's durable log file (mg-logwrap → /logs/model-gear/vllm-<boot>.log).
+      # mg-logwrap writes per-boot logs to $MG_LOG_DIR/$MG_LOG_NAME-<boot>.log.
+      # MG_LOG_DIR is the in-container mount point (set explicitly so it can't drift
+      # from the volume below); MG_LOG_NAME namespaces this service's file.
+      - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=vllm
     volumes:
       # Persist downloaded weights across restarts. HF_CACHE overrides the host

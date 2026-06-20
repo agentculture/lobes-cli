@@ -128,6 +128,16 @@ def test_logs_previous_shows_crash_boot(tmp_path, capsys) -> None:
     assert "EngineCore boom" in out
 
 
+def test_logs_previous_single_boot_notes(tmp_path, capsys) -> None:
+    # --previous with no earlier boot shows the latest, but says so (review feedback).
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    _boot(target / "logs", "vllm-20260620T060000Z.log", 1000.0, body="only boot")
+    capsys.readouterr()
+    assert main(["logs", "vllm", "--previous", "--compose-dir", str(target)]) == 0
+    assert "only 1 boot" in capsys.readouterr().out
+
+
 def test_logs_empty_dir_friendly(tmp_path, capsys) -> None:
     target = tmp_path / "deploy"
     assert main(["init", str(target), "--apply"]) == 0
@@ -156,3 +166,13 @@ def test_logwrap_template_shipped_and_safe() -> None:
     # In both template sets (single + fleet).
     assert "mg-logwrap.sh" in _compose.SINGLE_TEMPLATES
     assert "mg-logwrap.sh" in _compose.FLEET_TEMPLATES
+
+
+def test_compose_log_dir_does_not_drift_from_python() -> None:
+    # Guard: the compose host-dir default and the in-container path must stay in sync
+    # with the Python helpers that read them (review feedback).
+    from importlib.resources import files
+
+    compose = (files("model_gear.templates") / "docker-compose.yml").read_text()
+    assert f"${{MODEL_GEAR_LOG_DIR:-./{_compose.LOG_DIRNAME}}}:/logs/model-gear" in compose
+    assert "MG_LOG_DIR=/logs/model-gear" in compose
