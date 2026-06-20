@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-06-20
+
+### Added
+
+- **Durable vLLM logs that survive restart/recreate (#50).** When a vLLM
+  container restarted, its `docker logs` — and any EngineCore crash trace — were
+  lost, which blocked root-causing #50 for lack of data. `model init` now
+  scaffolds `mg-logwrap.sh`, bind-mounted as each vLLM service's entrypoint: it
+  tees stdout+stderr to a per-boot file `<service>-<boot>.log` under a
+  host-mounted log dir (`${MODEL_GEAR_LOG_DIR:-<deploy>/logs}` → `/logs/model-gear`),
+  then `exec`s the real command so vLLM stays the signal target (graceful
+  shutdown) and the exit code (and `restart:` policy) are unchanged. Teeing at the
+  process-I/O level captures **both** Python tracebacks and native CUDA/C++ aborts;
+  if logging can't be set up it falls back to a plain `exec` and never blocks
+  serving. The crash boot is preserved as its own file. Wired into the single-model
+  and fleet (`primary`/`embed`/`rerank`) compose templates. See
+  `docs/durable-logs.md`.
+- **`model logs`** — new read-only verb to list/tail the durable logs, reading the
+  host files directly so it works even after the crashed container is gone:
+  `model logs` (list boots), `model logs <service>` (tail latest), and
+  `model logs <service> --previous` (tail the boot that crashed, after a restart).
+
+### Changed
+
+- `model init` / `model serve` / `model fleet up` pre-create the host log dir
+  (user-owned) before compose bind-mounts it, so logs are never root-owned.
+
+### Fixed
+
 ## [0.22.1] - 2026-06-19
 
 ### Fixed

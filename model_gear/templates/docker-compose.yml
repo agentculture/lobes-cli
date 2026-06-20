@@ -49,13 +49,24 @@ services:
       # `Authorization: Bearer $CULTURE_VLLM_API_KEY`. REQUIRED before exposing the
       # API publicly (e.g. `model tunnel`). See env.example + README "Expose the API".
       - VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
+      # Names this service's durable log file (mg-logwrap → /logs/model-gear/vllm-<boot>.log).
+      - MG_LOG_NAME=vllm
     volumes:
       # Persist downloaded weights across restarts. HF_CACHE overrides the host
       # path; otherwise ~/.cache/huggingface, with /root as the fallback if HOME
       # is unset (so the mount never collapses to /.cache/huggingface).
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs: tee stdout+stderr to a host file that survives restart/recreate,
+      # so an EngineCore crash trace is never lost again (issue #50). MODEL_GEAR_LOG_DIR
+      # overrides the host dir; default ./logs next to this compose file. Read it with
+      # `model logs` (or straight from the host dir), even after the container is gone.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     ports:
       - "${VLLM_PORT:-8000}:8000"
+    # mg-logwrap tees this service's output to /logs/model-gear, then `exec`s the
+    # command below so vLLM stays the signal target (graceful SIGTERM). See mg-logwrap.sh.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
     command:
       - vllm
       - serve

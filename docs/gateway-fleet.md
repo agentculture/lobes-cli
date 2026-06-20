@@ -52,6 +52,11 @@ The backends are reachable only on the compose network (`http://vllm-primary:800
 gateway needs no Docker socket access — compose owns the lifecycle; the gateway
 only routes.
 
+Each vLLM gear runs through `mg-logwrap` so its output (and any crash trace)
+persists to per-boot files under the host log dir and **survives restart/recreate** —
+read them with `model logs {primary,embed,rerank}` even after a container is gone.
+See [docs/durable-logs.md](durable-logs.md) (issue #50).
+
 ### Adding a fallback
 
 The gateway adds a second backend **only** when `FALLBACK_URL` or

@@ -20,6 +20,15 @@ COMPOSE_FILE = "docker-compose.yml"
 ENV_FILE = ".env"
 DOCKERFILE_GATEWAY = "Dockerfile.gateway"
 
+# Durable logs (issue #50). `mg-logwrap.sh` is scaffolded next to docker-compose.yml
+# and bind-mounted into each vLLM service as the entrypoint; it tees stdout+stderr to
+# a per-boot file under the host log dir so a crash trace survives restart/recreate.
+# Host dir: $MODEL_GEAR_LOG_DIR (in .env) or <deploy>/logs (matches the compose default
+# `${MODEL_GEAR_LOG_DIR:-./logs}`); in-container it mounts at /logs/model-gear.
+LOG_WRAPPER = "mg-logwrap.sh"
+LOG_DIRNAME = "logs"
+LOG_DIR_ENV = "MODEL_GEAR_LOG_DIR"
+
 # Fleet container names (model init --fleet / model fleet ...): the always-warm
 # Qwen generate primary, the co-resident embedding + reranker gears, and the
 # stdlib gateway that fronts them on one OpenAI port. All four are in the default
@@ -50,12 +59,14 @@ CF_TUNNEL_EXAMPLE = "cf-tunnel.env.example"
 SINGLE_TEMPLATES = {
     "docker-compose.yml": COMPOSE_FILE,
     "env.example": ENV_FILE,
+    "mg-logwrap.sh": LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
 FLEET_TEMPLATES = {
     "fleet/docker-compose.yml": COMPOSE_FILE,
     "fleet/env.example": ENV_FILE,
     "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
+    "mg-logwrap.sh": LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
 # The --audio extras layered on FLEET_TEMPLATES: the compose override, the two
@@ -80,6 +91,37 @@ _TEMPLATES = SINGLE_TEMPLATES
 def default_deployment_dir() -> Path:
     """The global deployment home: ``~/.model-gear``."""
     return Path.home() / ".model-gear"
+
+
+def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
+    """Host directory holding the per-boot vLLM logs that ``mg-logwrap`` writes.
+
+    Mirrors the compose default ``${MODEL_GEAR_LOG_DIR:-./logs}``: an absolute
+    ``configured`` path (``MODEL_GEAR_LOG_DIR`` from ``.env``) wins; a relative one
+    resolves against the deployment dir; unset falls back to ``<deploy>/logs``. So
+    the CLI reads logs from exactly where compose mounts them.
+    """
+    base = Path(deploy_dir).expanduser()
+    if configured:
+        p = Path(configured).expanduser()
+        return p if p.is_absolute() else (base / p)
+    return base / LOG_DIRNAME
+
+
+def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
+    """Create the durable-log dir before ``docker compose up``.
+
+    The compose bind-mounts this host dir into each vLLM container; if it doesn't
+    exist when compose runs, Docker creates it **root-owned**. Creating it here (as
+    the invoking user) keeps the logs user-readable. Best-effort — returns the dir
+    even if mkdir fails (the wrapper falls back to plain exec, never blocking serve).
+    """
+    d = durable_log_dir(deploy_dir, configured)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
 
 
 def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
