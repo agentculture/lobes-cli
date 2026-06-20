@@ -199,14 +199,15 @@ def cmd_overview(args: argparse.Namespace) -> int:
         # Live dashboard: probe the running deployment (gateway /status or a single
         # vLLM /metrics) for online/offered/busy/usage/endpoints. HTTP-only.
         port, _ = _runtime_ops.resolve_port_soft(args)
+        subject = "model-gear (live)"
         sections = _live.live_sections(port, _served_name(args))
-        emit_overview("model-gear (live)", sections, json_mode=json_mode)
-        return 0
-    sections = tool_sections(
-        current=bool(getattr(args, "current", False)),
-        listing=bool(getattr(args, "list", False)),
-    )
-    emit_overview("model-gear", sections, json_mode=json_mode)
+    else:
+        subject = "model-gear"
+        sections = tool_sections(
+            current=bool(getattr(args, "current", False)),
+            listing=bool(getattr(args, "list", False)),
+        )
+    emit_overview(subject, sections, json_mode=json_mode)
     return 0
 
 

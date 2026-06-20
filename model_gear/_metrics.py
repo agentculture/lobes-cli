@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import math
-import urllib.error
 import urllib.request
 
 # Cap a single GET body so a misbehaving backend can't stress memory/latency. A
@@ -21,12 +20,15 @@ _MAX_BODY_BYTES = 5 * 1024 * 1024
 # The handful of vLLM series the live view reports. "busy" = running/waiting now;
 # "usage" = cumulative tokens + finished requests by reason. Summed across the
 # engine/model labels vLLM attaches (a single backend may expose >1 engine).
-_RUNNING = "vllm:num_requests_running"
-_WAITING = "vllm:num_requests_waiting"
 _KV = "vllm:gpu_cache_usage_perc"
-_PROMPT_TOK = "vllm:prompt_tokens_total"
-_GEN_TOK = "vllm:generation_tokens_total"
 _SUCCESS = "vllm:request_success_total"
+# Series that are simply summed → the live-view field they accumulate into.
+_SUM_FIELDS = {
+    "vllm:num_requests_running": "running",
+    "vllm:num_requests_waiting": "waiting",
+    "vllm:prompt_tokens_total": "prompt_tokens",
+    "vllm:generation_tokens_total": "generation_tokens",
+}
 
 
 def _label(label_block: str, key: str) -> str | None:
@@ -40,16 +42,12 @@ def _label(label_block: str, key: str) -> str | None:
     return label_block[start:end] if end > start else None
 
 
-def parse_metrics(text: str) -> dict:
-    """Reduce a vLLM ``/metrics`` exposition to the live-view numbers.
+def _iter_samples(text: str):
+    """Yield ``(name, labels, value)`` for each finite metric sample line.
 
-    Returns ints for counts/tokens and a ``by_finish_reason`` map; ``kv_cache_usage``
-    (0..1) is included only when the gauge is present. Unknown/malformed lines are
-    skipped, so a partial scrape still yields what it can.
+    Skips comments, blanks, malformed lines, and non-finite values (NaN/inf would
+    later make ``int()`` raise — the parser is best-effort).
     """
-    running = waiting = prompt_tok = gen_tok = 0.0
-    kv: float | None = None
-    by_reason: dict[str, float] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -60,28 +58,37 @@ def parse_metrics(text: str) -> dict:
         except ValueError:
             continue
         if not math.isfinite(val):
-            continue  # NaN/inf would later make int() raise — skip (best-effort contract)
+            continue
         brace = left.find("{")
         name = left[:brace] if brace >= 0 else left
         labels = left[brace:] if brace >= 0 else ""
-        if name == _RUNNING:
-            running += val
-        elif name == _WAITING:
-            waiting += val
+        yield name, labels, val
+
+
+def parse_metrics(text: str) -> dict:
+    """Reduce a vLLM ``/metrics`` exposition to the live-view numbers.
+
+    Returns ints for counts/tokens and a ``by_finish_reason`` map; ``kv_cache_usage``
+    (0..1) is included only when the gauge is present. Unknown/malformed lines are
+    skipped, so a partial scrape still yields what it can.
+    """
+    sums = dict.fromkeys(_SUM_FIELDS.values(), 0.0)
+    kv: float | None = None
+    by_reason: dict[str, float] = {}
+    for name, labels, val in _iter_samples(text):
+        field = _SUM_FIELDS.get(name)
+        if field is not None:
+            sums[field] += val
         elif name == _KV:
             kv = val if kv is None else max(kv, val)
-        elif name == _PROMPT_TOK:
-            prompt_tok += val
-        elif name == _GEN_TOK:
-            gen_tok += val
         elif name == _SUCCESS:
             reason = _label(labels, "finished_reason") or "?"
             by_reason[reason] = by_reason.get(reason, 0.0) + val
     out = {
-        "running": int(running),
-        "waiting": int(waiting),
-        "prompt_tokens": int(prompt_tok),
-        "generation_tokens": int(gen_tok),
+        "running": int(sums["running"]),
+        "waiting": int(sums["waiting"]),
+        "prompt_tokens": int(sums["prompt_tokens"]),
+        "generation_tokens": int(sums["generation_tokens"]),
         "requests_succeeded": int(sum(by_reason.values())),
         "by_finish_reason": {k: int(v) for k, v in by_reason.items() if v},
     }
@@ -109,7 +116,7 @@ def http_get_text(
             if len(data) > max_bytes:
                 return None  # oversized → best-effort fail rather than buffer it whole
             return data.decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError, ValueError):
+    except (OSError, ValueError):  # URLError is an OSError subclass — covered
         return None
 
 
