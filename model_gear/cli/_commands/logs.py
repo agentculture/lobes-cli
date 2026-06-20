@@ -37,7 +37,10 @@ def collect_logs(log_dir: Path, service: str | None = None) -> list[dict]:
         return []
     out: list[dict] = []
     for p in log_dir.glob("*.log"):
-        if p.name.endswith(_LATEST_SUFFIX) or not p.is_file():
+        # Skip symlinks (the <service>-latest.log pointer AND any planted symlink):
+        # never follow a symlink out of the log dir to a file like /etc/shadow —
+        # mg-logwrap only ever writes regular per-boot files (security, Qodo review).
+        if p.is_symlink() or p.name.endswith(_LATEST_SUFFIX) or not p.is_file():
             continue
         svc = p.name.split("-", 1)[0]
         if service and svc != service:
@@ -65,6 +68,10 @@ def tail_lines(path: Path, n: int, max_bytes: int = 262144) -> str:
     vLLM logs every few seconds, so a boot file can be large; read only the final
     ``max_bytes`` and return the last ``n`` lines of that window.
     """
+    # Defense in depth: refuse to read through a symlink even if one reaches here
+    # (collect_logs already filters them out of the selection).
+    if path.is_symlink():
+        return f"(refusing to read a symlink: {path})"
     try:
         size = path.stat().st_size
         with path.open("rb") as fh:

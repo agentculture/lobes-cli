@@ -61,6 +61,24 @@ def test_collect_logs_newest_first_and_skips_latest_symlink(tmp_path) -> None:
     assert "vllm-latest.log" not in names
 
 
+def test_collect_logs_skips_symlinks(tmp_path) -> None:
+    # Security: a planted symlink named like a boot log must not be followed/listed.
+    d = tmp_path / "logs"
+    real = _boot(d, "vllm-20260620T060000Z.log", 1000.0)
+    (d / "vllm-evil.log").symlink_to(real)  # could point anywhere (e.g. /etc/shadow)
+    names = [e["name"] for e in logs_cmd.collect_logs(d)]
+    assert names == ["vllm-20260620T060000Z.log"]
+    assert "vllm-evil.log" not in names
+
+
+def test_tail_lines_refuses_symlink(tmp_path) -> None:
+    real = tmp_path / "real.log"
+    real.write_text("secret", encoding="utf-8")
+    link = tmp_path / "link.log"
+    link.symlink_to(real)
+    assert "refusing to read a symlink" in logs_cmd.tail_lines(link, 10)
+
+
 def test_collect_logs_filters_by_service(tmp_path) -> None:
     d = tmp_path / "logs"
     _boot(d, "vllm-20260620T060000Z.log", 1000.0)
