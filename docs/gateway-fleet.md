@@ -89,9 +89,16 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   `/v1/embeddings` (the embedding gear), `/v1/rerank` + `/v1/score` (the reranker
   gear), `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
   `/v1/models/supported` (the full supported-model catalog — every gear you can
-  change to, each flagged `loaded` / `default`), `/health` (gateway liveness).
+  change to, each flagged `loaded` / `default`), `/health` (gateway liveness), and
+  `/status` (the live fleet aggregate — see below).
   See [Supported catalog vs. warm backends](#supported-catalog-vs-warm-backends)
   for what `/v1/models` and `/v1/models/supported` each mean.
+- **`GET /status`** — a model-gear-native (non-OpenAI) JSON aggregate the gateway
+  fans out to each backend's `/health` + `/metrics` and returns as
+  `{object: "model-gear.fleet_status", default_model, busy: {running, waiting},
+  backends: [{name, task, served_name, health, metrics}], endpoints}`. The backends
+  are internal-only, so the gateway is the only thing that can see them — this is
+  the source for `model overview --live`.
 
 The gateway image is built from the scaffolded `Dockerfile.gateway`
 (`pip install model-gear==${MODEL_GEAR_VERSION}`, as a non-root user); `model init
@@ -128,6 +135,7 @@ Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 model init --fleet --apply        # scaffold compose + .env + Dockerfile.gateway
 model fleet up --apply            # docker compose up -d --build, wait for gateway /health
 model fleet status                # each container's state + gateway /health + /v1/models
+model overview --live             # live dashboard: online / offered / busy + usage + endpoints
 model fleet down --apply          # docker compose down
 ```
 
@@ -136,6 +144,14 @@ model fleet down --apply          # docker compose down
 `$HOME/.model-gear`). `model fleet status` is read-only — it reports the *warm*
 backend(s) (`/v1/models`); for the full set you can switch to, use
 `model overview --list` / `/v1/models/supported` (see above).
+
+`model overview --live` is the read-only **live dashboard**: it reads the gateway
+`/status` (or, against a bare single-model server, that server's `/metrics` +
+`/health`) and prints what is **online** (per-backend health), **offered**
+(models, task families, endpoints), **busy** (in-flight / queued requests), and
+cumulative **usage** (prompt/generation tokens, finished requests by reason). HTTP-only, so it
+works against a local deployment or a `model tunnel` hostname alike; it degrades
+gracefully when a backend or its metrics is unreachable.
 
 **`model switch` does not drive the fleet** — it rewrites the single-model
 `VLLM_*` keys. Change the fleet primary by editing the fleet `.env`

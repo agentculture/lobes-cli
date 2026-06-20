@@ -17,8 +17,11 @@ import argparse
 from pathlib import Path
 
 from model_gear.catalog import supported_models
+from model_gear.cli import _live, _runtime_ops
 from model_gear.cli._commands.whoami import report
+from model_gear.cli._errors import ModelGearError
 from model_gear.cli._output import emit_result
+from model_gear.runtime import _compose, _env
 
 _VERBS = [
     "init [TARGET] — scaffold a deployment dir (--fleet for the gateway; dry-run; --apply)",
@@ -32,7 +35,7 @@ _VERBS = [
     "logs — read-only: list/tail the durable vLLM logs that survive restart (issue #50)",
     "assess — correctness probes against the served model",
     "benchmark — decode throughput + prefill latency",
-    "overview — this snapshot (--current / --list to filter)",
+    "overview — this snapshot (--current / --list to filter; --live for the running fleet)",
     "whoami — tool, machine, served model, container health",
     "explain <path> — markdown docs for a topic",
     "doctor — diagnose docker / compose / .env / health",
@@ -174,12 +177,37 @@ def emit_overview(subject: str, sections: list[dict[str, object]], *, json_mode:
         emit_result(render_text(subject, sections), json_mode=False)
 
 
-def cmd_overview(args: argparse.Namespace) -> int:
-    sections = tool_sections(
-        current=bool(getattr(args, "current", False)),
-        listing=bool(getattr(args, "list", False)),
+def _served_name(args: argparse.Namespace) -> str | None:
+    """Configured served-model name from ``.env`` (best-effort; None if unscaffolded).
+
+    Resolved independently of the probed port so ``overview --live --port N`` still
+    labels the model from the deployment's ``.env``.
+    """
+    try:
+        deploy_dir = _compose.resolve_deployment_dir(getattr(args, "compose_dir", None))
+    except ModelGearError:
+        return None
+    env_path = deploy_dir / _compose.ENV_FILE
+    return (
+        _env.read_env(env_path, "VLLM_SERVED_NAME") or _env.read_env(env_path, "VLLM_MODEL") or None
     )
-    emit_overview("model-gear", sections, json_mode=bool(getattr(args, "json", False)))
+
+
+def cmd_overview(args: argparse.Namespace) -> int:
+    json_mode = bool(getattr(args, "json", False))
+    if getattr(args, "live", False):
+        # Live dashboard: probe the running deployment (gateway /status or a single
+        # vLLM /metrics) for online/offered/busy/usage/endpoints. HTTP-only.
+        port, _ = _runtime_ops.resolve_port_soft(args)
+        subject = "model-gear (live)"
+        sections = _live.live_sections(port, _served_name(args))
+    else:
+        subject = "model-gear"
+        sections = tool_sections(
+            current=bool(getattr(args, "current", False)),
+            listing=bool(getattr(args, "list", False)),
+        )
+    emit_overview(subject, sections, json_mode=json_mode)
     return 0
 
 
@@ -200,6 +228,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--list",
         action="store_true",
         help="Show only the supported-model catalog (the gears you can switch to).",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Live dashboard: what is online / offered / busy + usage + endpoints "
+        "(probes the running deployment).",
+    )
+    p.add_argument("--port", type=int, help="Host port to probe with --live (default: VLLM_PORT).")
+    p.add_argument(
+        "--compose-dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear)."
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_overview)

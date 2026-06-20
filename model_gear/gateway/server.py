@@ -18,11 +18,13 @@ from __future__ import annotations
 import http.client
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
+from model_gear import _metrics
 from model_gear.catalog import as_dicts as supported_models_catalog
 from model_gear.gateway._config import ServerConfig
 from model_gear.gateway._routing import (
@@ -333,6 +335,80 @@ def handle_audio_post(
     return GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
 
 
+# --- fleet status (the live aggregate the CLI can't get otherwise) ---------
+
+# In the fleet the backends are internal-only (no host port), so only the gateway
+# can see their /health + /metrics. This endpoint fans out and aggregates them into
+# one JSON the host-side `model overview --live` renders. The prober is injected so
+# this is unit-testable without sockets.
+
+# Per-backend probe timeout for /status: bounded + probed in parallel (below) so a
+# slow/down backend can't make the whole /status call hang for connect_timeout × N.
+_STATUS_PROBE_TIMEOUT = 3.0
+
+
+def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
+    """OpenAI endpoints this gateway actually serves, by the task families present."""
+    tasks = {b.task for b in table.backends}
+    eps = [
+        "GET /health",
+        "GET /status",
+        "GET /v1/models",
+        "GET /v1/models/supported",
+        "POST /v1/chat/completions",
+        "POST /v1/completions",
+    ]
+    if "embed" in tasks:
+        eps.append("POST /v1/embeddings")
+    if "score" in tasks:
+        eps += ["POST /v1/rerank", "POST /v1/score"]
+    if audio:
+        eps += ["POST /v1/audio/transcriptions", "POST /v1/audio/speech"]
+    return eps
+
+
+def fleet_status_payload(
+    table: RoutingTable, cfg: ServerConfig, probe=_metrics.probe_backend
+) -> dict:
+    """Live status for every backend + an aggregate busy count + the endpoint list.
+
+    Backends are probed **in parallel** with a bounded timeout, so a slow/down
+    backend can't make ``/status`` hang for ``timeout × N``. ``base_url`` is
+    intentionally **not** in the payload — those are internal-only routing details
+    and ``/status`` may be reached over a public tunnel.
+    """
+    members = list(table.backends)
+    if members:
+        with ThreadPoolExecutor(max_workers=len(members)) as pool:
+            results = list(
+                pool.map(lambda b: probe(b.base_url, timeout=_STATUS_PROBE_TIMEOUT), members)
+            )
+    else:
+        results = []
+    backends: list[dict] = []
+    running = waiting = 0
+    for b, st in zip(members, results):
+        metrics = st.get("metrics") or {}
+        running += int(metrics.get("running", 0) or 0)
+        waiting += int(metrics.get("waiting", 0) or 0)
+        backends.append(
+            {
+                "name": b.name,
+                "task": b.task,
+                "served_name": b.served_name,
+                "health": st.get("health", "unreachable"),
+                "metrics": st.get("metrics"),
+            }
+        )
+    return {
+        "object": "model-gear.fleet_status",
+        "default_model": table.default_model,
+        "busy": {"running": running, "waiting": waiting},
+        "backends": backends,
+        "endpoints": _endpoints_for(table, bool(cfg.audio_url)),
+    }
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -345,11 +421,15 @@ class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
-    # --- GET: /health, /v1/models, /v1/models/supported ---
+    # --- GET: /health, /status, /v1/models, /v1/models/supported ---
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
         if route == "/health":
             self._send_json(200, {"status": "ok", "service": "model-gear-gateway"})
+        elif route == "/status":
+            # Live aggregate the host CLI can't get otherwise: the backends are
+            # internal-only, so the gateway fans out to each one's /health + /metrics.
+            self._send_json(200, fleet_status_payload(self.table, self.server_config))
         elif route == "/v1/models":
             self._send_json(200, list_models_payload(self.table))
         elif route == "/v1/models/supported":
