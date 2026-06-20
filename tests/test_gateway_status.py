@@ -78,6 +78,21 @@ def test_fleet_status_payload_aggregates_busy_and_health() -> None:
     assert embed["health"] == "unreachable" and embed["metrics"] is None
     primary = next(b for b in payload["backends"] if b["name"] == "primary")
     assert primary["task"] == "generate" and primary["served_name"] == "P"
+    # base_url is internal-only routing detail — must NOT leak in /status (Qodo).
+    assert all("base_url" not in b for b in payload["backends"])
+
+
+def test_fleet_status_probes_in_parallel_preserve_order() -> None:
+    # Parallel fan-out must still return backends in table order.
+    seen = []
+
+    def probe(base_url, *, timeout):
+        seen.append(base_url)
+        return {"health": "ok", "metrics": {"running": 1, "waiting": 0}}
+
+    payload = S.fleet_status_payload(_table(), _cfg(), probe=probe)
+    assert [b["name"] for b in payload["backends"]] == ["primary", "embed", "rerank"]
+    assert payload["busy"] == {"running": 3, "waiting": 0}  # 3 backends × running 1
 
 
 def test_fleet_status_payload_all_unreachable() -> None:

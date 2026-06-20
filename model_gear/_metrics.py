@@ -10,8 +10,13 @@ no API key is needed for either.
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.request
+
+# Cap a single GET body so a misbehaving backend can't stress memory/latency. A
+# vLLM /metrics scrape is well under this; /health is tiny.
+_MAX_BODY_BYTES = 5 * 1024 * 1024
 
 # The handful of vLLM series the live view reports. "busy" = running/waiting now;
 # "usage" = cumulative tokens + finished requests by reason. Summed across the
@@ -54,6 +59,8 @@ def parse_metrics(text: str) -> dict:
             val = float(value)
         except ValueError:
             continue
+        if not math.isfinite(val):
+            continue  # NaN/inf would later make int() raise — skip (best-effort contract)
         brace = left.find("{")
         name = left[:brace] if brace >= 0 else left
         labels = left[brace:] if brace >= 0 else ""
@@ -83,17 +90,27 @@ def parse_metrics(text: str) -> dict:
     return out
 
 
-def http_get_text(url: str, *, timeout: float = 3.0) -> str | None:
-    """Best-effort GET → body text, or ``None`` if unreachable / non-2xx. Never raises."""
+def http_get_text(
+    url: str, *, timeout: float = 3.0, max_bytes: int = _MAX_BODY_BYTES
+) -> str | None:
+    """Best-effort GET → body text, or ``None`` if unreachable / non-2xx / oversized.
+
+    Reads at most ``max_bytes`` (+1 to detect overflow): an over-cap body is treated
+    as unavailable rather than buffered whole, so a misbehaving backend can't stress
+    memory. Never raises.
+    """
     try:
         with urllib.request.urlopen(
             url, timeout=timeout
         ) as r:  # nosec B310 - http(s) only, fixed scheme
-            if 200 <= r.status < 300:
-                return r.read().decode("utf-8", errors="replace")
+            if not (200 <= r.status < 300):
+                return None
+            data = r.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                return None  # oversized → best-effort fail rather than buffer it whole
+            return data.decode("utf-8", errors="replace")
     except (urllib.error.URLError, OSError, ValueError):
         return None
-    return None
 
 
 def http_get_json(url: str, *, timeout: float = 3.0) -> dict | None:
@@ -120,9 +137,9 @@ def probe_backend(base_url: str, *, timeout: float = 3.0) -> dict:
     ``None`` when ``/metrics`` is unreachable (an engine can be loading or down).
     """
     base = base_url.rstrip("/")
-    healthy = health_ok(base, timeout=timeout)
+    if not health_ok(base, timeout=timeout):
+        # Short-circuit: a down backend has no useful /metrics, so skip the second
+        # request (halves the timeout cost for a dead backend).
+        return {"health": "unreachable", "metrics": None}
     raw = http_get_text(base + "/metrics", timeout=timeout)
-    return {
-        "health": "ok" if healthy else "unreachable",
-        "metrics": parse_metrics(raw) if raw is not None else None,
-    }
+    return {"health": "ok", "metrics": parse_metrics(raw) if raw is not None else None}

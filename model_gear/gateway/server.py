@@ -18,6 +18,7 @@ from __future__ import annotations
 import http.client
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
@@ -341,6 +342,10 @@ def handle_audio_post(
 # one JSON the host-side `model overview --live` renders. The prober is injected so
 # this is unit-testable without sockets.
 
+# Per-backend probe timeout for /status: bounded + probed in parallel (below) so a
+# slow/down backend can't make the whole /status call hang for connect_timeout × N.
+_STATUS_PROBE_TIMEOUT = 3.0
+
 
 def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
     """OpenAI endpoints this gateway actually serves, by the task families present."""
@@ -365,11 +370,24 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
 def fleet_status_payload(
     table: RoutingTable, cfg: ServerConfig, probe=_metrics.probe_backend
 ) -> dict:
-    """Live status for every backend + an aggregate busy count + the endpoint list."""
+    """Live status for every backend + an aggregate busy count + the endpoint list.
+
+    Backends are probed **in parallel** with a bounded timeout, so a slow/down
+    backend can't make ``/status`` hang for ``timeout × N``. ``base_url`` is
+    intentionally **not** in the payload — those are internal-only routing details
+    and ``/status`` may be reached over a public tunnel.
+    """
+    members = list(table.backends)
+    if members:
+        with ThreadPoolExecutor(max_workers=len(members)) as pool:
+            results = list(
+                pool.map(lambda b: probe(b.base_url, timeout=_STATUS_PROBE_TIMEOUT), members)
+            )
+    else:
+        results = []
     backends: list[dict] = []
     running = waiting = 0
-    for b in table.backends:
-        st = probe(b.base_url, timeout=cfg.connect_timeout)
+    for b, st in zip(members, results):
         metrics = st.get("metrics") or {}
         running += int(metrics.get("running", 0) or 0)
         waiting += int(metrics.get("waiting", 0) or 0)
@@ -378,7 +396,6 @@ def fleet_status_payload(
                 "name": b.name,
                 "task": b.task,
                 "served_name": b.served_name,
-                "base_url": b.base_url,
                 "health": st.get("health", "unreachable"),
                 "metrics": st.get("metrics"),
             }

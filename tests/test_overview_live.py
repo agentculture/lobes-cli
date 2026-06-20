@@ -52,6 +52,48 @@ def test_parse_metrics_skips_malformed_lines() -> None:
     assert m["running"] == 4
 
 
+def test_parse_metrics_skips_non_finite() -> None:
+    # NaN/inf must be dropped, not crash the later int() (Qodo: best-effort contract).
+    text = (
+        'vllm:num_requests_running{e="0"} nan\n'
+        'vllm:num_requests_running{e="1"} inf\n'
+        'vllm:num_requests_running{e="2"} 2.0\n'
+    )
+    assert _metrics.parse_metrics(text)["running"] == 2
+
+
+# --- http_get_text body cap + probe short-circuit -------------------------
+
+
+class _FakeResp:
+    def __init__(self, data: bytes, status: int = 200) -> None:
+        self._data, self.status = data, status
+
+    def read(self, n: int = -1) -> bytes:
+        return self._data[:n] if n and n > 0 else self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_http_get_text_caps_oversized_body(monkeypatch) -> None:
+    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout=0: _FakeResp(b"x" * 1000))
+    assert _metrics.http_get_text("http://x/m", max_bytes=100) is None  # over cap → unavailable
+    assert _metrics.http_get_text("http://x/m", max_bytes=5000) == "x" * 1000
+
+
+def test_probe_backend_short_circuits_when_unhealthy(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(_metrics, "health_ok", lambda base, **k: False)
+    monkeypatch.setattr(_metrics, "http_get_text", lambda url, **k: calls.append(url))
+    st = _metrics.probe_backend("http://dead:8000")
+    assert st == {"health": "unreachable", "metrics": None}
+    assert calls == []  # /metrics never fetched for a down backend
+
+
 # --- section builders (pure) ----------------------------------------------
 
 
