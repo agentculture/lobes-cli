@@ -13,6 +13,7 @@
 - One built-in default voice; **zero-shot voice cloning** via a reference `.wav`
   clip (`audio_prompt_path`).
 - Key generation API:
+
   ```python
   from chatterbox.tts import ChatterboxTTS
   model = ChatterboxTTS.from_pretrained(device="cuda")
@@ -25,16 +26,17 @@
 
 | Criterion | Chatterbox | Orpheus |
 |---|---|---|
-| RTF (real-time factor, warm) | **~0.55–0.64** | ~0.8+ |
-| VRAM | **~3.1 GB** | ~6 GB |
+| RTF (real-time factor, warm) | **~0.55–0.64** | ~4.0 (transformers fallback) |
+| VRAM | **~3.1 GB** | ~6.7 GB |
 | Output sample rate | **24 kHz** (matches client) | 24 kHz |
-| Cold-load time | ~19 s | ~25 s |
+| Cold-load time | ~19 s | ~35 s |
 | arm64 / Blackwell (sm_120) | **works** | blocked — vLLM fast path unimplemented on sm_120 |
 | NGC key required | no | no |
 
 Orpheus was eliminated because its fast vLLM-based inference path is blocked on
-the sm_120 (Blackwell) ISA — the kernel backend has not been ported to the GB10
-at the time of writing.
+the sm_120 (Blackwell) ISA, so it falls back to the `transformers` path at ~4×
+real-time — too slow for the realtime pipeline.  Chatterbox runs faster than
+real-time on the same hardware.
 
 ## arm64 / aarch64 install recipe (Dockerfile.chatterbox)
 
@@ -42,28 +44,34 @@ Plain `pip install chatterbox-tts` pulls CPU-only torch on aarch64 (PyPI does
 not yet ship a GPU arm64 wheel for current PyTorch).  The working recipe:
 
 ```bash
-# If torch is NOT already present (e.g. a base python image):
+# Install the proven cu128 torch first (cu128 wheels run on the cu130 host driver
+# via CUDA forward-compatibility):
 pip install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 \
     --index-url https://download.pytorch.org/whl/cu128
 
 # Install chatterbox without deps to prevent a torch downgrade to CPU:
-pip install chatterbox-tts --no-deps
+pip install chatterbox-tts==0.1.7 --no-deps
 
 # Required runtime deps (exact versions validated on the DGX Spark GB10):
 pip install "numpy>=1.24,<2.0" librosa==0.11.0 pyloudnorm \
     transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 \
     safetensors==0.5.3 s3tokenizer spacy-pkuseg pykakasi==2.3.0 omegaconf
 
-# Perth (no PyPI release — install from source):
-pip install git+https://github.com/resemble-ai/Perth.git --no-deps
+# Perth (Resemble AI vocoder) — pinned from PyPI:
+pip install resemble-perth==1.0.1 --no-deps
 ```
 
 Notes:
+
 - **torchcodec is broken on arm64 GB10** (missing `libnppicc`) — do NOT use
   `torchaudio.save`.  Write PCM/WAV with stdlib `wave` instead.
-- The `Dockerfile.chatterbox` base image (`nvcr.io/nvidia/pytorch:25.01-py3`)
-  already ships a compatible CUDA torch, so the explicit cu128 `pip install torch`
-  line is skipped there — `chatterbox-tts --no-deps` is installed directly.
+- The `Dockerfile.chatterbox` base image is
+  `nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04` (a lean CUDA runtime with **no**
+  preinstalled torch), so the explicit cu128 `torch`/`torchaudio` install above is
+  required.  The NGC `nvcr.io/nvidia/pytorch` base was rejected — its bundled
+  torchaudio ABI conflicts with Perth at runtime.
+- Ubuntu 24.04 ships a RECORD-less, PEP-668-marked pip; the Dockerfile bootstraps
+  a clean pip via `get-pip.py` after removing the `EXTERNALLY-MANAGED` marker.
 
 ## Sidecar HTTP contract
 
@@ -139,7 +147,7 @@ weight-load.
 Pass the absolute path of a clean mono 16–24 kHz WAV file (3–10 s, single
 speaker, low background noise) as `DEFAULT_VOICE` in `.env`:
 
-```
+```bash
 DEFAULT_VOICE=/data/voices/speaker.wav
 ```
 
@@ -149,7 +157,9 @@ the sidecar passes as `audio_prompt_path` to `ChatterboxTTS.generate`.
 
 ## Assessment (DGX Spark GB10, 2026-06-21)
 
-Warm inference, single-stream, co-resident with the 27B primary + Parakeet STT:
+Warm inference, single-stream, co-resident with the 27B primary + Parakeet STT.
+Validated end-to-end in a real container (`nvidia/cuda:13.0.1`, `--gpus all`) via
+a synthesize → Parakeet STT round-trip:
 
 | Metric | Result |
 |---|---|
