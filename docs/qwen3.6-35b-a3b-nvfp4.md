@@ -1,9 +1,11 @@
 # MoE candidate: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
 
-A **MoE candidate** — the *former* fleet fallback. It has been **replaced as the
-default fallback** by the dense `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
+A **MoE candidate** — the *former* fleet fallback. It was **superseded as the
+fallback choice** by the dense `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
 ([`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md)), because
-this checkpoint never loaded on the GB10 (see the status note below). It remains
+this checkpoint never loaded on the GB10 (see the status note below). (The fleet
+now runs one *generate* backend by default — any warm fallback is opt-in via the
+`FALLBACK_*` keys.) It remains
 in the **supported catalog** as a candidate to re-test on a quiet/dedicated box
 (`model overview --list`). See [`docs/gateway-fleet.md`](gateway-fleet.md) for the
 fleet topology and the

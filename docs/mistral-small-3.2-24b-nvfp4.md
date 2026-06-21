@@ -1,8 +1,12 @@
 # Fallback model: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
 
-The **dense fallback** the gateway fleet pairs with the default primary
-(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`). It **replaces the Qwen3.6-35B-A3B MoE**, which
-never loaded on this GB10 (OOM co-resident, stall solo — see
+The **opt-in dense warm fallback** for the gateway fleet. The fleet runs one
+*generate* backend by default — the primary
+(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) keeps its solo headroom — so this is
+**not loaded by default**; wire it in as a second generate backend via the
+`FALLBACK_*` keys (below). When you do add a fallback, this dense Mistral is the
+recommended choice: it **supersedes the Qwen3.6-35B-A3B MoE**, which never loaded
+on this GB10 (OOM co-resident, stall solo — see
 [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). Mistral is dense,
 loads reliably, and serves text + tool calls. It is one entry in model-gear's
 **supported catalog** (`model overview --list`); see
@@ -35,21 +39,40 @@ Source: <https://huggingface.co/RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVF
 
 ## How it runs in the fleet
 
-Configured via the `FALLBACK_*` keys in the fleet `.env` (scaffolded by
-`model init --fleet`); served by the `model-gear-vllm-fallback` container:
+The fleet ships **one** generate backend; a warm fallback is **opt-in** and is
+**not** scaffolded by `model init --fleet`. Wiring Mistral in is a manual,
+two-part change (see
+[`docs/gateway-fleet.md` → Adding a fallback](gateway-fleet.md#adding-a-fallback)):
 
-```dotenv
-FALLBACK_MODEL=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
-FALLBACK_SERVED_NAME=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
-FALLBACK_MAX_MODEL_LEN=32768
-FALLBACK_GPU_MEM_UTIL=0.35
-FALLBACK_TOOL_CALL_PARSER=mistral
-FALLBACK_QUANTIZATION=compressed-tensors
-```
+1. **Add a `vllm-fallback` service** to the fleet `docker-compose.yml` (mirror
+   `vllm-primary`) that serves Mistral with its own knobs, and add it to the
+   `gateway` service's `depends_on`:
 
-The fleet compose hard-codes the two Mistral-specific flags (`--tokenizer-mode
-mistral` and `--limit-mm-per-prompt {"image":0}`) on the fallback service. Address
-it through the gateway by name:
+   ```yaml
+   command:
+     - vllm
+     - serve
+     - RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+     - --served-model-name=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+     - --quantization=compressed-tensors
+     - --max-model-len=32768
+     - --gpu-memory-utilization=0.35   # also drop the primary's util — the two must sum < 1.0
+     - --tool-call-parser=mistral
+     - --tokenizer-mode=mistral             # required for Mistral tool calls
+     - '--limit-mm-per-prompt={"image":0}'  # disable vision (no params.json) — see gotchas below
+     # no --reasoning-parser: instruct model, answers inline in `content`
+   ```
+
+2. **Point the gateway at it** via the only two fallback keys the gateway reads
+   (uncomment them in the fleet `.env`); the gateway adds the second backend
+   **only** when these are set:
+
+   ```dotenv
+   FALLBACK_URL=http://vllm-fallback:8000
+   FALLBACK_SERVED_NAME=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+   ```
+
+Once wired, address it through the gateway by its served name:
 
 ```bash
 curl -s http://localhost:8000/v1/chat/completions \
@@ -93,7 +116,8 @@ an option: this NVFP4 repo ships HF-format `config.json` + sharded `safetensors`
 in mistral mode.
 
 > **Running it as a standalone single model.** Mistral's supported path is the
-> fleet fallback (the fleet compose encodes the recipe above). `model switch
+> fleet's **opt-in** fallback (wire it via `FALLBACK_URL`/`FALLBACK_SERVED_NAME` +
+> a `vllm-fallback` service — see the recipe above). `model switch
 > RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` sets the catalog quantization
 > (`compressed-tensors`) and the `mistral` tool parser, but the single-model
 > compose targets the dense/Qwen primaries and does **not** add
@@ -122,7 +146,8 @@ Loaded **solo** on port `8001` (the 27B primary stopped first to free memory),
 
 Decode at ~15 tok/s is **~50 % faster than the dense 32B** (`~9.7 tok/s`) — a
 smaller 24B reads fewer bytes per token — and it actually *loads*, unlike the 35B
-MoE. Suitable as the always-warm fallback the gateway fails over to.
+MoE. Suitable as the opt-in warm fallback the gateway fails over to once a
+fallback is configured.
 
 > **Note on the time-duration probe.** `model assess` marks
 > `14:45→17:10 = 145 min` as FAIL because its strict `"145" in content` check
