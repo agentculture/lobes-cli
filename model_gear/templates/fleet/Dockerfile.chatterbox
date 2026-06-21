@@ -14,42 +14,57 @@
 # torchaudio. We therefore start from a lean CUDA runtime image that does NOT
 # preinstall torch/torchaudio and install the proven cu128 wheel combo ourselves.
 #
-# Base: nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
-#   - CUDA 12.8 + cuDNN runtime, Ubuntu 24.04 (arm64 tag is available on Docker Hub)
+# Base: nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+#   - CUDA 13.0.1 + cuDNN runtime, Ubuntu 24.04 (arm64 tag confirmed on Docker Hub)
 #   - No torch/torchaudio preinstalled — we pin exact versions below
-#   - NOTE: verify the arm64 tag exists before building:
-#       docker manifest inspect nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
-#     A real arm64 GPU build (DGX Spark / on-device `docker build` or
-#     `docker buildx build --platform linux/arm64`) is required to validate this
-#     image end-to-end; CI is CPU-only x86 and does NOT build this Dockerfile.
+#   - The torch/torchaudio wheels are cu128-flavoured; they run on the cu130 host
+#     driver via CUDA forward-compatibility (validated on DGX Spark, 580.126.09).
+#
+# VALIDATED 2026-06-21 on DGX Spark (NVIDIA GB10, arm64, CUDA driver 13.0 /
+# 580.126.09): full build + 3-phrase round-trip (synthesize → Parakeet STT) passed.
+#   docker manifest inspect nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+# A real arm64 GPU build (DGX Spark / on-device `docker build` or
+# `docker buildx build --platform linux/arm64`) is required to validate this
+# image end-to-end; CI is CPU-only x86 and does NOT build this Dockerfile.
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
 ARG MODEL_GEAR_VERSION
 
 # ---------------------------------------------------------------------------
 # System dependencies
 # ---------------------------------------------------------------------------
+# curl — needed to bootstrap pip (see below)
 # git  — Perth is installed from a GitHub source URL (--no-deps)
 # ffmpeg / libsndfile1 — librosa / soundfile runtime requirements
 # libgomp1 — OpenMP runtime required by several audio libs (librosa, torch)
-# python3.12 / pip — system Python; cu128 wheels need Python ≥ 3.10
+# python3.12 / python3.12-dev — system Python; cu128 wheels need Python ≥ 3.10
+#
+# NOTE: python3-pip is intentionally NOT installed via apt. Ubuntu 24.04 ships a
+# Debian-patched pip without a RECORD file, which blocks self-upgrade and triggers
+# PEP 668 "externally-managed-environment" on every `pip install`. We bootstrap a
+# clean pip via get-pip.py instead (see next RUN step).
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
         git \
         ffmpeg \
         libsndfile1 \
         libgomp1 \
         python3.12 \
         python3.12-dev \
-        python3-pip \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3.12 -m pip install --no-cache-dir --upgrade pip
+    && rm -rf /var/lib/apt/lists/*
+
+# Bootstrap a fresh pip (bypasses Debian's RECORD-less pip stub and the PEP 668
+# externally-managed-environment guard — both safe to remove inside a container).
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED \
+    && curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.12
 
 # ---------------------------------------------------------------------------
 # Install the proven torch 2.11.0+cu128 + torchaudio 2.11.0+cu128 combo.
 #
-# This is the ONLY torch/torchaudio version validated against Perth on arm64
-# Blackwell (DGX Spark). Do NOT change these versions without re-validating
-# that Perth's C extension loads without ABI conflicts.
+# These are the ONLY torch/torchaudio versions validated against Perth on arm64
+# Blackwell (DGX Spark). cu128 wheels run on the cu130 host driver via CUDA
+# forward-compatibility. Do NOT change these versions without re-validating that
+# Perth's C extension loads without ABI conflicts.
 # ---------------------------------------------------------------------------
 RUN python3.12 -m pip install --no-cache-dir \
         torch==2.11.0+cu128 \
@@ -61,28 +76,30 @@ RUN python3.12 -m pip install --no-cache-dir \
 #
 # chatterbox-tts is installed --no-deps to prevent it from pulling in a CPU-only
 # or ABI-mismatched torch/torchaudio wheel. All required runtime deps are listed
-# explicitly below.
+# explicitly below, pinned to exact versions from the proven venv on the DGX Spark
+# (source of truth: /home/spark/tts-bakeoff/chatterbox/venv, validated 2026-06-21).
 # ---------------------------------------------------------------------------
-RUN python3.12 -m pip install --no-cache-dir chatterbox-tts --no-deps \
+RUN python3.12 -m pip install --no-cache-dir chatterbox-tts==0.1.7 --no-deps \
     && python3.12 -m pip install --no-cache-dir \
         "numpy>=1.24,<2.0" \
         "librosa==0.11.0" \
-        "pyloudnorm" \
+        "pyloudnorm==0.2.0" \
         "transformers==5.2.0" \
         "diffusers==0.29.0" \
         "conformer==0.3.2" \
         "safetensors==0.5.3" \
-        "s3tokenizer" \
-        "spacy-pkuseg" \
+        "s3tokenizer==0.3.0" \
+        "spacy-pkuseg==1.0.1" \
         "pykakasi==2.3.0" \
-        "omegaconf"
+        "omegaconf==2.3.1"
 
 # ---------------------------------------------------------------------------
-# Install Perth (Resemble AI vocoder) — must come AFTER torch/torchaudio so it
-# links against the cu128 ABI we just installed.
+# Install Perth 1.0.1 (Resemble AI vocoder) from PyPI — must come AFTER
+# torch/torchaudio so it links against the cu128 ABI we just installed.
+# --no-deps: torch/torchaudio/librosa/numpy are already present; letting Perth
+# pull its own versions would overwrite the pinned GPU wheels.
 # ---------------------------------------------------------------------------
-RUN python3.12 -m pip install --no-cache-dir \
-        git+https://github.com/resemble-ai/Perth.git --no-deps
+RUN python3.12 -m pip install --no-cache-dir "resemble-perth==1.0.1" --no-deps
 
 # ---------------------------------------------------------------------------
 # Install the model-gear server module (provides chatterbox_server entrypoint).
