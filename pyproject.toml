@@ -1,6 +1,6 @@
 [project]
 name = "model-gear"
-version = "0.25.0"
+version = "0.26.0"
 description = "model-gear — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "MIT"

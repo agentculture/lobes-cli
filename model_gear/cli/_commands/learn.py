@@ -76,6 +76,22 @@ GB10; a second *generate* backend (warm fallback) is the only opt-in piece.
 `model switch` can also serve a single embed/score gear solo (auto-detected from
 the catalog, or forced with `--task embed|score`).
 
+Realtime audio (opt-in overlay)
+-------------------------------
+`model init --fleet --audio` adds an OpenAI /v1/audio/* facade (a `realtime` bridge
+container) backed by two fixed GPU sidecars: Parakeet STT (nvidia/parakeet-tdt-0.6b-v2,
+POST /v1/audio/transcriptions) and Chatterbox TTS (Resemble AI, 0.5B, POST
+/v1/audio/speech, 24 kHz, zero-shot voice cloning). Both are open-weights — no NGC
+key. These backends are hardcoded (NOT in the switchable catalog). `model fleet up`
+builds and starts them with the rest of the fleet. See `model explain realtime`.
+
+OpenAI API surface
+------------------
+One port (default :8000), routed by the request's `model` field: /v1/chat/completions,
+/v1/completions, /v1/embeddings, /v1/rerank, /v1/score, /v1/audio/transcriptions,
+/v1/audio/speech, /v1/models (loaded now), /v1/models/supported (the catalog), /health.
+See `model explain api` and docs/openai-api.md.
+
 Machine-readable output
 -----------------------
 Every command supports --json. Errors in JSON mode emit
@@ -95,6 +111,8 @@ More detail
   model explain backend
   model explain embeddings   (POST /v1/embeddings — the embedding gear)
   model explain rerank       (POST /v1/rerank + /v1/score — the reranker gear)
+  model explain realtime     (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
+  model explain api          (the full OpenAI-compatible endpoint surface)
 
 Homepage: https://github.com/agentculture/model-gear
 """
@@ -178,6 +196,20 @@ def _as_json_payload() -> dict[str, object]:
                 "'score'/'rerank' (Qwen3-Reranker-0.6B → /v1/rerank + /v1/score). The "
                 "embedding + reranker gears co-reside with the primary (util 0.06 each); "
                 "a second generate backend (warm fallback) is opt-in."
+            ),
+            "realtime_audio": (
+                "Opt-in overlay ('model init --fleet --audio'): an OpenAI /v1/audio/* "
+                "facade (a 'realtime' bridge) backed by two fixed sidecars — Parakeet STT "
+                "(/v1/audio/transcriptions) and Chatterbox TTS (/v1/audio/speech, 24 kHz, "
+                "voice cloning). Both open-weights (no NGC key); hardcoded, not switchable. "
+                "See 'model explain realtime'."
+            ),
+            "api_surface": (
+                "One OpenAI-compatible port (default :8000), routed by the request's "
+                "'model' field: /v1/chat/completions, /v1/completions, /v1/embeddings, "
+                "/v1/rerank, /v1/score, /v1/audio/transcriptions, /v1/audio/speech, "
+                "/v1/models (loaded), /v1/models/supported (catalog), /health. See "
+                "'model explain api' and docs/openai-api.md."
             ),
         },
         "explain_pointer": "model explain <path> (e.g. 'model explain switch')",
