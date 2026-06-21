@@ -177,9 +177,8 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
     env = (target / ".env").read_text()
     # fleet keys still present, audio keys appended (not clobbered).
     assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
-    assert "NGC_API_KEY=" in env
+    assert "CHATTERBOX_PORT=9000" in env
     assert "AUDIO_URL=http://realtime:8080" in env
-    assert "MAGPIE_TTS_PORT=9000" in env
 
 
 def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:

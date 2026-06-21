@@ -1,0 +1,42 @@
+# model-gear Chatterbox TTS sidecar — arm64 GPU container.
+#
+# `model init --fleet --audio` scaffolds this next to docker-compose.audio.yml,
+# which builds it as the `chatterbox` service. Provides the
+# GET /v1/health/ready + POST /v1/audio/synthesize HTTP surface consumed by the
+# `realtime` bridge (no SSML; returns raw PCM16 mono 24 kHz).
+#
+# BASE IMAGE NOTE: nvcr.io/nvidia/pytorch:25.01-py3 ships CUDA 12.8 + cuDNN +
+# PyTorch pre-built for aarch64 Blackwell (sm_120 / GB10 DGX Spark).
+# TAG MUST MATCH THE HOST CUDA/BLACKWELL TOOLKIT — update if the base box
+# upgrades its CUDA driver beyond 12.8. This image is NOT built or validated in
+# CI (CI is CPU-only / x86 offline); it requires a real arm64 GPU build
+# (`docker buildx build --platform linux/arm64` or an on-device build).
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+ARG MODEL_GEAR_VERSION
+
+# ---------------------------------------------------------------------------
+# Install Chatterbox + dependencies using the proven arm64 cu128 recipe.
+#
+# Plain `pip install chatterbox-tts` pulls CPU-only torch on aarch64; the base
+# image already ships a compatible CUDA torch, so we skip the explicit cu128
+# wheel and install chatterbox-tts --no-deps to prevent a torch downgrade.
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir chatterbox-tts --no-deps \
+    && pip install --no-cache-dir \
+        "numpy>=1.24,<2.0" \
+        "librosa==0.11.0" \
+        "pyloudnorm" \
+        "transformers==5.2.0" \
+        "diffusers==0.29.0" \
+        "conformer==0.3.2" \
+        "safetensors==0.5.3" \
+        "s3tokenizer" \
+        "spacy-pkuseg" \
+        "pykakasi==2.3.0" \
+        "omegaconf" \
+    && pip install --no-cache-dir \
+        git+https://github.com/resemble-ai/Perth.git --no-deps \
+    && pip install --no-cache-dir "model-gear[chatterbox]==${MODEL_GEAR_VERSION}"
+
+EXPOSE 9000
+ENTRYPOINT ["python", "-m", "model_gear.realtime.chatterbox_server"]

@@ -5,9 +5,9 @@ The FastAPI routes live in :mod:`model_gear.realtime.app` (which needs the
 wrapping raw PCM16 in an audio container — lives here so it is importable and
 unit-testable without fastapi/httpx (the offline dev env has neither).
 
-Magpie returns raw PCM16 mono @ 22050 Hz. We expose two OpenAI ``response_format``
+Chatterbox returns raw PCM16 mono @ 24000 Hz. We expose two OpenAI ``response_format``
 values: ``wav`` (default; a self-describing container) and ``pcm`` (raw bytes,
-22050 Hz). ``mp3``/``opus``/``aac``/``flac`` need an encoder (ffmpeg) and are a
+24000 Hz). ``mp3``/``opus``/``aac``/``flac`` need an encoder (ffmpeg) and are a
 documented follow-up — they return HTTP 400 for now.
 """
 
@@ -24,8 +24,7 @@ _MEDIA_TYPE = {"wav": "audio/wav", "pcm": "audio/pcm"}
 
 # OpenAI's documented /v1/audio/speech ``speed`` multiplier range. Out-of-range
 # values are clamped (not rejected) so naive callers keep working — mirroring the
-# response_format-defaults-to-wav philosophy above — while a clamp stops a
-# negative/huge speed from reaching Magpie as SSML rate="{n}%" and 502ing.
+# response_format-defaults-to-wav philosophy above.
 _OPENAI_SPEED_MIN = 0.25
 _OPENAI_SPEED_MAX = 4.0
 
@@ -41,7 +40,7 @@ class SpeechParams:
     input: str
     voice: str | None
     response_format: str
-    speed: int | None  # Magpie percentage (100 = normal); None → service default
+    speed: int | None  # speed percentage (100 = normal); None → service default
 
 
 def parse_speech_request(body: object) -> SpeechParams:
@@ -50,8 +49,8 @@ def parse_speech_request(body: object) -> SpeechParams:
     ``input`` is required. ``response_format`` defaults to ``wav`` (OpenAI's
     default is mp3, which we cannot encode yet — defaulting to wav keeps naive
     callers working instead of 400ing them). OpenAI ``speed`` is a 0.25–4.0
-    multiplier (clamped to that range here); Magpie wants a percentage, so
-    ``1.0 → 100``.
+    multiplier (clamped to that range here); converted to a percentage so
+    ``1.0 → 100`` (accepted for API compatibility; Chatterbox ignores it).
     """
     if not isinstance(body, dict):
         raise SpeechRequestError("request body must be a JSON object")
@@ -77,7 +76,7 @@ def parse_speech_request(body: object) -> SpeechParams:
             multiplier = float(raw_speed)
         except (TypeError, ValueError):
             raise SpeechRequestError("'speed' must be a number") from None
-        # Clamp to OpenAI's 0.25–4.0 range before converting to a Magpie percentage.
+        # Clamp to OpenAI's 0.25–4.0 range before converting to a percentage.
         multiplier = max(_OPENAI_SPEED_MIN, min(_OPENAI_SPEED_MAX, multiplier))
         speed = int(round(multiplier * 100))
     return SpeechParams(input=text, voice=voice, response_format=fmt, speed=speed)

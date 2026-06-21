@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-06-21
+
+### Added
+
+- **Chatterbox TTS sidecar** (`model_gear/realtime/chatterbox_server.py`): a
+  FastAPI HTTP server (`GET /v1/health/ready`, `POST /v1/audio/synthesize`) that
+  wraps Resemble AI's Chatterbox model and returns raw PCM16 mono 24 kHz audio.
+  Supports zero-shot voice cloning via a `.wav` reference path.  Runs as the
+  `chatterbox` fleet service built by the new `Dockerfile.chatterbox` (arm64
+  cu128 recipe).
+- `[chatterbox]` optional-deps group (`fastapi`, `uvicorn`) in `pyproject.toml`.
+- `docs/chatterbox-tts.md`: bake-off numbers, arm64 install recipe, sidecar HTTP
+  contract, and integration notes.
+- `model_gear/templates/fleet/Dockerfile.chatterbox`: arm64 CUDA build (based on
+  `nvcr.io/nvidia/pytorch:25.01-py3`) with the proven cu128 install recipe.
+
+### Changed
+
+- **Replaced Magpie TTS with Chatterbox** across the realtime stack:
+  `protocol.py` (`TTS_SAMPLE_RATE` 22050→24000, `resolve_voice` rewritten for
+  Chatterbox — `.wav` path for cloning, `""` for default), `tts_client.py`
+  (plain JSON POST, no SSML/prosody wrapping), `_settings.py` (`tts_url` default
+  → `http://chatterbox:9000`, `default_voice` default → `""`),
+  `docker-compose.audio.yml` (new `chatterbox:` service replaces `tts:`),
+  `env.audio.example` (Magpie/NGC vars removed, `CHATTERBOX_PORT` added).
+
 ## [0.24.0] - 2026-06-20
 
 ### Added
