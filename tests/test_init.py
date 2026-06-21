@@ -170,6 +170,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
         "docker-compose.audio.yml",
         "Dockerfile.realtime",
         "Dockerfile.parakeet",
+        "Dockerfile.chatterbox",
         "listen_server.py",
         "_readiness.py",
     ):
@@ -188,7 +189,12 @@ def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["fleet"] is True and payload["audio"] is True
     names = {f["name"] for f in payload["files"]}
-    assert {"docker-compose.audio.yml", "Dockerfile.realtime", "listen_server.py"} <= names
+    assert {
+        "docker-compose.audio.yml",
+        "Dockerfile.realtime",
+        "Dockerfile.chatterbox",
+        "listen_server.py",
+    } <= names
     assert not target.exists()
 
 

@@ -69,7 +69,7 @@ FLEET_TEMPLATES = {
     LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
-# The --audio extras layered on FLEET_TEMPLATES: the compose override, the two
+# The --audio extras layered on FLEET_TEMPLATES: the compose override, the three
 # image build files, and the vendored Parakeet server. The audio .env keys are
 # appended to .env separately (env.audio.example → AUDIO_ENV_TEMPLATE) so they
 # extend the fleet .env instead of clobbering it.
@@ -77,6 +77,10 @@ AUDIO_TEMPLATES = {
     "fleet/docker-compose.audio.yml": AUDIO_OVERLAY,
     "fleet/Dockerfile.realtime": "Dockerfile.realtime",
     "fleet/Dockerfile.parakeet": "Dockerfile.parakeet",
+    # The chatterbox TTS service in docker-compose.audio.yml builds from this
+    # Dockerfile, so it MUST land at the deployment-dir root or `docker compose
+    # build chatterbox` fails with "Dockerfile.chatterbox: no such file".
+    "fleet/Dockerfile.chatterbox": "Dockerfile.chatterbox",
     "fleet/listen_server.py": "listen_server.py",
     # _readiness.py is COPY'd into the Parakeet image (Dockerfile.parakeet), so
     # it MUST land at the deployment-dir root or `docker compose build stt`
