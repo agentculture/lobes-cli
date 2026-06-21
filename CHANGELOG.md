@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.2] - 2026-06-21
+
+### Changed
+
+- Doc alignment pass across the audio + fleet surfaces (no behavior change):
+  - `docs/chatterbox-tts.md`: healthcheck shows `python3.12` (not the stale
+    `python3`) and the compose snippet includes `container_name:
+    model-gear-chatterbox` — matching the 0.26.1 fixes.
+  - `docs/realtime-pipeline.md`: the TTS service is `chatterbox` (was `tts`); the
+    overlay scaffolds a Chatterbox Dockerfile too.
+  - `docs/openai-api.md`: corrected the auth caveat — the gateway is a
+    pass-through and is *not* auth-aware for *any* proxied endpoint (the previous
+    wording implied it gated `/v1/chat/completions`).
+  - `docs/gateway-fleet.md`: endpoint list now includes `/v1/audio/*`; added an
+    "Auth (known limitation)" note.
+  - `model explain gateway` / `model explain tunnel` (`explain/catalog.py`): added
+    the gateway-not-auth-aware caveat; fixed the Mistral entry (opt-in fallback
+    candidate, not the active default pairing); listed `tunnel`/`fleet` as write
+    verbs.
+  - `model learn` (`learn.py`): added an "Auth / exposure" section + an
+    `auth_exposure` JSON field, and `model explain tunnel`/`gateway` pointers.
+
 ## [0.26.1] - 2026-06-21
 
 ### Fixed

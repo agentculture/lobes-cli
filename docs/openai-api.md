@@ -70,9 +70,10 @@ The bridge proxies:
 The audio overlay is enabled with `model init --fleet --audio --apply`. See
 [`docs/realtime-pipeline.md`](realtime-pipeline.md) for full bring-up instructions.
 
-**Known limitation:** the gateway is not yet auth-aware for audio. The
-`CULTURE_VLLM_API_KEY` bearer token that gates `/v1/chat/completions` does not yet
-extend to `/v1/audio/*`. Per-endpoint auth is planned for a later release.
+**Known limitation:** the fleet gateway is not auth-aware. `CULTURE_VLLM_API_KEY`
+is enforced by vLLM on the single-model serve path, but the gateway is a
+pass-through — the bearer token does not extend to any of its proxied endpoints,
+`/v1/audio/*` included. Per-endpoint gateway auth is planned for a later release.
 
 ## Endpoints in detail
 

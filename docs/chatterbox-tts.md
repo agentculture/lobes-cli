@@ -123,6 +123,7 @@ The `docker-compose.audio.yml` `chatterbox:` service:
 ```yaml
 chatterbox:
   build: { context: ., dockerfile: Dockerfile.chatterbox, args: { MODEL_GEAR_VERSION: ... } }
+  container_name: model-gear-chatterbox
   restart: unless-stopped
   deploy:
     resources:
@@ -133,7 +134,10 @@ chatterbox:
   volumes:
     - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
   healthcheck:
-    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen(...)"]
+    # python3.12, not python3 — the nvidia/cuda base has no python3 symlink.
+    test: ["CMD", "python3.12", "-c", "import urllib.request; urllib.request.urlopen(...)"]
+    timeout: 15s
+    retries: 5
     start_period: 120s
 ```
 
