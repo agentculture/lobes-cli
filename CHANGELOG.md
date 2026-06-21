@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-06-21
+
+### Fixed
+
+- `model init --fleet --audio` now scaffolds `Dockerfile.chatterbox`. The
+  Chatterbox sidecar landed in 0.25 (the compose `chatterbox` service builds from
+  `Dockerfile.chatterbox`), but the build file was never added to
+  `AUDIO_TEMPLATES`, so the scaffold omitted it and `docker compose build
+  chatterbox` failed with "Dockerfile.chatterbox: no such file". Added it to the
+  audio template set (twin of the `Dockerfile.realtime` / `Dockerfile.parakeet`
+  wiring) so the audio overlay can actually build and serve TTS.
+- `model fleet status` now reports the TTS gear. `FLEET_TTS` still pointed at the
+  old `model-gear-tts` container name, but the Chatterbox sidecar renamed the
+  container to `model-gear-chatterbox` — so status listed the live TTS gear as
+  "not created". Pinned `FLEET_TTS` to `model-gear-chatterbox` and added a test
+  that asserts every `FLEET_AUDIO_CONTAINERS` name matches a `container_name:` in
+  the packaged audio compose (catches future rename drift).
+- Chatterbox container now reports healthy. Its `Dockerfile.chatterbox` installs
+  the interpreter as `python3.12` (no `python3` symlink), but the compose
+  healthcheck called bare `python3` — which exec-failed every interval, pinning
+  the working container at "starting"/"unhealthy". Switched the healthcheck to
+  `python3.12` and added a test tying the healthcheck interpreter to the one the
+  Dockerfile provides.
+
 ## [0.26.0] - 2026-06-21
 
 Documentation pass for the realtime audio overlay and the OpenAI API front: a

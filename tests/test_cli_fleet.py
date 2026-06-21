@@ -179,6 +179,46 @@ def test_fleet_status_includes_audio_containers_with_overlay(tmp_path, capsys) -
     assert names == list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
 
 
+def test_audio_container_constants_match_compose_container_names() -> None:
+    """The FLEET_AUDIO_CONTAINERS constants must equal the `container_name:`
+    entries in the packaged audio compose, or `model fleet status` reports a gear
+    as "not created" (the Magpie->Chatterbox rename drifted FLEET_TTS once)."""
+    from importlib.resources import files
+
+    overlay = (files("model_gear.templates") / "fleet" / "docker-compose.audio.yml").read_text(
+        encoding="utf-8"
+    )
+    declared = {
+        line.split("container_name:", 1)[1].strip()
+        for line in overlay.splitlines()
+        if "container_name:" in line
+    }
+    for name in _compose.FLEET_AUDIO_CONTAINERS:
+        assert name in declared, f"{name} has no matching container_name in the audio compose"
+
+
+def test_chatterbox_healthcheck_uses_image_python() -> None:
+    """The chatterbox image installs `python3.12` with no `python3` symlink, so
+    the healthcheck must invoke `python3.12`. A bare `python3` exec-fails forever
+    and pins the (working) container at "starting"/"unhealthy"."""
+    import re
+    from importlib.resources import files
+
+    root = files("model_gear.templates") / "fleet"
+    overlay = (root / "docker-compose.audio.yml").read_text(encoding="utf-8").splitlines()
+    # isolate the `  chatterbox:` service block (up to the next 2-space service key)
+    start = next(i for i, ln in enumerate(overlay) if ln.startswith("  chatterbox:"))
+    end = next(
+        (i for i in range(start + 1, len(overlay)) if re.match(r"  \S", overlay[i])),
+        len(overlay),
+    )
+    block = "\n".join(overlay[start:end])
+    assert "- python3.12" in block, "chatterbox healthcheck must call python3.12"
+    assert "\n        - python3\n" not in block, "bare python3 isn't on PATH in the image"
+    # ...and that interpreter is the one the Dockerfile actually provides.
+    assert "python3.12" in (root / "Dockerfile.chatterbox").read_text(encoding="utf-8")
+
+
 def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, capsys) -> None:
     _scaffold_fleet_audio(tmp_path)
     monkeypatch.setattr(_compose, "compose_up_build", lambda d: _ok())

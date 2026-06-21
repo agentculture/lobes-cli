@@ -45,7 +45,10 @@ FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_EMBED, FLEET_RERANK, FLEET_GATEWAY)
 # layered on the base fleet via a compose override and fronted by the gateway.
 AUDIO_OVERLAY = "docker-compose.audio.yml"
 FLEET_STT = "model-gear-stt"
-FLEET_TTS = "model-gear-tts"
+# The TTS sidecar's container is `model-gear-chatterbox` (docker-compose.audio.yml,
+# the Chatterbox sidecar that replaced Magpie in 0.25) — must match that
+# container_name or `model fleet status` reports the TTS gear as "not created".
+FLEET_TTS = "model-gear-chatterbox"
 FLEET_REALTIME = "model-gear-realtime"
 FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
@@ -69,7 +72,7 @@ FLEET_TEMPLATES = {
     LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
-# The --audio extras layered on FLEET_TEMPLATES: the compose override, the two
+# The --audio extras layered on FLEET_TEMPLATES: the compose override, the three
 # image build files, and the vendored Parakeet server. The audio .env keys are
 # appended to .env separately (env.audio.example → AUDIO_ENV_TEMPLATE) so they
 # extend the fleet .env instead of clobbering it.
@@ -77,6 +80,10 @@ AUDIO_TEMPLATES = {
     "fleet/docker-compose.audio.yml": AUDIO_OVERLAY,
     "fleet/Dockerfile.realtime": "Dockerfile.realtime",
     "fleet/Dockerfile.parakeet": "Dockerfile.parakeet",
+    # The chatterbox TTS service in docker-compose.audio.yml builds from this
+    # Dockerfile, so it MUST land at the deployment-dir root or `docker compose
+    # build chatterbox` fails with "Dockerfile.chatterbox: no such file".
+    "fleet/Dockerfile.chatterbox": "Dockerfile.chatterbox",
     "fleet/listen_server.py": "listen_server.py",
     # _readiness.py is COPY'd into the Parakeet image (Dockerfile.parakeet), so
     # it MUST land at the deployment-dir root or `docker compose build stt`

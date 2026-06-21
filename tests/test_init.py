@@ -170,6 +170,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
         "docker-compose.audio.yml",
         "Dockerfile.realtime",
         "Dockerfile.parakeet",
+        "Dockerfile.chatterbox",
         "listen_server.py",
         "_readiness.py",
     ):
@@ -188,7 +189,10 @@ def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["fleet"] is True and payload["audio"] is True
     names = {f["name"] for f in payload["files"]}
-    assert {"docker-compose.audio.yml", "Dockerfile.realtime", "listen_server.py"} <= names
+    # The dry-run JSON must list EVERY audio overlay file (derive from the source
+    # map so a dropped/added template can't silently slip past this assertion).
+    assert set(_compose.AUDIO_TEMPLATES.values()) <= names
+    assert "Dockerfile.chatterbox" in names  # the file this PR wires in
     assert not target.exists()
 
 
@@ -200,3 +204,18 @@ def test_init_fleet_audio_dry_run_text_mentions_appended_env(tmp_path, capsys) -
     assert ".env (+ audio keys appended)" in out
     assert "Re-run with --apply to write." in out
     assert not target.exists()
+
+
+def test_every_compose_referenced_dockerfile_is_scaffolded(tmp_path) -> None:
+    """Root-cause guardrail for this PR: any `dockerfile:` a scaffolded compose
+    references MUST itself be scaffolded, or `docker compose build` fails. Would
+    have caught the omitted Dockerfile.chatterbox (and any future build file added
+    to compose but forgotten in the template maps)."""
+    import re
+
+    templates = {**_compose.FLEET_TEMPLATES, **_compose.AUDIO_TEMPLATES}
+    _compose.write_scaffold(tmp_path, force=True, templates=templates)
+    for compose_name in (_compose.COMPOSE_FILE, _compose.AUDIO_OVERLAY):
+        text = (tmp_path / compose_name).read_text(encoding="utf-8")
+        for ref in re.findall(r"^\s*dockerfile:\s*(\S+)", text, re.MULTILINE):
+            assert (tmp_path / ref).is_file(), f"{compose_name} builds from {ref}, not scaffolded"
