@@ -358,3 +358,7 @@ cross-machine NVFP4 benchmark of `Qwen3.6-35B-A3B-NVFP4` on DGX Spark, Jetson
 Thor, and Blackwell 6000 Pro:
 [*Benchmark Report: Qwen3.6-35B-A3B-NVFP4 on NVIDIA DGX Spark / Jetson Thor / Blackwell 6000 Pro*](https://forums.developer.nvidia.com/t/benchmark-report-qwen3-6-35b-a3b-nvfp4-on-nvidia-dgx-spark-jetson-thor-blackwell-6000-pro/371810)
 (NVIDIA Developer Forums, 2026). See [`docs/tuning-profiles.md`](docs/tuning-profiles.md).
+
+## License
+
+Apache 2.0 — see [`LICENSE`](LICENSE).
