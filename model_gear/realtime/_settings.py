@@ -22,14 +22,14 @@ class Settings:
     """Where the realtime service finds its backends + its audio defaults."""
 
     # Backend service URLs (reachable on the fleet compose network).
-    tts_url: str  # Magpie TTS, e.g. http://tts:9000
+    tts_url: str  # Chatterbox TTS sidecar, e.g. http://chatterbox:9000
     stt_url: str  # Parakeet STT, e.g. http://stt:9002
     openai_base_url: str  # the fleet LLM front, e.g. http://gateway:8000
     openai_api_key: str
     openai_model: str  # may be "" → the gateway default-routes
 
     # TTS defaults.
-    default_voice: str
+    default_voice: str  # "" → Chatterbox default voice; or a .wav path for zero-shot cloning
     tts_speed: int
     tts_concurrency: int  # max parallel TTS requests (1 = serial)
 
@@ -65,12 +65,12 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
     """Construct :class:`Settings` from environment variables (pure)."""
     env = os.environ if env is None else env
     return Settings(
-        tts_url=(env.get("TTS_URL") or "http://tts:9000").rstrip("/"),
+        tts_url=(env.get("TTS_URL") or "http://chatterbox:9000").rstrip("/"),
         stt_url=(env.get("STT_URL") or "http://stt:9002").rstrip("/"),
         openai_base_url=(env.get("OPENAI_BASE_URL") or "http://gateway:8000").rstrip("/"),
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
-        default_voice=env.get("DEFAULT_VOICE") or "Mia.Calm",
+        default_voice=env.get("DEFAULT_VOICE") or "",
         # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
         # (or negative) blocks every TTS request forever; tts_speed is a percentage,
         # where 0/negative would emit nonsensical SSML rate="0%" → backend 502s.

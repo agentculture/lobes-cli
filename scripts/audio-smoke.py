@@ -20,7 +20,9 @@ import io
 import json
 import math
 import sys
+import time
 import urllib.request
+import wave
 from urllib.error import URLError
 
 
@@ -190,6 +192,126 @@ def check_speech(base_url: str) -> bool:
         return False
 
 
+def check_round_trip(chatterbox_url: str, stt_url: str) -> bool:
+    """Test Chatterbox TTS → WAV → Parakeet STT round-trip with 3 known phrases.
+
+    Synthesizes each phrase via ``POST {chatterbox_url}/v1/audio/synthesize``
+    (JSON ``{"text": ...}`` body), wraps the returned raw PCM16 bytes in a
+    24 kHz mono WAV using stdlib :mod:`wave`, then POSTs that WAV to
+    ``{stt_url}/v1/audio/transcriptions`` and checks that key words from the
+    original phrase appear in the transcription (case-insensitive).
+
+    Keyword lists account for documented Parakeet normalizations:
+    - spoken numerals → digits (e.g. "eight thousand and one" → "8001")
+    - proper nouns rendered phonetically (e.g. "Reachy" → "Ricci")
+
+    Args:
+        chatterbox_url: Base URL of the Chatterbox sidecar (e.g. http://localhost:9100).
+        stt_url: Base URL of the Parakeet STT service (e.g. http://localhost:9002).
+
+    Returns:
+        True if all phrases round-trip successfully; False if any fail.
+    """
+    # Each entry: (phrase text, required keywords in transcription).
+    # Keywords are chosen to survive Parakeet's numeric/phonetic normalizations.
+    phrases = [
+        (
+            "The quick brown fox jumps over the lazy dog.",
+            ["quick", "brown", "fox", "lazy", "dog"],
+        ),
+        (
+            "Can you reach the gateway on port eight thousand and one?",
+            # Parakeet normalises "eight thousand and one" → "8001"
+            ["gateway", "port", "8001"],
+        ),
+        (
+            "Reachy is online and ready.",
+            # Parakeet renders "Reachy" phonetically and may split "online" → "on line";
+            # check only "ready" which is always faithfully transcribed
+            ["ready"],
+        ),
+    ]
+
+    synth_url = f"{chatterbox_url.rstrip('/')}/v1/audio/synthesize"
+    trans_url = f"{stt_url.rstrip('/')}/v1/audio/transcriptions"
+    boundary = "----ModelGearRoundTrip"
+
+    all_ok = True
+    for text, keywords in phrases:
+        # Step 1: synthesize → raw PCM16
+        payload = json.dumps({"text": text}).encode("utf-8")
+        req_synth = urllib.request.Request(synth_url, data=payload, method="POST")
+        req_synth.add_header("Content-Type", "application/json")
+        t0 = time.monotonic()
+        try:
+            with urllib.request.urlopen(req_synth, timeout=180) as resp:
+                if resp.status != 200:
+                    print(f"FAIL round-trip: synthesize returned {resp.status} for {text!r}")
+                    all_ok = False
+                    continue
+                pcm = resp.read()
+        except URLError as exc:
+            print(f"FAIL round-trip: synthesize error for {text!r}: {exc}")
+            all_ok = False
+            continue
+        latency = time.monotonic() - t0
+
+        # Step 2: wrap PCM16 in a 24 kHz mono WAV container
+        wav_buf = io.BytesIO()
+        with wave.open(wav_buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)   # 16-bit
+            wf.setframerate(24000)
+            wf.writeframes(pcm)
+        wav_data = wav_buf.getvalue()
+
+        # Step 3: transcribe WAV → text
+        body = io.BytesIO()
+        body.write(f"--{boundary}\r\n".encode())
+        body.write(
+            b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+        )
+        body.write(b"Content-Type: audio/wav\r\n\r\n")
+        body.write(wav_data)
+        body.write(f"\r\n--{boundary}--\r\n".encode())
+
+        req_trans = urllib.request.Request(trans_url, data=body.getvalue(), method="POST")
+        req_trans.add_header(
+            "Content-Type", f"multipart/form-data; boundary={boundary}"
+        )
+        try:
+            with urllib.request.urlopen(req_trans, timeout=60) as resp:
+                if resp.status != 200:
+                    print(
+                        f"FAIL round-trip: transcriptions returned {resp.status} "
+                        f"for {text!r}"
+                    )
+                    all_ok = False
+                    continue
+                transcription = json.loads(resp.read().decode("utf-8")).get("text", "")
+        except (URLError, json.JSONDecodeError) as exc:
+            print(f"FAIL round-trip: transcriptions error for {text!r}: {exc}")
+            all_ok = False
+            continue
+
+        trans_lower = transcription.lower()
+        missed = [kw for kw in keywords if kw.lower() not in trans_lower]
+        if missed:
+            print(
+                f"FAIL round-trip: phrase={text!r} | "
+                f"transcription={transcription!r} | missing={missed}"
+            )
+            all_ok = False
+        else:
+            print(
+                f"PASS round-trip: phrase={text!r} | "
+                f"latency={latency:.2f}s | pcm={len(pcm)}B | "
+                f"transcription={transcription!r}"
+            )
+
+    return all_ok
+
+
 def main() -> int:
     """Run all smoke tests.
 
@@ -206,7 +328,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--stt-url",
-        help="Override STT URL for direct Parakeet testing (optional)",
+        default="http://localhost:9002",
+        help="Parakeet STT URL for direct testing (default: http://localhost:9002)",
+    )
+    parser.add_argument(
+        "--chatterbox-url",
+        default="http://localhost:9100",
+        help="Chatterbox TTS sidecar URL for round-trip check (default: http://localhost:9100)",
     )
     args = parser.parse_args()
 
@@ -224,11 +352,33 @@ def main() -> int:
     # Test 3: Speech endpoint (facade → Magpie)
     results.append(("speech", check_speech(args.base_url)))
 
-    # Test 4 (optional): Parakeet STT directly, when --stt-url is given. This is
-    # the issue-#39 repro against the backend itself, bypassing the facade.
-    if args.stt_url:
+    # Test 4 (optional): Parakeet STT directly, bypassing the facade.
+    if args.stt_url and args.stt_url != "http://localhost:9002":
         print(f"\nTesting Parakeet STT directly at {args.stt_url}")
         results.append(("stt-direct", check_transcription(args.stt_url)))
+
+    # Test 5 (optional): Chatterbox→Parakeet round-trip. Only runs when the
+    # Chatterbox sidecar is reachable (skip gracefully otherwise, like
+    # stt-direct above).
+    try:
+        health_url = f"{args.chatterbox_url.rstrip('/')}/v1/health/ready"
+        with urllib.request.urlopen(health_url, timeout=3) as _r:
+            chatterbox_up = _r.status == 200
+    except URLError:
+        chatterbox_up = False
+
+    if chatterbox_up:
+        print(f"\nTesting Chatterbox→Parakeet round-trip")
+        print(f"  Chatterbox: {args.chatterbox_url}")
+        print(f"  STT:        {args.stt_url}")
+        results.append(
+            ("round-trip", check_round_trip(args.chatterbox_url, args.stt_url))
+        )
+    else:
+        print(
+            f"\nSKIP: Chatterbox sidecar not reachable at {args.chatterbox_url} "
+            f"(start with: CHATTERBOX_PORT=9100 python -m model_gear.realtime.chatterbox_server)"
+        )
 
     print()
     print("=" * 60)

@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-06-21
+
+### Added
+
+- **Chatterbox TTS sidecar** (`model_gear/realtime/chatterbox_server.py`): a
+  FastAPI HTTP server (`GET /v1/health/ready`, `POST /v1/audio/synthesize`) that
+  wraps Resemble AI's Chatterbox model and returns raw PCM16 mono 24 kHz audio.
+  Supports zero-shot voice cloning via a `.wav` reference path.  Runs as the
+  `chatterbox` fleet service built by the new `Dockerfile.chatterbox` (arm64
+  cu128 recipe).
+- `[chatterbox]` optional-deps group (`fastapi`, `uvicorn`) in `pyproject.toml`.
+- `docs/chatterbox-tts.md`: bake-off numbers, arm64 install recipe, sidecar HTTP
+  contract, and integration notes.
+- `model_gear/templates/fleet/Dockerfile.chatterbox`: arm64 CUDA build — rebased
+  on `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04` (no preinstalled torch) with
+  pinned `torch==2.11.0+cu128` + `torchaudio==2.11.0+cu128` + Perth, fixing the
+  NGC pytorch ABI conflict with Perth observed at runtime.
+- numpy fast path in `float_tensor_to_pcm16` (stdlib fallback kept for offline CI);
+  parity test in `tests/test_chatterbox_pcm16.py`.
+- `resolve_voice()` `.wav` check is now case-insensitive (`.WAV` / `.Wav` work).
+- Dead SSML code removed from `tts_client.py` (`_insert_ssml_breaks`); stale
+  Magpie references updated to Chatterbox across app, client, and tests; speed-ignored
+  warning emitted when a non-default speed is passed to `synthesize()`.
+
+### Changed
+
+- **Replaced Magpie TTS with Chatterbox** across the realtime stack:
+  `protocol.py` (`TTS_SAMPLE_RATE` 22050→24000, `resolve_voice` rewritten for
+  Chatterbox — `.wav` path for cloning, `""` for default), `tts_client.py`
+  (plain JSON POST, no SSML/prosody wrapping), `_settings.py` (`tts_url` default
+  → `http://chatterbox:9000`, `default_voice` default → `""`),
+  `docker-compose.audio.yml` (new `chatterbox:` service replaces `tts:`),
+  `env.audio.example` (Magpie/NGC vars removed, `CHATTERBOX_PORT` added).
+
 ## [0.24.0] - 2026-06-20
 
 ### Added

@@ -6,46 +6,56 @@
 # it when this file is present. It adds three internal services and teaches the
 # gateway to route /v1/audio/* (and, in a later release, /v1/realtime) to them.
 #
-# Same models as the standalone realtime-api stack used to run — Magpie TTS NIM +
-# Parakeet STT — but consolidated here: the realtime bridge's LLM is the fleet
-# *gateway* (no extra vLLM container). All three expose internal ports only; the
-# gateway fronts them on the one host port (VLLM_PORT).
+# TTS: Chatterbox (Resemble AI) sidecar — open-weights, arm64 GPU, no NGC key.
+# STT: Parakeet (NeMo ASR) — unchanged.
+# The realtime bridge's LLM is the fleet *gateway* (no extra vLLM container).
+# All three expose internal ports only; the gateway fronts them on VLLM_PORT.
 #
 # CO-RESIDENCE: these share the GPU with the two LLM backends. The base fleet
 # already warns two ~30B NVFP4 models barely co-fit a GB10 — adding audio
 # realistically wants a dedicated box or a single LLM. See docs/realtime-pipeline.md.
 services:
-  # --- Magpie TTS (NVIDIA NIM, proprietary /v1/audio/synthesize) -------------
-  tts:
-    image: nvcr.io/nim/nvidia/magpie-tts-multilingual:latest
-    container_name: model-gear-tts
+  # --- Chatterbox TTS (Resemble AI, open-weights, /v1/audio/synthesize) ------
+  chatterbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.chatterbox
+      args:
+        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+    container_name: model-gear-chatterbox
     restart: unless-stopped
     env_file:
       - path: .env
         required: false
     environment:
-      - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_HTTP_API_PORT=${MAGPIE_TTS_PORT:-9000}
+      - CHATTERBOX_HOST=0.0.0.0
+      - CHATTERBOX_PORT=${CHATTERBOX_PORT:-9000}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DISABLE_REQUIRE=1
     volumes:
-      - ${NIM_CACHE:-${HOME:-/root}/.cache/nim}:/opt/nim/.cache
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
           devices:
             - { driver: nvidia, count: all, capabilities: [gpu] }
     ipc: host
-    # Internal only — reachable as http://tts:9000 on the compose network.
+    # Internal only — reachable as http://chatterbox:9000 on the compose network.
     expose:
-      - "${MAGPIE_TTS_PORT:-9000}"
+      - "${CHATTERBOX_PORT:-9000}"
     healthcheck:
+      # pytorch:25.01-py3 base may lack curl — probe with stdlib urllib.
       test:
-        ["CMD", "curl", "-f", "http://localhost:${MAGPIE_TTS_PORT:-9000}/v1/health/ready"]
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:${CHATTERBOX_PORT:-9000}/v1/health/ready', timeout=5)"
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 300s
+      # Cold model load on first request: ~19 s; generous start_period covers
+      # both container startup and the initial weight-load on first /ready probe.
+      start_period: 120s
 
   # --- Parakeet STT (NeMo ASR, already OpenAI /v1/audio/transcriptions) ------
   stt:
@@ -99,16 +109,16 @@ services:
     depends_on:
       - gateway
       - stt
-      - tts
+      - chatterbox
     environment:
       - REALTIME_HOST=0.0.0.0
       - REALTIME_PORT=${REALTIME_PORT:-8080}
       - STT_URL=http://stt:${PARAKEET_PORT:-9002}
-      - TTS_URL=http://tts:${MAGPIE_TTS_PORT:-9000}
+      - TTS_URL=http://chatterbox:${CHATTERBOX_PORT:-9000}
       - OPENAI_BASE_URL=http://gateway:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY:-EMPTY}
       - OPENAI_MODEL=${OPENAI_MODEL:-}
-      - DEFAULT_VOICE=${DEFAULT_VOICE:-Mia.Calm}
+      - DEFAULT_VOICE=${DEFAULT_VOICE:-}
       - TTS_SPEED=${TTS_SPEED:-125}
     expose:
       - "${REALTIME_PORT:-8080}"

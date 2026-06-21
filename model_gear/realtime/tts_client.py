@@ -1,9 +1,11 @@
-"""Async httpx client for Magpie TTS — full-read per sentence.
+"""Async httpx client for Chatterbox TTS — full-read per sentence.
 
-Vendored from the ``realtime-api`` sibling (cite-don't-import). The only change
-from upstream is the settings import (``._settings`` instead of pydantic
-``.config``). Imports httpx at module top, so it loads only in the ``realtime``
-container (the ``[realtime]`` extra) — never in the base wheel or the gateway.
+Sends text to the Chatterbox sidecar (``http://chatterbox:9000/v1/audio/synthesize``)
+as plain JSON (no SSML — Chatterbox does not support SSML).  Returns raw PCM16
+bytes at 24 kHz mono.
+
+Imports httpx at module top, so it loads only in the ``realtime`` container
+(the ``[realtime]`` extra) — never in the base wheel or the gateway.
 """
 
 from __future__ import annotations
@@ -12,10 +14,6 @@ import asyncio
 import logging
 import re
 import time
-
-# xml_escape is output-escaping for SSML text, not XML parsing — B406 is a false
-# positive here (no untrusted XML is parsed).
-from xml.sax.saxutils import escape as xml_escape  # nosec B406
 
 import httpx
 
@@ -44,9 +42,8 @@ _EMOJI_RE = re.compile(
 _MARKDOWN_RE = re.compile(r"[*_~`#]")
 
 # Max chars of *cleaned* text per TTS request.
-# The Triton model has a 400-token sequence limit.  Empirically, ~660 clean chars
-# (≈706 SSML chars after prosody wrapper) is the safe ceiling.  We use 600 to
-# leave headroom for rare break tags (semicolons, colons, dashes).
+# Conservative chunking ceiling for Chatterbox (no hard SSML or Triton token limit;
+# kept at 600 to avoid extremely long single requests and preserve latency).
 _MAX_CLEAN_CHARS = 600
 
 
@@ -143,34 +140,6 @@ def _clean_for_tts(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _insert_ssml_breaks(text: str) -> str:
-    """Insert SSML <break> tags at internal punctuation points.
-
-    Call on xml_escape'd text — the break tags are injected *after* escaping
-    so they remain valid SSML elements inside <speak>/<prosody>.
-    """
-    # Ellipsis (three dots or unicode) — must come before comma/period patterns
-    text = re.sub(r"\.\.\.\s+", '... <break time="400ms"/> ', text)
-    text = re.sub(r"…\s*", '… <break time="400ms"/> ', text)
-
-    # Em dash — (U+2014), optionally surrounded by spaces
-    text = re.sub(r"\s*—\s*", ' <break time="250ms"/> ', text)
-
-    # En dash – (U+2013), optionally surrounded by spaces
-    text = re.sub(r"\s*–\s*", ' <break time="150ms"/> ', text)
-
-    # Space-hyphen-space (used as a dash)
-    text = text.replace(" - ", ' - <break time="100ms"/> ')
-
-    # Semicolon followed by whitespace
-    text = re.sub(r";\s+", '; <break time="250ms"/> ', text)
-
-    # Colon followed by whitespace
-    text = re.sub(r":\s+", ': <break time="200ms"/> ', text)
-
-    return text
-
-
 def trailing_pause_ms(original_text: str) -> int:
     """Return inter-sentence silence duration (ms) based on ending punctuation.
 
@@ -211,13 +180,16 @@ async def _synthesize_single(
     speed: int,
     cancel_event: asyncio.Event | None = None,
 ) -> bytes:
-    """Synthesize a single chunk of cleaned text via Magpie TTS.
+    """Synthesize a single chunk of cleaned text via the Chatterbox TTS sidecar.
 
-    Handles SSML wrapping, HTTP POST, and retry logic.  The retry loop runs
-    INSIDE the semaphore so that ``_reset_client()`` cannot race with other
-    requests that share the same ``httpx.AsyncClient``.
+    Sends a plain JSON POST to the sidecar (no SSML — Chatterbox does not support
+    SSML).  The retry loop runs INSIDE the semaphore so that ``_reset_client()``
+    cannot race with other requests that share the same ``httpx.AsyncClient``.
 
-    Returns raw PCM16 bytes at 22050 Hz (empty on error).
+    ``speed`` is accepted for API compatibility with callers but is not forwarded
+    (Chatterbox has no speed control in the sidecar contract).
+
+    Returns raw PCM16 bytes at 24 kHz (empty on error).
     """
     global _req_counter
     _req_counter += 1
@@ -227,24 +199,12 @@ async def _synthesize_single(
     if cancel_event and cancel_event.is_set():
         return b""
 
-    # Wrap in SSML prosody if speed != 100; xml_escape prevents broken markup
-    tts_text = clean
-    ssml = False
-    if speed != 100:
-        escaped = xml_escape(clean)
-        escaped = _insert_ssml_breaks(escaped)
-        tts_text = f'<speak><prosody rate="{speed}%">{escaped}</prosody></speak>'
-        ssml = True
-
     log.info(
-        "%s request: %d chars (ssml=%s, payload=%d chars) | %s",
+        "%s request: %d chars | %s",
         tag,
         len(clean),
-        ssml,
-        len(tts_text),
         clean[:120],
     )
-    log.debug("%s full payload: %s", tag, tts_text[:300])
 
     sem = _get_semaphore()
     t_wait = time.monotonic()
@@ -260,13 +220,7 @@ async def _synthesize_single(
                 t0 = time.monotonic()
                 resp = await client.post(
                     url,
-                    data={
-                        "text": tts_text,
-                        "language": "en-US",
-                        "voice": voice,
-                        "encoding": "LINEAR_PCM",
-                        "sample_rate_hz": str(TTS_SAMPLE_RATE),
-                    },
+                    json={"text": clean, "voice": voice},
                 )
                 elapsed = time.monotonic() - t0
 
@@ -372,18 +326,23 @@ async def synthesize(
     tts_url: str | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> bytes:
-    """Synthesize text via Magpie TTS, returning complete PCM16 audio at 22050Hz.
+    """Synthesize text via the Chatterbox TTS sidecar, returning PCM16 audio at 24000Hz.
 
-    Long text is automatically split into chunks that stay under Magpie's
-    2000-char SSML limit.  For the common case (text < 800 chars after
-    cleaning) this returns a single request with no overhead.
+    Long text is automatically split into chunks.  For the common case (text
+    already fits) this returns a single request with no overhead.
+
+    ``speed`` is accepted for API compatibility with callers but is not forwarded
+    to Chatterbox (the sidecar has no speed control).
 
     Returns:
-        Raw PCM16 bytes at 22050Hz (empty bytes if nothing to synthesize).
+        Raw PCM16 bytes at 24000Hz (empty bytes if nothing to synthesize).
     """
     url = (tts_url or settings.tts_url).rstrip("/") + "/v1/audio/synthesize"
     full_voice = resolve_voice(voice or settings.default_voice)
     spd = speed if speed is not None else settings.tts_speed
+
+    if speed is not None and speed != 100:
+        log.warning("[TTS] speed=%d requested but Chatterbox has no speed control — ignored", speed)
 
     # Clean text: strip emoji, markdown, normalize whitespace
     clean = _clean_for_tts(text)
@@ -391,7 +350,7 @@ async def synthesize(
         log.debug("[TTS] skipping empty text after cleanup (original: %s)", text[:40])
         return b""
 
-    # Split into chunks that fit Magpie's payload limit
+    # Split into chunks that fit within the conservative Chatterbox ceiling
     chunks = _split_for_tts(clean)
     if len(chunks) > 1:
         log.warning("[TTS] text too long (%d chars), split into %d chunks", len(clean), len(chunks))

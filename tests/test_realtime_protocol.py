@@ -1,6 +1,6 @@
 """Tests for the realtime protocol helpers (stdlib-only; no [realtime] extra).
 
-IDs, audio constants, and the OpenAI→Magpie voice mapping import without
+IDs, audio constants, and the Chatterbox voice resolver import without
 fastapi/httpx, so they are unit-tested here directly.
 """
 
@@ -39,7 +39,7 @@ def test_timestamp_ms_is_monotonic_non_negative_int() -> None:
 
 def test_audio_constants_match_the_backends() -> None:
     assert P.CLIENT_SAMPLE_RATE == 24000  # OpenAI Realtime PCM16
-    assert P.TTS_SAMPLE_RATE == 22050  # Magpie output
+    assert P.TTS_SAMPLE_RATE == 24000  # Chatterbox output — matches CLIENT_SAMPLE_RATE
     assert P.STT_SAMPLE_RATE == 16000  # Parakeet input
     assert P.VAD_SAMPLE_RATE == 16000
     assert P.BYTES_PER_SAMPLE == 2
@@ -52,24 +52,27 @@ def test_enums_expose_the_expected_members() -> None:
     assert P.AECMode.NONE.value == "none" and P.AECMode.AEC.value == "aec"
 
 
-# --- voice mapping --------------------------------------------------------
+# --- Chatterbox voice resolution ------------------------------------------
 
 
-def test_openai_voice_names_map_to_magpie_voices() -> None:
-    # An OpenAI name → its mapped Magpie voice, prefixed with the EN-US bank.
-    assert P.resolve_voice("alloy") == f"{P.VOICE_PREFIX}Mia.Calm"
-    assert P.resolve_voice("nova") == f"{P.VOICE_PREFIX}Mia.Happy"
+def test_wav_path_is_returned_verbatim_for_cloning() -> None:
+    # A .wav path → zero-shot cloning reference; returned unchanged.
+    assert P.resolve_voice("/data/voices/speaker.wav") == "/data/voices/speaker.wav"
+    assert P.resolve_voice("reference.wav") == "reference.wav"
 
 
-def test_voice_name_lookup_is_case_insensitive() -> None:
-    assert P.resolve_voice("ALLOY") == P.resolve_voice("alloy")
+def test_non_wav_names_resolve_to_default_voice() -> None:
+    # OpenAI names, arbitrary strings, and empty string all map to the default.
+    assert P.resolve_voice("alloy") == ""
+    assert P.resolve_voice("nova") == ""
+    assert P.resolve_voice("") == ""
+    assert P.resolve_voice("some-voice") == ""
 
 
-def test_unmapped_short_name_gets_the_voice_prefix() -> None:
-    # A Magpie short name not in VOICE_MAP is still prefixed.
-    assert P.resolve_voice("Leo.Calm") == f"{P.VOICE_PREFIX}Leo.Calm"
-
-
-def test_already_full_magpie_voice_is_returned_verbatim() -> None:
-    full = "Magpie-Multilingual.EN-US.Aria.Calm"
-    assert P.resolve_voice(full) == full
+def test_wav_suffix_check_is_case_insensitive() -> None:
+    # .WAV (upper-case) must also trigger cloning — the check is case-insensitive.
+    assert P.resolve_voice("clip.WAV") == "clip.WAV"
+    # Mixed case likewise.
+    assert P.resolve_voice("speaker.Wav") == "speaker.Wav"
+    # Lower-case .wav continues to work.
+    assert P.resolve_voice("clip.wav") == "clip.wav"

@@ -1,7 +1,6 @@
-"""Event ID generation, audio constants, and OpenAI→Magpie voice mapping.
+"""Event ID generation and audio constants for the realtime pipeline.
 
-Vendored verbatim from the ``realtime-api`` sibling. Stdlib-only (time, uuid,
-enum) so it imports without the ``[realtime]`` extra.
+Stdlib-only (time, uuid, enum) so it imports without the ``[realtime]`` extra.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from enum import Enum
 # Audio constants
 # ---------------------------------------------------------------------------
 CLIENT_SAMPLE_RATE = 24000  # OpenAI Realtime API uses 24kHz PCM16
-TTS_SAMPLE_RATE = 22050  # Magpie TTS outputs 22050Hz
+TTS_SAMPLE_RATE = 24000  # Chatterbox outputs 24000Hz — matches CLIENT_SAMPLE_RATE, no resample
 STT_SAMPLE_RATE = 16000  # Parakeet expects 16kHz
 VAD_SAMPLE_RATE = 16000  # Silero VAD expects 16kHz
 BYTES_PER_SAMPLE = 2  # 16-bit PCM
@@ -65,23 +64,20 @@ def timestamp_ms() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Voice mapping: OpenAI names → Magpie voices
+# Voice resolution: Chatterbox sidecar
 # ---------------------------------------------------------------------------
-VOICE_PREFIX = "Magpie-Multilingual.EN-US."
-
-VOICE_MAP: dict[str, str] = {
-    "alloy": "Mia.Calm",
-    "echo": "Jason.Neutral",
-    "fable": "Aria.Calm",
-    "onyx": "Leo.Calm",
-    "nova": "Mia.Happy",
-    "shimmer": "Aria.Happy",
-}
 
 
 def resolve_voice(voice: str) -> str:
-    """Resolve an OpenAI voice name or Magpie voice name to a full Magpie voice string."""
-    mapped = VOICE_MAP.get(voice.lower(), voice)
-    if mapped.startswith("Magpie-"):
-        return mapped
-    return f"{VOICE_PREFIX}{mapped}"
+    """Resolve a voice selector for the Chatterbox TTS sidecar.
+
+    Chatterbox ships one default voice; zero-shot cloning is activated by
+    supplying a reference ``.wav`` file path.
+
+    - ``voice`` ending in ``.wav`` → returned as-is (passed as
+      ``audio_prompt_path`` to ``ChatterboxTTS.generate``).
+    - Any other value (OpenAI name, empty string, …) → ``""`` (default voice).
+    """
+    if voice.lower().endswith(".wav"):
+        return voice
+    return ""

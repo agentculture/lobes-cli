@@ -7,9 +7,9 @@ deployed as the `realtime` container in the fleet. The realtime bridge ships in
 the model-gear wheel (`model_gear/realtime/app.py` and friends) and is built and
 managed by `model init --fleet --audio` / `model fleet up --apply`.
 
-This consolidates what used to be a separate `realtime-api` sibling stack. The
-same STT and TTS engines (Parakeet ASR + Magpie TTS) are now owned and versioned
-here.
+This consolidates what used to be a separate `realtime-api` sibling stack. STT
+is Parakeet (NeMo ASR); TTS is **Chatterbox** (Resemble AI, open-weights,
+Apache-2.0), running as a FastAPI sidecar container — no NGC key required.
 
 The overlay compose file is **`model_gear/templates/fleet/docker-compose.audio.yml`**.
 It is layered on top of the base fleet automatically when present during `model
@@ -39,7 +39,7 @@ fleet up`.
            │
            ├─ POST /v1/audio/transcriptions → [model-gear-stt] :9002 (Parakeet)
            │
-           └─ POST /v1/audio/speech → [model-gear-tts] :9000 (Magpie NIM)
+           └─ POST /v1/audio/speech → [model-gear-chatterbox] :9000 (Chatterbox)
 
 Both STT and TTS share the GPU with the two LLM backends.
 ```
@@ -48,9 +48,9 @@ Both STT and TTS share the GPU with the two LLM backends.
 
 ### Prerequisites
 
-- NGC API key for Magpie TTS (get it at [https://org.ngc.nvidia.com](https://org.ngc.nvidia.com) → Setup).
 - A GPU box (DGX Spark or dedicated; two ~30B models + audio barely co-fit on a
   shared GB10 — see [Memory and co-residence risk](#memory-co-residence-risk) below).
+- No NGC API key required — Chatterbox is open-weights (Apache-2.0).
 
 ### Steps
 
@@ -99,7 +99,7 @@ model fleet up --compose-dir /path/to/deployment --apply
   env keys), and `model fleet up --apply` builds and starts all three services
   (`tts`, `stt`, `realtime`) behind the gateway.
 - The realtime bridge forwards `/v1/audio/transcriptions` and `/v1/audio/speech`
-  to the backends (Parakeet and Magpie respectively) and wraps their responses
+  to the backends (Parakeet and Chatterbox respectively) and wraps their responses
   in the OpenAI schema.
 - Parakeet's healthcheck now includes a real model-readiness probe (loads the
   model, runs a trivial CUDA op); "healthy" means actually serving.
@@ -144,10 +144,10 @@ container as "healthy".
 **Root cause (suspected):**
 
 On the shared GB10 (DGX Spark), prolonged co-residence of two ~30B NVFP4 models
-(vLLM primary + fallback) + Magpie TTS + Parakeet STT results in a contended GPU
-and fragmented CUDA memory. After several hours or under sustained load, Parakeet's
-CUDA context becomes stale, and new transcription requests fail deep in NeMo's
-initialization.
+(vLLM primary + fallback) + Chatterbox TTS + Parakeet STT results in a contended
+GPU and fragmented CUDA memory. After several hours or under sustained load,
+Parakeet's CUDA context becomes stale, and new transcription requests fail deep in
+NeMo's initialization.
 
 **Fix:**
 
@@ -183,8 +183,9 @@ The audio surface **does not**:
 - Change the `/v1/realtime` WebSocket protocol (that is planned for a later
   release; the current surface is REST only: `/v1/audio/transcriptions` and
   `/v1/audio/speech`).
-- Swap the STT/TTS engines — Parakeet (NeMo ASR) and Magpie (NVIDIA NIM) remain
-  the hardcoded backends.
+- Swap the STT engine — Parakeet (NeMo ASR) remains the hardcoded STT backend.
+  TTS has been migrated from Magpie (NVIDIA NIM, proprietary) to Chatterbox
+  (Resemble AI, open-weights, Apache-2.0).
 - Make the gateway auth-aware — the same `/v1/chat/completions` gateway token
   that works for the LLM does not yet extend to audio. Plan to add per-endpoint
   auth in a later release.
@@ -192,7 +193,7 @@ The audio surface **does not**:
 ## Memory (co-residence risk)
 
 On a GB10 shared with other services, two ~30B NVFP4 models barely co-fit with
-usable KV caches. Adding Parakeet + Magpie increases contention. Options:
+usable KV caches. Adding Parakeet + Chatterbox increases contention. Options:
 
 - Run audio on a **dedicated GPU** (recommended).
 - Reduce the fleet to a **single LLM** and use `model switch` instead of fleet.

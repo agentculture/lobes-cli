@@ -1,6 +1,6 @@
 [project]
 name = "model-gear"
-version = "0.24.0"
+version = "0.25.0"
 description = "model-gear — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,16 @@ realtime = [
     "python-multipart>=0.0.9",
     "silero-vad>=5.1",
     "torch>=2.5",
+]
+# The Chatterbox TTS sidecar container (the `chatterbox` service in
+# docker-compose.audio.yml). torch + chatterbox-tts itself are NOT listed here
+# because the arm64 cu128 recipe in Dockerfile.chatterbox installs them with a
+# specific index URL (https://download.pytorch.org/whl/cu128) to pull the GPU
+# wheel — plain `pip install chatterbox-tts` would pull CPU-only torch on
+# aarch64.  Only the FastAPI/uvicorn glue is installed via this extra.
+chatterbox = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
 ]
 
 [project.urls]
@@ -71,6 +81,7 @@ omit = [
     "model_gear/realtime/app.py",
     "model_gear/realtime/__main__.py",
     "model_gear/realtime/tts_client.py",
+    "model_gear/realtime/chatterbox_server.py",
 ]
 
 [tool.coverage.report]
