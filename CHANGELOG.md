@@ -17,8 +17,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `[chatterbox]` optional-deps group (`fastapi`, `uvicorn`) in `pyproject.toml`.
 - `docs/chatterbox-tts.md`: bake-off numbers, arm64 install recipe, sidecar HTTP
   contract, and integration notes.
-- `model_gear/templates/fleet/Dockerfile.chatterbox`: arm64 CUDA build (based on
-  `nvcr.io/nvidia/pytorch:25.01-py3`) with the proven cu128 install recipe.
+- `model_gear/templates/fleet/Dockerfile.chatterbox`: arm64 CUDA build — rebased
+  on `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04` (no preinstalled torch) with
+  pinned `torch==2.11.0+cu128` + `torchaudio==2.11.0+cu128` + Perth, fixing the
+  NGC pytorch ABI conflict with Perth observed at runtime.
+- numpy fast path in `float_tensor_to_pcm16` (stdlib fallback kept for offline CI);
+  parity test in `tests/test_chatterbox_pcm16.py`.
+- `resolve_voice()` `.wav` check is now case-insensitive (`.WAV` / `.Wav` work).
+- Dead SSML code removed from `tts_client.py` (`_insert_ssml_breaks`); stale
+  Magpie references updated to Chatterbox across app, client, and tests; speed-ignored
+  warning emitted when a non-default speed is passed to `synthesize()`.
 
 ### Changed
 

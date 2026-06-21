@@ -69,8 +69,10 @@ def test_non_wav_names_resolve_to_default_voice() -> None:
     assert P.resolve_voice("some-voice") == ""
 
 
-def test_only_wav_suffix_triggers_cloning() -> None:
-    # A path ending with .WAV (upper-case) is NOT a .wav ending — no special casing.
-    assert P.resolve_voice("clip.WAV") == ""
-    # A path ending with .wav is always treated as a cloning reference.
+def test_wav_suffix_check_is_case_insensitive() -> None:
+    # .WAV (upper-case) must also trigger cloning — the check is case-insensitive.
+    assert P.resolve_voice("clip.WAV") == "clip.WAV"
+    # Mixed case likewise.
+    assert P.resolve_voice("speaker.Wav") == "speaker.Wav"
+    # Lower-case .wav continues to work.
     assert P.resolve_voice("clip.wav") == "clip.wav"

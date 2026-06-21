@@ -42,9 +42,8 @@ _EMOJI_RE = re.compile(
 _MARKDOWN_RE = re.compile(r"[*_~`#]")
 
 # Max chars of *cleaned* text per TTS request.
-# The Triton model has a 400-token sequence limit.  Empirically, ~660 clean chars
-# (≈706 SSML chars after prosody wrapper) is the safe ceiling.  We use 600 to
-# leave headroom for rare break tags (semicolons, colons, dashes).
+# Conservative chunking ceiling for Chatterbox (no hard SSML or Triton token limit;
+# kept at 600 to avoid extremely long single requests and preserve latency).
 _MAX_CLEAN_CHARS = 600
 
 
@@ -139,34 +138,6 @@ def _clean_for_tts(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Punctuation-aware pause helpers
 # ---------------------------------------------------------------------------
-
-
-def _insert_ssml_breaks(text: str) -> str:
-    """Insert SSML <break> tags at internal punctuation points.
-
-    Call on xml_escape'd text — the break tags are injected *after* escaping
-    so they remain valid SSML elements inside <speak>/<prosody>.
-    """
-    # Ellipsis (three dots or unicode) — must come before comma/period patterns
-    text = re.sub(r"\.\.\.\s+", '... <break time="400ms"/> ', text)
-    text = re.sub(r"…\s*", '… <break time="400ms"/> ', text)
-
-    # Em dash — (U+2014), optionally surrounded by spaces
-    text = re.sub(r"\s*—\s*", ' <break time="250ms"/> ', text)
-
-    # En dash – (U+2013), optionally surrounded by spaces
-    text = re.sub(r"\s*–\s*", ' <break time="150ms"/> ', text)
-
-    # Space-hyphen-space (used as a dash)
-    text = text.replace(" - ", ' - <break time="100ms"/> ')
-
-    # Semicolon followed by whitespace
-    text = re.sub(r";\s+", '; <break time="250ms"/> ', text)
-
-    # Colon followed by whitespace
-    text = re.sub(r":\s+", ': <break time="200ms"/> ', text)
-
-    return text
 
 
 def trailing_pause_ms(original_text: str) -> int:
@@ -370,13 +341,16 @@ async def synthesize(
     full_voice = resolve_voice(voice or settings.default_voice)
     spd = speed if speed is not None else settings.tts_speed
 
+    if speed is not None and speed != 100:
+        log.warning("[TTS] speed=%d requested but Chatterbox has no speed control — ignored", speed)
+
     # Clean text: strip emoji, markdown, normalize whitespace
     clean = _clean_for_tts(text)
     if not clean:
         log.debug("[TTS] skipping empty text after cleanup (original: %s)", text[:40])
         return b""
 
-    # Split into chunks that fit Magpie's payload limit
+    # Split into chunks that fit within the conservative Chatterbox ceiling
     chunks = _split_for_tts(clean)
     if len(chunks) > 1:
         log.warning("[TTS] text too long (%d chars), split into %d chunks", len(clean), len(chunks))

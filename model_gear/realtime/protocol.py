@@ -78,6 +78,6 @@ def resolve_voice(voice: str) -> str:
       ``audio_prompt_path`` to ``ChatterboxTTS.generate``).
     - Any other value (OpenAI name, empty string, …) → ``""`` (default voice).
     """
-    if voice.endswith(".wav"):
+    if voice.lower().endswith(".wav"):
         return voice
     return ""

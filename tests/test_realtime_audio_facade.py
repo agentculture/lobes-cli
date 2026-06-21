@@ -17,6 +17,7 @@ from model_gear.realtime.audio_facade import (
     parse_speech_request,
     pcm_to_container,
 )
+from model_gear.realtime.protocol import TTS_SAMPLE_RATE
 
 # --- pcm_to_container -----------------------------------------------------
 
@@ -29,13 +30,22 @@ def test_pcm_passthrough_is_untouched() -> None:
 
 def test_wav_wraps_pcm_in_a_self_describing_container() -> None:
     pcm = b"\x00\x00\x10\x20" * 50
-    data, media_type = pcm_to_container(pcm, "wav", rate=22050)
+    data, media_type = pcm_to_container(pcm, "wav", rate=24000)
     assert media_type == "audio/wav"
     with wave.open(io.BytesIO(data)) as wf:
         assert wf.getnchannels() == 1
         assert wf.getsampwidth() == 2  # 16-bit
-        assert wf.getframerate() == 22050
+        assert wf.getframerate() == 24000
         assert wf.readframes(wf.getnframes()) == pcm
+
+
+def test_wav_default_rate_uses_tts_sample_rate() -> None:
+    """pcm_to_container with no explicit rate must use TTS_SAMPLE_RATE (24000)."""
+    pcm = b"\x00\x00" * 100
+    data, _ = pcm_to_container(pcm, "wav")
+    with wave.open(io.BytesIO(data)) as wf:
+        assert wf.getframerate() == TTS_SAMPLE_RATE
+        assert TTS_SAMPLE_RATE == 24000
 
 
 def test_unsupported_container_format_raises() -> None:
@@ -64,7 +74,7 @@ def test_voice_format_and_speed_multiplier() -> None:
     )
     assert p.voice == "alloy"
     assert p.response_format == "pcm"  # lower-cased
-    assert p.speed == 125  # OpenAI 1.25x → Magpie percentage
+    assert p.speed == 125  # OpenAI 1.25x → speed percentage
 
 
 def test_missing_input_is_rejected() -> None:
@@ -108,7 +118,7 @@ def test_speed_within_range_is_converted_unchanged() -> None:
 
 
 def test_too_fast_speed_is_clamped_to_the_max() -> None:
-    # OpenAI's max is 4.0 (→ 400%); a huge value must not reach Magpie as-is.
+    # OpenAI's max is 4.0 (→ 400%); a huge value must be clamped before forwarding.
     assert parse_speech_request({"input": "hi", "speed": 100}).speed == 400
 
 

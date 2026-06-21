@@ -36,7 +36,7 @@ async def health() -> dict:
 
 @app.post("/v1/audio/speech")  # pragma: no cover
 async def speech(request: Request) -> Response:
-    """OpenAI text-to-speech → Magpie. Returns a wav/pcm audio body."""
+    """OpenAI text-to-speech → Chatterbox. Returns a wav/pcm audio body."""
     try:
         body = await request.json()
     except ValueError:

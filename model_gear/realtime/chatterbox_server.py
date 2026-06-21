@@ -26,6 +26,13 @@ import struct
 
 log = logging.getLogger(__name__)
 
+try:
+    import numpy as _np
+
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Pure stdlib helper — unit-testable without fastapi/torch/numpy
 # ---------------------------------------------------------------------------
@@ -38,9 +45,12 @@ def float_tensor_to_pcm16(tensor) -> bytes:  # type: ignore[type-arg]
     Clamps the float values to [-1, 1] before converting to signed 16-bit
     little-endian integers.
 
-    This function is **stdlib-only** at the call site — the tensor may be a
-    torch.Tensor but no torch import is required *here*.  The caller (inside the
-    GPU container) passes the tensor; the helper just iterates and packs.
+    Uses a numpy fast path when numpy is available (typical in the GPU container
+    and the dev env); falls back to a pure-Python/stdlib path otherwise (offline
+    CI).  Both paths produce byte-identical output.
+
+    Asymmetric int16 scaling so both peaks map to the full int16 range:
+        +1.0 → 32767 (max int16)   -1.0 → -32768 (min int16)
 
     Args:
         tensor: A 1-D (or squeezable to 1-D) float tensor/array/list with
@@ -49,6 +59,17 @@ def float_tensor_to_pcm16(tensor) -> bytes:  # type: ignore[type-arg]
     Returns:
         Raw PCM16 bytes (little-endian, mono).
     """
+    if _NUMPY_AVAILABLE:
+        # --- numpy fast path ---------------------------------------------------
+        arr = _np.asarray(tensor, dtype=_np.float32).reshape(-1)
+        if arr.size == 0:
+            return b""
+        arr = _np.clip(arr, -1.0, 1.0)
+        # Asymmetric scaling: positive values → *32767, negative → *32768
+        scaled = _np.where(arr >= 0, arr * 32767.0, arr * 32768.0)
+        return scaled.astype("<i2").tobytes()
+
+    # --- pure-Python / stdlib fallback (numpy absent) --------------------------
     # Flatten to 1-D.  torch.Tensor and numpy.ndarray expose .squeeze() and
     # .tolist(); plain Python lists/iterables do not — handle all three cases.
     if hasattr(tensor, "squeeze"):
@@ -67,8 +88,6 @@ def float_tensor_to_pcm16(tensor) -> bytes:  # type: ignore[type-arg]
 
     clamped = [max(-1.0, min(1.0, float(s))) for s in samples]
 
-    # Asymmetric int16 scaling so both peaks map to the full range:
-    #   +1.0 * 32767 → 32767  (max int16);  -1.0 * 32768 → -32768 (min int16).
     def _scale(s: float) -> int:
         if s >= 0.0:
             return int(s * 32767)

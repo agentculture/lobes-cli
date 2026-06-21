@@ -11,6 +11,7 @@ import struct
 
 import pytest
 
+import model_gear.realtime.chatterbox_server as _cs_mod
 from model_gear.realtime.chatterbox_server import float_tensor_to_pcm16
 
 # ---------------------------------------------------------------------------
@@ -102,3 +103,47 @@ def test_2d_array_is_squeezed() -> None:
 
 def test_empty_input_returns_empty_bytes() -> None:
     assert float_tensor_to_pcm16([]) == b""
+
+
+# ---------------------------------------------------------------------------
+# numpy path vs stdlib path parity (skipped when numpy is absent)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not _cs_mod._NUMPY_AVAILABLE,  # noqa: SLF001
+    reason="numpy not installed; parity test requires both paths",
+)
+def test_numpy_and_stdlib_paths_produce_identical_bytes() -> None:
+    """numpy fast path and pure-Python fallback must be byte-identical.
+
+    We exercise: silence (0.0), positive peak (1.0), negative peak (-1.0),
+    midpoint (0.5, -0.5), out-of-range clamping (1.5, -1.5), and a mixed
+    signal to catch any edge-case in the asymmetric scaling formula.
+    """
+    signals = [
+        [0.0] * 4,
+        [1.0],
+        [-1.0],
+        [0.5, -0.5],
+        [1.5, -1.5],  # clamped
+        [0.0, 0.25, -0.25, 0.75, -0.75, 1.0, -1.0],
+    ]
+
+    for samples in signals:
+        # numpy path (current _NUMPY_AVAILABLE == True)
+        numpy_bytes = float_tensor_to_pcm16(samples)
+
+        # stdlib path: temporarily mask numpy away
+        saved = _cs_mod._NUMPY_AVAILABLE  # noqa: SLF001
+        _cs_mod._NUMPY_AVAILABLE = False  # noqa: SLF001
+        try:
+            stdlib_bytes = float_tensor_to_pcm16(samples)
+        finally:
+            _cs_mod._NUMPY_AVAILABLE = saved  # noqa: SLF001
+
+        assert numpy_bytes == stdlib_bytes, (
+            f"path mismatch for samples={samples}: "
+            f"numpy={list(struct.unpack(f'<{len(numpy_bytes)//2}h', numpy_bytes))} "
+            f"stdlib={list(struct.unpack(f'<{len(stdlib_bytes)//2}h', stdlib_bytes))}"
+        )

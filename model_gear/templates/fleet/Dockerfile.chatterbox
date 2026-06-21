@@ -5,24 +5,66 @@
 # GET /v1/health/ready + POST /v1/audio/synthesize HTTP surface consumed by the
 # `realtime` bridge (no SSML; returns raw PCM16 mono 24 kHz).
 #
-# BASE IMAGE NOTE: nvcr.io/nvidia/pytorch:25.01-py3 ships CUDA 12.8 + cuDNN +
-# PyTorch pre-built for aarch64 Blackwell (sm_120 / GB10 DGX Spark).
-# TAG MUST MATCH THE HOST CUDA/BLACKWELL TOOLKIT — update if the base box
-# upgrades its CUDA driver beyond 12.8. This image is NOT built or validated in
-# CI (CI is CPU-only / x86 offline); it requires a real arm64 GPU build
-# (`docker buildx build --platform linux/arm64` or an on-device build).
-FROM nvcr.io/nvidia/pytorch:25.01-py3
+# ---------------------------------------------------------------------------
+# WHY THIS BASE IMAGE (not NGC pytorch)
+# ---------------------------------------------------------------------------
+# The NGC nvcr.io/nvidia/pytorch base ships its own torchaudio build whose ABI
+# conflicts with the Perth vocoder (resemble-ai/Perth) at runtime — observed as
+# a symbol lookup failure when Perth's C extension is imported alongside the NGC
+# torchaudio. We therefore start from a lean CUDA runtime image that does NOT
+# preinstall torch/torchaudio and install the proven cu128 wheel combo ourselves.
+#
+# Base: nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
+#   - CUDA 12.8 + cuDNN runtime, Ubuntu 24.04 (arm64 tag is available on Docker Hub)
+#   - No torch/torchaudio preinstalled — we pin exact versions below
+#   - NOTE: verify the arm64 tag exists before building:
+#       docker manifest inspect nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
+#     A real arm64 GPU build (DGX Spark / on-device `docker build` or
+#     `docker buildx build --platform linux/arm64`) is required to validate this
+#     image end-to-end; CI is CPU-only x86 and does NOT build this Dockerfile.
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
 ARG MODEL_GEAR_VERSION
 
 # ---------------------------------------------------------------------------
-# Install Chatterbox + dependencies using the proven arm64 cu128 recipe.
-#
-# Plain `pip install chatterbox-tts` pulls CPU-only torch on aarch64; the base
-# image already ships a compatible CUDA torch, so we skip the explicit cu128
-# wheel and install chatterbox-tts --no-deps to prevent a torch downgrade.
+# System dependencies
 # ---------------------------------------------------------------------------
-RUN pip install --no-cache-dir chatterbox-tts --no-deps \
-    && pip install --no-cache-dir \
+# git  — Perth is installed from a GitHub source URL (--no-deps)
+# ffmpeg / libsndfile1 — librosa / soundfile runtime requirements
+# libgomp1 — OpenMP runtime required by several audio libs (librosa, torch)
+# python3.12 / pip — system Python; cu128 wheels need Python ≥ 3.10
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ffmpeg \
+        libsndfile1 \
+        libgomp1 \
+        python3.12 \
+        python3.12-dev \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3.12 -m pip install --no-cache-dir --upgrade pip
+
+# ---------------------------------------------------------------------------
+# Install the proven torch 2.11.0+cu128 + torchaudio 2.11.0+cu128 combo.
+#
+# This is the ONLY torch/torchaudio version validated against Perth on arm64
+# Blackwell (DGX Spark). Do NOT change these versions without re-validating
+# that Perth's C extension loads without ABI conflicts.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir \
+        torch==2.11.0+cu128 \
+        torchaudio==2.11.0+cu128 \
+        --extra-index-url https://download.pytorch.org/whl/cu128
+
+# ---------------------------------------------------------------------------
+# Install Chatterbox and its dependencies.
+#
+# chatterbox-tts is installed --no-deps to prevent it from pulling in a CPU-only
+# or ABI-mismatched torch/torchaudio wheel. All required runtime deps are listed
+# explicitly below.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir chatterbox-tts --no-deps \
+    && python3.12 -m pip install --no-cache-dir \
         "numpy>=1.24,<2.0" \
         "librosa==0.11.0" \
         "pyloudnorm" \
@@ -33,10 +75,20 @@ RUN pip install --no-cache-dir chatterbox-tts --no-deps \
         "s3tokenizer" \
         "spacy-pkuseg" \
         "pykakasi==2.3.0" \
-        "omegaconf" \
-    && pip install --no-cache-dir \
-        git+https://github.com/resemble-ai/Perth.git --no-deps \
-    && pip install --no-cache-dir "model-gear[chatterbox]==${MODEL_GEAR_VERSION}"
+        "omegaconf"
+
+# ---------------------------------------------------------------------------
+# Install Perth (Resemble AI vocoder) — must come AFTER torch/torchaudio so it
+# links against the cu128 ABI we just installed.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir \
+        git+https://github.com/resemble-ai/Perth.git --no-deps
+
+# ---------------------------------------------------------------------------
+# Install the model-gear server module (provides chatterbox_server entrypoint).
+# The [chatterbox] extra adds fastapi + uvicorn.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir "model-gear[chatterbox]==${MODEL_GEAR_VERSION}"
 
 EXPOSE 9000
-ENTRYPOINT ["python", "-m", "model_gear.realtime.chatterbox_server"]
+ENTRYPOINT ["python3.12", "-m", "model_gear.realtime.chatterbox_server"]
