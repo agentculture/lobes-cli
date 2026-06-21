@@ -1,8 +1,12 @@
 # Fallback model: `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
 
-The **dense fallback** the gateway fleet pairs with the default primary
-(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`). It **replaces the Qwen3.6-35B-A3B MoE**, which
-never loaded on this GB10 (OOM co-resident, stall solo — see
+The **opt-in dense warm fallback** for the gateway fleet. The fleet runs one
+*generate* backend by default — the primary
+(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) keeps its solo headroom — so this is
+**not loaded by default**; wire it in as a second generate backend via the
+`FALLBACK_*` keys (below). When you do add a fallback, this dense Mistral is the
+recommended choice: it **supersedes the Qwen3.6-35B-A3B MoE**, which never loaded
+on this GB10 (OOM co-resident, stall solo — see
 [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). Mistral is dense,
 loads reliably, and serves text + tool calls. It is one entry in model-gear's
 **supported catalog** (`model overview --list`); see
@@ -93,7 +97,8 @@ an option: this NVFP4 repo ships HF-format `config.json` + sharded `safetensors`
 in mistral mode.
 
 > **Running it as a standalone single model.** Mistral's supported path is the
-> fleet fallback (the fleet compose encodes the recipe above). `model switch
+> fleet's **opt-in** fallback (wire it via the `FALLBACK_*` keys; the fleet compose
+> documents the recipe above). `model switch
 > RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` sets the catalog quantization
 > (`compressed-tensors`) and the `mistral` tool parser, but the single-model
 > compose targets the dense/Qwen primaries and does **not** add
@@ -122,7 +127,8 @@ Loaded **solo** on port `8001` (the 27B primary stopped first to free memory),
 
 Decode at ~15 tok/s is **~50 % faster than the dense 32B** (`~9.7 tok/s`) — a
 smaller 24B reads fewer bytes per token — and it actually *loads*, unlike the 35B
-MoE. Suitable as the always-warm fallback the gateway fails over to.
+MoE. Suitable as the opt-in warm fallback the gateway fails over to once a
+fallback is configured.
 
 > **Note on the time-duration probe.** `model assess` marks
 > `14:45→17:10 = 145 min` as FAIL because its strict `"145" in content` check

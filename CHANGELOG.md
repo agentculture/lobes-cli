@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.3] - 2026-06-21
+
+### Fixed
+
+- Doc consistency: `docs/mistral-small-3.2-24b-nvfp4.md` and
+  `docs/qwen3.6-35b-a3b-nvfp4.md` still framed Mistral as the **default** fleet
+  fallback the gateway pairs with the primary. The fleet has run one *generate*
+  backend by default since the single-backend default (#42); the warm fallback is
+  opt-in via the `FALLBACK_*` keys. Reframed both docs to match — closing the drift
+  with the `model explain` catalog corrected in 0.26.2.
+
 ## [0.26.2] - 2026-06-21
 
 ### Changed
