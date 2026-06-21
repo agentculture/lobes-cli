@@ -21,6 +21,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "not created". Pinned `FLEET_TTS` to `model-gear-chatterbox` and added a test
   that asserts every `FLEET_AUDIO_CONTAINERS` name matches a `container_name:` in
   the packaged audio compose (catches future rename drift).
+- Chatterbox container now reports healthy. Its `Dockerfile.chatterbox` installs
+  the interpreter as `python3.12` (no `python3` symlink), but the compose
+  healthcheck called bare `python3` — which exec-failed every interval, pinning
+  the working container at "starting"/"unhealthy". Switched the healthcheck to
+  `python3.12` and added a test tying the healthcheck interpreter to the one the
+  Dockerfile provides.
 
 ## [0.26.0] - 2026-06-21
 
