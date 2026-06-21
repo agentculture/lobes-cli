@@ -80,7 +80,7 @@ FastAPI server (`model_gear/realtime/chatterbox_server.py`):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/v1/health/ready` | Liveness/readiness probe → 200 `{"status":"ok"}` |
+| `GET` | `/v1/health/ready` | Readiness probe → 503 `{"status":"loading"}` until model is loaded; 200 `{"status":"ok"}` once ready |
 | `POST` | `/v1/audio/synthesize` | Synthesize text → raw PCM16 mono 24 kHz |
 
 ### POST /v1/audio/synthesize
@@ -131,14 +131,14 @@ chatterbox:
           - { driver: nvidia, count: all, capabilities: [gpu] }
   expose: ["${CHATTERBOX_PORT:-9000}"]
   volumes:
-    - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
   healthcheck:
     test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen(...)"]
     start_period: 120s
 ```
 
 Model weights (~3.1 GB) are downloaded from HuggingFace on first boot and cached
-in `HF_CACHE` (defaults to `~/.cache/huggingface`).  Cold-load is ~19 s; the
+in `HF_CACHE` (defaults to `${HOME:-/root}/.cache/huggingface`).  Cold-load is ~19 s; the
 generous `start_period: 120s` covers both container startup and the first
 weight-load.
 

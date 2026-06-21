@@ -8,14 +8,15 @@ this module is never imported by the unit suite — its routes are thin shells
 
 HTTP contract
 -------------
-GET  /v1/health/ready            → 200 ``{"status":"ok"}``
+GET  /v1/health/ready            → 503 ``{"status":"loading"}`` until the model
+                                   is loaded; 200 ``{"status":"ok"}`` once ready.
 POST /v1/audio/synthesize        → JSON body ``{"text": str, "voice": str|null}``
                                    Response: raw PCM16 mono 24 kHz bytes
                                    Content-Type: audio/pcm
 
-Voice semantics: if ``voice`` ends with ``.wav`` it is passed to Chatterbox as
-``audio_prompt_path`` (zero-shot cloning); any other value (or null/empty) uses
-the model's single built-in default voice.
+Voice semantics: if ``voice`` ends with ``.wav`` (case-insensitive) it is passed
+to Chatterbox as ``audio_prompt_path`` (zero-shot cloning); any other value (or
+null/empty) uses the model's single built-in default voice.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import struct
+import threading
 
 log = logging.getLogger(__name__)
 
@@ -116,28 +118,35 @@ except ImportError:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 _model = None  # ChatterboxTTS singleton
+_model_lock = threading.Lock()
 
 
 def _get_model():  # pragma: no cover
-    """Lazy-load the ChatterboxTTS model once per process."""
+    """Lazy-load the ChatterboxTTS model once per process (thread-safe)."""
     global _model
     if _model is None:
-        # Import chatterbox lazily so the module can be imported (e.g. for the
-        # PCM16 helper) even when chatterbox-tts is not installed.
-        from chatterbox.tts import ChatterboxTTS  # type: ignore[import]
+        with _model_lock:
+            if _model is None:
+                from chatterbox.tts import ChatterboxTTS  # type: ignore[import]
 
-        log.info("[Chatterbox] loading model (first request; cold-load ~19 s) …")
-        _model = ChatterboxTTS.from_pretrained(device="cuda")
-        log.info("[Chatterbox] model ready — sample rate: %d Hz", _model.sr)
+                log.info("[Chatterbox] loading model (cold-load ~19 s) …")
+                _model = ChatterboxTTS.from_pretrained(device="cuda")
+                log.info("[Chatterbox] model ready — sample rate: %d Hz", _model.sr)
     return _model
 
 
 if _FASTAPI_AVAILABLE:
     app = FastAPI(title="model-gear chatterbox-tts", version="1")
 
+    @app.on_event("startup")  # pragma: no cover
+    async def _warm_model() -> None:
+        threading.Thread(target=_get_model, daemon=True).start()
+
     @app.get("/v1/health/ready")  # pragma: no cover
-    async def health() -> dict:
-        return {"status": "ok"}
+    async def health() -> Response:
+        if _model is not None:
+            return JSONResponse(content={"status": "ok"})
+        return JSONResponse(status_code=503, content={"status": "loading"})
 
     @app.post("/v1/audio/synthesize")  # pragma: no cover
     async def synthesize(request_body: dict) -> Response:
@@ -160,7 +169,7 @@ if _FASTAPI_AVAILABLE:
         def _generate() -> bytes:
             mdl = _get_model()
             kwargs: dict = {"exaggeration": 0.5, "cfg_weight": 0.5}
-            if voice.endswith(".wav"):
+            if voice.lower().endswith(".wav"):
                 kwargs["audio_prompt_path"] = voice
             wav_tensor = mdl.generate(text, **kwargs)
             # Chatterbox emits 24 kHz mono (mdl.sr); the facade wraps the bare
