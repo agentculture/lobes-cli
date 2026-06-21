@@ -246,6 +246,16 @@ The numbers in each doc come from `model switch <model> --apply` then `model
 assess` (correctness) and `model benchmark` (throughput). `model overview --list`
 lists the catalog (these models) and flags which one is currently served.
 
+The two **audio backends** are fixed (the `--audio` overlay, *not* switchable gears
+in the catalog), each with its own doc:
+
+- [`docs/parakeet-stt.md`](docs/parakeet-stt.md) — **Parakeet** TDT 0.6B
+  (`nvidia/parakeet-tdt-0.6b-v2`, NVIDIA NeMo ASR), the speech-to-text backend
+  (`POST /v1/audio/transcriptions`).
+- [`docs/chatterbox-tts.md`](docs/chatterbox-tts.md) — **Chatterbox** (Resemble AI,
+  0.5B, Apache-2.0), the text-to-speech backend (`POST /v1/audio/speech`), with
+  zero-shot voice cloning. Replaced the retired Magpie NIM (no NGC key needed).
+
 ### What's loaded vs. what's supported
 
 Two questions that look alike but aren't:
@@ -272,6 +282,63 @@ Two questions that look alike but aren't:
 Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 `/v1/models` is *what's hot now*. See
 [`docs/gateway-fleet.md`](docs/gateway-fleet.md#supported-catalog-vs-warm-backends).
+
+## Realtime audio (speech-to-text + text-to-speech)
+
+`model init --fleet --audio` adds an **audio overlay** to the fleet: an OpenAI
+`/v1/audio/*` facade served by a small **realtime bridge** container, backed by two
+GPU sidecars — **Parakeet** (NVIDIA NeMo ASR, `nvidia/parakeet-tdt-0.6b-v2`) for
+speech-to-text and **Chatterbox** (Resemble AI, 0.5B, Apache-2.0) for text-to-speech.
+No NGC key is required — both are open-weights, pulled from HuggingFace. (Chatterbox
+replaced the retired Magpie NIM.)
+
+```bash
+model init --fleet --audio --apply   # add the audio overlay to the fleet scaffold
+model fleet up --apply               # build + start STT, TTS, and the realtime bridge
+model fleet status
+```
+
+The gateway fans `/v1/audio/*` out to the bridge, which proxies each request to the
+right backend:
+
+```bash
+# speech-to-text — multipart upload → {"text": ...}
+curl -s http://localhost:8000/v1/audio/transcriptions -F file=@clip.wav
+
+# text-to-speech — text → 24 kHz audio bytes
+curl -s http://localhost:8000/v1/audio/speech \
+  -d '{"model":"chatterbox","input":"Hello from model-gear.","voice":""}' -o speech.wav
+```
+
+Chatterbox does zero-shot **voice cloning** — point `DEFAULT_VOICE` (or the request's
+`voice`) at a `.wav` path on the sidecar. Verify the whole stack end-to-end with the
+TTS → STT round-trip in `scripts/audio-smoke.py`. See
+[`docs/realtime-pipeline.md`](docs/realtime-pipeline.md) for the topology and
+bring-up, [`docs/parakeet-stt.md`](docs/parakeet-stt.md) +
+[`docs/chatterbox-tts.md`](docs/chatterbox-tts.md) for the two backends, or
+`model explain realtime` for the short version.
+
+## The OpenAI-compatible API surface
+
+Everything model-gear serves speaks the OpenAI wire format on **one port** (default
+`:8000`), routed by the request's `model` field. Single-model mode serves the
+generate endpoints; the fleet adds embeddings, reranking, and (with `--audio`) the
+audio endpoints.
+
+| Endpoint | Method | Served by |
+|---|---|---|
+| `/v1/chat/completions`, `/v1/completions` | POST | generate primary (opt-in fallback) |
+| `/v1/embeddings` | POST | Qwen3-Embedding-0.6B gear |
+| `/v1/rerank`, `/v1/score` | POST | Qwen3-Reranker-0.6B gear |
+| `/v1/audio/transcriptions` | POST | Parakeet STT (audio overlay) |
+| `/v1/audio/speech` | POST | Chatterbox TTS (audio overlay) |
+| `/v1/models` | GET | the loaded backends (what's hot now) |
+| `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
+| `/health` | GET | gateway liveness |
+
+See [`docs/openai-api.md`](docs/openai-api.md) for per-endpoint request/response
+shapes, the routing rules (name / default / failover / SSE), `curl` examples, and
+auth/exposure — or `model explain api`.
 
 ## model-gear is also the deployed agent
 

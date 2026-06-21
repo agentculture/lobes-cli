@@ -42,6 +42,18 @@ primary without crowding it; a second *generate* backend (warm fallback) is the
 only opt-in piece. See `docs/qwen3-embedding-0.6b.md`,
 `docs/qwen3-reranker-0.6b.md`, and `docs/gateway-fleet.md`.
 
+An opt-in **realtime audio overlay** (`model init --fleet --audio`) adds an OpenAI
+`/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
+`model_gear.realtime`) that the gateway fans `/v1/audio/*` out to — backed by two
+fixed GPU sidecars: **Parakeet** STT (`nvidia/parakeet-tdt-0.6b-v2`, NeMo ASR →
+`POST /v1/audio/transcriptions`) and **Chatterbox** TTS (Resemble AI, 0.5B,
+Apache-2.0 → `POST /v1/audio/speech`, 24 kHz, zero-shot voice cloning; it replaced
+the retired Magpie NIM — no NGC key). These two are hardcoded, **not** in the
+switchable catalog (`model_gear/catalog.py`). See `docs/realtime-pipeline.md`,
+`docs/parakeet-stt.md`, `docs/chatterbox-tts.md`, and `docs/openai-api.md` (the full
+OpenAI-compatible endpoint surface). `model explain realtime` / `api` are the
+in-CLI versions.
+
 ## Deployment model
 
 model-gear is **scaffold-based, not checkout-based.** The canonical
@@ -58,8 +70,12 @@ model_gear/                 # Python package (pip install model-gear)
 ├── __init__.py             # __version__ via importlib.metadata("model-gear")
 ├── __main__.py             # python -m model_gear
 ├── assess.py               # correctness probes + throughput/prefill (stdlib urllib)
-├── templates/              # packaged docker-compose.yml + env.example (model init)
+├── catalog.py              # the supported-model catalog (the switchable "gears")
+├── templates/              # packaged docker-compose*.yml + env.example + Dockerfiles (model init)
 ├── runtime/                # _env (.env r/w) · _compose (dir resolve + docker) · _health · _tunnel (cloudflared)
+├── gateway/                # stdlib OpenAI-compatible reverse proxy (the fleet front)
+├── realtime/               # /v1/audio/* facade: bridge · tts_client · chatterbox_server · _readiness
+├── explain/                # markdown catalog for `model explain <path>`
 └── cli/
     ├── __init__.py         # argparse main(); registers every verb
     ├── _errors.py          # ModelGearError + EXIT_USER_ERROR / EXIT_ENV_ERROR

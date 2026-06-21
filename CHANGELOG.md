@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-06-21
+
+Documentation pass for the realtime audio overlay and the OpenAI API front: a
+feature doc per audio backend, a consolidated endpoint reference, and the same
+information surfaced through `model learn`, `model explain`, the README, and
+`CLAUDE.md`.
+
+### Added
+
+- `docs/parakeet-stt.md`: per-model feature doc for the **Parakeet** STT backend
+  (`nvidia/parakeet-tdt-0.6b-v2`, NeMo ASR) — the only audio model that lacked one.
+  Covers the HTTP contract, the real (model-loaded + CUDA-live) readiness probe,
+  fleet integration, the stale-CUDA-context runbook, and why it is not a switchable
+  catalog gear.
+- `docs/openai-api.md`: consolidated **OpenAI-compatible API surface** reference —
+  every endpoint (`/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
+  `/v1/rerank`, `/v1/score`, `/v1/audio/transcriptions`, `/v1/audio/speech`,
+  `/v1/models`, `/v1/models/supported`, `/health`), routing semantics (name /
+  default / failover / SSE / audio fan-out), per-endpoint `curl` examples, the
+  loaded-vs-supported split, and auth/exposure.
+- `model explain` topics: `realtime` / `audio` (the `/v1/audio/*` overlay),
+  `transcribe` / `stt` / `parakeet` (STT), `speak` / `tts` / `chatterbox` (TTS),
+  and `api` / `openai` (the endpoint surface); linked from the explain root.
+- `model learn` now documents the realtime audio overlay and the OpenAI API surface
+  (text + `--json` `realtime_audio` / `api_surface` fields).
+- README sections for **Realtime audio (STT + TTS)** and **The OpenAI-compatible API
+  surface**, plus the two audio backends added to the per-model notes.
+
+### Changed
+
+- `CLAUDE.md`: documents the realtime audio overlay alongside the fleet; the CLI
+  package tree now lists the `gateway/`, `realtime/`, `explain/`, and `catalog.py`
+  surfaces.
+
+### Fixed
+
+- `docs/realtime-pipeline.md`: removed the stale `NGC_API_KEY` bring-up step (a
+  Magpie leftover — Chatterbox needs no NGC key) and documented the TTS → STT
+  round-trip in `scripts/audio-smoke.py`.
+
 ## [0.25.0] - 2026-06-21
 
 ### Added

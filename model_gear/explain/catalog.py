@@ -69,6 +69,9 @@ require `--apply` to commit. The rest are read-only.
 - `model explain embeddings` (POST /v1/embeddings — 1024-dim Qwen3 embedder)
 - `model explain rerank` (POST /v1/rerank — Jina/Cohere reranking)
 - `model explain score` (POST /v1/score — cross-encoder raw scoring)
+- `model explain realtime` (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
+- `model explain transcribe` / `model explain speak` (the STT / TTS endpoints)
+- `model explain api` (the full OpenAI-compatible endpoint surface)
 """
 
 _SWITCH = """\
@@ -603,6 +606,149 @@ the numbers track the serve config. Override with `--purpose` / `--input-len` /
 benchmark — see `docs/tuning-profiles.md`.
 """
 
+_REALTIME = """\
+# model-gear realtime audio
+
+An **opt-in fleet overlay** (`model init --fleet --audio`) that adds an OpenAI
+`/v1/audio/*` facade to the gateway: speech-to-text and text-to-speech behind the
+same port as chat. model-gear owns this surface (it ships in the wheel as
+`model_gear.realtime`); it replaces the old separate `realtime-api` sibling stack.
+
+## Topology
+
+```text
+client → gateway :8000 → (route /v1/audio/*) → realtime bridge :8080
+                                                  ├─ /v1/audio/transcriptions → Parakeet STT :9002
+                                                  └─ /v1/audio/speech         → Chatterbox TTS :9000
+```
+
+The gateway fans `/v1/audio/*` to the `realtime` bridge container (`AUDIO_URL`,
+default `http://realtime:8080`); the bridge proxies each request to the right
+sidecar and wraps the response in the OpenAI schema. The bridge's own LLM is the
+fleet gateway — no extra vLLM container.
+
+## Backends (both open-weights — no NGC key)
+
+- **STT — Parakeet** (`nvidia/parakeet-tdt-0.6b-v2`, NVIDIA NeMo ASR): the `stt`
+  container, `POST /v1/audio/transcriptions` (multipart upload → `{"text": ...}`).
+  See `model explain transcribe` and `docs/parakeet-stt.md`.
+- **TTS — Chatterbox** (Resemble AI, 0.5B, Apache-2.0): the `chatterbox` container,
+  `POST /v1/audio/speech` (text → 24 kHz audio bytes), zero-shot voice cloning via a
+  `.wav` reference. Replaced the retired Magpie NIM. See `model explain speak` and
+  `docs/chatterbox-tts.md`.
+
+Both backends are **fixed** — they are not in the switchable catalog
+(`model_gear/catalog.py`), so `model switch` does not target them. Swap the STT
+checkpoint via `PARAKEET_MODEL` in `.env`; set `DEFAULT_VOICE` for TTS cloning.
+
+## Bring-up
+
+```bash
+model init --fleet --audio --apply   # scaffold the audio overlay
+model fleet up --apply               # build + start STT, TTS, and the bridge
+model fleet status
+python3 scripts/audio-smoke.py       # live smoke test (+ TTS→STT round-trip)
+```
+
+REST only today (`/v1/audio/transcriptions` + `/v1/audio/speech`); the
+`/v1/realtime` WebSocket is planned. The gateway is not yet auth-aware for audio.
+Full topology, runbooks, and memory guidance: `docs/realtime-pipeline.md`.
+"""
+
+_STT = """\
+# model explain transcribe — speech-to-text (Parakeet)
+
+`POST /v1/audio/transcriptions` — OpenAI/Riva-shaped ASR served by **Parakeet**
+(`nvidia/parakeet-tdt-0.6b-v2`, NVIDIA NeMo, 0.6B), the `stt` container in the
+`--audio` fleet overlay. Reached through the gateway (default `:8000`); the
+container is internal-only on `PARAKEET_PORT` (default 9002).
+
+## Request / response
+
+Multipart `multipart/form-data`: `file` (the audio, required) + `language`
+(optional, default `"en"`; Parakeet is English-only). The server reads any format
+`soundfile` supports, resamples to 16 kHz mono, and transcribes.
+
+```bash
+curl -s http://localhost:8000/v1/audio/transcriptions -F file=@clip.wav
+# → {"text": "the transcribed words"}
+```
+
+## Readiness
+
+`GET /v1/health/ready` reports `200 {"status": "ready"}` only when the NeMo model
+is loaded AND a trivial CUDA op succeeds; otherwise `503 {"status": "not_ready",
+"reason": ...}` (issue #39 — a real readiness check, not liveness). Decision logic:
+`model_gear/realtime/_readiness.py`.
+
+Fixed backend — not in the switchable catalog; override the checkpoint with
+`PARAKEET_MODEL`. See `model explain realtime`, `model explain speak`, and
+`docs/parakeet-stt.md`.
+"""
+
+_TTS = """\
+# model explain speak — text-to-speech (Chatterbox)
+
+`POST /v1/audio/speech` — text-to-speech served by **Chatterbox** (Resemble AI,
+0.5B, Apache-2.0), the `chatterbox` container in the `--audio` fleet overlay.
+Reached through the gateway (default `:8000`); the container is internal-only on
+`CHATTERBOX_PORT` (default 9000). Replaced the retired Magpie NIM — no NGC key.
+
+## Request / response
+
+```bash
+curl -s http://localhost:8000/v1/audio/speech \\
+  -d '{"model":"chatterbox","input":"Hello from model-gear.","voice":""}' -o speech.wav
+```
+
+Returns **24 kHz mono audio** (matches the realtime client rate — no resample). The
+`voice` field: empty/null → Chatterbox's built-in default voice; a `.wav` path on
+the sidecar → zero-shot **voice cloning** (passed as `audio_prompt_path`). Set a
+fleet-wide default with `DEFAULT_VOICE` in `.env`.
+
+The sidecar's own contract is `POST /v1/audio/synthesize` (raw PCM16) +
+`GET /v1/health/ready` (`503 {"status":"loading"}` → `200 {"status":"ok"}`); the
+realtime bridge wraps PCM into the OpenAI `/v1/audio/speech` response.
+
+Fixed backend — not in the switchable catalog. See `model explain realtime`,
+`model explain transcribe`, and `docs/chatterbox-tts.md`.
+"""
+
+_API = """\
+# model explain api — the OpenAI-compatible surface
+
+Everything model-gear serves speaks the OpenAI wire format on **one port** (default
+`:8000`, `VLLM_PORT`), routed by the request's `model` field. Single-model mode
+serves the generate endpoints; the fleet adds embeddings, reranking, and (with
+`--audio`) audio.
+
+| Endpoint | Method | Served by |
+|---|---|---|
+| `/v1/chat/completions`, `/v1/completions` | POST | generate primary (opt-in fallback) |
+| `/v1/embeddings` | POST | Qwen3-Embedding-0.6B gear |
+| `/v1/rerank`, `/v1/score` | POST | Qwen3-Reranker-0.6B gear |
+| `/v1/audio/transcriptions` | POST | Parakeet STT (audio overlay) |
+| `/v1/audio/speech` | POST | Chatterbox TTS (audio overlay) |
+| `/v1/models` | GET | the backends loaded now (what's hot) |
+| `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
+| `/health` | GET | gateway liveness |
+
+## Routing
+
+- **By name** — `model` selects the backend (+ `GATEWAY_ALIASES`); the forwarded
+  body's `model` is rewritten to the backend's `--served-model-name`.
+- **Default** — missing/unknown `model` → `GATEWAY_DEFAULT_MODEL` (the primary), so
+  single-model clients keep working.
+- **Failover** — a generate backend that refuses or 5xx's *before any body* is
+  retried against the other generate backend (4xx is verbatim; no retry once a 2xx
+  body streams). SSE (`"stream": true`) is relayed chunk-by-chunk.
+- **Audio** is fanned to the realtime bridge (`AUDIO_URL`).
+
+See `model explain gateway` (routing), `model explain embeddings|rerank|score`
+(per-endpoint shapes), `model explain realtime` (audio), and `docs/openai-api.md`
+for the full reference with `curl` examples and auth/exposure.
+"""
+
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
     ("model-gear",): _ROOT,
@@ -631,4 +777,14 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("embedding",): _EMBEDDINGS,
     ("rerank",): _RERANK,
     ("score",): _SCORE,
+    ("realtime",): _REALTIME,
+    ("audio",): _REALTIME,
+    ("transcribe",): _STT,
+    ("stt",): _STT,
+    ("parakeet",): _STT,
+    ("speak",): _TTS,
+    ("tts",): _TTS,
+    ("chatterbox",): _TTS,
+    ("api",): _API,
+    ("openai",): _API,
 }

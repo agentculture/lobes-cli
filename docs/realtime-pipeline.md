@@ -58,9 +58,10 @@ Both STT and TTS share the GPU with the two LLM backends.
 # 1. Initialize the fleet with the audio overlay
 model init --fleet --audio --apply
 
-# 2. Set NGC_API_KEY in the .env file
-# Locate $HOME/.model-gear/.env (or your --compose-dir) and edit:
-#   NGC_API_KEY=<your-key>
+# 2. (optional) edit $HOME/.model-gear/.env — DEFAULT_VOICE for TTS voice cloning,
+#    PARAKEET_MODEL / CHATTERBOX_PORT / PARAKEET_PORT to override defaults.
+#    No NGC key is required: both STT (Parakeet, NeMo) and TTS (Chatterbox,
+#    Resemble AI, Apache-2.0) are open-weights — pulled from HuggingFace, not NGC.
 
 # 3. Bring up the full audio stack (dry-run by default; --apply commits)
 model fleet up --apply
@@ -222,6 +223,17 @@ The script:
 3. Sends it to `/v1/audio/transcriptions` and confirms a 200 response with a
    `text` field.
 4. Prints PASS/FAIL for each step and exits non-zero on failure.
+
+It can also run the **TTS → STT round-trip** check (`check_round_trip`): synthesize
+a known phrase through the Chatterbox sidecar, wrap the returned PCM in a 24 kHz
+WAV, post it to Parakeet, and assert the transcript echoes the input. This is the
+functional proof that the two audio backends actually work together end-to-end:
+
+```bash
+python3 scripts/audio-smoke.py \
+  --chatterbox-url http://localhost:9100 \
+  --stt-url http://localhost:9002
+```
 
 This requires a **live GPU box** with `model fleet up` already running; it is not
 an offline CI test. It reproduces the issue #39 symptom to confirm the fix.
