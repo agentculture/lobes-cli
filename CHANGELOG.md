@@ -15,6 +15,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chatterbox` failed with "Dockerfile.chatterbox: no such file". Added it to the
   audio template set (twin of the `Dockerfile.realtime` / `Dockerfile.parakeet`
   wiring) so the audio overlay can actually build and serve TTS.
+- `model fleet status` now reports the TTS gear. `FLEET_TTS` still pointed at the
+  old `model-gear-tts` container name, but the Chatterbox sidecar renamed the
+  container to `model-gear-chatterbox` — so status listed the live TTS gear as
+  "not created". Pinned `FLEET_TTS` to `model-gear-chatterbox` and added a test
+  that asserts every `FLEET_AUDIO_CONTAINERS` name matches a `container_name:` in
+  the packaged audio compose (catches future rename drift).
 
 ## [0.26.0] - 2026-06-21
 

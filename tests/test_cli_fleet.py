@@ -179,6 +179,24 @@ def test_fleet_status_includes_audio_containers_with_overlay(tmp_path, capsys) -
     assert names == list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
 
 
+def test_audio_container_constants_match_compose_container_names() -> None:
+    """The FLEET_AUDIO_CONTAINERS constants must equal the `container_name:`
+    entries in the packaged audio compose, or `model fleet status` reports a gear
+    as "not created" (the Magpie->Chatterbox rename drifted FLEET_TTS once)."""
+    from importlib.resources import files
+
+    overlay = (files("model_gear.templates") / "fleet" / "docker-compose.audio.yml").read_text(
+        encoding="utf-8"
+    )
+    declared = {
+        line.split("container_name:", 1)[1].strip()
+        for line in overlay.splitlines()
+        if "container_name:" in line
+    }
+    for name in _compose.FLEET_AUDIO_CONTAINERS:
+        assert name in declared, f"{name} has no matching container_name in the audio compose"
+
+
 def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, capsys) -> None:
     _scaffold_fleet_audio(tmp_path)
     monkeypatch.setattr(_compose, "compose_up_build", lambda d: _ok())

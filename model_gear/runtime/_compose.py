@@ -45,7 +45,10 @@ FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_EMBED, FLEET_RERANK, FLEET_GATEWAY)
 # layered on the base fleet via a compose override and fronted by the gateway.
 AUDIO_OVERLAY = "docker-compose.audio.yml"
 FLEET_STT = "model-gear-stt"
-FLEET_TTS = "model-gear-tts"
+# The TTS sidecar's container is `model-gear-chatterbox` (docker-compose.audio.yml,
+# the Chatterbox sidecar that replaced Magpie in 0.25) — must match that
+# container_name or `model fleet status` reports the TTS gear as "not created".
+FLEET_TTS = "model-gear-chatterbox"
 FLEET_REALTIME = "model-gear-realtime"
 FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
