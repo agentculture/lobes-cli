@@ -46,8 +46,8 @@ tool and the deployed agent share one identity).
 
 ## Mutation safety
 
-Write verbs (`switch`, `serve`, `stop`, `init`) are **dry-run by default** and
-require `--apply` to commit. The rest are read-only.
+Write verbs (`switch`, `serve`, `stop`, `init`, `tunnel`, `fleet up`/`fleet down`)
+are **dry-run by default** and require `--apply` to commit. The rest are read-only.
 
 ## Exit-code policy
 
@@ -221,9 +221,11 @@ run on this hardware, holding the correctness + throughput numbers produced by
   primary (hybrid Mamba/linear-attn + ViT, 256K native). Retained as the MTP
   primary's tokenizer source and the only vision-capable 27B.
 - `docs/mistral-small-3.2-24b-nvfp4.md` — `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`,
-  the dense fallback the gateway fleet pairs with the primary (loads reliably on
-  the GB10; serve with the mistral tokenizer + images disabled — required for
-  tool-call parsing on this build; see the doc).
+  a dense **warm-fallback candidate**. It was the default fleet fallback until the
+  single-backend default removed it (the fleet runs one *generate* backend by
+  default); wire it back via the opt-in `FALLBACK_*` config. Loads reliably on the
+  GB10; serve with the mistral tokenizer + images disabled (required for tool-call
+  parsing on this build; see the doc).
 - `docs/qwen3-32b-nvfp4.md` — `nvidia/Qwen3-32B-NVFP4`, a dense candidate (faster
   decode; swap in via `PRIMARY_MODEL` / `model switch`).
 - `docs/qwen3.6-35b-a3b-nvfp4.md` — `mmangkad/Qwen3.6-35B-A3B-NVFP4`, a MoE
@@ -323,6 +325,15 @@ All endpoints are reached at the same gateway port — routing is by the request
 `model` field. Configured via the `gateway` service's environment in the fleet
 compose (`PRIMARY_URL` / `FALLBACK_URL` / `*_SERVED_NAME` / `GATEWAY_DEFAULT_MODEL`
 / `GATEWAY_ALIASES` / timeouts).
+
+## Auth (known limitation)
+
+The gateway is a **pass-through** — it does not inspect or validate `Authorization`
+headers. `CULTURE_VLLM_API_KEY` is enforced by vLLM on the single-model `model
+serve` path, **not** by the gateway, so the fleet's proxied endpoints (generate /
+embed / rerank / `/v1/audio/*`) are not bearer-gated. Keep the port private; layer
+Cloudflare Access or an IP allowlist when exposing it via `model tunnel`.
+Per-endpoint gateway auth is planned. See `model explain tunnel`.
 """
 
 _TUNNEL = """\
@@ -357,6 +368,12 @@ deployment dir), and `--stop --apply` terminates it.
 `--apply` preflights that `cloudflared` (and `shushu`, for the sealed token) is on
 PATH and that the local server answers `/health` first. **Set `CULTURE_VLLM_API_KEY`
 before exposing the API** — without it the tunnel publishes an unauthenticated model.
+
+**Single-model vs. fleet:** vLLM enforces `CULTURE_VLLM_API_KEY` on the `model
+serve` (single-model) path. The **fleet gateway is a pass-through and is not
+auth-aware**, so tunnelling the fleet does *not* bearer-protect its endpoints — add
+Cloudflare Access or an IP allowlist for that case. See `model explain gateway`.
+
 See `model explain backend` and the README "Expose the API" section.
 """
 

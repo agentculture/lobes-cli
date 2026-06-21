@@ -92,6 +92,15 @@ One port (default :8000), routed by the request's `model` field: /v1/chat/comple
 /v1/audio/speech, /v1/models (loaded now), /v1/models/supported (the catalog), /health.
 See `model explain api` and docs/openai-api.md.
 
+Auth / exposure
+---------------
+Set CULTURE_VLLM_API_KEY in the deployment .env before exposing the API. vLLM
+enforces it as a bearer token on the single-model `model serve` path. The fleet
+gateway is a pass-through and is NOT auth-aware (a known limitation) — bearer keys
+do not protect its proxied endpoints, so add Cloudflare Access or an IP allowlist
+when tunnelling the fleet. Use `model tunnel` to expose the local API via a
+Cloudflare Tunnel. See `model explain tunnel`.
+
 Machine-readable output
 -----------------------
 Every command supports --json. Errors in JSON mode emit
@@ -113,6 +122,8 @@ More detail
   model explain rerank       (POST /v1/rerank + /v1/score — the reranker gear)
   model explain realtime     (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
   model explain api          (the full OpenAI-compatible endpoint surface)
+  model explain gateway      (the fleet front — routing, /status, auth limitation)
+  model explain tunnel       (expose the local API anywhere via Cloudflare Tunnel)
 
 Homepage: https://github.com/agentculture/model-gear
 """
@@ -210,6 +221,14 @@ def _as_json_payload() -> dict[str, object]:
                 "/v1/rerank, /v1/score, /v1/audio/transcriptions, /v1/audio/speech, "
                 "/v1/models (loaded), /v1/models/supported (catalog), /health. See "
                 "'model explain api' and docs/openai-api.md."
+            ),
+            "auth_exposure": (
+                "Set CULTURE_VLLM_API_KEY in .env before exposing the API; vLLM enforces "
+                "it as a bearer token on the single-model 'model serve' path. The fleet "
+                "gateway is a pass-through and is NOT auth-aware (known limitation) — bearer "
+                "keys don't protect its proxied endpoints, so add Cloudflare Access or an IP "
+                "allowlist when tunnelling the fleet. Expose via 'model tunnel'. See "
+                "'model explain tunnel' / 'model explain gateway'."
             ),
         },
         "explain_pointer": "model explain <path> (e.g. 'model explain switch')",

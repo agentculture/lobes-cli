@@ -87,7 +87,9 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   flushing; normal JSON is buffered with `Content-Length`.
 - **Endpoints** — `/v1/chat/completions`, `/v1/completions` (generate primary),
   `/v1/embeddings` (the embedding gear), `/v1/rerank` + `/v1/score` (the reranker
-  gear), `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
+  gear), `/v1/audio/transcriptions` + `/v1/audio/speech` (the `--audio` overlay
+  only — fanned to the realtime bridge → Parakeet STT / Chatterbox TTS),
+  `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
   `/v1/models/supported` (the full supported-model catalog — every gear you can
   change to, each flagged `loaded` / `default`), `/health` (gateway liveness), and
   `/status` (the live fleet aggregate — see below).
@@ -106,6 +108,16 @@ The gateway image is built from the scaffolded `Dockerfile.gateway`
 is required (pinning keeps the image reproducible); from-source/dev boxes that run
 ahead of a PyPI release point `MODEL_GEAR_VERSION` at a published TestPyPI `.devN`
 build.
+
+### Auth (known limitation)
+
+The gateway is a **pass-through** and is **not auth-aware** — it does not inspect
+or validate `Authorization` headers. `CULTURE_VLLM_API_KEY` is enforced by vLLM on
+the **single-model** serve path (`model serve`), but it does **not** protect the
+fleet gateway's proxied endpoints (generate, embed, rerank, or `/v1/audio/*`). Keep
+the gateway port off the public internet; when exposing it with `model tunnel`,
+layer Cloudflare Access or an IP allowlist on top. Per-endpoint gateway auth is
+planned for a later release.
 
 ### Supported catalog vs. warm backends
 

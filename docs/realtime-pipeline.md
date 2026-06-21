@@ -96,9 +96,9 @@ model fleet up --compose-dir /path/to/deployment --apply
 **After:**
 
 - model-gear now owns the audio surface. `model init --fleet --audio` scaffolds
-  the complete overlay (compose file, Dockerfile for realtime and Parakeet,
-  env keys), and `model fleet up --apply` builds and starts all three services
-  (`tts`, `stt`, `realtime`) behind the gateway.
+  the complete overlay (compose file, Dockerfiles for realtime, Parakeet, and
+  Chatterbox, env keys), and `model fleet up --apply` builds and starts all three
+  services (`chatterbox`, `stt`, `realtime`) behind the gateway.
 - The realtime bridge forwards `/v1/audio/transcriptions` and `/v1/audio/speech`
   to the backends (Parakeet and Chatterbox respectively) and wraps their responses
   in the OpenAI schema.
