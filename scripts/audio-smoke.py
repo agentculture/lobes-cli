@@ -2,8 +2,8 @@
 """Smoke test for the live audio realtime surface.
 
 Tests the OpenAI /v1/audio/* endpoints (transcriptions + speech) against a
-running model-gear fleet with the audio overlay. This is NOT an offline CI test
-— it requires a live GPU box with `model fleet up` already active.
+running lobes fleet with the audio overlay. This is NOT an offline CI test
+— it requires a live GPU box with `lobes fleet up` already active.
 
 Reproduces the issue #39 repro to confirm the 500→200 fix: generates a 2s 440 Hz
 tone (16 kHz mono PCM16 WAV), posts it to /v1/audio/transcriptions, and asserts
@@ -319,7 +319,7 @@ def main() -> int:
         0 if all tests pass; 1 if any fail.
     """
     parser = argparse.ArgumentParser(
-        description="Smoke test the model-gear audio realtime surface."
+        description="Smoke test the lobes audio realtime surface."
     )
     parser.add_argument(
         "--base-url",
@@ -377,7 +377,7 @@ def main() -> int:
     else:
         print(
             f"\nSKIP: Chatterbox sidecar not reachable at {args.chatterbox_url} "
-            f"(start with: CHATTERBOX_PORT=9100 python -m model_gear.realtime.chatterbox_server)"
+            f"(start with: CHATTERBOX_PORT=9100 python -m lobes.realtime.chatterbox_server)"
         )
 
     print()

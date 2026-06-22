@@ -6,7 +6,7 @@ fastapi/httpx, so they are unit-tested here directly.
 
 from __future__ import annotations
 
-from model_gear.realtime import protocol as P
+from lobes.realtime import protocol as P
 
 # --- ID generation --------------------------------------------------------
 

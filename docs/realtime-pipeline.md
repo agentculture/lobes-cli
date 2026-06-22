@@ -2,16 +2,16 @@
 
 ## Ownership
 
-**model-gear owns the live audio surface** — the OpenAI `/v1/audio/*` facade
+**lobes owns the live audio surface** — the OpenAI `/v1/audio/*` facade
 deployed as the `realtime` container in the fleet. The realtime bridge ships in
-the model-gear wheel (`model_gear/realtime/app.py` and friends) and is built and
-managed by `model init --fleet --audio` / `model fleet up --apply`.
+the lobes wheel (`lobes/realtime/app.py` and friends) and is built and
+managed by `lobes init --fleet --audio` / `lobes fleet up --apply`.
 
 This consolidates what used to be a separate `realtime-api` sibling stack. STT
 is Parakeet (NeMo ASR); TTS is **Chatterbox** (Resemble AI, open-weights,
 Apache-2.0), running as a FastAPI sidecar container — no NGC key required.
 
-The overlay compose file is **`model_gear/templates/fleet/docker-compose.audio.yml`**.
+The overlay compose file is **`lobes/templates/fleet/docker-compose.audio.yml`**.
 It is layered on top of the base fleet automatically when present during `model
 fleet up`.
 
@@ -56,29 +56,29 @@ Both STT and TTS share the GPU with the two LLM backends.
 
 ```bash
 # 1. Initialize the fleet with the audio overlay
-model init --fleet --audio --apply
+lobes init --fleet --audio --apply
 
-# 2. (optional) edit $HOME/.model-gear/.env — DEFAULT_VOICE for TTS voice cloning,
+# 2. (optional) edit $HOME/.lobes/.env — DEFAULT_VOICE for TTS voice cloning,
 #    PARAKEET_MODEL / CHATTERBOX_PORT / PARAKEET_PORT to override defaults.
 #    No NGC key is required: both STT (Parakeet, NeMo) and TTS (Chatterbox,
 #    Resemble AI, Apache-2.0) are open-weights — pulled from HuggingFace, not NGC.
 
 # 3. Bring up the full audio stack (dry-run by default; --apply commits)
-model fleet up --apply
+lobes fleet up --apply
 
 # 4. Check status
-model fleet status
+lobes fleet status
 ```
 
-Each `model init` and `model fleet` verb defaults to **dry-run**; omit `--apply`
+Each `lobes init` and `lobes fleet` verb defaults to **dry-run**; omit `--apply`
 to see what would happen, or add `--apply` to execute. This ensures safe-by-default
 operation (useful when agents call CLIs in loops).
 
-To customize the compose dir (default `$MODEL_GEAR_DIR` or `$HOME/.model-gear`):
+To customize the compose dir (default `$LOBES_DIR` or `$HOME/.lobes`):
 
 ```bash
-model init --fleet --audio --compose-dir /path/to/deployment --apply
-model fleet up --compose-dir /path/to/deployment --apply
+lobes init --fleet --audio --compose-dir /path/to/deployment --apply
+lobes fleet up --compose-dir /path/to/deployment --apply
 ```
 
 ## The drift this fixed
@@ -95,9 +95,9 @@ model fleet up --compose-dir /path/to/deployment --apply
 
 **After:**
 
-- model-gear now owns the audio surface. `model init --fleet --audio` scaffolds
+- lobes now owns the audio surface. `lobes init --fleet --audio` scaffolds
   the complete overlay (compose file, Dockerfiles for realtime, Parakeet, and
-  Chatterbox, env keys), and `model fleet up --apply` builds and starts all three
+  Chatterbox, env keys), and `lobes fleet up --apply` builds and starts all three
   services (`chatterbox`, `stt`, `realtime`) behind the gateway.
 - The realtime bridge forwards `/v1/audio/transcriptions` and `/v1/audio/speech`
   to the backends (Parakeet and Chatterbox respectively) and wraps their responses
@@ -161,7 +161,7 @@ docker restart model-gear-stt
 Or cycle the entire fleet:
 
 ```bash
-model fleet down --apply && model fleet up --apply
+lobes fleet down --apply && model fleet up --apply
 ```
 
 Watch `nvidia-smi` to confirm memory is freed before the STT container restarts.
@@ -197,7 +197,7 @@ On a GB10 shared with other services, two ~30B NVFP4 models barely co-fit with
 usable KV caches. Adding Parakeet + Chatterbox increases contention. Options:
 
 - Run audio on a **dedicated GPU** (recommended).
-- Reduce the fleet to a **single LLM** and use `model switch` instead of fleet.
+- Reduce the fleet to a **single LLM** and use `lobes switch` instead of fleet.
 - Tune `PRIMARY_GPU_MEM_UTIL` and `FALLBACK_GPU_MEM_UTIL` in `.env` to lower
   the baseline (the defaults are estimates for a dedicated box).
 
@@ -235,5 +235,5 @@ python3 scripts/audio-smoke.py \
   --stt-url http://localhost:9002
 ```
 
-This requires a **live GPU box** with `model fleet up` already running; it is not
+This requires a **live GPU box** with `lobes fleet up` already running; it is not
 an offline CI test. It reproduces the issue #39 symptom to confirm the fix.

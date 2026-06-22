@@ -10,7 +10,7 @@ slug: `model-gear-owns-the-audio-i-o-surface-end-to-end-m` · status: `exported`
 
 - covers: c13, h3
 - acceptance:
-  - model_gear/realtime/parakeet_server.py exposes POST /v1/audio/transcriptions and GET /v1/health/ready
+  - lobes/realtime/parakeet_server.py exposes POST /v1/audio/transcriptions and GET /v1/health/ready
   - GET /v1/health/ready returns 200 only when the NeMo model is loaded AND a trivial CUDA tensor op succeeds, else 503 — a cheap probe, NOT a full multipart transcription each interval (decision c16 supersedes the 'real transcription' wording in c4/c7)
   - A unit test stubs the model to assert 200-when-ready and 503-when-model-None/CUDA-fails, with no GPU required in CI
 
@@ -19,7 +19,7 @@ slug: `model-gear-owns-the-audio-i-o-surface-end-to-end-m` · status: `exported`
 - depends on: t1
 - covers: c11
 - acceptance:
-  - model_gear/templates/Dockerfile.realtime installs the [realtime] extra and runs model_gear.realtime.app; Dockerfile.parakeet installs NeMo ASR and copies parakeet_server.py
+  - lobes/templates/Dockerfile.realtime installs the [realtime] extra and runs lobes.realtime.app; Dockerfile.parakeet installs NeMo ASR and copies parakeet_server.py
   - docker build succeeds for both from a clean checkout (smoke-built in the PR or documented as built)
 
 ### t3 — Wire the full audio stack into the compose template + env.example (sole owner of docker-compose.yml)
@@ -27,9 +27,9 @@ slug: `model-gear-owns-the-audio-i-o-surface-end-to-end-m` · status: `exported`
 - depends on: t1, t2
 - covers: c11, c12, c17, c4, h1, h2, h5, h12
 - acceptance:
-  - model_gear/templates/docker-compose.yml gains parakeet-stt, magpie-tts, and realtime-facade services; the facade env points STT_URL->parakeet and TTS_URL->magpie and binds host :8080
+  - lobes/templates/docker-compose.yml gains parakeet-stt, magpie-tts, and realtime-facade services; the facade env points STT_URL->parakeet and TTS_URL->magpie and binds host :8080
   - env.example documents NGC_API_KEY (Magpie) and the audio service ports; 'model init' materialises them with no manual compose edits
-  - The realtime-facade service builds from Dockerfile.realtime (the vendored model_gear app), NOT the realtime-api sibling image
+  - The realtime-facade service builds from Dockerfile.realtime (the vendored lobes app), NOT the realtime-api sibling image
   - Parakeet service healthcheck calls GET /v1/health/ready (the cheap probe from t1)
 
 ### t4 — Bring the audio services up via 'model fleet up' (gating + ownership)

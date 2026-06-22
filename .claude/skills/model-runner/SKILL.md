@@ -1,16 +1,16 @@
 ---
 name: model-runner
-description: Run, assess, and switch the local vLLM model via the `model` CLI (model-gear). Use when changing the served model, starting/stopping the server, load-testing a candidate (e.g. an NVFP4 checkpoint), or producing the numbers for a per-model doc under docs/.
+description: Run, assess, and switch the local vLLM model via the `lobes` CLI (lobes-cli). Use when changing the served model, starting/stopping the server, load-testing a candidate (e.g. an NVFP4 checkpoint), or producing the numbers for a per-model doc under docs/.
 ---
 
 # model-runner
 
 The local vLLM model is served by this repo's deployment (`docker-compose.yml` +
-`.env`, scaffolded into `~/.model-gear`). The **canonical implementation** is the
-`model` CLI (the `model-gear` package); this skill points a maintainer at it and
-the `scripts/model-runner.sh` shim just forwards to `model`.
+`.env`, scaffolded into `~/.lobes`). The **canonical implementation** is the
+`lobes` CLI (the `lobes-cli` package); this skill points a maintainer at it and
+the `scripts/model-runner.sh` shim just forwards to `lobes`.
 
-It is a maintainer convenience — the deployed agent (`model-gear`) does not run it.
+It is a maintainer convenience — the deployed agent (`lobes`) does not run it.
 
 ## When to use
 
@@ -25,7 +25,7 @@ It is a maintainer convenience — the deployed agent (`model-gear`) does not ru
 Use the `model` CLI directly (or `scripts/model-runner.sh <args>`, which `exec`s it):
 
 ```bash
-model init --apply                 # scaffold ~/.model-gear (compose + .env)
+model init --apply                 # scaffold ~/.lobes (compose + .env)
 
 # switch the served model (edits .env, recreates the container, waits for health).
 # DRY-RUN by default: prints the plan and changes nothing. Add --apply to execute.

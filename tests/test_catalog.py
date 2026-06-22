@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from model_gear.catalog import (
+from lobes.catalog import (
     SUPPORTED_MODELS,
     as_dicts,
     mtp_compose_command_items,
     supported_models,
 )
-from model_gear.gateway import _config
-from model_gear.runtime._parser import infer_parser
+from lobes.gateway import _config
+from lobes.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
-_TEMPLATES = Path(__file__).resolve().parents[1] / "model_gear" / "templates"
+_TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
 
 # Fields required non-empty for ALL models (task-agnostic).
 _FIELDS_ALL = ("id", "role_hint", "shape", "context", "status", "doc")

@@ -1,0 +1,24 @@
+[project]
+name = "model-gear"
+version = "0.27.0"
+description = "Deprecated alias for lobes-cli. Installing model-gear pulls in lobes-cli, which provides the `lobes` command (and the legacy `model` alias)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{name = "AgentCulture"}]
+classifiers = [
+    "Development Status :: 7 - Inactive",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = ["lobes-cli==0.27.0"]
+
+[project.urls]
+Homepage = "https://github.com/agentculture/lobes-cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

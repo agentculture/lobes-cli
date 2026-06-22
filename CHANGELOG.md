@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-06-22
+
+### Changed
+
+- **Renamed the tool from `model-gear`/`model` to `lobes`/`lobes-cli`.** The
+  binary is now **`lobes`** (`lobes switch`, `lobes serve`, `lobes assess`, …),
+  the import package is **`lobes`**, and the PyPI distribution is **`lobes-cli`**.
+  The deployed Culture agent is renamed `model-gear` → `lobes` (`culture.yaml`,
+  `AGENTS.md`).
+- **Deployment dir is now `~/.lobes`** (env `$LOBES_DIR`). The legacy
+  `$MODEL_GEAR_DIR` and `~/.model-gear` are still resolved as fallbacks, so a
+  pre-rename deployment keeps working with the renamed CLI without redeploying.
+- **Deployment-internal names are intentionally kept as `model-gear`** so a live
+  fleet isn't disrupted: Docker `container_name`s (`model-gear-vllm`,
+  `model-gear-gateway`, …), `mg-logwrap.sh`, `MODEL_GEAR_LOG_DIR`, and the
+  served-model id are unchanged.
+
+### Added
+
+- **`model` is kept as a deprecated alias command** for `lobes` (same entry
+  point); `--version`/help reflect whichever name was invoked.
+- **`model-gear` is published on PyPI as a deprecated alias** of `lobes-cli`: a
+  metadata-only shim package (`packaging/model-gear/`) that depends on
+  `lobes-cli==<same version>`, plus a `publish-alias` job in `publish.yml` that
+  builds and publishes it after the main release.
+
 ## [0.26.4] - 2026-06-21
 
 ### Changed

@@ -1,10 +1,10 @@
 # Runtime model: `nvidia/Qwen3-32B-NVFP4`
 
-The **current runtime model** model-gear runs, served by local vLLM over the
-`acp` backend (the model-gear agent consumes it). Declared in `culture.yaml` as
+The **current runtime model** lobes runs, served by local vLLM over the
+`acp` backend (the lobes agent consumes it). Declared in `culture.yaml` as
 `vllm-local/nvidia/Qwen3-32B-NVFP4` and stood up by the packaged compose template.
 
-> One entry in model-gear's **supported catalog** (`model overview --list`). For
+> One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
@@ -20,7 +20,7 @@ The **current runtime model** model-gear runs, served by local vLLM over the
 ## How to run
 
 ```bash
-model init --apply            # scaffold ~/.model-gear; set HF_TOKEN in .env for gated repos
+model init --apply            # scaffold ~/.lobes; set HF_TOKEN in .env for gated repos
 docker login nvcr.io          # NGC API key, to pull the vLLM image
 model serve --apply           # first run downloads ~20 GB of weights
 model status                  # reports until /health is up
@@ -36,11 +36,11 @@ curl -s http://localhost:8000/v1/models   # lists nvidia/Qwen3-32B-NVFP4
 Relevant compose flags: `--quantization=modelopt_fp4`, `--kv-cache-dtype=fp8`,
 `--reasoning-parser=qwen3`, `--enable-auto-tool-choice`,
 `--tool-call-parser=hermes` (OpenAI tool/function calling — `hermes` is correct
-for this Qwen3 dense model and is what `model switch` auto-selects; the parser is
+for this Qwen3 dense model and is what `lobes switch` auto-selects; the parser is
 `VLLM_TOOL_CALL_PARSER`),
 `--enable-prefix-caching`, `--gpu-memory-utilization=0.6`. Tunables in the
 deployment `.env`
-(`VLLM_GPU_MEM_UTIL`, `VLLM_MAX_MODEL_LEN`, `HF_CACHE`, …); `model switch`
+(`VLLM_GPU_MEM_UTIL`, `VLLM_MAX_MODEL_LEN`, `HF_CACHE`, …); `lobes switch`
 rewrites them.
 
 ## Reading the reasoning trace

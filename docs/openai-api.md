@@ -1,6 +1,6 @@
 # OpenAI-compatible API reference
 
-> Every OpenAI-compatible endpoint model-gear serves, and how the gateway routes it.
+> Every OpenAI-compatible endpoint lobes serves, and how the gateway routes it.
 
 All endpoints are served on a **single port** (default `:8000`, set by `VLLM_PORT`
 in the deployment `.env`). In single-model mode that port is the raw vLLM container
@@ -67,7 +67,7 @@ The bridge proxies:
 - `POST /v1/audio/transcriptions` → Parakeet STT (`model-gear-stt`, port 9002)
 - `POST /v1/audio/speech` → Chatterbox TTS (`model-gear-chatterbox`, port 9000)
 
-The audio overlay is enabled with `model init --fleet --audio --apply`. See
+The audio overlay is enabled with `lobes init --fleet --audio --apply`. See
 [`docs/realtime-pipeline.md`](realtime-pipeline.md) for full bring-up instructions.
 
 **Known limitation:** the fleet gateway is not auth-aware. `CULTURE_VLLM_API_KEY`
@@ -252,7 +252,7 @@ Returns **audio bytes** (24 kHz). Requires the `--audio` fleet overlay.
 ```bash
 curl -s http://localhost:8000/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"model":"chatterbox","input":"Hello from model-gear.","voice":""}' \
+  -d '{"model":"chatterbox","input":"Hello from lobes.","voice":""}' \
   -o speech.wav
 ```
 
@@ -276,9 +276,9 @@ curl -s http://localhost:8000/v1/models
 
 ### Supported catalog
 
-`GET /v1/models/supported` — the full model-gear supported catalog: every gear you
+`GET /v1/models/supported` — the full lobes supported catalog: every gear you
 can switch to, each flagged `loaded` (in GPU memory now) and `default` (the primary
-the gateway defaults to). This is the HTTP equivalent of `model overview --list`.
+the gateway defaults to). This is the HTTP equivalent of `lobes overview --list`.
 
 ```bash
 curl -s http://localhost:8000/v1/models/supported
@@ -290,14 +290,14 @@ Two questions that look alike but are not:
 
 | Question | CLI | HTTP |
 |---|---|---|
-| What *can* I run? (catalog) | `model overview --list` | `GET /v1/models/supported` |
-| What's *loaded* right now? | `model fleet status` | `GET /v1/models` |
-| What's the deployment *set* to serve? | `model status` / `model whoami` | — |
+| What *can* I run? (catalog) | `lobes overview --list` | `GET /v1/models/supported` |
+| What's *loaded* right now? | `lobes fleet status` | `GET /v1/models` |
+| What's the deployment *set* to serve? | `lobes status` / `lobes whoami` | — |
 
 Mnemonic: the catalog is what's on the **menu** (and which dishes have been
 cooked); `GET /v1/models` is what's **hot now**.
 
-`model status` / `model whoami` report the model the deployment is configured to
+`lobes status` / `lobes whoami` report the model the deployment is configured to
 serve (from `.env`) plus container health — normally the same model, but it is
 configuration, not a live query. For runtime truth, query `/v1/models`.
 
@@ -308,7 +308,7 @@ for the full discussion.
 
 ### Single-model deployment
 
-Set `CULTURE_VLLM_API_KEY` in `$HOME/.model-gear/.env` before serving. vLLM then
+Set `CULTURE_VLLM_API_KEY` in `$HOME/.lobes/.env` before serving. vLLM then
 requires `Authorization: Bearer $CULTURE_VLLM_API_KEY` on every request. An empty
 key leaves the API open — only safe for local development.
 
@@ -320,7 +320,7 @@ curl -s http://localhost:8000/v1/chat/completions \
 ```
 
 Generate the key with `python3 scripts/gen-api-key.py` (writes to the deployment
-`.env`; `--show` to print, `--force` to rotate), then `model serve --apply` to
+`.env`; `--show` to print, `--force` to rotate), then `lobes serve --apply` to
 enforce it.
 
 ### Fleet gateway
@@ -328,32 +328,32 @@ enforce it.
 The fleet gateway is **not yet auth-aware** — the bearer token does not yet extend
 to the gateway's proxied endpoints (including `/v1/audio/*`). Per-endpoint auth is
 planned. In the meantime, keep the gateway port off the public internet: use the
-Cloudflare Tunnel (`model tunnel`) on the single-model deployment, or bind the
+Cloudflare Tunnel (`lobes tunnel`) on the single-model deployment, or bind the
 fleet gateway to localhost and expose only via the tunnel.
 
 ### Public exposure via Cloudflare Tunnel
 
-`model tunnel --apply` publishes the local API at an owner-chosen hostname through
+`lobes tunnel --apply` publishes the local API at an owner-chosen hostname through
 a Cloudflare Tunnel — no inbound ports, no static IP required. Set
 `CULTURE_VLLM_API_KEY` before tunnelling.
 
 ```bash
-model tunnel       # dry-run: prints the cloudflared command + public URL
-model tunnel --apply   # start the tunnel in the background
-model tunnel --stop --apply   # tear it down
+lobes tunnel       # dry-run: prints the cloudflared command + public URL
+lobes tunnel --apply   # start the tunnel in the background
+lobes tunnel --stop --apply   # tear it down
 ```
 
-See the README "Expose the API" section and `model explain tunnel` for the full
-two-step provisioning flow (`cultureflare` + `model tunnel`).
+See the README "Expose the API" section and `lobes explain tunnel` for the full
+two-step provisioning flow (`cultureflare` + `lobes tunnel`).
 
 ## See also
 
-- `model explain gateway` — routing semantics (name / default / failover / SSE)
-- `model explain fleet` — the multi-container fleet topology
-- `model explain embeddings` — `/v1/embeddings` request/response detail
-- `model explain rerank` — `/v1/rerank` request/response detail
-- `model explain score` — `/v1/score` request/response detail
-- `model explain tunnel` — Cloudflare Tunnel bring-up
+- `lobes explain gateway` — routing semantics (name / default / failover / SSE)
+- `lobes explain fleet` — the multi-container fleet topology
+- `lobes explain embeddings` — `/v1/embeddings` request/response detail
+- `lobes explain rerank` — `/v1/rerank` request/response detail
+- `lobes explain score` — `/v1/score` request/response detail
+- `lobes explain tunnel` — Cloudflare Tunnel bring-up
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — full fleet topology, memory guidance, live validation findings
 - [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), health/readiness, runbooks
 - [`docs/chatterbox-tts.md`](chatterbox-tts.md) — Chatterbox TTS details, voice prompting

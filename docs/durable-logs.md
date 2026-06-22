@@ -2,12 +2,12 @@
 
 When a vLLM container restarts or is recreated, its `docker logs` are gone. That
 is exactly how the EngineCore crash trace in
-[issue #50](https://github.com/agentculture/model-gear/issues/50) vanished before
+[issue #50](https://github.com/agentculture/lobes-cli/issues/50) vanished before
 anyone could read it: the server 500'd on a tool-calling request, the engine went
 down, and by the time the box was looked at, a restart had wiped the logs — so
 the root cause could not be investigated for lack of data.
 
-model-gear fixes the **observability gap**, not (yet) the crash itself: it makes
+lobes fixes the **observability gap**, not (yet) the crash itself: it makes
 each vLLM service's output durable so the *next* crash leaves a trace you can
 read. Pinning the EngineCore root cause (MTP speculative decoding + tools vs FP4)
 needs a controlled repro **with that durable trace in hand** — durable logs is
@@ -15,7 +15,7 @@ the prerequisite that unblocks it.
 
 ## How it works
 
-`model init` scaffolds **`mg-logwrap.sh`** next to `docker-compose.yml`. Each
+`lobes init` scaffolds **`mg-logwrap.sh`** next to `docker-compose.yml`. Each
 vLLM service bind-mounts it as the container **entrypoint**, so the real
 `command:` (the `vllm serve …` arg list, unchanged) arrives at the wrapper as
 `"$@"`. The wrapper:
@@ -39,18 +39,18 @@ never stop the model from serving.
 
 | | Host | In container |
 |---|---|---|
-| Log dir | `${MODEL_GEAR_LOG_DIR:-<deploy>/logs}` | `/logs/model-gear` |
-| Single model | `…/logs/vllm-<boot>.log` | `/logs/model-gear/vllm-<boot>.log` |
-| Fleet gears | `…/logs/{primary,embed,rerank}-<boot>.log` | `/logs/model-gear/<svc>-<boot>.log` |
+| Log dir | `${MODEL_GEAR_LOG_DIR:-<deploy>/logs}` | `/logs/lobes` |
+| Single model | `…/logs/vllm-<boot>.log` | `/logs/lobes/vllm-<boot>.log` |
+| Fleet gears | `…/logs/{primary,embed,rerank}-<boot>.log` | `/logs/lobes/<svc>-<boot>.log` |
 
-The host dir is created (user-owned) by `model init`, `model serve`, and
-`model fleet up` before compose bind-mounts it, so the logs are never
+The host dir is created (user-owned) by `lobes init`, `lobes serve`, and
+`lobes fleet up` before compose bind-mounts it, so the logs are never
 root-owned. Per-boot files mean the **crash boot is preserved as its own file**
 and never overwritten by the restart that follows it.
 
-## Reading the logs — `model logs`
+## Reading the logs — `lobes logs`
 
-`model logs` is read-only and reads the **host** files directly, so it works even
+`lobes logs` is read-only and reads the **host** files directly, so it works even
 after the crashed container is gone (`docker logs` would not):
 
 ```text

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from model_gear.gateway import server as S
-from model_gear.gateway._config import _parse_aliases, build_config
-from model_gear.gateway._routing import (
+from lobes.gateway import server as S
+from lobes.gateway._config import _parse_aliases, build_config
+from lobes.gateway._routing import (
     Backend,
     RoutingTable,
     list_models_payload,
@@ -65,7 +65,7 @@ def test_supported_models_payload_annotates_loaded_and_default() -> None:
         {"id": "X", "role_hint": "candidate", "shape": "dense"},  # supported but not loaded
     ]
     payload = supported_models_payload(t, catalog)
-    assert payload["object"] == "model-gear.supported_models"
+    assert payload["object"] == "lobes.supported_models"
     assert payload["default_model"] == "P"
     by_id = {e["id"]: e for e in payload["data"]}
     assert by_id["P"]["loaded"] is True and by_id["P"]["default"] is True

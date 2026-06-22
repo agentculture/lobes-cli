@@ -1,6 +1,6 @@
 # Parakeet STT — realtime audio sidecar
 
-> The STT backend for model-gear's audio fleet overlay.  The speech-to-text half
+> The STT backend for lobes's audio fleet overlay.  The speech-to-text half
 > of the realtime audio pair; the TTS half is Chatterbox (see
 > `docs/chatterbox-tts.md`).  Runs `nvidia/parakeet-tdt-0.6b-v2` via NeMo ASR,
 > exposes an OpenAI-shaped `/v1/audio/transcriptions` endpoint, and is fronted by
@@ -78,11 +78,11 @@ true:
 2. **CUDA live** — a trivial tensor op (`torch.zeros(1, device="cuda")` +
    `torch.cuda.synchronize()`) succeeds without raising.
 
-The decision logic lives in `model_gear/realtime/_readiness.py`
+The decision logic lives in `lobes/realtime/_readiness.py`
 (`evaluate_readiness`), the single source of truth shared with the realtime
 bridge.  The container COPYs a vendored top-level `_readiness.py` alongside
 `listen_server.py` so the import resolves inside the container without requiring
-the model-gear wheel.
+the lobes wheel.
 
 A "healthy" Parakeet container is **actually serving** — this is a true readiness
 check, not a liveness ping.  The distinction matters: before issue #39 the
@@ -174,7 +174,7 @@ For diagnosis steps and memory-pressure guidance, see the
 ## Not a switchable gear
 
 Parakeet is the **hardcoded STT backend** for the audio overlay — it is not
-registered in `model_gear/catalog.py` and cannot be selected via `model switch`.
+registered in `lobes/catalog.py` and cannot be selected via `lobes switch`.
 The catalog covers generate / embed / score gears only.  The same applies to
 Chatterbox TTS.
 

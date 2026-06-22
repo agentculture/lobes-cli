@@ -8,9 +8,9 @@ import urllib.error
 
 import pytest
 
-import model_gear.assess as A
-from model_gear.cli import main
-from model_gear.cli._errors import ModelGearError
+import lobes.assess as A
+from lobes.cli import main
+from lobes.cli._errors import ModelGearError
 
 
 def _fake_get(url, path, timeout=10):

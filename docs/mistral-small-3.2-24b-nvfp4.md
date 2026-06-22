@@ -8,8 +8,8 @@ The **opt-in dense warm fallback** for the gateway fleet. The fleet runs one
 recommended choice: it **supersedes the Qwen3.6-35B-A3B MoE**, which never loaded
 on this GB10 (OOM co-resident, stall solo — see
 [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). Mistral is dense,
-loads reliably, and serves text + tool calls. It is one entry in model-gear's
-**supported catalog** (`model overview --list`); see
+loads reliably, and serves text + tool calls. It is one entry in lobes's
+**supported catalog** (`lobes overview --list`); see
 [`docs/gateway-fleet.md`](gateway-fleet.md) for the fleet topology and the
 [catalog-vs-warm distinction](gateway-fleet.md#supported-catalog-vs-warm-backends)
 (what you *can* load vs. what's loaded *now*).
@@ -40,7 +40,7 @@ Source: <https://huggingface.co/RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVF
 ## How it runs in the fleet
 
 The fleet ships **one** generate backend; a warm fallback is **opt-in** and is
-**not** scaffolded by `model init --fleet`. Wiring Mistral in is a manual,
+**not** scaffolded by `lobes init --fleet`. Wiring Mistral in is a manual,
 two-part change (see
 [`docs/gateway-fleet.md` → Adding a fallback](gateway-fleet.md#adding-a-fallback)):
 
@@ -149,7 +149,7 @@ smaller 24B reads fewer bytes per token — and it actually *loads*, unlike the 
 MoE. Suitable as the opt-in warm fallback the gateway fails over to once a
 fallback is configured.
 
-> **Note on the time-duration probe.** `model assess` marks
+> **Note on the time-duration probe.** `lobes assess` marks
 > `14:45→17:10 = 145 min` as FAIL because its strict `"145" in content` check
 > didn't match that one greedy run's verbose output. Manual re-runs of the exact
 > prompt return the correct answer (the model derives `145` and boxes it). Treat

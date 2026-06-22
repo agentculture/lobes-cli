@@ -12,9 +12,9 @@ import json
 import os
 from pathlib import Path
 
-from model_gear.cli import main
-from model_gear.cli._commands import logs as logs_cmd
-from model_gear.runtime import _compose
+from lobes.cli import main
+from lobes.cli._commands import logs as logs_cmd
+from lobes.runtime import _compose
 
 # --- log dir resolution ----------------------------------------------------
 
@@ -175,7 +175,7 @@ def test_logs_unknown_service_no_crash(tmp_path, capsys) -> None:
 def test_logwrap_template_shipped_and_safe() -> None:
     from importlib.resources import files
 
-    content = (files("model_gear.templates") / _compose.LOG_WRAPPER).read_text()
+    content = (files("lobes.templates") / _compose.LOG_WRAPPER).read_text()
     # Always execs the real command (so logging can never block serving) ...
     assert 'exec "$@"' in content
     # ... tees to a durable file, and is parameterised per service.
@@ -191,6 +191,6 @@ def test_compose_log_dir_does_not_drift_from_python() -> None:
     # with the Python helpers that read them (review feedback).
     from importlib.resources import files
 
-    compose = (files("model_gear.templates") / "docker-compose.yml").read_text()
+    compose = (files("lobes.templates") / "docker-compose.yml").read_text()
     assert f"${{MODEL_GEAR_LOG_DIR:-./{_compose.LOG_DIRNAME}}}:/logs/model-gear" in compose
     assert "MG_LOG_DIR=/logs/model-gear" in compose

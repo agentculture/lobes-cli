@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from model_gear.realtime._settings import build_settings
+from lobes.realtime._settings import build_settings
 
 
 def test_defaults_point_at_the_fleet_compose_network() -> None:

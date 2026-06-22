@@ -5,7 +5,7 @@ description: Run pytest with parallel execution and coverage. Use when running t
 
 # Run Tests
 
-> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by model-gear and may diverge.
+> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by lobes and may diverge.
 
 Run the project's pytest suite with optional parallelism (pytest-xdist) and coverage.
 Coverage targets are read from `pyproject.toml`'s `[tool.coverage.run]` section,

@@ -11,7 +11,7 @@ description: >
 
 # doc-test-alignment (stub)
 
-> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by model-gear and may diverge.
+> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by lobes and may diverge.
 
 This skill is a stub. The real workflow is intentionally not yet implemented —
 the file exists so that `steward verify` can find it and so contributors who

@@ -1,4 +1,4 @@
-"""Tests for model-gear's introspection verbs: overview, cli overview, doctor."""
+"""Tests for lobes' introspection verbs: overview, cli overview, doctor."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from model_gear.cli import main
+from lobes.cli import main
 
 # --- overview -------------------------------------------------------------
 
@@ -15,7 +15,7 @@ def test_overview_text(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["overview"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "# model-gear" in out
+    assert "# lobes" in out
     assert "Currently served" in out
     assert "Verbs" in out
 
@@ -24,7 +24,7 @@ def test_overview_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["overview", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["subject"] == "model-gear"
+    assert payload["subject"] == "lobes"
     assert isinstance(payload["sections"], list)
     assert payload["sections"]
 

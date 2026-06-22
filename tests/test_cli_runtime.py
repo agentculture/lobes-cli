@@ -7,9 +7,9 @@ import types
 
 import pytest
 
-from model_gear.cli import _runtime_ops, main
-from model_gear.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
-from model_gear.runtime import _compose, _env, _health
+from lobes.cli import _runtime_ops, main
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
+from lobes.runtime import _compose, _env, _health
 
 
 def _ok() -> types.SimpleNamespace:
@@ -66,7 +66,7 @@ def test_resolve_explicit_missing_raises_user_error(tmp_path) -> None:
 
 def test_resolve_env_var(tmp_path, monkeypatch) -> None:
     _scaffold(tmp_path)
-    monkeypatch.setenv("MODEL_GEAR_DIR", str(tmp_path))
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
     assert _compose.resolve_deployment_dir(None) == tmp_path
 
 

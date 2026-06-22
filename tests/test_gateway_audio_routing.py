@@ -14,9 +14,9 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from model_gear.gateway import server as S
-from model_gear.gateway._config import build_config
-from model_gear.gateway._routing import is_audio_path
+from lobes.gateway import server as S
+from lobes.gateway._config import build_config
+from lobes.gateway._routing import is_audio_path
 
 
 def _cfg(**over):

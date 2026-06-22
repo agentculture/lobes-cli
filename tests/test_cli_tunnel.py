@@ -13,9 +13,9 @@ import sys
 
 import pytest
 
-from model_gear.cli import main
-from model_gear.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR
-from model_gear.runtime import _compose, _health, _tunnel
+from lobes.cli import main
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR
+from lobes.runtime import _compose, _health, _tunnel
 
 
 def _scaffold(path):

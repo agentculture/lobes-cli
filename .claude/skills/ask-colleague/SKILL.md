@@ -208,6 +208,6 @@ stop requests take effect on the next iteration rather than interrupting mid-ste
 ## Provenance
 
 This is a **first-party** colleague skill — colleague is its origin. It is
-the inverse of the other skills under `.claude/skills/`, which model-gear
+the inverse of the other skills under `.claude/skills/`, which lobes
 vendors *from* guildmaster. See `docs/skill-sources.md`. The `cite, don't import`
 policy holds: downstream repos copy it, they don't symlink or depend on it.

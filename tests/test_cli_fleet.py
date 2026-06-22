@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import types
 
-from model_gear.cli import main
-from model_gear.runtime import _compose, _health
+from lobes.cli import main
+from lobes.runtime import _compose, _health
 
 
 def _ok() -> types.SimpleNamespace:
@@ -114,7 +114,7 @@ def test_bare_fleet_defaults_to_status(tmp_path, capsys) -> None:
 def test_fleet_status_fetches_models_when_healthy(tmp_path, monkeypatch, capsys) -> None:
     _scaffold_fleet(tmp_path)
     monkeypatch.setattr(_health, "is_healthy", lambda *a, **k: True)
-    from model_gear import assess
+    from lobes import assess
 
     monkeypatch.setattr(
         assess, "_get", lambda url, path, timeout=10: (200, {"data": [{"id": "P"}, {"id": "F"}]})
@@ -185,7 +185,7 @@ def test_audio_container_constants_match_compose_container_names() -> None:
     as "not created" (the Magpie->Chatterbox rename drifted FLEET_TTS once)."""
     from importlib.resources import files
 
-    overlay = (files("model_gear.templates") / "fleet" / "docker-compose.audio.yml").read_text(
+    overlay = (files("lobes.templates") / "fleet" / "docker-compose.audio.yml").read_text(
         encoding="utf-8"
     )
     declared = {
@@ -204,7 +204,7 @@ def test_chatterbox_healthcheck_uses_image_python() -> None:
     import re
     from importlib.resources import files
 
-    root = files("model_gear.templates") / "fleet"
+    root = files("lobes.templates") / "fleet"
     overlay = (root / "docker-compose.audio.yml").read_text(encoding="utf-8").splitlines()
     # isolate the `  chatterbox:` service block (up to the next 2-space service key)
     start = next(i for i, ln in enumerate(overlay) if ln.startswith("  chatterbox:"))

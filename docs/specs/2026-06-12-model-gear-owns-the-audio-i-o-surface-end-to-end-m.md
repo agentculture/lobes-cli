@@ -17,7 +17,7 @@
 
 ## Requirements
 
-- model-gear's packaged compose template (model_gear/templates/docker-compose.yml) gains a Parakeet STT service and a realtime-facade service built from the vendored model_gear/realtime app, so 'model init' + 'model fleet up' materialise and start them.
+- model-gear's packaged compose template (lobes/templates/docker-compose.yml) gains a Parakeet STT service and a realtime-facade service built from the vendored lobes/realtime app, so 'model init' + 'model fleet up' materialise and start them.
   - honesty: 'model fleet up --apply' on a clean box brings up parakeet + facade services healthy, and 'model init' materialises them into the deployment dir without manual compose edits.
 - The realtime facade service serves POST /v1/audio/transcriptions (forward to Parakeet) and POST /v1/audio/speech (forward to Magpie) on :8080, and its /openapi.json lists both routes.
   - honesty: curl :8080/openapi.json lists both /v1/audio/transcriptions and /v1/audio/speech, and a multipart WAV POST to /v1/audio/transcriptions returns 200 with {text:...} sourced from Parakeet.

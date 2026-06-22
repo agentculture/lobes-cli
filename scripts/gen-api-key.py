@@ -11,8 +11,8 @@ By default the key is written but **not printed** (so it doesn't leak into logs
 or terminal scrollback); read it back privately from ``.env`` to configure
 clients, or pass ``--show`` to emit it on stdout.
 
-Deployment dir resolves like the ``model`` CLI: ``--dir`` → ``$MODEL_GEAR_DIR`` →
-``~/.model-gear``. Stdlib only; no model_gear import, so it runs from a wheel
+Deployment dir resolves like the ``model`` CLI: ``--dir`` → ``$LOBES_DIR`` →
+``~/.lobes``. Stdlib only; no lobes import, so it runs from a wheel
 install too.
 
 Examples:
@@ -37,10 +37,10 @@ MIN_BYTES = 16  # 128-bit floor — below this the key is too weak to gate a pub
 def _deploy_dir(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser()
-    env = os.environ.get("MODEL_GEAR_DIR")
+    env = os.environ.get("LOBES_DIR")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".model-gear"
+    return Path.home() / ".lobes"
 
 
 def _read_key(env_path: Path) -> str | None:
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=f"Generate/rotate {KEY} in the deployment .env (open-source-safe).",
     )
-    parser.add_argument("--dir", help="Deployment dir (default: $MODEL_GEAR_DIR or ~/.model-gear).")
+    parser.add_argument("--dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     parser.add_argument("--force", action="store_true", help="Rotate even if a key already exists.")
     parser.add_argument(
         "--bytes",

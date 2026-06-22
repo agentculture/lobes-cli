@@ -7,7 +7,7 @@ works. The archived baseline
 slow single-stream on the GB10 (~8 tok/s decode); MTP drafts several tokens per
 forward pass and roughly doubles that. Promoted from candidate after the
 tool-calling gate passed (see "Tool calling — verified" below). Filed as
-[issue #26](https://github.com/agentculture/model-gear/issues/26).
+[issue #26](https://github.com/agentculture/lobes-cli/issues/26).
 
 > **Status: the fleet default primary (promoted 2026-05-31 on this GB10).**
 > Loaded and served on `spark-f8a9` (vLLM `0.19.0+nv26.04`) at **18.7–19.1 tok/s
@@ -159,7 +159,7 @@ heavier co-resident agents need the headroom.
 
 ## Live-test (run on `spark-f8a9`, 2026-05-31) — how to reproduce
 
-1. **Premise (unsloth baseline).** The ticket ([#26](https://github.com/agentculture/model-gear/issues/26))
+1. **Premise (unsloth baseline).** The ticket ([#26](https://github.com/agentculture/lobes-cli/issues/26))
    names a baseline serve command —
    `vllm serve unsloth/Qwen3.6-27B-NVFP4 --trust-remote-code --dtype bfloat16 --max-model-len 4096`.
    We deliberately **deviate**: that baseline NVFP4 export *drops the MTP head* →
