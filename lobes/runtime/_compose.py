@@ -91,6 +91,9 @@ AUDIO_TEMPLATES = {
     "fleet/_readiness.py": "_readiness.py",
 }
 AUDIO_ENV_TEMPLATE = "fleet/env.audio.example"
+_INIT_REMEDIATION = (
+    "run 'lobes init --apply' to scaffold ~/.lobes, " "or pass --compose-dir / set LOBES_DIR"
+)
 # Back-compat alias: the single set was the only one before the fleet existed.
 _TEMPLATES = SINGLE_TEMPLATES
 
@@ -154,8 +157,7 @@ def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
             raise ModelGearError(
                 code=code,
                 message=f"no {COMPOSE_FILE} in {candidate} ({source})",
-                remediation="run 'lobes init --apply' to scaffold ~/.lobes, "
-                "or pass --compose-dir / set LOBES_DIR",
+                remediation=_INIT_REMEDIATION,
             )
         return candidate
     if os.environ.get("LOBES_DIR"):
@@ -165,8 +167,7 @@ def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
             raise ModelGearError(
                 code=code,
                 message=f"no {COMPOSE_FILE} in {candidate} ({source})",
-                remediation="run 'lobes init --apply' to scaffold ~/.lobes, "
-                "or pass --compose-dir / set LOBES_DIR",
+                remediation=_INIT_REMEDIATION,
             )
         return candidate
     if os.environ.get("MODEL_GEAR_DIR"):
@@ -176,8 +177,7 @@ def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
             raise ModelGearError(
                 code=code,
                 message=f"no {COMPOSE_FILE} in {candidate} ({source})",
-                remediation="run 'lobes init --apply' to scaffold ~/.lobes, "
-                "or pass --compose-dir / set LOBES_DIR",
+                remediation=_INIT_REMEDIATION,
             )
         return candidate
     # Prefer ~/.lobes; fall back to ~/.model-gear for live fleets that haven't
@@ -191,8 +191,7 @@ def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
     raise ModelGearError(
         code=EXIT_ENV_ERROR,
         message=f"no {COMPOSE_FILE} in {lobes_default} (default ~/.lobes)",
-        remediation="run 'lobes init --apply' to scaffold ~/.lobes, "
-        "or pass --compose-dir / set LOBES_DIR",
+        remediation=_INIT_REMEDIATION,
     )
 
 
