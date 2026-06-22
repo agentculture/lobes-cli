@@ -1,4 +1,4 @@
-"""``model serve`` (alias ``start``) — start the vLLM server.
+"""``lobes serve`` (alias ``start``) — start the vLLM server.
 
 Mutating: dry-run by default; ``--apply`` runs ``docker compose up -d`` in the
 deployment dir, waits for ``/health``, then probes ``tool_choice:"auto"`` to
@@ -49,7 +49,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if json_mode:
             emit_result(result, json_mode=True)
         else:
-            out = [f">> serving on :{port}. assess with: model assess --port {port}"]
+            out = [f">> serving on :{port}. assess with: lobes assess --port {port}"]
             if tc is not None:
                 out.append(">> " + _runtime_ops.format_tool_probe(tc))
             emit_result("\n".join(out), json_mode=False)

@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 
 # Import the readiness decision from the single source of truth. The Dockerfile
 # COPYs _readiness.py next to listen_server.py (top-level module in /app) and
-# `model init --fleet --audio` scaffolds it via AUDIO_TEMPLATES, so the
+# `lobes init --fleet --audio` scaffolds it via AUDIO_TEMPLATES, so the
 # container-local import always resolves; the wheel path is a dev fallback. No
 # inline copy — a third copy would invite drift from the CI-tested canonical
 # lobes/realtime/_readiness.py.

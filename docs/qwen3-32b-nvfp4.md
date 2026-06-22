@@ -20,10 +20,10 @@ The **current runtime model** lobes runs, served by local vLLM over the
 ## How to run
 
 ```bash
-model init --apply            # scaffold ~/.lobes; set HF_TOKEN in .env for gated repos
+lobes init --apply            # scaffold ~/.lobes; set HF_TOKEN in .env for gated repos
 docker login nvcr.io          # NGC API key, to pull the vLLM image
-model serve --apply           # first run downloads ~20 GB of weights
-model status                  # reports until /health is up
+lobes serve --apply           # first run downloads ~20 GB of weights
+lobes status                  # reports until /health is up
 ```
 
 Verify:

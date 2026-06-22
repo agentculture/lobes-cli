@@ -1,6 +1,6 @@
 """Run the cloudflared tunnel that exposes the local vLLM API (stdlib only).
 
-``model tunnel`` starts a standalone ``cloudflared tunnel run`` process (NOT a
+``lobes tunnel`` starts a standalone ``cloudflared tunnel run`` process (NOT a
 compose service) that proxies the owner-chosen public hostname to the local
 OpenAI-compatible server. The Cloudflare side (tunnel + ingress + DNS, run-token
 sealed in ``shushu``) is provisioned once by ``cultureflare remote-login

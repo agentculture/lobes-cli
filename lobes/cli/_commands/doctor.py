@@ -1,4 +1,4 @@
-"""``model doctor`` — diagnose the local model deployment.
+"""``lobes doctor`` — diagnose the local model deployment.
 
 Real checks (no longer a stub): is docker available, is a deployment scaffolded,
 is the ``.env`` coherent with ``culture.yaml``, and is ``/health`` reachable. A
@@ -68,7 +68,7 @@ def _env_coherence_check(env_path) -> dict:
             False,
             "warn",
             "VLLM_SERVED_NAME is not set in .env",
-            "set it, or run 'model switch <model> --apply'",
+            "set it, or run 'lobes switch <model> --apply'",
         )
     if expected and served != expected:
         return _check(
@@ -88,7 +88,7 @@ def _health_check(port: int) -> dict:
         healthy,
         "info",
         f"/health responding on :{port}" if healthy else f"/health not responding on :{port}",
-        "" if healthy else "start the server with 'model serve --apply'",
+        "" if healthy else "start the server with 'lobes serve --apply'",
     )
 
 
@@ -125,7 +125,7 @@ def _mark(check: dict) -> str:
 
 def _render_text(report: dict) -> str:
     status = "healthy" if report["healthy"] else "unhealthy"
-    lines = [f"model doctor: {status}", ""]
+    lines = [f"lobes doctor: {status}", ""]
     for check in report["checks"]:
         lines.append(f"[{_mark(check)}] {check['id']}: {check['message']}")
         if not check["passed"] and check["remediation"]:

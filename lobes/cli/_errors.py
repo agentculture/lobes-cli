@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Exit-code policy. Documented in ``model learn`` output.
+# Exit-code policy. Documented in ``lobes learn`` output.
 # 0      = success
 # 1      = user-input error (bad flag, missing required arg, unknown path)
 # 2      = environment / setup error (tool not installed, file unreadable)

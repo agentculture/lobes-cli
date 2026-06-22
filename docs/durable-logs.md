@@ -54,12 +54,12 @@ and never overwritten by the restart that follows it.
 after the crashed container is gone (`docker logs` would not):
 
 ```text
-model logs                 # list per-boot files (newest first) + the log dir
-model logs vllm            # tail the latest boot for a service
-model logs vllm --previous # tail the boot BEFORE the latest — i.e. the crashed
+lobes logs                 # list per-boot files (newest first) + the log dir
+lobes logs vllm            # tail the latest boot for a service
+lobes logs vllm --previous # tail the boot BEFORE the latest — i.e. the crashed
                            #   boot, after a restart created a fresh healthy one
-model logs primary -n 200  # more lines (fleet service)
-model logs --json          # structured listing
+lobes logs primary -n 200  # more lines (fleet service)
+lobes logs --json          # structured listing
 ```
 
 The `--previous` flag is the #50 investigation path: after a crash+restart, the

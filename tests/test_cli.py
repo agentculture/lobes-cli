@@ -116,6 +116,16 @@ def test_explain_self_uses_prog_name(capsys: pytest.CaptureFixture[str]) -> None
     assert "# lobes" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("alias", ["lobes", "lobes-cli", "model", "model-gear"])
+def test_explain_root_aliases_resolve(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # Both the new names and the deprecated model/model-gear aliases must resolve
+    # to the root entry (regression: the duplicate ("lobes",) key once dropped the
+    # ("model-gear",) back-compat alias entirely).
+    rc = main(["explain", alias])
+    assert rc == 0
+    assert "# lobes" in capsys.readouterr().out
+
+
 def test_explain_switch(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain", "switch"])
     assert rc == 0
@@ -144,7 +154,7 @@ def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["path"] == ["switch"]
-    assert "model switch" in payload["markdown"]
+    assert "lobes switch" in payload["markdown"]
 
 
 def test_explain_unknown_path_errors(capsys: pytest.CaptureFixture[str]) -> None:

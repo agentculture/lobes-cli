@@ -74,11 +74,11 @@ Both the target (`Qwen3_5ForConditionalGeneration`) and the **draft head**
 (`Qwen3_5MTP`) resolve on the stock image — no newer engine needed. Live draft
 acceptance came out at **72 %** (see the benchmark table).
 
-## How to run (compose edits `model switch` prints)
+## How to run (compose edits `lobes switch` prints)
 
-`model switch` writes the `VLLM_*` keys to `.env`, but the MTP draft and the
+`lobes switch` writes the `VLLM_*` keys to `.env`, but the MTP draft and the
 text-only flags **can't be defaulted in the shared template** (compose can't omit
-an empty flag, and they break the dense/hybrid models). So `model switch` resolves
+an empty flag, and they break the dense/hybrid models). So `lobes switch` resolves
 the env and then **prints the exact compose `command:` list items to add by hand** —
 the same mechanism the MoE `--moe-backend` uses. The compose `command:` is a YAML
 list (one argv token per item), so each flag is a separate item and the
@@ -93,7 +93,7 @@ list (one argv token per item), so each flag is a separate item and the
       - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4
 ```
 
-`model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply` also auto-selects
+`lobes switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply` also auto-selects
 `VLLM_TOOL_CALL_PARSER=qwen3_coder` + `VLLM_QUANTIZATION=modelopt`; separately set
 `VLLM_MAX_NUM_SEQS=2` in `.env` (see the OOM caveat below).
 
@@ -131,11 +131,11 @@ heavier co-resident agents need the headroom.
    currently imported`. Fix: point vLLM at the sibling base tokenizer (same
    Qwen3.6-27B vocab, already cached in production) — add
    `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4` to the compose command. With that it
-   loads cleanly. (`model switch` prints this line.)
+   loads cleanly. (`lobes switch` prints this line.)
 2. **`--max-num-seqs 2` is load-bearing.** The card warns that `--max-num-seqs 4`
    with KV-FP8, `n=3`, and 256K context **silently OOMs during CUDA-graph capture**.
    No `--purpose` profile yields 2 (balanced/prompt-heavy=4, decode-heavy=8), so
-   set `VLLM_MAX_NUM_SEQS=2` in `.env` by hand (`model switch` to this primary
+   set `VLLM_MAX_NUM_SEQS=2` in `.env` by hand (`lobes switch` to this primary
    forces it). Tested at 32768 context / util 0.6 on the shared box (~71.5 GiB
    resident); the **full 256K** (`262144`) served default was load-tested too
    (2026-06-03) — boots clean **at seqs=2** (the seqs=2 cap is exactly what keeps
@@ -171,8 +171,8 @@ heavier co-resident agents need the headroom.
    MTP work.
 2. **The real test (sakamakismile).** Stop the primary first (one ~30B model fits
    on the GB10 at a time), serve with the compose edits above + `VLLM_MAX_NUM_SEQS=2`,
-   `docker compose up -d` → `/health`, then `model assess` (correctness) +
-   `model benchmark` (decode tok/s), plus `GET /metrics`
+   `docker compose up -d` → `/health`, then `lobes assess` (correctness) +
+   `lobes benchmark` (decode tok/s), plus `GET /metrics`
    (`vllm:spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`) for the
    draft-acceptance rate. **Result: healthy, 19.1 tok/s, 72 % acceptance** (below).
 3. **Risk gate — passed.** vLLM `0.19.0+nv26.04` accepts `qwen3_5_mtp`, so no newer
@@ -215,8 +215,8 @@ artifact, not a wrong answer.
 Re-tested on the same shared GB10 at the **128K** default (`--max-model-len
 131072`), otherwise the same image and flags as the 2026-05-31 run (util 0.6,
 `--max-num-seqs 2`, KV-FP8, MTP n=3, `--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`).
-Reproduce with `model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
---max-model-len 131072 --apply`, then `model assess` + `model benchmark`.
+Reproduce with `lobes switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+--max-model-len 131072 --apply`, then `lobes assess` + `lobes benchmark`.
 
 | Property | Value |
 |---|---|
@@ -242,9 +242,9 @@ the served default since 2026-06-03 (next section).
 Re-tested on the same shared GB10 at the **full 256K** native context
 (`--max-model-len 262144`), otherwise the same image and flags as the 128K run
 (util 0.6, `--max-num-seqs 2`, KV-FP8, MTP n=3,
-`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`). Reproduce with `model switch
+`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`). Reproduce with `lobes switch
 sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --max-model-len 262144 --apply`, then
-`model assess --tools` + `model benchmark`.
+`lobes assess --tools` + `lobes benchmark`.
 
 | Property | Value |
 |---|---|
@@ -289,14 +289,14 @@ minimal recipe omitted were all present: `--enable-auto-tool-choice`,
 | Full tool round-trip (result → final answer) | ✅ `finish=stop`, correct natural-language answer |
 | Reasoning + tool calling coexist (vLLM [#34650](https://github.com/vllm-project/vllm/issues/34650)) | ✅ reasoning trace present, no `</think>` breakage |
 | MTP spec-decode active **with tools on** | ✅ **78.6 %** draft acceptance (276/351) — not silently disabled |
-| Correctness (`model assess`) | ✅ both probes `finish=stop` (the 145-min word problem that hit `length` in the minimal run now completes) |
-| Decode throughput (`model benchmark`, production flags) | ✅ **18.7 tok/s** — the ~2.4× win survives the full flag set |
+| Correctness (`lobes assess`) | ✅ both probes `finish=stop` (the 145-min word problem that hit `length` in the minimal run now completes) |
+| Decode throughput (`lobes benchmark`, production flags) | ✅ **18.7 tok/s** — the ~2.4× win survives the full flag set |
 | GPU footprint | ~71.2 GiB (72,915 MiB) at util 0.6 — fits the shared box |
 
 The one packaging caveat (the `--tokenizer` override, caveat 1) is handled by
 baking it into the compose template, so a fresh deploy works out of the box.
-Reproduce with `model assess` + `model benchmark` and a `tool_choice:"auto"`
-request (or `model switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply`, which
+Reproduce with `lobes assess` + `lobes benchmark` and a `tool_choice:"auto"`
+request (or `lobes switch sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --apply`, which
 runs the tool-call probe automatically).
 
 ## Recommendation

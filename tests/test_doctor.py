@@ -1,4 +1,4 @@
-"""Tests for ``model doctor`` — real docker/compose/.env/health checks."""
+"""Tests for ``lobes doctor`` — real docker/compose/.env/health checks."""
 
 from __future__ import annotations
 

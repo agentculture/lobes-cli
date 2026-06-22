@@ -1,9 +1,9 @@
-"""``model assess`` — correctness probes against the served model.
+"""``lobes assess`` — correctness probes against the served model.
 
 Read-only. Runs the two fixed correctness probes and detects the reasoning-trace
 field, then emits a markdown block (plus host-side facts) ready to paste into a
 per-model doc under ``docs/``. ``--tools`` additionally probes OpenAI tool
-calling. Throughput lives in ``model benchmark``.
+calling. Throughput lives in ``lobes benchmark``.
 """
 
 from __future__ import annotations

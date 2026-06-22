@@ -3,7 +3,7 @@
 Fronts the fleet's vLLM backend(s) on one port: routes each request by its
 ``model`` field, defaults unknown/missing names to the primary, and (when an
 opt-in fallback is configured) fails over to it when the chosen one is down. Runs
-as the ``gateway`` container in a ``model init --fleet`` deployment
+as the ``gateway`` container in a ``lobes init --fleet`` deployment
 (``python -m lobes.gateway``).
 
 Public surface:

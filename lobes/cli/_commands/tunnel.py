@@ -1,4 +1,4 @@
-"""``model tunnel`` — expose the local vLLM API via a Cloudflare Tunnel.
+"""``lobes tunnel`` — expose the local vLLM API via a Cloudflare Tunnel.
 
 Mutating: dry-run by default; ``--apply`` starts a standalone ``cloudflared tunnel
 run`` (background, logging to the deployment dir) that proxies the owner-chosen
@@ -58,7 +58,7 @@ def _cmd_stop(args: argparse.Namespace, deploy_dir, json_mode: bool) -> int:
     else:  # "failed" — signalled but still alive; pidfile kept for a retry
         emit_diagnostic(
             f">> pid {pid} did not exit after SIGTERM/SIGKILL; the pidfile is kept.\n"
-            ">> inspect it (ps) and retry: model tunnel --stop --apply"
+            ">> inspect it (ps) and retry: lobes tunnel --stop --apply"
         )
     return EXIT_ENV_ERROR if status == "failed" else EXIT_SUCCESS
 
@@ -108,7 +108,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message=f"a tunnel is already running (pid {running})",
-            remediation="stop it first: model tunnel --stop --apply",
+            remediation="stop it first: lobes tunnel --stop --apply",
         )
     if not _tunnel.cloudflared_present():
         raise ModelGearError(
@@ -129,7 +129,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"local server not healthy on :{port}",
-            remediation="start it first: model serve --apply "
+            remediation="start it first: lobes serve --apply "
             "(a tunnel to a down server just serves errors)",
         )
     emit_diagnostic(f">> starting cloudflared tunnel for :{port} -> {url}")
@@ -152,7 +152,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
     else:
         emit_result(
             f">> tunnel up (pid {pid}); model reachable at {url}\n"
-            f">> logs: {log}; stop with: model tunnel --stop --apply",
+            f">> logs: {log}; stop with: lobes tunnel --stop --apply",
             json_mode=False,
         )
     return EXIT_SUCCESS

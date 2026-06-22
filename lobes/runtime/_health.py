@@ -45,7 +45,7 @@ def wait_health(
             raise ModelGearError(
                 code=EXIT_ENV_ERROR,
                 message=f"timeout waiting for health on :{port}",
-                remediation=f"check 'model status' and 'docker logs {container}'",
+                remediation=f"check 'lobes status' and 'docker logs {container}'",
             )
         state = _compose.container_status(container)
         if state != "running":

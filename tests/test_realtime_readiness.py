@@ -15,7 +15,7 @@ import pytest
 from lobes.realtime._readiness import evaluate_readiness
 
 # The vendored twin COPY'd into the Parakeet image / scaffolded by
-# `model init --fleet --audio`. It must stay behaviourally identical to the
+# `lobes init --fleet --audio`. It must stay behaviourally identical to the
 # canonical module (cite-don't-import — two copies, one truth).
 _VENDORED_TWIN = (
     Path(__file__).resolve().parents[1] / "lobes" / "templates" / "fleet" / "_readiness.py"

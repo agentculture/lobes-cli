@@ -1,4 +1,4 @@
-"""Tests for ``model tunnel`` — offline; never spawns cloudflared.
+"""Tests for ``lobes tunnel`` — offline; never spawns cloudflared.
 
 The ``--apply`` start path is covered with ``_tunnel.start_tunnel`` mocked. The
 pidfile/lifecycle helpers are exercised against a harmless ``python -c sleep``

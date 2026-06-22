@@ -1,8 +1,8 @@
-"""``model explain <path>...`` — global markdown catalog lookup.
+"""``lobes explain <path>...`` — global markdown catalog lookup.
 
 Takes zero or more path tokens and resolves them via :mod:`lobes.explain`.
 Unknown paths raise :class:`ModelGearError` with a remediation pointing at
-``model explain lobes``.
+``lobes explain lobes``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "explain",
-        help="Print markdown docs for a topic (e.g. 'model explain switch').",
+        help="Print markdown docs for a topic (e.g. 'lobes explain switch').",
     )
     p.add_argument(
         "path",

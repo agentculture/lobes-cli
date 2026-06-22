@@ -95,7 +95,7 @@ def test_doctor_text(capsys: pytest.CaptureFixture[str]) -> None:
     # Offline fixture → docker unavailable → unhealthy → exit 1.
     rc = main(["doctor"])
     assert rc == 1
-    assert "model doctor" in capsys.readouterr().out
+    assert "lobes doctor" in capsys.readouterr().out
 
 
 def test_doctor_json_shape(capsys: pytest.CaptureFixture[str]) -> None:

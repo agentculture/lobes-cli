@@ -1,19 +1,19 @@
-"""``model fleet up | down | status`` — drive the gateway deployment.
+"""``lobes fleet up | down | status`` — drive the gateway deployment.
 
 The fleet is the always-warm Qwen generate primary plus co-resident embedding and
-reranker gears behind one stdlib gateway (scaffolded by ``model init --fleet``),
+reranker gears behind one stdlib gateway (scaffolded by ``lobes init --fleet``),
 routed by task family; there is one generate backend by default, with an opt-in
 warm generate fallback. These verbs are the fleet-lane counterparts of the single-model
 ``serve`` / ``stop`` / ``status``:
 
-- ``model fleet up`` — ``docker compose up -d --build`` (builds the gateway image),
+- ``lobes fleet up`` — ``docker compose up -d --build`` (builds the gateway image),
   then waits for the gateway ``/health``. Dry-run by default; ``--apply`` commits.
-- ``model fleet down`` — ``docker compose down``. Dry-run by default; ``--apply``.
-- ``model fleet status`` — read-only: each container's state, the gateway's
+- ``lobes fleet down`` — ``docker compose down``. Dry-run by default; ``--apply``.
+- ``lobes fleet status`` — read-only: each container's state, the gateway's
   ``/health``, and the *warm* routed model list (``/v1/models``). The full catalog
-  you can switch to is ``model overview --list`` / ``/v1/models/supported``.
+  you can switch to is ``lobes overview --list`` / ``/v1/models/supported``.
 
-``model switch`` does NOT drive the fleet (it rewrites the single-model ``VLLM_*``
+``lobes switch`` does NOT drive the fleet (it rewrites the single-model ``VLLM_*``
 keys); change fleet models by editing the fleet ``.env`` and re-running ``up``.
 """
 
@@ -64,7 +64,7 @@ def cmd_fleet_up(args: argparse.Namespace) -> int:
             _compose.compose_up_build(deploy_dir), "docker compose up -d --build"
         )
         # The gateway answers /health within seconds (it doesn't block on backends);
-        # the vLLM backends load in the background — check them via 'model fleet status'.
+        # the vLLM backends load in the background — check them via 'lobes fleet status'.
         _health.wait_health(
             port, deadline_seconds=120, interval=5, container=_compose.FLEET_GATEWAY
         )
@@ -76,7 +76,7 @@ def cmd_fleet_up(args: argparse.Namespace) -> int:
         }
         text = (
             f">> gateway up on :{port}. Backends load in the background — "
-            f"check: model fleet status --compose-dir {deploy_dir}"
+            f"check: lobes fleet status --compose-dir {deploy_dir}"
         )
         emit_result(result if json_mode else text, json_mode=json_mode)
     return 0
@@ -137,7 +137,7 @@ def cmd_fleet_status(args: argparse.Namespace) -> int:
 
 
 def _no_verb(args: argparse.Namespace) -> int:
-    # Bare `model fleet` → the read-only status (safe default).
+    # Bare `lobes fleet` → the read-only status (safe default).
     return cmd_fleet_status(args)
 
 
@@ -148,7 +148,7 @@ def _add_compose_dir(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "fleet",
-        help="Drive the gateway fleet (up / down / status). See 'model fleet status'.",
+        help="Drive the gateway fleet (up / down / status). See 'lobes fleet status'.",
     )
     _add_compose_dir(p)
     p.add_argument("--port", type=int, help=_PORT_HELP)

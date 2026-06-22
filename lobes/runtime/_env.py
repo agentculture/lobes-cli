@@ -54,7 +54,7 @@ def set_env(env_path: os.PathLike | str, key: str, value: str) -> None:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f".env not found at {path}",
-            remediation="run 'model init --apply' first",
+            remediation="run 'lobes init --apply' first",
         )
     prefix = key + "="
     out: list[str] = []

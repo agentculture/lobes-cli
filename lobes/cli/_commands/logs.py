@@ -1,4 +1,4 @@
-"""``model logs`` — read the durable, restart-surviving vLLM logs.
+"""``lobes logs`` — read the durable, restart-surviving vLLM logs.
 
 Read-only. ``mg-logwrap`` (the compose entrypoint) tees each vLLM service's
 stdout+stderr to a per-boot file under the host log dir, so a crash trace
@@ -6,10 +6,10 @@ survives container restart/recreate — the investigation gap behind issue #50.
 This verb lists those files and tails one, reading the **host** files directly so
 it works even after the crashed container is gone (``docker logs`` would not).
 
-    model logs                 # list per-boot log files (newest first) + the dir
-    model logs vllm            # tail the latest log for a service (vllm/primary/embed/rerank)
-    model logs primary -n 200  # tail more lines
-    model logs --list --json   # structured listing
+    lobes logs                 # list per-boot log files (newest first) + the dir
+    lobes logs vllm            # tail the latest log for a service (vllm/primary/embed/rerank)
+    lobes logs primary -n 200  # tail more lines
+    lobes logs --list --json   # structured listing
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def _emit_listing(log_dir: Path, entries: list[dict], json_mode: bool) -> None:
     if not entries:
         emit_result(
             f"no durable logs yet in {log_dir}\n"
-            ">> they appear once a vLLM service starts (model serve / fleet up).",
+            ">> they appear once a vLLM service starts (lobes serve / fleet up).",
             json_mode=False,
         )
         return
@@ -155,7 +155,7 @@ def _emit_listing(log_dir: Path, entries: list[dict], json_mode: bool) -> None:
         latest = "" if e["service"] in seen_services else "  <- latest"
         seen_services.add(e["service"])
         lines.append(f"  {e['name']:<34} {_human_size(e['size']):>6}{latest}")
-    lines.append(">> tail one with: model logs <service>  (e.g. model logs vllm)")
+    lines.append(">> tail one with: lobes logs <service>  (e.g. lobes logs vllm)")
     emit_result("\n".join(lines), json_mode=False)
 
 
@@ -175,7 +175,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "logs",
         help="Read-only: list/tail the durable vLLM logs that survive restart "
-        "(model logs [service]; issue #50).",
+        "(lobes logs [service]; issue #50).",
     )
     p.add_argument(
         "service",

@@ -60,7 +60,7 @@ instantiates, loads weights, and serves with the same compose flags as the 32B
 ## How to run (same compose, model override)
 
 ```bash
-model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
+lobes switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
 # (switch is dry-run without --apply; it rewrites VLLM_MODEL / VLLM_SERVED_NAME /
 #  VLLM_PORT in .env, auto-selects VLLM_TOOL_CALL_PARSER=qwen3_coder for this
 #  model (override with --tool-call-parser), recreates the container, waits for
@@ -82,7 +82,7 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
    format (`<function=finish><parameter=summary>…</parameter></function>`), which
    the default `hermes` parser cannot parse (HTTP 200 but empty `tool_calls`).
    It must be served with `--tool-call-parser=qwen3_coder` — which `lobes switch`
-   now **auto-selects** for this model (`model switch mmangkad/Qwen3.6-27B-NVFP4
+   now **auto-selects** for this model (`lobes switch mmangkad/Qwen3.6-27B-NVFP4
    --apply` sets `VLLM_TOOL_CALL_PARSER=qwen3_coder`; override with
    `--tool-call-parser`). Verified live on `:8001`, 2026-05-27 — the
    probe returns a `finish` tool call (see

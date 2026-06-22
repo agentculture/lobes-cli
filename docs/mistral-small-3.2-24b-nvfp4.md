@@ -117,7 +117,7 @@ in mistral mode.
 
 > **Running it as a standalone single model.** Mistral's supported path is the
 > fleet's **opt-in** fallback (wire it via `FALLBACK_URL`/`FALLBACK_SERVED_NAME` +
-> a `vllm-fallback` service — see the recipe above). `model switch
+> a `vllm-fallback` service — see the recipe above). `lobes switch
 > RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4` sets the catalog quantization
 > (`compressed-tensors`) and the `mistral` tool parser, but the single-model
 > compose targets the dense/Qwen primaries and does **not** add

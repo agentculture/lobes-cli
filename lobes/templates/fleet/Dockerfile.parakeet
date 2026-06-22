@@ -1,7 +1,7 @@
 # lobes STT — NVIDIA Parakeet TDT 0.6B as an OpenAI-shaped ASR server.
 #
 # Vendored from the qwen3-tts sibling (cite-don't-import) so the build context is
-# self-contained in the deployment dir (no external path). `model init --fleet
+# self-contained in the deployment dir (no external path). `lobes init --fleet
 # --audio` writes this + listen_server.py; docker-compose.audio.yml builds it as
 # the `stt` service. Serves POST /v1/audio/transcriptions (already OpenAI-shaped)
 # and GET /v1/health/ready on PARAKEET_PORT (default 9002).

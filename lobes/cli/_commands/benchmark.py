@@ -1,11 +1,11 @@
-"""``model benchmark`` — decode throughput + prefill latency for the served model.
+"""``lobes benchmark`` — decode throughput + prefill latency for the served model.
 
 Read-only. The workload shape is the active *purpose*: it defaults to the
 configured ``VLLM_PURPOSE`` (so the numbers track the serve config) and can be
 overridden with ``--purpose`` or explicit ``--input-len`` / ``--output-len``.
 Forces a fixed decode length over a couple of runs and measures a prompt-sized
 prefill, then emits a markdown block (plus host-side facts) for a per-model doc
-under ``docs/``. Correctness lives in ``model assess``.
+under ``docs/``. Correctness lives in ``lobes assess``.
 """
 
 from __future__ import annotations

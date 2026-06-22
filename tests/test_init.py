@@ -1,4 +1,4 @@
-"""Tests for ``model init`` — scaffold a deployment dir."""
+"""Tests for ``lobes init`` — scaffold a deployment dir."""
 
 from __future__ import annotations
 

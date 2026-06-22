@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # lobes log wrapper — make the server's output (and its crash trace) durable.
 #
-# `model init` materialises this next to docker-compose.yml; each vLLM service
+# `lobes init` materialises this next to docker-compose.yml; each vLLM service
 # bind-mounts it at /usr/local/bin/mg-logwrap and runs it as the entrypoint, so
 # the real `command:` (the vllm arg list) arrives here verbatim as "$@".
 #
 # Why this exists: when a vLLM container is restarted or recreated (docker
-# restart, `docker compose up` after `model switch`, a `compose down/up`, …) its
+# restart, `docker compose up` after `lobes switch`, a `compose down/up`, …) its
 # `docker logs` are gone — which is exactly how the EngineCore crash trace in
 # issue #50 vanished before anyone could read it. This wrapper tees stdout+stderr
 # to a per-boot file under a host-mounted log dir, so the trace survives any
@@ -28,7 +28,7 @@ log="${dir}/${name}-${ts}.log"
 
 # Per-boot file (the crash boot is preserved as its own file, never overwritten by
 # the restart) plus a stable <service>-latest.log pointer for quick tailing and
-# `model logs`. The `:` no-op probes that the file is actually writable before we
+# `lobes logs`. The `:` no-op probes that the file is actually writable before we
 # commit to teeing into it.
 if mkdir -p "$dir" 2>/dev/null && : 2>/dev/null >>"$log"; then
     ln -sf "${name}-${ts}.log" "${dir}/${name}-latest.log" 2>/dev/null || true

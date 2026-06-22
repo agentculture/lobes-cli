@@ -6,10 +6,10 @@
 # port the acp `vllm-local` provider expects; it routes by the request's `model`
 # field and defaults unknown/missing names to GATEWAY_DEFAULT_MODEL.
 #
-#   model init --fleet --apply     # scaffold (writes the running version into .env)
+#   lobes init --fleet --apply     # scaffold (writes the running version into .env)
 #   docker login nvcr.io           # NGC API key for the vLLM image
-#   model fleet up --apply         # build the gateway + start the backend
-#   model fleet status             # container states + gateway /health + /v1/models
+#   lobes fleet up --apply         # build the gateway + start the backend
+#   lobes fleet status             # container states + gateway /health + /v1/models
 #
 # Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). One generate
 # backend by default: the Qwen primary keeps its load-tested headroom (util 0.6,

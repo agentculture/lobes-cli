@@ -2,7 +2,7 @@
 #
 # A docker-compose *override*: layer it on top of the base fleet with
 #   docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d --build
-# `model init --fleet --audio` scaffolds it; `model fleet up --apply` auto-includes
+# `lobes init --fleet --audio` scaffolds it; `lobes fleet up --apply` auto-includes
 # it when this file is present. It adds three internal services and teaches the
 # gateway to route /v1/audio/* (and, in a later release, /v1/realtime) to them.
 #

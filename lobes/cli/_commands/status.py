@@ -1,9 +1,9 @@
-"""``model status`` — read-only snapshot of the current deployment.
+"""``lobes status`` — read-only snapshot of the current deployment.
 
 Reports the configured model/served-name/port (from ``.env``), the container
 lifecycle + health state, and whether ``/health`` is responding. This is the
 *configured* served model (from ``.env``) + health — not a live ``/v1/models``
-query; for the full supported catalog you can switch to, use ``model overview --list``.
+query; for the full supported catalog you can switch to, use ``lobes overview --list``.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "status",
         help="Read-only: the configured served model (from .env), container state, "
-        "/health (catalog: model overview --list).",
+        "/health (catalog: lobes overview --list).",
     )
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")

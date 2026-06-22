@@ -1,6 +1,6 @@
 """Resolve the deployment directory and drive ``docker compose`` (stdlib only).
 
-The deployment directory holds ``docker-compose.yml`` + ``.env``. ``model init``
+The deployment directory holds ``docker-compose.yml`` + ``.env``. ``lobes init``
 scaffolds it (default ``~/.lobes``); every model-ops verb resolves it via
 :func:`resolve_deployment_dir`. All subprocess calls use fixed argv lists (no
 shell) — the bandit ``B404``/``B603`` skips in ``pyproject.toml`` cover them.
@@ -29,7 +29,7 @@ LOG_WRAPPER = "mg-logwrap.sh"
 LOG_DIRNAME = "logs"
 LOG_DIR_ENV = "MODEL_GEAR_LOG_DIR"
 
-# Fleet container names (model init --fleet / model fleet ...): the always-warm
+# Fleet container names (lobes init --fleet / lobes fleet ...): the always-warm
 # Qwen generate primary, the co-resident embedding + reranker gears, and the
 # stdlib gateway that fronts them on one OpenAI port. All four are in the default
 # fleet compose, so all four are in the default container set. A *generate*
@@ -41,20 +41,20 @@ FLEET_FALLBACK = "model-gear-vllm-fallback"  # opt-in; not started by default
 FLEET_GATEWAY = "model-gear-gateway"
 FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_EMBED, FLEET_RERANK, FLEET_GATEWAY)
 
-# Audio overlay (model init --fleet --audio): STT + TTS + the realtime bridge,
+# Audio overlay (lobes init --fleet --audio): STT + TTS + the realtime bridge,
 # layered on the base fleet via a compose override and fronted by the gateway.
 AUDIO_OVERLAY = "docker-compose.audio.yml"
 FLEET_STT = "model-gear-stt"
 # The TTS sidecar's container is `model-gear-chatterbox` (docker-compose.audio.yml,
 # the Chatterbox sidecar that replaced Magpie in 0.25) — must match that
-# container_name or `model fleet status` reports the TTS gear as "not created".
+# container_name or `lobes fleet status` reports the TTS gear as "not created".
 FLEET_TTS = "model-gear-chatterbox"
 FLEET_REALTIME = "model-gear-realtime"
 FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
 # Template filename -> destination filename written by the scaffold. The single
 # template set is the default (every existing caller stays unchanged); the fleet
-# set scaffolds the gateway deployment (model init --fleet; primary + embed/rerank gears).
+# set scaffolds the gateway deployment (lobes init --fleet; primary + embed/rerank gears).
 # Cloudflare Tunnel example scaffolded alongside both deployments (the tunnel
 # fronts the single-model :8000 or the fleet gateway). Copied verbatim as an
 # `.example`; the owner copies it to the gitignored `.cf-tunnel.env` and edits.

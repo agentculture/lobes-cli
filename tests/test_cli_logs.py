@@ -1,4 +1,4 @@
-"""Tests for ``model logs`` + the durable-log helpers (issue #50).
+"""Tests for ``lobes logs`` + the durable-log helpers (issue #50).
 
 Pure file I/O — no docker. A deployment is scaffolded into a tmp dir (so
 ``resolve_deployment_dir`` finds a compose file) and fake per-boot log files are

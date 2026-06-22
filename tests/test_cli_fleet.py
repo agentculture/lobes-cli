@@ -1,4 +1,4 @@
-"""Tests for the ``model fleet`` verbs (up / down / status) and ``init --fleet``."""
+"""Tests for the ``lobes fleet`` verbs (up / down / status) and ``init --fleet``."""
 
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ def test_fleet_status_includes_audio_containers_with_overlay(tmp_path, capsys) -
 
 def test_audio_container_constants_match_compose_container_names() -> None:
     """The FLEET_AUDIO_CONTAINERS constants must equal the `container_name:`
-    entries in the packaged audio compose, or `model fleet status` reports a gear
+    entries in the packaged audio compose, or `lobes fleet status` reports a gear
     as "not created" (the Magpie->Chatterbox rename drifted FLEET_TTS once)."""
     from importlib.resources import files
 

@@ -6,13 +6,13 @@ friendly "unknown profile" messages). Where :mod:`lobes.catalog` answers
 
 * a **workload profile** (the ``purpose``: ``balanced`` / ``prompt-heavy`` /
   ``decode-heavy``) sets the throughput/batching knobs and the shape
-  (``input_len``/``output_len``) ``model benchmark`` exercises, and
+  (``input_len``/``output_len``) ``lobes benchmark`` exercises, and
 * a **machine profile** (``spark`` / ``thor`` / ``blackwell`` / ``generic``) sets
   the memory/arch defaults (``gpu_memory_utilization``, ``max_model_len``,
   ``attention_backend``).
 
 The workload knobs and machine defaults are *configured heuristics* (a sensible
-starting point), not load-tested numbers — confirm them with ``model benchmark``.
+starting point), not load-tested numbers — confirm them with ``lobes benchmark``.
 The one set of values taken straight from a measured source is the per-purpose
 ``(input_len, output_len)`` benchmark shapes and the ``balanced`` batching knobs,
 which mirror shahizat's cross-machine report (see ``docs/tuning-profiles.md``).
@@ -20,7 +20,7 @@ which mirror shahizat's cross-machine report (see ``docs/tuning-profiles.md``).
 Resolution layers (highest precedence last), assembled by
 :func:`resolve_serve_config`: machine profile → workload profile → explicit CLI
 overrides. The *model* layer (quantization, tool parser, MoE/MTP extras) stays in
-:mod:`lobes.catalog`, applied by ``model switch`` alongside this.
+:mod:`lobes.catalog`, applied by ``lobes switch`` alongside this.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ class WorkloadProfile:
     summary: str  # one-line description
     max_num_seqs: int  # vLLM --max-num-seqs (concurrent decode slots)
     max_num_batched_tokens: int  # vLLM --max-num-batched-tokens (prefill chunk budget)
-    bench_input_len: int  # model benchmark prompt size for this purpose
-    bench_output_len: int  # model benchmark decode length for this purpose
+    bench_input_len: int  # lobes benchmark prompt size for this purpose
+    bench_output_len: int  # lobes benchmark decode length for this purpose
 
 
 # Ordered; the first entry is the default (balanced). The balanced batching knobs
@@ -214,7 +214,7 @@ def resolve_serve_config(
 
     ``machine`` must already be a concrete profile name (call :func:`resolve_machine`
     on a possibly-``auto`` value first). ``max_model_len`` / ``gpu_mem_util`` are
-    the explicit ``model switch`` overrides — ``None`` means "use the machine
+    the explicit ``lobes switch`` overrides — ``None`` means "use the machine
     default". The model layer (quantization, tool parser, MoE extras) is applied
     separately from :mod:`lobes.catalog`.
     """

@@ -1,4 +1,4 @@
-"""Build the ``model overview --live`` sections from a running deployment.
+"""Build the ``lobes overview --live`` sections from a running deployment.
 
 Read-only and HTTP-only (no docker), so it works against a local deployment or a
 remote tunnel alike. It probes the gateway ``/status`` (fleet) or a single vLLM
@@ -67,7 +67,7 @@ def fleet_sections(status: dict) -> list[dict]:
                 f"default model: {status.get('default_model', '?')}",
                 f"task families: {', '.join(tasks) or '?'}",
                 f"models: {', '.join(models) or '?'}",
-                "full catalog: model overview --list",
+                "full catalog: lobes overview --list",
             ],
         },
         {
@@ -103,7 +103,7 @@ def single_sections(
         {"title": "Online (live)", "items": [online]},
         {
             "title": "Offered",
-            "items": [f"served model: {served}", "full catalog: model overview --list"],
+            "items": [f"served model: {served}", "full catalog: lobes overview --list"],
         },
         {"title": "Busy", "items": busy},
         {"title": "Usage", "items": usage},

@@ -1,4 +1,4 @@
-"""``model overview`` — read-only descriptive snapshot of the tool.
+"""``lobes overview`` — read-only descriptive snapshot of the tool.
 
 Describes lobes to an agent reader: identity (tool/version/machine), the
 verb surface, capabilities, the currently-served model, and the supported-model

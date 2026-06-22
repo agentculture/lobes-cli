@@ -18,7 +18,7 @@ def resolve(path: tuple[str, ...]) -> str:
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=f"no explain entry for: {display}",
-        remediation="list known topics with: model explain lobes",
+        remediation="list known topics with: lobes explain lobes",
     )
 
 

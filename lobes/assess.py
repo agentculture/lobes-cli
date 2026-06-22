@@ -4,9 +4,9 @@ Talks only to the OpenAI-compatible endpoint (``urllib``, no third-party deps).
 Ported from the original ``_assess.py`` and split into two concerns:
 
 * :func:`run_correctness` — fixed correctness probes + reasoning-trace detection
-  (drives ``model assess``);
+  (drives ``lobes assess``);
 * :func:`run_benchmark` — decode throughput + prefill latency (drives
-  ``model benchmark``).
+  ``lobes benchmark``).
 
 Host-side facts (image tag, GPU memory) are gathered by the command handlers via
 :mod:`lobes.runtime._compose` and printed alongside this output.
@@ -42,7 +42,7 @@ def _api_errors(what: str):
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"{what} failed: {exc}",
-            remediation="check 'model status' / 'docker logs model-gear-vllm'",
+            remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
         ) from exc
     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise ModelGearError(
@@ -62,7 +62,7 @@ _PROBES = [
     ),
 ]
 
-# Tool-calling probe (opt-in via ``model assess --tools``): mirrors issue #9's
+# Tool-calling probe (opt-in via ``lobes assess --tools``): mirrors issue #9's
 # acceptance check — a ``tool_choice:"auto"`` request must return a ``tool_calls``
 # array naming the ``finish`` function. Requires the server's
 # ``--enable-auto-tool-choice`` + ``--tool-call-parser`` flags.
@@ -122,7 +122,7 @@ def health_status(url: str) -> int:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"/health unreachable at {url} ({exc})",
-            remediation="start the server with 'model serve --apply'",
+            remediation="start the server with 'lobes serve --apply'",
         ) from exc
     return status
 
@@ -136,7 +136,7 @@ def served_model(url: str, override: str | None = None) -> tuple[str, object]:
             raise ModelGearError(
                 code=EXIT_ENV_ERROR,
                 message=f"/v1/models returned no models at {url}",
-                remediation="check 'model status' / 'docker logs model-gear-vllm'",
+                remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
             )
         first = data[0]
         return (override or first["id"]), first.get("max_model_len")
@@ -225,7 +225,7 @@ def _tool_probe(url: str, model: str) -> dict:
 def probe_tool_calls(url: str, model: str) -> dict:
     """One-shot tool-calling probe, without the arithmetic correctness probes.
 
-    Used by ``model switch`` / ``model serve`` to verify, the moment the
+    Used by ``lobes switch`` / ``lobes serve`` to verify, the moment the
     container is healthy, that ``tool_choice:"auto"`` returns a ``tool_calls``
     response (no HTTP 400, a ``finish`` call present). Returns the same
     structured dict as the in-``assess`` probe (``ok``/``tool_calls``/``finish``/
@@ -332,7 +332,7 @@ def run_benchmark(
     """Measure decode throughput + prefill latency for a workload shape.
 
     The shape (``input_len`` prompt, ``output_len`` decode) is the workload
-    *purpose* — ``model benchmark`` derives it from the configured ``VLLM_PURPOSE``
+    *purpose* — ``lobes benchmark`` derives it from the configured ``VLLM_PURPOSE``
     so the numbers track the serve config (see :mod:`lobes.profiles`).
     """
     url = url.rstrip("/")

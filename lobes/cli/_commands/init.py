@@ -1,7 +1,7 @@
-"""``model init [TARGET]`` — scaffold a deployment directory.
+"""``lobes init [TARGET]`` — scaffold a deployment directory.
 
 Copies the packaged ``docker-compose.yml`` + ``env.example``→``.env`` into
-``TARGET`` (default ``~/.lobes``; ``model init .`` for the local folder).
+``TARGET`` (default ``~/.lobes``; ``lobes init .`` for the local folder).
 ``--fleet`` scaffolds the gateway deployment instead (the always-warm Qwen
 primary + co-resident embedding/reranker gears behind one OpenAI front, routed by
 task family; one generate backend by default, opt-in generate fallback).
@@ -56,7 +56,7 @@ def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> No
 def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: bool) -> None:
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
-    # source exists before `model serve` / `fleet up` — otherwise Docker makes it
+    # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
     # root-owned. The mg-logwrap entrypoint writes per-boot logs here (issue #50).
     _compose.ensure_log_dir(target)
     if fleet:
@@ -77,9 +77,9 @@ def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: 
         )
         return
     next_step = (
-        "docker login nvcr.io && model fleet up --apply"
+        "docker login nvcr.io && lobes fleet up --apply"
         if fleet
-        else "docker login nvcr.io && model serve --apply"
+        else "docker login nvcr.io && lobes serve --apply"
     )
     emit_result(
         f">> scaffolded {target}:\n"
@@ -98,7 +98,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--audio requires --fleet",
-            remediation="the audio overlay layers on the fleet: run 'model init --fleet --audio'",
+            remediation="the audio overlay layers on the fleet: run 'lobes init --fleet --audio'",
         )
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
     if args.apply:

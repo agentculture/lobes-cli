@@ -161,7 +161,7 @@ docker restart model-gear-stt
 Or cycle the entire fleet:
 
 ```bash
-lobes fleet down --apply && model fleet up --apply
+lobes fleet down --apply && lobes fleet up --apply
 ```
 
 Watch `nvidia-smi` to confirm memory is freed before the STT container restarts.

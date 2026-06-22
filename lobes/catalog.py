@@ -5,7 +5,7 @@ lobes knows how to serve (each one load-tested or configured on the DGX
 Spark and documented under ``docs/``). It ships *in the wheel* so both runtimes
 can read it:
 
-* the CLI (``model overview --list``) — which would otherwise scan ``docs/`` and
+* the CLI (``lobes overview --list``) — which would otherwise scan ``docs/`` and
   find nothing in a wheel install (``docs/`` is not packaged), and
 * the gateway (``GET /v1/models/supported``) — which runs from a pip-installed
   wheel inside its container and has no source tree to scan.
@@ -30,7 +30,7 @@ class SupportedModel:
     context: str  # native context window, human-readable
     # The largest --max-model-len this checkpoint serves with vLLM's *default* rope
     # (no YaRN/rope-scaling override) — a hard ceiling: vLLM refuses a larger value
-    # and the container fails to boot. `model switch` clamps the machine-profile
+    # and the container fails to boot. `lobes switch` clamps the machine-profile
     # context default DOWN to this, so a high machine default (e.g. spark's 256K)
     # can't silently boot-fail a 32K-native model. An explicit --max-model-len wins.
     native_max_model_len: int
@@ -41,7 +41,7 @@ class SupportedModel:
     # Per-model serve extras for MoE checkpoints. Empty for dense/hybrid models;
     # set only where the architecture needs them. These are NOT in the default
     # single-model template (docker compose can't conditionally omit a flag, and
-    # an empty `--moe-backend=` token breaks vLLM) — `model switch` surfaces them
+    # an empty `--moe-backend=` token breaks vLLM) — `lobes switch` surfaces them
     # as a documented compose edit. See docs/qwen3.6-35b-a3b-nvfp4.md.
     moe_backend: str = ""  # vLLM --moe-backend (e.g. "marlin") for MoE models
     speculative_config: str = ""  # vLLM --speculative-config JSON (e.g. MTP draft)
@@ -110,7 +110,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # the baseline NVFP4 export drops the MTP draft head (0% draft acceptance),
         # so this repo restores it in bf16 for vLLM speculative decoding. The
         # --speculative-config is catalog data (like moe_backend): compose can't omit
-        # an empty flag, so `model switch` surfaces it as a hand edit. Load-tested on
+        # an empty flag, so `lobes switch` surfaces it as a hand edit. Load-tested on
         # the GB10 2026-05-31: 19.1 tok/s decode (~2.4x the baseline 27B) at 72% MTP
         # acceptance on vLLM 0.19.0+nv26.04. Also needs --trust-remote-code +
         # --language-model-only, VLLM_MAX_NUM_SEQS=2 (4 OOMs at n=3/256K), and a
@@ -130,7 +130,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         status="configured",
         doc="qwen3.6-35b-a3b-nvfp4.md",
         # MoE-only serve extra: the marlin MoE kernel — verified to load this
-        # checkpoint *solo* on the GB10 (2026-05-31, util 0.70). model switch
+        # checkpoint *solo* on the GB10 (2026-05-31, util 0.70). lobes switch
         # surfaces it as a compose edit; it must not land on the dense/hybrid models.
         # shahizat's MTP --speculative-config is intentionally NOT carried: it is
         # tied to the nvidia/ checkpoint and FAILS to load on this mmangkad copy
@@ -205,7 +205,7 @@ def mtp_compose_command_items() -> list[str]:
     """The extra compose ``command:`` items the MTP default primary needs.
 
     These four flags are baked into the packaged compose templates *and* named by
-    ``model switch`` as the lines to remove when switching to a non-MTP model. This
+    ``lobes switch`` as the lines to remove when switching to a non-MTP model. This
     is the single source of truth so the two cannot drift — ``tests/test_catalog.py``
     asserts the packaged templates contain exactly these items, and the speculative
     config is pulled from the primary catalog entry rather than re-typed.

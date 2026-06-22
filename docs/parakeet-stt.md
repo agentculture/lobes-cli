@@ -165,7 +165,7 @@ docker restart model-gear-stt
 Or cycle the full fleet:
 
 ```bash
-model fleet down --apply && model fleet up --apply
+lobes fleet down --apply && lobes fleet up --apply
 ```
 
 For diagnosis steps and memory-pressure guidance, see the

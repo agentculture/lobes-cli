@@ -339,7 +339,7 @@ def handle_audio_post(
 
 # In the fleet the backends are internal-only (no host port), so only the gateway
 # can see their /health + /metrics. This endpoint fans out and aggregates them into
-# one JSON the host-side `model overview --live` renders. The prober is injected so
+# one JSON the host-side `lobes overview --live` renders. The prober is injected so
 # this is unit-testable without sockets.
 
 # Per-backend probe timeout for /status: bounded + probed in parallel (below) so a

@@ -74,5 +74,5 @@ def compose_check(completed: subprocess.CompletedProcess, label: str) -> None:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"{label} failed (exit {completed.returncode})",
-            remediation=detail[-500:] if detail else "check docker and 'model status'",
+            remediation=detail[-500:] if detail else "check docker and 'lobes status'",
         )

@@ -1,6 +1,6 @@
 """Parse vLLM Prometheus ``/metrics`` + probe a backend's live state (stdlib only).
 
-Shared by the gateway's ``/status`` fan-out and ``model overview --live``. The
+Shared by the gateway's ``/status`` fan-out and ``lobes overview --live``. The
 parser is pure; the probes are best-effort and **never raise** — an unreachable
 backend folds into a structured result so the live view degrades gracefully
 instead of erroring. vLLM serves ``/metrics`` and ``/health`` unauthenticated, so

@@ -2,7 +2,7 @@
 
 Pure — the per-backend probe is injected, so no sockets. The gateway is the only
 place that can see the internal-only backends' /health + /metrics, so this is the
-source for ``model overview --live`` in the fleet.
+source for ``lobes overview --live`` in the fleet.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 vLLM needs a tool-call parser that matches how the served model emits tool
 calls. Picking the wrong one silently breaks tool calling (the server returns
-200 but no usable ``tool_calls``), so ``model switch`` auto-selects one per model
+200 but no usable ``tool_calls``), so ``lobes switch`` auto-selects one per model
 rather than leaving the caller to remember it. The rules below mirror the
 guidance in ``templates/env.example`` (the single source of truth):
 

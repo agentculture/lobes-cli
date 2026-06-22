@@ -1,4 +1,4 @@
-"""``model stop`` — stop and remove the vLLM server.
+"""``lobes stop`` — stop and remove the vLLM server.
 
 Mutating: dry-run by default; ``--apply`` runs ``docker compose down`` in the
 deployment dir.

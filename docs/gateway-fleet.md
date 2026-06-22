@@ -125,7 +125,7 @@ Two questions that look alike but aren't:
 
 - **What's loaded right now?** — the model(s) actually in GPU memory. The live
   source is `GET /v1/models` (OpenAI-standard; one model in single-model mode; the
-  generate primary plus the embedding + reranker gears in the fleet); `model fleet
+  generate primary plus the embedding + reranker gears in the fleet); `lobes fleet
   status` queries it. It changes when you
   `lobes switch` or bring the fleet up/down. (`lobes status` / `lobes whoami`
   instead report the model the deployment is *configured* to serve — from `.env` —
@@ -168,7 +168,7 @@ gracefully when a backend or its metrics is unreachable.
 **`lobes switch` does not drive the fleet** — it rewrites the single-model
 `VLLM_*` keys. Change the fleet primary by editing the fleet `.env`
 (`PRIMARY_MODEL` and its `PRIMARY_SERVED_NAME` / `PRIMARY_GPU_MEM_UTIL`
-/ `PRIMARY_TOOL_CALL_PARSER` / `PRIMARY_QUANTIZATION`) and re-running `model fleet
+/ `PRIMARY_TOOL_CALL_PARSER` / `PRIMARY_QUANTIZATION`) and re-running `lobes fleet
 up --apply`. (A fallback, when wired up, uses the parallel `FALLBACK_*` keys.)
 
 ## Memory

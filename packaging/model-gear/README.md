@@ -5,7 +5,7 @@
 This package is a thin alias: installing it pulls in `lobes-cli`. Please install
 `lobes-cli` directly going forward:
 
-```
+```bash
 pip install lobes-cli      # provides the `lobes` command (and the legacy `model` alias)
 ```
 

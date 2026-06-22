@@ -1,4 +1,4 @@
-"""``model switch <model>`` — change the served vLLM model (and its gear).
+"""``lobes switch <model>`` — change the served vLLM model (and its gear).
 
 Mutating: dry-run by default (prints the plan, changes nothing); ``--apply``
 writes the resolved ``VLLM_*`` vars to ``.env``, recreates the container
@@ -11,7 +11,7 @@ The serve config is resolved from three layers (explicit CLI flags win):
 * the **machine** profile (``--machine``, default auto-detected) → GPU memory
   fraction, max context, attention backend;
 * the **workload** profile (``--purpose``, default ``balanced``) → batching knobs
-  (and the shape ``model benchmark`` exercises); and
+  (and the shape ``lobes benchmark`` exercises); and
 * the **model** catalog entry → quantization + tool-call parser, plus a printed
   reminder for the MoE-only compose flags (which can't be defaulted safely).
 
@@ -76,7 +76,7 @@ def _resolve_task(args: argparse.Namespace) -> str:
     ``"generate"``) so an explicit ``--task generate`` is distinguishable from
     "flag omitted" and can override a catalogued embed/score model. When the flag
     was omitted (``None``), the catalog is consulted: embed/score models declare
-    their task there and it is inferred automatically — so ``model switch
+    their task there and it is inferred automatically — so ``lobes switch
     Qwen/Qwen3-Embedding-0.6B`` auto-detects ``task=embed`` without the flag.
     """
     if args.task is not None:
@@ -141,8 +141,8 @@ def _pooling_notice(model) -> str | None:
     convert = "embed" if model.task == "embed" else "classify"
     service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
     return (
-        "embed/score gear — the TURNKEY path is the fleet: `model init --fleet` "
-        f"+ `model fleet up` serves it via the dedicated {service} service "
+        "embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` "
+        f"+ `lobes fleet up` serves it via the dedicated {service} service "
         "(already task-aware). To solo-serve on the single-model template "
         "instead, ADD these `command:` list items —"
         "\n      - --runner=pooling"
@@ -372,7 +372,7 @@ def _apply_switch(
     if json_mode:
         emit_result(result, json_mode=True)
         return
-    out = [f">> done. assess with: model assess --port {port}"]
+    out = [f">> done. assess with: lobes assess --port {port}"]
     if tc is not None:
         out.append(">> " + _runtime_ops.format_tool_probe(tc))
     emit_result("\n".join(out), json_mode=False)
@@ -385,7 +385,7 @@ def _apply_env_only(model, env_path, plan, notices, served, port, json_mode) -> 
     while the template ships the MTP primary's flags; or the MoE backend flag) would
     take a healthy container down and fail to bring it back. So we persist the plan
     to ``.env`` and stop, printing the edits to make by hand. The user applies them
-    and then runs ``model serve --apply`` — or re-runs ``switch --apply --force`` to
+    and then runs ``lobes serve --apply`` — or re-runs ``switch --apply --force`` to
     recreate the container anyway.
     """
     for key, value in plan.items():
@@ -399,7 +399,7 @@ def _apply_env_only(model, env_path, plan, notices, served, port, json_mode) -> 
                 "restarted": False,
                 "blocked_on_compose_edits": True,
                 "compose_edits": notices,
-                "next": "apply the compose edits, then: model serve --apply"
+                "next": "apply the compose edits, then: lobes serve --apply"
                 " (or re-run switch --apply --force)",
             },
             json_mode=True,
@@ -407,7 +407,7 @@ def _apply_env_only(model, env_path, plan, notices, served, port, json_mode) -> 
         return
     lines = [f">> wrote .env for {model} but did NOT restart — a manual compose edit is required:"]
     lines += [f">> NOTE: {notice}" for notice in notices]
-    lines.append(">> then: model serve --apply  (or re-run: model switch ... --apply --force)")
+    lines.append(">> then: lobes serve --apply  (or re-run: lobes switch ... --apply --force)")
     emit_result("\n".join(lines), json_mode=False)
 
 
