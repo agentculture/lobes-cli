@@ -225,3 +225,6 @@ __marimo__/
 .devague/reviews/
 .colleague/
 docs/steward/
+
+# Agent/colleague throwaway worktrees (write previews, subagent isolation)
+.claude/worktrees/
