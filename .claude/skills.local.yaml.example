@@ -1,4 +1,4 @@
-# Per-machine paths and settings for model-gear's skills.
+# Per-machine paths and settings for lobes' skills.
 #
 # Copy this file to `.claude/skills.local.yaml` (git-ignored) and fill in the
 # values for your machine. Skills read the local file and fall back to this
@@ -9,7 +9,7 @@
 # the shared-workspace layout (siblings alongside this repo).
 workspace_root: ".."
 
-# The Culture nick this repo's agent posts as. The deployed agent is `model-gear`
+# The Culture nick this repo's agent posts as. The deployed agent is `lobes`
 # (same name as the repo/tool). Resolved from culture.yaml's `suffix:` when unset;
 # the repo basename is the final fallback.
-nick: "model-gear"
+nick: "lobes"

@@ -7,7 +7,7 @@ this checkpoint never loaded on the GB10 (see the status note below). (The fleet
 now runs one *generate* backend by default — any warm fallback is opt-in via the
 `FALLBACK_*` keys.) It remains
 in the **supported catalog** as a candidate to re-test on a quiet/dedicated box
-(`model overview --list`). See [`docs/gateway-fleet.md`](gateway-fleet.md) for the
+(`lobes overview --list`). See [`docs/gateway-fleet.md`](gateway-fleet.md) for the
 fleet topology and the
 [catalog-vs-warm distinction](gateway-fleet.md#supported-catalog-vs-warm-backends)
 (what you *can* load vs. what's loaded *now*).
@@ -15,7 +15,7 @@ fleet topology and the
 Source: <https://huggingface.co/mmangkad/Qwen3.6-35B-A3B-NVFP4>.
 
 > **Status: load-tested 2026-05-30 — does NOT load reliably on this GB10.** First
-> live `model fleet up` on `spark-f8a9`: co-resident with the 27B primary it hit
+> live `lobes fleet up` on `spark-f8a9`: co-resident with the 27B primary it hit
 > `CUDA error: out of memory` on engine init and crash-looped (14+ restarts);
 > *solo* (65 GiB free) it still crashed/restarted and then stalled at "Loading
 > safetensors checkpoint shards: 0%" with the GPU idle, never reaching `/health`
@@ -50,7 +50,7 @@ copy (`qwen3_5_mtp.py` weight-shape mismatch on vLLM nv26.04) — it is tied to 
 ## How it runs in the fleet
 
 Configured via the `FALLBACK_*` keys in the fleet `.env` (scaffolded by
-`model init --fleet`); served by the `model-gear-vllm-fallback` container:
+`lobes init --fleet`); served by the `model-gear-vllm-fallback` container:
 
 ```dotenv
 FALLBACK_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4
@@ -73,7 +73,7 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 1. **Tool-call format.** Qwen3.6 emits the Qwen3-Coder **XML** function format, so
    the backend is served with `--tool-call-parser=qwen3_coder` (not the `hermes`
-   parser the dense Qwen3-32B uses). `model_gear.runtime._parser.infer_parser`
+   parser the dense Qwen3-32B uses). `lobes.runtime._parser.infer_parser`
    already maps `qwen3.6` → `qwen3_coder`. Verify a `tool_choice:"auto"` probe
    returns a `finish` tool call.
 2. **Quantization format.** The fleet defaults `FALLBACK_QUANTIZATION=modelopt_fp4`
@@ -92,15 +92,15 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 ## Benchmark — blocked (model would not load), 2026-05-30
 
-A live run was attempted (`model fleet up --apply` on `spark-f8a9`, then
-`model benchmark --model mmangkad/Qwen3.6-35B-A3B-NVFP4`). The model never reached
+A live run was attempted (`lobes fleet up --apply` on `spark-f8a9`, then
+`lobes benchmark --model mmangkad/Qwen3.6-35B-A3B-NVFP4`). The model never reached
 `/health`, so no numbers exist yet:
 
 | Property | Value |
 |---|---|
 | Health / `max_model_len` | **never healthy** — crash-looped co-resident; stalled at safetensors 0 % solo |
 | Weights on disk | 24 GiB (single `model.safetensors`; `Qwen3_5MoeForConditionalGeneration`) |
-| Decode throughput | *blocked* — `model benchmark` returned HTTP 502 (backend not up) |
+| Decode throughput | *blocked* — `lobes benchmark` returned HTTP 502 (backend not up) |
 | Prefill / correctness / tool calling | *blocked* |
 | Co-resident with 27B (util 0.55/0.30, then 0.40/0.35) | **OOM** — `CUDA error: out of memory` on engine init |
 | Solo (util 0.30, 65 GiB free) | crashed/restarted, then stalled loading the 24 GiB shard with GPU idle |
@@ -119,8 +119,8 @@ Spark, Jetson Thor, and Blackwell 6000 Pro boxes, where it **did** load and serv
 This is the serve recipe to try when re-testing on a quiet box. The two
 **MoE-only** flags (`--moe-backend=marlin` and the MTP `--speculative-config`) are
 what make the MoE perform — they are recorded as catalog data
-([`model_gear/catalog.py`](../model_gear/catalog.py)) and printed by
-`model switch mmangkad/Qwen3.6-35B-A3B-NVFP4`, but are **not** in the default
+([`lobes/catalog.py`](../lobes/catalog.py)) and printed by
+`lobes switch mmangkad/Qwen3.6-35B-A3B-NVFP4`, but are **not** in the default
 single-model template (they break the dense/hybrid models, and compose can't
 conditionally omit a flag). Add them to the compose `command` by hand:
 

@@ -1,0 +1,119 @@
+# Local vLLM server — the deployment template lobes scaffolds.
+#
+# `lobes init` copies this file (and env.example -> .env) into a deployment
+# directory (default ~/.lobes). `lobes serve` / `lobes switch` then drive
+# `docker compose` in that directory.
+#
+# Serves an OpenAI-compatible API on :8000 that the Culture `acp` backend
+# (opencode's `vllm-local` provider) connects to — this is the model the
+# lobes agent consumes. The served model name must match the part after
+# `vllm-local/` in the culture.yaml `model:` field.
+#
+# Quickstart:
+#   lobes init --apply            # scaffold ~/.lobes (compose + .env)
+#   docker login nvcr.io          # NGC API key; see README "Running the model"
+#   lobes serve --apply           # first run downloads ~18 GB of weights
+#   lobes status                  # container state + /health
+#
+# Tuned for DGX Spark (GB10 Grace Blackwell, SM12.1, 128 GB unified memory).
+# The throughput/batching flags below (flashinfer attention backend, chunked
+# prefill, async scheduling, max-num-seqs/batched-tokens) follow shahizat's
+# cross-machine NVFP4 benchmark — see docs/tuning-profiles.md. `lobes switch
+# --purpose {balanced,prompt-heavy,decode-heavy} --machine {spark,thor,blackwell}`
+# rewrites the VLLM_* values these default to.
+services:
+  vllm:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the current tag)
+    container_name: model-gear-vllm
+    restart: unless-stopped
+    # GPU access — requires the NVIDIA Container Toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host                              # vLLM needs host shared memory
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      # Optional — only HF_TOKEN (for gated repos) really needs it. required:false
+      # keeps `docker compose up` working before `lobes init` writes a .env.
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Bearer key for the OpenAI-compatible API. Empty (default) = open local dev;
+      # set CULTURE_VLLM_API_KEY in .env and every request must carry
+      # `Authorization: Bearer $CULTURE_VLLM_API_KEY`. REQUIRED before exposing the
+      # API publicly (e.g. `lobes tunnel`). See env.example + README "Expose the API".
+      - VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
+      # mg-logwrap writes per-boot logs to $MG_LOG_DIR/$MG_LOG_NAME-<boot>.log.
+      # MG_LOG_DIR is the in-container mount point (set explicitly so it can't drift
+      # from the volume below); MG_LOG_NAME namespaces this service's file.
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=vllm
+    volumes:
+      # Persist downloaded weights across restarts. HF_CACHE overrides the host
+      # path; otherwise ~/.cache/huggingface, with /root as the fallback if HOME
+      # is unset (so the mount never collapses to /.cache/huggingface).
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs: tee stdout+stderr to a host file that survives restart/recreate,
+      # so an EngineCore crash trace is never lost again (issue #50). MODEL_GEAR_LOG_DIR
+      # overrides the host dir; default ./logs next to this compose file. Read it with
+      # `lobes logs` (or straight from the host dir), even after the container is gone.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    # mg-logwrap tees this service's output to /logs/model-gear, then `exec`s the
+    # command below so vLLM stays the signal target (graceful SIGTERM). See mg-logwrap.sh.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${VLLM_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --served-model-name=${VLLM_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${VLLM_QUANTIZATION:-modelopt}   # MTP primary is ModelOpt NVFP4 (`modelopt` → modelopt_fp4); mmangkad/nvidia are modelopt_fp4, RedHatAI (Mistral) is compressed-tensors (`lobes switch` sets this from the catalog)
+      - --kv-cache-dtype=fp8
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-262144}   # 256K native, served at the full 256K (load-tested 2026-06-03 on the shared GB10 — ~70 GiB at util 0.6, same as 32K/128K; 5.3x KV concurrency headroom at full context); lower only for heavier co-residence
+      - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
+      - --attention-backend=${VLLM_ATTENTION_BACKEND:-flashinfer}   # Blackwell-class kernel (ships in the nv26.04 image); `lobes switch --machine` sets this
+      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-2}                      # concurrent decode slots — capped at 2 for the MTP primary (4 OOMs at n=3/high-context); `lobes switch --purpose` tunes this for non-MTP models
+      - --max-num-batched-tokens=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}  # prefill chunk budget — `lobes switch --purpose` tunes this
+      - --enable-chunked-prefill           # interleave prefill with decode (default-on in recent vLLM; pairs with max-num-batched-tokens)
+      - --async-scheduling                 # overlap scheduling with the forward pass; drop on older vLLM builds without the flag
+      - --reasoning-parser=qwen3           # expose the <think> trace (field is `reasoning` on the nv26.04 build, `reasoning_content` on older vLLM; drop the flag on builds without the parser)
+      - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
+      - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
+      - --enable-prefix-caching
+      # --- MTP default primary (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) ---------
+      # These four serve the speculative-decoding MTP primary out of the box (~2.4x
+      # decode vs the archived baseline 27B; 78.6% draft acceptance, tool calling +
+      # reasoning verified 2026-05-31). They are MTP-only: --language-model-only and
+      # the --tokenizer override break every non-MTP checkpoint, and compose can't
+      # conditionally omit a list item — so to serve a NON-MTP model, REMOVE these 4
+      # lines by hand (`lobes switch <non-mtp-model>` prints them). See
+      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # SECURITY: --trust-remote-code runs the model repo's code in-container with
+      # access to whatever .env carries. HF_TOKEN is only needed to *download* gated
+      # repos (these defaults are public) — leave it empty, or use a minimal-scope
+      # read-only token and clear it once weights are cached. Pin model revisions you
+      # trust; the blast radius of a compromised repo is arbitrary code, not just weights.
+      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - --trust-remote-code                # MTP build ships custom modeling code (see SECURITY note above)
+      - --language-model-only              # MTP build is text-only (ViT tower removed)
+      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4   # MTP checkpoint's tokenizer_config declares TokenizersBackend (absent from nv26.04); point at the cached base tokenizer (same vocab)
+      # NOTE: the MoE-only flag is NOT here. The Qwen3.6-35B-A3B MoE candidate also
+      # wants `--moe-backend=marlin` (verified to load it solo on the GB10). It is
+      # catalog data, not a default — add it by hand when serving the MoE
+      # (`lobes switch` prints the exact line). See docs/qwen3.6-35b-a3b-nvfp4.md.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s                   # allow time for the first-run weight download + load

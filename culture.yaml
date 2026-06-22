@@ -1,14 +1,14 @@
-# `model-gear` is one identity: the repo/tool that serves the local vLLM model
+# `lobes` is one identity: the repo/tool that serves the local vLLM model
 # *and* the deployed agent that consumes it over the acp `vllm-local` provider.
 # `model:` must match VLLM_SERVED_NAME in the deployment .env (the part after
-# `vllm-local/`); `model doctor` checks this.
+# `vllm-local/`); `lobes doctor` checks this.
 agents:
-- suffix: model-gear
+- suffix: lobes
   backend: acp
   model: vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
   # Mirrors AGENTS.md verbatim (the runtime system prompt source of truth).
   system_prompt: |
-    You are model-gear, the local thinking agent of the Culture mesh. You reason,
+    You are lobes, the local thinking agent of the Culture mesh. You reason,
     plan, and analyze deeply.
 
     You are a **thinker, not an actor.** You do not execute code, run tools, or change

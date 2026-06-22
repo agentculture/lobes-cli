@@ -29,7 +29,7 @@ jobs:
 
       - run: uv sync
 
-      - run: uv run pytest -n auto --cov=model_gear --cov-report=xml:coverage.xml --cov-report=term -v
+      - run: uv run pytest -n auto --cov=lobes --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''
@@ -55,16 +55,16 @@ jobs:
       - run: uv sync
 
       - name: black --check
-        run: uv run black --check model_gear tests
+        run: uv run black --check lobes tests
 
       - name: isort --check
-        run: uv run isort --check-only model_gear tests
+        run: uv run isort --check-only lobes tests
 
       - name: flake8
-        run: uv run flake8 model_gear tests
+        run: uv run flake8 lobes tests
 
       - name: bandit
-        run: uv run bandit -c pyproject.toml -r model_gear
+        run: uv run bandit -c pyproject.toml -r lobes
 
       - name: markdownlint-cli2
         run: |

@@ -11,8 +11,8 @@ and (2) it is the **only vision-capable 27B** in the catalog (the MTP primary is
 text-only), so it is the fallback when an image path is needed.
 
 **Load-tested live on DGX Spark (GB10),** first 2026-05-27 and re-confirmed
-2026-05-30 — it loads and serves cleanly under the vLLM image model-gear already
-runs. Tracked by [issue #6](https://github.com/agentculture/model-gear/issues/6).
+2026-05-30 — it loads and serves cleanly under the vLLM image lobes already
+runs. Tracked by [issue #6](https://github.com/agentculture/lobes-cli/issues/6).
 
 **Warm-up (solo, 2026-05-30): ~423 s (~7 min)** from container start to `/health`
 — weight load 160 s (28.25 GiB), profiling/warmup 55 s, then CUDA-graph capture +
@@ -21,7 +21,7 @@ KV allocation. Plan for a multi-minute cold start. Decode re-confirmed at
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-27B-NVFP4> — public, Apache-2.0.
 
-> One entry in model-gear's **supported catalog** (`model overview --list`). For
+> One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
@@ -60,7 +60,7 @@ instantiates, loads weights, and serves with the same compose flags as the 32B
 ## How to run (same compose, model override)
 
 ```bash
-model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
+lobes switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --apply
 # (switch is dry-run without --apply; it rewrites VLLM_MODEL / VLLM_SERVED_NAME /
 #  VLLM_PORT in .env, auto-selects VLLM_TOOL_CALL_PARSER=qwen3_coder for this
 #  model (override with --tool-call-parser), recreates the container, waits for
@@ -69,7 +69,7 @@ model switch mmangkad/Qwen3.6-27B-NVFP4 --port 8001 --max-model-len 32768 --appl
 ```
 
 `VLLM_SERVED_NAME` must match the part after `vllm-local/` in `culture.yaml`
-(`model doctor` checks this). Memory note: native context is 256K; the KV cache
+(`lobes doctor` checks this). Memory note: native context is 256K; the KV cache
 at that length is large, so
 keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
 
@@ -81,12 +81,12 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
    For **OpenAI tool/function calling** this model emits the Qwen3-Coder XML
    format (`<function=finish><parameter=summary>…</parameter></function>`), which
    the default `hermes` parser cannot parse (HTTP 200 but empty `tool_calls`).
-   It must be served with `--tool-call-parser=qwen3_coder` — which `model switch`
-   now **auto-selects** for this model (`model switch mmangkad/Qwen3.6-27B-NVFP4
+   It must be served with `--tool-call-parser=qwen3_coder` — which `lobes switch`
+   now **auto-selects** for this model (`lobes switch mmangkad/Qwen3.6-27B-NVFP4
    --apply` sets `VLLM_TOOL_CALL_PARSER=qwen3_coder`; override with
    `--tool-call-parser`). Verified live on `:8001`, 2026-05-27 — the
    probe returns a `finish` tool call (see
-   [issue #9](https://github.com/agentculture/model-gear/issues/9)).
+   [issue #9](https://github.com/agentculture/lobes-cli/issues/9)).
 2. **`ForConditionalGeneration` + multimodal RoPE / ViT encoder.** → **Resolved
    for text:** vLLM initializes the ViT encoder but does not demand an
    image/processor path for text chat; both correctness probes passed.
@@ -100,7 +100,7 @@ keep `VLLM_MAX_MODEL_LEN=32768` for a first load and raise only with headroom.
 ## Benchmark — 2026-05-27, DGX Spark (GB10)
 
 Image `nvcr.io/nvidia/vllm:26.04-py3`, engine `0.19.0+...nv26.04`. Served on
-`:8001` via `model assess` / `model benchmark`. Engine init (download cached)
+`:8001` via `lobes assess` / `lobes benchmark`. Engine init (download cached)
 ~159 s; KV cache 38.55 GiB allocated.
 
 | Property | Value |
@@ -134,8 +134,8 @@ despite being smaller, and it is a heavier, more-experimental path (hybrid Mamba
 layers with experimental prefix caching, plus a ViT encoder unused for text).
 
 **`nvidia/Qwen3-32B-NVFP4` remains the speed-optimised candidate** — swap it in via
-`PRIMARY_MODEL` / `model switch` when raw text decode throughput matters more than
-context length or vision. Re-run `model assess` / `model benchmark` after any vLLM
+`PRIMARY_MODEL` / `lobes switch` when raw text decode throughput matters more than
+context length or vision. Re-run `lobes assess` / `lobes benchmark` after any vLLM
 image bump — the Mamba/NVFP4 paths are young and likely to get faster.
 
 **For MTP (speculative decoding) on the 27B,** the baseline NVFP4 export here drops
@@ -143,4 +143,4 @@ the MTP draft head (~0 % acceptance). The MTP-grafted, text-only re-export
 `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`
 ([`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md)) restores it for
 vLLM speculative decoding — a candidate to benchmark against this baseline
-([issue #26](https://github.com/agentculture/model-gear/issues/26)).
+([issue #26](https://github.com/agentculture/lobes-cli/issues/26)).

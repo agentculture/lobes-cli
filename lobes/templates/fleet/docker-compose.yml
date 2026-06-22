@@ -1,0 +1,254 @@
+# lobes FLEET — the always-warm Qwen primary behind one stdlib gateway.
+#
+# `lobes init --fleet` copies this file (+ env.example -> .env, + Dockerfile.gateway)
+# into a deployment directory; `lobes fleet up --apply` drives `docker compose
+# up -d --build` there. The gateway serves an OpenAI-compatible API on the host
+# port the acp `vllm-local` provider expects; it routes by the request's `model`
+# field and defaults unknown/missing names to GATEWAY_DEFAULT_MODEL.
+#
+#   lobes init --fleet --apply     # scaffold (writes the running version into .env)
+#   docker login nvcr.io           # NGC API key for the vLLM image
+#   lobes fleet up --apply         # build the gateway + start the backend
+#   lobes fleet status             # container states + gateway /health + /v1/models
+#
+# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). One generate
+# backend by default: the Qwen primary keeps its load-tested headroom (util 0.6,
+# full 256K context), with the ~0.6B embed/rerank gears (util 0.06 each) co-resident.
+# To add a warm *generate* fallback, wire a vllm-fallback service +
+# FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway (the gateway adds the second
+# generate backend when those are set) and drop both generate GPU utils so they
+# sum well under 1.0 — two ~30B NVFP4 models barely co-fit a GB10.
+services:
+  vllm-primary:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
+    container_name: model-gear-vllm-primary
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-primary:8000 on the compose net.
+    expose:
+      - "8000"
+    # mg-logwrap tees output to /logs/model-gear, then `exec`s the command (vLLM stays
+    # the signal target). The command list below is unchanged.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${PRIMARY_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --served-model-name=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
+      - --kv-cache-dtype=fp8
+      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-262144}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.6}
+      - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
+      - --reasoning-parser=qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
+      # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
+      - --enable-prefix-caching
+      # MTP default primary: speculative decoding (~2.4x decode) + the text-only /
+      # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
+      # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
+      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
+      # is only needed to download gated repos (these defaults are public) — leave it
+      # empty or use a minimal-scope read-only token; pin revisions you trust.
+      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - --trust-remote-code
+      - --language-model-only
+      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # A warm *generate* fallback backend can be added here. The default fleet runs
+  # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
+  # the primary keeps its solo generate headroom. To add
+  # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
+  # your fallback model with its own quantization / tokenizer / parser), add it to
+  # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the
+  # gateway, and lower both GPU utils so they sum well under 1.0. The archived
+  # dense Mistral-Small-3.2-24B (NVFP4) fallback config is in git history (the
+  # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
+  # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
+
+  # --- Embedding + reranker gears (co-resident on the GB10) -----------------
+  # Co-residency budget: primary at util 0.6 (~75 GiB) + two 0.6B gears at
+  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) sum well
+  # under 1.0 on the 128 GB GB10. The gears are served at --max-model-len 8192 so
+  # KV cache stays tiny — these are short-context workloads (embed/rerank, not
+  # generation). No quantization, tool, reasoning, or speculative flags — they are
+  # not needed for the pooling runner and would interfere with --runner/--convert.
+
+  vllm-embed:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-embed
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - --served-model-name=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # This vLLM build (0.19.0+nv26.04) replaced the old --task with --runner +
+      # --convert: an embedding gear is --runner pooling --convert embed (load-tested
+      # 2026-06-19 on the GB10). --task embed is rejected ("unrecognized arguments").
+      - --runner=pooling
+      - --convert=embed
+      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
+      - --max-model-len=${EMBED_MAX_MODEL_LEN:-8192}
+      # util 0.06 (~7 GiB budget): 0.025 fails with "No available memory for the cache
+      # blocks" — vLLM's pooling runner still reserves a cache-block budget. Load-tested.
+      - --gpu-memory-utilization=${EMBED_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  vllm-rerank:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-rerank
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      - --served-model-name=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # --runner pooling --convert classify is the score/rerank gear on this vLLM
+      # build (replaces --task score; vLLM auto-resolves --convert auto to classify
+      # for a *ForSequenceClassification arch, but pass it explicitly). Load-tested.
+      - --runner=pooling
+      - --convert=classify
+      - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+      args:
+        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+    container_name: model-gear-gateway
+    restart: unless-stopped
+    # Start order only — the gateway tolerates a backend still loading (it routes
+    # and fails over per request), so it must not block on backend health.
+    depends_on:
+      - vllm-primary
+      - vllm-embed
+      - vllm-rerank
+    environment:
+      - GATEWAY_PORT=8000
+      - PRIMARY_URL=http://vllm-primary:8000
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
+      # gateway wires a second backend only when these are present).
+      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
+      # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
+      - EMBED_URL=${EMBED_URL:-http://vllm-embed:8000}
+      - EMBED_SERVED_NAME=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - RERANK_URL=${RERANK_URL:-http://vllm-rerank:8000}
+      - RERANK_SERVED_NAME=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
+      - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
+      - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    healthcheck:
+      # python:3.12-slim has no curl — probe /health with stdlib urllib instead.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

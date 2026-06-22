@@ -439,6 +439,66 @@ wheels = [
 ]
 
 [[package]]
+name = "lobes-cli"
+version = "0.27.0"
+source = { editable = "." }
+
+[package.optional-dependencies]
+chatterbox = [
+    { name = "fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+realtime = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "python-multipart" },
+    { name = "scipy" },
+    { name = "silero-vad" },
+    { name = "torch" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "afi-cli" },
+    { name = "bandit" },
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
+    { name = "httpx", marker = "extra == 'realtime'", specifier = ">=0.28" },
+    { name = "numpy", marker = "extra == 'realtime'", specifier = ">=2.0" },
+    { name = "python-multipart", marker = "extra == 'realtime'", specifier = ">=0.0.9" },
+    { name = "scipy", marker = "extra == 'realtime'", specifier = ">=1.14" },
+    { name = "silero-vad", marker = "extra == 'realtime'", specifier = ">=5.1" },
+    { name = "torch", marker = "extra == 'realtime'", specifier = ">=2.5" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox'", specifier = ">=0.34" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'realtime'", specifier = ">=0.34" },
+]
+provides-extras = ["realtime", "chatterbox"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "afi-cli", specifier = ">=0.7" },
+    { name = "bandit", specifier = ">=1.7.5" },
+    { name = "black", specifier = ">=23.7.0" },
+    { name = "flake8", specifier = ">=6.1" },
+    { name = "isort", specifier = ">=5.12.0" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=4.1" },
+    { name = "pytest-xdist", specifier = ">=3.0" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -529,66 +589,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
-]
-
-[[package]]
-name = "model-gear"
-version = "0.26.1"
-source = { editable = "." }
-
-[package.optional-dependencies]
-chatterbox = [
-    { name = "fastapi" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-realtime = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "numpy" },
-    { name = "python-multipart" },
-    { name = "scipy" },
-    { name = "silero-vad" },
-    { name = "torch" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "afi-cli" },
-    { name = "bandit" },
-    { name = "black" },
-    { name = "flake8" },
-    { name = "isort" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
-    { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
-    { name = "httpx", marker = "extra == 'realtime'", specifier = ">=0.28" },
-    { name = "numpy", marker = "extra == 'realtime'", specifier = ">=2.0" },
-    { name = "python-multipart", marker = "extra == 'realtime'", specifier = ">=0.0.9" },
-    { name = "scipy", marker = "extra == 'realtime'", specifier = ">=1.14" },
-    { name = "silero-vad", marker = "extra == 'realtime'", specifier = ">=5.1" },
-    { name = "torch", marker = "extra == 'realtime'", specifier = ">=2.5" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox'", specifier = ">=0.34" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'realtime'", specifier = ">=0.34" },
-]
-provides-extras = ["realtime", "chatterbox"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "afi-cli", specifier = ">=0.7" },
-    { name = "bandit", specifier = ">=1.7.5" },
-    { name = "black", specifier = ">=23.7.0" },
-    { name = "flake8", specifier = ">=6.1" },
-    { name = "isort", specifier = ">=5.12.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-cov", specifier = ">=4.1" },
-    { name = "pytest-xdist", specifier = ">=3.0" },
 ]
 
 [[package]]

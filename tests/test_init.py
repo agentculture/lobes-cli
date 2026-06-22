@@ -1,12 +1,12 @@
-"""Tests for ``model init`` — scaffold a deployment dir."""
+"""Tests for ``lobes init`` — scaffold a deployment dir."""
 
 from __future__ import annotations
 
 import json
 import stat
 
-from model_gear.cli import main
-from model_gear.runtime import _compose
+from lobes.cli import main
+from lobes.runtime import _compose
 
 
 def test_init_dry_run_writes_nothing(tmp_path, capsys) -> None:
@@ -96,7 +96,7 @@ def test_init_local_folder(tmp_path, monkeypatch) -> None:
 
 
 def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
-    from model_gear import __version__
+    from lobes import __version__
 
     target = tmp_path / "fleet"
     rc = main(["init", "--fleet", str(target), "--apply"])
@@ -124,7 +124,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     # The primary is restored to its solo headroom (util 0.6, full 256K).
     assert "PRIMARY_GPU_MEM_UTIL=0.6" in env
     assert "PRIMARY_MAX_MODEL_LEN=262144" in env
-    # init --fleet pins the gateway image to the running model-gear version.
+    # init --fleet pins the gateway image to the running lobes-cli version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
     assert "VLLM_SERVED_NAME=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env

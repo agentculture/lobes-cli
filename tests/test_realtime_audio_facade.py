@@ -1,6 +1,6 @@
 """Tests for the OpenAI /v1/audio/* pure helpers (stdlib-only; no [realtime] extra).
 
-The FastAPI routes (model_gear/realtime/app.py) need fastapi/httpx and are not
+The FastAPI routes (lobes/realtime/app.py) need fastapi/httpx and are not
 installed offline; the logic they delegate to lives here and is tested directly.
 """
 
@@ -11,13 +11,13 @@ import wave
 
 import pytest
 
-from model_gear.realtime.audio_facade import (
+from lobes.realtime.audio_facade import (
     SUPPORTED_FORMATS,
     SpeechRequestError,
     parse_speech_request,
     pcm_to_container,
 )
-from model_gear.realtime.protocol import TTS_SAMPLE_RATE
+from lobes.realtime.protocol import TTS_SAMPLE_RATE
 
 # --- pcm_to_container -----------------------------------------------------
 

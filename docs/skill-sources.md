@@ -1,8 +1,8 @@
 # Skill sources
 
-This is model-gear's provenance ledger for the skills under `.claude/skills/`.
+This is lobes' provenance ledger for the skills under `.claude/skills/`.
 The policy is **cite-don't-import**: every vendored skill is *copied* into this
-repo and is **owned by model-gear** — it may diverge from its upstream, and this
+repo and is **owned by lobes** — it may diverge from its upstream, and this
 repo's copy is authoritative for this repo. Nothing here symlinks to or
 runtime-depends on a sibling checkout.
 
@@ -51,4 +51,4 @@ here may diverge.
 
 | Skill | Citation path | Origin | Notes |
 |-------|---------------|--------|-------|
-| `model-runner` | — | model-gear | Not vendored. Thin shim that `exec`s the `model` CLI (this repo's `model_gear` package). |
+| `model-runner` | — | lobes | Not vendored. Thin shim that `exec`s the `lobes` CLI (this repo's `lobes` package), with `model` as a deprecated alias. |

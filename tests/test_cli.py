@@ -1,4 +1,4 @@
-"""Smoke tests for the model-gear CLI entry point and the agent-first verbs."""
+"""Smoke tests for the lobes CLI entry point and the agent-first verbs."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from model_gear import __version__
-from model_gear.cli import main
-from model_gear.explain import known_paths
+from lobes import __version__
+from lobes.cli import main
+from lobes.explain import known_paths
 
 
 def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
@@ -21,7 +21,7 @@ def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
 def test_no_args_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main([])
     assert rc == 0
-    assert "usage: model" in capsys.readouterr().out
+    assert "usage: lobes" in capsys.readouterr().out
 
 
 def test_unknown_command_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -40,22 +40,22 @@ def test_whoami_text(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["whoami"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "tool: model-gear" in out
+    assert "tool: lobes" in out
     assert "served_model:" in out
     assert "container_health:" in out
-    assert "agent: model-gear" in out
+    assert "agent: lobes" in out
 
 
 def test_whoami_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["whoami", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["tool"] == "model-gear"
+    assert payload["tool"] == "lobes"
     assert payload["version"] == __version__
     assert isinstance(payload["machine"], dict)
     assert "host" in payload["machine"]
     assert payload["served_model"]
-    assert payload["agent"] == "model-gear"
+    assert payload["agent"] == "lobes"
     # Offline fixture → no container.
     assert payload["container_health"] == "not created"
 
@@ -67,7 +67,7 @@ def test_learn_text(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["learn"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "model-gear" in out
+    assert "lobes" in out
     assert "Exit-code policy" in out
     assert "--json" in out
     assert "switch" in out
@@ -78,10 +78,10 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["learn", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["tool"] == "model-gear"
+    assert payload["tool"] == "lobes"
     assert payload["version"] == __version__
     assert payload["json_support"] is True
-    assert payload["serves"] == "model-gear"
+    assert payload["serves"] == "lobes"
     verbs = {tuple(c["path"]) for c in payload["commands"]}
     assert ("switch",) in verbs
     assert ("assess",) in verbs
@@ -105,7 +105,7 @@ def test_explain_root(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "# model-gear" in out
+    assert "# lobes" in out
     assert "switch" in out
 
 
@@ -113,7 +113,17 @@ def test_explain_self_uses_prog_name(capsys: pytest.CaptureFixture[str]) -> None
     # The rubric probes `explain model` (the binary name) — must resolve to root.
     rc = main(["explain", "model"])
     assert rc == 0
-    assert "# model-gear" in capsys.readouterr().out
+    assert "# lobes" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("alias", ["lobes", "lobes-cli", "model", "model-gear"])
+def test_explain_root_aliases_resolve(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # Both the new names and the deprecated model/model-gear aliases must resolve
+    # to the root entry (regression: the duplicate ("lobes",) key once dropped the
+    # ("model-gear",) back-compat alias entirely).
+    rc = main(["explain", alias])
+    assert rc == 0
+    assert "# lobes" in capsys.readouterr().out
 
 
 def test_explain_switch(capsys: pytest.CaptureFixture[str]) -> None:
@@ -144,7 +154,7 @@ def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["path"] == ["switch"]
-    assert "model switch" in payload["markdown"]
+    assert "lobes switch" in payload["markdown"]
 
 
 def test_explain_unknown_path_errors(capsys: pytest.CaptureFixture[str]) -> None:

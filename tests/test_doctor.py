@@ -1,11 +1,11 @@
-"""Tests for ``model doctor`` — real docker/compose/.env/health checks."""
+"""Tests for ``lobes doctor`` — real docker/compose/.env/health checks."""
 
 from __future__ import annotations
 
 import json
 
-from model_gear.cli import main
-from model_gear.runtime import _compose, _env
+from lobes.cli import main
+from lobes.runtime import _compose, _env
 
 
 def test_doctor_offline_is_unhealthy(capsys) -> None:
@@ -21,7 +21,7 @@ def test_doctor_offline_is_unhealthy(capsys) -> None:
 
 def test_doctor_healthy_when_docker_and_scaffold_present(tmp_path, monkeypatch, capsys) -> None:
     _compose.write_scaffold(tmp_path, force=True)
-    monkeypatch.setenv("MODEL_GEAR_DIR", str(tmp_path))
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
     monkeypatch.setattr(_compose, "docker_available", lambda: True)
 
     rc = main(["doctor", "--json"])
@@ -52,7 +52,7 @@ def test_doctor_compose_dir_flag(tmp_path, monkeypatch, capsys) -> None:
 def test_doctor_env_mismatch_warns_but_passes(tmp_path, monkeypatch, capsys) -> None:
     _compose.write_scaffold(tmp_path, force=True)
     _env.set_env(tmp_path / ".env", "VLLM_SERVED_NAME", "other/model")
-    monkeypatch.setenv("MODEL_GEAR_DIR", str(tmp_path))
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
     monkeypatch.setattr(_compose, "docker_available", lambda: True)
 
     rc = main(["doctor", "--json"])

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from model_gear import profiles
-from model_gear.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes import profiles
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 
 # --- workload profiles ----------------------------------------------------
 

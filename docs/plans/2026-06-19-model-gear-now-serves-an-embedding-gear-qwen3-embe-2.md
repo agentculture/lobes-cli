@@ -10,7 +10,7 @@ slug: `model-gear-now-serves-an-embedding-gear-qwen3-embe-2` · status: `exporte
 
 - covers: c10
 - acceptance:
-  - SupportedModel gains task (default 'generate'), dimension (int|None, default None), hf_overrides (str, default '') fields; the two 0.6B gears appear in SUPPORTED_MODELS with correct task/dimension/hf_overrides; every existing chat entry keeps task='generate' with dimension=None; as_dicts() includes the new fields; black/isort/flake8 clean. File: model_gear/catalog.py.
+  - SupportedModel gains task (default 'generate'), dimension (int|None, default None), hf_overrides (str, default '') fields; the two 0.6B gears appear in SUPPORTED_MODELS with correct task/dimension/hf_overrides; every existing chat entry keeps task='generate' with dimension=None; as_dicts() includes the new fields; black/isort/flake8 clean. File: lobes/catalog.py.
 
 ### t2 — Catalog-consistency tests for the new fields: a task=embed model must have a non-null dimension and a docs/ file; a task=score model must carry the Qwen3ForSequenceClassification hf_overrides; generate models keep dimension=None.
 
@@ -30,7 +30,7 @@ slug: `model-gear-now-serves-an-embedding-gear-qwen3-embe-2` · status: `exporte
 
 - covers: c11
 - acceptance:
-  - build_config appends an embed and/or rerank Backend when the env vars are set; RoutingTable.backends includes them; existing primary/fallback behavior is byte-for-byte unchanged when the new vars are absent; unit test passes with a dict env. File: model_gear/gateway/_config.py.
+  - build_config appends an embed and/or rerank Backend when the env vars are set; RoutingTable.backends includes them; existing primary/fallback behavior is byte-for-byte unchanged when the new vars are absent; unit test passes with a dict env. File: lobes/gateway/_config.py.
 
 ### t5 — Gateway routing verification + minimal fix: prove handle_post forwards POST /v1/embeddings, /v1/score, /v1/rerank to the backend named by the body's model field; document the before-state (no warm embed backend); add a server.py fix ONLY if a failing test proves one is needed; chat + audio routing unchanged.
 
@@ -45,7 +45,7 @@ slug: `model-gear-now-serves-an-embedding-gear-qwen3-embe-2` · status: `exporte
 - depends on: t1
 - covers: c7
 - acceptance:
-  - model switch <embed-model> --apply writes VLLM_TASK=embed and prints the hf-overrides notice; the single-model template threads  into the vllm command; switch dry-run shows the plan; existing chat switch output unchanged when task=generate; unit test covers the new flag. Files: model_gear/cli/_commands/switch.py, model_gear/templates/docker-compose.yml.
+  - model switch <embed-model> --apply writes VLLM_TASK=embed and prints the hf-overrides notice; the single-model template threads  into the vllm command; switch dry-run shows the plan; existing chat switch output unchanged when task=generate; unit test covers the new flag. Files: lobes/cli/_commands/switch.py, lobes/templates/docker-compose.yml.
   - for --task embed|score, switch uses a small max-model-len + gpu-mem-util and skips the tool-calling probe (embed/score have no tool calling).
 
 ### t7 — Document the call shapes: add model explain embeddings / rerank / score entries (request+response+dimension+served names) and write per-model docs docs/qwen3-embedding-0.6b.md + docs/qwen3-reranker-0.6b.md (OpenAI-style usage, composition with eidetic, no model-gear SDK).
@@ -53,14 +53,14 @@ slug: `model-gear-now-serves-an-embedding-gear-qwen3-embe-2` · status: `exporte
 - depends on: t1
 - covers: c2, c5, c12, h2, h5, h10
 - acceptance:
-  - model explain embeddings, model explain rerank, model explain score each resolve to a body documenting the exact request/response + dimension + served model name; docs/qwen3-embedding-0.6b.md and docs/qwen3-reranker-0.6b.md exist with a placeholder for measured numbers; documented served names equal the catalog ids; markdownlint clean. Files: model_gear/explain/catalog.py, docs/qwen3-embedding-0.6b.md, docs/qwen3-reranker-0.6b.md.
+  - model explain embeddings, model explain rerank, model explain score each resolve to a body documenting the exact request/response + dimension + served model name; docs/qwen3-embedding-0.6b.md and docs/qwen3-reranker-0.6b.md exist with a placeholder for measured numbers; documented served names equal the catalog ids; markdownlint clean. Files: lobes/explain/catalog.py, docs/qwen3-embedding-0.6b.md, docs/qwen3-reranker-0.6b.md.
   - the explain _GATEWAY entry drops the 'nothing warm behind /v1/embeddings' line and the _MODELS entry lists the two new per-model docs.
 
-### t8 — Boundary guard: a test asserting model-gear adds no vector store / index / chunker / retrieval — pyproject dependencies are unchanged (still no vector-DB deps) and no new module under model_gear/ implements storage/retrieval.
+### t8 — Boundary guard: a test asserting model-gear adds no vector store / index / chunker / retrieval — pyproject dependencies are unchanged (still no vector-DB deps) and no new module under lobes/ implements storage/retrieval.
 
 - covers: c6, h6
 - acceptance:
-  - tests/ assert the diff adds no vector-DB dependency to pyproject.toml and no module named like store/index/retrieve/chunk under model_gear/; test passes. File: tests/test_boundary_serves_only.py.
+  - tests/ assert the diff adds no vector-DB dependency to pyproject.toml and no module named like store/index/retrieve/chunk under lobes/; test passes. File: tests/test_boundary_serves_only.py.
 
 ### t9 — Load-test both gears WARM on the DGX Spark: bring up the fleet, curl /v1/embeddings (assert 1024-len vector) and /v1/rerank (assert sorted relevance_score) while /v1/chat/completions still answers from the 27B; paste the measured dimension + throughput + co-residency numbers into the per-model docs.
 

@@ -15,7 +15,7 @@ description: >
 
 # Communicate (Cross-Repo + Mesh)
 
-> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by model-gear and may diverge.
+> Vendored from steward (canonical upstream: `docs/skill-sources.md`); this copy is owned by lobes and may diverge.
 
 Steward's job is alignment across the AgentCulture mesh; that surfaces in
 four distinct channels:

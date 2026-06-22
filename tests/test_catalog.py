@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from model_gear.catalog import (
+from lobes.catalog import (
     SUPPORTED_MODELS,
     as_dicts,
     mtp_compose_command_items,
     supported_models,
 )
-from model_gear.gateway import _config
-from model_gear.runtime._parser import infer_parser
+from lobes.gateway import _config
+from lobes.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
-_TEMPLATES = Path(__file__).resolve().parents[1] / "model_gear" / "templates"
+_TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
 
 # Fields required non-empty for ALL models (task-agnostic).
 _FIELDS_ALL = ("id", "role_hint", "shape", "context", "status", "doc")
@@ -54,7 +54,7 @@ def test_status_values_are_known() -> None:
 
 
 def test_native_max_model_len_is_a_positive_int() -> None:
-    # The clamp `model switch` applies relies on a real, positive ceiling per model;
+    # The clamp `lobes switch` applies relies on a real, positive ceiling per model;
     # a missing/zero value would silently disable the boot-safety clamp.
     for model in SUPPORTED_MODELS:
         assert isinstance(model.native_max_model_len, int), model.id
@@ -70,7 +70,7 @@ def test_every_doc_file_exists() -> None:
 
 def test_tool_parser_matches_infer_parser() -> None:
     # The catalog must agree with the runtime's parser inference (the source of
-    # truth model switch uses), or a fleet backend would be misconfigured.
+    # truth lobes switch uses), or a fleet backend would be misconfigured.
     # Restrict to generate (chat/completion) models: embed/score gears have no
     # tool parser (tool_parser="") but infer_parser would return "hermes" for
     # any Qwen3 id — those models don't do tool calling, so the field is empty.
@@ -116,7 +116,7 @@ def test_speculative_config_only_on_mtp_checkpoints() -> None:
 
 def test_mtp_command_items_match_packaged_templates() -> None:
     # The MTP primary's extra command items are baked into the compose templates AND
-    # named by `model switch` as the lines to remove for a non-MTP model. The catalog
+    # named by `lobes switch` as the lines to remove for a non-MTP model. The catalog
     # helper is the single source of truth — guard it against drift from the packaged
     # templates (both single-model and the fleet vllm-primary service must ship them).
     items = mtp_compose_command_items()

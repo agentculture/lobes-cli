@@ -1,6 +1,6 @@
 # Qwen3-Reranker-0.6B — reranker gear (score / rerank)
 
-> One entry in model-gear's **supported catalog** (`model overview --list`). For
+> One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
@@ -22,8 +22,8 @@ Served as a **warm fleet backend** alongside the 27B primary and the embedder on
 the DGX Spark GB10 (128 GB unified memory). Its small footprint (0.6B weights,
 32K KV window) keeps the KV cache tiny so all three backends co-fit.
 
-The warm path is the **fleet** (`model init --fleet` then `model fleet up --apply`).
-To serve it *solo* for testing, `model switch Qwen/Qwen3-Reranker-0.6B` (the task is
+The warm path is the **fleet** (`lobes init --fleet` then `lobes fleet up --apply`).
+To serve it *solo* for testing, `lobes switch Qwen/Qwen3-Reranker-0.6B` (the task is
 auto-detected from the catalog) prints the exact compose edits to apply.
 
 Key compose flags:

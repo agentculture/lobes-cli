@@ -1,13 +1,13 @@
 """Tests for the live overview layer: metrics parsing, section builders, the CLI.
 
-All offline — the HTTP probes in :mod:`model_gear._metrics` are monkeypatched, so
+All offline — the HTTP probes in :mod:`lobes._metrics` are monkeypatched, so
 no sockets and no running deployment are needed.
 """
 
 from __future__ import annotations
 
-from model_gear import _metrics
-from model_gear.cli import _live, main
+from lobes import _metrics
+from lobes.cli import _live, main
 
 SAMPLE = """
 # HELP vllm:num_requests_running Number of requests currently running.
@@ -99,7 +99,7 @@ def test_probe_backend_short_circuits_when_unhealthy(monkeypatch) -> None:
 
 def _fleet_status() -> dict:
     return {
-        "object": "model-gear.fleet_status",
+        "object": "lobes.fleet_status",
         "default_model": "P",
         "busy": {"running": 2, "waiting": 0},
         "backends": [
@@ -179,7 +179,7 @@ def test_live_sections_nothing_serving(monkeypatch) -> None:
     monkeypatch.setattr(_metrics, "health_ok", lambda base, **k: False)
     secs = _live.live_sections(8000, None)
     assert secs[0]["title"] == "Live"
-    assert "no model-gear endpoint reachable" in secs[0]["items"][0]
+    assert "no lobes endpoint reachable" in secs[0]["items"][0]
 
 
 # --- the CLI verb ----------------------------------------------------------
@@ -193,7 +193,7 @@ def test_overview_live_cli_single(monkeypatch, capsys) -> None:
     )
     assert main(["overview", "--live", "--port", "8000"]) == 0
     out = capsys.readouterr().out
-    assert "model-gear (live)" in out and "Usage" in out and "generation tokens: 9" in out
+    assert "lobes (live)" in out and "Usage" in out and "generation tokens: 9" in out
 
 
 def test_overview_live_cli_json(monkeypatch, capsys) -> None:
@@ -203,5 +203,5 @@ def test_overview_live_cli_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(_metrics, "health_ok", lambda base, **k: False)  # nothing serving
     assert main(["overview", "--live", "--port", "8000", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["subject"] == "model-gear (live)"
+    assert payload["subject"] == "lobes (live)"
     assert payload["sections"][0]["title"] == "Live"

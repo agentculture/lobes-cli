@@ -1,10 +1,10 @@
-"""Tests for per-model tool-call parser inference (``model_gear.runtime._parser``)."""
+"""Tests for per-model tool-call parser inference (``lobes.runtime._parser``)."""
 
 from __future__ import annotations
 
 import pytest
 
-from model_gear.runtime import _parser
+from lobes.runtime import _parser
 
 
 @pytest.mark.parametrize(

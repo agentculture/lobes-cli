@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "pyproject.toml"
-      - "model_gear/**"
+      - "lobes/**"
+      - "packaging/**"
   pull_request:
     branches: [main]
     paths:
       - "pyproject.toml"
-      - "model_gear/**"
+      - "lobes/**"
+      - "packaging/**"
 
 jobs:
   test:
@@ -63,7 +65,7 @@ jobs:
       - name: Print install commands
         if: always()
         run: |
-          echo "::notice::Test with: uv tool install --index-url https://test.pypi.org/simple/ --index-strategy unsafe-best-match model-gear==${DEV_VERSION}"
+          echo "::notice::Test with: uv tool install --index-url https://test.pypi.org/simple/ --index-strategy unsafe-best-match lobes-cli==${DEV_VERSION}"
 
   publish:
     if: github.event_name == 'push'
@@ -84,5 +86,32 @@ jobs:
 
       - name: Build and publish to PyPI
         run: |
+          uv build
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/
+
+  publish-alias:
+    if: github.event_name == 'push'
+    needs: [test, publish]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: Sync alias version to root version
+        run: |
+          BASE=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          sed -i "s/^version = .*/version = \"${BASE}\"/" packaging/model-gear/pyproject.toml
+          sed -i "s/lobes-cli==.*/lobes-cli==${BASE}\"]/" packaging/model-gear/pyproject.toml
+
+      - name: Build and publish model-gear alias to PyPI
+        run: |
+          cd packaging/model-gear
           uv build
           uv publish --trusted-publishing always --check-url https://pypi.org/simple/

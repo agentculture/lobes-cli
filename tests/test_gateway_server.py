@@ -13,8 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from model_gear.gateway import server as S
-from model_gear.gateway._config import build_config
+from lobes.gateway import server as S
+from lobes.gateway._config import build_config
 
 
 def _cfg(**over):
@@ -169,7 +169,7 @@ def test_integration_supported_models(gateway) -> None:
     with urllib.request.urlopen(gateway + "/v1/models/supported", timeout=5) as r:
         assert r.status == 200
         payload = json.load(r)
-    assert payload["object"] == "model-gear.supported_models"
+    assert payload["object"] == "lobes.supported_models"
     assert payload["default_model"] == "P"  # the fixture's default served name
     assert len(payload["data"]) >= 1
     for entry in payload["data"]:
@@ -278,7 +278,7 @@ def backend():
 
 
 def test_open_upstream_success_and_5xx(backend) -> None:
-    from model_gear.gateway._routing import Backend
+    from lobes.gateway._routing import Backend
 
     b = Backend("primary", backend, "P")
     up = S.open_upstream(b, "/v1/chat/completions", b"{}", [], connect_timeout=2, read_timeout=5)
@@ -292,7 +292,7 @@ def test_open_upstream_success_and_5xx(backend) -> None:
 
 
 def test_open_upstream_refused_raises_upstream_error() -> None:
-    from model_gear.gateway._routing import Backend
+    from lobes.gateway._routing import Backend
 
     # Nothing is listening on this port → connect fails fast.
     b = Backend("primary", "http://127.0.0.1:1", "P")
@@ -301,7 +301,7 @@ def test_open_upstream_refused_raises_upstream_error() -> None:
 
 
 def test_open_upstream_malformed_url_raises_upstream_error() -> None:
-    from model_gear.gateway._routing import Backend
+    from lobes.gateway._routing import Backend
 
     # A non-numeric port makes urlsplit's .port raise ValueError — must surface as
     # UpstreamError (→ failover), not an uncaught 500.

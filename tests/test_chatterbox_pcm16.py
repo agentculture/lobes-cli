@@ -11,8 +11,8 @@ import struct
 
 import pytest
 
-import model_gear.realtime.chatterbox_server as _cs_mod
-from model_gear.realtime.chatterbox_server import float_tensor_to_pcm16
+import lobes.realtime.chatterbox_server as _cs_mod
+from lobes.realtime.chatterbox_server import float_tensor_to_pcm16
 
 # ---------------------------------------------------------------------------
 # Helpers

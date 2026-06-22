@@ -2,14 +2,14 @@
 
 Pure — the per-backend probe is injected, so no sockets. The gateway is the only
 place that can see the internal-only backends' /health + /metrics, so this is the
-source for ``model overview --live`` in the fleet.
+source for ``lobes overview --live`` in the fleet.
 """
 
 from __future__ import annotations
 
-from model_gear.gateway import server as S
-from model_gear.gateway._config import ServerConfig
-from model_gear.gateway._routing import Backend, RoutingTable
+from lobes.gateway import server as S
+from lobes.gateway._config import ServerConfig
+from lobes.gateway._routing import Backend, RoutingTable
 
 
 def _cfg(audio_url=None) -> ServerConfig:
@@ -70,7 +70,7 @@ def test_fleet_status_payload_aggregates_busy_and_health() -> None:
         return {"health": "unreachable", "metrics": None}
 
     payload = S.fleet_status_payload(_table(), _cfg(), probe=fake_probe)
-    assert payload["object"] == "model-gear.fleet_status"
+    assert payload["object"] == "lobes.fleet_status"
     assert payload["default_model"] == "P"
     assert payload["busy"] == {"running": 2, "waiting": 1}  # only the reachable backend contributes
     assert [b["name"] for b in payload["backends"]] == ["primary", "embed", "rerank"]

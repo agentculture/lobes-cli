@@ -1,6 +1,6 @@
 # Qwen3-Embedding-0.6B — embedding gear (1024-dim)
 
-> One entry in model-gear's **supported catalog** (`model overview --list`). For
+> One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
@@ -24,9 +24,9 @@ the DGX Spark GB10 (128 GB unified memory). Its small footprint (0.6B weights,
 32K KV window) keeps the KV cache tiny so all three backends co-fit without
 memory pressure.
 
-The warm path is the **fleet** (`model init --fleet` then `model fleet up --apply`),
+The warm path is the **fleet** (`lobes init --fleet` then `lobes fleet up --apply`),
 which brings up `vllm-embed` + `vllm-rerank` + the primary behind one gateway. To
-serve it *solo* for isolated testing, `model switch Qwen/Qwen3-Embedding-0.6B` (the
+serve it *solo* for isolated testing, `lobes switch Qwen/Qwen3-Embedding-0.6B` (the
 task is auto-detected from the catalog) prints the exact compose edits to apply.
 
 Key compose flags:
@@ -120,10 +120,10 @@ and chat calls share one endpoint with zero client-side configuration.
 
 ## Composition with eidetic-cli
 
-model-gear vectorizes text via this backend; eidetic-cli stores and retrieves
+lobes vectorizes text via this backend; eidetic-cli stores and retrieves
 the resulting vectors. Typical pipeline:
 
-1. `POST /v1/embeddings` (model-gear) → 1024-dim vector(s)
+1. `POST /v1/embeddings` (lobes) → 1024-dim vector(s)
 2. eidetic ingest — stores vectors + metadata in its index
 3. eidetic retrieve — nearest-neighbour search returns candidate chunks
 4. optionally re-rank candidates with `Qwen/Qwen3-Reranker-0.6B` via `/v1/rerank`
@@ -145,5 +145,5 @@ three backends simultaneously healthy on the one GB10):
 
 Served on this vLLM build (`0.19.0+nv26.04`) with `--runner pooling --convert embed`
 — the older `--task embed` is rejected (`unrecognized arguments`). The probes use
-plain `curl` against `/v1/embeddings` (the `model assess` arithmetic/tool probes are
+plain `curl` against `/v1/embeddings` (the `lobes assess` arithmetic/tool probes are
 chat-oriented and not applicable to a pooling model).

@@ -1,6 +1,6 @@
 # Chatterbox TTS — realtime audio sidecar
 
-> The TTS backend for model-gear's audio fleet overlay.  Replaces the abandoned
+> The TTS backend for lobes's audio fleet overlay.  Replaces the abandoned
 > Magpie NIM (proprietary NVIDIA NIM, deprecated) after a bake-off that chose
 > Chatterbox over Orpheus.  No NGC key required — Chatterbox is open-weights
 > (Resemble AI, Apache-2.0).
@@ -76,7 +76,7 @@ Notes:
 ## Sidecar HTTP contract
 
 The `chatterbox` service (built by `Dockerfile.chatterbox`) exposes a minimal
-FastAPI server (`model_gear/realtime/chatterbox_server.py`):
+FastAPI server (`lobes/realtime/chatterbox_server.py`):
 
 | Method | Path | Description |
 |---|---|---|
