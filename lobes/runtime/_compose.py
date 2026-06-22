@@ -92,7 +92,7 @@ AUDIO_TEMPLATES = {
 }
 AUDIO_ENV_TEMPLATE = "fleet/env.audio.example"
 _INIT_REMEDIATION = (
-    "run 'lobes init --apply' to scaffold ~/.lobes, " "or pass --compose-dir / set LOBES_DIR"
+    "run 'lobes init --apply' to scaffold ~/.lobes, or pass --compose-dir / set LOBES_DIR"
 )
 # Back-compat alias: the single set was the only one before the fleet existed.
 _TEMPLATES = SINGLE_TEMPLATES
