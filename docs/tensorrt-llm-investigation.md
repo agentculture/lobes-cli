@@ -36,20 +36,28 @@ beta-supported).
 
 ## 1. Where a TRT-LLM engine would plug into lobes
 
-The good news from the codebase side: **two of the three integration surfaces
-are already engine-agnostic.**
+The good news from the codebase side: **the request path is already
+engine-agnostic.** The catch: the **telemetry path is not.**
 
-- **Gateway** (`lobes/gateway/`) — the `Backend` dataclass keys on a `base_url`
-  and forwards POSTs verbatim (`/v1/chat/completions`, `/v1/embeddings`,
-  `/v1/score`, `/v1/rerank`). It has no vLLM-specific code. Any OpenAI-speaking
-  HTTP server on the backend URL works. **No gateway change needed.**
+- **Gateway routing / proxying** (`lobes/gateway/`) — the `Backend` dataclass
+  keys on a `base_url` and forwards POSTs verbatim (`/v1/chat/completions`,
+  `/v1/embeddings`, `/v1/score`, `/v1/rerank`). The request proxy has no
+  vLLM-specific code, so any OpenAI-speaking HTTP server on the backend URL is
+  reachable unchanged. **But the gateway's `/status` aggregation *is*
+  vLLM-specific:** it calls `_metrics.probe_backend`, and `lobes/_metrics.py` is
+  a vLLM Prometheus parser keyed on `vllm:*` series
+  (`vllm:num_requests_running`, `vllm:gpu_cache_usage_perc`, `vllm:*_tokens_total`).
+  A TRT-LLM backend would proxy fine but report misleading zeros on gateway
+  `/status` / `lobes overview --live` until a TRT-LLM metrics adapter is added.
 - **Assessment** (`lobes/assess.py`, `lobes assess` / `lobes benchmark`) — speaks
   pure OpenAI HTTP: `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`.
   A TRT-LLM backend that serves those passes the harness as-is, so the *same*
   decode-throughput / prefill / correctness-probe numbers are directly
-  comparable. (MTP draft acceptance is read from `GET /metrics` — vLLM exposes
-  `vllm:spec_decode_*`; TRT-LLM's `/metrics` surface differs, so that one metric
-  would need a new reader.)
+  comparable. **MTP draft acceptance is *not* part of this harness** —
+  `assess.py` never scrapes `/metrics`; the operator reads `vllm:spec_decode_*`
+  from `GET /metrics` as a separate manual step (as the baseline doc does).
+  Automating it — for vLLM or TRT-LLM — would need a metrics reader, and
+  TRT-LLM's `/metrics` surface differs anyway.
 
 The bad news: **everything else hardcodes vLLM.** A real engine swap touches:
 
@@ -62,6 +70,7 @@ The bad news: **everything else hardcodes vLLM.** A real engine swap touches:
 | `lobes/runtime/_compose.py` | `CONTAINER = "model-gear-vllm"`, fleet container names |
 | `lobes/runtime/_health.py` | polls `/health` (fine for vLLM *and* `trtllm-serve` — both expose it) |
 | `lobes/profiles.py` | `attention_backend` stores `flashinfer`, a vLLM backend name |
+| `lobes/_metrics.py` + gateway `/status` (`lobes/gateway/server.py`) | Prometheus parser keyed on `vllm:*` series; `/status` / `lobes overview --live` report zeros for a non-vLLM backend until a TRT-LLM metrics adapter lands |
 
 So an honest "switchable engine" is a real feature: it needs an `engine` field on
 `SupportedModel`, a second compose template, an engine selector in `switch`, and
@@ -200,9 +209,12 @@ decision input is the 1.3.0 stable release.
 
 ## Decision / revisit trigger
 
-**Do not adopt TRT-LLM now. Stay on vLLM.** The engine-agnostic gateway +
-assessment harness mean re-evaluation is cheap later, so there's no architectural
-debt in waiting.
+**Do not adopt TRT-LLM now. Stay on vLLM.** The engine-agnostic *request path*
+(gateway routing + the `assess`/`benchmark` harness) means re-evaluation is cheap
+later — a spike only needs a throwaway compose service and a `base_url`. The
+remaining engine-specific work (the `/status` `vllm:*` metrics adapter and the
+`catalog.py` / `switch.py` / template seam in §1) is bounded and only matters if
+we commit to adoption, so there's no architectural debt in waiting.
 
 **Revisit when all three hold:**
 

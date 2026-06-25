@@ -15,8 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   releases and the Qwen3.6 hybrid GDN/DeltaNet kernels are RC-only (both land in
   1.3.0 RC builds); serving on a stable TRT-LLM today would forfeit the ~2.4×
   decode win the checkpoint exists for. Records the engine-integration seam (the
-  gateway + `lobes assess`/`benchmark` are already engine-agnostic; `catalog.py`,
-  `switch.py`, templates, and `VLLM_*` env vars hardcode vLLM), a feasibility
+  request path — gateway routing + `lobes assess`/`benchmark` — is already
+  engine-agnostic, while the gateway `/status` `vllm:*` metrics path, `catalog.py`,
+  `switch.py`, templates, and `VLLM_*` env vars are vLLM-specific), a feasibility
   table by dimension with confidence levels, a comparison against the recorded
   vLLM baseline, a minimal spike recipe, an explicit revisit trigger (TRT-LLM
   1.3.0 stable), and 11 cited sources. Linked from the README per-model notes.
