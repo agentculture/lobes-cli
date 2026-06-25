@@ -81,7 +81,7 @@ Every `recall` hit carries a `signal` field (float in `[0, 1]`). The signal
 blends **multiplicatively** into the lexical/vector score so recently-created
 and frequently-recalled records surface ahead of stale ones. The formula:
 
-```
+```text
 access_bonus = min(0.5, recall_count * 0.05)
 age_factor   = 1 / (1 + days_since_creation * 0.01)
 staleness    = days_since_last_recall * 0.01
