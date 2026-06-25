@@ -253,6 +253,17 @@ The numbers in each doc come from `lobes switch <model> --apply` then `lobes
 assess` (correctness) and `lobes benchmark` (throughput). `lobes overview --list`
 lists the catalog (these models) and flags which one is currently served.
 
+**Engine investigations** (alternatives to the vLLM serving path) are recorded
+separately:
+
+- [`docs/tensorrt-llm-investigation.md`](docs/tensorrt-llm-investigation.md) —
+  desk study (2026-06-26) of serving the MTP 27B primary with **TensorRT-LLM**
+  (`trtllm-serve`) on the DGX Spark instead of vLLM. **Verdict: not yet** — MTP
+  spec-decode is DeepSeek-only in stable TRT-LLM and the Qwen3.6 hybrid GDN
+  kernels are RC-only; revisit on TRT-LLM 1.3.0 stable. The lobes gateway and
+  `lobes assess`/`benchmark` are already engine-agnostic, so re-evaluation stays
+  cheap.
+
 The two **audio backends** are fixed (the `--audio` overlay, *not* switchable gears
 in the catalog), each with its own doc:
 
