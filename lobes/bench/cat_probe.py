@@ -184,7 +184,7 @@ def generate_case(*, seed: int, mode: str = "closed", n_characters: int = 4) -> 
             f"n_characters must be <= {_MAX_CHARACTERS} (pool limit), got {n_characters}"
         )
 
-    rng = Random(seed)
+    rng = Random(seed)  # nosec B311 — deterministic test-data generation, not crypto
 
     # Distinct draws without replacement: distinct names, distinct locations, and
     # — crucially — distinct timestamps, which makes the latest event unique.

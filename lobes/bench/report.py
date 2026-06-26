@@ -69,7 +69,7 @@ def render_report(results: dict) -> str:
             "peak_req_s": "peak req/s",
             "p50_latency_ms": "p50 latency (ms)",
             "p95_latency_ms": "p95 latency (ms)",
-            "ms_per_token": "ms per token",
+            "ms_per_token": "ms per token",  # nosec B105 — metric label, not a secret
             "cat_soft_score": "cat soft-score",
         }
         return name_map.get(key, key.replace("_", " ").title())
