@@ -79,12 +79,15 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import benchmark as _benchmark_cmd
     from lobes.cli._commands import cli as _cli_group
     from lobes.cli._commands import doctor as _doctor_cmd
+    from lobes.cli._commands import eval as _eval_cmd
     from lobes.cli._commands import explain as _explain_cmd
     from lobes.cli._commands import fleet as _fleet_cmd
     from lobes.cli._commands import init as _init_cmd
     from lobes.cli._commands import learn as _learn_cmd
     from lobes.cli._commands import logs as _logs_cmd
     from lobes.cli._commands import overview as _overview_cmd
+    from lobes.cli._commands import route as _route_cmd
+    from lobes.cli._commands import run as _run_cmd
     from lobes.cli._commands import serve as _serve_cmd
     from lobes.cli._commands import status as _status_cmd
     from lobes.cli._commands import stop as _stop_cmd
@@ -116,6 +119,11 @@ def _build_parser() -> argparse.ArgumentParser:
     _fleet_cmd.register(sub)
     _logs_cmd.register(sub)
     _tunnel_cmd.register(sub)
+
+    # Inference / eval verbs (read-only; no --apply needed).
+    _eval_cmd.register(sub)
+    _route_cmd.register(sub)
+    _run_cmd.register(sub)
 
     # Agent-first / introspection verbs (sibling rubric).
     _whoami_cmd.register(sub)

@@ -234,3 +234,50 @@ def test_embed_score_hf_overrides_match_fleet_template() -> None:
             f"{model.id}: hf_overrides not found verbatim in "
             "templates/fleet/docker-compose.yml (catalog<->compose drift)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5-4B "minor" gear + bf16 "none" quantization sentinel (issue #64)
+# ---------------------------------------------------------------------------
+
+_MINOR_ID = "Qwen/Qwen3.5-4B"
+
+
+def test_minor_gear_exists_with_correct_fields() -> None:
+    # The minor gear must be present in the catalog with exactly the fields the
+    # acceptance criteria specify — any field drift is a misconfiguration bug.
+    minor = next((m for m in SUPPORTED_MODELS if m.id == _MINOR_ID), None)
+    assert minor is not None, f"{_MINOR_ID} not found in catalog"
+    assert minor.role_hint == "minor"
+    assert minor.shape == "hybrid linear-attn + ViT (multimodal)"
+    assert minor.context == "256K native"
+    assert minor.native_max_model_len == 262144
+    assert minor.tool_parser == "qwen3_coder"
+    assert minor.quantization == "none"
+    assert minor.status == "configured"
+    assert minor.doc == "qwen3.5-4b-minor.md"
+    assert minor.task == "generate"
+    assert minor.dimension == 0
+    assert minor.hf_overrides == ""
+    assert minor.moe_backend == ""
+    assert minor.speculative_config == ""
+
+
+def test_minor_gear_shape_is_not_moe_so_no_moe_backend() -> None:
+    # The 4B minor gear is a hybrid model (not MoE) — moe_backend must be empty
+    # (the moe_backend_aligns_with_shape invariant also enforces this).
+    minor = next(m for m in SUPPORTED_MODELS if m.id == _MINOR_ID)
+    assert not minor.shape.lower().startswith(
+        "moe"
+    ), f"{_MINOR_ID}: shape must not be MoE — got {minor.shape!r}"
+    assert minor.moe_backend == "", f"{_MINOR_ID}: moe_backend must be empty for a non-MoE model"
+
+
+def test_minor_gear_quantization_is_none_sentinel() -> None:
+    # quantization="none" is the bf16/unquantized sentinel — the value must be the
+    # literal string "none" (not an empty string, not None) so switch can distinguish
+    # "unquantized" from "uncatalogued" (which uses empty/absent).
+    minor = next(m for m in SUPPORTED_MODELS if m.id == _MINOR_ID)
+    assert (
+        minor.quantization == "none"
+    ), f"{_MINOR_ID}: expected quantization='none', got {minor.quantization!r}"

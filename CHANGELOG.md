@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-06-26
+
+### Added
+
+- **The `minor` lobe — a cheap, warm co-resident Qwen3.5-4B small-brain** (issue
+  #64). A new switchable catalog gear `Qwen/Qwen3.5-4B` (`role_hint="minor"`,
+  served **bf16** — the first unsloth-LoRA fine-tune target; multimodal, served
+  text-only via `--language-model-only`), reachable both as a switchable gear and
+  as an opt-in warm co-resident backend alongside the 27B primary.
+  - **New read-only verbs:** `lobes run minor "<prompt>"` (call the minor model),
+    `lobes route "<text>"` (classify a task across catalog gears with an
+    escalate flag + confidence), and `lobes eval minor --suite <path>` (run a
+    JSONL eval suite). All three default `--base-url` to the gateway
+    (`http://localhost:8000/v1`) and reuse a new stdlib-only urllib client
+    (`lobes.minor`) — no new runtime dependencies.
+  - **Governance + escalation** (`lobes.minor.governance`): the minor role may
+    prepare/classify/format/validate/suggest/summarize/route, and escalates on
+    forbidden actions (approve/finalize/delete/deploy/architectural) or any of
+    five escalation conditions. Role-keyed, not model-keyed.
+  - **Warm co-residency:** an opt-in `vllm-minor` fleet service (compose profile
+    `minor` + `MINOR_BASE_URL`/`MINOR_SERVED_NAME` gateway env gate); the gateway
+    routes the minor model id to it with failover to the primary. Default fleet
+    behavior is unchanged.
+
+### Changed
+
+- **`runtime/_parser.py` recognizes the Qwen3.5 family** → `qwen3_coder` (it
+  emits the XML function-call format, not Hermes JSON).
+- **Catalog supports an unquantized bf16 generate gear** via a `quantization="none"`
+  sentinel that `lobes switch` normalizes to "omit `--quantization`" and surfaces
+  as a required compose edit.
+
+### Fixed
+
 ## [0.29.0] - 2026-06-24
 
 ### Added

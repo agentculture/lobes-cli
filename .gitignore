@@ -228,3 +228,5 @@ docs/steward/
 
 # Agent/colleague throwaway worktrees (write previews, subagent isolation)
 .claude/worktrees/
+
+.devague/questions/
