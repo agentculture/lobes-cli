@@ -70,8 +70,15 @@ endpoint). Each suite line is a JSON case object with a `prompt` and exactly one
 expectation field (`expect_substring` or `expect_regex`). Blank lines and lines
 starting with `#` are skipped.
 
+A ready-to-run example suite ships in the repo:
+
 ```bash
-lobes eval minor --suite tests/fixtures/minor_suite.jsonl
+lobes eval minor --suite examples/minor-evals/smoke.jsonl
+```
+
+```json
+{"prompt": "What is the capital of France? Reply with only the city name.", "expect_substring": "Paris"}
+{"prompt": "What is 2 plus 2? Reply with just the number.", "expect_substring": "4"}
 ```
 
 Reports per-case `PASS` / `FAIL` and an aggregate `passed/total`. Pass `--json`

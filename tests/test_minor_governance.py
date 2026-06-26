@@ -226,3 +226,19 @@ def test_decision_has_required_fields():
     assert isinstance(result.escalate, bool)
     assert isinstance(result.reason, str)
     assert isinstance(result.matched_conditions, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty threshold (issue #64 escalation.uncertainty_threshold)
+# ---------------------------------------------------------------------------
+
+
+def test_low_confidence_escalates() -> None:
+    from lobes.minor.governance import UNCERTAINTY_THRESHOLD, decide
+
+    # Below the threshold → escalate even for an allowed duty with no conditions.
+    assert decide(duty="route", confidence=UNCERTAINTY_THRESHOLD - 0.05).escalate is True
+    # At/above the threshold → no escalation.
+    assert decide(duty="route", confidence=0.9).escalate is False
+    # confidence omitted → threshold has no effect.
+    assert decide(duty="route").escalate is False

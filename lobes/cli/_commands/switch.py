@@ -178,33 +178,40 @@ def _bf16_none_notice(model) -> str | None:
     gear; the operator must REMOVE the ``--quantization`` line from the compose
     ``command:`` by hand. See docs/qwen3.5-4b-minor.md.
     """
-    if model.quantization != "none":
-        return None
-    return (
-        "bf16/unquantized model (quantization=none) — REMOVE the --quantization line "
-        "from the compose `command:` by hand: the template defaults to "
-        "--quantization=modelopt when VLLM_QUANTIZATION is absent, which would corrupt "
-        "bf16 weights. See docs/qwen3.5-4b-minor.md."
-    )
+    return _BF16_NONE_NOTICE if model.quantization == "none" else None
 
 
-def _serve_notices(model_id: str) -> list[str]:
+_BF16_NONE_NOTICE = (
+    "bf16/unquantized model (quantization=none) — REMOVE the --quantization line "
+    "from the compose `command:` by hand: the template defaults to "
+    "--quantization=modelopt when VLLM_QUANTIZATION is absent, which would corrupt "
+    "bf16 weights. See docs/qwen3.5-4b-minor.md."
+)
+
+
+def _serve_notices(model_id: str, args: argparse.Namespace | None = None) -> list[str]:
     """Reminders for compose ``command:`` edits a switch implies.
 
-    Empty for the MTP default primary itself and for an uncatalogued model. The
-    four applicable edits — non-MTP flag removal, MoE backend add, embed/score
-    pooling serve, and bf16/none quantization removal — are each built by a
-    dedicated helper (see those for detail).
+    The catalog-keyed edits (non-MTP flag removal, MoE backend add, embed/score
+    pooling serve) fire only for a catalogued model. The bf16/none quantization
+    removal fires on the **effective** quantization choice — a catalogued
+    ``quantization="none"`` gear *or* an explicit ``--quantization none`` (even
+    for an uncatalogued model), matching ``_select_quantization``'s contract.
     """
     model = next((m for m in supported_models() if m.id == model_id), None)
-    if model is None:
-        return []
-    candidates = (
-        _mtp_removal_notice(model),
-        _moe_notice(model),
-        _pooling_notice(model),
-        _bf16_none_notice(model),
+    candidates: list[str | None] = []
+    if model is not None:
+        candidates += [
+            _mtp_removal_notice(model),
+            _moe_notice(model),
+            _pooling_notice(model),
+        ]
+    # bf16/none keys off the effective choice, not solely catalog metadata.
+    effective_none = (getattr(args, "quantization", None) == "none") or (
+        model is not None and model.quantization == "none"
     )
+    if effective_none:
+        candidates.append(_BF16_NONE_NOTICE)
     return [notice for notice in candidates if notice]
 
 
@@ -455,7 +462,7 @@ def cmd_switch(args: argparse.Namespace) -> int:
     port = _runtime_ops.resolve_port(args, env_path)
     served = args.served_name or args.model
     plan, messages = _build_plan(args, port, served)
-    notices = _serve_notices(args.model)
+    notices = _serve_notices(args.model, args)
 
     effective_task = _resolve_task(args)
     is_pooling = effective_task != "generate"

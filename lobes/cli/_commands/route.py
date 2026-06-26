@@ -154,6 +154,38 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
+# Known catalog gear roles a routing decision may target. An out-of-set
+# suggestion from the model is clamped to "primary" (the safe default target).
+_KNOWN_GEARS: frozenset[str] = frozenset(
+    {"minor", "primary", "candidate", "fallback", "embedding", "reranker"}
+)
+
+
+def _normalize_conditions(raw: object) -> tuple[list[str], bool]:
+    """Normalize the model's ``conditions`` field to a clean lowercased list.
+
+    Returns ``(conditions, malformed)``. A bare string is treated as a single
+    condition (NOT split into characters); a list/tuple is coerced element-wise
+    with ``str().strip().lower()``; ``None`` is empty. Anything else is
+    *malformed* — the caller must fail closed (escalate). This closes the bug
+    where ``list("security_sensitive")`` silently became ``['s','e',...]`` and
+    bypassed escalation.
+    """
+    if raw is None:
+        return [], False
+    if isinstance(raw, str):
+        return ([raw.strip().lower()] if raw.strip() else []), False
+    if isinstance(raw, (list, tuple)):
+        return [str(c).strip().lower() for c in raw if str(c).strip()], False
+    return [], True  # malformed type → fail closed
+
+
+def _normalize_gear(raw: object) -> str:
+    """Lowercase/clamp the model's gear suggestion to a known role (else primary)."""
+    gear = str(raw or "").strip().lower()
+    return gear if gear in _KNOWN_GEARS else "primary"
+
+
 # ---------------------------------------------------------------------------
 # Command handler
 # ---------------------------------------------------------------------------
@@ -177,11 +209,11 @@ def cmd_route(args: argparse.Namespace) -> int:
     content: str = completion["choices"][0]["message"]["content"]
     parsed = _parse_model_response(content)
 
-    # Extract fields from the model's response.
-    chosen_gear: str = str(parsed.get("chosen_gear") or "primary")
+    # Extract + normalize fields from the model's response.
+    chosen_gear: str = _normalize_gear(parsed.get("chosen_gear"))
     raw_confidence = parsed.get("confidence")
     model_reason: str = str(parsed.get("reason") or "No reason provided.")
-    conditions: list[str] = list(parsed.get("conditions") or [])
+    conditions, conditions_malformed = _normalize_conditions(parsed.get("conditions"))
 
     # Clamp confidence to [0, 1].  Use the sane default when the model
     # omits or nulls the field.
@@ -192,18 +224,25 @@ def cmd_route(args: argparse.Namespace) -> int:
     confidence: float = _clamp(raw_float)
 
     # Overlay governance — duty="route" is in ALLOWED, but any recognised
-    # escalation condition still forces escalate=True.
-    gov = decide(duty="route", conditions=conditions)
+    # escalation condition, a confidence below the uncertainty threshold, or a
+    # malformed conditions field (fail-closed) forces escalate=True.
+    gov = decide(duty="route", conditions=conditions, confidence=confidence)
+    escalate = gov.escalate or conditions_malformed
 
     # Build the combined reason string.
-    if gov.escalate:
+    if conditions_malformed and not gov.escalate:
+        reason = (
+            "Malformed conditions in model response; failing closed. "
+            f"(model suggested: {model_reason})"
+        )
+    elif gov.escalate:
         reason = f"{gov.reason} (model suggested: {model_reason})"
     else:
         reason = model_reason
 
     decision: dict = {
         "chosen_gear": chosen_gear,
-        "escalate": gov.escalate,
+        "escalate": escalate,
         "confidence": confidence,
         "reason": reason,
     }
@@ -211,7 +250,7 @@ def cmd_route(args: argparse.Namespace) -> int:
     if json_mode:
         emit_result(decision, json_mode=True)
     else:
-        escalate_str = "yes" if gov.escalate else "no"
+        escalate_str = "yes" if escalate else "no"
         summary = (
             f"chosen_gear: {chosen_gear}\n"
             f"escalate:    {escalate_str}\n"

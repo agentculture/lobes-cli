@@ -425,3 +425,98 @@ def test_route_no_file_writes(
     files_after = set(tmp_path.iterdir())
 
     assert files_before == files_after, "read-only verb must not create files"
+
+
+# ---------------------------------------------------------------------------
+# Qodo review fixes: condition normalization, low-confidence, gear clamp
+# ---------------------------------------------------------------------------
+
+
+def _canned_with_content(content: str) -> dict:
+    return {
+        "id": "chatcmpl-route-raw",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {},
+    }
+
+
+def test_string_conditions_still_escalate(capsys: pytest.CaptureFixture[str]) -> None:
+    """A string `conditions` field must NOT be split into characters (escalation bypass bug)."""
+    p = _make_parser()
+    args = p.parse_args(["route", "x", "--model", "m", "--base-url", "http://h/v1", "--json"])
+    content = json.dumps(
+        {
+            "chosen_gear": "minor",
+            "confidence": 0.9,
+            "reason": "r",
+            "conditions": "security_sensitive",
+        }
+    )
+    with patch(
+        "lobes.cli._commands.route.chat_completion", return_value=_canned_with_content(content)
+    ):
+        route.cmd_route(args)
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["escalate"] is True
+
+
+def test_mixed_case_conditions_normalized(capsys: pytest.CaptureFixture[str]) -> None:
+    """Conditions are stripped/lowercased before matching."""
+    p = _make_parser()
+    args = p.parse_args(["route", "x", "--model", "m", "--base-url", "http://h/v1", "--json"])
+    content = json.dumps(
+        {
+            "chosen_gear": "minor",
+            "confidence": 0.9,
+            "reason": "r",
+            "conditions": ["  Security_Sensitive "],
+        }
+    )
+    with patch(
+        "lobes.cli._commands.route.chat_completion", return_value=_canned_with_content(content)
+    ):
+        route.cmd_route(args)
+    assert json.loads(capsys.readouterr().out)["escalate"] is True
+
+
+def test_malformed_conditions_fail_closed(capsys: pytest.CaptureFixture[str]) -> None:
+    """A non-list/str conditions field is malformed → fail closed (escalate)."""
+    p = _make_parser()
+    args = p.parse_args(["route", "x", "--model", "m", "--base-url", "http://h/v1", "--json"])
+    content = json.dumps(
+        {"chosen_gear": "minor", "confidence": 0.9, "reason": "r", "conditions": {"oops": 1}}
+    )
+    with patch(
+        "lobes.cli._commands.route.chat_completion", return_value=_canned_with_content(content)
+    ):
+        route.cmd_route(args)
+    assert json.loads(capsys.readouterr().out)["escalate"] is True
+
+
+def test_low_confidence_forces_escalate(capsys: pytest.CaptureFixture[str]) -> None:
+    """Confidence below the uncertainty threshold escalates even with no conditions."""
+    p = _make_parser()
+    args = p.parse_args(["route", "x", "--model", "m", "--base-url", "http://h/v1", "--json"])
+    canned = _make_completion(chosen_gear="minor", confidence=0.1, conditions=[])
+    with patch("lobes.cli._commands.route.chat_completion", return_value=canned):
+        route.cmd_route(args)
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["escalate"] is True
+    assert decision["confidence"] == 0.1
+
+
+def test_unknown_gear_clamped_to_primary(capsys: pytest.CaptureFixture[str]) -> None:
+    """An out-of-set gear suggestion is clamped to the safe default 'primary'."""
+    p = _make_parser()
+    args = p.parse_args(["route", "x", "--model", "m", "--base-url", "http://h/v1", "--json"])
+    canned = _make_completion(chosen_gear="wizard", confidence=0.9, conditions=[])
+    with patch("lobes.cli._commands.route.chat_completion", return_value=canned):
+        route.cmd_route(args)
+    assert json.loads(capsys.readouterr().out)["chosen_gear"] == "primary"

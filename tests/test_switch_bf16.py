@@ -150,3 +150,20 @@ def test_real_quantization_values_still_written(tmp_path, capsys) -> None:
     assert rc2 == 0
     out2 = capsys.readouterr().out
     assert "VLLM_QUANTIZATION=compressed-tensors" in out2
+
+
+def test_switch_uncatalogued_quantization_none_surfaces_remove_notice(tmp_path, capsys) -> None:
+    # Qodo finding 4: an explicit --quantization none on an UNCATALOGUED model must
+    # still surface the REMOVE --quantization compose-edit NOTE (the notice keys off
+    # the effective quantization choice, not just catalog metadata).
+    _scaffold(tmp_path)
+    rc = main(
+        ["switch", "acme/some-bf16-model", "--quantization", "none", "--compose-dir", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_QUANTIZATION=" not in out
+    note_lines = [line for line in out.splitlines() if "NOTE:" in line]
+    assert any(
+        "REMOVE" in line and "--quantization" in line for line in note_lines
+    ), f"expected REMOVE --quantization NOTE (uncatalogued --quantization none); got: {note_lines}"

@@ -1,0 +1,4 @@
+{"prompt": "What is the capital of France? Reply with only the city name.", "expect_substring": "Paris"}
+{"prompt": "Classify the sentiment of 'I love this!' as positive or negative. Reply with one word.", "expect_regex": "(?i)positive"}
+{"prompt": "Convert to a JSON object: name=Ada, role=admin. Reply with only the JSON.", "expect_substring": "\"name\""}
+{"prompt": "What is 2 plus 2? Reply with just the number.", "expect_substring": "4"}

@@ -85,6 +85,18 @@ Any *single* matching condition is sufficient to escalate.
 """
 
 # ---------------------------------------------------------------------------
+# Uncertainty threshold
+# ---------------------------------------------------------------------------
+
+UNCERTAINTY_THRESHOLD: float = 0.25
+"""Confidence floor below which a routing/classification decision escalates.
+
+Mirrors issue #64's ``escalation.uncertainty_threshold``: when a caller supplies
+a ``confidence`` to :func:`decide` and it falls *below* this value, the minor
+lobe is too unsure to handle the task locally and the decision escalates.
+"""
+
+# ---------------------------------------------------------------------------
 # Decision dataclass
 # ---------------------------------------------------------------------------
 
@@ -120,6 +132,7 @@ def decide(
     *,
     duty: str | None = None,
     conditions: Iterable[str] = (),
+    confidence: float | None = None,
 ) -> Decision:
     """Evaluate a proposed action against the minor-role governance policy.
 
@@ -137,6 +150,10 @@ def decide(
         request context.  Only values in :data:`ESCALATION_CONDITIONS` are
         meaningful; unrecognised strings are ignored (they do not escalate by
         themselves but also do not suppress escalation from known conditions).
+    confidence:
+        Optional self-reported confidence in ``[0, 1]``. When supplied and below
+        :data:`UNCERTAINTY_THRESHOLD`, the decision escalates (the lobe is too
+        unsure to handle the task locally).
 
     Returns
     -------
@@ -173,6 +190,17 @@ def decide(
             escalate=True,
             reason=f"Escalation condition(s) present: {joined}.",
             matched_conditions=matched,
+        )
+
+    # -- Rule 2b: confidence below the uncertainty threshold → escalate ------
+    if confidence is not None and confidence < UNCERTAINTY_THRESHOLD:
+        return Decision(
+            escalate=True,
+            reason=(
+                f"Low confidence {confidence:.2f} < uncertainty threshold "
+                f"{UNCERTAINTY_THRESHOLD}; escalating."
+            ),
+            matched_conditions=(),
         )
 
     # -- Rule 3: unknown duty (not allowed, not forbidden) → escalate --------
