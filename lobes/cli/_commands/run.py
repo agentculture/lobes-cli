@@ -122,9 +122,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--model",
         default=None,
-        help=(
-            "Override the model id " "(default: resolved from the catalog by role_hint='minor')."
-        ),
+        help="Override the model id (default: resolved from the catalog by role_hint='minor').",
     )
     p.add_argument(
         "--system",
