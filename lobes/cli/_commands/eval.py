@@ -52,6 +52,8 @@ import json
 import re
 from pathlib import Path
 
+from lobes.bench.cat_probe import generate_case  # noqa: F401 (re-exported for tests)
+from lobes.bench.cat_score import score_case  # patched in tests via eval_cmd.score_case
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
 from lobes.minor import chat_text  # patched in tests via eval_cmd.chat_text
@@ -128,6 +130,51 @@ def _check(response: str, case: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Cat-suite loading
+# ---------------------------------------------------------------------------
+
+
+def _load_cat_suite(path: Path) -> list[dict]:
+    """Load and parse a cat-probe JSONL suite; return a list of case dicts.
+
+    Each non-blank, non-comment line must be a JSON object with at least a
+    ``seed`` (int) field.  Optional keys: ``mode`` (``"open"``/``"closed"``)
+    and ``n_characters`` (int).
+
+    Raises :class:`ModelGearError` if the file is missing, a data line is
+    malformed, or the ``seed`` field is absent.
+    """
+    if not path.exists():
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"suite file not found: {path}",
+            remediation="pass an existing .jsonl file path via --suite",
+        )
+
+    cases: list[dict] = []
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=f"suite parse error at line {lineno}: {exc}",
+                remediation="every non-blank, non-comment line must be valid JSON",
+            ) from exc
+        if "seed" not in obj:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=f"suite line {lineno}: missing required field 'seed'",
+                remediation="each cat-suite case object must have an integer 'seed' field",
+            )
+        cases.append(obj)
+    return cases
+
+
+# ---------------------------------------------------------------------------
 # Command handler
 # ---------------------------------------------------------------------------
 
@@ -188,13 +235,72 @@ def cmd_eval_minor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval_cat(args: argparse.Namespace) -> int:
+    """Handler for ``lobes eval cat``."""
+    json_mode = bool(getattr(args, "json", False))
+    suite_path = Path(str(args.suite))
+    base_url: str = getattr(args, "base_url", _DEFAULT_BASE_URL) or _DEFAULT_BASE_URL
+    model: str = getattr(args, "model", None) or ""
+    timeout: int = int(getattr(args, "timeout", _DEFAULT_TIMEOUT))
+    cli_mode: str = getattr(args, "mode", "closed") or "closed"
+
+    suite_cases = _load_cat_suite(suite_path)
+
+    results: list[dict] = []
+    for entry in suite_cases:
+        seed: int = int(entry["seed"])
+        case_mode: str = entry.get("mode", cli_mode)
+        n_characters: int = int(entry.get("n_characters", 4))
+
+        case = generate_case(seed=seed, mode=case_mode, n_characters=n_characters)
+        scored = score_case(case, base_url=base_url, model=model, timeout=timeout)
+
+        results.append(
+            {
+                "seed": seed,
+                "mode": case_mode,
+                "answer": scored["answer"],
+                "soft_score": scored["soft_score"],
+                "headline": scored["headline"],
+                "first_token_mass": scored["first_token_mass"],
+                "echo_available": scored["echo_available"],
+            }
+        )
+
+    mean_soft: float = sum(r["soft_score"] for r in results) / len(results) if results else 0.0
+
+    report: dict = {
+        "mode": cli_mode,
+        "score": "logprobs",
+        "mean_soft_score": mean_soft,
+        "cases": results,
+    }
+
+    if json_mode:
+        emit_result(report, json_mode=True)
+    else:
+        lines: list[str] = []
+        for r in results:
+            lines.append(
+                f"  seed={r['seed']} mode={r['mode']}"
+                f" answer={r['answer']!r}"
+                f" soft_score={r['soft_score']:.4f}"
+                f" headline={r['headline']}"
+                f" first_token_mass={r['first_token_mass']:.4f}"
+            )
+        lines.append(f"mean soft-score: {mean_soft:.4f}")
+        emit_result("\n".join(lines), json_mode=False)
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argparse registration
 # ---------------------------------------------------------------------------
 
 
 def register(sub: argparse._SubParsersAction) -> None:
-    """Register the ``eval`` noun group and its ``minor`` sub-verb."""
+    """Register the ``eval`` noun group and its ``minor`` and ``cat`` sub-verbs."""
     p = sub.add_parser(
         "eval",
         help="Read-only: run a JSONL eval suite against a lobes backend.",
@@ -238,3 +344,60 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     minor_p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     minor_p.set_defaults(func=cmd_eval_minor)
+
+    cat_p = noun_sub.add_parser(
+        "cat",
+        help=(
+            "Evaluate the cat-probe (temporal-reasoning) using logprobs scoring. "
+            "Read-only; exit code is always 0."
+        ),
+    )
+    cat_p.add_argument(
+        "--suite",
+        required=True,
+        metavar="PATH",
+        help=(
+            "Path to a cat-probe JSONL suite file. "
+            "Each non-blank, non-comment line must be a JSON object with an integer "
+            "'seed' field, and optional 'mode' and 'n_characters' overrides."
+        ),
+    )
+    cat_p.add_argument(
+        "--score",
+        default="logprobs",
+        choices=["logprobs"],
+        metavar="SCORER",
+        help="Scoring method (default: 'logprobs'; only logprobs is supported).",
+    )
+    cat_p.add_argument(
+        "--mode",
+        default="closed",
+        choices=["open", "closed"],
+        metavar="MODE",
+        help=(
+            "Probe mode applied to cases whose suite line does not override it "
+            "(default: 'closed'). 'closed' enumerates candidate locations in the "
+            "prompt; 'open' omits the options list."
+        ),
+    )
+    cat_p.add_argument(
+        "--base-url",
+        default=_DEFAULT_BASE_URL,
+        metavar="URL",
+        help=f"OpenAI-compatible base URL (default: {_DEFAULT_BASE_URL!r}).",
+    )
+    cat_p.add_argument(
+        "--model",
+        default=None,
+        metavar="NAME",
+        help="Model identifier forwarded in each request (default: empty string).",
+    )
+    cat_p.add_argument(
+        "--timeout",
+        type=int,
+        default=_DEFAULT_TIMEOUT,
+        metavar="SECS",
+        help=f"Socket timeout in seconds (default: {_DEFAULT_TIMEOUT}).",
+    )
+    cat_p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    cat_p.set_defaults(func=cmd_eval_cat)
