@@ -60,11 +60,22 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
     can. An explicit ``--quantization`` wins; otherwise it is read from the catalog
     for a known model. ``None`` means "uncatalogued" — leave the existing
     ``VLLM_QUANTIZATION`` untouched (override it explicitly when needed).
+
+    The special sentinel value ``"none"`` (catalog or explicit flag) signals
+    bf16/unquantized: ``None`` is returned so ``VLLM_QUANTIZATION`` is not written.
+    The single-model template defaults to ``--quantization=modelopt`` when
+    ``VLLM_QUANTIZATION`` is absent — a compose-edit notice fires separately (via
+    ``_bf16_none_notice``) telling the operator to remove that line by hand.
     """
+    _UNQUANTIZED = "none"
     if args.quantization:
+        if args.quantization == _UNQUANTIZED:
+            return None, "quantization: none (bf16/unquantized; --quantization omitted)"
         return args.quantization, f"quantization (explicit): {args.quantization}"
     for model in supported_models():
         if model.id == args.model:
+            if model.quantization == _UNQUANTIZED:
+                return None, "quantization: none (bf16/unquantized; --quantization omitted)"
             return model.quantization, f"quantization (from catalog): {model.quantization}"
     return None, "quantization: left unchanged (uncatalogued model; pass --quantization)"
 
@@ -157,17 +168,43 @@ def _pooling_notice(model) -> str | None:
     )
 
 
+def _bf16_none_notice(model) -> str | None:
+    """bf16/unquantized gear: the ``--quantization`` compose line must be removed.
+
+    The single-model template hardcodes ``--quantization=${VLLM_QUANTIZATION:-modelopt}``
+    — even when ``VLLM_QUANTIZATION`` is absent from ``.env``, the default silently
+    applies ModelOpt post-processing, which would corrupt bf16/unquantized weights.
+    ``lobes switch`` does not write ``VLLM_QUANTIZATION`` for a ``quantization="none"``
+    gear; the operator must REMOVE the ``--quantization`` line from the compose
+    ``command:`` by hand. See docs/qwen3.5-4b-minor.md.
+    """
+    if model.quantization != "none":
+        return None
+    return (
+        "bf16/unquantized model (quantization=none) — REMOVE the --quantization line "
+        "from the compose `command:` by hand: the template defaults to "
+        "--quantization=modelopt when VLLM_QUANTIZATION is absent, which would corrupt "
+        "bf16 weights. See docs/qwen3.5-4b-minor.md."
+    )
+
+
 def _serve_notices(model_id: str) -> list[str]:
     """Reminders for compose ``command:`` edits a switch implies.
 
     Empty for the MTP default primary itself and for an uncatalogued model. The
-    three applicable edits — non-MTP flag removal, MoE backend add, and embed/score
-    pooling serve — are each built by a dedicated helper (see those for detail).
+    four applicable edits — non-MTP flag removal, MoE backend add, embed/score
+    pooling serve, and bf16/none quantization removal — are each built by a
+    dedicated helper (see those for detail).
     """
     model = next((m for m in supported_models() if m.id == model_id), None)
     if model is None:
         return []
-    candidates = (_mtp_removal_notice(model), _moe_notice(model), _pooling_notice(model))
+    candidates = (
+        _mtp_removal_notice(model),
+        _moe_notice(model),
+        _pooling_notice(model),
+        _bf16_none_notice(model),
+    )
     return [notice for notice in candidates if notice]
 
 
