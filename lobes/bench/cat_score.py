@@ -141,7 +141,7 @@ def _first_token_mass(
 
     candidate_masses = {c: _candidate_mass(c) for c in candidates}
     denom = sum(candidate_masses.values())
-    if denom == 0.0:
+    if denom <= 0.0:
         return 0.0
     return candidate_masses.get(answer, 0.0) / denom
 
