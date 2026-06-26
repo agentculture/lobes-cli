@@ -131,6 +131,22 @@ def test_request_body_is_well_formed(local_server) -> None:
     ), f"prompt not found in messages: {messages}"
 
 
+def test_extra_body_merged_into_request(local_server) -> None:
+    """extra_body keys (e.g. chat_template_kwargs) are merged into the POST body."""
+    server, base_url = local_server
+    chat_completion(
+        "route this",
+        base_url=base_url,
+        model="m",
+        max_tokens=512,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    body = server.last_request_body
+    assert body.get("chat_template_kwargs") == {"enable_thinking": False}
+    # explicit max_tokens still wins over anything in extra_body
+    assert body.get("max_tokens") == 512
+
+
 def test_chat_text_returns_assistant_content(local_server) -> None:
     """chat_text() returns just the assistant message string."""
     server, base_url = local_server

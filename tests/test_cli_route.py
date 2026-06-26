@@ -334,6 +334,25 @@ def test_confidence_in_range_unchanged(capsys: pytest.CaptureFixture[str]) -> No
     ), f"confidence changed: {decision['confidence']}"
 
 
+def test_route_disables_thinking_and_caps_tokens() -> None:
+    """route must cap max_tokens and disable thinking so a thinking-mode model
+    returns a terse parseable decision without running past the client timeout
+    (regression for the live TimeoutError on the 4B's <think> trace)."""
+    p = _make_parser()
+    args = p.parse_args(
+        ["route", "hello", "--model", "m", "--base-url", "http://localhost/v1", "--json"]
+    )
+    canned = _make_completion()
+    with patch("lobes.cli._commands.route.chat_completion", return_value=canned) as mock_cc:
+        route.cmd_route(args)
+
+    kwargs = mock_cc.call_args.kwargs
+    assert kwargs.get("max_tokens"), "route must pass a max_tokens cap"
+    assert (
+        kwargs.get("extra_body", {}).get("chat_template_kwargs", {}).get("enable_thinking") is False
+    ), "route must disable thinking via chat_template_kwargs"
+
+
 # ---------------------------------------------------------------------------
 # Plain-text output mode
 # ---------------------------------------------------------------------------

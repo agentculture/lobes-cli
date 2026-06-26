@@ -49,6 +49,13 @@ _DEFAULT_BASE_URL = "http://localhost:8000/v1"
 # Sane confidence default when the model does not self-report one.
 _DEFAULT_CONFIDENCE: float = 0.7
 
+# A routing decision is a short JSON object — cap generation so a thinking-mode
+# model can't run past the client timeout emitting a long <think> trace, and
+# disable thinking outright so the reply is the JSON we asked for (verified live:
+# enable_thinking=false returns a terse parseable object in well under a second).
+_ROUTE_MAX_TOKENS: int = 512
+_ROUTE_EXTRA_BODY: dict = {"chat_template_kwargs": {"enable_thinking": False}}
+
 # ---------------------------------------------------------------------------
 # System prompt for the routing classifier
 # ---------------------------------------------------------------------------
@@ -164,6 +171,8 @@ def cmd_route(args: argparse.Namespace) -> int:
         base_url=base_url,
         model=model_id,
         system=_ROUTE_SYSTEM,
+        max_tokens=_ROUTE_MAX_TOKENS,
+        extra_body=_ROUTE_EXTRA_BODY,
     )
     content: str = completion["choices"][0]["message"]["content"]
     parsed = _parse_model_response(content)

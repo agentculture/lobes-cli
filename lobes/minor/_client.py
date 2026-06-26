@@ -28,6 +28,7 @@ def chat_completion(
     timeout: int = 60,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    extra_body: dict | None = None,
 ) -> dict:
     """POST an OpenAI chat-completions request; return the parsed JSON dict.
 
@@ -48,6 +49,11 @@ def chat_completion(
         If set, forwarded as ``max_tokens`` in the request body.
     temperature:
         If set, forwarded as ``temperature`` in the request body.
+    extra_body:
+        Optional extra top-level request fields merged into the body — e.g.
+        ``{"chat_template_kwargs": {"enable_thinking": False}}`` to turn off a
+        thinking-mode model's ``<think>`` trace. Explicit ``max_tokens`` /
+        ``temperature`` args take precedence over the same keys here.
 
     Returns
     -------
@@ -62,6 +68,8 @@ def chat_completion(
     messages.append({"role": "user", "content": prompt})
 
     payload: dict = {"model": model, "messages": messages}
+    if extra_body:
+        payload.update(extra_body)
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     if temperature is not None:
