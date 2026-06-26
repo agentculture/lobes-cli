@@ -1,0 +1,314 @@
+{
+  "slug": "lobes-ships-a-minor-lobe-a-cheap-warm-co-resident",
+  "title": "lobes ships a 'minor' lobe: a cheap, warm co-resident Qwen3.5-4B small-brain served bf16 alongside the 27B primary, driven by lobes run/route/eval with escalation + confidence governance, and chosen as the first unsloth-LoRA fine-tune target (training itself comes later)",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-26T09:21:29Z",
+  "updated": "2026-06-26T09:42:54Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships a 'minor' lobe: a cheap, warm co-resident Qwen3.5-4B small-brain served bf16 alongside the 27B primary, driven by lobes run/route/eval with escalation + confidence governance, and chosen as the first unsloth-LoRA fine-tune target (training itself comes later)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "every piece lands behind an EXISTING safety contract \u2014 read-only verbs (run/route/eval) and dry-run-by-default mutations (compose/switch) \u2014 not a new unguarded surface",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "lobes maintainers and Culture-mesh agents; agent loops that need a cheap local model for high-frequency low-risk calls (classify, route, format, validate, summarize) instead of spending 27B-primary tokens",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "the named reflex tasks (classify/route/format/validate/summarize) are within a 4B's reliable range; anything needing codebase context or judgment ESCALATES rather than silently degrading",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "lobes only switches/serves/assesses ONE served model; it has no notion of a cheap secondary worker, no co-resident small-brain, and no verb that invokes a model with a prompt (only assess.py's internal urllib correctness probes hit the model today)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "confirmed against the CLI surface: no existing verb invokes the model with a prompt (assess.py probes are internal), and the catalog has no role_hint=minor / co-resident generate gear today",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "the architectural primitive becomes 'minor' (a role), not 'qwen4b' (a model): lobes stays model-agnostic while AgentCulture gets a practical cheap-local default and its first LoRA target, and reflex work stops burning the 27B",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the role abstraction holds \u2014 swapping the 4B for another small model later is a catalog edit only; the verbs target the 'minor' ROLE, not a model id",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "Qwen3.5-4B is a catalog gear with role_hint=minor, served WARM CO-RESIDENT behind the gateway; lobes overview --list and GET /v1/models/supported list it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "the new entry passes every tests/test_catalog.py invariant and appears in BOTH lobes overview --list and GET /v1/models/supported",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "risk: lobes gaining run/route/eval shifts it from model-ops toward an agent-runtime \u2014 scope creep vs its stated identity ('runs, assesses, switches'); mitigate by keeping verbs THIN (prompt in / decision out), no agent loop, no persistent state",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "after_state",
+      "text": "new verbs: lobes run minor \"<prompt>\" invokes the minor model; lobes route \"<text>\" returns a routing decision; lobes eval minor --suite ... runs an eval; minor outputs carry confidence/uncertainty metadata",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "what does 'route' decide BETWEEN \u2014 lobes gears, tools, or other agents/lobes? the routing-target taxonomy must be defined or the verb is underspecified",
+          "resolved": true,
+          "blocking": true
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "after_state",
+      "text": "governance: minor MAY prepare/classify/format/validate/suggest but is config-blocked from approve/finalize/delete/deploy/architectural decisions; escalation conditions (needs_codebase_context, security_sensitive, architectural_decision, write_or_delete_operation, final_review_required) route work upward",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the allowed/forbidden duty split and escalation conditions are ENFORCED in config (minor refuses/escalates a forbidden action), not merely documented prose",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "NOT actually fine-tuning yet \u2014 no training runs, datasets, or shipped adapters; bf16 base is chosen to ENABLE later unsloth LoRA. NOT making minor a reviewer/approver. NOT displacing the 27B primary. The model is an implementation detail of the 'minor' role",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the bf16-base decision is sufficient to LoRA-finetune later with unsloth without re-exporting the served checkpoint (bf16 base is the adapter target)",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "success_signal",
+      "text": "lobes run minor returns a completion from the co-resident 4B; lobes route returns a structured decision with confidence; escalation thresholds are representable and tested; catalog + parser + afi cli doctor --strict tests pass; docs state allowed/forbidden minor duties and name Qwen3.5-4B as the first fine-tune target",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "every listed signal is OBSERVABLE in CI/local (run returns a completion, route returns decision+confidence, catalog/parser/doctor tests pass), not subjective",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "decision",
+      "text": "served checkpoint = Qwen/Qwen3.5-4B (bf16), chosen because unsloth LoRA needs the bf16 base; community cosmicproc/Qwen3.5-4B-NVFP4 is documented as an UNTESTED config alternative, not the default",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "decision",
+      "text": "role_hint=minor \u2014 a new behavior-free catalog label (only 'primary' is load-bearing in switch.py/MTP; overview prints role_hint, gateway routes by task not role)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "decision",
+      "text": "warm co-resident (opt-in always-on second generate backend), not switch-only \u2014 served at a modest max_model_len and bounded gpu-mem so it does not crowd the 27B",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "lobes/runtime/_parser.py learns the Qwen3.5 family so infer_parser(id) == the catalog tool_parser (the catalog test asserts equality), set to whatever tool format Qwen3.5-4B actually emits",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the parser is set from Qwen3.5-4B's REAL emitted tool format (verified, not assumed), and a _parser unit test pins infer_parser('Qwen3.5-4B') to that value",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "the catalog can represent an UNQUANTIZED bf16 generate gear: a quantization-field convention (a sentinel that lobes switch/compose translate to omitting --quantization) plus updated catalog tests, since today every generate entry requires a non-empty quantization",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "a bf16 entry boots under the GB10 vLLM image with the chosen quantization convention (\u2014quantization omitted), and the updated catalog tests still pin every other invariant for the other gears",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "lobes run/route/eval reuse the existing stdlib-only urllib client pattern (assess.py) to call the OpenAI-compatible endpoint \u2014 no new heavy deps \u2014 and stay read-only per the mutation-safety contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "run/route/eval add zero runtime deps beyond stdlib (matching assess.py) and pass the read-only / mutation-safety checks in doctor",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "warm co-residency: the fleet compose gains an opt-in 'minor' generate backend and the gateway can target minor vs primary for generate traffic",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the co-resident minor backend boots alongside the 27B on the GB10 within memory budget (modest max_model_len + bounded gpu-mem) without OOMing the primary",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "new verbs (read-only): lobes run minor \"<prompt>\" calls the co-resident 4B; lobes route \"<text>\" picks which GEAR handles a task (minor vs 27B primary vs candidate) AND whether to escalate, with a confidence score; lobes eval minor --suite ... runs an eval; v1 routes ONLY across lobes gears (not tools, not mesh agents)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "lobes route emits a structured, machine-parseable decision (chosen gear + escalate flag + confidence) validated by a test, so agent loops can consume it",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "VERIFIED model facts (HF config.json): Qwen3.5-4B is hybrid linear-attn (Gated Delta/SSM) + full-attention (NOT MoE, so no moe_backend), multimodal (ViT image+video), built-in MTP draft head, 256K native (max_position_embeddings 262144), bf16, Apache-2.0, public; tool format = qwen3_coder (XML); served as a text-only reflex brain via --language-model-only to drop the vision tower",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "lobes train minor (unsloth LoRA/QLoRA): real training runs, datasets, adapter artifacts, adapter hot-swap/serving \u2014 deferred ('not yet'); the bf16-base decision exists to enable it",
+      "kind": "follow_up",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "eval-suite CONTENTS (evals/tool-routing, formatting, contract-following datasets) \u2014 the 'lobes eval' verb lands now; the curated suites come later",
+      "kind": "follow_up",
+      "claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "the 4B's real architecture (dense vs hybrid/MoE, vision tower?) \u2014 sets the catalog shape field and whether moe_backend is needed (Sonnet agent verifying)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "community cosmicproc/Qwen3.5-4B-NVFP4 quality/throughput on the GB10 \u2014 untested; stays docs-only until load-tested",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Qwen3.5-4B ships a built-in MTP draft head (mtp_num_hidden_layers=1) \u2014 native speculative decoding for the minor with no separate draft checkpoint; deferred because the catalog test gates speculative_config on an 'MTP' id substring",
+      "kind": "follow_up",
+      "claim_id": null
+    }
+  ]
+}
