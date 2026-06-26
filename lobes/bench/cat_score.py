@@ -61,7 +61,7 @@ def _softmax(logprobs: list[float]) -> list[float]:
         return [1.0 / n] * n
     exps = [math.exp(lp - max_lp) for lp in logprobs]
     total = sum(exps)
-    if total == 0.0 or not math.isfinite(total):
+    if total <= 0.0 or not math.isfinite(total):
         return [1.0 / n] * n
     return [e / total for e in exps]
 

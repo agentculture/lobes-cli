@@ -149,82 +149,86 @@ def _bench_all_lobes(
     return results
 
 
+def _parse_concurrency(raw: str) -> "str | int":
+    """Validate ``--concurrency``: the literal ``"auto"`` or a positive integer.
+
+    Returns ``"auto"`` or the parsed ``int``. Raises :class:`ModelGearError`
+    (``EXIT_USER_ERROR``) on a non-integer or non-positive value, so a bad flag
+    fails with a structured error rather than an uncaught ``ValueError`` (or a
+    ``ThreadPoolExecutor`` crash downstream).
+    """
+    if raw == "auto":
+        return "auto"
+    try:
+        value = int(raw)
+    except (ValueError, TypeError):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"--concurrency must be 'auto' or a positive integer; got {raw!r}",
+            remediation="pass --concurrency auto (default) or a positive integer, e.g. 8",
+        )
+    if value <= 0:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"--concurrency must be a positive integer; got {value}",
+            remediation="pass --concurrency auto (default) or a positive integer, e.g. 8",
+        )
+    return value
+
+
+def _run_all_lobes(args: argparse.Namespace, url: str, deploy_dir, json_mode: bool) -> int:
+    """Benchmark BOTH lobes through the gateway and emit one combined report.
+
+    Resolves the primary/minor served names (flags override ``.env``), runs the
+    per-lobe perf engine + cat scorer, and renders the comparison. Raises
+    :class:`ModelGearError` (``EXIT_ENV_ERROR``) when neither lobe is configured.
+    Returns ``0`` on success.
+    """
+    primary_model: str | None = getattr(args, "model", None)
+    minor_model: str | None = getattr(args, "minor_model", None)
+    if primary_model is None and deploy_dir is not None:
+        primary_model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
+    if minor_model is None and deploy_dir is not None:
+        minor_model = _env.read_env(deploy_dir / _compose.ENV_FILE, "MINOR_SERVED_NAME")
+
+    _, input_len, output_len = _resolve_shape(args, deploy_dir)
+    concurrency_val = _parse_concurrency(getattr(args, "concurrency", "auto"))
+
+    results = _bench_all_lobes(
+        url,
+        primary_model,
+        minor_model,
+        concurrency=concurrency_val,
+        output_len=output_len,
+        runs=args.runs,
+        input_len=input_len,
+    )
+    if not results:
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=(
+                "no lobes to benchmark: neither VLLM_SERVED_NAME nor " + "MINOR_SERVED_NAME is set"
+            ),
+            remediation=(
+                "set a served model name in the deployment .env, " + "or run without --all-lobes"
+            ),
+        )
+
+    markdown = render_report(results)
+    if json_mode:
+        emit_result({"results": results, "markdown": markdown}, json_mode=True)
+    else:
+        emit_result(markdown, json_mode=False)
+    return 0
+
+
 def cmd_benchmark(args: argparse.Namespace) -> int:
-    all_lobes = bool(getattr(args, "all_lobes", False))
     json_mode = bool(getattr(args, "json", False))
     port, deploy_dir = _runtime_ops.resolve_port_soft(args)
     url = f"http://localhost:{port}"
 
-    if all_lobes:
-        # --all-lobes: benchmark BOTH lobes through the gateway in one combined report.
-        primary_model: str | None = getattr(args, "model", None)
-        minor_model: str | None = getattr(args, "minor_model", None)
-        if primary_model is None and deploy_dir is not None:
-            primary_model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
-        if minor_model is None and deploy_dir is not None:
-            minor_model = _env.read_env(deploy_dir / _compose.ENV_FILE, "MINOR_SERVED_NAME")
-
-        _, input_len, output_len = _resolve_shape(args, deploy_dir)
-        concurrency_raw: str = getattr(args, "concurrency", "auto")
-
-        # Validate --concurrency: must be "auto" or a positive integer string.
-        # Parse to int once here so downstream helpers receive the typed value.
-        if concurrency_raw == "auto":
-            concurrency_val: "str | int" = "auto"
-        else:
-            try:
-                concurrency_int = int(concurrency_raw)
-            except (ValueError, TypeError):
-                raise ModelGearError(
-                    code=EXIT_USER_ERROR,
-                    message=(
-                        f"--concurrency must be 'auto' or a positive integer; "
-                        f"got {concurrency_raw!r}"
-                    ),
-                    remediation=(
-                        "pass --concurrency auto (default) or a positive integer "
-                        "such as --concurrency 8"
-                    ),
-                )
-            if concurrency_int <= 0:
-                raise ModelGearError(
-                    code=EXIT_USER_ERROR,
-                    message=(f"--concurrency must be a positive integer; got {concurrency_int}"),
-                    remediation=(
-                        "pass --concurrency auto (default) or a positive integer "
-                        "such as --concurrency 8"
-                    ),
-                )
-            concurrency_val = concurrency_int
-
-        results = _bench_all_lobes(
-            url,
-            primary_model,
-            minor_model,
-            concurrency=concurrency_val,
-            output_len=output_len,
-            runs=args.runs,
-            input_len=input_len,
-        )
-
-        if not results:
-            raise ModelGearError(
-                code=EXIT_ENV_ERROR,
-                message=(
-                    "no lobes to benchmark: neither VLLM_SERVED_NAME nor "
-                    "MINOR_SERVED_NAME is set"
-                ),
-                remediation=(
-                    "set a served model name in the deployment .env, " "or run without --all-lobes"
-                ),
-            )
-
-        markdown = render_report(results)
-        if json_mode:
-            emit_result({"results": results, "markdown": markdown}, json_mode=True)
-        else:
-            emit_result(markdown, json_mode=False)
-        return 0
+    if bool(getattr(args, "all_lobes", False)):
+        return _run_all_lobes(args, url, deploy_dir, json_mode)
 
     # Original single-model path (unchanged when --all-lobes is absent).
     model = args.model

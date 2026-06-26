@@ -136,6 +136,52 @@ def _check(response: str, case: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _validate_cat_entry(obj: dict, lineno: int) -> None:
+    """Validate one cat-suite case object; raise :class:`ModelGearError` on any problem.
+
+    Ensures ``seed`` is present and integer-valued, and that the optional
+    ``mode`` / ``n_characters`` fields (when present) are well-formed — so a
+    malformed suite produces a structured error here rather than an uncaught
+    ``ValueError`` later in :func:`cmd_eval_cat`.
+    """
+    if "seed" not in obj:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"suite line {lineno}: missing required field 'seed'",
+            remediation="each cat-suite case object must have an integer 'seed' field",
+        )
+    try:
+        int(obj["seed"])
+    except (TypeError, ValueError):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"suite line {lineno}: 'seed' must be an integer, got {obj['seed']!r}",
+            remediation="set 'seed' to an integer value (e.g. 42)",
+        )
+    if "mode" in obj and obj["mode"] not in _CAT_VALID_MODES:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"suite line {lineno}: invalid 'mode' {obj['mode']!r} "
+                + f"(must be one of {_CAT_VALID_MODES})"
+            ),
+            remediation="set 'mode' to 'open' or 'closed'",
+        )
+    if "n_characters" in obj:
+        try:
+            if int(obj["n_characters"]) < 1:
+                raise ValueError("non-positive")
+        except (TypeError, ValueError):
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"suite line {lineno}: 'n_characters' must be a positive integer, "
+                    + f"got {obj['n_characters']!r}"
+                ),
+                remediation="set 'n_characters' to a positive integer (e.g. 4)",
+            )
+
+
 def _load_cat_suite(path: Path) -> list[dict]:
     """Load and parse a cat-probe JSONL suite; return a list of case dicts.
 
@@ -166,45 +212,7 @@ def _load_cat_suite(path: Path) -> list[dict]:
                 message=f"suite parse error at line {lineno}: {exc}",
                 remediation="every non-blank, non-comment line must be valid JSON",
             ) from exc
-        if "seed" not in obj:
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=f"suite line {lineno}: missing required field 'seed'",
-                remediation="each cat-suite case object must have an integer 'seed' field",
-            )
-        try:
-            int(obj["seed"])
-        except (TypeError, ValueError):
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=(
-                    f"suite line {lineno}: 'seed' must be an integer, " f"got {obj['seed']!r}"
-                ),
-                remediation="set 'seed' to an integer value (e.g. 42)",
-            )
-        if "mode" in obj and obj["mode"] not in _CAT_VALID_MODES:
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=(
-                    f"suite line {lineno}: invalid 'mode' {obj['mode']!r} "
-                    f"(must be one of {_CAT_VALID_MODES})"
-                ),
-                remediation="set 'mode' to 'open' or 'closed'",
-            )
-        if "n_characters" in obj:
-            try:
-                n = int(obj["n_characters"])
-                if n < 1:
-                    raise ValueError("non-positive")
-            except (TypeError, ValueError):
-                raise ModelGearError(
-                    code=EXIT_USER_ERROR,
-                    message=(
-                        f"suite line {lineno}: 'n_characters' must be a positive integer, "
-                        f"got {obj['n_characters']!r}"
-                    ),
-                    remediation="set 'n_characters' to a positive integer (e.g. 4)",
-                )
+        _validate_cat_entry(obj, lineno)
         cases.append(obj)
     return cases
 
