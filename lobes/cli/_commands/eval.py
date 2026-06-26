@@ -56,7 +56,7 @@ from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
 from lobes.minor import chat_text  # patched in tests via eval_cmd.chat_text
 
-_DEFAULT_BASE_URL = "http://localhost:8001/v1"
+_DEFAULT_BASE_URL = "http://localhost:8000/v1"
 _DEFAULT_TIMEOUT = 60
 
 
