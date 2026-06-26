@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - 2026-06-26
+
+### Added
+
+- `lobes benchmark --all-lobes --concurrency auto`: per-lobe (minor + primary) performance benchmark routed through the gateway — single-stream decode tok/s, prefill TTFT, concurrent throughput with auto-ramp to the throughput knee (req/s + p50/p95 latency + ms/token), plus the logprobs cat soft-score, rendered as one combined minor-vs-primary report with per-metric deltas.
+- `lobes eval cat --score logprobs --mode open|closed`: read-only 'Where is the cat?' temporal-reasoning probe, scored by logprobs (softmax over candidate-location full-sequence echo logprobs as the headline, with a chat first-token-mass cross-check and graceful fallback when echo is unavailable).
+- `lobes.bench` package: `cat_probe` (deterministic, seeded timestamped-narrative generator with exactly one unambiguous current location; open + closed modes), `cat_score` (echo-softmax headline scorer + first-token cross-check + fallback), and `report` (per-lobe markdown report renderer with minor-vs-primary deltas).
+- `lobes.minor` logprobs plumbing: `chat_completion` now forwards `logprobs`/`top_logprobs`; new `completions_echo` (full-sequence `/v1/completions` echo scoring) and `gateway_supports_echo` capability probe (never raises; lets callers fall back).
+- `lobes.assess` per-lobe perf engine: `measure_prefill_ttft`, `run_concurrent` (requests/sec + p50/p95 latency + ms/token), and `auto_ramp_concurrency` (1→2→4→… ramp with plateau/knee detection).
+
 ## [0.30.0] - 2026-06-26
 
 ### Added

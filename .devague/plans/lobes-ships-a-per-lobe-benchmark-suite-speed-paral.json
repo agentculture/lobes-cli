@@ -1,0 +1,284 @@
+{
+  "slug": "lobes-ships-a-per-lobe-benchmark-suite-speed-paral",
+  "title": "lobes ships a per-lobe benchmark suite: speed, parallel throughput, prefill (read) and generation latency for the minor (Qwen3.5-4B) and primary (27B) lobes through the gateway, plus a logprobs-scored 'Where is the cat?' temporal-reasoning probe that grades soft-correctness over candidate locations",
+  "frame_slug": "lobes-ships-a-per-lobe-benchmark-suite-speed-paral",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-26T15:48:53Z",
+  "updated": "2026-06-26T15:52:36Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships a per-lobe benchmark suite: speed, parallel throughput, prefill (read) and generation latency for the minor (Qwen3.5-4B) and primary (27B) lobes through the gateway, plus a logprobs-scored 'Where is the cat?' temporal-reasoning probe that grades soft-correctness over candidate locations"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the suite runs end-to-end against a live lobes deployment and produces both the four perf metrics and the cat-probe soft-score for each lobe in one invocation"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The suite runs four per-lobe performance measurements: (a) speed = single-stream decode tokens/sec; (b) parallel = throughput and latency under N concurrent requests; (c) read time = prefill / time-to-first-token; (d) generation time = end-to-end and per-token decode latency"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "each of the four metrics has a defined method and unit (decode tok/s; requests/s + p50/p95 latency; ms TTFT for read; ms/token + total s for generation) and is reproducible across runs"
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Every measurement runs against each lobe \u2014 minor (Qwen3.5-4B) and primary (27B) \u2014 routed through the gateway, and results are reported per-lobe side by side"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the suite can address each lobe distinctly through the gateway (minor vs primary) and every reported number is labelled with the lobe it came from"
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "The suite includes a 'Where is the cat?' probe: a generated narrative where several characters each saw/played-with the cat at different timestamps; an investigating-kid framing collects the clues; the prompt ends with 'And the cat is at:' and the model must infer the cat's CURRENT location from the temporal clues"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "the generated narrative has a single unambiguous correct CURRENT location given the timestamps, and the intended answer is machine-checkable"
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "The cat probe is graded with logprobs: the score is the model's probability mass over the candidate-location tokens (soft-correctness), not just the greedy/argmax token"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the soft-score is computed from returned logprobs over the candidate set and equals 1.0 only when all probability mass sits on the correct location"
+    },
+    {
+      "id": "c6",
+      "kind": "success_signal",
+      "text": "The report shows the minor lobe is materially faster/cheaper on the four perf metrics while the cat probe's logprobs soft-score quantifies how much temporal-reasoning quality it trades vs the primary"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the report makes the speed-vs-reasoning tradeoff legible at a glance \u2014 the perf deltas and the soft-score delta are both shown per lobe"
+    },
+    {
+      "id": "c7",
+      "kind": "why_it_matters",
+      "text": "Deciding whether the minor lobe earns its co-residency needs evidence on both axes \u2014 speed AND reasoning \u2014 and a logprobs soft-score discriminates the two lobes more finely than a pass/fail probe"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the soft-score separates the two lobes by more than run-to-run noise on the cat probe (otherwise it is not discriminating)"
+    },
+    {
+      "id": "c8",
+      "kind": "audience",
+      "text": "the lobes maintainer / mesh operator evaluating whether to keep the minor lobe warm and co-resident"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the report answers 'is the minor lobe fast enough and good-enough to keep co-resident?' for that operator without extra tooling"
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "not a training/fine-tuning eval and not a general LLM leaderboard; it benchmarks only the lobes that lobes serves, through the gateway, read-only \u2014 and the cat probe is one hand-built temporal-reasoning probe, not a broad dataset"
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the suite only reads from a running lobes deployment (no training, no external datasets, no writes) and the cat probe is fully self-contained"
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the request client gains logprobs support (logprobs + top_logprobs) so the cat probe can read per-token candidate probabilities from the OpenAI-compatible endpoint"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "a request returns per-token logprobs/top_logprobs that include the candidate tokens, or the scorer degrades gracefully (records 'unavailable') when they are absent"
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "one read-only command runs the same workload against each lobe through the gateway and emits a per-lobe comparison: decode tok/s, parallel throughput + p50/p95 latency, prefill/TTFT, generation time, and the cat probe's logprobs soft-score"
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "a single invocation per the chosen surface produces both the per-lobe perf numbers and the cat soft-score, rendered together for comparison"
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "The cat probe ships in two modes: (a) open-ended \u2014 the model is shown no options and the scorer discovers the candidate locations the narrative introduced; (b) closed forced-choice \u2014 the prompt lists the candidate locations. In both, the soft-score is the renormalised probability mass over the candidate-location set, so it lands in [0,1] and is comparable across lobes"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "in open-ended mode the scorer reliably recovers the set of locations the story introduced; in closed mode that set is given; in both, the renormalisation denominator is exactly that set"
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "The headline soft-score is the softmax over candidates' full-sequence logprobs from /v1/completions with echo=true + logprobs (each candidate string appended after 'And the cat is at:'); the first-token probability mass from a chat logprobs+top_logprobs call is reported alongside as a cheaper cross-check"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the /v1/completions echo path returns per-token logprobs for the appended candidate tokens through the gateway; if echo or completions is unavailable, the suite records the sequence score as 'unavailable' and falls back to the first-token-mass score rather than failing"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Logprobs client plumbing: chat top_logprobs + /v1/completions echo + gateway-echo capability probe",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "chat_completion forwards logprobs+top_logprobs and returns per-token top_logprobs including the answer-position token",
+        "a completions-echo call (echo=true, logprobs) returns per-token logprobs for an appended continuation string",
+        "a gateway-echo capability probe returns False when /v1/completions echo is unavailable so callers can fall back"
+      ],
+      "deps": [],
+      "covers": [
+        "c12",
+        "h5",
+        "h11"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Cat-probe generator: timestamped narrative with one unambiguous CURRENT location, open + closed modes, candidate set",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a generated case has exactly one CURRENT location entailed by the timestamps, verified by a deterministic solver in the test",
+        "closed mode lists the candidate locations in the prompt; open mode omits them",
+        "the candidate-location set is exposed on the case and recoverable from the narrative text for open-mode scoring"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h3",
+        "c16",
+        "h10"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Per-lobe perf engine: decode tok/s, prefill TTFT, concurrent req/s + p50/p95 + per-token decode, auto-ramp to plateau",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "single-stream decode reports tokens/sec and prefill reports TTFT in ms",
+        "a concurrent driver reports requests/sec + p50/p95 latency and per-token decode (ms/token, total s)",
+        "concurrency auto-ramps 1->2->4->8->16... and stops when req/s gain between steps < threshold, reporting the knee + per-step rows"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Combined per-lobe report renderer: markdown table, per-metric minor-vs-primary deltas + cat soft-score delta",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "render takes a per-lobe results dict and emits a markdown table with one row per lobe and explicit per-metric deltas (minor vs primary)",
+        "the cat soft-score and its minor-vs-primary delta appear alongside the perf deltas in the same table"
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "c6",
+        "h8",
+        "h14"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Logprobs cat scorer: softmax over full-sequence echo logprobs (headline) + first-token mass cross-check, renormalised, with fallback",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "headline soft-score = softmax over candidates' full-sequence echo logprobs and equals 1.0 iff all mass is on the correct location",
+        "first-token probability mass from chat top_logprobs is computed and reported as a cross-check",
+        "score renormalises over exactly the candidate set, lands in [0,1]; when echo is unavailable the headline records 'unavailable' and falls back to first-token mass"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c5",
+        "h4",
+        "c17"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "lobes eval cat --score logprobs verb wiring generator+scorer, read-only, --mode open|closed",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes eval cat --suite <jsonl> --score logprobs runs read-only against a backend and emits per-case soft-score + headline/cross-check + the correct location",
+        "--mode {open,closed} selects the probe mode and both run end to end"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c16"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "lobes benchmark --all-lobes --concurrency auto: per-lobe perf + cat scorer through the gateway, read-only, combined report",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes benchmark --all-lobes runs the perf engine + cat scorer against each lobe (minor, primary) through the gateway with every number labelled by lobe",
+        "a single invocation produces both the four perf metrics and the cat soft-score per lobe, rendered together via the report renderer",
+        "the suite is read-only (no --apply, no writes, no external datasets) and the output answers 'is the minor fast enough and good-enough to stay co-resident?'",
+        "the soft-score delta is shown so a reader can judge it against run-to-run noise"
+      ],
+      "deps": [
+        "t3",
+        "t5",
+        "t4"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "c7",
+        "c8",
+        "c9",
+        "h7",
+        "h9",
+        "h12",
+        "h13",
+        "c15"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "/v1/completions echo may not be gateway-routed to backends; first build step verifies it, else the scorer falls back to first-token mass",
+      "kind": "follow_up",
+      "task_id": "t1"
+    }
+  ]
+}
