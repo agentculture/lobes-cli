@@ -6,7 +6,7 @@ calls. Picking the wrong one silently breaks tool calling (the server returns
 rather than leaving the caller to remember it. The rules below mirror the
 guidance in ``templates/env.example`` (the single source of truth):
 
-* Qwen3-Coder / Qwen3.6 checkpoints emit the XML function format → ``qwen3_coder``
+* Qwen3-Coder / Qwen3.5 / Qwen3.6 checkpoints emit the XML function format → ``qwen3_coder``
 * Qwen3 dense models emit Hermes-style JSON tool calls → ``hermes``
 * Mistral checkpoints emit the ``[TOOL_CALLS]`` format → ``mistral``
 * anything else → ``None`` (unknown; leave the configured parser untouched and
@@ -32,7 +32,20 @@ from __future__ import annotations
 # Qwen3.6 rule comes first because those ids also contain "qwen3"; its markers are
 # Qwen3-scoped so a generic "*-coder" model doesn't get qwen3_coder.
 _RULES: list[tuple[tuple[str, ...], str]] = [
-    (("qwen3-coder", "qwen3_coder", "qwen3coder", "qwen3.6", "qwen3-6", "qwen3_6"), "qwen3_coder"),
+    (
+        (
+            "qwen3-coder",
+            "qwen3_coder",
+            "qwen3coder",
+            "qwen3.5",
+            "qwen3-5",
+            "qwen3_5",
+            "qwen3.6",
+            "qwen3-6",
+            "qwen3_6",
+        ),
+        "qwen3_coder",
+    ),
     (("qwen3", "qwen-3"), "hermes"),
     (("mistral",), "mistral"),
 ]
