@@ -160,6 +160,27 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         ),
     ),
     SupportedModel(
+        id="Qwen/Qwen3.5-4B",
+        # bf16 base (the unsloth-LoRA fine-tune target): the fleet's first LoRA
+        # target and "minor" small-brain companion to the 27B primary. Multimodal
+        # (hybrid linear-attn + ViT) — serve text-only via --language-model-only.
+        # Built-in MTP head not used in v1 (no speculative_config carried).
+        # quantization="none" is the bf16/unquantized sentinel — VLLM_QUANTIZATION
+        # is NOT written on switch; the operator must REMOVE the --quantization
+        # flag from the compose command: by hand (the single-model template defaults
+        # to --quantization=modelopt when VLLM_QUANTIZATION is absent, which would
+        # corrupt bf16 weights). See docs/qwen3.5-4b-minor.md.
+        role_hint="minor",
+        shape="hybrid linear-attn + ViT (multimodal)",
+        context="256K native",
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="none",
+        status="configured",
+        doc="qwen3.5-4b-minor.md",
+        task="generate",
+    ),
+    SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
         # Reranker gear (issue #44): cross-encoder that scores (query, passage) pairs.
         # Built on Qwen3ForSequenceClassification with a binary yes/no logit head;
