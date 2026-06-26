@@ -68,6 +68,23 @@ set `FALLBACK_URL` + `FALLBACK_SERVED_NAME` on the gateway, and **drop both
 fallback config is in git history and
 [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md).
 
+### Minor co-resident companion (opt-in)
+
+The fleet compose also ships a `vllm-minor` service under `profiles: [minor]` —
+a small 4B bf16 companion generate model that co-resides with the primary.
+Activate it by setting `COMPOSE_PROFILES=minor` in `.env` or passing
+`--profile minor` to `docker compose`. The gateway routes requests for
+`model: Qwen/Qwen3.5-4B` to this backend only when `MINOR_BASE_URL` and
+`MINOR_SERVED_NAME` are set in the gateway's environment; the defaults are empty,
+so the gateway ignores the minor backend unless the operator explicitly opts in.
+
+At `VLLM_MINOR_GPU_MEM_UTIL=0.10` (~13 GiB) the 4B model co-resides alongside
+the 27B primary (~75 GiB) within the 128 GB GB10 budget, with the two ~0.6B
+gears (util 0.06 each) also co-resident. See
+[`docs/qwen3.5-4b-minor.md`](qwen3.5-4b-minor.md) for governance, the
+minor-lobe verbs (`lobes run minor`, `lobes route`, `lobes eval minor`), and
+serving details.
+
 ## The gateway
 
 A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy:
