@@ -488,3 +488,85 @@ def test_register_minor_model_flag_parseable() -> None:
 
     args = parser.parse_args(["benchmark", "--minor-model", "Qwen/Qwen3.5-4B"])
     assert args.minor_model == "Qwen/Qwen3.5-4B"
+
+
+# ---------------------------------------------------------------------------
+# Finding A: --concurrency validation (Qodo reliability bug)
+# ---------------------------------------------------------------------------
+
+
+def test_concurrency_invalid_string_raises_user_error(monkeypatch) -> None:
+    """Non-integer --concurrency raises ModelGearError with EXIT_USER_ERROR, not ValueError."""
+    from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+
+    for bad in ("-1", "0", "abc"):
+        args = _make_all_lobes_args(concurrency=bad)
+        with pytest.raises(ModelGearError) as exc_info:
+            benchmark_cmd.cmd_benchmark(args)
+        err = exc_info.value
+        assert err.code == EXIT_USER_ERROR, (
+            f"concurrency={bad!r}: expected EXIT_USER_ERROR ({EXIT_USER_ERROR}), "
+            f"got code={err.code}"
+        )
+        # Must NOT be a raw ValueError leaking out
+        assert (
+            type(err).__name__ != "ValueError"
+        ), f"concurrency={bad!r}: raw ValueError escaped (must be ModelGearError)"
+
+
+def test_concurrency_invalid_does_not_call_run_concurrent(monkeypatch) -> None:
+    """Validation rejects bad --concurrency before any ThreadPoolExecutor / network call."""
+    from lobes.cli._errors import ModelGearError
+
+    concurrent_calls: list = []
+    ramp_calls: list = []
+    monkeypatch.setattr(
+        benchmark_cmd,
+        "run_concurrent",
+        lambda *a, **kw: concurrent_calls.append(kw) or _CANNED_CONCURRENT,
+    )
+    monkeypatch.setattr(
+        benchmark_cmd,
+        "auto_ramp_concurrency",
+        lambda *a, **kw: ramp_calls.append(kw) or _CANNED_RAMP,
+    )
+
+    for bad in ("-1", "0", "abc"):
+        concurrent_calls.clear()
+        ramp_calls.clear()
+        with pytest.raises(ModelGearError):
+            benchmark_cmd.cmd_benchmark(_make_all_lobes_args(concurrency=bad))
+        assert (
+            len(concurrent_calls) == 0
+        ), f"concurrency={bad!r}: run_concurrent must not be called on invalid concurrency"
+        assert (
+            len(ramp_calls) == 0
+        ), f"concurrency={bad!r}: auto_ramp_concurrency must not be called on invalid concurrency"
+
+
+# ---------------------------------------------------------------------------
+# Finding B: --all-lobes with no served names raises EXIT_ENV_ERROR (S3516)
+# ---------------------------------------------------------------------------
+
+
+def test_all_lobes_no_served_names_raises_env_error() -> None:
+    """--all-lobes with both served names unset raises ModelGearError(EXIT_ENV_ERROR).
+
+    Replaces the previous silent empty-report / return-0 behavior.
+    Uses explicit port=8000 so deploy_dir is None (no .env lookup),
+    and passes model=None, minor_model=None so both lobes are skipped.
+    No network monkeypatching needed: the error is raised before any probe.
+    """
+    from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
+
+    args = _make_all_lobes_args(model=None, minor_model=None)
+    with pytest.raises(ModelGearError) as exc_info:
+        benchmark_cmd.cmd_benchmark(args)
+    err = exc_info.value
+    assert err.code == EXIT_ENV_ERROR, (
+        f"Expected EXIT_ENV_ERROR ({EXIT_ENV_ERROR}) when no lobes are set, "
+        f"got code={err.code} message={err.message!r}"
+    )
+    assert (
+        "VLLM_SERVED_NAME" in err.message or "MINOR_SERVED_NAME" in err.message
+    ), f"Error message should mention the unset env vars; got: {err.message!r}"

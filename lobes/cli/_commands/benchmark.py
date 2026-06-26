@@ -30,6 +30,7 @@ from lobes.bench.cat_probe import generate_case
 from lobes.bench.cat_score import score_case
 from lobes.bench.report import render_report
 from lobes.cli import _runtime_ops
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
 from lobes.runtime import _compose, _env
 
@@ -54,7 +55,7 @@ def _bench_one_lobe(
     url: str,
     model: str,
     *,
-    concurrency: str = "auto",
+    concurrency: "str | int" = "auto",
     output_len: int = 128,
     runs: int = 2,
     input_len: int = 2000,
@@ -122,7 +123,7 @@ def _bench_all_lobes(
     primary_model: str | None,
     minor_model: str | None,
     *,
-    concurrency: str = "auto",
+    concurrency: "str | int" = "auto",
     output_len: int = 128,
     runs: int = 2,
     input_len: int = 2000,
@@ -164,17 +165,60 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             minor_model = _env.read_env(deploy_dir / _compose.ENV_FILE, "MINOR_SERVED_NAME")
 
         _, input_len, output_len = _resolve_shape(args, deploy_dir)
-        concurrency: str = getattr(args, "concurrency", "auto")
+        concurrency_raw: str = getattr(args, "concurrency", "auto")
+
+        # Validate --concurrency: must be "auto" or a positive integer string.
+        # Parse to int once here so downstream helpers receive the typed value.
+        if concurrency_raw == "auto":
+            concurrency_val: "str | int" = "auto"
+        else:
+            try:
+                concurrency_int = int(concurrency_raw)
+            except (ValueError, TypeError):
+                raise ModelGearError(
+                    code=EXIT_USER_ERROR,
+                    message=(
+                        f"--concurrency must be 'auto' or a positive integer; "
+                        f"got {concurrency_raw!r}"
+                    ),
+                    remediation=(
+                        "pass --concurrency auto (default) or a positive integer "
+                        "such as --concurrency 8"
+                    ),
+                )
+            if concurrency_int <= 0:
+                raise ModelGearError(
+                    code=EXIT_USER_ERROR,
+                    message=(f"--concurrency must be a positive integer; got {concurrency_int}"),
+                    remediation=(
+                        "pass --concurrency auto (default) or a positive integer "
+                        "such as --concurrency 8"
+                    ),
+                )
+            concurrency_val = concurrency_int
 
         results = _bench_all_lobes(
             url,
             primary_model,
             minor_model,
-            concurrency=concurrency,
+            concurrency=concurrency_val,
             output_len=output_len,
             runs=args.runs,
             input_len=input_len,
         )
+
+        if not results:
+            raise ModelGearError(
+                code=EXIT_ENV_ERROR,
+                message=(
+                    "no lobes to benchmark: neither VLLM_SERVED_NAME nor "
+                    "MINOR_SERVED_NAME is set"
+                ),
+                remediation=(
+                    "set a served model name in the deployment .env, " "or run without --all-lobes"
+                ),
+            )
+
         markdown = render_report(results)
         if json_mode:
             emit_result({"results": results, "markdown": markdown}, json_mode=True)
