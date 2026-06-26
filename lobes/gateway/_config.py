@@ -17,6 +17,7 @@ _DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
+_DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,19 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             name_key="FALLBACK_SERVED_NAME",
             default_url="http://vllm-fallback:8000",
             default_name=_DEFAULT_FALLBACK,
+        ),
+        # The minor co-resident generate backend (Qwen/Qwen3.5-4B, bf16).
+        # Wired only when MINOR_BASE_URL or MINOR_SERVED_NAME is present in
+        # the environment — i.e. when the operator has activated the compose
+        # "minor" profile and set these vars (they are absent by default so
+        # the routing table is unchanged on a standard fleet startup).
+        _optional_backend(
+            env,
+            name="minor",
+            url_key="MINOR_BASE_URL",
+            name_key="MINOR_SERVED_NAME",
+            default_url="http://vllm-minor:8000",
+            default_name=_DEFAULT_MINOR,
         ),
         _optional_backend(
             env,
