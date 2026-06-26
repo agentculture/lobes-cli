@@ -25,7 +25,6 @@ gateway_supports_echo(*, base_url, model, timeout=10) -> bool
 from __future__ import annotations
 
 import json
-import urllib.error
 import urllib.request
 
 
@@ -233,5 +232,5 @@ def gateway_supports_echo(
         )
         token_logprobs = result["choices"][0]["logprobs"]["token_logprobs"]
         return isinstance(token_logprobs, list) and len(token_logprobs) > 0
-    except (urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError, TypeError, IndexError):
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, IndexError):
         return False
