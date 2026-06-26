@@ -1,0 +1,298 @@
+{
+  "slug": "lobes-ships-a-per-lobe-benchmark-suite-speed-paral",
+  "title": "lobes ships a per-lobe benchmark suite: speed, parallel throughput, prefill (read) and generation latency for the minor (Qwen3.5-4B) and primary (27B) lobes through the gateway, plus a logprobs-scored 'Where is the cat?' temporal-reasoning probe that grades soft-correctness over candidate locations",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-26T14:40:14Z",
+  "updated": "2026-06-26T14:53:38Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships a per-lobe benchmark suite: speed, parallel throughput, prefill (read) and generation latency for the minor (Qwen3.5-4B) and primary (27B) lobes through the gateway, plus a logprobs-scored 'Where is the cat?' temporal-reasoning probe that grades soft-correctness over candidate locations",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "the suite runs end-to-end against a live lobes deployment and produces both the four perf metrics and the cat-probe soft-score for each lobe in one invocation",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The suite runs four per-lobe performance measurements: (a) speed = single-stream decode tokens/sec; (b) parallel = throughput and latency under N concurrent requests; (c) read time = prefill / time-to-first-token; (d) generation time = end-to-end and per-token decode latency",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "each of the four metrics has a defined method and unit (decode tok/s; requests/s + p50/p95 latency; ms TTFT for read; ms/token + total s for generation) and is reproducible across runs",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Every measurement runs against each lobe \u2014 minor (Qwen3.5-4B) and primary (27B) \u2014 routed through the gateway, and results are reported per-lobe side by side",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the suite can address each lobe distinctly through the gateway (minor vs primary) and every reported number is labelled with the lobe it came from",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "The suite includes a 'Where is the cat?' probe: a generated narrative where several characters each saw/played-with the cat at different timestamps; an investigating-kid framing collects the clues; the prompt ends with 'And the cat is at:' and the model must infer the cat's CURRENT location from the temporal clues",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the generated narrative has a single unambiguous correct CURRENT location given the timestamps, and the intended answer is machine-checkable",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "The cat probe is graded with logprobs: the score is the model's probability mass over the candidate-location tokens (soft-correctness), not just the greedy/argmax token",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the soft-score is computed from returned logprobs over the candidate set and equals 1.0 only when all probability mass sits on the correct location",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "success_signal",
+      "text": "The report shows the minor lobe is materially faster/cheaper on the four perf metrics while the cat probe's logprobs soft-score quantifies how much temporal-reasoning quality it trades vs the primary",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the report makes the speed-vs-reasoning tradeoff legible at a glance \u2014 the perf deltas and the soft-score delta are both shown per lobe",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "why_it_matters",
+      "text": "Deciding whether the minor lobe earns its co-residency needs evidence on both axes \u2014 speed AND reasoning \u2014 and a logprobs soft-score discriminates the two lobes more finely than a pass/fail probe",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "the soft-score separates the two lobes by more than run-to-run noise on the cat probe (otherwise it is not discriminating)",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "audience",
+      "text": "the lobes maintainer / mesh operator evaluating whether to keep the minor lobe warm and co-resident",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the report answers 'is the minor lobe fast enough and good-enough to keep co-resident?' for that operator without extra tooling",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "not a training/fine-tuning eval and not a general LLM leaderboard; it benchmarks only the lobes that lobes serves, through the gateway, read-only \u2014 and the cat probe is one hand-built temporal-reasoning probe, not a broad dataset",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "the suite only reads from a running lobes deployment (no training, no external datasets, no writes) and the cat probe is fully self-contained",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "does not replace 'lobes assess' correctness probes or the existing 'lobes eval' substring/regex suites; it adds perf+logprobs scoring rather than changing them",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "decision",
+      "text": "exposed as an extension of the existing read-only benchmark/eval surface (per-lobe + concurrency + a logprobs scorer), reusing lobes.assess.run_benchmark for prefill/decode and lobes.minor._client for requests",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the request client gains logprobs support (logprobs + top_logprobs) so the cat probe can read per-token candidate probabilities from the OpenAI-compatible endpoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "a request returns per-token logprobs/top_logprobs that include the candidate tokens, or the scorer degrades gracefully (records 'unavailable') when they are absent",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "the cat probe constrains the answer to a fixed small candidate-location set and the soft-score is the renormalised probability mass over those candidates, so scores are comparable across lobes",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "the candidate-location set is fixed and known to the scorer, and the score renormalises over only those candidates so it lands in [0,1] and is comparable across lobes",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "the vLLM OpenAI-compatible endpoints the lobes serve expose logprobs/top_logprobs (chat completions and/or /v1/completions with echo)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "one read-only command runs the same workload against each lobe through the gateway and emits a per-lobe comparison: decode tok/s, parallel throughput + p50/p95 latency, prefill/TTFT, generation time, and the cat probe's logprobs soft-score",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "a single invocation per the chosen surface produces both the per-lobe perf numbers and the cat soft-score, rendered together for comparison",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "The cat probe ships in two modes: (a) open-ended \u2014 the model is shown no options and the scorer discovers the candidate locations the narrative introduced; (b) closed forced-choice \u2014 the prompt lists the candidate locations. In both, the soft-score is the renormalised probability mass over the candidate-location set, so it lands in [0,1] and is comparable across lobes",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "in open-ended mode the scorer reliably recovers the set of locations the story introduced; in closed mode that set is given; in both, the renormalisation denominator is exactly that set",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "The headline soft-score is the softmax over candidates' full-sequence logprobs from /v1/completions with echo=true + logprobs (each candidate string appended after 'And the cat is at:'); the first-token probability mass from a chat logprobs+top_logprobs call is reported alongside as a cheaper cross-check",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the /v1/completions echo path returns per-token logprobs for the appended candidate tokens through the gateway; if echo or completions is unavailable, the suite records the sequence score as 'unavailable' and falls back to the first-token-mass score rather than failing",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "Surface: perf metrics via 'lobes benchmark --all-lobes --concurrency auto' (extends the read-only benchmark verb with per-lobe routing + a concurrency sweep); the cat probe via 'lobes eval cat --suite <jsonl> --score logprobs' (extends the read-only eval verb with a logprobs scorer). No new top-level verb",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "The parallel-calls measurement auto-ramps concurrency (1->2->4->8->16...) until the requests/sec gain between steps falls below a threshold, then reports the knee (peak-throughput concurrency) plus per-step throughput and p50/p95 latency",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "RESOLVED (user): scoring = softmax over candidates' full-sequence logprobs via /v1/completions echo (headline) + chat first-token mass (cross-check); see c17. Open follow-up: verify echo is gateway-routed, else fall back to first-token mass.",
+      "kind": "follow_up",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "RESOLVED (user): parallel measurement auto-ramps concurrency to the throughput knee; see c19. Open follow-up: tune the plateau threshold.",
+      "kind": "follow_up",
+      "claim_id": null
+    }
+  ]
+}
