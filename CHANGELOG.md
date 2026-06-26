@@ -43,6 +43,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in `$HOME/.eidetic/memory` instead of in-repo. Propagated by rollout-cli's
   `eidetic-memory` recipe.
 
+## [0.28.1] - 2026-06-26
+
+### Added
+
+- **`docs/tensorrt-llm-investigation.md`** — a dated desk investigation (no live
+  run) of serving the MTP 27B primary (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`)
+  with **TensorRT-LLM** (`trtllm-serve`) on the DGX Spark (GB10/SM121) instead of
+  vLLM. **Verdict: not yet** — TRT-LLM MTP spec-decode is DeepSeek-only in stable
+  releases and the Qwen3.6 hybrid GDN/DeltaNet kernels are RC-only (both land in
+  1.3.0 RC builds); serving on a stable TRT-LLM today would forfeit the ~2.4×
+  decode win the checkpoint exists for. Records the engine-integration seam (the
+  request path — gateway routing + `lobes assess`/`benchmark` — is already
+  engine-agnostic, while the gateway `/status` `vllm:*` metrics path, `catalog.py`,
+  `switch.py`, templates, and `VLLM_*` env vars are vLLM-specific), a feasibility
+  table by dimension with confidence levels, a comparison against the recorded
+  vLLM baseline, a minimal spike recipe, an explicit revisit trigger (TRT-LLM
+  1.3.0 stable), and 11 cited sources. Linked from the README per-model notes.
+
+### Changed
+
+### Fixed
+
 ## [0.28.0] - 2026-06-23
 
 ### Added
