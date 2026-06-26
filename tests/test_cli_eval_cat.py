@@ -213,6 +213,44 @@ def test_eval_cat_malformed_json_line(tmp_path) -> None:
     assert exc.value.code == EXIT_USER_ERROR
 
 
+def test_eval_cat_non_integer_seed(tmp_path) -> None:
+    """A suite line with a non-integer seed raises ModelGearError (not ValueError)."""
+    suite = tmp_path / "cat.jsonl"
+    suite.write_text('{"seed": "abc"}\n', encoding="utf-8")
+
+    args = _make_cat_args(suite=str(suite))
+    with pytest.raises(ModelGearError) as exc:
+        eval_cmd.cmd_eval_cat(args)
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "seed" in exc.value.message.lower()
+    # Must NOT be a raw ValueError leaking through
+    assert "1" in exc.value.message or "line" in exc.value.message.lower()
+
+
+def test_eval_cat_invalid_mode_in_suite(tmp_path) -> None:
+    """A suite line with an invalid mode value raises ModelGearError."""
+    suite = tmp_path / "cat.jsonl"
+    suite.write_text('{"seed": 1, "mode": "sideways"}\n', encoding="utf-8")
+
+    args = _make_cat_args(suite=str(suite))
+    with pytest.raises(ModelGearError) as exc:
+        eval_cmd.cmd_eval_cat(args)
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "mode" in exc.value.message.lower()
+
+
+def test_eval_cat_non_int_n_characters(tmp_path) -> None:
+    """A suite line with a non-int n_characters raises ModelGearError."""
+    suite = tmp_path / "cat.jsonl"
+    suite.write_text('{"seed": 1, "n_characters": "many"}\n', encoding="utf-8")
+
+    args = _make_cat_args(suite=str(suite))
+    with pytest.raises(ModelGearError) as exc:
+        eval_cmd.cmd_eval_cat(args)
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "n_characters" in exc.value.message.lower()
+
+
 # ---------------------------------------------------------------------------
 # Text-mode output
 # ---------------------------------------------------------------------------
