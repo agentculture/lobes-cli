@@ -77,8 +77,8 @@ lobes eval minor --suite tests/fixtures/minor_suite.jsonl
 Reports per-case `PASS` / `FAIL` and an aggregate `passed/total`. Pass `--json`
 for a structured report (`passed`, `total`, `cases`). Exit code is always 0 —
 pass/fail lives in the report, not the exit code. A missing suite file is the
-only non-zero exit. The default base URL for `eval` is
-`http://localhost:8001/v1`; override with `--base-url`.
+only non-zero exit. All three verbs default `--base-url` to the gateway
+`http://localhost:8000/v1` (override with `--base-url`).
 
 ## Governance
 
