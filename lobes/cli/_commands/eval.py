@@ -60,6 +60,8 @@ from lobes.minor import chat_text  # patched in tests via eval_cmd.chat_text
 
 _DEFAULT_BASE_URL = "http://localhost:8000/v1"
 _DEFAULT_TIMEOUT = 60
+_JSON_HELP = "Emit structured JSON."
+_CAT_VALID_MODES = ("open", "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +172,39 @@ def _load_cat_suite(path: Path) -> list[dict]:
                 message=f"suite line {lineno}: missing required field 'seed'",
                 remediation="each cat-suite case object must have an integer 'seed' field",
             )
+        try:
+            int(obj["seed"])
+        except (TypeError, ValueError):
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"suite line {lineno}: 'seed' must be an integer, " f"got {obj['seed']!r}"
+                ),
+                remediation="set 'seed' to an integer value (e.g. 42)",
+            )
+        if "mode" in obj and obj["mode"] not in _CAT_VALID_MODES:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"suite line {lineno}: invalid 'mode' {obj['mode']!r} "
+                    f"(must be one of {_CAT_VALID_MODES})"
+                ),
+                remediation="set 'mode' to 'open' or 'closed'",
+            )
+        if "n_characters" in obj:
+            try:
+                n = int(obj["n_characters"])
+                if n < 1:
+                    raise ValueError("non-positive")
+            except (TypeError, ValueError):
+                raise ModelGearError(
+                    code=EXIT_USER_ERROR,
+                    message=(
+                        f"suite line {lineno}: 'n_characters' must be a positive integer, "
+                        f"got {obj['n_characters']!r}"
+                    ),
+                    remediation="set 'n_characters' to a positive integer (e.g. 4)",
+                )
         cases.append(obj)
     return cases
 
@@ -305,7 +340,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "eval",
         help="Read-only: run a JSONL eval suite against a lobes backend.",
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=_JSON_HELP)
     # When called as bare ``lobes eval`` with no sub-verb, print help.
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1], json=False)
 
@@ -342,7 +377,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         metavar="SECS",
         help=f"Socket timeout in seconds (default: {_DEFAULT_TIMEOUT}).",
     )
-    minor_p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    minor_p.add_argument("--json", action="store_true", help=_JSON_HELP)
     minor_p.set_defaults(func=cmd_eval_minor)
 
     cat_p = noun_sub.add_parser(
@@ -399,5 +434,5 @@ def register(sub: argparse._SubParsersAction) -> None:
         metavar="SECS",
         help=f"Socket timeout in seconds (default: {_DEFAULT_TIMEOUT}).",
     )
-    cat_p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    cat_p.add_argument("--json", action="store_true", help=_JSON_HELP)
     cat_p.set_defaults(func=cmd_eval_cat)
