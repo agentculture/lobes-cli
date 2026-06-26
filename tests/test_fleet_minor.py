@@ -1,0 +1,181 @@
+"""Tests for the opt-in vllm-minor service and its gateway routing (t9).
+
+Two concerns:
+1. Gateway routing — with MINOR_BASE_URL / MINOR_SERVED_NAME configured, a
+   ``minor`` Backend is added and ``resolve_model`` / ``order_backends`` route
+   correctly; without those env vars the table is exactly as today.
+2. Compose template — the fleet compose has a ``vllm-minor`` service under the
+   ``minor`` profile, with ``--language-model-only`` and no ``--quantization``
+   flag (bf16 serving).
+"""
+
+from __future__ import annotations
+
+import pathlib
+
+import yaml
+
+from lobes.gateway._config import build_config
+from lobes.gateway._routing import order_backends, resolve_model
+
+_MINOR_SERVED = "Qwen/Qwen3.5-4B"
+_PRIMARY_SERVED = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+
+# ---------------------------------------------------------------------------
+# Gateway routing tests (written before the implementation — TDD)
+# ---------------------------------------------------------------------------
+
+
+def test_minor_backend_not_added_by_default() -> None:
+    """Without MINOR_BASE_URL / MINOR_SERVED_NAME, the routing table is unchanged."""
+    table, _ = build_config({})
+    names = [b.name for b in table.backends]
+    assert "minor" not in names
+    assert len(table.backends) == 1  # only primary — existing invariant must hold
+
+
+def test_minor_backend_added_when_minor_url_set() -> None:
+    """MINOR_BASE_URL alone triggers the minor backend with the default served name."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    names = [b.name for b in table.backends]
+    assert "minor" in names
+    minor = next(b for b in table.backends if b.name == "minor")
+    assert minor.served_name == _MINOR_SERVED
+    assert minor.base_url == "http://vllm-minor:8000"
+    assert minor.task == "generate"
+
+
+def test_minor_backend_added_when_minor_served_name_set() -> None:
+    """MINOR_SERVED_NAME alone triggers the minor backend with the default URL."""
+    table, _ = build_config({"MINOR_SERVED_NAME": _MINOR_SERVED})
+    names = [b.name for b in table.backends]
+    assert "minor" in names
+    minor = next(b for b in table.backends if b.name == "minor")
+    assert minor.base_url == "http://vllm-minor:8000"  # falls back to default
+
+
+def test_minor_backend_url_stripped() -> None:
+    """Trailing slashes are stripped from MINOR_BASE_URL (URL normalisation)."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000/"})
+    minor = next(b for b in table.backends if b.name == "minor")
+    assert minor.base_url == "http://vllm-minor:8000"
+
+
+def test_resolve_model_routes_minor_served_name_to_itself() -> None:
+    """resolve_model returns the minor served name when a minor backend is wired."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    assert resolve_model(table, _MINOR_SERVED) == _MINOR_SERVED
+
+
+def test_resolve_model_primary_unaffected_when_minor_present() -> None:
+    """The primary's served name still resolves correctly alongside the minor."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    assert resolve_model(table, _PRIMARY_SERVED) == _PRIMARY_SERVED
+
+
+def test_order_backends_minor_is_owner_with_primary_failover() -> None:
+    """order_backends: minor is tried first; primary is the generate failover."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    result = order_backends(table, _MINOR_SERVED)
+    names = [b.name for b in result]
+    assert names[0] == "minor"
+    assert "primary" in names  # same-task (generate) failover
+    # All failover backends must be generate tasks.
+    assert all(b.task == "generate" for b in result)
+
+
+def test_primary_failover_includes_minor_when_minor_present() -> None:
+    """If minor is configured, order_backends for primary includes minor as failover."""
+    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    result = order_backends(table, _PRIMARY_SERVED)
+    names = [b.name for b in result]
+    assert names[0] == "primary"
+    assert "minor" in names  # minor is also generate → in the failover pool
+
+
+def test_minor_does_not_pollute_embed_failover_chain() -> None:
+    """The embed backend must NOT fall over to minor (different task families)."""
+    table, _ = build_config(
+        {
+            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "EMBED_URL": "http://vllm-embed:8000",
+            "EMBED_SERVED_NAME": "Qwen/Qwen3-Embedding-0.6B",
+        }
+    )
+    embed_result = order_backends(table, "Qwen/Qwen3-Embedding-0.6B")
+    assert all(b.task == "embed" for b in embed_result)
+    assert not any(b.name == "minor" for b in embed_result)
+
+
+def test_existing_gateway_tests_invariant_unchanged() -> None:
+    """No-env baseline: exactly one backend (primary) — regression guard for t9."""
+    table, _ = build_config({})
+    assert len(table.backends) == 1
+    assert table.backends[0].name == "primary"
+
+
+# ---------------------------------------------------------------------------
+# Compose template assertion tests
+# ---------------------------------------------------------------------------
+
+_COMPOSE_PATH = (
+    pathlib.Path(__file__).parent.parent / "lobes" / "templates" / "fleet" / "docker-compose.yml"
+)
+
+
+def _load_compose() -> dict:
+    with _COMPOSE_PATH.open(encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def test_fleet_compose_has_vllm_minor_service() -> None:
+    """The fleet compose template defines a vllm-minor service."""
+    compose = _load_compose()
+    assert "vllm-minor" in compose["services"], "vllm-minor service missing from fleet compose"
+
+
+def test_vllm_minor_has_minor_profile() -> None:
+    """vllm-minor is opt-in via the 'minor' compose profile."""
+    svc = _load_compose()["services"]["vllm-minor"]
+    profiles = svc.get("profiles", [])
+    assert "minor" in profiles, f"expected 'minor' in profiles, got {profiles!r}"
+
+
+def test_vllm_minor_has_language_model_only() -> None:
+    """vllm-minor command includes --language-model-only (drops the ViT tower)."""
+    svc = _load_compose()["services"]["vllm-minor"]
+    cmd = [str(c) for c in svc.get("command", [])]
+    assert "--language-model-only" in cmd, "--language-model-only missing from vllm-minor command"
+
+
+def test_vllm_minor_has_no_quantization_flag() -> None:
+    """vllm-minor must NOT have --quantization (bf16 = native precision, no quant)."""
+    svc = _load_compose()["services"]["vllm-minor"]
+    cmd = [str(c) for c in svc.get("command", [])]
+    assert not any(
+        c.startswith("--quantization") for c in cmd
+    ), "--quantization must not appear in vllm-minor command (bf16 serving)"
+
+
+def test_vllm_minor_container_name() -> None:
+    """vllm-minor container is named model-gear-vllm-minor."""
+    svc = _load_compose()["services"]["vllm-minor"]
+    assert svc.get("container_name") == "model-gear-vllm-minor"
+
+
+def test_vllm_minor_has_healthcheck() -> None:
+    """vllm-minor has a healthcheck block (same pattern as primary)."""
+    svc = _load_compose()["services"]["vllm-minor"]
+    assert "healthcheck" in svc, "vllm-minor is missing a healthcheck"
+
+
+def test_vllm_minor_default_fleet_unchanged() -> None:
+    """Without the 'minor' profile, the default services are primary/embed/rerank/gateway."""
+    compose = _load_compose()
+    svcs = compose["services"]
+    # The four always-on services must remain (no profiles field = always on).
+    for name in ("vllm-primary", "vllm-embed", "vllm-rerank", "gateway"):
+        svc = svcs[name]
+        assert (
+            "profiles" not in svc
+        ), f"{name} must NOT have a profiles key (it must always start by default)"

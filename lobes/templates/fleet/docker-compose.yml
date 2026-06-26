@@ -209,6 +209,77 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in minor co-resident generate backend --------------------------------
+  # A small (4B, bf16) companion generate model that co-resides with the primary.
+  # Activated by `docker compose --profile minor up -d` (or adding "minor" to
+  # COMPOSE_PROFILES in .env). When active, set MINOR_BASE_URL and
+  # MINOR_SERVED_NAME on the gateway (or rely on the compose defaults passed below)
+  # so the gateway routes `model: Qwen/Qwen3.5-4B` requests directly to this
+  # backend and falls over to the primary on failure.
+  #
+  # GPU budget: at util 0.10 (~13 GiB) this fits alongside the 27B primary (util
+  # 0.6, ~75 GiB) on the 128 GB GB10 with headroom to spare; tuning with the
+  # two embed/rerank gears (util 0.06 each) leaves ~35 GiB free.
+  #
+  # bf16 (NO --quantization flag): quantization="none" in the catalog means
+  # the weights are served at native precision. Do NOT add --quantization here —
+  # passing --quantization=modelopt to a bf16 checkpoint corrupts it.
+  #
+  # --language-model-only: the Qwen3.5-4B checkpoint ships a ViT vision tower;
+  # this flag drops it so only the language trunk loads (text-only serving).
+
+  vllm-minor:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-minor
+    profiles:
+      - minor
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=minor   # → /logs/model-gear/minor-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-minor:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MINOR_MODEL:-Qwen/Qwen3.5-4B}
+      - --served-model-name=${MINOR_SERVED_NAME:-Qwen/Qwen3.5-4B}
+      - --host=0.0.0.0
+      - --port=8000
+      # bf16 — NO --quantization flag (quantization="none" in catalog).
+      # A modest context cap keeps KV-cache small for the co-resident role.
+      - --max-model-len=${VLLM_MINOR_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${VLLM_MINOR_GPU_MEM_UTIL:-0.10}
+      # text-only: drop the ViT vision tower (Qwen3.5-4B ships multimodal by default).
+      - --language-model-only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -229,6 +300,11 @@ services:
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
       # gateway wires a second backend only when these are present).
+      # Minor co-resident generate backend (opt-in: activate with --profile minor
+      # and set MINOR_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in — default fleet is unchanged).
+      - MINOR_BASE_URL=${MINOR_BASE_URL:-}
+      - MINOR_SERVED_NAME=${MINOR_SERVED_NAME:-}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
