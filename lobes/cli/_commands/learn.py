@@ -50,9 +50,9 @@ Commands
 Mutation safety
 ---------------
 Write verbs default to DRY RUN and require --apply to commit: `switch`, `serve`,
-`stop`, `init`, `tunnel`. Agents call CLIs in loops, so safe-by-default is mandatory. The
-read-only verbs (`status`, `assess`, `benchmark`, `overview`, `whoami`,
-`explain`, `doctor`) never change the world.
+`stop`, `init`, `fleet up`, `fleet down`, `tunnel`. Agents call CLIs in loops, so
+safe-by-default is mandatory. The read-only verbs (`status`, `assess`, `benchmark`,
+`overview`, `whoami`, `explain`, `doctor`) never change the world.
 
 Models: supported vs. warm
 --------------------------
