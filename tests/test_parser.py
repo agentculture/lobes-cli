@@ -10,11 +10,16 @@ from lobes.runtime import _parser
 @pytest.mark.parametrize(
     "model, expected",
     [
-        # Qwen3-Coder / Qwen3.6 emit the XML function format → qwen3_coder
+        # Qwen3-Coder / Qwen3.5 / Qwen3.6 emit the XML function format → qwen3_coder
         ("mmangkad/Qwen3.6-27B-NVFP4", "qwen3_coder"),
         ("sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP", "qwen3_coder"),
         ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "qwen3_coder"),
         ("some/qwen3_6-foo", "qwen3_coder"),
+        # Qwen3.5 also emits the XML function-call format → qwen3_coder
+        ("Qwen/Qwen3.5-4B", "qwen3_coder"),
+        ("cosmicproc/Qwen3.5-4B-NVFP4", "qwen3_coder"),
+        ("some/qwen3-5-foo", "qwen3_coder"),
+        ("some/qwen3_5-foo", "qwen3_coder"),
         # Qwen3 dense → hermes
         ("nvidia/Qwen3-32B-NVFP4", "hermes"),
         ("Qwen/Qwen3-8B", "hermes"),
