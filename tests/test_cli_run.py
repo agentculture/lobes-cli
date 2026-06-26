@@ -191,17 +191,35 @@ def test_run_wrong_lobe_raises_error() -> None:
 
 
 def test_run_no_catalog_minor_and_no_model_flag_raises() -> None:
-    """When the catalog has no 'minor' model and --model isn't supplied, raise ModelGearError."""
+    """When the catalog has no 'minor' model and --model isn't supplied, raise ModelGearError.
+
+    The real catalog now ships a role_hint=='minor' gear (t1), so simulate an
+    empty/minor-less catalog by patching the lookup the handler uses.
+    """
     p = _make_parser()
-    # --model is NOT passed; catalog currently has no role_hint=='minor' entry.
+    # --model is NOT passed.
     args = p.parse_args(["run", "minor", "hello", "--base-url", "http://localhost/v1"])
     # Clear the model attr to simulate no --model flag.
     args.model = None
 
-    with pytest.raises(ModelGearError) as exc:
-        run.cmd_run_minor(args)
+    with patch("lobes.cli._commands.run.supported_models", return_value=()):
+        with pytest.raises(ModelGearError) as exc:
+            run.cmd_run_minor(args)
     assert exc.value.code == EXIT_USER_ERROR
     assert "minor" in exc.value.message.lower() or "catalog" in exc.value.message.lower()
+
+
+def test_run_minor_resolves_catalog_model_id(capsys) -> None:
+    """With the real catalog (t1's minor gear) and no --model, the id resolves."""
+    p = _make_parser()
+    args = p.parse_args(["run", "minor", "hello", "--base-url", "http://localhost/v1"])
+    args.model = None  # force catalog resolution
+
+    with patch("lobes.cli._commands.run.chat_text", return_value=_CANNED_TEXT) as mock_ct:
+        rc = run.cmd_run_minor(args)
+
+    assert rc == 0
+    assert mock_ct.call_args.kwargs.get("model") == "Qwen/Qwen3.5-4B"
 
 
 # ---------------------------------------------------------------------------
