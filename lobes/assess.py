@@ -14,8 +14,10 @@ Host-side facts (image tag, GPU memory) are gathered by the command handlers via
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import json
+import statistics
 import time
 import urllib.error
 import urllib.request
@@ -382,6 +384,208 @@ def render_correctness(result: dict) -> str:
             )
         lines.append(f"| tool calling (`tool_choice:auto`) | {detail} |")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Per-lobe perf engine — t3: ttft · concurrent driver · auto-ramp knee
+# ---------------------------------------------------------------------------
+
+
+def measure_prefill_ttft(
+    url: str,
+    model: str,
+    *,
+    input_len: int = 2000,
+    timeout: int = 300,
+) -> dict:
+    """Measure time-to-first-token (TTFT) by timing a ``max_tokens=1`` request.
+
+    Sends a prompt of approximately *input_len* tokens with ``max_tokens=1`` and
+    ``temperature=0``, timing the full round trip.  With only one decode step the
+    elapsed time is dominated by the prefill phase, so it approximates TTFT.
+
+    Returns:
+        ``{"prompt_tokens": int, "ttft_ms": float}``
+    """
+    reps = max(1, input_len // 6)
+    prompt = "Summarize this. " + "The system processes events. " * reps
+    t0 = time.monotonic()
+    d = _post(
+        url.rstrip("/"),
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1,
+            "temperature": 0,
+        },
+        timeout=timeout,
+    )
+    elapsed = time.monotonic() - t0
+    return {
+        "prompt_tokens": d["usage"]["prompt_tokens"],
+        "ttft_ms": round(elapsed * 1000, 1),
+    }
+
+
+def _pct(sorted_vals: list[float], p: int) -> float:
+    """Return the *p*-th percentile of a pre-sorted list (0 ≤ p ≤ 100).
+
+    Uses the nearest-rank method on the sorted input.  Since the input is sorted
+    and we only ever call this with p50 < p95, the invariant ``p95 >= p50`` holds
+    by construction.
+    """
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    idx = int((n - 1) * p / 100)
+    return sorted_vals[idx]
+
+
+def run_concurrent(
+    url: str,
+    model: str,
+    *,
+    concurrency: int,
+    max_tokens: int = 128,
+    timeout: int = 300,
+) -> dict:
+    """Fire *concurrency* chat requests concurrently; return throughput + latency stats.
+
+    Uses :class:`concurrent.futures.ThreadPoolExecutor` with *max_workers=concurrency*
+    so all requests are in-flight simultaneously.  Wall time is measured around the
+    whole batch (``time.monotonic()``).
+
+    Returns:
+        ``{"concurrency": int, "requests_per_s": float, "p50_latency_ms": float,
+        "p95_latency_ms": float, "ms_per_token": float, "total_s": float}``
+
+    * ``requests_per_s`` = concurrency / total_s (batch throughput).
+    * ``p50``/``p95`` are per-request round-trip latencies.
+    * ``ms_per_token`` = mean of (latency_ms / completion_tokens) across requests.
+    """
+    url = url.rstrip("/")
+
+    def _one_request() -> dict:
+        t0 = time.monotonic()
+        d = _post(
+            url,
+            {
+                "model": model,
+                "messages": [{"role": "user", "content": "Write a short paragraph."}],
+                "max_tokens": max_tokens,
+                "temperature": 0,
+            },
+            timeout=timeout,
+        )
+        dt = time.monotonic() - t0
+        ct = d["usage"]["completion_tokens"]
+        return {"latency_ms": dt * 1000.0, "completion_tokens": ct}
+
+    t_batch = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(_one_request) for _ in range(concurrency)]
+        results = [f.result() for f in futures]
+    total_s = time.monotonic() - t_batch
+
+    latencies = sorted(r["latency_ms"] for r in results)
+    p50 = _pct(latencies, 50)
+    p95 = _pct(latencies, 95)
+
+    ms_per_token_vals = [
+        r["latency_ms"] / r["completion_tokens"] for r in results if r["completion_tokens"] > 0
+    ]
+    ms_per_token = statistics.mean(ms_per_token_vals) if ms_per_token_vals else 0.0
+
+    return {
+        "concurrency": concurrency,
+        "requests_per_s": round(concurrency / total_s, 3),
+        "p50_latency_ms": round(p50, 1),
+        "p95_latency_ms": round(p95, 1),
+        "ms_per_token": round(ms_per_token, 3),
+        "total_s": round(total_s, 3),
+    }
+
+
+def _find_knee(rows: list[dict], *, threshold: float = 0.1) -> dict:
+    """Pure throughput-plateau detector; no network calls.
+
+    Walk *rows* (each a dict with ``"concurrency"`` and ``"requests_per_s"``).
+    Stop when the relative gain between consecutive steps falls below *threshold*::
+
+        gain = (rps[i] - rps[i-1]) / rps[i-1]
+
+    The *knee* is the concurrency of the last step **before** the gain dropped
+    (the peak-throughput concurrency).  ``rows`` in the result contains all rows
+    up to (but not including) the declining step.
+
+    Args:
+        rows: List of per-step measurement dicts, ordered by ascending concurrency.
+        threshold: Minimum relative gain to keep ramping (default 0.1 = 10 %).
+
+    Returns:
+        ``{"knee": int, "rows": list[dict]}``
+    """
+    if not rows:
+        return {"knee": 0, "rows": []}
+    if len(rows) == 1:
+        return {"knee": rows[0]["concurrency"], "rows": list(rows)}
+
+    for i in range(1, len(rows)):
+        prev_rps = rows[i - 1]["requests_per_s"]
+        curr_rps = rows[i]["requests_per_s"]
+        if prev_rps == 0:
+            continue  # guard against degenerate data
+        gain = (curr_rps - prev_rps) / prev_rps
+        if gain < threshold:
+            return {"knee": rows[i - 1]["concurrency"], "rows": rows[:i]}
+
+    # All steps gained enough — last step is the peak.
+    return {"knee": rows[-1]["concurrency"], "rows": list(rows)}
+
+
+def auto_ramp_concurrency(
+    url: str,
+    model: str,
+    *,
+    schedule: tuple = (1, 2, 4, 8, 16, 32),
+    threshold: float = 0.1,
+    _measure=None,
+    **kw,
+) -> dict:
+    """Ramp concurrency through *schedule*, stopping when throughput gain plateaus.
+
+    Calls *_measure* (defaults to :func:`run_concurrent`) at each step.  After
+    each step beyond the first, computes the relative throughput gain; if it falls
+    below *threshold*, the ramp stops early (avoiding unnecessary load on the GPU).
+    The final knee is located via :func:`_find_knee` on the accumulated rows.
+
+    Args:
+        url: Base URL of the vLLM endpoint.
+        model: Model identifier to benchmark.
+        schedule: Concurrency levels to try, in ascending order.
+        threshold: Minimum relative gain to keep ramping (default 0.1 = 10 %).
+        _measure: Override the per-step measurement function (useful for testing).
+            Must have signature ``(url, model, *, concurrency, **kw) -> dict``.
+            Defaults to :func:`run_concurrent`.
+        **kw: Extra keyword arguments forwarded to *_measure* (e.g. ``max_tokens``).
+
+    Returns:
+        ``{"knee": int, "rows": list[dict]}`` — same shape as :func:`_find_knee`.
+    """
+    if _measure is None:
+        _measure = run_concurrent
+
+    rows: list[dict] = []
+    for c in schedule:
+        row = _measure(url, model, concurrency=c, **kw)
+        rows.append(row)
+        if len(rows) >= 2:
+            prev_rps = rows[-2]["requests_per_s"]
+            curr_rps = rows[-1]["requests_per_s"]
+            if prev_rps != 0 and (curr_rps - prev_rps) / prev_rps < threshold:
+                break  # plateau detected — no need to go higher
+
+    return _find_knee(rows, threshold=threshold)
 
 
 def render_benchmark(result: dict) -> str:
