@@ -215,6 +215,22 @@ class _FallbackHandler(http.server.BaseHTTPRequestHandler):
 # ===========================================================================
 
 
+def test_softmax_empty_returns_empty() -> None:
+    """_softmax([]) returns [] — no division-by-zero or IndexError."""
+    assert _softmax([]) == []
+
+
+def test_softmax_all_neg_inf_returns_uniform() -> None:
+    """All-inf input returns a finite uniform distribution, never NaN/Inf."""
+    probs = _softmax([float("-inf"), float("-inf")])
+    assert len(probs) == 2
+    assert all(math.isfinite(p) for p in probs), f"non-finite value in {probs}"
+    assert abs(sum(probs) - 1.0) < 1e-9, f"sum={sum(probs)}"
+    # Uniform → each entry == 0.5
+    assert abs(probs[0] - 0.5) < 1e-9
+    assert abs(probs[1] - 0.5) < 1e-9
+
+
 def test_softmax_all_mass_on_max() -> None:
     """All probability mass lands on the max logprob when others are ~ -inf."""
     probs = _softmax([0.0, -1e9, -1e9])
@@ -538,3 +554,102 @@ def test_fallback_first_token_mass_in_range() -> None:
     assert isinstance(ftm, float)
     assert 0.0 <= ftm <= 1.0
     assert abs(ftm - _EXPECTED_FTM) < 1e-9
+
+
+# ===========================================================================
+# Finding A: all-candidate echo logprobs are -inf → must force fallback
+# Handler: probe succeeds (echo_available=True) but every candidate echo
+# returns 400 → completions_echo raises → lp=−inf for all candidates.
+# Request budget:
+#   1 probe  (/v1/completions, "Ping")
+#   1 chat   (/v1/chat/completions)
+#   2 echo   (/v1/completions, one per candidate → 400 → exception → -inf)
+#   = 4 requests total
+# ===========================================================================
+
+
+def test_score_case_all_inf_logprobs_forces_fallback() -> None:
+    """Finding A: when all candidate echo logprobs are -inf, score_case falls back.
+
+    The echo path is probed successfully (gateway_supports_echo returns True),
+    but every completions_echo call for a candidate returns HTTP 400, causing
+    all sequence logprobs to be -inf.  score_case must force the fallback path
+    rather than emitting NaN headline/soft_score.
+    """
+    # Empty logprobs_map → handler returns 400 for any non-Ping echo request.
+    handler = _make_echo_handler({})
+    server, base_url = _make_server(handler)
+    t = _serve_n(server, 4)
+    try:
+        result = score_case(_FAKE_CASE, base_url=base_url, model="m", timeout=10)
+        t.join(timeout=5)
+    finally:
+        server.server_close()
+
+    # Must have forced the fallback path.
+    assert result["echo_available"] is False, "expected echo_available=False"
+    assert result["headline"] == "unavailable", f"headline={result['headline']!r}"
+    assert (
+        result["soft_score"] == result["first_token_mass"]
+    ), f"soft_score={result['soft_score']} != first_token_mass={result['first_token_mass']}"
+    # No value in the result dict may be NaN or Inf.
+    numeric_fields = ["first_token_mass", "soft_score"]
+    for field in numeric_fields:
+        v = result[field]
+        assert math.isfinite(v), f"result[{field!r}] = {v} is not finite"
+    for cand, mass in result["per_candidate"].items():
+        assert math.isfinite(mass), f"per_candidate[{cand!r}] = {mass} is not finite"
+
+
+# ===========================================================================
+# Finding B: whitespace-only token must not inflate every candidate's mass
+# ===========================================================================
+
+
+def test_first_token_mass_whitespace_token_skipped() -> None:
+    """Finding B: a whitespace-only top_logprob token is skipped, not broadcast.
+
+    Without the fix, token " " strips to "" and `first_word.startswith("")`
+    is always True, so exp(logprob(" ")) is added to every candidate's mass,
+    distorting the renormalised distribution.  With the fix, the token is
+    skipped; only the real tokens contribute.
+    """
+    whitespace_lp = -2.0
+    chat_resp = {
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "token": " kitchen",
+                            "logprob": -0.5,
+                            "top_logprobs": [
+                                {"token": " kitchen", "logprob": -0.5},
+                                {"token": " garden", "logprob": -1.5},
+                                # Whitespace-only token — must be ignored.
+                                {"token": " ", "logprob": whitespace_lp},
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    candidates = ("kitchen", "garden")
+    # Expected: whitespace token absent → only kitchen and garden contribute.
+    kitchen_expected = math.exp(-0.5) / (math.exp(-0.5) + math.exp(-1.5))
+
+    mass = _first_token_mass(chat_resp, candidates, "kitchen")
+    assert abs(mass - kitchen_expected) < 1e-9, (
+        f"mass={mass}, expected={kitchen_expected} " f"(whitespace token leaked into distribution)"
+    )
+    # Cross-check: if the bug were present, the whitespace token would inflate
+    # both numerator and denominator — the result would differ from kitchen_expected.
+    ws_prob = math.exp(whitespace_lp)
+    kitchen_prob = math.exp(-0.5)
+    garden_prob = math.exp(-1.5)
+    buggy_kitchen = (kitchen_prob + ws_prob) / (kitchen_prob + garden_prob + 2 * ws_prob)
+    # Ensure the expected value differs from the buggy value (so the test is meaningful).
+    assert (
+        abs(kitchen_expected - buggy_kitchen) > 1e-6
+    ), "Test setup flaw: expected and buggy values are indistinguishable"

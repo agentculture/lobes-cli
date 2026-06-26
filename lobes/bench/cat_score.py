@@ -39,17 +39,30 @@ def _softmax(logprobs: list[float]) -> list[float]:
     Subtracts the maximum before exponentiation so very-negative entries
     (e.g. ``-1e9``) contribute ~0 probability without overflow.
 
+    Degenerate cases are handled safely:
+    * Empty input → ``[]``.
+    * All entries ``-inf`` (or max not finite) → uniform distribution ``[1/n]*n``.
+    * ``total`` is zero or non-finite after exponentiation → uniform distribution.
+
     Args:
         logprobs: List of log-probabilities (may contain very negative floats).
 
     Returns:
-        A probability distribution whose elements sum to 1.0.
+        A probability distribution whose elements sum to 1.0.  Never contains
+        NaN or Inf.
     """
     if not logprobs:
         return []
+    n = len(logprobs)
     max_lp = max(logprobs)
+    if not math.isfinite(max_lp):
+        # All entries are -inf (or the max is otherwise non-finite).
+        # Return a uniform distribution so callers always get finite values.
+        return [1.0 / n] * n
     exps = [math.exp(lp - max_lp) for lp in logprobs]
     total = sum(exps)
+    if total == 0.0 or not math.isfinite(total):
+        return [1.0 / n] * n
     return [e / total for e in exps]
 
 
@@ -122,9 +135,14 @@ def _first_token_mass(
     top_lp_list = chat_resp["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
 
     # Build a normalised token → probability map.
+    # Skip whitespace-only tokens: after strip() they become "" and would
+    # match every candidate via `first_word.startswith("")`, inflating all
+    # candidate masses and distorting the renormalised distribution.
     token_probs: dict[str, float] = {}
     for entry in top_lp_list:
         tok = entry["token"].strip().lower()
+        if not tok:
+            continue
         prob = math.exp(entry["logprob"])
         token_probs[tok] = token_probs.get(tok, 0.0) + prob
 
@@ -221,6 +239,13 @@ def score_case(
                 lp = float("-inf")
             candidate_seq_logprobs.append(lp)
 
+        # If every candidate's logprob is non-finite (-inf), softmax would
+        # return a uniform distribution but the headline would be meaningless.
+        # Force the fallback path so callers get a semantically valid result.
+        if all(not math.isfinite(lp) for lp in candidate_seq_logprobs):
+            echo_available = False
+
+    if echo_available:
         distribution = _softmax(candidate_seq_logprobs)
         per_candidate = dict(zip(case.candidates, distribution))
         answer_idx = list(case.candidates).index(case.answer)
