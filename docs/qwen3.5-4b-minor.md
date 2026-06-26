@@ -182,6 +182,28 @@ production.
 
 ## Serving notes
 
+### Live verification (GB10, vLLM 0.19.0 / nv26.04)
+
+Verified live on the DGX Spark (GB10, sm_121) on 2026-06-26, co-resident with
+the 27B primary. The image's vLLM `0.19.0` registers
+`Qwen3_5ForConditionalGeneration`, and the model serves **coherent** output —
+the known Gated-DeltaNet / FLA corruption bug on Blackwell (fixed upstream only
+in vLLM 0.23.0) did **not** materialize in this config. Serving flags that
+worked:
+
+```text
+--language-model-only            # drop the ViT vision tower
+--max-num-batched-tokens 2096    # GDN cache-alignment constraint
+--max-model-len 4096             # modest; keeps the KV cache small co-resident
+--gpu-memory-utilization 0.10    # ~13 GiB alongside the 27B
+```
+
+`lobes run minor`, `lobes route`, and `lobes eval minor` were all exercised live
+against this backend. Note the model defaults to **thinking mode** (`<think>`
+trace): `lobes route` disables thinking (`chat_template_kwargs.enable_thinking=
+false`) and caps `max_tokens` so the routing decision returns promptly and
+parses — without that, a long reasoning trace times the routing call out.
+
 ### Text-only serving
 
 The checkpoint ships a ViT vision tower. Until vision is tested and enabled,
