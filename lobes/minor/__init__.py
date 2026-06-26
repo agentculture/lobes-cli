@@ -9,7 +9,12 @@ Also re-exports the governance API::
     from lobes.minor import decide, Decision, ROLE, ALLOWED, FORBIDDEN, ESCALATION_CONDITIONS
 """
 
-from lobes.minor._client import chat_completion, chat_text
+from lobes.minor._client import (
+    chat_completion,
+    chat_text,
+    completions_echo,
+    gateway_supports_echo,
+)
 from lobes.minor.governance import (
     ALLOWED,
     ESCALATION_CONDITIONS,
@@ -22,6 +27,8 @@ from lobes.minor.governance import (
 __all__ = [
     "chat_completion",
     "chat_text",
+    "completions_echo",
+    "gateway_supports_echo",
     # governance
     "ROLE",
     "ALLOWED",
