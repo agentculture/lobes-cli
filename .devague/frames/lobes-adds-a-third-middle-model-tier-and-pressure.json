@@ -1,0 +1,330 @@
+{
+  "slug": "lobes-adds-a-third-middle-model-tier-and-pressure",
+  "title": "lobes adds a third middle model tier and pressure-aware tier routing, so three capability tiers (cheap 4B / middle 8B-14B / hard 27B) stay co-resident on the Spark \u2014 downstream agents request a tier instead of a model name, the 27B served context is trimmed to make room, and the middle tier doubles as a LoRA-trainable base",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-29T19:29:08Z",
+  "updated": "2026-06-29T19:43:03Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes adds a third middle model tier and pressure-aware tier routing, so three capability tiers (cheap 4B / middle 8B-14B / hard 27B) stay co-resident on the Spark \u2014 downstream agents request a tier instead of a model name, the 27B served context is trimmed to make room, and the middle tier doubles as a LoRA-trainable base",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "After bring-up, all three generate gears (4B + middle + 27B) plus embed/rerank are simultaneously resident and healthy, verified by lobes fleet status / nvidia-smi, within the 128GB unified-memory budget",
+          "status": "confirmed"
+        },
+        {
+          "id": "h2",
+          "text": "A caller names only a capability tier (cheap/normal/hard) and the gateway/route resolves it to the correct co-resident gear \u2014 no concrete model id crosses the contract boundary",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Downstream Culture mesh agents and tools that today hardcode a model name or backend, plus the operator running the lobes fleet on the shared DGX Spark",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "A concrete downstream caller (e.g. a Culture mesh agent or daria) can switch from a hardcoded model id to a tier alias with no other code change and keep working",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "why_it_matters",
+      "text": "DGX Spark uses unified memory: CPU and GPU share one physical pool, so running the 27B as the default path causes swap thrash. Tiering lets the box behave like a memory-budgeted lab device \u2014 small models carry routine work, the large model is the escalation/authority path",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "On the Spark, running the 27B as the default path is shown to drive swap/iowait up, and routing routine work to the 4B/14B measurably lowers that pressure",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "Two generate gears exist (minor Qwen3.5-4B + 27B primary) but there is no middle tier, no capability-tier contract (callers hardcode model names), and no pressure-aware routing on swap/iowait",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "Today, with only minor(4B) + primary(27B), there is no catalog gear whose role_hint marks it as the middle tier, so route/select cannot offer a normal/middle option",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "Three generate tiers (cheap 4B / middle 8B-14B / hard 27B) are co-resident behind the gateway; a caller asks lobes for a capability tier (cheap/normal/hard) and gets back the chosen model + mode + reason, with pressure-aware fallback when unified memory is under stress",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "After bring-up a caller issues cheap/normal/hard and receives a completion from the matching gear, with mode and reason surfaced",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "This spec delivers the third (middle) tier and the capability-tier routing contract; it does NOT implement LoRA fine-tuning (lobes train stays a follow-up) \u2014 the middle tier is merely chosen as a bf16 base that CAN be LoRA-trained",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "non_goal",
+      "text": "Not dynamically unloading/reloading the 27B per request; the three generate gears stay co-resident \u2014 memory headroom comes from trimming the 27B served context, not from swapping models in and out",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "success_signal",
+      "text": "A downstream caller selects a capability tier (e.g. lobes select --tier normal) and receives the chosen model + mode + reason without ever naming a concrete model; all three generate gears plus embed/rerank fit within the Spark 128GB unified-memory budget",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "The memory math is shown: trimmed-27B KV cache + middle-gear weights+KV + 4B + embed + rerank (+optional audio) sums under the GPU mem-util budget that fits 128GB",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "This spec delivers the third (middle) tier plus the capability-tier routing contract and the full pressure policy; it does NOT implement LoRA fine-tuning itself (lobes train stays a follow-up)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "The shipped scope contains no lobes train / fine-tuning code path; LoRA training appears only as a referenced follow-up",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "decision",
+      "text": "Middle tier = a 14B-class NVFP4 checkpoint (memory-lean ~8GB weights, inference-only escalation reviewer/coder). Exact HF checkpoint id verified separately (candidates: nvidia/Qwen3-14B-NVFP4 or equivalent), consistent with the existing nvidia/Qwen3-32B-NVFP4 candidate",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "risk: A 14B NVFP4 checkpoint must actually load and produce non-gibberish output on the fleet's Blackwell vLLM image; older dense Qwen3 NVFP4 (cf. the supported 32B candidate) is lower-risk than a Qwen3.5/3.6 hybrid which hit a known FLA bug pre-vLLM-0.23",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "decision",
+      "text": "27B primary served context is trimmed from full 256K (262144) to 128K (131072) via PRIMARY_MAX_MODEL_LEN, freeing roughly half the KV cache to make room for the co-resident middle gear",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "decision",
+      "text": "Tier-request surface is the gateway model-alias ONLY: a caller sends model=cheap|normal|hard to the OpenAI-compatible endpoint and the gateway resolves it to the 4B/14B/27B generate gear. No new 'lobes select --tier' verb and no 'route --tier' field in this spec",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "decision",
+      "text": "Full pressure policy is in scope: lobes senses host memory pressure (swap%, iowait%) and applies the issue #68 thresholds, including a degraded-mode state machine and pressure-aware downgrade",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "LoRA training target is the existing 4B bf16 minor lobe; the 14B NVFP4 middle tier is inference-only and is NOT a LoRA base. The 'three tiers to scale work and train loras' goal = scale inference across 3 tiers + keep the 4B as the trainable base",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "All three generate gears (4B bf16 + 14B NVFP4 + 27B@128K) plus the embed and rerank pooling gears are simultaneously resident and healthy within the Spark 128GB unified-memory budget",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "The GPU mem-util budget is shown to sum under 1.0 (27B@128K + 14B-NVFP4 + 4B + embed + rerank) AND lobes fleet status reports all five gears healthy after bring-up on the Spark",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "The gateway resolves the model aliases cheap/normal/hard to the 4B/14B/27B generate gears respectively, as a same-task (generate) alias layer on top of the existing task-family routing",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "An OpenAI request with model=normal returns a chat completion whose served model is the 14B gear; an embed request still never fails over to a generate gear (same-task constraint preserved)",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "lobes samples host memory pressure read-only (swap_used_percent + iowait_percent, from /proc) without mutating the system",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Pressure fields are populated from real /proc readings on the Spark and the sampler is side-effect-free (no writes, no container restarts)",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "Pressure thresholds from issue #68 drive tier resolution and a degraded-mode state machine (swap>50 avoid new hard jobs; swap>65 prefer cheap/middle; swap>75 degraded=cheap-only; iowait>25 no new hard; iowait>50 emergency degraded); under degraded mode a model=hard request resolves down to a permitted tier and the response reports reason=pressure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "An injected/simulated swap>75% causes a model=hard request to be served by the cheap tier with reason=pressure; every threshold is config-driven, not hardcoded magic numbers",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "A manual override lets a caller force the requested tier despite pressure (bypassing the automatic downgrade); the override and the downgrade reason cross the OpenAI-compatible boundary via HTTP headers, and the response model field reflects the actually-served model",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "With the override header set, model=hard is served by the 27B even under simulated degraded pressure; without it, the same request downgrades",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "A read-only observability surface reports the active selection as {tier, model, mode(warm|lazy|disabled|degraded), reason(default|escalation|pressure|manual_override), pressure{swap_used_percent, iowait_percent}} \u2014 e.g. via lobes status --pressure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "lobes status --pressure emits exactly {tier, model, mode, reason, pressure{swap_used_percent, iowait_percent}} and mutates nothing (read-only, like the existing status verb)",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "A downstream caller selects a capability tier by sending model=cheap|normal|hard to the OpenAI-compatible gateway and receives a completion from the right gear without ever naming a concrete model; all three generate gears plus embed/rerank fit within the Spark 128GB unified-memory budget",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The memory math is shown: trimmed-27B@128K KV cache + 14B-NVFP4 weights+KV + 4B + embed + rerank (+optional audio) sums under the GPU mem-util budget that fits 128GB",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Exact 14B NVFP4 HF checkpoint id (and whether a same-generation Qwen3.6 14B NVFP4 exists, vs falling back to a Qwen3 14B NVFP4)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Exact HTTP header names for tier override + downgrade reason, and whether a streaming response can carry the reason (header vs first-chunk metadata)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    }
+  ]
+}
