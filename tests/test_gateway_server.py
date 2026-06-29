@@ -354,3 +354,183 @@ def test_handle_post_rerank_path_routes_to_rerank_backend() -> None:
     # rerank backend was called, not the primary.
     assert calls[0][0] == "rerank"
     assert json.loads(calls[0][1])["model"] == _RERANK_SERVED
+
+
+# --- pressure-aware tier downgrade + manual override (t6, #68) ----------------
+
+from lobes.gateway._tier_request import PressureCache  # noqa: E402
+
+
+def _fleet_cfg():
+    """A full three-tier generate fleet with identifiable served names."""
+    return build_config(
+        {
+            "PRIMARY_SERVED_NAME": "PRIMARY",
+            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "MINOR_SERVED_NAME": "MINOR",
+            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
+            "MIDDLE_SERVED_NAME": "MIDDLE",
+        }
+    )
+
+
+_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → degraded/cheap
+_NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
+
+
+def test_handle_post_downgrades_hard_to_cheap_under_pressure() -> None:
+    # model=hard under simulated high swap → forwarded to the cheap served name
+    # (the minor gear) with X-Lobes-Tier-Reason: pressure.
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
+    )
+    assert resp.status == 200
+    assert calls[0][0] == "minor"  # cheap → minor backend
+    assert json.loads(calls[0][1])["model"] == "MINOR"  # body rewritten to served name
+    headers = dict(resp.headers)
+    assert headers["X-Lobes-Tier"] == "cheap"
+    assert headers["X-Lobes-Tier-Reason"] == "pressure"
+
+
+def test_handle_post_override_forces_hard_under_pressure() -> None:
+    # X-Lobes-Override forces the requested tier despite degraded pressure.
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    resp = S.handle_post(
+        table,
+        cfg,
+        "/v1/chat/completions",
+        [],
+        b'{"model":"hard"}',
+        opener,
+        pressure=_HIGH_SWAP,
+        override=True,
+    )
+    assert resp.status == 200
+    assert calls[0][0] == "primary"  # override → still the 27B
+    assert json.loads(calls[0][1])["model"] == "PRIMARY"
+    headers = dict(resp.headers)
+    assert headers["X-Lobes-Tier"] == "hard"
+    assert headers["X-Lobes-Tier-Reason"] == "manual_override"
+
+
+def test_handle_post_no_pressure_keeps_hard_reason_default() -> None:
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_NO_PRESSURE
+    )
+    assert calls[0][0] == "primary"
+    headers = dict(resp.headers)
+    assert headers["X-Lobes-Tier"] == "hard"
+    assert headers["X-Lobes-Tier-Reason"] == "default"
+
+
+def test_handle_post_plain_model_gets_no_tier_headers() -> None:
+    # A concrete model id is never downgraded and carries no tier headers, even
+    # under high pressure — the existing routing path is untouched.
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', opener, pressure=_HIGH_SWAP
+    )
+    assert calls[0][0] == "primary"
+    headers = dict(resp.headers)
+    assert "X-Lobes-Tier" not in headers
+    assert "X-Lobes-Tier-Reason" not in headers
+
+
+def test_handle_post_without_pressure_skips_downgrade_layer() -> None:
+    # pressure=None (no cache wired) → tier aliases resolve via the static table
+    # (t5 behaviour), no tier headers, no downgrade.
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener)
+    assert calls[0][0] == "primary"  # hard → primary via static alias
+    assert "X-Lobes-Tier" not in dict(resp.headers)
+
+
+# --- loopback: tier headers are emitted BEFORE the streamed body --------------
+
+
+@pytest.fixture
+def tier_gateway(monkeypatch):
+    """A real ThreadingHTTPServer wired with a PressureCache fixed at high swap.
+
+    open_upstream is stubbed (no real backend). Streaming responses echo the
+    backend the request routed to so the test can see the downgrade on the wire.
+    """
+    table, cfg = _fleet_cfg()
+    cache = PressureCache(sampler=lambda: dict(_HIGH_SWAP), interval=1000, start=False)
+
+    def fake_open(backend, path, body, headers, *, connect_timeout, read_timeout):
+        tag = backend.name.encode()
+        if S.is_streaming(body):
+            return _FakeUpstream(200, chunks=[b"data: " + tag + b"\n\n", b"data: end\n\n"])
+        return _FakeUpstream(200, body=b'{"echo": "' + tag + b'"}')
+
+    monkeypatch.setattr(S, "open_upstream", fake_open)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg, cache))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        cache.stop()
+
+
+def test_integration_streaming_downgrade_headers_precede_body(tier_gateway) -> None:
+    # Raw socket so we can see the header block lands before the SSE data chunks.
+    host, port = tier_gateway.removeprefix("http://").split(":")
+    body = b'{"model":"hard","stream":true}'
+    request = (
+        b"POST /v1/chat/completions HTTP/1.1\r\n"
+        b"Host: x\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: %d\r\n\r\n" % len(body)
+    ) + body
+    with socket.create_connection((host, int(port)), timeout=5) as sock:
+        sock.sendall(request)
+        buf = b""
+        while b"0\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+    head, _, _rest = buf.partition(b"\r\n\r\n")
+    # Tier headers are in the HTTP header block (before the body separator).
+    assert b"X-Lobes-Tier: cheap" in head
+    assert b"X-Lobes-Tier-Reason: pressure" in head
+    # And the downgrade actually happened on the wire: routed to the minor gear.
+    assert b"data: minor\n\n" in buf
+    # Header block precedes the first data chunk (no metadata smuggled into body).
+    assert buf.index(b"X-Lobes-Tier-Reason") < buf.index(b"data: minor")
+
+
+def test_integration_override_header_forces_hard(tier_gateway) -> None:
+    host, port = tier_gateway.removeprefix("http://").split(":")
+    body = b'{"model":"hard","stream":true}'
+    request = (
+        b"POST /v1/chat/completions HTTP/1.1\r\n"
+        b"Host: x\r\n"
+        b"Content-Type: application/json\r\n"
+        b"X-Lobes-Override: 1\r\n"
+        b"Content-Length: %d\r\n\r\n" % len(body)
+    ) + body
+    with socket.create_connection((host, int(port)), timeout=5) as sock:
+        sock.sendall(request)
+        buf = b""
+        while b"0\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+    head, _, _rest = buf.partition(b"\r\n\r\n")
+    assert b"X-Lobes-Tier: hard" in head
+    assert b"X-Lobes-Tier-Reason: manual_override" in head
+    assert b"data: primary\n\n" in buf  # override → the 27B primary on the wire
