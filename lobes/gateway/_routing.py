@@ -7,6 +7,7 @@ module that touches ``http.client`` / sockets.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 
@@ -37,6 +38,40 @@ def is_audio_path(path: str) -> bool:
     the routing table knows about.
     """
     return path.split("?", 1)[0].startswith("/v1/audio/")
+
+
+def tier_aliases(
+    backends: Iterable[Backend],
+    tier_role: Mapping[str, str],
+) -> dict[str, str]:
+    """Map each capability tier alias to a wired generate backend's served name.
+
+    ``tier_role`` is :data:`lobes.catalog.TIER_ROLE` — an *ordered* map of tier
+    alias → backend role (``cheap``→``minor`` / ``normal``→``middle`` /
+    ``hard``→``primary``), ascending capability in key order. A backend's role is
+    its :attr:`Backend.name` (``"primary"`` / ``"minor"`` / ``"middle"`` / …), so
+    a tier resolves to the served name of the *generate* backend whose ``name``
+    equals the tier's role.
+
+    Fallback contract: when a tier's own backend is not wired, the alias falls
+    back **upward** to the nearest available higher tier — ultimately the
+    always-present ``primary`` (so ``normal``→primary when the middle gear is
+    absent, and ``cheap``→middle, else primary, when the minor gear is absent).
+    ``hard`` therefore always resolves to primary. Pooling backends (embed /
+    score) are ignored: tier aliases are a *generate-only* layer on top of the
+    task-family routing, so an embed request can never reach one via a tier name.
+    """
+    served_by_role = {b.name: b.served_name for b in backends if b.task == "generate"}
+    tiers = list(tier_role)  # ascending capability (cheap, normal, hard)
+    out: dict[str, str] = {}
+    for i, tier in enumerate(tiers):
+        # Walk this tier then every higher one; the first wired role wins.
+        for higher in tiers[i:]:
+            served = served_by_role.get(tier_role[higher])
+            if served is not None:
+                out[tier] = served
+                break
+    return out
 
 
 def resolve_model(table: RoutingTable, requested: str | None) -> str:
