@@ -1,0 +1,155 @@
+"""Tests for the 14B-class NVFP4 middle gear and the tier->role_hint map (t1, issue #68).
+
+Acceptance criteria:
+- catalog.py defines a generate gear with role_hint='middle' (nvidia/Qwen3-14B-NVFP4)
+- A tier->role_hint map exists at module level: cheap->minor / normal->middle / hard->primary
+- tool_parser == infer_parser(id) and quantization is non-empty
+- tests assert the middle gear exists, is task=generate, and the tier map resolves
+  cheap/normal/hard to the 4B/14B/27B gears respectively
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from lobes.catalog import (
+    SUPPORTED_MODELS,
+    TIER_ROLE,
+    resolve_tier,
+)
+from lobes.runtime._parser import infer_parser
+
+_MIDDLE_ID = "nvidia/Qwen3-14B-NVFP4"
+_MINOR_ID = "Qwen/Qwen3.5-4B"
+_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+
+
+# ---------------------------------------------------------------------------
+# Middle gear catalog entry
+# ---------------------------------------------------------------------------
+
+
+def test_middle_gear_exists() -> None:
+    """The 14B-class NVFP4 middle gear must be present in the catalog."""
+    ids = [m.id for m in SUPPORTED_MODELS]
+    assert _MIDDLE_ID in ids, f"{_MIDDLE_ID} not found in catalog"
+
+
+def test_middle_gear_task_is_generate() -> None:
+    """The middle gear must be a generate (chat/completion) model."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.task == "generate"
+
+
+def test_middle_gear_role_hint_is_middle() -> None:
+    """The middle gear must carry role_hint='middle'."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.role_hint == "middle"
+
+
+def test_middle_gear_tool_parser_matches_infer_parser() -> None:
+    """tool_parser must agree with what the runtime would auto-select.
+
+    The catalog is the single source of truth for parser values;
+    lobes switch uses infer_parser to auto-select — they must match.
+    """
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert infer_parser(middle.id) == middle.tool_parser
+
+
+def test_middle_gear_quantization_is_nonempty() -> None:
+    """Generate gears must have a non-empty quantization field."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.quantization, f"{_MIDDLE_ID}: quantization must be non-empty for a generate gear"
+
+
+def test_middle_gear_status_is_configured() -> None:
+    """The 14B is a candidate not yet load-tested — status must be 'configured'."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.status == "configured"
+
+
+def test_middle_gear_has_positive_native_max_model_len() -> None:
+    """lobes switch relies on native_max_model_len to clamp boot context."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.native_max_model_len > 0
+
+
+def test_middle_gear_generate_fields_are_zero_dimension_and_empty_hf_overrides() -> None:
+    """Generate models must have dimension==0 and empty hf_overrides."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert middle.dimension == 0
+    assert middle.hf_overrides == ""
+
+
+def test_middle_gear_has_no_moe_backend() -> None:
+    """The 14B is a dense model — moe_backend must be empty."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert not middle.moe_backend, f"{_MIDDLE_ID}: moe_backend must be empty for a dense model"
+    assert not middle.shape.lower().startswith("moe")
+
+
+def test_middle_gear_has_no_speculative_config() -> None:
+    """The 14B checkpoint has no MTP draft head — speculative_config must be empty."""
+    middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
+    assert "MTP" not in middle.id.upper()
+    assert middle.speculative_config == ""
+
+
+# ---------------------------------------------------------------------------
+# Tier -> role_hint map
+# ---------------------------------------------------------------------------
+
+
+def test_tier_role_map_exists_and_has_three_tiers() -> None:
+    """TIER_ROLE must be a module-level dict with cheap/normal/hard keys."""
+    assert isinstance(TIER_ROLE, dict)
+    assert set(TIER_ROLE.keys()) >= {"cheap", "normal", "hard"}
+
+
+def test_tier_role_map_values() -> None:
+    """cheap->minor / normal->middle / hard->primary."""
+    assert TIER_ROLE["cheap"] == "minor"
+    assert TIER_ROLE["normal"] == "middle"
+    assert TIER_ROLE["hard"] == "primary"
+
+
+# ---------------------------------------------------------------------------
+# resolve_tier helper
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tier_cheap_returns_minor_gear() -> None:
+    """resolve_tier('cheap') must return the 4B minor gear."""
+    model = resolve_tier("cheap")
+    assert model.id == _MINOR_ID
+    assert model.role_hint == "minor"
+
+
+def test_resolve_tier_normal_returns_middle_gear() -> None:
+    """resolve_tier('normal') must return the 14B middle gear."""
+    model = resolve_tier("normal")
+    assert model.id == _MIDDLE_ID
+    assert model.role_hint == "middle"
+
+
+def test_resolve_tier_hard_returns_primary_gear() -> None:
+    """resolve_tier('hard') must return the 27B primary generate gear."""
+    model = resolve_tier("hard")
+    assert model.role_hint == "primary"
+    assert model.task == "generate"
+
+
+def test_resolve_tier_unknown_raises_value_error() -> None:
+    """resolve_tier must raise ValueError for an unknown tier name."""
+    with pytest.raises(ValueError, match="unknown tier"):
+        resolve_tier("ultra")
+
+
+def test_resolve_tier_returns_supported_model_instance() -> None:
+    """resolve_tier must return a SupportedModel, not a string."""
+    from lobes.catalog import SupportedModel
+
+    for tier in ("cheap", "normal", "hard"):
+        model = resolve_tier(tier)
+        assert isinstance(model, SupportedModel), f"resolve_tier({tier!r}) returned {type(model)}"
