@@ -12,12 +12,12 @@
 #   lobes fleet status             # container states + gateway /health + /v1/models
 #
 # Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). One generate
-# backend by default: the Qwen primary keeps its load-tested headroom (util 0.6,
-# full 256K context), with the ~0.6B embed/rerank gears (util 0.06 each) co-resident.
-# To add a warm *generate* fallback, wire a vllm-fallback service +
-# FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway (the gateway adds the second
-# generate backend when those are set) and drop both generate GPU utils so they
-# sum well under 1.0 — two ~30B NVFP4 models barely co-fit a GB10.
+# backend by default: the Qwen primary at util 0.45 and 128K context, with the
+# ~0.6B embed/rerank gears (util 0.06 each) co-resident. The context reduction
+# (256K→128K) makes room for the opt-in vllm-middle 14B gear (util 0.12) without
+# touching primary weights — see env.example GPU budget. To add a warm *generate*
+# fallback, wire a vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on
+# the gateway and drop both generate GPU utils so they sum well under 1.0.
 services:
   vllm-primary:
     image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
@@ -60,8 +60,8 @@ services:
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
       - --kv-cache-dtype=fp8
-      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-262144}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.6}
+      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.45}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
@@ -98,12 +98,13 @@ services:
   # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
 
   # --- Embedding + reranker gears (co-resident on the GB10) -----------------
-  # Co-residency budget: primary at util 0.6 (~75 GiB) + two 0.6B gears at
-  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) sum well
-  # under 1.0 on the 128 GB GB10. The gears are served at --max-model-len 8192 so
-  # KV cache stays tiny — these are short-context workloads (embed/rerank, not
-  # generation). No quantization, tool, reasoning, or speculative flags — they are
-  # not needed for the pooling runner and would interfere with --runner/--convert.
+  # Co-residency budget: primary at util 0.45 (~56 GiB) + two 0.6B gears at
+  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) + opt-in
+  # middle 14B at util 0.12 (~15 GiB) sums to 0.79 on the 128 GB GB10. The gears
+  # are served at --max-model-len 8192 so KV cache stays tiny — these are
+  # short-context workloads (embed/rerank, not generation). No quantization, tool,
+  # reasoning, or speculative flags — they are not needed for the pooling runner
+  # and would interfere with --runner/--convert.
 
   vllm-embed:
     image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
@@ -280,6 +281,79 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in middle co-resident generate backend ----------------------------
+  # A 14B NVFP4 companion generate model that co-resides with the primary.
+  # Activated by `docker compose --profile middle up -d` (or adding "middle" to
+  # COMPOSE_PROFILES in .env). When active, set MIDDLE_BASE_URL and
+  # MIDDLE_SERVED_NAME on the gateway (or rely on the compose defaults passed
+  # below) so the gateway routes `model: nvidia/Qwen3-14B-NVFP4` requests
+  # directly to this backend and falls over to the primary on failure.
+  #
+  # GPU budget: at util 0.12 (~15 GiB) this fits alongside the 27B primary
+  # (util 0.45, 128K context, ~56 GiB) on the 128 GB GB10 with headroom to
+  # spare; see env.example for the full budget line. Primary context is trimmed
+  # to 128K to free KV cache — the GPU weight budget alone does NOT free memory,
+  # vLLM fills its util ceiling with KV cache regardless of --max-model-len.
+  #
+  # --quantization=modelopt_fp4: this is the NVFP4 path for the nvidia/ Qwen3
+  # checkpoints (same as the 32B dense entry). Do NOT omit it — unlike the
+  # bf16 minor, the 14B checkpoint was quantised and must be served at FP4.
+  # Context is set to 32K by default (YaRN can extend to 131K — see catalog).
+
+  vllm-middle:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-middle
+    profiles:
+      - middle
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=middle   # → /logs/model-gear/middle-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-middle:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MIDDLE_MODEL:-nvidia/Qwen3-14B-NVFP4}
+      - --served-model-name=${MIDDLE_SERVED_NAME:-nvidia/Qwen3-14B-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      # NVFP4 quantization (modelopt_fp4 = the native SM120 FP4 path).
+      - --quantization=${MIDDLE_QUANTIZATION:-modelopt_fp4}
+      # 32K default context; raise MIDDLE_MAX_MODEL_LEN up to 131072 for YaRN
+      # extended context if GPU budget allows (see env.example for budget math).
+      - --max-model-len=${MIDDLE_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${MIDDLE_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=${MIDDLE_TOOL_CALL_PARSER:-hermes}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -305,6 +379,11 @@ services:
       # unless the operator explicitly opts in — default fleet is unchanged).
       - MINOR_BASE_URL=${MINOR_BASE_URL:-}
       - MINOR_SERVED_NAME=${MINOR_SERVED_NAME:-}
+      # Middle co-resident generate backend (opt-in: activate with --profile middle
+      # and set MIDDLE_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in — default fleet is unchanged).
+      - MIDDLE_BASE_URL=${MIDDLE_BASE_URL:-}
+      - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
