@@ -160,6 +160,28 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         ),
     ),
     SupportedModel(
+        id="nvidia/Qwen3-14B-NVFP4",
+        # 14B dense NVFP4 candidate — the fleet's "middle" tier between the 4B
+        # minor (cheap/fast) and the 27B primary (hard/full-capability). Not yet
+        # load-tested on the DGX Spark (status="configured"); verify before
+        # promoting to load-tested. 32K native context (→131K via YaRN, same as
+        # the 32B entry). Dense architecture like Qwen3-32B-NVFP4 — no MoE, no
+        # MTP draft head, no hf_overrides. See docs/qwen3-14b-nvfp4.md.
+        # Consistent with the nvidia/ Qwen3-32B-NVFP4 entry (same org, NVFP4,
+        # hermes tool-call format, modelopt_fp4 quantization). The exact HF
+        # checkpoint id is an accepted plan risk (issue #68, t1): verify on
+        # the Spark and promote status to load-tested once confirmed.
+        role_hint="middle",
+        shape="dense",
+        context="32K (→131K via YaRN)",
+        native_max_model_len=32768,
+        tool_parser="hermes",
+        quantization="modelopt_fp4",
+        status="configured",
+        doc="qwen3-14b-nvfp4.md",
+        task="generate",
+    ),
+    SupportedModel(
         id="Qwen/Qwen3.5-4B",
         # bf16 base (the unsloth-LoRA fine-tune target): the fleet's first LoRA
         # target and "minor" small-brain companion to the 27B primary. Multimodal
@@ -220,6 +242,42 @@ def as_dicts() -> list[dict[str, str]]:
 # checkpoint's tokenizer_config declares a class absent from the nv26.04 image; see
 # docs/qwen3.6-27b-text-nvfp4-mtp.md caveat 1). Drop once fixed upstream (issue #29).
 MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
+
+
+# ---------------------------------------------------------------------------
+# Tier → role_hint map (issue #68 — three-tier fleet: cheap/normal/hard)
+# ---------------------------------------------------------------------------
+
+#: Maps tier alias to the ``role_hint`` of the gear that serves it.
+#: cheap  → minor   (4B bf16 small-brain companion — fast, low memory)
+#: normal → middle  (14B NVFP4 — balanced capability / cost)
+#: hard   → primary (27B MTP primary — full capability)
+TIER_ROLE: dict[str, str] = {
+    "cheap": "minor",
+    "normal": "middle",
+    "hard": "primary",
+}
+
+
+def resolve_tier(tier: str) -> "SupportedModel":
+    """Return the *first* generate-task ``SupportedModel`` whose ``role_hint``
+    matches ``TIER_ROLE[tier]``.
+
+    :param tier: A tier alias — one of ``"cheap"``, ``"normal"``, ``"hard"``.
+    :raises ValueError: If *tier* is not a known key in :data:`TIER_ROLE`.
+    """
+    role = TIER_ROLE.get(tier)
+    if role is None:
+        known = ", ".join(sorted(TIER_ROLE))
+        raise ValueError(f"unknown tier {tier!r} — must be one of: {known}")
+    for model in SUPPORTED_MODELS:
+        if model.role_hint == role and model.task == "generate":
+            return model
+    # Should never happen if the catalog is internally consistent.
+    raise LookupError(  # pragma: no cover
+        f"no generate-task model with role_hint={role!r} found in catalog "
+        f"(tier={tier!r}); catalog may be incomplete"
+    )
 
 
 def mtp_compose_command_items() -> list[str]:
