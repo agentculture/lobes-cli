@@ -179,3 +179,79 @@ def test_vllm_minor_default_fleet_unchanged() -> None:
         assert (
             "profiles" not in svc
         ), f"{name} must NOT have a profiles key (it must always start by default)"
+
+
+# ---------------------------------------------------------------------------
+# vllm-middle compose template assertion tests (t3)
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_compose_has_vllm_middle_service() -> None:
+    """The fleet compose template defines a vllm-middle service."""
+    compose = _load_compose()
+    assert "vllm-middle" in compose["services"], "vllm-middle service missing from fleet compose"
+
+
+def test_vllm_middle_has_middle_profile() -> None:
+    """vllm-middle is opt-in via the 'middle' compose profile (mirrors vllm-minor pattern)."""
+    svc = _load_compose()["services"]["vllm-middle"]
+    profiles = svc.get("profiles", [])
+    assert "middle" in profiles, f"expected 'middle' in profiles, got {profiles!r}"
+
+
+def test_vllm_middle_has_quantization_flag() -> None:
+    """vllm-middle must have --quantization=modelopt_fp4 (NVFP4 checkpoint)."""
+    svc = _load_compose()["services"]["vllm-middle"]
+    cmd = [str(c) for c in svc.get("command", [])]
+    assert any(
+        c.startswith("--quantization") for c in cmd
+    ), "--quantization missing from vllm-middle command (NVFP4 must be served quantised)"
+
+
+def test_vllm_middle_wired_to_middle_env_vars() -> None:
+    """vllm-middle command references MIDDLE_MAX_MODEL_LEN and MIDDLE_GPU_MEM_UTIL."""
+    svc = _load_compose()["services"]["vllm-middle"]
+    cmd = " ".join(str(c) for c in svc.get("command", []))
+    assert (
+        "MIDDLE_MAX_MODEL_LEN" in cmd
+    ), "MIDDLE_MAX_MODEL_LEN not referenced in vllm-middle command"
+    assert "MIDDLE_GPU_MEM_UTIL" in cmd, "MIDDLE_GPU_MEM_UTIL not referenced in vllm-middle command"
+
+
+def test_vllm_middle_container_name() -> None:
+    """vllm-middle container is named model-gear-vllm-middle."""
+    svc = _load_compose()["services"]["vllm-middle"]
+    assert svc.get("container_name") == "model-gear-vllm-middle"
+
+
+def test_vllm_middle_has_healthcheck() -> None:
+    """vllm-middle has a healthcheck block (same pattern as primary/minor)."""
+    svc = _load_compose()["services"]["vllm-middle"]
+    assert "healthcheck" in svc, "vllm-middle is missing a healthcheck"
+
+
+def test_primary_max_model_len_default_is_128k() -> None:
+    """PRIMARY_MAX_MODEL_LEN default is 131072 (128K, trimmed for co-residency with middle)."""
+    svc = _load_compose()["services"]["vllm-primary"]
+    cmd = [str(c) for c in svc.get("command", [])]
+    max_len_flag = next((c for c in cmd if c.startswith("--max-model-len=")), None)
+    assert max_len_flag is not None, "--max-model-len flag missing from vllm-primary command"
+    # The default (after :-) must be 131072, not the old 262144.
+    assert (
+        "131072" in max_len_flag
+    ), f"PRIMARY_MAX_MODEL_LEN default should be 131072 (128K), got: {max_len_flag!r}"
+    assert (
+        "262144" not in max_len_flag
+    ), "PRIMARY_MAX_MODEL_LEN default must NOT be 262144 — fleet now uses 128K (t3)"
+
+
+def test_gateway_has_middle_env_vars() -> None:
+    """Gateway service passes MIDDLE_BASE_URL and MIDDLE_SERVED_NAME to the container."""
+    gw = _load_compose()["services"]["gateway"]
+    env_lines = [str(e) for e in gw.get("environment", [])]
+    assert any(
+        "MIDDLE_BASE_URL" in e for e in env_lines
+    ), "MIDDLE_BASE_URL missing from gateway environment"
+    assert any(
+        "MIDDLE_SERVED_NAME" in e for e in env_lines
+    ), "MIDDLE_SERVED_NAME missing from gateway environment"

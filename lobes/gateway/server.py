@@ -36,6 +36,11 @@ from lobes.gateway._routing import (
     resolve_model,
     supported_models_payload,
 )
+from lobes.gateway._tier_request import (
+    PressureCache,
+    is_tier_alias,
+    resolve_tier_request,
+)
 
 _CHUNK = 65536
 
@@ -98,6 +103,17 @@ def rewrite_model(body: bytes, served_name: str) -> bytes:
 def filter_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     """Drop hop-by-hop headers (used both for the forwarded request and response)."""
     return [(k, v) for k, v in headers if k.lower() not in _HOP_BY_HOP]
+
+
+# The request header that forces the requested tier despite pressure (t6, #68).
+OVERRIDE_HEADER = "X-Lobes-Override"
+_CONTENT_TYPE_JSON = "application/json"
+_OVERRIDE_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+def is_override(value: str | None) -> bool:
+    """True when ``X-Lobes-Override`` holds a truthy token (``1``/``true``/``yes``)."""
+    return bool(value) and value.strip().lower() in _OVERRIDE_TRUTHY
 
 
 def frame_chunk(chunk: bytes) -> bytes:
@@ -240,14 +256,38 @@ def handle_post(
     req_headers: Iterable[tuple[str, str]],
     body: bytes,
     open_upstream: OpenUpstream,
+    *,
+    pressure: dict[str, float] | None = None,
+    override: bool = False,
 ) -> GatewayResponse:
     """Resolve the model, then try backends in failover order.
 
     Returns the first backend that produces a response **before the body** (2xx
     or 4xx — committed), or a 502 if every backend refused / 5xx'd. ``open_upstream``
     is injected so this is unit-testable without sockets.
+
+    Pressure-aware tier downgrade (t6, #68): when ``pressure`` is supplied *and*
+    the requested model is a capability tier (``cheap``/``normal``/``hard``), the
+    tier is run through :func:`resolve_tier_request` *in front of*
+    :func:`resolve_model` — under memory/iowait pressure a ``hard`` request may be
+    served by a cheaper tier, and the ``X-Lobes-Override`` header (passed as
+    ``override``) forces the requested tier back. The resolved tier + reason are
+    surfaced as ``X-Lobes-Tier`` / ``X-Lobes-Tier-Reason`` response headers
+    (prepended so they reach the client before the body, streaming included). A
+    plain model id, or ``pressure=None`` (no cache wired), takes the exact
+    existing path. The static alias table is never mutated.
     """
-    served = resolve_model(table, extract_model(body))
+    requested = extract_model(body)
+    tier_headers: list[tuple[str, str]] = []
+    if pressure is not None and is_tier_alias(requested):
+        decision = resolve_tier_request(requested, pressure, override, table)
+        served = decision["served_name"]
+        tier_headers = [
+            ("X-Lobes-Tier", decision["served_tier"]),
+            ("X-Lobes-Tier-Reason", decision["reason"]),
+        ]
+    else:
+        served = resolve_model(table, requested)
     streaming = is_streaming(body)
     fwd_body = rewrite_model(body, served)
     fwd_headers = filter_headers(req_headers)
@@ -273,7 +313,7 @@ def handle_post(
         # 2xx or 4xx → commit to this backend (4xx is a client error; no failover).
         return GatewayResponse(
             status=up.status,
-            headers=up.headers,
+            headers=tier_headers + up.headers,
             upstream=up,
             streaming=streaming,
             attempts=attempts,
@@ -281,7 +321,7 @@ def handle_post(
 
     return GatewayResponse(
         status=502,
-        headers=[("Content-Type", "application/json")],
+        headers=tier_headers + [("Content-Type", _CONTENT_TYPE_JSON)],
         body=_error_body("all fleet backends are unavailable", attempts),
         attempts=attempts,
     )
@@ -306,7 +346,7 @@ def handle_audio_post(
     if not cfg.audio_url:
         return GatewayResponse(
             status=404,
-            headers=[("Content-Type", "application/json")],
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
             body=_error_body("audio endpoints are not configured on this deployment", []),
         )
     backend = Backend(name="audio", base_url=cfg.audio_url, served_name="")
@@ -323,7 +363,7 @@ def handle_audio_post(
     except UpstreamError as exc:
         return GatewayResponse(
             status=502,
-            headers=[("Content-Type", "application/json")],
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
             body=_error_body("audio backend is unavailable", [str(exc)]),
         )
     # 2xx, 4xx or 5xx — relay whatever the single audio backend says (no failover).
@@ -418,6 +458,9 @@ class _Handler(BaseHTTPRequestHandler):
     # Set per-server by _make_handler (frozen dataclasses → safe to share).
     table: RoutingTable
     server_config: ServerConfig
+    # Non-blocking host-pressure provider (t6). None → the tier-downgrade layer
+    # is skipped and tier aliases resolve via the static table (the t5 path).
+    pressure_cache: PressureCache | None = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -448,6 +491,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self.server_config, self.path, list(self.headers.items()), body, open_upstream
             )
         else:
+            # Read pressure from the cache (O(1), never samples here) and the
+            # override header so the tier-downgrade layer runs in front of routing.
+            pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
+            override = is_override(self.headers.get(OVERRIDE_HEADER))
             resp = handle_post(
                 self.table,
                 self.server_config,
@@ -455,6 +502,8 @@ class _Handler(BaseHTTPRequestHandler):
                 list(self.headers.items()),
                 body,
                 open_upstream,
+                pressure=pressure,
+                override=override,
             )
         if resp.upstream is None:
             self._send_simple(resp.status, resp.headers, resp.body or b"")
@@ -506,7 +555,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _send_json(self, status: int, obj: dict) -> None:
-        self._send_simple(status, [("Content-Type", "application/json")], json.dumps(obj).encode())
+        self._send_simple(status, [("Content-Type", _CONTENT_TYPE_JSON)], json.dumps(obj).encode())
 
     def _send_simple(self, status: int, headers: list[tuple[str, str]], body: bytes) -> None:
         self.send_response(status)
@@ -521,13 +570,22 @@ class _Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[gateway] %s\n" % (fmt % args))
 
 
-def _make_handler(table: RoutingTable, cfg: ServerConfig) -> type[_Handler]:
-    bound = type("_BoundHandler", (_Handler,), {"table": table, "server_config": cfg})
+def _make_handler(
+    table: RoutingTable, cfg: ServerConfig, pressure_cache: PressureCache | None = None
+) -> type[_Handler]:
+    bound = type(
+        "_BoundHandler",
+        (_Handler,),
+        {"table": table, "server_config": cfg, "pressure_cache": pressure_cache},
+    )
     return bound
 
 
 def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     """Bind and serve forever (the long-lived gateway process)."""
-    httpd = ThreadingHTTPServer((cfg.host, cfg.port), _make_handler(table, cfg))
+    # One pressure cache per process: a background daemon thread refreshes it so
+    # the 150 ms sample never lands on the request path.
+    pressure_cache = PressureCache()
+    httpd = ThreadingHTTPServer((cfg.host, cfg.port), _make_handler(table, cfg, pressure_cache))
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
     httpd.serve_forever()

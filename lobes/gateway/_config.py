@@ -11,13 +11,15 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from lobes.gateway._routing import Backend, RoutingTable
+from lobes.catalog import TIER_ROLE
+from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 
 _DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
+_DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,21 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-minor:8000",
             default_name=_DEFAULT_MINOR,
         ),
+        # The middle co-resident generate backend (14B NVFP4 "normal" tier).
+        # Wired only when MIDDLE_BASE_URL or MIDDLE_SERVED_NAME is present —
+        # i.e. when the operator has activated the compose "middle" profile and
+        # set these vars (absent by default, so the routing table is unchanged
+        # on a standard fleet startup). Mirrors the minor backend exactly; note
+        # the env keys are MIDDLE_* (the URL key is MIDDLE_BASE_URL, not
+        # MIDDLE_URL — matching the minor gear's MINOR_BASE_URL convention).
+        _optional_backend(
+            env,
+            name="middle",
+            url_key="MIDDLE_BASE_URL",
+            name_key="MIDDLE_SERVED_NAME",
+            default_url="http://vllm-middle:8000",
+            default_name=_DEFAULT_MIDDLE,
+        ),
         _optional_backend(
             env,
             name="embed",
@@ -141,10 +158,19 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         ),
     )
     backends = [primary, *(b for b in optional if b is not None)]
+    # The capability-tier layer (issue #68): cheap/normal/hard resolve to the
+    # served name of the wired minor / middle / primary *generate* gear, on top
+    # of the task-family routing. Computed from the wired generate backends using
+    # catalog.TIER_ROLE (no parallel tier map). A tier whose gear is absent falls
+    # back upward to the nearest higher tier (ultimately the always-present
+    # primary). Explicit GATEWAY_ALIASES are merged last so an operator override
+    # wins over a computed tier alias.
+    aliases = tier_aliases(backends, TIER_ROLE)
+    aliases.update(_parse_aliases(env.get("GATEWAY_ALIASES")))
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
-        aliases=_parse_aliases(env.get("GATEWAY_ALIASES")),
+        aliases=aliases,
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0] - 2026-06-30
+
+### Added
+
+- Third capability tier: opt-in `vllm-middle` 14B-NVFP4 generate gear (`COMPOSE_PROFILES=middle`, GPU mem-util 0.12), inference-only (not a LoRA base).
+- Gateway capability-tier aliases — callers send `model=cheap|normal|hard` and the gateway resolves to the 4B/14B/27B generate gears (same-task alias on top of task-family routing) with upward fallback when a tier is absent.
+- Read-only host memory-pressure sampler (`swap_used_percent`/`iowait_percent` from /proc) and a swap/iowait pressure policy with a degraded-mode state machine (env-overridable thresholds).
+- Pressure-aware tier downgrade at the gateway with an `X-Lobes-Override` bypass header; the served tier and reason cross the OpenAI boundary via `X-Lobes-Tier` / `X-Lobes-Tier-Reason` response headers.
+- `lobes status --pressure` — read-only snapshot of the current tier ceiling, mode, reason, and live swap/iowait.
+- `scripts/validate-tiers.sh` + `docs/validate-tiers.md` — operator-run live validation harness for the three-tier fleet on the Spark.
+
+### Changed
+
+- 27B primary default served context trimmed 256K→128K (`PRIMARY_MAX_MODEL_LEN=131072`) and `PRIMARY_GPU_MEM_UTIL` lowered to 0.45 so the co-resident 14B middle gear fits within the 128GB unified-memory budget (0.45 + 0.12 + 0.10 + 0.06 + 0.06 = 0.79).
+
 ## [0.31.1] - 2026-06-27
 
 ### Changed
