@@ -18,8 +18,8 @@ for vLLM speculative decoding and is quantized to **NVFP4** (`modelopt_fp4`).
 
 Architecture highlights:
 
-- **Unified multimodal** (`Gemma4UnifiedForConditionalGeneration`) — text + IMAGE
-  + AUDIO in one checkpoint; the generate lane gains native vision and audio
+- **Unified multimodal** (`Gemma4UnifiedForConditionalGeneration`) — text, image,
+  and audio in one checkpoint; the generate lane gains native vision and audio
   without the realtime overlay.
 - **Native MTP draft head** (`--speculative-config` with `gemma4_mtp` method) —
   speculative decoding baked into the checkpoint, like the 27B primary's
