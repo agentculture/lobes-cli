@@ -57,7 +57,7 @@ def parse_swap_percent(meminfo_text: str) -> float:
         elif key == "SwapFree:":
             free_kb = float(parts[1])
 
-    if total_kb == 0.0:
+    if total_kb <= 0.0:
         return 0.0
     return (total_kb - free_kb) / total_kb * 100.0
 
