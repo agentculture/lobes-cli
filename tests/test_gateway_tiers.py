@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._config import (
+    _DEFAULT_MIDDLE,
     _DEFAULT_MINOR,
     _DEFAULT_MULTIMODAL,
     _DEFAULT_PRIMARY,
@@ -65,6 +66,48 @@ def test_multimodal_default_served_name_is_pinned_gemma_id() -> None:
     table, _ = build_config({"MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000"})
     mm = next(b for b in table.backends if b.name == "multimodal")
     assert mm.served_name == "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+
+
+# --- legacy middle (14B) backend: opt-in, reachable by served name only ------
+
+
+def test_middle_backend_absent_by_default() -> None:
+    # No MIDDLE_* env → the legacy 14B gear is opt-in and not wired.
+    table, _ = build_config({})
+    assert not any(b.name == "middle" for b in table.backends)
+
+
+def test_middle_base_url_wires_generate_backend_with_default_name() -> None:
+    # MIDDLE_BASE_URL alone wires the legacy 14B gear (mirror minor/multimodal).
+    # Regression for #69: dropping this wiring made the `middle` compose profile
+    # + MIDDLE_BASE_URL a no-op (14B requests silently fell back to the primary).
+    table, _ = build_config({"MIDDLE_BASE_URL": "http://vllm-middle:8000/"})
+    mid = next(b for b in table.backends if b.name == "middle")
+    assert mid.task == "generate"
+    assert mid.served_name == _DEFAULT_MIDDLE
+    assert mid.base_url == "http://vllm-middle:8000"  # trailing slash stripped
+
+
+def test_middle_reachable_by_explicit_served_name() -> None:
+    # The 14B is addressable by its served name once the profile is active.
+    table, _ = build_config({"MIDDLE_SERVED_NAME": "nvidia/Qwen3-14B-NVFP4"})
+    assert resolve_model(table, "nvidia/Qwen3-14B-NVFP4") == "nvidia/Qwen3-14B-NVFP4"
+
+
+def test_middle_is_not_a_tier_alias() -> None:
+    # "middle" is not a TIER_ROLE role, so wiring it grants NO tier alias: the
+    # tier vocabulary never resolves to the 14B (normal→multimodal, hard→primary).
+    table, _ = build_config(
+        {
+            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
+            "MIDDLE_SERVED_NAME": "MID-14B",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+        }
+    )
+    assert "middle" not in table.aliases
+    assert resolve_model(table, "middle") == _DEFAULT_PRIMARY  # unknown → default
+    assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
+    assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
 
 
 # --- primary vocabulary: main / minor / multimodal ---------------------------
@@ -307,3 +350,30 @@ def test_explicit_gateway_aliases_coexist_with_tier_aliases() -> None:
     assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
     assert resolve_model(table, "main") == _DEFAULT_PRIMARY
+    # A non-tier custom alias is left untouched (no synonym expansion).
+    assert "fast" in table.aliases and table.aliases["fast"] == _DEFAULT_MINOR
+
+
+def test_legacy_keyed_override_expands_to_canonical_synonym() -> None:
+    # An override keyed by a legacy alias also populates its new-vocab synonym
+    # (hard→main) so the normalized tier-resolution path honours it. Without the
+    # expansion, aliases["main"] would still hold the computed primary name.
+    table, _ = build_config({"GATEWAY_ALIASES": "hard=CUSTOM-27B"})
+    assert table.aliases["hard"] == "CUSTOM-27B"
+    assert table.aliases["main"] == "CUSTOM-27B"
+
+
+def test_canonical_keyed_override_expands_to_legacy_synonym() -> None:
+    # ...and the reverse: a new-vocab override also populates its legacy synonym
+    # (minor→cheap) so resolve_model on either name agrees.
+    table, _ = build_config({"GATEWAY_ALIASES": "minor=CUSTOM-4B"})
+    assert table.aliases["minor"] == "CUSTOM-4B"
+    assert table.aliases["cheap"] == "CUSTOM-4B"
+
+
+def test_explicit_synonym_override_is_not_clobbered_by_expansion() -> None:
+    # When the operator sets BOTH synonyms with different targets, each explicit
+    # key wins — the expansion never overwrites an explicitly-provided synonym.
+    table, _ = build_config({"GATEWAY_ALIASES": "hard=A-27B,main=B-27B"})
+    assert table.aliases["hard"] == "A-27B"
+    assert table.aliases["main"] == "B-27B"

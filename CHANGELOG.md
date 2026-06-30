@@ -15,6 +15,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Reworded the three Gemma-risk markers in `catalog.py` / `runtime/_parser.py` from bare `TODO(risk …)` comments to `Risk … (pending #71)` — the deferred live-validation work is tracked in issue #71 (gemma4_unified won't load on released vLLM images), so the comments now cite the tracking issue instead of an untracked TODO (clears SonarCloud `python:S1135`).
 
+### Fixed
+
+- Gateway: re-wire the legacy 14B `middle` generate backend from `MIDDLE_BASE_URL` / `MIDDLE_SERVED_NAME` in `build_config()`. The #69 14B demotion dropped the wiring but the compose template still ships the `vllm-middle` profile + those env vars, so enabling the profile silently fell back to the primary; the 14B is again reachable by its explicit served name (and, as intended, gets no tier alias). (Qodo)
+- Gateway: a `GATEWAY_ALIASES` operator override keyed by a *legacy* tier alias (`hard`/`cheap`/`normal`) is now honoured on the pressure-aware tier path. Tier requests normalize to the new vocabulary (`hard`→`main`) before the alias lookup, which bypassed a legacy-keyed override; `build_config()` now mirrors a tier-keyed override onto its vocabulary synonyms (explicit keys still win). (Qodo)
+
 ## [0.32.0] - 2026-06-30
 
 ### Added

@@ -138,6 +138,31 @@ def test_back_compat_hard_request_normalizes_and_downgrades() -> None:
     assert hot["reason"] == "pressure"
 
 
+def test_legacy_keyed_operator_override_applies_on_normalized_tier_path() -> None:
+    """A ``GATEWAY_ALIASES`` override keyed by a *legacy* alias (``hard``) still
+    takes effect even though the request normalizes to the new vocab (main).
+
+    Regression for the tier-normalization seam: ``resolve_tier_request`` resolves
+    the served name from the *normalized* tier (``hard``→``main``), so an override
+    keyed only by ``hard`` would be bypassed without the synonym expansion in
+    ``build_config`` — the request would silently fall back to the primary.
+    """
+    table, _ = build_config(
+        {
+            "PRIMARY_SERVED_NAME": "PRIMARY",
+            "GATEWAY_ALIASES": "hard=CUSTOM-27B",
+        }
+    )
+    out = resolve_tier_request("hard", _NO_PRESSURE, override=False, table=table)
+    assert out["served_name"] == "CUSTOM-27B"
+    # The canonical-vocabulary request honours the same override...
+    main_out = resolve_tier_request("main", _NO_PRESSURE, override=False, table=table)
+    assert main_out["served_name"] == "CUSTOM-27B"
+    # ...and the override survives a manual override too (forced, no pressure path).
+    forced = resolve_tier_request("hard", _HIGH_SWAP, override=True, table=table)
+    assert forced["served_name"] == "CUSTOM-27B"
+
+
 def test_plain_model_id_passes_through_unchanged() -> None:
     table = _full_fleet()
     # A concrete model id (not a tier) is returned verbatim, no downgrade.
