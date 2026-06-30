@@ -267,18 +267,30 @@ def test_fleet_compose_multimodal_is_default_on() -> None:
     ), "vllm-multimodal must not have a profiles: key — it must come up with the default fleet"
 
 
-def test_fleet_compose_multimodal_vision_active_and_native_mtp() -> None:
-    """vllm-multimodal: no --language-model-only (vision+audio active); has native-MTP config."""
+def test_fleet_compose_multimodal_vision_active_no_spec_decode() -> None:
+    """vllm-multimodal: no --language-model-only (vision+audio active); NO --speculative-config.
+
+    Gemma4 native MTP needs a separate gemma4_assistant draft model on vLLM 0.21/0.22
+    (the unified checkpoint exposes none), and {"method":"gemma4_mtp"} is rejected —
+    verified live on the Spark (#71). The gear serves without spec-decode until a draft
+    is sourced (tracked follow-up).
+    """
     block = _service_block(_fleet_compose_text(), "vllm-multimodal")
     assert (
         "--language-model-only" not in block
     ), "vllm-multimodal must NOT pass --language-model-only: vision+audio must stay active"
     assert (
-        "--speculative-config" in block
-    ), "vllm-multimodal must carry --speculative-config for native-MTP"
+        "--speculative-config" not in block
+    ), "vllm-multimodal must NOT carry --speculative-config (gemma4_mtp needs a draft model; #71)"
+
+
+def test_fleet_compose_multimodal_forces_triton_attention() -> None:
+    """vllm-multimodal sets VLLM_ATTENTION_BACKEND=TRITON_ATTN — Gemma4's non-square
+    attention (global_head_dim 512 ≠ head_dim 256) needs it (#71)."""
+    block = _service_block(_fleet_compose_text(), "vllm-multimodal")
     assert (
-        "gemma4_mtp" in block
-    ), "vllm-multimodal --speculative-config must reference the gemma4_mtp method"
+        "VLLM_ATTENTION_BACKEND" in block and "TRITON_ATTN" in block
+    ), "vllm-multimodal must set VLLM_ATTENTION_BACKEND=TRITON_ATTN for Gemma4 non-square attention"
 
 
 def test_fleet_compose_middle_is_behind_profile() -> None:

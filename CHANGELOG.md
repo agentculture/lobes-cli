@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-06-30
+
+### Added
+
+- Custom vLLM image Dockerfile.vllm-gemma4 (FROM nvcr.io/nvidia/vllm:26.06-py3, vLLM 0.22.1, + a pinned from-source Transformers 181beb3) so the Gemma 4 12B gemma4_unified multimodal gear loads (#71)
+- MULTIMODAL_IMAGE override for the vllm-multimodal service (local build by default; optional ghcr.io/local-registry tag)
+- MULTIMODAL_ATTENTION_BACKEND env (TRITON_ATTN) for Gemma 4 non-square attention
+
+### Changed
+
+- Multimodal gear quantization corrected to compressed-tensors (was modelopt_fp4) after live validation (#71)
+- Removed the invalid gemma4_mtp speculative_config from the multimodal gear (vLLM Gemma4 MTP needs a separate gemma4_assistant draft model)
+
+### Fixed
+
+- docs/compose comments now name the correct base image and MULTIMODAL_IMAGE registry semantics
+
 ## [0.32.1] - 2026-06-30
 
 ### Added

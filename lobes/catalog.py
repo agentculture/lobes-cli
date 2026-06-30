@@ -215,32 +215,40 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # the new "normal" tier (replacing the demoted 14B "middle"). A UNIFIED
         # multimodal model: a single Gemma4UnifiedForConditionalGeneration serves
         # text + image + AUDIO in one checkpoint (no separate sidecars), so the
-        # generate lane gains native vision+audio without the realtime overlay. It
-        # ships a native MTP draft head for vLLM speculative decoding (hence the -MTP
-        # suffix and the speculative_config below). NVFP4 (modelopt_fp4). Tool calls
-        # use the Python-style "pythonic" parser (matches runtime._parser.infer_parser,
-        # which returns "pythonic" for gemma-4* ids — set in t1). status="configured":
-        # t7 (2026-06-30) found this arch (`model_type: gemma4_unified`) does NOT load
-        # on the released nv26.04 (vLLM 0.19.0) OR nv26.05 (vLLM 0.21.0) images — it
-        # needs a Transformers build that registers gemma4_unified. Stays "configured"
-        # until a supporting image lands; tracked in issue #71. See docs/gemma-4-12b-nvfp4.md.
+        # generate lane gains native vision+audio without the realtime overlay. Tool
+        # calls use the Python-style "pythonic" parser (matches runtime._parser.
+        # infer_parser, which returns "pythonic" for gemma-4* ids — set in t1).
+        #
+        # status="configured" (NOT load-tested). Live validation on the Spark (#71,
+        # 2026-06-30) established: the custom image (docs/gemma-4-12b-nvfp4.md;
+        # Dockerfile.vllm-gemma4 = NGC 26.06 / vLLM 0.22.1 + transformers @181beb3)
+        # registers gemma4_unified and LOADS the weights, but the gear does not yet
+        # SERVE — Gemma 4's non-square attention (global_head_dim 512 ≠ head_dim 256)
+        # needs VLLM_ATTENTION_BACKEND=TRITON_ATTN, which vLLM's transformers-modeling
+        # backend did not honor in our runs (o_proj marlin_gemm shape mismatch
+        # 4096≠8192). Serve-enablement is a tracked follow-up; promotion to
+        # load-tested waits on it. See docs/gemma-4-12b-nvfp4.md and issue #71.
         role_hint="multimodal",
-        shape="unified multimodal (text+image+audio), native MTP draft head",
-        # Risk (pending #71): confirm Gemma 4 12B's native context on the served
-        # checkpoint during live validation — using 128K (131072) as a safe
-        # default until measured.
+        shape="unified multimodal (text+image+audio)",
+        # Native context confirmed 128K (text_config.max_position_embeddings=131072,
+        # read from the checkpoint config during #71 live validation).
         context="128K native",
         native_max_model_len=131072,
         tool_parser="pythonic",
-        quantization="modelopt_fp4",
+        # This checkpoint is NVFP4 in compressed-tensors format (config.json
+        # quant_method="compressed-tensors", format "nvfp4-pack-quantized") — NOT
+        # nvidia modelopt. vLLM must be told --quantization=compressed-tensors;
+        # passing modelopt_fp4 fails with a quant-method-mismatch (verified #71).
+        quantization="compressed-tensors",
         status="configured",
         doc="gemma-4-12b-nvfp4.md",
         task="generate",
-        # Native Gemma 4 MTP draft head → vLLM --speculative-config (like the 27B
-        # primary's qwen3_5_mtp config). The exact method string is unconfirmed.
-        # Risk r4 (pending #71): confirm the Gemma4 native-MTP method string
-        # against the served checkpoint during live validation on the Spark.
-        speculative_config='{"method": "gemma4_mtp", "num_speculative_tokens": 3}',
+        # No speculative_config: despite the "-MTP" name, this unified checkpoint
+        # exposes no gemma4_assistant draft, and vLLM 0.21/0.22 enable Gemma4 MTP
+        # only via a SEPARATE gemma4_assistant draft model (no self-speculation from
+        # the unified target). --speculative-config {"method":"gemma4_mtp"} is
+        # rejected ("Unsupported speculative method"). Sourcing/​building a draft is a
+        # follow-up; the gear serves without spec-decode until then. (#71)
     ),
     SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",

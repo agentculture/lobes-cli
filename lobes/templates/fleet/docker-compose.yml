@@ -376,7 +376,25 @@ services:
   # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
 
   vllm-multimodal:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Gemma 4's gemma4_unified arch is not registered by the stock NGC image's
+    # Transformers, so this service uses a custom Dockerfile (Dockerfile.vllm-gemma4)
+    # built FROM nvcr.io/nvidia/vllm:26.06-py3 (vLLM 0.22.1) with a Transformers
+    # build that registers gemma4_unified.
+    # When MULTIMODAL_IMAGE is unset, `lobes fleet up` (which runs `up -d --build`)
+    # builds Dockerfile.vllm-gemma4 and tags the result as lobes/vllm-gemma4:local;
+    # a subsequent `docker compose up` (no --build) reuses that local tag.
+    # When MULTIMODAL_IMAGE is set to a registry tag (e.g.
+    # ghcr.io/agentculture/vllm-gemma4:latest), pull it and run WITHOUT --build
+    # (a --build would rebuild Dockerfile.vllm-gemma4 and shadow the pulled tag):
+    #   docker compose pull vllm-multimodal      # pull the pre-built image
+    #   docker compose up -d vllm-multimodal     # no --build; uses the pulled tag
+    # Note: `lobes fleet up` forces --build, so use plain docker compose for a
+    # registry tag (or a future `lobes fleet up --no-build`).
+    # See env.example MULTIMODAL_IMAGE. (Tracked as risk r5 in the build plan.)
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_IMAGE:-lobes/vllm-gemma4:local}
     container_name: model-gear-vllm-multimodal
     restart: unless-stopped
     deploy:
@@ -394,6 +412,12 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Gemma 4's attention is non-square (global_head_dim 512 ≠ head_dim 256), so
+      # the default FlashAttention backend produces the wrong o_proj input width and
+      # serving crashes (marlin_gemm 4096≠8192). TRITON_ATTN handles it. NOTE (#71):
+      # gemma4_unified currently runs via vLLM's transformers-modeling backend, which
+      # did NOT honor this env in testing — serve-enablement is a tracked follow-up.
+      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal   # → /logs/model-gear/multimodal-<boot>.log
     volumes:
@@ -412,15 +436,17 @@ services:
       - --served-model-name=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${MULTIMODAL_QUANTIZATION:-modelopt_fp4}
+      # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
+      # config.json quant_method; modelopt_fp4 fails with a method mismatch (#71).
+      - --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
       - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-131072}
-      # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
+      # TODO(#71): measure real multimodal util (vision+audio KV) once it serves.
       - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.12}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
-      # Native Gemma 4 MTP speculative decoding (draft head baked into the checkpoint).
-      # TODO(risk r4): confirm Gemma4 native-MTP method against the served checkpoint in t7.
-      - '--speculative-config=${MULTIMODAL_SPECULATIVE_CONFIG:-{"method": "gemma4_mtp", "num_speculative_tokens": 3}}'
+      # No speculative-decoding flag here: Gemma4 native MTP needs a separate
+      # gemma4_assistant draft model on vLLM 0.21/0.22 (the "-MTP" checkpoint exposes
+      # none), and the gemma4_mtp method is rejected. Sourcing a draft is a follow-up (#71).
       - --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
