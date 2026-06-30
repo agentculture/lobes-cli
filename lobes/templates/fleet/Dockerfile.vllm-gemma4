@@ -1,0 +1,68 @@
+# lobes vLLM-Gemma4 — custom vLLM image that registers the gemma4_unified arch.
+#
+# The NGC vLLM 26.05.post1 base ships vLLM 0.21.x but a Transformers version
+# that does NOT yet register gemma4_unified in AutoConfig.  This Dockerfile
+# overlays a newer (or from-source) Transformers build so the Gemma 4 12B
+# multimodal gear loads without "unknown architecture" errors.
+#
+# TRANSFORMERS_REF — the Transformers ref to install.  Defaults to the HEAD of
+# the HuggingFace main branch (the known-good path for gemma4_unified
+# registration).  Task t3 replaces this default with a pinned version/SHA once
+# the exact working ref is validated live on the DGX Spark.
+#
+# Full checkpoint download + live serving is NOT performed at build time (that
+# would require network access to HuggingFace Hub and GPU resources during CI).
+# Live validation is task t3; the build-stage verification below is network-free.
+FROM nvcr.io/nvidia/vllm:26.05.post1-py3
+
+ARG TRANSFORMERS_REF=git+https://github.com/huggingface/transformers.git
+
+# ---------------------------------------------------------------------------
+# Bootstrap uv, then overlay the Transformers build.
+#
+# The NGC vLLM base does not ship uv.  We install it via pip first so that
+# subsequent package management uses uv pip install --system — consistent with
+# the rest of the lobes fleet and immune to PEP 668 externally-managed-
+# environment guards that Debian-patched pip enforces.
+#
+# uv pip install --system writes into the container's system site-packages,
+# which is where vLLM's import paths resolve.  The naked `pip install uv` here
+# is a one-time bootstrap step, NOT a Transformers install — the actual
+# Transformers overlay is the uv command on the next line.
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache-dir "${TRANSFORMERS_REF}"
+
+# ---------------------------------------------------------------------------
+# Build-stage verification (network-free).
+#
+# Asserts that the installed Transformers version registers gemma4_unified in
+# AutoConfig's CONFIG_MAPPING and that vLLM's ModelRegistry exposes at least
+# one Gemma4 architecture.  This proves the overlay worked without requiring
+# the actual checkpoint to be downloaded.
+#
+# Note: a full AutoConfig.from_pretrained(<checkpoint>) needs network at build
+# time and is fragile in CI — we deliberately avoid it here.  The checkpoint
+# load + end-to-end serve path is validated live in task t3 (risk r1).
+# ---------------------------------------------------------------------------
+RUN python3 -c "
+import transformers
+import vllm
+
+# 1. gemma4_unified must appear in AutoConfig's registry after the overlay.
+assert 'gemma4_unified' in transformers.models.auto.configuration_auto.CONFIG_MAPPING, \
+    'gemma4_unified not found in CONFIG_MAPPING — Transformers ref too old or wrong'
+
+# 2. vLLM import must succeed (confirms we did not break the base install).
+import vllm  # noqa: F811
+
+# 3. vLLM ModelRegistry must expose at least one Gemma4 architecture.
+supported = vllm.ModelRegistry.get_supported_archs()
+gemma4_archs = [a for a in supported if 'Gemma4' in a]
+assert gemma4_archs, (
+    'No Gemma4 arch found in vllm.ModelRegistry.get_supported_archs(). '
+    f'Available: {supported}'
+)
+
+print('OK — gemma4_unified registered; import vllm OK; Gemma4 arch in ModelRegistry:', gemma4_archs)
+"
