@@ -1,14 +1,15 @@
 # Fleet: the Qwen primary + embedding/reranker gears behind one OpenAI gateway
 
-The **fleet** runs the always-warm Qwen generate primary — plus two tiny
-co-resident **embedding** and **reranker** gears — behind a single stdlib
-OpenAI-compatible gateway, managed by lobes as Docker containers. It is an
-alternative to the bare single-model deployment — scaffold it with `lobes init
---fleet` (the single-model `lobes init` is unchanged and remains the default).
+The **fleet** runs the always-warm Qwen 27B generate primary and the Gemma 4 12B
+multimodal gear as a **default-on duo** — plus two tiny co-resident **embedding**
+and **reranker** gears — behind a single stdlib OpenAI-compatible gateway, managed
+by lobes as Docker containers. It is an alternative to the bare single-model
+deployment — scaffold it with `lobes init --fleet` (the single-model `lobes init`
+is unchanged and remains the default).
 The gateway routes by **task family** (generate / embed / score / rerank) and by
-**capability-tier alias** (cheap / normal / hard → 4B / 14B / 27B generate gear);
-there is **one generate backend by default** and the 14B middle gear is opt-in
-(see "Three-tier generate layer").
+**capability-tier alias** (`main` / `minor` / `multimodal`, with back-compat aliases
+`hard` / `cheap` / `normal`); the 4B `minor` and the legacy 14B are opt-in
+(see "Generate-lane tier aliases").
 
 ## Why
 
@@ -33,18 +34,20 @@ and the opt-in fallback example.
 
 ```text
 client / acp ──:8000──▶ model-gear-gateway   (python -m lobes.gateway)
-                          │  route by `model` / task family
-                          ├──▶ model-gear-vllm-primary  :8000  generate (→ failover if a fallback is wired)
-                          ├──▶ model-gear-vllm-embed     :8000  embed (/v1/embeddings)
-                          └──▶ model-gear-vllm-rerank    :8000  score/rerank (/v1/rerank, /v1/score)
+                          │  route by `model` / task family / tier alias
+                          ├──▶ model-gear-vllm-primary    :8000  generate main tier (→ failover if a fallback is wired)
+                          ├──▶ model-gear-vllm-multimodal :8000  generate multimodal tier (vision+audio)
+                          ├──▶ model-gear-vllm-embed      :8000  embed (/v1/embeddings)
+                          └──▶ model-gear-vllm-rerank     :8000  score/rerank (/v1/rerank, /v1/score)
 ```
 
-Four containers by default, all `restart: unless-stopped`:
+Five containers by default, all `restart: unless-stopped`:
 
 | Container | Role | Host port |
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
-| `model-gear-vllm-primary` | generate primary (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
+| `model-gear-vllm-primary` | generate `main` tier (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
+| `model-gear-vllm-multimodal` | generate `multimodal` tier (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`, vision+audio) | internal only |
 | `model-gear-vllm-embed` | embedding gear (`Qwen/Qwen3-Embedding-0.6B`, `/v1/embeddings`) | internal only |
 | `model-gear-vllm-rerank` | reranker gear (`Qwen/Qwen3-Reranker-0.6B`, `/v1/rerank` + `/v1/score`) | internal only |
 
@@ -86,28 +89,31 @@ gears (util 0.06 each) also co-resident. See
 minor-lobe verbs (`lobes run minor`, `lobes route`, `lobes eval minor`), and
 serving details.
 
-### Three-tier generate layer (opt-in)
+### Generate-lane tier aliases
 
 The gateway supports three capability-tier **aliases** for the generate lane.
-Callers send `model=cheap|normal|hard` instead of a full model id; the gateway
-resolves to the appropriate warm backend:
+Callers send `model=main|minor|multimodal` (or the back-compat aliases
+`hard|cheap|normal`) instead of a full model id; the gateway resolves to the
+appropriate warm backend:
 
-| Alias | Role | Checkpoint | Notes |
-|---|---|---|---|
-| `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast; small-brain tasks |
-| `normal` | `middle` | `nvidia/Qwen3-14B-NVFP4` | balanced capability / cost |
-| `hard` | `primary` | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | full capability |
+| Alias | Back-compat alias | Role | Checkpoint | Notes |
+|---|---|---|---|---|
+| `main` | `hard` | `primary` | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | full text capability; default-on |
+| `minor` | `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast, small-brain; opt-in (`--profile minor`) |
+| `multimodal` | `normal` | `multimodal` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | text+image+audio; default-on |
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back
-**upward** to the nearest available higher tier. `normal`→primary when the middle
-gear is not started; `hard` always resolves to the primary (which is always warm).
-Pooling gears (`embed` / `rerank`) are never reached via tier aliases — they are
+**upward** to the nearest available generate tier. `minor`→primary when the minor
+gear is not started; `main` always resolves to the primary (which is always warm).
+`multimodal` falls back to `main` if the multimodal gear is not wired. Pooling gears
+(`embed` / `rerank`) are never reached via tier aliases — they are
 task-family-routed, not tier-routed.
 
-Activate the `middle` (14B) backend and the `minor` (4B) backend as opt-in
-compose profiles (`--profile middle` / `--profile minor`) and uncomment their
-`*_BASE_URL` in `.env`. See [`docs/qwen3-14b-nvfp4.md`](qwen3-14b-nvfp4.md) for
-the 14B serving details and memory footprint.
+The `minor` (4B) backend and the legacy `middle` (14B) backend are opt-in compose
+profiles (`--profile minor` / `--profile middle`). Uncomment their `*_BASE_URL` in
+`.env` after activating. See [`docs/qwen3-14b-nvfp4.md`](qwen3-14b-nvfp4.md) for
+the legacy 14B serving details and [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md)
+for the multimodal gear.
 
 **Caller migration example:** switch from a hardcoded model id to a tier alias
 with no other change:
@@ -125,7 +131,7 @@ response = client.chat.completions.create(
 
 # After — tier alias (gateway resolves to the right gear; survives primary swap)
 response = client.chat.completions.create(
-    model="hard",   # or "normal" / "cheap"
+    model="main",   # or "multimodal" / "minor"
     messages=[{"role": "user", "content": "Summarise this PR in one sentence."}],
 )
 ```
@@ -135,12 +141,12 @@ The same swap works with raw `curl`:
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "normal", "messages": [{"role": "user", "content": "Hello"}]}'
+  -d '{"model": "multimodal", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
 **LoRA scope:** LoRA adapter training targets the 4B bf16 `minor` lobe
-(`Qwen/Qwen3.5-4B`) — not the 14B or 27B. The 14B NVFP4 middle is
-inference-only; there is no `lobes train` verb.
+(`Qwen/Qwen3.5-4B`) — not the 14B or 27B. The 14B NVFP4 and the Gemma 4 12B
+multimodal are inference-only; there is no `lobes train` verb.
 
 ### Pressure policy and tier downgrade
 
@@ -152,16 +158,16 @@ and purely computed from `/proc` readings (`lobes.gateway._pressure_policy`).
 
 | Condition | Max allowed tier | Mode |
 |---|---|---|
-| swap > 50 % | `normal` | warm |
-| swap > 65 % | `normal` | warm (prefer cheap/middle) |
-| swap > 75 % | `cheap` | **degraded** |
-| iowait > 25 % | `normal` | warm |
-| iowait > 50 % | `cheap` | **degraded** |
-| *(none)* | `hard` | warm |
+| swap > 75 % OR iowait > 50 % | `minor` | **degraded** |
+| *(none)* | `main` (+ `multimodal` permitted) | warm |
 
-When multiple bands fire, the **most restrictive** cap wins (min by tier ordering).
-`mode` is `"degraded"` when swap > 75 % or iowait > 50 % (whichever fires); `"warm"`
-otherwise.
+Under `warm`, both `main` and `multimodal` are granted as requested — `multimodal`
+is a different capability (vision+audio), not a cheaper rung below `main`. Under
+`degraded`, **every** generate request (both `main` and `multimodal`) collapses to
+`minor`. The old intermediate swap bands (`LOBES_SWAP_NO_HARD_THRESHOLD`,
+`LOBES_SWAP_PREFER_CHEAP_THRESHOLD`, `LOBES_IOWAIT_NO_HARD_THRESHOLD`) are
+retained as named env constants for observability and tuning but no longer impose a
+tier ceiling — there is no intermediate rung to cap to.
 
 Each threshold is a named env constant with a `LOBES_*` override:
 
@@ -178,7 +184,7 @@ response, streaming-safe — headers precede the body):
 
 | Header | Value |
 |---|---|
-| `X-Lobes-Tier` | The tier actually served (e.g. `cheap`, `normal`, `hard`) |
+| `X-Lobes-Tier` | The tier actually served (e.g. `minor`, `multimodal`, `main`) |
 | `X-Lobes-Tier-Reason` | `default` \| `pressure` \| `manual_override` |
 
 **Override header:** send `X-Lobes-Override: true` on the request to force the
@@ -190,7 +196,7 @@ highest tier currently permitted — read-only, no deployment dir or Docker need
 
 ```bash
 lobes status --pressure
-# tier:    hard
+# tier:    main
 # model:   sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
 # mode:    warm
 # reason:  default
@@ -198,7 +204,7 @@ lobes status --pressure
 # iowait:  0.8%
 
 lobes status --pressure --json
-# {"tier": "hard", "model": "...", "mode": "warm", "reason": "default",
+# {"tier": "main", "model": "...", "mode": "warm", "reason": "default",
 #  "pressure": {"swap_used_percent": 22.4, "iowait_percent": 0.8}}
 ```
 
@@ -213,10 +219,10 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   `GATEWAY_DEFAULT_MODEL` (the primary).
 - **Failover** — when a fallback is wired up, a chosen backend that refuses the
   connection or returns a 5xx **before any response body** is retried against the
-  other backend. (One generate backend by default → no generate peer to fail over
-  to; the embed/rerank gears are separate task families, not failover targets.) A 4xx is a
-  client error (returned verbatim, no failover). Once a 2xx body starts streaming
-  there is no retry — the client already has bytes.
+  other backend. (`main` and `multimodal` are different-capability tiers, not
+  failover peers for each other; the embed/rerank gears are separate task families,
+  not failover targets.) A 4xx is a client error (returned verbatim, no failover).
+  Once a 2xx body starts streaming there is no retry — the client already has bytes.
 - **Streaming** — `"stream": true` (SSE) is relayed chunk-by-chunk with per-chunk
   flushing; normal JSON is buffered with `Content-Length`.
 - **Endpoints** — `/v1/chat/completions`, `/v1/completions` (generate primary),
@@ -307,24 +313,31 @@ up --apply`. (A fallback, when wired up, uses the parallel `FALLBACK_*` keys.)
 
 ## Memory
 
-The fleet default is **three always-warm backends** — the 27B generate primary,
-the 0.6B embedding gear, and the 0.6B reranker gear — with the 4B minor (cheap)
-and 14B middle (normal) as opt-in compose profiles. The full five-gear co-residency
-budget (with middle active):
+The fleet default is **four always-warm backends** — the 27B generate primary
+(`main` tier), the Gemma 4 12B multimodal gear (`multimodal` tier), the 0.6B
+embedding gear, and the 0.6B reranker gear. The 4B `minor` (back-compat `cheap`)
+and the legacy 14B are opt-in compose profiles. Default budget:
 
 | Gear | Model | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|---|
-| `primary` (hard) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | 0.45 | ~56 |
-| `middle` (normal, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
-| `minor` (cheap, opt-in) | `Qwen/Qwen3.5-4B` | 0.10 | ~13 |
+| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | 0.45 | ~56 |
+| `multimodal` (default-on) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
 | `embed` | `Qwen/Qwen3-Embedding-0.6B` | 0.06 | ~7 |
 | `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 0.06 | ~7 |
-| **Total** | | **0.79** | ~98 / 128 GB |
+| **Total (default)** | | **0.69** | ~85 / 128 GB |
+
+Opt-in gears (add to `COMPOSE_PROFILES`):
+
+| Gear | Model | `--gpu-memory-utilization` | Approx GiB |
+|---|---|---|---|
+| `minor` (cheap, opt-in) | `Qwen/Qwen3.5-4B` | 0.10 | ~13 |
+| `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
 
 The **primary is trimmed to 128K context** (`PRIMARY_MAX_MODEL_LEN=131072`) and
-`PRIMARY_GPU_MEM_UTIL=0.45` when the middle gear is active. Without the middle
-gear, restore `PRIMARY_GPU_MEM_UTIL=0.6` and optionally `PRIMARY_MAX_MODEL_LEN=262144`
-for the full 256K solo footprint (the load-tested default; see findings below).
+`PRIMARY_GPU_MEM_UTIL=0.45` with the default-on multimodal gear co-resident.
+Without the multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6`
+and optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
+(the load-tested default; see findings below).
 
 The co-resident embedding and reranker gears are ~0.6B each at `*_GPU_MEM_UTIL=0.06`
 (a couple GiB apiece), so they tuck into the remaining headroom without crowding

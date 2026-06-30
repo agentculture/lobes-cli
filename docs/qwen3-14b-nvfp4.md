@@ -1,21 +1,33 @@
-# Qwen3-14B-NVFP4 — "middle" tier (normal)
+# Qwen3-14B-NVFP4 — legacy candidate (demoted)
 
+> **DEMOTED (issue #69):** This gear is no longer the fleet's `normal`/middle
+> tier. The `normal` tier alias now resolves to the **Gemma 4 12B multimodal
+> gear** (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`,
+> [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md)), which is **default-on**.
+> The 14B is kept as a **legacy `candidate`** — selectable explicitly by model id
+> or via `COMPOSE_PROFILES=middle` — but no tier alias resolves to it.
+>
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 
 **Model id:** `nvidia/Qwen3-14B-NVFP4`
-**Tier alias:** `normal` (resolves here via `model=normal` at the gateway)
-**Role:** `middle` — balanced capability and cost between the 4B `minor` (cheap)
-and the 27B MTP `primary` (hard)
+**Tier alias:** none — demoted to legacy candidate (issue #69). Use the full model
+id or `COMPOSE_PROFILES=middle` to activate. The `normal` back-compat alias now
+routes to `multimodal` (the Gemma 4 12B gear).
+**Role:** `candidate` (formerly `middle`) — kept as a selectable legacy option;
+no longer the `normal`/middle tier between `minor` and `main`
 **Status:** `configured` — not yet load-tested on the DGX Spark (issue #68, t9)
 
 ## What it is
 
-The 14B dense NVFP4 checkpoint from NVIDIA is the fleet's **middle/normal tier**:
-more capable than the 4B companion but cheaper to run than the full 27B primary.
-It is a pure **inference** gear — not a LoRA base. LoRA training stays on
-`Qwen/Qwen3.5-4B` (the bf16 minor lobe); there is no `lobes train` verb.
+The 14B dense NVFP4 checkpoint from NVIDIA was the fleet's **middle/normal tier**,
+but is now a **legacy candidate** (demoted in issue #69). The `normal`/`multimodal`
+slot is now filled by the Gemma 4 12B unified-multimodal gear. The 14B is kept in
+the catalog for operators who explicitly need a text-only Qwen 14B, but no tier
+alias routes to it automatically. It is a pure **inference** gear — not a LoRA
+base. LoRA training stays on `Qwen/Qwen3.5-4B` (the bf16 minor lobe); there is no
+`lobes train` verb.
 
 Architecture highlights:
 
@@ -46,8 +58,9 @@ COMPOSE_PROFILES=middle
 docker compose --profile middle up -d
 ```
 
-Once active, uncomment `MIDDLE_BASE_URL` in `.env` so the gateway routes `normal`
-requests here:
+Once active, uncomment `MIDDLE_BASE_URL` in `.env` so the gateway routes explicit
+`nvidia/Qwen3-14B-NVFP4` model-id requests here (note: the `normal` alias no
+longer routes to this gear — it routes to the Gemma 4 12B `multimodal` gear):
 
 ```env
 MIDDLE_BASE_URL=http://vllm-middle:8000   # uncomment to activate gateway routing
@@ -92,33 +105,29 @@ trimming its context from 256K → 128K (`PRIMARY_MAX_MODEL_LEN=131072`). If you
 without the middle gear, restore `PRIMARY_GPU_MEM_UTIL=0.6` and optionally raise
 `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K context.
 
-## Tier alias usage
+## Tier alias usage (legacy — no alias resolves to this gear)
 
-Callers use capability-tier aliases instead of hardcoded model ids:
-
-| Alias | Routes to | Fallback when absent |
-|---|---|---|
-| `cheap` | 4B `minor` | middle, else primary |
-| `normal` | **14B `middle`** | primary |
-| `hard` | 27B `primary` | always present |
-
-Send `model=normal` and the gateway resolves to this gear when it is wired and
-healthy. If the middle backend is not started, `normal` falls back upward to the
-primary — the caller's code is unchanged.
+As of issue #69, **no tier alias resolves to this gear**. The `normal` back-compat
+alias now routes to the Gemma 4 12B `multimodal` gear. To use this gear explicitly,
+address it by model id:
 
 ```python
-# Before: hardcoded model id
+# Use the full model id directly — no tier alias routes here:
 response = client.chat.completions.create(
     model="nvidia/Qwen3-14B-NVFP4",
     messages=[{"role": "user", "content": "..."}],
 )
-
-# After: tier alias — the gateway resolves to the right gear
-response = client.chat.completions.create(
-    model="normal",
-    messages=[{"role": "user", "content": "..."}],
-)
 ```
+
+Current tier alias table (for reference):
+
+| Alias | Back-compat alias | Routes to | Notes |
+|---|---|---|---|
+| `main` | `hard` | 27B `primary` | always present |
+| `minor` | `cheap` | 4B `minor` | opt-in (`--profile minor`) |
+| `multimodal` | `normal` | Gemma 4 12B `multimodal` | default-on; replaced `middle`/`normal` in #69 |
+
+The 14B is activated via `COMPOSE_PROFILES=middle` and addressed by its full model id.
 
 ## LoRA scope
 
@@ -131,8 +140,10 @@ base. The 14B NVFP4 middle is:
 
 ## Related docs
 
-- [`gateway-fleet.md`](gateway-fleet.md) — three-tier topology, tier alias routing,
+- [`gateway-fleet.md`](gateway-fleet.md) — fleet topology, tier alias routing,
   pressure policy, memory budget.
+- [`gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md) — the Gemma 4 12B multimodal
+  gear that now fills the `normal`/`multimodal` tier slot.
 - [`qwen3.5-4b-minor.md`](qwen3.5-4b-minor.md) — the cheap/`minor` gear and the
   LoRA fine-tune target.
 - [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md) — the

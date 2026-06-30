@@ -38,20 +38,23 @@ behind the gateway, routed by **task family** (`generate` / `embed` / `score` /
 /v1/embeddings`, served `--runner pooling --convert embed`) and a **reranker**
 gear (`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`, `--convert
 classify`). At ~0.6B and `*_GPU_MEM_UTIL=0.06` each they sit alongside the 27B
-primary without crowding it. Two opt-in generate companions extend the fleet into a
-**three-tier generate lane**: a **minor** (4B bf16, cheap tier, `COMPOSE_PROFILES=minor`,
-util 0.10) and a **middle** (14B NVFP4, normal tier, `COMPOSE_PROFILES=middle`,
-util 0.12). Together with the always-warm primary (hard tier, util 0.45 when middle
-is active) the full budget is `0.45 + 0.12 + 0.10 + 0.06 + 0.06 = 0.79` on the
-128 GB GB10. Callers address the generate lane by **capability-tier alias** —
-`model=cheap|normal|hard` — rather than hardcoded model ids; the gateway resolves
-to the warmest matching gear, with upward fallback when a tier is absent (e.g.
-`normal`→primary if the middle gear is not started). A swap/iowait **pressure
-policy** can further downgrade the granted tier (swap > 75 % or iowait > 50 % →
-degraded, cheap only); `lobes status --pressure` shows the current tier ceiling.
-LoRA adapter training targets the 4B bf16 `minor` only — the 14B NVFP4 middle is
-inference-only, and there is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
-`docs/qwen3-reranker-0.6b.md`, `docs/qwen3-14b-nvfp4.md`, and `docs/gateway-fleet.md`.
+primary without crowding it. A default-on **Gemma 4 12B multimodal gear** (`multimodal` tier,
+`COMPOSE_PROFILES` not needed — it starts with the fleet) joins the 27B primary as
+a **main + multimodal duo** at util 0.12, giving the generate lane native
+vision+audio. The 4B `minor` (back-compat `cheap`, `COMPOSE_PROFILES=minor`, util
+0.10) and the legacy 14B Qwen (`COMPOSE_PROFILES=middle`, util 0.12) are
+**opt-in** gears. Default budget: `0.45 + 0.12 + 0.06 + 0.06 = 0.69` on the 128
+GB GB10. Callers address the generate lane by **capability-tier alias** —
+`model=main|minor|multimodal` (back-compat: `hard|cheap|normal`) — rather than
+hardcoded model ids; `normal` now maps to `multimodal` (the Gemma gear), not the
+demoted 14B. A swap/iowait **pressure policy** degrades both `main` and
+`multimodal` requests to `minor` (swap > 75 % or iowait > 50 % → degraded, `minor`
+only — `multimodal` is a different capability, not a cheaper rung);
+`lobes status --pressure` shows the current tier ceiling. LoRA adapter training
+targets the 4B bf16 `minor` only — the 14B NVFP4 is inference-only, and there is
+no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
+`docs/qwen3-reranker-0.6b.md`, `docs/gemma-4-12b-nvfp4.md`, and
+`docs/gateway-fleet.md`.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
