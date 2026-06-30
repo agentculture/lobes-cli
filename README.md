@@ -202,19 +202,23 @@ curl -s http://localhost:8000/v1/models       # the WARM backend(s) (not the ful
 curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP","messages":[...]}'
 ```
 
-The fleet runs **one generate backend** by default, so the primary keeps its
-load-tested solo headroom (`PRIMARY_GPU_MEM_UTIL=0.6`, full 256K context) on the
-128 GB unified memory; the embedding + reranker gears are ~0.6B (util `0.06`
-each), so they co-reside without crowding it. To add a warm *generate* fallback,
-wire a `vllm-fallback` service + the `FALLBACK_*` env and drop both generate utils
-so they sum well under 1.0 (two ~30B NVFP4 models barely co-fit a GB10). `lobes
-switch` drives the single-model deployment (it can also serve an embed/score gear
-solo — auto-detected from the catalog, or forced with `--task embed|score`);
-change the fleet primary by editing the fleet `.env` and re-running `lobes fleet
-up --apply`. See `lobes explain fleet` / `lobes explain gateway` for the routing
-semantics, [`docs/qwen3-embedding-0.6b.md`](docs/qwen3-embedding-0.6b.md) +
-[`docs/qwen3-reranker-0.6b.md`](docs/qwen3-reranker-0.6b.md) for the gears, and
-[`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the full topology.
+The fleet runs a **default-on `main` + `multimodal` duo** — the 27B Qwen text
+generate primary and the Gemma 4 12B vision+audio gear (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`)
+— at a combined `0.45 + 0.12 = 0.57` GPU util, plus the tiny embedding + reranker
+gears (`0.06` each), for a default budget of `0.69` on the 128 GB GB10. The 4B
+`minor` companion and the legacy 14B Qwen are opt-in compose profiles
+(`COMPOSE_PROFILES=minor` / `COMPOSE_PROFILES=middle`). Callers address the
+generate lane by tier alias — `model=main|minor|multimodal` (back-compat:
+`hard|cheap|normal`). `lobes switch` drives the single-model deployment (it can
+also serve an embed/score gear solo — auto-detected from the catalog, or forced
+with `--task embed|score`); change the fleet primary by editing the fleet `.env`
+and re-running `lobes fleet up --apply`. See `lobes explain fleet` / `lobes
+explain gateway` for the routing semantics,
+[`docs/qwen3-embedding-0.6b.md`](docs/qwen3-embedding-0.6b.md) +
+[`docs/qwen3-reranker-0.6b.md`](docs/qwen3-reranker-0.6b.md) for the pooling
+gears, [`docs/gemma-4-12b-nvfp4.md`](docs/gemma-4-12b-nvfp4.md) for the
+multimodal gear, and [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the
+full topology.
 
 ### Per-model notes
 
@@ -237,12 +241,16 @@ results, and caveats:
 - [`docs/qwen3-32b-nvfp4.md`](docs/qwen3-32b-nvfp4.md) — the dense **candidate**
   (`nvidia/Qwen3-32B-NVFP4`), faster on decode (~9.7 tok/s); swap in via
   `PRIMARY_MODEL` / `lobes switch` when throughput matters more than context/vision.
+- [`docs/gemma-4-12b-nvfp4.md`](docs/gemma-4-12b-nvfp4.md) — the fleet's
+  **`multimodal` (normal) tier** (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`),
+  default-on alongside the primary (issue #69). A unified multimodal checkpoint
+  (text+image+audio) with a native MTP draft head; replaces the demoted 14B as
+  the `normal`/`multimodal` generate tier.
 - [`docs/mistral-small-3.2-24b-nvfp4.md`](docs/mistral-small-3.2-24b-nvfp4.md) —
   the dense **fallback candidate** (`RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`);
-  the default fleet's warm fallback in 0.11.0–0.19.x, since removed (the fleet runs
-  one *generate* backend by default — two ~30B NVFP4 models don't co-fit a shared GB10).
-  Kept selectable: load-tested 2026-05-30, loads reliably (~15 GiB, ~14.9 tok/s
-  decode), text + tool calls (serve with the mistral tokenizer + images disabled).
+  the default fleet's warm fallback in 0.11.0–0.19.x, since removed (two ~30B
+  NVFP4 models don't co-fit a shared GB10). Kept selectable: load-tested
+  2026-05-30, loads reliably (~15 GiB, ~14.9 tok/s decode), text + tool calls.
   Wire it back via the opt-in `FALLBACK_*` fleet config.
 - [`docs/qwen3.6-35b-a3b-nvfp4.md`](docs/qwen3.6-35b-a3b-nvfp4.md) — the former
   **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`), now a candidate. It does

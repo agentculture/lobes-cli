@@ -25,7 +25,11 @@ class SupportedModel:
     """One model the fleet/CLI can serve — a gear you can change to."""
 
     id: str  # OpenAI model id (== the vLLM --served-model-name)
-    role_hint: str  # "primary" | "fallback" | "candidate" (the fleet's default role)
+    # The fleet's default role for this gear. One of:
+    # "primary" | "fallback" | "candidate" | "minor" | "multimodal" | "embedding" | "reranker".
+    # The generate-lane tier aliases (main/minor/multimodal + back-compat
+    # cheap/normal/hard) resolve to a gear by this field — see TIER_ROLE / resolve_tier.
+    role_hint: str
     shape: str  # architecture in a phrase, e.g. "dense" / "MoE (~3B active)"
     context: str  # native context window, human-readable
     # The largest --max-model-len this checkpoint serves with vLLM's *default* rope
@@ -161,17 +165,20 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/Qwen3-14B-NVFP4",
-        # 14B dense NVFP4 candidate — the fleet's "middle" tier between the 4B
-        # minor (cheap/fast) and the 27B primary (hard/full-capability). Not yet
-        # load-tested on the DGX Spark (status="configured"); verify before
-        # promoting to load-tested. 32K native context (→131K via YaRN, same as
-        # the 32B entry). Dense architecture like Qwen3-32B-NVFP4 — no MoE, no
-        # MTP draft head, no hf_overrides. See docs/qwen3-14b-nvfp4.md.
-        # Consistent with the nvidia/ Qwen3-32B-NVFP4 entry (same org, NVFP4,
-        # hermes tool-call format, modelopt_fp4 quantization). The exact HF
-        # checkpoint id is an accepted plan risk (issue #68, t1): verify on
-        # the Spark and promote status to load-tested once confirmed.
-        role_hint="middle",
+        # 14B dense NVFP4 — a LEGACY CANDIDATE, KEPT but DEMOTED. It was the
+        # fleet's "middle"/normal tier between the 4B minor and the 27B primary;
+        # the normal tier is now served by the Gemma 4 12B unified-multimodal gear
+        # (role_hint="multimodal"), so this 14B is demoted to role_hint="candidate"
+        # and is no longer the normal tier (no tier alias resolves to it). It stays
+        # in the catalog as a supported candidate you can switch to explicitly by id.
+        # Not load-tested on the DGX Spark (status="configured"). 32K native context
+        # (→131K via YaRN, same as the 32B entry). Dense architecture like
+        # Qwen3-32B-NVFP4 — no MoE, no MTP draft head, no hf_overrides. Consistent
+        # with the nvidia/ Qwen3-32B-NVFP4 entry (same org, NVFP4, hermes tool-call
+        # format, modelopt_fp4 quantization). The exact HF checkpoint id is an
+        # accepted plan risk (issue #68): verify on the Spark before any promotion.
+        # See docs/qwen3-14b-nvfp4.md.
+        role_hint="candidate",
         shape="dense",
         context="32K (→131K via YaRN)",
         native_max_model_len=32768,
@@ -201,6 +208,39 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         status="configured",
         doc="qwen3.5-4b-minor.md",
         task="generate",
+    ),
+    SupportedModel(
+        id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4",
+        # Gemma 4 12B (Google DeepMind) — the fleet's "multimodal" generate gear and
+        # the new "normal" tier (replacing the demoted 14B "middle"). A UNIFIED
+        # multimodal model: a single Gemma4UnifiedForConditionalGeneration serves
+        # text + image + AUDIO in one checkpoint (no separate sidecars), so the
+        # generate lane gains native vision+audio without the realtime overlay. It
+        # ships a native MTP draft head for vLLM speculative decoding (hence the -MTP
+        # suffix and the speculative_config below). NVFP4 (modelopt_fp4). Tool calls
+        # use the Python-style "pythonic" parser (matches runtime._parser.infer_parser,
+        # which returns "pythonic" for gemma-4* ids — set in t1). status="configured":
+        # t7 (2026-06-30) found this arch (`model_type: gemma4_unified`) does NOT load
+        # on the released nv26.04 (vLLM 0.19.0) OR nv26.05 (vLLM 0.21.0) images — it
+        # needs a Transformers build that registers gemma4_unified. Stays "configured"
+        # until a supporting image lands; tracked in issue #71. See docs/gemma-4-12b-nvfp4.md.
+        role_hint="multimodal",
+        shape="unified multimodal (text+image+audio), native MTP draft head",
+        # Risk (pending #71): confirm Gemma 4 12B's native context on the served
+        # checkpoint during live validation — using 128K (131072) as a safe
+        # default until measured.
+        context="128K native",
+        native_max_model_len=131072,
+        tool_parser="pythonic",
+        quantization="modelopt_fp4",
+        status="configured",
+        doc="gemma-4-12b-nvfp4.md",
+        task="generate",
+        # Native Gemma 4 MTP draft head → vLLM --speculative-config (like the 27B
+        # primary's qwen3_5_mtp config). The exact method string is unconfirmed.
+        # Risk r4 (pending #71): confirm the Gemma4 native-MTP method string
+        # against the served checkpoint during live validation on the Spark.
+        speculative_config='{"method": "gemma4_mtp", "num_speculative_tokens": 3}',
     ),
     SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
@@ -245,16 +285,33 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 
 
 # ---------------------------------------------------------------------------
-# Tier → role_hint map (issue #68 — three-tier fleet: cheap/normal/hard)
+# Tier → role_hint map — the generate-lane capability tiers
 # ---------------------------------------------------------------------------
+# Vocabulary reframed to main / minor / multimodal (the prior cheap/normal/hard
+# tier names are retained as back-compat aliases). The "normal" tier is now the
+# Gemma 4 12B unified-multimodal gear (role_hint="multimodal"); it replaced the
+# 14B "middle" gear, which is demoted to a legacy candidate (no tier resolves
+# to it any more).
 
-#: Maps tier alias to the ``role_hint`` of the gear that serves it.
-#: cheap  → minor   (4B bf16 small-brain companion — fast, low memory)
-#: normal → middle  (14B NVFP4 — balanced capability / cost)
-#: hard   → primary (27B MTP primary — full capability)
+#: Maps a tier alias to the ``role_hint`` of the gear that serves it.
+#:
+#: Primary vocabulary:
+#:   main       → primary    (27B MTP primary — full capability, the "hard" tier)
+#:   minor      → minor      (4B bf16 small-brain companion — fast, low memory)
+#:   multimodal → multimodal (Gemma 4 12B unified text+image+audio gear)
+#:
+#: Back-compat aliases (the prior cheap/normal/hard tier names):
+#:   cheap  → minor      (== minor)
+#:   normal → multimodal (was the 14B "middle"; reframed to the Gemma gear)
+#:   hard   → primary    (== main)
 TIER_ROLE: dict[str, str] = {
+    # Primary vocabulary.
+    "main": "primary",
+    "minor": "minor",
+    "multimodal": "multimodal",
+    # Back-compat aliases.
     "cheap": "minor",
-    "normal": "middle",
+    "normal": "multimodal",
     "hard": "primary",
 }
 
@@ -263,7 +320,12 @@ def resolve_tier(tier: str) -> "SupportedModel":
     """Return the *first* generate-task ``SupportedModel`` whose ``role_hint``
     matches ``TIER_ROLE[tier]``.
 
-    :param tier: A tier alias — one of ``"cheap"``, ``"normal"``, ``"hard"``.
+    :param tier: A tier alias — one of the :data:`TIER_ROLE` keys. The primary
+        vocabulary is ``"main"`` / ``"minor"`` / ``"multimodal"``; the legacy
+        ``"cheap"`` / ``"normal"`` / ``"hard"`` names are retained as aliases.
+        ``"main"`` and ``"hard"`` resolve to the primary; ``"minor"`` and
+        ``"cheap"`` to the 4B minor; ``"multimodal"`` and ``"normal"`` to the
+        Gemma 4 multimodal gear.
     :raises ValueError: If *tier* is not a known key in :data:`TIER_ROLE`.
     """
     role = TIER_ROLE.get(tier)

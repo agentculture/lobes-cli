@@ -48,6 +48,14 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     ),
     (("qwen3", "qwen-3"), "hermes"),
     (("mistral",), "mistral"),
+    # Gemma 4 (Google DeepMind) uses a Python-style function-call syntax; vLLM's
+    # Gemma 4 recipe prescribes --tool-call-parser pythonic.  Markers are scoped to
+    # "gemma-4" / "gemma4" so they don't match older Gemma 1/2/3 checkpoints whose
+    # tool-call story is less clear.
+    # chosen parser value: "pythonic"
+    # Risk r2 (pending #71): confirm against the served checkpoint during live
+    # validation on the Spark (blocked until a gemma4_unified-capable image lands).
+    (("gemma-4", "gemma4"), "pythonic"),
 ]
 
 

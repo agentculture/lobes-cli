@@ -1,14 +1,20 @@
-"""Tests for ``lobes status --pressure`` and the no-train boundary guard (t7, #68).
+"""Tests for ``lobes status --pressure`` and the no-train boundary guard (t6/t7, #68/#69).
 
 Acceptance contract (three groups):
 1. ``status --pressure --json`` emits exactly 5 top-level keys with a nested
    ``pressure`` dict; the tier/model/mode/reason values follow from
-   ``decide()`` + ``resolve_tier()`` for the fixed monkeypatched sample.
+   ``decide()`` for the fixed monkeypatched sample, expressed in the new
+   **main/minor/multimodal** vocabulary (issue #69 / t6 seam).
 2. The command is strictly read-only: ``compose_down`` and
    ``compose_up_detached`` must never be called.
 3. No ``train`` / ``finetune`` / ``fine-tune`` verb is registered in the CLI
    parser (LoRA-training is an explicit non-goal — the boundary is enforced
    here at the parser level).
+
+The seam (t6): under degraded pressure the only cheaper target is ``minor``; a
+``main`` (or ``multimodal``) request downgrades to ``minor``. Below the degraded
+floor nothing is downgraded — there is no intermediate rung, because
+``multimodal`` is a *different capability*, not a cheaper version of ``main``.
 """
 
 from __future__ import annotations
@@ -22,9 +28,8 @@ from lobes.runtime import _pressure as _pressure_mod
 
 # Tier model IDs — mirrors test_catalog_tiers.py constants so that any catalog
 # change that renames an ID also breaks *this* test (intentional coupling).
-_MINOR_ID = "Qwen/Qwen3.5-4B"  # cheap tier
-_MIDDLE_ID = "nvidia/Qwen3-14B-NVFP4"  # normal tier
-_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # hard tier
+_MINOR_ID = "Qwen/Qwen3.5-4B"  # minor tier (degraded floor)
+_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # main tier (full ceiling)
 
 
 # ---------------------------------------------------------------------------
@@ -42,18 +47,18 @@ def _set_pressure(monkeypatch, *, swap: float, iowait: float) -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSON shape — swap=80 → cheap / degraded / pressure
+# JSON shape — swap=80 → minor / degraded / pressure
 # ---------------------------------------------------------------------------
 
 
 def test_status_pressure_json_high_swap_degraded(capsys, monkeypatch) -> None:
-    """swap=80 > 75 → tier=cheap, mode=degraded, reason=pressure."""
+    """swap=80 > 75 → degraded → tier=minor, mode=degraded, reason=pressure."""
     _set_pressure(monkeypatch, swap=80.0, iowait=5.0)
     rc = main(["status", "--pressure", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload.keys()) == {"tier", "model", "mode", "reason", "pressure"}
-    assert payload["tier"] == "cheap"
+    assert payload["tier"] == "minor"
     assert payload["model"] == _MINOR_ID
     assert payload["mode"] == "degraded"
     assert payload["reason"] == "pressure"
@@ -61,18 +66,18 @@ def test_status_pressure_json_high_swap_degraded(capsys, monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSON shape — swap=10, iowait=5 → hard / warm / default
+# JSON shape — swap=10, iowait=5 → main / warm / default
 # ---------------------------------------------------------------------------
 
 
 def test_status_pressure_json_low_pressure_warm(capsys, monkeypatch) -> None:
-    """swap=10, iowait=5 — no thresholds fire → tier=hard, warm, default."""
+    """swap=10, iowait=5 — no thresholds fire → tier=main, warm, default."""
     _set_pressure(monkeypatch, swap=10.0, iowait=5.0)
     rc = main(["status", "--pressure", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload.keys()) == {"tier", "model", "mode", "reason", "pressure"}
-    assert payload["tier"] == "hard"
+    assert payload["tier"] == "main"
     assert payload["model"] == _PRIMARY_ID
     assert payload["mode"] == "warm"
     assert payload["reason"] == "default"
@@ -80,22 +85,45 @@ def test_status_pressure_json_low_pressure_warm(capsys, monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSON shape — swap=60 → normal / warm / pressure (constrained, not degraded)
+# JSON shape — swap=60 → main / warm / default (seam: no intermediate rung)
 # ---------------------------------------------------------------------------
 
 
-def test_status_pressure_json_mid_swap_constrained(capsys, monkeypatch) -> None:
-    """swap=60 > 50 but <= 75 → tier=normal (constrained), warm, pressure."""
+def test_status_pressure_json_mid_swap_not_downgraded(capsys, monkeypatch) -> None:
+    """swap=60 > 50 but <= 75 → NOT degraded → tier=main (full), warm, default.
+
+    Migrated from the OLD linear behaviour (swap=60 → normal/constrained). The
+    seam resolution collapses the intermediate band: ``multimodal`` is not a
+    cheaper rung, so the only downgrade is to ``minor`` and only under the
+    degraded floor (swap > 75). Below it, ``main`` is served unconstrained.
+    """
     _set_pressure(monkeypatch, swap=60.0, iowait=5.0)
     rc = main(["status", "--pressure", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload.keys()) == {"tier", "model", "mode", "reason", "pressure"}
-    assert payload["tier"] == "normal"
-    assert payload["model"] == _MIDDLE_ID
+    assert payload["tier"] == "main"
+    assert payload["model"] == _PRIMARY_ID
     assert payload["mode"] == "warm"
-    assert payload["reason"] == "pressure"
+    assert payload["reason"] == "default"
     assert payload["pressure"] == {"swap_used_percent": 60.0, "iowait_percent": 5.0}
+
+
+# ---------------------------------------------------------------------------
+# JSON shape — iowait=60 → minor / degraded / pressure
+# ---------------------------------------------------------------------------
+
+
+def test_status_pressure_json_high_iowait_degraded(capsys, monkeypatch) -> None:
+    """iowait=60 > 50 → degraded → tier=minor, mode=degraded, reason=pressure."""
+    _set_pressure(monkeypatch, swap=10.0, iowait=60.0)
+    rc = main(["status", "--pressure", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tier"] == "minor"
+    assert payload["model"] == _MINOR_ID
+    assert payload["mode"] == "degraded"
+    assert payload["reason"] == "pressure"
 
 
 # ---------------------------------------------------------------------------
@@ -114,13 +142,24 @@ def test_status_pressure_text_output(capsys, monkeypatch) -> None:
     assert "model" in out
     assert "mode" in out
     assert "reason" in out
-    # Expected values for swap=60: normal / warm / pressure.
-    assert "normal" in out
+    # Expected values for swap=60 (not degraded): main / warm / default.
+    assert "main" in out
     assert "warm" in out
-    assert "pressure" in out
+    assert "default" in out
     # Pressure numbers must appear.
     assert "60" in out  # swap
     assert "5" in out  # iowait
+
+
+def test_status_pressure_text_output_degraded_shows_minor(capsys, monkeypatch) -> None:
+    """Under degraded pressure the text form reports the minor floor."""
+    _set_pressure(monkeypatch, swap=80.0, iowait=5.0)
+    rc = main(["status", "--pressure"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "minor" in out
+    assert "degraded" in out
+    assert "pressure" in out
 
 
 # ---------------------------------------------------------------------------

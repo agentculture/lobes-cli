@@ -1,11 +1,17 @@
 """``lobes init [TARGET]`` — scaffold a deployment directory.
 
-Copies the packaged ``docker-compose.yml`` + ``env.example``→``.env`` into
-``TARGET`` (default ``~/.lobes``; ``lobes init .`` for the local folder).
-``--fleet`` scaffolds the gateway deployment instead (the always-warm Qwen
-primary + co-resident embedding/reranker gears behind one OpenAI front, routed by
-task family; one generate backend by default, opt-in generate fallback).
-Mutating: dry-run by default; ``--apply`` writes, ``--force`` overwrites.
+Copies the packaged compose + ``env.example``→``.env`` (+ gateway Dockerfile)
+into ``TARGET`` (default ``~/.lobes``; ``lobes init .`` for the local folder).
+
+The DEFAULT topology is the **fleet duo** (issue #69): the always-warm Qwen
+generate primary + the multimodal Gemma gear, fronted by the stdlib gateway with
+the co-resident embedding/reranker gears (the legacy 4B ``minor`` / 14B
+``middle`` generate gears stay behind opt-in compose profiles). ``--single``
+(alias ``--legacy``) restores the old single-model scaffold (one vLLM server, no
+gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
+``--audio`` layers the realtime audio overlay on the fleet (incompatible with
+``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
+overwrites.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> No
             {
                 "dry_run": True,
                 "fleet": fleet,
+                "single": not fleet,
                 "audio": audio,
                 "target": str(target),
                 "files": [{"name": name, "exists": exists} for name, exists in plan],
@@ -42,7 +49,12 @@ def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> No
             json_mode=True,
         )
         return
-    scope = "fleet+audio " if (fleet and audio) else "fleet " if fleet else ""
+    if fleet and audio:
+        scope = "the fleet duo + audio overlay "
+    elif fleet:
+        scope = "the fleet duo (main + multimodal) "
+    else:
+        scope = "the legacy single-model "
     lines = [f"DRY RUN — would scaffold {scope}into {target}:"]
     for name, exists in plan:
         note = " (exists; needs --force to overwrite)" if exists else ""
@@ -70,6 +82,7 @@ def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: 
             {
                 "scaffolded": str(target),
                 "fleet": fleet,
+                "single": not fleet,
                 "audio": audio,
                 "files": [p.name for p in written],
             },
@@ -92,13 +105,17 @@ def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: 
 
 def cmd_init(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
-    fleet = bool(getattr(args, "fleet", False))
+    # The fleet duo is the DEFAULT (issue #69); --single (alias --legacy) opts out
+    # to the legacy single-model scaffold. --fleet is a default-implied no-op alias.
+    single = bool(getattr(args, "single", False))
+    fleet = not single
     audio = bool(getattr(args, "audio", False))
     if audio and not fleet:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="--audio requires --fleet",
-            remediation="the audio overlay layers on the fleet: run 'lobes init --fleet --audio'",
+            message="--audio is incompatible with --single",
+            remediation="the audio overlay layers on the fleet (the default): "
+            "drop --single, e.g. 'lobes init --audio'",
         )
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
     if args.apply:
@@ -118,17 +135,31 @@ def register(sub: argparse._SubParsersAction) -> None:
         nargs="?",
         help="Where to scaffold (default ~/.lobes; '.' for the current folder).",
     )
-    p.add_argument(
+    # Topology selector. Default is the fleet duo (main primary + multimodal gear
+    # + gateway + embed/rerank); --single (alias --legacy) restores the legacy
+    # single-model scaffold. --fleet is the now-default-implied no-op kept for
+    # back-compat. They are mutually exclusive.
+    topology = p.add_mutually_exclusive_group()
+    topology.add_argument(
+        "--single",
+        "--legacy",
+        dest="single",
+        action="store_true",
+        help="Scaffold the legacy single-model deployment (one vLLM server, no "
+        "gateway) instead of the default fleet duo.",
+    )
+    topology.add_argument(
         "--fleet",
         action="store_true",
-        help="Scaffold the gateway deployment (the Qwen primary + co-resident "
-        "embedding/reranker gears behind 1 OpenAI front; one generate backend by "
-        "default, opt-in generate fallback) instead of a single model.",
+        help="Default-implied no-op (kept for back-compat): the fleet duo — the "
+        "Qwen primary + the multimodal gear behind 1 OpenAI gateway with the "
+        "co-resident embedding/reranker gears — is now the default scaffold.",
     )
     p.add_argument(
         "--audio",
         action="store_true",
-        help="Also scaffold the audio overlay (STT + TTS + realtime bridge). Requires --fleet.",
+        help="Also scaffold the audio overlay (STT + TTS + realtime bridge). "
+        "Layers on the fleet (the default); incompatible with --single.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")

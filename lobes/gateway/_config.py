@@ -19,6 +19,7 @@ _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
+_DEFAULT_MULTIMODAL = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 
 
@@ -46,6 +47,30 @@ def _parse_aliases(raw: str | None) -> dict[str, str]:
         alias, target = alias.strip(), target.strip()
         if alias and target:
             out[alias] = target
+    return out
+
+
+def _expand_tier_alias_synonyms(operator: dict[str, str]) -> dict[str, str]:
+    """Mirror a tier-keyed operator override onto its vocabulary synonyms.
+
+    Tier requests are normalized to the new vocabulary (``hard``→``main``,
+    ``cheap``→``minor``, ``normal``→``multimodal``) *before* the alias table is
+    consulted (see :func:`lobes.gateway._tier_request.resolve_tier_request`), so
+    an operator ``GATEWAY_ALIASES`` override keyed only by a legacy alias would
+    otherwise be silently bypassed. For each tier-keyed override, also set every
+    other alias sharing its capability role (the new-vocab name for a legacy key
+    and vice versa) so the override applies regardless of which vocabulary the
+    operator used. An explicit key for a synonym always wins (never clobbered);
+    non-tier custom aliases (e.g. ``fast=...``) pass through untouched.
+    """
+    out = dict(operator)
+    for alias, target in operator.items():
+        role = TIER_ROLE.get(alias)
+        if role is None:
+            continue  # a non-tier custom alias — leave it alone
+        for synonym, synonym_role in TIER_ROLE.items():
+            if synonym_role == role and synonym not in operator:
+                out[synonym] = target
     return out
 
 
@@ -123,13 +148,31 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-minor:8000",
             default_name=_DEFAULT_MINOR,
         ),
-        # The middle co-resident generate backend (14B NVFP4 "normal" tier).
-        # Wired only when MIDDLE_BASE_URL or MIDDLE_SERVED_NAME is present —
-        # i.e. when the operator has activated the compose "middle" profile and
-        # set these vars (absent by default, so the routing table is unchanged
-        # on a standard fleet startup). Mirrors the minor backend exactly; note
-        # the env keys are MIDDLE_* (the URL key is MIDDLE_BASE_URL, not
-        # MIDDLE_URL — matching the minor gear's MINOR_BASE_URL convention).
+        # The multimodal co-resident generate backend (Gemma 4 12B unified
+        # text+image+audio, the "normal"/"multimodal" tier). Wired only when
+        # MULTIMODAL_BASE_URL or MULTIMODAL_SERVED_NAME is present — i.e. when
+        # the operator has activated the compose "multimodal" profile and set
+        # these vars (absent by default, so the routing table is unchanged on a
+        # standard fleet startup). The 14B Qwen3 "middle" gear is LEGACY and is
+        # no longer a tier backend; address it explicitly by model id (see the
+        # middle backend wired below).
+        _optional_backend(
+            env,
+            name="multimodal",
+            url_key="MULTIMODAL_BASE_URL",
+            name_key="MULTIMODAL_SERVED_NAME",
+            default_url="http://vllm-multimodal:8000",
+            default_name=_DEFAULT_MULTIMODAL,
+        ),
+        # The legacy 14B Qwen3-NVFP4 "middle" gear. Demoted in #69 from the
+        # "normal" tier (now the Gemma multimodal gear) to an opt-in legacy
+        # candidate: wired only when MIDDLE_BASE_URL or MIDDLE_SERVED_NAME is
+        # present (the compose "middle"/"legacy" profile sets them). Because its
+        # backend name "middle" is NOT a TIER_ROLE role, it gets no tier alias —
+        # it is reachable by its explicit served name only (resolve_model matches
+        # backend.served_name), exactly as the compose template documents. Kept
+        # so enabling the profile actually routes to the 14B instead of silently
+        # falling back to the primary.
         _optional_backend(
             env,
             name="middle",
@@ -158,15 +201,16 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         ),
     )
     backends = [primary, *(b for b in optional if b is not None)]
-    # The capability-tier layer (issue #68): cheap/normal/hard resolve to the
-    # served name of the wired minor / middle / primary *generate* gear, on top
-    # of the task-family routing. Computed from the wired generate backends using
-    # catalog.TIER_ROLE (no parallel tier map). A tier whose gear is absent falls
-    # back upward to the nearest higher tier (ultimately the always-present
-    # primary). Explicit GATEWAY_ALIASES are merged last so an operator override
-    # wins over a computed tier alias.
+    # The capability-tier layer: main/minor/multimodal (and back-compat
+    # cheap/normal/hard) resolve to the served name of the wired minor /
+    # multimodal / primary *generate* gear, on top of the task-family routing.
+    # Computed from the wired generate backends using catalog.TIER_ROLE (no
+    # parallel tier map). A tier whose gear is absent falls back upward to the
+    # nearest higher tier (ultimately the always-present primary). Explicit
+    # GATEWAY_ALIASES are merged last so an operator override wins over a
+    # computed tier alias.
     aliases = tier_aliases(backends, TIER_ROLE)
-    aliases.update(_parse_aliases(env.get("GATEWAY_ALIASES")))
+    aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,

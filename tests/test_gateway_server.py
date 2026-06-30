@@ -368,36 +368,37 @@ def _fleet_cfg():
             "PRIMARY_SERVED_NAME": "PRIMARY",
             "MINOR_BASE_URL": "http://vllm-minor:8000",
             "MINOR_SERVED_NAME": "MINOR",
-            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
-            "MIDDLE_SERVED_NAME": "MIDDLE",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
     )
 
 
-_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → degraded/cheap
+_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → degraded/minor
 _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 
 
-def test_handle_post_downgrades_hard_to_cheap_under_pressure() -> None:
-    # model=hard under simulated high swap → forwarded to the cheap served name
-    # (the minor gear) with X-Lobes-Tier-Reason: pressure.
+def test_handle_post_downgrades_to_minor_under_pressure() -> None:
+    # model=hard (back-compat alias for main) under simulated high swap →
+    # forwarded to the minor gear with X-Lobes-Tier-Reason: pressure. The emitted
+    # X-Lobes-Tier is normalized to the new vocabulary (minor), per the t6 seam.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
     )
     assert resp.status == 200
-    assert calls[0][0] == "minor"  # cheap → minor backend
+    assert calls[0][0] == "minor"  # degraded → minor backend
     assert json.loads(calls[0][1])["model"] == "MINOR"  # body rewritten to served name
     headers = dict(resp.headers)
-    assert headers["X-Lobes-Tier"] == "cheap"
+    assert headers["X-Lobes-Tier"] == "minor"
     assert headers["X-Lobes-Tier-Reason"] == "pressure"
 
 
-def test_handle_post_override_forces_hard_under_pressure() -> None:
+def test_handle_post_override_forces_main_under_pressure() -> None:
     # X-Lobes-Override forces the requested tier despite degraded pressure.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table,
         cfg,
@@ -412,19 +413,19 @@ def test_handle_post_override_forces_hard_under_pressure() -> None:
     assert calls[0][0] == "primary"  # override → still the 27B
     assert json.loads(calls[0][1])["model"] == "PRIMARY"
     headers = dict(resp.headers)
-    assert headers["X-Lobes-Tier"] == "hard"
+    assert headers["X-Lobes-Tier"] == "main"  # hard normalizes to main
     assert headers["X-Lobes-Tier-Reason"] == "manual_override"
 
 
-def test_handle_post_no_pressure_keeps_hard_reason_default() -> None:
+def test_handle_post_no_pressure_keeps_main_reason_default() -> None:
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_NO_PRESSURE
     )
     assert calls[0][0] == "primary"
     headers = dict(resp.headers)
-    assert headers["X-Lobes-Tier"] == "hard"
+    assert headers["X-Lobes-Tier"] == "main"  # hard normalizes to main
     assert headers["X-Lobes-Tier-Reason"] == "default"
 
 
@@ -432,7 +433,7 @@ def test_handle_post_plain_model_gets_no_tier_headers() -> None:
     # A concrete model id is never downgraded and carries no tier headers, even
     # under high pressure — the existing routing path is untouched.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', opener, pressure=_HIGH_SWAP
     )
@@ -446,7 +447,7 @@ def test_handle_post_without_pressure_skips_downgrade_layer() -> None:
     # pressure=None (no cache wired) → tier aliases resolve via the static table
     # (t5 behaviour), no tier headers, no downgrade.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener)
     assert calls[0][0] == "primary"  # hard → primary via static alias
     assert "X-Lobes-Tier" not in dict(resp.headers)
@@ -504,7 +505,7 @@ def test_integration_streaming_downgrade_headers_precede_body(tier_gateway) -> N
             buf += chunk
     head, _, _rest = buf.partition(b"\r\n\r\n")
     # Tier headers are in the HTTP header block (before the body separator).
-    assert b"X-Lobes-Tier: cheap" in head
+    assert b"X-Lobes-Tier: minor" in head
     assert b"X-Lobes-Tier-Reason: pressure" in head
     # And the downgrade actually happened on the wire: routed to the minor gear.
     assert b"data: minor\n\n" in buf
@@ -531,6 +532,6 @@ def test_integration_override_header_forces_hard(tier_gateway) -> None:
                 break
             buf += chunk
     head, _, _rest = buf.partition(b"\r\n\r\n")
-    assert b"X-Lobes-Tier: hard" in head
+    assert b"X-Lobes-Tier: main" in head  # hard normalizes to main
     assert b"X-Lobes-Tier-Reason: manual_override" in head
     assert b"data: primary\n\n" in buf  # override → the 27B primary on the wire

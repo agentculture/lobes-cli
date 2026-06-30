@@ -1,6 +1,7 @@
 # Validate Tiers — Operator Runbook
 
-Three-tier generate-fleet validation for issue #68, task t9.
+Generate-fleet tier validation for issue #68, task t9 (updated for issue #69
+vocabulary: `main`/`minor`/`multimodal` with back-compat `hard`/`cheap`/`normal`).
 Runs `scripts/validate-tiers.sh` against an already-running fleet to confirm
 that tier alias routing, pressure downgrade, and manual override all behave
 correctly end-to-end on the live hardware.
@@ -9,16 +10,17 @@ correctly end-to-end on the live hardware.
 
 Before running the script:
 
-1. **Fleet up with all five gears.**
-   The fleet must be running with `COMPOSE_PROFILES` including `middle` and `minor`:
+1. **Fleet up with all required gears.**
+   The default fleet starts four gears automatically (primary, multimodal, embed,
+   rerank). For full tier coverage, also activate the opt-in `minor` (4B):
 
    ```bash
-   COMPOSE_PROFILES=minor,middle lobes fleet up --apply
-   # or set COMPOSE_PROFILES=minor,middle in your deployment .env and then:
+   COMPOSE_PROFILES=minor lobes fleet up --apply
+   # or set COMPOSE_PROFILES=minor in your deployment .env and then:
    lobes fleet up --apply
    ```
 
-   Confirm all five gears (primary, middle, minor, embed, rerank) and the
+   Confirm all five gears (primary, multimodal, minor, embed, rerank) and the
    gateway are healthy before proceeding:
 
    ```bash
@@ -54,39 +56,42 @@ at least one hard check failed. Checks B and F are non-fatal evidence checks.
 ### A — Fleet health
 
 Confirms all five gears are in `running*` state and the gateway responds to
-`/health`. The base gears (primary, embed, rerank) are queried via
-`lobes fleet status --json`; the opt-in profile containers (minor, middle) are
-checked directly via `docker inspect` because `fleet_containers()` only covers
-the always-warm base set.
+`/health`. The always-warm base gears (primary, multimodal, embed, rerank) are
+queried via `lobes fleet status --json`; the opt-in `minor` container is checked
+directly via `docker inspect` because `fleet_containers()` only covers the
+always-warm base set.
 
 **Maps to t9 acceptance criterion:** all five co-resident gears fit on the GB10
-with the documented budget (0.79) and start successfully.
+with the documented budget and start successfully.
 
 ### B — Memory budget (informational)
 
 Runs `nvidia-smi` and prints live GPU memory. Compare against the documented
 budget:
 
-| Gear | `--gpu-memory-utilization` | Approx GiB |
-|---|---|---|
-| primary (hard, 27B) | 0.45 | ~56 |
-| middle (normal, 14B) | 0.12 | ~15 |
-| minor (cheap, 4B) | 0.10 | ~13 |
-| embed (0.6B) | 0.06 | ~7 |
-| rerank (0.6B) | 0.06 | ~7 |
-| **Total** | **0.79** | **~98 / 128 GB** |
+| Gear | Tier | `--gpu-memory-utilization` | Approx GiB |
+|---|---|---|---|
+| primary (27B) | `main` | 0.45 | ~56 |
+| multimodal (12B) | `multimodal` | 0.12 | ~15 |
+| minor (4B, opt-in) | `minor` | 0.10 | ~13 |
+| embed (0.6B) | — | 0.06 | ~7 |
+| rerank (0.6B) | — | 0.06 | ~7 |
+| **Default total** (without minor) | | **0.69** | **~85 / 128 GB** |
+| **Full total** (with minor) | | **0.79** | **~98 / 128 GB** |
 
 Non-fatal: nvidia-smi parse quirks do not block the exit code.
 
 ### C — Tier alias routing
 
-POSTs `model=normal` to `POST /v1/chat/completions` and asserts **both**:
+POSTs `model=multimodal` to `POST /v1/chat/completions` and asserts **both**:
 
-- `X-Lobes-Tier: normal` response header
-- `body.model` contains `Qwen3-14B`
+- `X-Lobes-Tier: multimodal` response header
+- `body.model` contains `gemma-4-12B`
 
-Smoke-tests `model=cheap` (expect `X-Lobes-Tier: cheap`) and `model=hard`
-(expect `X-Lobes-Tier: hard`).
+Smoke-tests `model=minor` (expect `X-Lobes-Tier: minor`) and `model=main`
+(expect `X-Lobes-Tier: main`). The back-compat aliases (`normal`, `cheap`, `hard`)
+are also accepted and emit the new-vocabulary tier in the response header
+(`multimodal`, `minor`, `main` respectively).
 
 **Maps to t9 acceptance criterion:** callers address the generate lane by
 capability-tier alias and the gateway routes to the correct gear.
@@ -114,7 +119,7 @@ This check simulates an overloaded host **without actually stressing memory**:
    The vLLM backends are untouched. The gateway re-imports
    `lobes.gateway._pressure_policy` at container start, picking up the lowered
    threshold.
-4. POST `model=hard` and assert `X-Lobes-Tier: cheap` and
+4. POST `model=main` and assert `X-Lobes-Tier: minor` and
    `X-Lobes-Tier-Reason: pressure`.
 
 The `LOBES_SWAP_DEGRADED_THRESHOLD` constant is read at **module import time**
@@ -128,14 +133,14 @@ The `trap '_cleanup' EXIT` in the script handles this unconditionally — even i
 the script is killed with Ctrl-C or fails partway through D.
 
 **Maps to t9 acceptance criterion:** swap or iowait pressure above the
-degraded threshold downgrades `hard` requests to `cheap`.
+degraded threshold downgrades `main` (and `multimodal`) requests to `minor`.
 
 ### E — Manual override
 
-With the same lowered threshold still active from D, POSTs `model=hard` **with
+With the same lowered threshold still active from D, POSTs `model=main` **with
 `X-Lobes-Override: 1`** and asserts:
 
-- `X-Lobes-Tier: hard` (override bypassed the downgrade)
+- `X-Lobes-Tier: main` (override bypassed the downgrade)
 - `X-Lobes-Tier-Reason: manual_override`
 
 The gateway's truthy tokens for `X-Lobes-Override` are `1`, `true`, `yes`.
@@ -145,14 +150,14 @@ regardless of pressure when they explicitly set `X-Lobes-Override`.
 
 ### F — Pressure delta evidence (informational)
 
-Fires three completions against `cheap` + `normal` (4B/14B, with override to
-bypass the still-lowered threshold) and three against `hard` (27B, with
+Fires three completions against `minor` + `multimodal` (4B/12B, with override to
+bypass the still-lowered threshold) and three against `main` (27B, with
 override). `lobes status --pressure --json` is sampled before and after each
 burst to capture `swap_used_percent` and `iowait_percent` deltas. The evidence
 is printed to stdout and optionally written to `--out`.
 
-The expected pattern: the cheap/normal burst produces smaller or equal
-swap/iowait delta compared with the hard burst, reflecting that the 27B primary
+The expected pattern: the `minor`/`multimodal` burst produces smaller or equal
+swap/iowait delta compared with the `main` burst, reflecting that the 27B primary
 is more memory-bandwidth-intensive than the smaller gears.
 
 Non-fatal: a reverse delta is not an automatic failure — transient OS activity
@@ -170,27 +175,30 @@ for both bursts. Example:
 F: Pressure delta evidence  (2026-06-30T10:15:03Z)
 compose-dir: /home/user/.model-gear
 
-cheap+normal burst (4B/14B gears, 3 completions with X-Lobes-Override):
+minor+multimodal burst (4B/12B gears, 3 completions with X-Lobes-Override):
   swap_before:   22.4%
   swap_after:    22.6%
   iowait_before: 0.8%
   iowait_after:  0.9%
 
-hard burst (27B gear, 3 completions with X-Lobes-Override):
+main burst (27B gear, 3 completions with X-Lobes-Override):
   swap_before:   22.6%
   swap_after:    24.1%
   iowait_before: 0.9%
   iowait_after:  1.2%
 ```
 
-Larger deltas on the hard burst confirm the 27B primary uses more memory
-bandwidth — the motivation for routing routine tasks to cheaper tiers.
+Larger deltas on the `main` burst confirm the 27B primary uses more memory
+bandwidth — the motivation for routing routine tasks to the `minor` or `multimodal`
+tiers.
 
 ## Troubleshooting
 
-**Check A fails for minor/middle:** confirm `COMPOSE_PROFILES=minor,middle` is
-set in the deployment `.env` and the fleet was started **after** that change.
-Profiles are read at `docker compose up` time.
+**Check A fails for minor:** confirm `COMPOSE_PROFILES=minor` is set in the
+deployment `.env` and the fleet was started **after** that change. Profiles are
+read at `docker compose up` time. The `multimodal` gear starts automatically
+(no profile needed); if it fails, check that `MULTIMODAL_BASE_URL` is wired in
+the gateway env.
 
 **Check D fails (downgrade not firing):** the gateway container's
 `LOBES_SWAP_DEGRADED_THRESHOLD` env var was not set. Confirm the
@@ -199,9 +207,9 @@ before the `--force-recreate` call and that `docker compose up` picked it up
 (it is passed explicitly via `-f`). Check
 `docker inspect model-gear-gateway | grep -A5 Env`.
 
-**Check C body.model mismatch:** the middle gear may not have finished loading
+**Check C body.model mismatch:** the multimodal gear may not have finished loading
 (vLLM load takes several minutes). Wait until `lobes fleet status` shows
-`running (healthy)` for `model-gear-vllm-middle`.
+`running (healthy)` for `model-gear-vllm-multimodal`.
 
 **Gateway not restored after failure:** if the script crashes before the trap
 can run, delete the override file and recreate the gateway. Include the audio

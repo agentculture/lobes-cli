@@ -1,11 +1,16 @@
-"""Tests for the 14B-class NVFP4 middle gear and the tier->role_hint map (t1, issue #68).
+"""Tests for the 14B-class NVFP4 gear and the tier->role_hint map (issue #68, updated #69).
 
-Acceptance criteria:
-- catalog.py defines a generate gear with role_hint='middle' (nvidia/Qwen3-14B-NVFP4)
-- A tier->role_hint map exists at module level: cheap->minor / normal->middle / hard->primary
+The 14B (nvidia/Qwen3-14B-NVFP4) was the original 'middle'/normal tier (issue #68).
+Issue #69 reframed the tier vocabulary to main/minor/multimodal and demoted the 14B
+to a legacy *candidate* (the Gemma 4 12B 'multimodal' gear now serves the normal slot).
+This file keeps the 14B-entry coverage (still a valid generate candidate) and tracks
+the post-#69 tier map; the new-vocabulary resolution is also covered in test_catalog.py.
+
+Acceptance criteria (post-#69):
+- catalog.py keeps the 14B generate gear, now role_hint='candidate' (kept, legacy)
+- A tier->role_hint map exists at module level with main/minor/multimodal +
+  cheap/normal/hard back-compat: normal->multimodal, hard->primary, cheap->minor
 - tool_parser == infer_parser(id) and quantization is non-empty
-- tests assert the middle gear exists, is task=generate, and the tier map resolves
-  cheap/normal/hard to the 4B/14B/27B gears respectively
 """
 
 from __future__ import annotations
@@ -41,10 +46,10 @@ def test_middle_gear_task_is_generate() -> None:
     assert middle.task == "generate"
 
 
-def test_middle_gear_role_hint_is_middle() -> None:
-    """The middle gear must carry role_hint='middle'."""
+def test_14b_gear_role_hint_is_candidate() -> None:
+    """Post-#69 the 14B is demoted from 'middle' to a legacy 'candidate' (kept)."""
     middle = next(m for m in SUPPORTED_MODELS if m.id == _MIDDLE_ID)
-    assert middle.role_hint == "middle"
+    assert middle.role_hint == "candidate"
 
 
 def test_middle_gear_tool_parser_matches_infer_parser() -> None:
@@ -108,9 +113,9 @@ def test_tier_role_map_exists_and_has_three_tiers() -> None:
 
 
 def test_tier_role_map_values() -> None:
-    """cheap->minor / normal->middle / hard->primary."""
+    """Post-#69 back-compat values: cheap->minor / normal->multimodal / hard->primary."""
     assert TIER_ROLE["cheap"] == "minor"
-    assert TIER_ROLE["normal"] == "middle"
+    assert TIER_ROLE["normal"] == "multimodal"
     assert TIER_ROLE["hard"] == "primary"
 
 
@@ -126,11 +131,11 @@ def test_resolve_tier_cheap_returns_minor_gear() -> None:
     assert model.role_hint == "minor"
 
 
-def test_resolve_tier_normal_returns_middle_gear() -> None:
-    """resolve_tier('normal') must return the 14B middle gear."""
+def test_resolve_tier_normal_returns_multimodal_gear() -> None:
+    """Post-#69 resolve_tier('normal') resolves to the Gemma 'multimodal' gear."""
     model = resolve_tier("normal")
-    assert model.id == _MIDDLE_ID
-    assert model.role_hint == "middle"
+    assert model.role_hint == "multimodal"
+    assert model.task == "generate"
 
 
 def test_resolve_tier_hard_returns_primary_gear() -> None:

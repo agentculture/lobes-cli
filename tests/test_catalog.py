@@ -10,8 +10,11 @@ import pytest
 
 from lobes.catalog import (
     SUPPORTED_MODELS,
+    TIER_ROLE,
+    SupportedModel,
     as_dicts,
     mtp_compose_command_items,
+    resolve_tier,
     supported_models,
 )
 from lobes.gateway import _config
@@ -281,3 +284,104 @@ def test_minor_gear_quantization_is_none_sentinel() -> None:
     assert (
         minor.quantization == "none"
     ), f"{_MINOR_ID}: expected quantization='none', got {minor.quantization!r}"
+
+
+# ---------------------------------------------------------------------------
+# Gemma 4 12B "multimodal" gear + main/minor/multimodal tier reframe (t2)
+# ---------------------------------------------------------------------------
+# The "normal" tier is reframed from the 14B "middle" gear to the Gemma 4 12B
+# unified-multimodal gear; the 14B is demoted (KEPT) to role_hint="candidate".
+
+_GEMMA_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+_14B_ID = "nvidia/Qwen3-14B-NVFP4"
+_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+
+
+def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
+    # The Gemma multimodal gear must be present with exactly the fields the
+    # acceptance criteria specify — any field drift is a misconfiguration bug.
+    gemma = next((m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID), None)
+    assert gemma is not None, f"{_GEMMA_ID} not found in catalog"
+    assert gemma.role_hint == "multimodal"
+    assert gemma.task == "generate"
+    assert gemma.tool_parser == "pythonic"
+    assert gemma.quantization == "modelopt_fp4"  # NVFP4, non-empty
+    assert gemma.status == "configured"  # not load-tested yet (t7)
+    assert gemma.doc == "gemma-4-12b-nvfp4.md"
+    assert gemma.native_max_model_len == 131072
+    assert gemma.dimension == 0
+    assert gemma.hf_overrides == ""
+    assert gemma.moe_backend == ""  # not MoE
+    # The shape phrase must advertise the unified multimodal (text+image+audio) nature.
+    shape = gemma.shape.lower()
+    assert "multimodal" in shape
+    for modality in ("text", "image", "audio"):
+        assert modality in shape, f"{_GEMMA_ID}: shape must mention {modality!r}"
+
+
+def test_gemma_tool_parser_matches_infer_parser() -> None:
+    # The catalog's pythonic parser must agree with the runtime's inference (t1).
+    gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
+    assert infer_parser(gemma.id) == "pythonic"
+    assert gemma.tool_parser == infer_parser(gemma.id)
+
+
+def test_gemma_carries_native_mtp_speculative_config() -> None:
+    # Gemma 4 ships a native MTP draft head → a non-empty --speculative-config with
+    # a 'method'. The exact method string is RISK r4 (unconfirmed; see catalog TODO).
+    gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
+    assert gemma.speculative_config, f"{_GEMMA_ID}: expected a native-MTP speculative_config"
+    cfg = json.loads(gemma.speculative_config)
+    assert cfg.get("method"), f"{_GEMMA_ID}: speculative_config missing 'method'"
+    assert cfg["num_speculative_tokens"] == 3
+    # The -MTP suffix gate (test_speculative_config_only_on_mtp_checkpoints) requires
+    # MTP in the id; assert it directly so the two invariants stay coupled.
+    assert "MTP" in gemma.id.upper()
+
+
+def test_14b_is_demoted_to_candidate() -> None:
+    # The 14B is KEPT but demoted from the "middle" tier to a legacy candidate;
+    # it must remain in the catalog and now carry role_hint="candidate".
+    middle = next((m for m in SUPPORTED_MODELS if m.id == _14B_ID), None)
+    assert middle is not None, f"{_14B_ID} must be KEPT in the catalog (demoted, not deleted)"
+    assert middle.role_hint == "candidate", f"{_14B_ID}: expected demotion to 'candidate'"
+
+
+def test_tier_role_map_uses_new_vocabulary() -> None:
+    # Primary vocabulary: main/minor/multimodal. Back-compat aliases retained.
+    assert TIER_ROLE["main"] == "primary"
+    assert TIER_ROLE["minor"] == "minor"
+    assert TIER_ROLE["multimodal"] == "multimodal"
+    assert TIER_ROLE["cheap"] == "minor"
+    assert TIER_ROLE["normal"] == "multimodal"
+    assert TIER_ROLE["hard"] == "primary"
+
+
+def test_resolve_tier_multimodal_and_normal_return_gemma() -> None:
+    # Both the new "multimodal" alias and the back-compat "normal" alias resolve
+    # to the Gemma 4 multimodal gear (the reframed normal tier).
+    for tier in ("multimodal", "normal"):
+        model = resolve_tier(tier)
+        assert isinstance(model, SupportedModel)
+        assert model.id == _GEMMA_ID, f"resolve_tier({tier!r}) -> {model.id} (expected Gemma)"
+        assert model.role_hint == "multimodal"
+
+
+def test_resolve_tier_main_and_hard_return_primary() -> None:
+    for tier in ("main", "hard"):
+        model = resolve_tier(tier)
+        assert model.role_hint == "primary"
+        assert model.id == _PRIMARY_ID
+        assert model.task == "generate"
+
+
+def test_resolve_tier_minor_and_cheap_return_4b_minor() -> None:
+    for tier in ("minor", "cheap"):
+        model = resolve_tier(tier)
+        assert model.role_hint == "minor"
+        assert model.id == _MINOR_ID
+
+
+def test_resolve_tier_unknown_still_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unknown tier"):
+        resolve_tier("ultra")

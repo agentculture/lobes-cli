@@ -46,31 +46,54 @@ def tier_aliases(
 ) -> dict[str, str]:
     """Map each capability tier alias to a wired generate backend's served name.
 
-    ``tier_role`` is :data:`lobes.catalog.TIER_ROLE` — an *ordered* map of tier
-    alias → backend role (``cheap``→``minor`` / ``normal``→``middle`` /
-    ``hard``→``primary``), ascending capability in key order. A backend's role is
-    its :attr:`Backend.name` (``"primary"`` / ``"minor"`` / ``"middle"`` / …), so
-    a tier resolves to the served name of the *generate* backend whose ``name``
-    equals the tier's role.
+    ``tier_role`` is :data:`lobes.catalog.TIER_ROLE` — a map of tier alias →
+    backend role. The primary vocabulary is ``main``→``primary`` /
+    ``minor``→``minor`` / ``multimodal``→``multimodal``; back-compat aliases
+    ``cheap``→``minor`` / ``normal``→``multimodal`` / ``hard``→``primary``
+    resolve identically to their primary-vocabulary counterparts.
+
+    A backend's role is its :attr:`Backend.name` (``"primary"`` / ``"minor"``
+    / ``"multimodal"`` / …), so a tier resolves to the served name of the
+    *generate* backend whose ``name`` equals the tier's role.
 
     Fallback contract: when a tier's own backend is not wired, the alias falls
-    back **upward** to the nearest available higher tier — ultimately the
-    always-present ``primary`` (so ``normal``→primary when the middle gear is
-    absent, and ``cheap``→middle, else primary, when the minor gear is absent).
-    ``hard`` therefore always resolves to primary. Pooling backends (embed /
-    score) are ignored: tier aliases are a *generate-only* layer on top of the
-    task-family routing, so an embed request can never reach one via a tier name.
+    back **upward** to the nearest available higher-capability tier — ultimately
+    the always-present ``primary`` (so ``multimodal``/``normal``→primary when
+    the multimodal gear is absent; ``minor``/``cheap``→multimodal, else
+    primary, when the minor gear is absent). ``main``/``hard`` therefore always
+    resolve to primary. Pooling backends (embed/score) are ignored: tier
+    aliases are a *generate-only* layer on top of the task-family routing.
+
+    Capability order is derived by sorting the unique role values from
+    ``tier_role`` by their **last occurrence position** in the values sequence.
+    The back-compat aliases (``cheap`` / ``normal`` / ``hard``) appear last in
+    ``TIER_ROLE`` in ascending capability order, so last-position sort yields
+    the correct ascending sequence ``[minor, multimodal, primary]`` regardless
+    of where the primary-vocabulary keys appear.
     """
     served_by_role = {b.name: b.served_name for b in backends if b.task == "generate"}
-    tiers = list(tier_role)  # ascending capability (cheap, normal, hard)
-    out: dict[str, str] = {}
-    for i, tier in enumerate(tiers):
-        # Walk this tier then every higher one; the first wired role wins.
-        for higher in tiers[i:]:
-            served = served_by_role.get(tier_role[higher])
+    # Determine ascending capability order for unique roles by sorting on their
+    # last occurrence in tier_role.values(). The back-compat aliases
+    # (cheap/normal/hard) appear last in ascending order, anchoring the sort.
+    last_pos: dict[str, int] = {}
+    for i, role in enumerate(tier_role.values()):
+        last_pos[role] = i
+    roles_asc = sorted(last_pos, key=last_pos.__getitem__)
+    # For each unique role in ascending capability, walk upward to find the
+    # nearest wired backend. Primary is always present, so every tier resolves.
+    role_served: dict[str, str] = {}
+    for i, role in enumerate(roles_asc):
+        for higher_role in roles_asc[i:]:
+            served = served_by_role.get(higher_role)
             if served is not None:
-                out[tier] = served
+                role_served[role] = served
                 break
+    # Map every tier alias (primary vocabulary and back-compat) to its resolved
+    # served name.
+    out: dict[str, str] = {}
+    for tier, role in tier_role.items():
+        if role in role_served:
+            out[tier] = role_served[role]
     return out
 
 

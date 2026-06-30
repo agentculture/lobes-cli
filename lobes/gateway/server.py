@@ -266,11 +266,13 @@ def handle_post(
     or 4xx — committed), or a 502 if every backend refused / 5xx'd. ``open_upstream``
     is injected so this is unit-testable without sockets.
 
-    Pressure-aware tier downgrade (t6, #68): when ``pressure`` is supplied *and*
-    the requested model is a capability tier (``cheap``/``normal``/``hard``), the
+    Pressure-aware tier downgrade (t6, #68; vocab #69): when ``pressure`` is
+    supplied *and* the requested model is a capability tier (``main``/``minor``/
+    ``multimodal``, or the ``cheap``/``normal``/``hard`` back-compat aliases), the
     tier is run through :func:`resolve_tier_request` *in front of*
-    :func:`resolve_model` — under memory/iowait pressure a ``hard`` request may be
-    served by a cheaper tier, and the ``X-Lobes-Override`` header (passed as
+    :func:`resolve_model` — under memory/iowait pressure a ``main``/``multimodal``
+    request is downgraded to ``minor`` (the only cheaper rung, since multimodal is
+    a capability, not a tier), and the ``X-Lobes-Override`` header (passed as
     ``override``) forces the requested tier back. The resolved tier + reason are
     surfaced as ``X-Lobes-Tier`` / ``X-Lobes-Tier-Reason`` response headers
     (prepended so they reach the client before the body, streaming included). A

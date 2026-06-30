@@ -41,6 +41,13 @@ from lobes.runtime import _parser
         # A bare mixtral/ministral basename (no mistralai prefix) stays unknown.
         ("Mixtral-8x7B", None),
         ("some/ministral-8b", None),
+        # Gemma 4 — Google's Python-style function-call format → pythonic
+        # (chosen parser value: "pythonic"; t2 catalog task must use the same string)
+        # TODO(risk r2): confirm against the served checkpoint during t7 live
+        # validation on the Spark.
+        ("sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4", "pythonic"),
+        ("some/gemma-4-27b-it", "pythonic"),
+        ("some/gemma4-9b", "pythonic"),
     ],
 )
 def test_infer_parser(model, expected) -> None:

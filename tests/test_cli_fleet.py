@@ -229,3 +229,61 @@ def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, c
     assert payload["containers"] == (
         list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
     )
+
+
+# --- fleet compose template assertions (vllm-multimodal default-on) ----------
+
+
+def _fleet_compose_text() -> str:
+    from importlib.resources import files
+
+    return (files("lobes.templates") / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
+
+
+def _service_block(text: str, service_name: str) -> str:
+    """Extract the YAML block for a top-level service (until the next 2-space key)."""
+    import re
+
+    lines = text.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if re.match(rf"  {re.escape(service_name)}:", ln)),
+        None,
+    )
+    assert start is not None, f"service '{service_name}' not found in fleet compose"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"  \S", lines[i])),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def test_fleet_compose_multimodal_is_default_on() -> None:
+    """vllm-multimodal service exists and has NO profiles: key — starts by default."""
+    text = _fleet_compose_text()
+    assert "vllm-multimodal:" in text, "vllm-multimodal service must be defined in fleet compose"
+    block = _service_block(text, "vllm-multimodal")
+    assert (
+        "profiles:" not in block
+    ), "vllm-multimodal must not have a profiles: key — it must come up with the default fleet"
+
+
+def test_fleet_compose_multimodal_vision_active_and_native_mtp() -> None:
+    """vllm-multimodal: no --language-model-only (vision+audio active); has native-MTP config."""
+    block = _service_block(_fleet_compose_text(), "vllm-multimodal")
+    assert (
+        "--language-model-only" not in block
+    ), "vllm-multimodal must NOT pass --language-model-only: vision+audio must stay active"
+    assert (
+        "--speculative-config" in block
+    ), "vllm-multimodal must carry --speculative-config for native-MTP"
+    assert (
+        "gemma4_mtp" in block
+    ), "vllm-multimodal --speculative-config must reference the gemma4_mtp method"
+
+
+def test_fleet_compose_middle_is_behind_profile() -> None:
+    """vllm-middle (14B, legacy candidate) is opt-in: must declare a profiles: key."""
+    block = _service_block(_fleet_compose_text(), "vllm-middle")
+    assert (
+        "profiles:" in block
+    ), "vllm-middle must be behind a profiles: key — it is a legacy opt-in candidate"
