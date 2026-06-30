@@ -368,8 +368,8 @@ def _fleet_cfg():
             "PRIMARY_SERVED_NAME": "PRIMARY",
             "MINOR_BASE_URL": "http://vllm-minor:8000",
             "MINOR_SERVED_NAME": "MINOR",
-            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
-            "MIDDLE_SERVED_NAME": "MIDDLE",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
     )
 
@@ -382,7 +382,7 @@ def test_handle_post_downgrades_hard_to_cheap_under_pressure() -> None:
     # model=hard under simulated high swap → forwarded to the cheap served name
     # (the minor gear) with X-Lobes-Tier-Reason: pressure.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
     )
@@ -397,7 +397,7 @@ def test_handle_post_downgrades_hard_to_cheap_under_pressure() -> None:
 def test_handle_post_override_forces_hard_under_pressure() -> None:
     # X-Lobes-Override forces the requested tier despite degraded pressure.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table,
         cfg,
@@ -418,7 +418,7 @@ def test_handle_post_override_forces_hard_under_pressure() -> None:
 
 def test_handle_post_no_pressure_keeps_hard_reason_default() -> None:
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_NO_PRESSURE
     )
@@ -432,7 +432,7 @@ def test_handle_post_plain_model_gets_no_tier_headers() -> None:
     # A concrete model id is never downgraded and carries no tier headers, even
     # under high pressure — the existing routing path is untouched.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', opener, pressure=_HIGH_SWAP
     )
@@ -446,7 +446,7 @@ def test_handle_post_without_pressure_skips_downgrade_layer() -> None:
     # pressure=None (no cache wired) → tier aliases resolve via the static table
     # (t5 behaviour), no tier headers, no downgrade.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "middle": 200, "primary": 200})
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener)
     assert calls[0][0] == "primary"  # hard → primary via static alias
     assert "X-Lobes-Tier" not in dict(resp.headers)

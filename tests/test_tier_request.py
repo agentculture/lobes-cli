@@ -34,8 +34,8 @@ def _full_fleet():
             "PRIMARY_SERVED_NAME": "PRIMARY",
             "MINOR_BASE_URL": "http://vllm-minor:8000",
             "MINOR_SERVED_NAME": "MINOR",
-            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
-            "MIDDLE_SERVED_NAME": "MIDDLE",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
     )
     return table
