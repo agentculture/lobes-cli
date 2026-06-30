@@ -19,7 +19,7 @@ _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
-_DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
+_DEFAULT_MULTIMODAL = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 
 
 @dataclass(frozen=True)
@@ -123,20 +123,20 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-minor:8000",
             default_name=_DEFAULT_MINOR,
         ),
-        # The middle co-resident generate backend (14B NVFP4 "normal" tier).
-        # Wired only when MIDDLE_BASE_URL or MIDDLE_SERVED_NAME is present —
-        # i.e. when the operator has activated the compose "middle" profile and
-        # set these vars (absent by default, so the routing table is unchanged
-        # on a standard fleet startup). Mirrors the minor backend exactly; note
-        # the env keys are MIDDLE_* (the URL key is MIDDLE_BASE_URL, not
-        # MIDDLE_URL — matching the minor gear's MINOR_BASE_URL convention).
+        # The multimodal co-resident generate backend (Gemma 4 12B unified
+        # text+image+audio, the "normal"/"multimodal" tier). Wired only when
+        # MULTIMODAL_BASE_URL or MULTIMODAL_SERVED_NAME is present — i.e. when
+        # the operator has activated the compose "multimodal" profile and set
+        # these vars (absent by default, so the routing table is unchanged on a
+        # standard fleet startup). The 14B Qwen3 "middle" gear is LEGACY and is
+        # no longer a tier backend; address it explicitly by model id if needed.
         _optional_backend(
             env,
-            name="middle",
-            url_key="MIDDLE_BASE_URL",
-            name_key="MIDDLE_SERVED_NAME",
-            default_url="http://vllm-middle:8000",
-            default_name=_DEFAULT_MIDDLE,
+            name="multimodal",
+            url_key="MULTIMODAL_BASE_URL",
+            name_key="MULTIMODAL_SERVED_NAME",
+            default_url="http://vllm-multimodal:8000",
+            default_name=_DEFAULT_MULTIMODAL,
         ),
         _optional_backend(
             env,
@@ -158,13 +158,14 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         ),
     )
     backends = [primary, *(b for b in optional if b is not None)]
-    # The capability-tier layer (issue #68): cheap/normal/hard resolve to the
-    # served name of the wired minor / middle / primary *generate* gear, on top
-    # of the task-family routing. Computed from the wired generate backends using
-    # catalog.TIER_ROLE (no parallel tier map). A tier whose gear is absent falls
-    # back upward to the nearest higher tier (ultimately the always-present
-    # primary). Explicit GATEWAY_ALIASES are merged last so an operator override
-    # wins over a computed tier alias.
+    # The capability-tier layer: main/minor/multimodal (and back-compat
+    # cheap/normal/hard) resolve to the served name of the wired minor /
+    # multimodal / primary *generate* gear, on top of the task-family routing.
+    # Computed from the wired generate backends using catalog.TIER_ROLE (no
+    # parallel tier map). A tier whose gear is absent falls back upward to the
+    # nearest higher tier (ultimately the always-present primary). Explicit
+    # GATEWAY_ALIASES are merged last so an operator override wins over a
+    # computed tier alias.
     aliases = tier_aliases(backends, TIER_ROLE)
     aliases.update(_parse_aliases(env.get("GATEWAY_ALIASES")))
     table = RoutingTable(

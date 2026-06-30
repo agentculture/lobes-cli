@@ -22,9 +22,11 @@ from lobes.runtime import _pressure as _pressure_mod
 
 # Tier model IDs — mirrors test_catalog_tiers.py constants so that any catalog
 # change that renames an ID also breaks *this* test (intentional coupling).
-_MINOR_ID = "Qwen/Qwen3.5-4B"  # cheap tier
-_MIDDLE_ID = "nvidia/Qwen3-14B-NVFP4"  # normal tier
-_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # hard tier
+_MINOR_ID = "Qwen/Qwen3.5-4B"  # cheap/minor tier
+_MULTIMODAL_ID = (
+    "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"  # normal/multimodal tier
+)
+_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # hard/main tier
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ def test_status_pressure_json_mid_swap_constrained(capsys, monkeypatch) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert set(payload.keys()) == {"tier", "model", "mode", "reason", "pressure"}
     assert payload["tier"] == "normal"
-    assert payload["model"] == _MIDDLE_ID
+    assert payload["model"] == _MULTIMODAL_ID
     assert payload["mode"] == "warm"
     assert payload["reason"] == "pressure"
     assert payload["pressure"] == {"swap_used_percent": 60.0, "iowait_percent": 5.0}
