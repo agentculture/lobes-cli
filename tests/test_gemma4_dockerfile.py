@@ -114,3 +114,41 @@ def test_verification_run_checks_gemma4_arch():
         "Expected verification RUN to check vllm.ModelRegistry for a 'Gemma4' arch. "
         f"has_registry={has_registry}, has_gemma4_arch={has_gemma4_arch}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. Every logical line is a valid Dockerfile instruction
+# ---------------------------------------------------------------------------
+# Regression guard for a real t3 build failure: a multi-line `RUN python3 -c
+# "..."` WITHOUT backslash continuations makes Docker parse each body line
+# (e.g. `import transformers`) as its own instruction → "unknown instruction:
+# import". A grep-based content check cannot catch that; this lint does.
+
+_DOCKERFILE_INSTRUCTIONS = {
+    "FROM", "RUN", "CMD", "LABEL", "MAINTAINER", "EXPOSE", "ENV", "ADD",
+    "COPY", "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD",
+    "STOPSIGNAL", "HEALTHCHECK", "SHELL",
+}
+
+
+def test_every_logical_line_is_a_valid_instruction():
+    """Each non-comment, non-continuation line must begin with a known
+    Dockerfile instruction. Stray lines mean a RUN body wasn't continued
+    with a trailing backslash and Docker will fail to parse the file."""
+    lines = _lines()
+    in_continuation = False
+    for lineno, raw in enumerate(lines, start=1):
+        ends_with_backslash = raw.rstrip().endswith("\\")
+        if in_continuation:
+            # Body of a continued instruction — not a new instruction line.
+            in_continuation = ends_with_backslash
+            continue
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        instruction = stripped.split(None, 1)[0].upper()
+        assert instruction in _DOCKERFILE_INSTRUCTIONS, (
+            f"line {lineno}: {raw!r} is not a valid Dockerfile instruction — "
+            "a multi-line RUN body must use trailing-backslash continuations"
+        )
+        in_continuation = ends_with_backslash
