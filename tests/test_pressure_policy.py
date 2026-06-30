@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import pytest
 
+from lobes.catalog import TIER_ROLE as CATALOG_TIER_ROLE
 from lobes.gateway._pressure_policy import (
+    _TIER_ROLE,
     IOWAIT_DEGRADED_THRESHOLD,
     IOWAIT_NO_HARD_THRESHOLD,
     SWAP_DEGRADED_THRESHOLD,
@@ -38,6 +40,18 @@ from lobes.gateway._pressure_policy import (
     _env_float,
     decide,
 )
+
+
+def test_pressure_tier_role_mirror_matches_catalog() -> None:
+    """The local _TIER_ROLE mirror must not drift from catalog.TIER_ROLE.
+
+    _pressure_policy.py keeps a local copy of the tier->role map so the module
+    stays pure stdlib (no catalog import in the policy path). This test is the
+    guard that the two never diverge — a rename in catalog without updating the
+    mirror would silently break pressure-aware routing (colleague review, #69).
+    """
+    assert _TIER_ROLE == dict(CATALOG_TIER_ROLE)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
