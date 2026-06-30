@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - docs/specs: Gemma 4 12B multimodal-duo spec (issue #69) — /think frame for default-serving the Qwen3.6-27B-MTP + Gemma4-12B duo as main/minor/multimodal tiers (vision+audio), native-MTP on by default, DSpark draft as a disabled experiment, 14B demoted to a legacy candidate
 - docs/plans: buildable plan for the Gemma duo (9 tasks across 5 dependency waves, 6 accepted-risk objects) via /spec-to-plan — covers all 26 spec targets; resolves the main/minor/multimodal pressure-ladder seam as a first-class task
 
+### Changed
+
+- Reworded the three Gemma-risk markers in `catalog.py` / `runtime/_parser.py` from bare `TODO(risk …)` comments to `Risk … (pending #71)` — the deferred live-validation work is tracked in issue #71 (gemma4_unified won't load on released vLLM images), so the comments now cite the tracking issue instead of an untracked TODO (clears SonarCloud `python:S1135`).
+
 ## [0.32.0] - 2026-06-30
 
 ### Added

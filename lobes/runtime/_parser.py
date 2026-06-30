@@ -53,8 +53,8 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     # "gemma-4" / "gemma4" so they don't match older Gemma 1/2/3 checkpoints whose
     # tool-call story is less clear.
     # chosen parser value: "pythonic"
-    # TODO(risk r2): confirm against the served checkpoint during t7 live
-    # validation on the Spark.
+    # Risk r2 (pending #71): confirm against the served checkpoint during live
+    # validation on the Spark (blocked until a gemma4_unified-capable image lands).
     (("gemma-4", "gemma4"), "pythonic"),
 ]
 

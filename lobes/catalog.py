@@ -226,8 +226,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # until a supporting image lands; tracked in issue #71. See docs/gemma-4-12b-nvfp4.md.
         role_hint="multimodal",
         shape="unified multimodal (text+image+audio), native MTP draft head",
-        # TODO(risk): confirm Gemma 4 12B's native context on the served checkpoint
-        # in t7 — using 128K (131072) as a safe default until measured.
+        # Risk (pending #71): confirm Gemma 4 12B's native context on the served
+        # checkpoint during live validation — using 128K (131072) as a safe
+        # default until measured.
         context="128K native",
         native_max_model_len=131072,
         tool_parser="pythonic",
@@ -237,8 +238,8 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
         # Native Gemma 4 MTP draft head → vLLM --speculative-config (like the 27B
         # primary's qwen3_5_mtp config). The exact method string is unconfirmed.
-        # TODO(risk r4): confirm the Gemma4 native-MTP method string against the
-        # served checkpoint in t7 (live validation on the Spark).
+        # Risk r4 (pending #71): confirm the Gemma4 native-MTP method string
+        # against the served checkpoint during live validation on the Spark.
         speculative_config='{"method": "gemma4_mtp", "num_speculative_tokens": 3}',
     ),
     SupportedModel(
