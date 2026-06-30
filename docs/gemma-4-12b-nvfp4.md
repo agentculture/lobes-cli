@@ -140,6 +140,57 @@ MULTIMODAL_SPECULATIVE_CONFIG={"method": "draft_model", "draft_model_id": "deeps
 
 DSpark is unvalidated on this checkpoint — measure before enabling.
 
+## Speculative decoding (#75): before-state and scope
+
+**Audience:** lobes operators/maintainers and the Culture mesh that consumes the
+`multimodal` (Gemma 4 12B) generate lane — i.e. anyone calling `model=multimodal`
+or the back-compat `model=normal` (see [Tier alias usage](#tier-alias-usage)).
+
+**Before-state (verified in-repo).** The gemma catalog entry
+(`lobes/catalog.py`, `id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"`)
+carries **no `speculative_config`** today: `SupportedModel.speculative_config`
+defaults to `speculative_config: str = ""`, and the gemma entry never overrides
+it — the comment directly above its closing paren reads "No speculative_config:
+despite the '-MTP' name, this unified checkpoint exposes no gemma4_assistant
+draft...". Compose mirrors this: the only `--speculative-config` item in
+`lobes/templates/docker-compose*.yml` belongs to the 27B `vllm` (primary)
+service (`'--speculative-config={"method": "qwen3_5_mtp", ...}'`); the
+`vllm-multimodal` service carries none — see the compose-flags block above and
+the `# NO --speculative-config` comment in it. The native self-speculation path
+is also closed: `{"method": "gemma4_mtp"}` is rejected by vLLM 0.21/0.22 as an
+"Unsupported speculative method" (see the ["No native MTP via this
+checkpoint"](#what-it-is) bullet above; the [DSpark
+experiment](#dspark-experiment) above is the one currently-documented, but
+disabled and unvalidated, alternative route).
+
+**The gap this leaves.** The 27B `primary`/`main` gear gets a measured **~2.4×
+single-stream decode speedup** from MTP speculative decoding (72–79 % draft
+acceptance) — see
+[`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md). The
+`multimodal`/`normal` lane has no equivalent boost: it serves with no
+speculative config at all, so per-stream decode is comparatively slow relative
+to the primary, and that gap is real (not assumed) once #71 lands and the lane
+takes live mesh traffic.
+
+**Scope split.**
+
+| Concern | Owner |
+|---|---|
+| Serve-enablement — force `TRITON_ATTN` on the transformers backend so the gear actually serves | issue #71 (see [Live-validation status](#live-validation-status-71) below) |
+| Draft-model training/distilling (building a native `gemma4_assistant` head from scratch) | a separate follow-up, not #75 |
+| Resolve a draft route, wire `--speculative-config`, measure, and decide | **issue #75 (this work)** |
+
+Issue #75 does not train a draft model. It resolves to exactly one concrete
+route (a validated `draft_model` such as DSpark, a sourced `gemma4_assistant`
+draft, or a documented "no compatible draft available"), wires it through the
+same catalog-to-compose pattern the 27B MTP primary uses today
+(`speculative_config` on the catalog entry drives the compose
+`--speculative-config` items), measures draft acceptance and decode speedup on
+a live co-resident serve, and commits a verdict: restore `speculative_config`
+by default if it beats the no-spec baseline, or document the negative with the
+numbers that ruled it out. **Done = a measured verdict, not merely a wired
+draft.** #75 is gated on #71 — no draft can be measured until the gear serves.
+
 ## Live-validation status (#71) {#live-validation-status-71}
 
 > **Live validation on the DGX Spark (`spark-f8a9`, GB10, 2026-06-30, #71)
