@@ -376,7 +376,20 @@ services:
   # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
 
   vllm-multimodal:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Gemma 4 needs patches not yet in the stock NGC image, so this service uses a
+    # custom Dockerfile (Dockerfile.vllm-gemma4) that layers fixes on top of 26.04-py3.
+    # When MULTIMODAL_IMAGE is unset, `lobes fleet up` (which runs `up -d --build`)
+    # builds Dockerfile.vllm-gemma4 and tags the result as lobes/vllm-gemma4:local;
+    # a subsequent `docker compose up` (no --build) reuses that local tag.
+    # When MULTIMODAL_IMAGE is set to a registry tag (e.g.
+    # ghcr.io/agentculture/vllm-gemma4:latest), the operator can skip the local build:
+    #   docker compose pull vllm-multimodal   # pull the pre-built image
+    #   lobes fleet up --apply                # up without --build; uses the pulled tag
+    # See env.example MULTIMODAL_IMAGE. (Tracked as risk r5 in the build plan.)
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_IMAGE:-lobes/vllm-gemma4:local}
     container_name: model-gear-vllm-multimodal
     restart: unless-stopped
     deploy:

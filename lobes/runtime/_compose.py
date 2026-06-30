@@ -72,6 +72,10 @@ FLEET_TEMPLATES = {
     "fleet/docker-compose.yml": COMPOSE_FILE,
     "fleet/env.example": ENV_FILE,
     "fleet/Dockerfile.gateway": DOCKERFILE_GATEWAY,
+    # Custom vLLM image for the Gemma 4 12B multimodal gear (issue #71).
+    # Layers a Transformers build (gemma4_unified) on the NGC 26.05 base.
+    # Authored in t1; wired to vllm-multimodal's build: block in t2.
+    "fleet/Dockerfile.vllm-gemma4": "Dockerfile.vllm-gemma4",
     LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
 }
