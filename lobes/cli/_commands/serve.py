@@ -1,4 +1,13 @@
-"""``lobes serve`` (alias ``start``) — start the vLLM server.
+"""``lobes serve`` (alias ``start``) — bring the scaffolded deployment up.
+
+``docker compose up -d`` starts whatever the materialised compose marks
+default-on. For a default ``lobes init`` deploy that is the **main+multimodal
+duo** (the Qwen generate primary + the Gemma multimodal gear, fronted by the
+gateway with the co-resident embed/rerank gears); for a legacy ``lobes init
+--single`` deploy it is the single vLLM server. ``serve`` no longer means
+"single-model" — it brings up the duo by default. (The opt-in 4B ``minor`` /
+14B ``middle`` generate gears stay behind compose profiles, so a bare ``up -d``
+does not start them.)
 
 Mutating: dry-run by default; ``--apply`` runs ``docker compose up -d`` in the
 deployment dir, waits for ``/health``, then probes ``tool_choice:"auto"`` to
@@ -60,7 +69,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "serve",
         aliases=["start"],
-        help="Start the vLLM server (dry-run by default; --apply to commit).",
+        help="Bring the scaffolded deployment up — the main+multimodal duo by "
+        "default (dry-run by default; --apply to commit).",
     )
     p.add_argument(
         "--port", type=int, help="Host port for the health wait (default: VLLM_PORT in .env)."

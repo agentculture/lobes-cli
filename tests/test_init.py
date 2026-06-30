@@ -17,43 +17,92 @@ def test_init_dry_run_writes_nothing(tmp_path, capsys) -> None:
     assert not target.exists()
 
 
-def test_init_apply_writes_both_files(tmp_path, capsys) -> None:
+def test_init_default_scaffolds_fleet_duo(tmp_path, capsys) -> None:
+    # DEFAULT topology flip (issue #69): a bare `lobes init` now scaffolds the
+    # fleet duo (main primary + multimodal gear + gateway + embed/rerank), NOT a
+    # single model. The single-model path moved behind `--single` (see below).
     target = tmp_path / "deploy"
     rc = main(["init", str(target), "--apply"])
     assert rc == 0
     assert (target / "docker-compose.yml").is_file()
     assert (target / ".env").is_file()
-    # the compose template carries the renamed container
+    # The whole FLEET_TEMPLATES set is written — including the gateway Dockerfile,
+    # which the legacy single-model scaffold does NOT carry.
+    written = {p.name for p in target.iterdir() if p.is_file()}
+    assert set(_compose.FLEET_TEMPLATES.values()) <= written
+    assert "Dockerfile.gateway" in written
+    # The duo is present in the materialised compose: the Qwen primary + the
+    # Gemma multimodal gear, fronted by the gateway.
+    compose = (target / "docker-compose.yml").read_text()
+    assert "vllm-primary" in compose
+    assert "vllm-multimodal" in compose
+    assert "model-gear-gateway" in compose
+    # Durable logs (issue #50): wrapper scaffolded + each vLLM gear runs it.
+    assert (target / "mg-logwrap.sh").is_file()
+    assert (target / "logs").is_dir()
+    assert 'entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]' in compose
+
+
+def test_init_default_apply_json_lists_fleet_files(tmp_path, capsys) -> None:
+    # The default `init --apply --json` now lists the FLEET file set (the gateway
+    # Dockerfile is the tell-tale fleet-only file) and reports fleet=True.
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--apply", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scaffolded"] == str(target)
+    assert payload["fleet"] is True
+    assert payload["single"] is False
+    assert set(payload["files"]) == set(_compose.FLEET_TEMPLATES.values())
+    assert "Dockerfile.gateway" in payload["files"]
+
+
+def test_init_single_scaffolds_legacy(tmp_path, capsys) -> None:
+    # `lobes init --single` restores the legacy single-model scaffold (one vLLM
+    # server, no gateway). This is the behaviour that used to be the default.
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--single", "--apply"])
+    assert rc == 0
+    written = {p.name for p in target.iterdir() if p.is_file()}
+    assert set(_compose.SINGLE_TEMPLATES.values()) <= written
+    # Legacy single-model has no gateway / fleet services.
+    assert "Dockerfile.gateway" not in written
     compose = (target / "docker-compose.yml").read_text()
     assert "model-gear-vllm" in compose
+    assert "vllm-primary" not in compose
     # OpenAI tool/function calling is enabled out of the box (issue #9); the
     # parser is env-driven so a switched model can override it (default qwen3_coder
     # for the Qwen3.6-27B primary).
     assert "--enable-auto-tool-choice" in compose
     assert "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}" in compose
     assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in (target / ".env").read_text()
-    # Durable logs (issue #50): the wrapper is scaffolded, the log dir is pre-created
-    # (user-owned), and the vllm service runs the wrapper as its entrypoint + tees to
-    # a host-mounted log dir.
-    assert (target / "mg-logwrap.sh").is_file()
-    assert (target / "logs").is_dir()
+    # Durable logs (issue #50): the single vLLM service runs the wrapper + names
+    # its own per-boot log file.
     assert 'entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]' in compose
     assert "MG_LOG_NAME=vllm" in compose
     assert "/logs/model-gear" in compose
 
 
-def test_init_apply_json(tmp_path, capsys) -> None:
+def test_init_legacy_alias_matches_single(tmp_path) -> None:
+    # `--legacy` is an accepted alias for `--single`.
     target = tmp_path / "deploy"
-    rc = main(["init", str(target), "--apply", "--json"])
+    rc = main(["init", str(target), "--legacy", "--apply"])
+    assert rc == 0
+    written = {p.name for p in target.iterdir() if p.is_file()}
+    assert set(_compose.SINGLE_TEMPLATES.values()) <= written
+    assert "Dockerfile.gateway" not in written
+
+
+def test_init_single_apply_json(tmp_path, capsys) -> None:
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--single", "--apply", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scaffolded"] == str(target)
-    assert set(payload["files"]) == {
-        "docker-compose.yml",
-        ".env",
-        "mg-logwrap.sh",
-        "cf-tunnel.env.example",
-    }
+    assert payload["fleet"] is False
+    assert payload["single"] is True
+    assert set(payload["files"]) == set(_compose.SINGLE_TEMPLATES.values())
+    assert "Dockerfile.gateway" not in payload["files"]
 
 
 def test_init_refuses_overwrite_without_force(tmp_path) -> None:
@@ -151,12 +200,24 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
 # --- audio overlay (--fleet --audio) --------------------------------------
 
 
-def test_init_audio_requires_fleet(capsys) -> None:
+def test_init_audio_is_valid_by_default(tmp_path, capsys) -> None:
+    # The fleet is now the default, and the audio overlay layers on the fleet, so
+    # `lobes init --audio` (no --fleet needed) is now valid — it scaffolds the
+    # fleet + audio overlay. (Was an error back when single was the default.)
+    target = tmp_path / "fa"
+    rc = main(["init", "--audio", str(target), "--apply"])
+    assert rc == 0
+    assert (target / "docker-compose.audio.yml").is_file()
+
+
+def test_init_audio_incompatible_with_single(capsys) -> None:
+    # The audio overlay needs the fleet; it cannot layer on the legacy single model.
     rc = main(
-        ["init", "--audio", "/tmp/nope", "--json"]
+        ["init", "--single", "--audio", "/tmp/nope", "--json"]
     )  # nosec B108 - never written (errors first)
     assert rc == 1  # EXIT_USER_ERROR
-    assert "--audio requires --fleet" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--audio" in err and "--single" in err
 
 
 def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None:
@@ -220,3 +281,31 @@ def test_every_compose_referenced_dockerfile_is_scaffolded(tmp_path) -> None:
         text = (tmp_path / compose_name).read_text(encoding="utf-8")
         for ref in re.findall(r"^\s*dockerfile:\s*(\S+)", text, re.MULTILINE):
             assert (tmp_path / ref).is_file(), f"{compose_name} builds from {ref}, not scaffolded"
+
+
+# --- the default-on topology (issue #69) ----------------------------------
+
+
+def test_fleet_compose_default_on_generate_services_are_the_duo() -> None:
+    """The packaged fleet compose's DEFAULT-ON (no-``profiles``) generate services
+    must be exactly the duo {vllm-primary, vllm-multimodal}; the legacy generate
+    gears vllm-minor (4B) and vllm-middle (14B) must sit BEHIND profiles so a bare
+    ``docker compose up -d`` (what `lobes serve` runs) does NOT start them."""
+    from importlib.resources import files
+
+    import yaml
+
+    text = (files("lobes.templates") / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(text)
+    services = compose["services"]
+
+    generate = {"vllm-primary", "vllm-multimodal", "vllm-minor", "vllm-middle"}
+    # All four generate gears are defined in the compose.
+    assert generate <= set(services)
+    default_on_generate = {
+        name for name in generate if name in services and not services[name].get("profiles")
+    }
+    assert default_on_generate == {"vllm-primary", "vllm-multimodal"}
+    # The legacy generate gears are profile-gated (excluded from a bare up -d).
+    assert services["vllm-minor"].get("profiles")
+    assert services["vllm-middle"].get("profiles")
