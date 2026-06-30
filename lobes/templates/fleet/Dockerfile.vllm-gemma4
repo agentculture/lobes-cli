@@ -1,0 +1,38 @@
+# Gemma 4 custom vLLM image — layers a Transformers build that registers
+# the gemma4_unified architecture on top of the NGC vLLM 26.05 base.
+#
+# This Dockerfile is the template scaffolded by `lobes init --fleet`.
+# The full implementation is authored in task t1 (issue #71). This stub
+# ensures `lobes fleet up --build` can reference the file; t1 fills in
+# the Transformers install, the TRANSFORMERS_REF ARG, and the build-stage
+# verification step.
+#
+# Base image: NGC vLLM 26.05 (ARM64/Blackwell, latest at time of #71) — one
+# minor version ahead of 26.04 which does not include the Gemma 4 patches.
+FROM nvcr.io/nvidia/vllm:26.05.post1-py3
+
+# TRANSFORMERS_REF pins the Transformers commit/tag that registers the
+# gemma4_unified architecture. Default is updated by t3 once the build is
+# verified live on the DGX Spark (issue #71).
+ARG TRANSFORMERS_REF=main
+
+# Install uv for reproducible Transformers builds.
+RUN pip install --no-cache-dir uv
+
+# Install the pinned Transformers ref system-wide (not in a venv — vLLM's
+# entrypoint runs in the base environment).
+RUN uv pip install --system \
+    "transformers @ git+https://github.com/huggingface/transformers.git@${TRANSFORMERS_REF}"
+
+# Verify that the gemma4_unified architecture is registered before shipping
+# the layer (catches a broken TRANSFORMERS_REF at build time, not serve time).
+RUN python - <<'EOF'
+from transformers import AutoConfig  # noqa: F401 — import verifies the install
+from vllm.model_executor.models import ModelRegistry
+
+registered = ModelRegistry.get_supported_archs()
+assert any("gemma4" in arch.lower() for arch in registered), (
+    f"gemma4_unified not in ModelRegistry: {registered}"
+)
+print("OK: gemma4_unified registered in ModelRegistry")
+EOF
