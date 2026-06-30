@@ -305,8 +305,10 @@ def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
     assert gemma.role_hint == "multimodal"
     assert gemma.task == "generate"
     assert gemma.tool_parser == "pythonic"
-    assert gemma.quantization == "modelopt_fp4"  # NVFP4, non-empty
-    assert gemma.status == "configured"  # not load-tested yet (t7)
+    # NVFP4 in compressed-tensors format (config.json quant_method), NOT modelopt —
+    # verified live on the Spark (#71); modelopt_fp4 fails with a method mismatch.
+    assert gemma.quantization == "compressed-tensors"
+    assert gemma.status == "configured"  # not load-tested yet (#71 serve-enablement)
     assert gemma.doc == "gemma-4-12b-nvfp4.md"
     assert gemma.native_max_model_len == 131072
     assert gemma.dimension == 0
@@ -326,17 +328,18 @@ def test_gemma_tool_parser_matches_infer_parser() -> None:
     assert gemma.tool_parser == infer_parser(gemma.id)
 
 
-def test_gemma_carries_native_mtp_speculative_config() -> None:
-    # Gemma 4 ships a native MTP draft head → a non-empty --speculative-config with
-    # a 'method'. The exact method string is RISK r4 (unconfirmed; see catalog TODO).
+def test_gemma_has_no_speculative_config() -> None:
+    # Despite the "-MTP" name, this unified checkpoint exposes no gemma4_assistant
+    # draft, and vLLM 0.21/0.22 enable Gemma4 MTP only via a SEPARATE gemma4_assistant
+    # draft model — not self-speculation from the unified target. Passing
+    # {"method": "gemma4_mtp"} is rejected ("Unsupported speculative method"), verified
+    # live on the Spark (#71). So the gear carries NO speculative_config until a draft
+    # model is sourced (tracked follow-up); it serves without spec-decode.
     gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
-    assert gemma.speculative_config, f"{_GEMMA_ID}: expected a native-MTP speculative_config"
-    cfg = json.loads(gemma.speculative_config)
-    assert cfg.get("method"), f"{_GEMMA_ID}: speculative_config missing 'method'"
-    assert cfg["num_speculative_tokens"] == 3
-    # The -MTP suffix gate (test_speculative_config_only_on_mtp_checkpoints) requires
-    # MTP in the id; assert it directly so the two invariants stay coupled.
-    assert "MTP" in gemma.id.upper()
+    assert gemma.speculative_config == "", (
+        f"{_GEMMA_ID}: speculative_config must be empty — Gemma4 native MTP needs a "
+        "separate gemma4_assistant draft model (see docs/gemma-4-12b-nvfp4.md)"
+    )
 
 
 def test_14b_is_demoted_to_candidate() -> None:

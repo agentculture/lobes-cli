@@ -191,7 +191,7 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
         "docker-compose.yml",
         ".env",
         "Dockerfile.gateway",
-        "Dockerfile.vllm-gemma4",   # custom vLLM image for vllm-multimodal (issue #71)
+        "Dockerfile.vllm-gemma4",  # custom vLLM image for vllm-multimodal (issue #71)
         "mg-logwrap.sh",
         "cf-tunnel.env.example",
     }

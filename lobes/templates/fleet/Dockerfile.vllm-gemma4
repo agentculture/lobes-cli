@@ -1,21 +1,23 @@
 # lobes vLLM-Gemma4 — custom vLLM image that registers the gemma4_unified arch.
 #
-# The NGC vLLM 26.05.post1 base ships vLLM 0.21.x but a Transformers version
-# that does NOT yet register gemma4_unified in AutoConfig.  This Dockerfile
-# overlays a newer (or from-source) Transformers build so the Gemma 4 12B
-# multimodal gear loads without "unknown architecture" errors.
+# The NGC vLLM 26.06 base ships vLLM 0.22.1 (the version proven to serve Gemma 4
+# Omni; native Gemma4Unified support) on NGC's Blackwell-built torch 2.13.0a0, but
+# its Transformers (5.6.0) does NOT register gemma4_unified in AutoConfig. This
+# Dockerfile overlays a from-source Transformers build that does — without touching
+# NGC's torch (only Transformers + safetensors are swapped, verified #71). Base
+# bumped 26.05.post1 → 26.06 after live validation on the Spark (#71, 2026-06-30):
+# both bases register gemma4_unified, but 0.22.1 is the serve-proven vLLM.
 #
 # TRANSFORMERS_REF — the Transformers ref to install. Pinned to a specific commit
-# for reproducible rebuilds. This SHA was validated on the DGX Spark (t3,
-# 2026-06-30): it registers gemma4_unified in AutoConfig AND leaves vLLM 0.21.0
-# importing/serving. It resolves to transformers 5.13.0.dev0. Bump deliberately
-# (and re-validate) rather than floating to main HEAD. Override at build time with
-# --build-arg TRANSFORMERS_REF=... to test a newer ref.
+# for reproducible rebuilds. This SHA was validated on the DGX Spark (#71): it
+# registers gemma4_unified in AutoConfig AND leaves vLLM importing/serving. It
+# resolves to transformers 5.13.0.dev0. Bump deliberately (and re-validate) rather
+# than floating to main HEAD. Override at build time with --build-arg TRANSFORMERS_REF=…
 #
 # Full checkpoint download + live serving is NOT performed at build time (that
 # would require network access to HuggingFace Hub and GPU resources during CI).
-# The build-stage verification below is network-free; live serving is task t4.
-FROM nvcr.io/nvidia/vllm:26.05.post1-py3
+# The build-stage verification below is network-free.
+FROM nvcr.io/nvidia/vllm:26.06-py3
 
 ARG TRANSFORMERS_REF=git+https://github.com/huggingface/transformers.git@181beb3ba4c47098ed8cbc97ee250d1d45ae0107
 

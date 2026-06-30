@@ -43,33 +43,30 @@ class TestMultimodalServiceHasBuildBlock:
         compose = _load_fleet()
         svc = compose["services"]["vllm-multimodal"]
         build = svc["build"]
-        assert build.get("context") == ".", (
-            f"build.context must be '.' (got {build.get('context')!r})"
-        )
+        assert (
+            build.get("context") == "."
+        ), f"build.context must be '.' (got {build.get('context')!r})"
 
     def test_vllm_multimodal_build_dockerfile_is_gemma4(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-multimodal"]
         build = svc["build"]
         assert build.get("dockerfile") == _CUSTOM_DOCKERFILE, (
-            f"build.dockerfile must be {_CUSTOM_DOCKERFILE!r} "
-            f"(got {build.get('dockerfile')!r})"
+            f"build.dockerfile must be {_CUSTOM_DOCKERFILE!r} " f"(got {build.get('dockerfile')!r})"
         )
 
     def test_vllm_multimodal_image_uses_multimodal_image_var(self) -> None:
         # The raw YAML text must contain the ${MULTIMODAL_IMAGE:-...} form because
         # PyYAML expands nothing — the variable placeholder must be visible in text.
         text = _FLEET_COMPOSE.read_text(encoding="utf-8")
-        assert _MULTIMODAL_IMAGE_VAR in text, (
-            f"${_MULTIMODAL_IMAGE_VAR} variable not found in fleet compose"
-        )
+        assert (
+            _MULTIMODAL_IMAGE_VAR in text
+        ), f"${_MULTIMODAL_IMAGE_VAR} variable not found in fleet compose"
 
     def test_vllm_multimodal_image_local_fallback_tag(self) -> None:
         # The local fallback tag must appear so plain `docker compose up` uses it.
         text = _FLEET_COMPOSE.read_text(encoding="utf-8")
-        assert _LOCAL_TAG in text, (
-            f"Local fallback tag {_LOCAL_TAG!r} not found in fleet compose"
-        )
+        assert _LOCAL_TAG in text, f"Local fallback tag {_LOCAL_TAG!r} not found in fleet compose"
 
     def test_vllm_multimodal_has_image_key_parsed(self) -> None:
         # PyYAML sees the raw string (with ${}), so image: value must start with
@@ -78,9 +75,9 @@ class TestMultimodalServiceHasBuildBlock:
         svc = compose["services"]["vllm-multimodal"]
         assert "image" in svc, "vllm-multimodal must have an image: key"
         image_val: str = svc["image"]
-        assert image_val.startswith("${MULTIMODAL_IMAGE"), (
-            f"vllm-multimodal image: must start with ${{MULTIMODAL_IMAGE (got {image_val!r})"
-        )
+        assert image_val.startswith(
+            "${MULTIMODAL_IMAGE"
+        ), f"vllm-multimodal image: must start with ${{MULTIMODAL_IMAGE (got {image_val!r})"
 
 
 class TestOtherServicesUnchanged:
@@ -90,24 +87,21 @@ class TestOtherServicesUnchanged:
         compose = _load_fleet()
         svc = compose["services"]["vllm-primary"]
         assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-primary must keep image: {_STOCK_VLLM_IMAGE!r} "
-            f"(got {svc.get('image')!r})"
+            f"vllm-primary must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
         )
 
     def test_vllm_embed_keeps_stock_image(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-embed"]
         assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-embed must keep image: {_STOCK_VLLM_IMAGE!r} "
-            f"(got {svc.get('image')!r})"
+            f"vllm-embed must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
         )
 
     def test_vllm_rerank_keeps_stock_image(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-rerank"]
         assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-rerank must keep image: {_STOCK_VLLM_IMAGE!r} "
-            f"(got {svc.get('image')!r})"
+            f"vllm-rerank must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
         )
 
     def test_vllm_primary_has_no_build_key(self) -> None:
@@ -133,6 +127,6 @@ class TestAudioOverlayUntouched:
     def test_audio_compose_has_no_vllm_multimodal_service(self) -> None:
         audio = yaml.safe_load(_AUDIO_COMPOSE.read_text(encoding="utf-8"))
         services = audio.get("services", {})
-        assert "vllm-multimodal" not in services, (
-            "docker-compose.audio.yml must not define a vllm-multimodal override"
-        )
+        assert (
+            "vllm-multimodal" not in services
+        ), "docker-compose.audio.yml must not define a vllm-multimodal override"
