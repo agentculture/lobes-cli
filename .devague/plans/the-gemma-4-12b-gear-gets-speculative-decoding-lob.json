@@ -1,0 +1,218 @@
+{
+  "slug": "the-gemma-4-12b-gear-gets-speculative-decoding-lob",
+  "title": "The Gemma 4 12B gear gets speculative decoding: lobes sources or builds a gemma4_assistant draft model, wires it via --speculative-config, measures draft acceptance and decode speedup, and restores it on the catalog gemma entry + compose flag when it beats the no-spec baseline",
+  "frame_slug": "the-gemma-4-12b-gear-gets-speculative-decoding-lob",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-30T22:44:48Z",
+  "updated": "2026-06-30T22:48:40Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Gemma 4 12B gear gets speculative decoding: lobes sources or builds a gemma4_assistant draft model, wires it via --speculative-config, measures draft acceptance and decode speedup, and restores it on the catalog gemma entry + compose flag when it beats the no-spec baseline"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the 'sources or builds' promise resolves to ONE concrete route \u2014 a measured DSpark draft_model, a sourced gemma4_assistant draft, or a documented 'no compatible draft available' \u2014 never left ambiguous"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "lobes operators/maintainers and the Culture mesh that consumes the multimodal (Gemma 4 12B) generate lane"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the multimodal/normal generate lane (model=multimodal|normal) has real mesh traffic worth speeding up \u2014 not a dormant tier"
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "the Gemma gear has a measured verdict on speculative decoding: either a validated draft wired via --speculative-config with recorded acceptance and decode speedup and restored on the catalog gemma entry + compose flag, OR a documented negative recording the numbers that rule it out"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "the verdict is backed by recorded numbers (acceptance percent, baseline vs spec tok/s) from a live co-resident serve, not an estimate"
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "the Gemma gear carries no --speculative-config: its -MTP checkpoint exposes no gemma4_assistant draft and vLLM 0.21/0.22 reject the gemma4_mtp method, so its single-stream decode lacks any speculative boost"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "verified in-repo: the catalog gemma entry carries no speculative_config and the compose has no gemma --speculative-config items (true as of this frame)"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "the 27B MTP primary gets ~2.4x single-stream decode from speculative decoding; the Gemma multimodal/normal lane has none, so per-stream it is comparatively slow \u2014 spec-decode closes that gap or we learn it cannot and stop chasing it"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the 27B primary ~2.4x MTP decode gain is documented (qwen3.6-27b-text-nvfp4-mtp.md) and the Gemma gear has no equivalent boost \u2014 the gap is real, not assumed"
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "out of scope: training a new Gemma BASE model, the serve-enablement fix itself (owned by issue #71), and the realtime /v1/audio overlay; in scope is the draft model + wiring + measurement + the keep/drop decision"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the scope split holds: serve-enablement stays in #71, draft-training stays a separate follow-up, and #75 delivers route + wiring + measurement + keep/drop decision only"
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "a committed verdict: either catalog gemma speculative_config + the compose --speculative-config items restored with recorded acceptance percent and tok/s speedup beating the no-spec baseline, or a doc section recording the measured numbers that rule it out"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the recorded numbers come from the same fleet/compose the gear deploys under, co-resident with the running 27B primary"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "any draft model must share the served checkpoint tokenizer and vocab"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "a candidate draft loads in vLLM alongside the target with no vocab-size/tokenizer mismatch and yields non-zero draft acceptance"
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "wiring flows through the catalog: the gemma entry speculative_config drives the compose --speculative-config items (the same catalog-data pattern the 27B MTP primary uses via mtp_compose_command_items)"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "lobes switch adds/removes the gemma --speculative-config items the same way it does for the 27B MTP primary, and the catalog compose-items round-trip test still passes"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Resolve the draft route: desk-source a gemma4_assistant draft and confirm the DSpark candidate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gemma4-mtp-draft.md exists and names exactly ONE resolved route: a DSpark draft_model id, a sourced model_type==gemma4_assistant id, or 'no compatible draft available'",
+        "the doc records whether any model_type==gemma4_assistant draft exists on HF for this checkpoint and the tokenizer/vocab match (same vocab size) vs the served checkpoint"
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "h6",
+        "c10"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Document the before-state, the gap, the scope split, and the audience in docs/gemma-4-12b-nvfp4.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "verified in-repo: the doc states the gemma gear carries no speculative_config / --speculative-config today and the gemma4_mtp method is rejected",
+        "the doc cites the 27B ~2.4x MTP decode gain (qwen3.6-27b-text-nvfp4-mtp.md) and frames the per-stream gap for the multimodal/normal lane the mesh consumes",
+        "the doc records the scope split: serve-enablement -> #71, draft-training -> separate follow-up, #75 delivers route+wiring+measure+decide, done = a measured verdict"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "c3",
+        "c4",
+        "c5",
+        "c6",
+        "h7",
+        "h8",
+        "h9",
+        "h10"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Make the gemma speculative wiring catalog-driven (catalog entry -> compose --speculative-config), like the 27B MTP primary",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the gemma catalog entry carries a speculative_config field (the route resolved in t1) and lobes switch adds/removes the gemma --speculative-config compose items the same way it does for the 27B MTP primary",
+        "a catalog test asserts the gemma --speculative-config items round-trip through switch / the compose-items helper, mirroring the MTP primary test, and the draft shares the served checkpoint tokenizer/vocab"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c11",
+        "h2",
+        "c10"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Measure draft acceptance and decode speedup on the live co-resident serve (gated on #71)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with the gear serving (post-#71), the draft loads with no vocab/tokenizer mismatch and yields non-zero draft acceptance",
+        "records draft acceptance percent and baseline-vs-spec tok/s from a live serve on the same fleet/compose the gear deploys under, co-resident with the running 27B primary"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c3",
+        "c7",
+        "h1",
+        "h3",
+        "h4"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Commit the verdict: restore speculative_config if it beats baseline, else document the negative",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "if acceptance/speedup beats the no-spec baseline: the gemma catalog speculative_config + compose items are restored as default and lobes status/switch reflect it; otherwise the gear keeps no spec-decode and docs/gemma4-mtp-draft.md records the measured numbers that rule it out",
+        "exactly one concrete outcome is committed (route resolved to restore-or-document), satisfying the 'one concrete route' promise"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c7",
+        "c3",
+        "h6"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "whether any native model_type==gemma4_assistant draft exists to source on HF is unknown \u2014 DSpark draft_model may be the only viable path",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1"
+    },
+    {
+      "id": "r2",
+      "text": "serve-enablement (#71) gates measurement: t4/t5 cannot run until the gemma gear actually serves (TRITON_ATTN honored on the transformers backend)",
+      "kind": "follow_up",
+      "task_id": "t4"
+    },
+    {
+      "id": "r3",
+      "text": "DSpark draft_model may fail to load or yield 0 percent acceptance on this checkpoint, invalidating the cheap path and forcing a native-draft or stop decision",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    }
+  ]
+}
