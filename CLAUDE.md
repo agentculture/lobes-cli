@@ -102,12 +102,14 @@ lobes/                 # Python package (pip install lobes-cli)
         └── logs.py tunnel.py whoami.py learn.py explain.py overview.py doctor.py cli.py
 ```
 
-**Lifecycle (turn on / off):** `lobes serve` (alias `start`) brings the
-single-model server **up** (`docker compose up -d`, then waits for `/health`);
-`lobes stop` takes it **down** (`docker compose down` — it *removes* the
-containers, not a pause). The fleet lane mirrors this: `lobes fleet up`
-(`up -d --build`) / `lobes fleet down`. `lobes switch <model>` is a down+up with a
-model swap. `lobes status` / `lobes fleet status` observe without mutating.
+**Lifecycle (turn on / off):** `lobes serve` (alias `start`) brings the default
+deployment **up** (`docker compose up -d`, then waits for `/health`) — since #69
+`lobes init`/`serve` default to the **main + multimodal duo** (the legacy
+single-model scaffold is opt-in via `lobes init --single`/`--legacy`). `lobes
+stop` takes it **down** (`docker compose down` — it *removes* the containers, not
+a pause). The fleet lane mirrors this: `lobes fleet up` (`up -d --build`) / `lobes
+fleet down`. `lobes switch <model>` is a down+up with a model swap. `lobes status`
+/ `lobes fleet status` observe without mutating.
 
 **Mutation safety:** write verbs (`switch`, `serve`, `stop`, `init`, `fleet up`,
 `fleet down`, `tunnel`) default to **dry-run**; require `--apply` to commit. Agents
