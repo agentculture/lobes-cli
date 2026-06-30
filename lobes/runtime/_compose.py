@@ -52,9 +52,12 @@ FLEET_TTS = "model-gear-chatterbox"
 FLEET_REALTIME = "model-gear-realtime"
 FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
-# Template filename -> destination filename written by the scaffold. The single
-# template set is the default (every existing caller stays unchanged); the fleet
-# set scaffolds the gateway deployment (lobes init --fleet; primary + embed/rerank gears).
+# Template filename -> destination filename written by the scaffold. The library
+# helpers below keep SINGLE_TEMPLATES as their function-level default (every
+# existing caller stays unchanged); the FLEET set scaffolds the gateway
+# deployment (the duo: primary + multimodal gear + embed/rerank gears). NOTE: the
+# `lobes init` CLI default is now the FLEET set (issue #69) — `--single` opts back
+# to SINGLE; the function default below is only the back-compat library helper.
 # Cloudflare Tunnel example scaffolded alongside both deployments (the tunnel
 # fronts the single-model :8000 or the fleet gateway). Copied verbatim as an
 # `.example`; the owner copies it to the gitignored `.cf-tunnel.env` and edits.
