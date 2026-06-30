@@ -11,13 +11,14 @@
 #   lobes fleet up --apply         # build the gateway + start the backend
 #   lobes fleet status             # container states + gateway /health + /v1/models
 #
-# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). One generate
-# backend by default: the Qwen primary at util 0.45 and 128K context, with the
-# ~0.6B embed/rerank gears (util 0.06 each) co-resident. The context reduction
-# (256K→128K) makes room for the opt-in vllm-middle 14B gear (util 0.12) without
-# touching primary weights — see env.example GPU budget. To add a warm *generate*
-# fallback, wire a vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on
-# the gateway and drop both generate GPU utils so they sum well under 1.0.
+# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). Default
+# fleet: the Qwen primary (util 0.45, 128K context), the Gemma 4 12B multimodal
+# gear (util 0.12, vision+audio+MTP), and the two ~0.6B embed/rerank gears (util
+# 0.06 each). Total default budget: 0.69 on the 128 GB GB10. Opt-in: the 4B minor
+# (profile `minor`) and the legacy 14B middle (profile `middle` / `legacy`).
+# See env.example GPU budget. To add a warm *generate* fallback, wire a
+# vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
+# drop both generate GPU utils so they sum well under 1.0.
 services:
   vllm-primary:
     image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
@@ -281,13 +282,15 @@ services:
       retries: 5
       start_period: 600s
 
-  # --- Opt-in middle co-resident generate backend ----------------------------
-  # A 14B NVFP4 companion generate model that co-resides with the primary.
-  # Activated by `docker compose --profile middle up -d` (or adding "middle" to
-  # COMPOSE_PROFILES in .env). When active, set MIDDLE_BASE_URL and
-  # MIDDLE_SERVED_NAME on the gateway (or rely on the compose defaults passed
-  # below) so the gateway routes `model: nvidia/Qwen3-14B-NVFP4` requests
-  # directly to this backend and falls over to the primary on failure.
+  # --- Opt-in (legacy) middle co-resident generate backend ------------------
+  # LEGACY CANDIDATE: the 14B NVFP4 "middle" is no longer the fleet's "normal"
+  # tier — that role is now filled by the default-on vllm-multimodal (Gemma 4
+  # 12B) gear. This service is kept as a selectable legacy option for operators
+  # who explicitly want the Qwen 14B text-only model.
+  # Activate with `docker compose --profile middle up -d` (or `--profile legacy`
+  # once the alias lands), or add "middle" to COMPOSE_PROFILES in .env.
+  # When active, set MIDDLE_BASE_URL and MIDDLE_SERVED_NAME on the gateway so it
+  # routes `model: nvidia/Qwen3-14B-NVFP4` requests here.
   #
   # GPU budget: at util 0.12 (~15 GiB) this fits alongside the 27B primary
   # (util 0.45, 128K context, ~56 GiB) on the 128 GB GB10 with headroom to
@@ -354,6 +357,78 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Default-on multimodal generate backend (Gemma 4 12B, NVFP4) ----------
+  # The fleet's "multimodal" generate gear and the "normal" capability tier.
+  # Gemma 4 12B is a UNIFIED multimodal model: text + image + AUDIO in one
+  # checkpoint (no separate sidecars), so the generate lane gains native
+  # vision+audio without the realtime overlay.
+  #
+  # Vision + audio are ACTIVE: do NOT add --language-model-only (that would
+  # disable the ViT/audio tower and defeat the headline capability).
+  #
+  # Native MTP draft head for speculative decoding (like the 27B primary's
+  # qwen3_5_mtp config). Tool calls use the Python-style "pythonic" parser.
+  # NVFP4 (modelopt_fp4). NO --profiles key — starts with the default fleet.
+  #
+  # GPU budget: util 0.12 (~15 GiB) alongside the 27B primary (util 0.45,
+  # ~56 GiB) + embed/rerank (util 0.06 each): 0.45+0.12+0.06+0.06 = 0.69 on
+  # the 128 GB GB10 with ~38 GiB headroom for caches and other services.
+  # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
+
+  vllm-multimodal:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-multimodal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=multimodal   # → /logs/model-gear/multimodal-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-multimodal:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MULTIMODAL_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --served-model-name=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MULTIMODAL_QUANTIZATION:-modelopt_fp4}
+      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-131072}
+      # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
+      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=pythonic
+      # Native Gemma 4 MTP speculative decoding (draft head baked into the checkpoint).
+      # TODO(risk r4): confirm Gemma4 native-MTP method against the served checkpoint in t7.
+      - '--speculative-config=${MULTIMODAL_SPECULATIVE_CONFIG:-{"method": "gemma4_mtp", "num_speculative_tokens": 3}}'
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -366,6 +441,7 @@ services:
     # and fails over per request), so it must not block on backend health.
     depends_on:
       - vllm-primary
+      - vllm-multimodal
       - vllm-embed
       - vllm-rerank
     environment:
@@ -379,11 +455,14 @@ services:
       # unless the operator explicitly opts in — default fleet is unchanged).
       - MINOR_BASE_URL=${MINOR_BASE_URL:-}
       - MINOR_SERVED_NAME=${MINOR_SERVED_NAME:-}
-      # Middle co-resident generate backend (opt-in: activate with --profile middle
-      # and set MIDDLE_BASE_URL in .env; empty defaults mean no backend is wired
-      # unless the operator explicitly opts in — default fleet is unchanged).
+      # Middle co-resident generate backend (legacy opt-in: activate with
+      # --profile middle and set MIDDLE_BASE_URL in .env; empty defaults mean no
+      # backend is wired unless the operator explicitly opts in).
       - MIDDLE_BASE_URL=${MIDDLE_BASE_URL:-}
       - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
+      # Multimodal gear (default-on: always started, always wired).
+      - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}
+      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
