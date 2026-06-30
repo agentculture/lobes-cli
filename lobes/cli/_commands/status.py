@@ -5,15 +5,19 @@ lifecycle + health state, and whether ``/health`` is responding. This is the
 *configured* served model (from ``.env``) + health — not a live ``/v1/models``
 query; for the full supported catalog you can switch to, use ``lobes overview --list``.
 
-``--pressure`` sub-mode (issue #68, t7)
-----------------------------------------
+``--pressure`` sub-mode (issue #68/#69, t6/t7)
+----------------------------------------------
 Reads host memory pressure from ``/proc`` (via
 :func:`lobes.runtime._pressure.sample_pressure`) and maps it to the highest
 tier currently permitted under that pressure via
 :func:`lobes.gateway._pressure_policy.decide` (called with
-``requested_tier="hard"`` so the result shows how far the top tier would be
-downgraded right now).  This path is **strictly read-only**: it touches
-neither the deployment dir nor the Docker socket.
+``requested_tier="main"`` so the result shows how far the top tier would be
+downgraded right now).  The tier/model are reported in the new **main / minor /
+multimodal** vocabulary (issue #69): under degraded pressure the ceiling drops
+to ``minor`` — the only cheaper target — because ``multimodal`` is a *different
+capability*, not a cheaper rung below ``main`` (the t6 seam).  This path is
+**strictly read-only**: it touches neither the deployment dir nor the Docker
+socket.
 """
 
 from __future__ import annotations
@@ -42,8 +46,10 @@ def _cmd_status_pressure(json_mode: bool) -> int:
     d = _pressure_policy.decide(
         p["swap_used_percent"],
         p["iowait_percent"],
-        requested_tier="hard",
+        requested_tier="main",
     )
+    # New-vocabulary ceiling: "main" (full) when warm, "minor" under degraded
+    # pressure (the only cheaper target — multimodal is not a rung; t6 seam).
     tier = d["max_allowed_tier"]
     model = catalog.resolve_tier(tier).id
 

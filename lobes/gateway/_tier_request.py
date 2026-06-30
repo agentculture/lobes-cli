@@ -37,9 +37,11 @@ from lobes.gateway import _pressure_policy
 from lobes.gateway._routing import RoutingTable, tier_aliases
 from lobes.runtime._pressure import sample_pressure
 
-# Capability tiers, ascending. Mirrors catalog.TIER_ROLE keys / _pressure_policy.
-_TIER_ORDER: tuple[str, ...] = ("cheap", "normal", "hard")
-_KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ORDER)
+# Every capability-tier alias (primary vocabulary ``main``/``minor``/
+# ``multimodal`` plus the back-compat ``cheap``/``normal``/``hard``). Single
+# source of truth is catalog.TIER_ROLE — the same map the routing layer keys
+# its alias table by.
+_KNOWN_TIERS: frozenset[str] = frozenset(TIER_ROLE)
 
 _ZERO_PRESSURE: dict[str, float] = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 
@@ -47,16 +49,13 @@ Sampler = Callable[[], "dict[str, float]"]
 
 
 def is_tier_alias(name: object) -> bool:
-    """True when *name* is one of the capability tiers (``cheap``/``normal``/``hard``).
+    """True when *name* is a capability tier (``main``/``minor``/``multimodal``
+    or a back-compat ``cheap``/``normal``/``hard`` alias).
 
     A plain model id (or ``None``) is not a tier and must pass through the normal
     routing path untouched.
     """
     return name in _KNOWN_TIERS
-
-
-def _tier_index(tier: str) -> int:
-    return _TIER_ORDER.index(tier)
 
 
 def _served_name_for(table: RoutingTable, tier: str) -> str:
@@ -85,8 +84,9 @@ def resolve_tier_request(
     Parameters
     ----------
     requested_tier:
-        The incoming model field. Either a capability tier (``cheap`` /
-        ``normal`` / ``hard``) or a concrete model id.
+        The incoming model field. Either a capability tier (``main`` / ``minor``
+        / ``multimodal``, or a back-compat ``cheap`` / ``normal`` / ``hard``
+        alias) or a concrete model id.
     pressure:
         A sampled-pressure dict with ``swap_used_percent`` / ``iowait_percent``
         (missing keys default to ``0.0``). Typically :meth:`PressureCache.current`.
@@ -105,12 +105,16 @@ def resolve_tier_request(
         this is the id itself; for a tier it is the served name the (possibly
         downgraded) tier resolves to, honouring the upward-fallback.
     ``served_tier``
-        The capability tier actually served (``cheap`` / ``normal`` / ``hard``),
-        or ``None`` when the request was a plain model id (pass-through).
+        The capability tier actually served, in the **new vocabulary**
+        (``main`` / ``minor`` / ``multimodal``), or ``None`` when the request was
+        a plain model id (pass-through). The seam (t6): under degraded pressure a
+        ``main`` *or* a ``multimodal`` request both serve ``minor`` — multimodal
+        is a different capability, not a cheaper rung, so it degrades to ``minor``
+        like ``main`` does.
     ``reason``
         ``"default"`` (served the requested tier, no pressure), ``"pressure"``
-        (downgraded, or the system is in degraded mode), or ``"manual_override"``
-        (override forced the requested tier).
+        (downgraded to ``minor``, or the system is in degraded mode), or
+        ``"manual_override"`` (override forced the requested tier).
 
     Pass-through: a non-tier model id is returned verbatim with
     ``served_tier=None`` / ``reason="default"`` (override is ignored — it only
@@ -126,12 +130,15 @@ def resolve_tier_request(
     )
 
     if override:
-        served_tier = requested_tier
+        # Force the requested tier (normalized to the new vocabulary) despite
+        # pressure. ``decide`` already validated the alias above.
+        served_tier = _pressure_policy.normalize_tier(requested_tier)
         reason = "manual_override"
     else:
+        # ``decide`` already returns the granted tier (new vocab) and the reason
+        # (pressure when degraded or constrained, else default).
         served_tier = decision["allowed_tier"]
-        downgraded = _tier_index(served_tier) < _tier_index(requested_tier)
-        reason = "pressure" if (downgraded or decision["mode"] == "degraded") else "default"
+        reason = decision["reason"]
 
     return {
         "served_name": _served_name_for(table, served_tier),

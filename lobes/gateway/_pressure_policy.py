@@ -5,49 +5,68 @@ calls.  It accepts numeric inputs and returns a plain dict.  The sampler
 (:mod:`lobes.runtime._pressure`) is the companion that produces those numbers
 from the live host; ``_pressure_policy`` deliberately does not import it.
 
-Tier ordering (cheap < normal < hard)
---------------------------------------
-The three capability tiers mirror ``catalog.TIER_ROLE`` keys:
+Tier vocabulary (main / minor / multimodal) and the pressure seam
+-----------------------------------------------------------------
+Issue #69 reframed the generate-lane capability tiers to **main / minor /
+multimodal** (mirroring ``catalog.TIER_ROLE``):
 
-    cheap   → 4B minor  (fast, low memory)
-    normal  → 14B middle (balanced)
-    hard    → 27B primary (full capability)
+    main        → 27B primary   (full text capability, the former "hard" tier)
+    minor       → 4B minor       (fast, low memory, the former "cheap" tier)
+    multimodal  → 12B multimodal (text+image+audio — a *different* capability)
 
-Threshold table (#68)
----------------------
-All comparisons are **strictly greater than** (``>``).  A value *exactly equal*
-to a threshold does NOT trigger that band.  The effective ``max_allowed_tier``
-is the MOST restrictive across both the swap and iowait bands.
+**The seam (t6).** ``multimodal`` is NOT a cheaper rung below ``main`` on a
+linear capability ladder — it is a *different capability* (vision+audio).  So
+"downgrade under pressure" cannot simply walk ``main -> multimodal -> minor``:
+swapping a text ``main`` request onto the multimodal gear is not a graceful
+degradation, and a ``multimodal`` request cannot be satisfied by ``main`` at
+all.  The resolution: **the only cheaper target is ``minor``.**  Under degraded
+pressure, a ``main`` *or* a ``multimodal`` request both downgrade to ``minor``
+(``reason="pressure"``) — multimodal degrades to minor just like main does,
+because it is a capability and not a cheaper tier.  This collapses the old
+linear intermediate band: there is no rung between the full tiers and ``minor``.
 
-+---------------------------+---------------------+-------+--------+
-| Condition                 | max_allowed_tier    | mode  | notes  |
-+===========================+=====================+=======+========+
-| swap > 50 %               | normal              | warm  | band 1 |
-+---------------------------+---------------------+-------+--------+
-| swap > 65 %               | normal              | warm  | band 2 |
-+---------------------------+---------------------+       | (stronger warn; |
-|                           |                     |       | same tier cap as band 1) |
-+---------------------------+---------------------+-------+--------+
-| swap > 75 %               | cheap               | degraded       |
-+---------------------------+---------------------+-------+--------+
-| iowait > 25 %             | normal              | warm  | band 4 |
-+---------------------------+---------------------+-------+--------+
-| iowait > 50 %             | cheap               | degraded       |
-+---------------------------+---------------------+-------+--------+
+Back-compat input tiers (``cheap`` / ``normal`` / ``hard``) are still accepted
+and normalize to the new vocabulary on output (``cheap``→``minor``,
+``normal``→``multimodal``, ``hard``→``main``).
 
-When no threshold fires, ``max_allowed_tier = hard`` and ``mode = warm``.
+Decision table (#68/#69)
+-------------------------
+Comparisons are **strictly greater than** (``>``); a value *exactly equal* to a
+threshold does NOT trigger the band.  Two degraded signals gate the policy:
+
++----------------------------------------+--------------------+----------+
+| Condition                              | max_allowed_tier   | mode     |
++========================================+====================+==========+
+| swap > 75 %  OR  iowait > 50 %         | minor              | degraded |
++----------------------------------------+--------------------+----------+
+| otherwise                              | main (full tier)   | warm     |
++----------------------------------------+--------------------+----------+
+
+Under ``warm`` the full tier is granted as requested (``main`` *and*
+``multimodal`` allowed — ``max_allowed_tier`` reports ``main`` as the apex of
+the ceiling, but ``multimodal`` is a permitted sibling, not a downgrade).  Under
+``degraded`` every request resolves to ``minor``.
+
+Retained-but-advisory thresholds
+---------------------------------
+The pre-#69 no-hard / prefer-cheap thresholds (``SWAP_NO_HARD_THRESHOLD``,
+``SWAP_PREFER_CHEAP_THRESHOLD``, ``IOWAIT_NO_HARD_THRESHOLD``) are **kept** as
+named, env-overridable constants for observability/tuning and back-compat, but
+they no longer impose a separate tier ceiling — under the seam resolution there
+is no intermediate rung for them to cap to.  Only the two *degraded* thresholds
+participate in :func:`decide`.
 
 Env overrides
 -------------
 Each threshold constant is readable from a corresponding environment variable at
-module import time.  The variable name and default are documented alongside each
-constant.  Override example::
+module import time.  Override example::
 
     LOBES_SWAP_DEGRADED_THRESHOLD=70 uv run lobes ...
 
 Public API
 ----------
-:func:`decide` is the single entry point.
+:func:`decide` is the single entry point; :func:`normalize_tier` exposes the
+back-compat → new-vocabulary normalization used by the request layer.
 """
 
 from __future__ import annotations
@@ -56,12 +75,37 @@ import math
 import os
 
 # ---------------------------------------------------------------------------
-# Tier ordering (cheap < normal < hard)
-# Strings mirror catalog.TIER_ROLE keys — do not rename without updating both.
+# Tier vocabulary — mirror of catalog.TIER_ROLE (kept local so this module stays
+# pure stdlib; do not rename a tier without updating catalog.TIER_ROLE too).
 # ---------------------------------------------------------------------------
 
-_TIER_ORDER: tuple[str, ...] = ("cheap", "normal", "hard")
-_KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ORDER)
+#: Tier alias (both vocabularies) → backend role. Mirrors ``catalog.TIER_ROLE``.
+_TIER_ROLE: dict[str, str] = {
+    # Primary vocabulary.
+    "main": "primary",
+    "minor": "minor",
+    "multimodal": "multimodal",
+    # Back-compat aliases.
+    "cheap": "minor",
+    "normal": "multimodal",
+    "hard": "primary",
+}
+
+#: Backend role → canonical new-vocabulary tier name (the inverse of the primary
+#: vocabulary rows above).
+_ROLE_TO_TIER: dict[str, str] = {
+    "primary": "main",
+    "minor": "minor",
+    "multimodal": "multimodal",
+}
+
+_KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)
+
+#: The full (non-minor) tiers. Under pressure these all collapse to ``minor`` —
+#: ``main`` and ``multimodal`` are siblings, not rungs on a linear ladder.
+_FULL_CEILING: str = "main"
+#: The single cheaper target under degraded pressure.
+_DEGRADED_FLOOR: str = "minor"
 
 
 def _env_float(key: str, default: float) -> float:
@@ -83,68 +127,54 @@ def _env_float(key: str, default: float) -> float:
 # Threshold constants (config-driven; each has a named env override)
 # ---------------------------------------------------------------------------
 
-#: swap_used_percent **above** this value: no new *hard* (27 B) jobs allowed.
-#: Env override: ``LOBES_SWAP_NO_HARD_THRESHOLD`` (default 50.0).
-SWAP_NO_HARD_THRESHOLD: float = _env_float("LOBES_SWAP_NO_HARD_THRESHOLD", 50.0)
-
-#: swap_used_percent **above** this value: stronger warning band — prefer
-#: cheap/middle only.  The tier ceiling is still *normal* (same as
-#: ``SWAP_NO_HARD_THRESHOLD``); this band does not further restrict the cap
-#: but is documented and exported for observability / tuning.
-#: Env override: ``LOBES_SWAP_PREFER_CHEAP_THRESHOLD`` (default 65.0).
-SWAP_PREFER_CHEAP_THRESHOLD: float = _env_float("LOBES_SWAP_PREFER_CHEAP_THRESHOLD", 65.0)
-
-#: swap_used_percent **above** this value: degraded mode, cheap tier only.
+#: swap_used_percent **above** this value: degraded mode, minor tier only.
 #: Env override: ``LOBES_SWAP_DEGRADED_THRESHOLD`` (default 75.0).
 SWAP_DEGRADED_THRESHOLD: float = _env_float("LOBES_SWAP_DEGRADED_THRESHOLD", 75.0)
 
-#: iowait_percent **above** this value: no new *hard* (27 B) jobs allowed.
-#: Env override: ``LOBES_IOWAIT_NO_HARD_THRESHOLD`` (default 25.0).
-IOWAIT_NO_HARD_THRESHOLD: float = _env_float("LOBES_IOWAIT_NO_HARD_THRESHOLD", 25.0)
-
-#: iowait_percent **above** this value: emergency degraded mode, cheap tier only.
+#: iowait_percent **above** this value: emergency degraded mode, minor tier only.
 #: Env override: ``LOBES_IOWAIT_DEGRADED_THRESHOLD`` (default 50.0).
 IOWAIT_DEGRADED_THRESHOLD: float = _env_float("LOBES_IOWAIT_DEGRADED_THRESHOLD", 50.0)
 
+# --- Retained-but-advisory thresholds (no longer cap the tier; see module doc) ---
+
+#: swap_used_percent advisory warning threshold (pre-#69 "no new hard jobs").
+#: Retained for observability/tuning and env-override stability; it does NOT
+#: impose a tier ceiling under the seam resolution (no intermediate rung).
+#: Env override: ``LOBES_SWAP_NO_HARD_THRESHOLD`` (default 50.0).
+SWAP_NO_HARD_THRESHOLD: float = _env_float("LOBES_SWAP_NO_HARD_THRESHOLD", 50.0)
+
+#: swap_used_percent advisory stronger-warning threshold (pre-#69 "prefer cheap").
+#: Retained, advisory only (does not cap the tier).
+#: Env override: ``LOBES_SWAP_PREFER_CHEAP_THRESHOLD`` (default 65.0).
+SWAP_PREFER_CHEAP_THRESHOLD: float = _env_float("LOBES_SWAP_PREFER_CHEAP_THRESHOLD", 65.0)
+
+#: iowait_percent advisory warning threshold (pre-#69 "no new hard jobs").
+#: Retained, advisory only (does not cap the tier).
+#: Env override: ``LOBES_IOWAIT_NO_HARD_THRESHOLD`` (default 25.0).
+IOWAIT_NO_HARD_THRESHOLD: float = _env_float("LOBES_IOWAIT_NO_HARD_THRESHOLD", 25.0)
+
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Public helpers
 # ---------------------------------------------------------------------------
 
 
-def _tier_index(tier: str) -> int:
-    """Return the ordinal position of *tier* in ``_TIER_ORDER`` (0 = most restricted)."""
-    return _TIER_ORDER.index(tier)
+def normalize_tier(tier: str) -> str:
+    """Normalize a tier alias (either vocabulary) to its new-vocabulary name.
 
+    ``main``/``hard`` → ``"main"``; ``minor``/``cheap`` → ``"minor"``;
+    ``multimodal``/``normal`` → ``"multimodal"``.
 
-def _min_tier(a: str, b: str) -> str:
-    """Return the more restrictive of two tier strings (lower index in _TIER_ORDER)."""
-    return a if _tier_index(a) <= _tier_index(b) else b
-
-
-def _max_allowed_for_swap(swap: float) -> str:
-    """Compute the max-allowed tier imposed by swap pressure alone.
-
-    Bands are checked from most to least restrictive so the first match wins.
-    All comparisons are strictly ``>`` (threshold value itself is NOT triggered).
+    Raises
+    ------
+    ValueError
+        If *tier* is not a known tier alias.
     """
-    if swap > SWAP_DEGRADED_THRESHOLD:
-        return "cheap"
-    if swap > SWAP_NO_HARD_THRESHOLD:  # covers both the 50 % and 65 % bands (both → normal)
-        return "normal"
-    return "hard"
-
-
-def _max_allowed_for_iowait(iowait: float) -> str:
-    """Compute the max-allowed tier imposed by iowait pressure alone.
-
-    All comparisons are strictly ``>`` (threshold value itself is NOT triggered).
-    """
-    if iowait > IOWAIT_DEGRADED_THRESHOLD:
-        return "cheap"
-    if iowait > IOWAIT_NO_HARD_THRESHOLD:
-        return "normal"
-    return "hard"
+    role = _TIER_ROLE.get(tier)
+    if role is None:
+        known = ", ".join(sorted(_KNOWN_TIERS))
+        raise ValueError(f"unknown tier {tier!r} — must be one of: {known}")
+    return _ROLE_TO_TIER[role]
 
 
 # ---------------------------------------------------------------------------
@@ -167,63 +197,64 @@ def decide(
     iowait_percent:
         CPU iowait percentage over the last sample interval, 0–100.
     requested_tier:
-        The capability tier the caller asked for.  Must be one of
-        ``"cheap"``, ``"normal"``, ``"hard"``.
+        The capability tier the caller asked for.  One of the new-vocabulary
+        tiers (``"main"`` / ``"minor"`` / ``"multimodal"``) or a back-compat
+        alias (``"cheap"`` / ``"normal"`` / ``"hard"``).
 
     Returns
     -------
-    dict with four keys:
+    dict with four keys (tiers are always emitted in the new vocabulary):
 
     ``mode``
         ``"warm"`` under normal operation; ``"degraded"`` when
         ``swap_used_percent > SWAP_DEGRADED_THRESHOLD`` or
         ``iowait_percent > IOWAIT_DEGRADED_THRESHOLD``.
     ``max_allowed_tier``
-        The highest capability tier permitted under current pressure.
-        This is the **most restrictive** cap across both the swap and iowait
-        bands (computed as ``min(swap_cap, iowait_cap)`` by tier ordering).
+        The capability ceiling under current pressure.  ``"minor"`` when
+        degraded (the only cheaper target), otherwise ``"main"`` — the apex of
+        the full ceiling (``multimodal`` is a permitted sibling, not above
+        ``main``).
     ``allowed_tier``
-        The tier actually granted for *requested_tier*, i.e.
-        ``min(requested_tier, max_allowed_tier)`` by tier ordering.
+        The tier actually granted for *requested_tier*.  Under ``warm`` this is
+        the requested tier (normalized to the new vocabulary, never downgraded —
+        a ``multimodal`` request stays ``multimodal``).  Under ``degraded`` it
+        is always ``"minor"`` (the seam: both ``main`` and ``multimodal``
+        collapse to ``minor``).
     ``reason``
-        ``"pressure"`` when the system is in degraded mode **or** when the
-        request was constrained below what was asked (``allowed_tier !=
-        requested_tier``); ``"default"`` otherwise.
+        ``"pressure"`` when the system is in degraded mode **or** the request
+        was constrained below what was asked; ``"default"`` otherwise.
 
     Raises
     ------
     ValueError
-        If *requested_tier* is not one of ``"cheap"``, ``"normal"``, ``"hard"``.
+        If *requested_tier* is not a known tier alias.
 
     Boundary behaviour
     ------------------
-    All threshold comparisons are **strictly greater than** (``>``).
-    A value exactly equal to a threshold does **not** trigger that band.
-    For example, ``swap_used_percent == 50.0`` does NOT enter the no-hard band;
-    ``50.001`` does.  This holds for every threshold.
+    Both degraded comparisons are **strictly greater than** (``>``).  A value
+    exactly equal to a threshold does **not** trigger degraded mode.  For
+    example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` degrades.
     """
-    if requested_tier not in _KNOWN_TIERS:
-        known = ", ".join(_TIER_ORDER)
-        raise ValueError(f"unknown tier {requested_tier!r} — must be one of: {known}")
+    normalized = normalize_tier(requested_tier)  # validates + maps to new vocab
 
-    # 1. Compute the tier ceiling imposed by each signal independently.
-    swap_cap = _max_allowed_for_swap(swap_used_percent)
-    iowait_cap = _max_allowed_for_iowait(iowait_percent)
-
-    # 2. Most restrictive cap wins (min by tier ordering).
-    max_allowed_tier = _min_tier(swap_cap, iowait_cap)
-
-    # 3. Mode: degraded when either signal exceeds its emergency threshold.
+    # Degraded when either signal exceeds its emergency threshold. The seam: the
+    # only cheaper target is ``minor`` — there is no intermediate rung, because
+    # ``multimodal`` is a different capability, not a cheaper version of ``main``.
     degraded = (
         swap_used_percent > SWAP_DEGRADED_THRESHOLD or iowait_percent > IOWAIT_DEGRADED_THRESHOLD
     )
     mode = "degraded" if degraded else "warm"
 
-    # 4. Granted tier: the lower of what was requested and what is allowed.
-    allowed_tier = _min_tier(requested_tier, max_allowed_tier)
+    if degraded:
+        max_allowed_tier = _DEGRADED_FLOOR  # minor — the only cheaper target
+        allowed_tier = _DEGRADED_FLOOR  # main AND multimodal collapse to minor
+    else:
+        max_allowed_tier = _FULL_CEILING  # main apex; multimodal also permitted
+        allowed_tier = normalized  # granted as requested (no downgrade)
 
-    # 5. Reason: pressure whenever we are degraded OR the request was constrained.
-    constrained = allowed_tier != requested_tier
+    # Reason: pressure whenever degraded OR the request was constrained below
+    # what was asked (a full-tier request served as minor).
+    constrained = allowed_tier != normalized
     reason = "pressure" if (degraded or constrained) else "default"
 
     return {
