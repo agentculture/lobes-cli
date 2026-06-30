@@ -120,15 +120,19 @@ response = client.chat.completions.create(
 
 ## DSpark experiment
 
-The DSpark experiment is **disabled by default**. An environment variable
-override can swap in the DeepSeek DSpark checkpoint:
+The DSpark experiment is **disabled by default**. DSpark
+(`deepseek-ai/dspark_gemma4_12b_block7`) is a DeepSeek *speculative-decoding draft
+head* for Gemma 4 12B — **not** a replacement base model. To try it, override the
+**speculative-config** (the base `MULTIMODAL_MODEL` stays the Gemma checkpoint) by
+uncommenting this line in `.env`:
 
 ```env
-MULTIMODAL_MODEL=deepseek-ai/dspark_gemma4_12b_block7
+MULTIMODAL_SPECULATIVE_CONFIG={"method": "draft_model", "draft_model_id": "deepseek-ai/dspark_gemma4_12b_block7", "num_speculative_tokens": 3}
 ```
 
-This replaces the Gemma 4 12B checkpoint with the DSpark variant for
-experimental evaluation. The default fleet does not use this override.
+This swaps the native `gemma4_mtp` draft for the DSpark draft. The default fleet
+keeps native MTP; DSpark is unvalidated on this checkpoint — measure before
+enabling.
 
 ## Accepted plan risks
 
@@ -147,8 +151,8 @@ The following items are pending t7 live validation on the DGX Spark:
 
 ## Related docs
 
-- [`gateway-fleet.md`](gateway-fleet.md) — three-tier topology, tier alias routing,
-  pressure policy, memory budget.
+- [`gateway-fleet.md`](gateway-fleet.md) — fleet topology (main/minor/multimodal),
+  tier alias routing, pressure policy, memory budget.
 - [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md) — the
   hard/`primary` gear (27B MTP).
 - [`qwen3-14b-nvfp4.md`](qwen3-14b-nvfp4.md) — the legacy 14B candidate (demoted
