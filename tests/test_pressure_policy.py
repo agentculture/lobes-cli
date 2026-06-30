@@ -21,6 +21,7 @@ from lobes.gateway._pressure_policy import (
     SWAP_DEGRADED_THRESHOLD,
     SWAP_NO_HARD_THRESHOLD,
     SWAP_PREFER_CHEAP_THRESHOLD,
+    _env_float,
     decide,
 )
 
@@ -367,3 +368,38 @@ class TestPurity:
         # that calling decide() in a sandbox with no /proc is fine.
         r = decide(swap_used_percent=0.0, iowait_percent=0.0, requested_tier="hard")
         assert isinstance(r, dict)
+
+
+# ---------------------------------------------------------------------------
+# 12. _env_float rejects non-finite values (nan / inf / -inf)
+# ---------------------------------------------------------------------------
+
+
+class TestEnvFloatNonFinite:
+    """_env_float must fall back to *default* when the env var parses to a
+    non-finite float.  A nan/inf threshold silently breaks every ``>``
+    comparison so the pressure downgrade never fires — we treat it like a
+    parse failure instead.
+    """
+
+    def test_nan_returns_default(self, monkeypatch):
+        monkeypatch.setenv("LOBES_TEST_THRESHOLD", "nan")
+        assert _env_float("LOBES_TEST_THRESHOLD", 75.0) == 75.0
+
+    def test_inf_returns_default(self, monkeypatch):
+        monkeypatch.setenv("LOBES_TEST_THRESHOLD", "inf")
+        assert _env_float("LOBES_TEST_THRESHOLD", 50.0) == 50.0
+
+    def test_negative_inf_returns_default(self, monkeypatch):
+        monkeypatch.setenv("LOBES_TEST_THRESHOLD", "-inf")
+        assert _env_float("LOBES_TEST_THRESHOLD", 25.0) == 25.0
+
+    def test_valid_value_still_accepted(self, monkeypatch):
+        """Sanity: a normal finite value is returned unchanged."""
+        monkeypatch.setenv("LOBES_TEST_THRESHOLD", "42.5")
+        assert _env_float("LOBES_TEST_THRESHOLD", 75.0) == 42.5
+
+    def test_missing_key_returns_default(self, monkeypatch):
+        """Key not in env → default returned (existing behaviour, not broken)."""
+        monkeypatch.delenv("LOBES_TEST_THRESHOLD", raising=False)
+        assert _env_float("LOBES_TEST_THRESHOLD", 99.0) == 99.0

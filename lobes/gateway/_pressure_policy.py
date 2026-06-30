@@ -52,6 +52,7 @@ Public API
 
 from __future__ import annotations
 
+import math
 import os
 
 # ---------------------------------------------------------------------------
@@ -64,10 +65,16 @@ _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ORDER)
 
 
 def _env_float(key: str, default: float) -> float:
-    """Read a float from *key* in ``os.environ``; fall back to *default*."""
+    """Read a float from *key* in ``os.environ``; fall back to *default*.
+
+    Non-finite values (``nan``, ``inf``, ``-inf``) are treated as parse
+    failures and return *default* — a non-finite threshold silently breaks
+    every ``>`` comparison (``nan > x`` is always ``False``).
+    """
     try:
         raw = os.environ.get(key)
-        return float(raw) if raw is not None else float(default)
+        value = float(raw) if raw is not None else float(default)
+        return value if math.isfinite(value) else float(default)
     except (TypeError, ValueError):
         return float(default)
 

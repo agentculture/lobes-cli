@@ -107,6 +107,7 @@ def filter_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
 
 # The request header that forces the requested tier despite pressure (t6, #68).
 OVERRIDE_HEADER = "X-Lobes-Override"
+_CONTENT_TYPE_JSON = "application/json"
 _OVERRIDE_TRUTHY = frozenset({"1", "true", "yes"})
 
 
@@ -320,7 +321,7 @@ def handle_post(
 
     return GatewayResponse(
         status=502,
-        headers=tier_headers + [("Content-Type", "application/json")],
+        headers=tier_headers + [("Content-Type", _CONTENT_TYPE_JSON)],
         body=_error_body("all fleet backends are unavailable", attempts),
         attempts=attempts,
     )
@@ -345,7 +346,7 @@ def handle_audio_post(
     if not cfg.audio_url:
         return GatewayResponse(
             status=404,
-            headers=[("Content-Type", "application/json")],
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
             body=_error_body("audio endpoints are not configured on this deployment", []),
         )
     backend = Backend(name="audio", base_url=cfg.audio_url, served_name="")
@@ -362,7 +363,7 @@ def handle_audio_post(
     except UpstreamError as exc:
         return GatewayResponse(
             status=502,
-            headers=[("Content-Type", "application/json")],
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
             body=_error_body("audio backend is unavailable", [str(exc)]),
         )
     # 2xx, 4xx or 5xx — relay whatever the single audio backend says (no failover).
@@ -554,7 +555,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _send_json(self, status: int, obj: dict) -> None:
-        self._send_simple(status, [("Content-Type", "application/json")], json.dumps(obj).encode())
+        self._send_simple(status, [("Content-Type", _CONTENT_TYPE_JSON)], json.dumps(obj).encode())
 
     def _send_simple(self, status: int, headers: list[tuple[str, str]], body: bytes) -> None:
         self.send_response(status)
