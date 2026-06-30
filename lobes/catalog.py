@@ -220,7 +220,10 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # suffix and the speculative_config below). NVFP4 (modelopt_fp4). Tool calls
         # use the Python-style "pythonic" parser (matches runtime._parser.infer_parser,
         # which returns "pythonic" for gemma-4* ids — set in t1). status="configured":
-        # not yet load-tested on the DGX Spark; hardware validation is t7.
+        # t7 (2026-06-30) found this arch (`model_type: gemma4_unified`) does NOT load
+        # on the released nv26.04 (vLLM 0.19.0) OR nv26.05 (vLLM 0.21.0) images — it
+        # needs a Transformers build that registers gemma4_unified. Stays "configured"
+        # until a supporting image lands; tracked in issue #71. See docs/gemma-4-12b-nvfp4.md.
         role_hint="multimodal",
         shape="unified multimodal (text+image+audio), native MTP draft head",
         # TODO(risk): confirm Gemma 4 12B's native context on the served checkpoint

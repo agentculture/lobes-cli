@@ -134,20 +134,32 @@ This swaps the native `gemma4_mtp` draft for the DSpark draft. The default fleet
 keeps native MTP; DSpark is unvalidated on this checkpoint — measure before
 enabling.
 
-## Accepted plan risks
+## Live-validation status (t7) — blocked on the runtime image
 
-The following items are pending t7 live validation on the DGX Spark:
+> **t7 ran on the DGX Spark (2026-06-30) and the gear does NOT load on any
+> released NGC vLLM image.** This is why `status` stays `configured` (not
+> `load-tested`). The unblock work is tracked in **[issue #71](https://github.com/agentculture/lobes-cli/issues/71)**.
 
-1. **Exact checkpoint pick** — confirm `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`
-   loads correctly on the `nv26.04` vLLM image.
-2. **`gemma4_mtp` method string** — verify the native-MTP `--speculative-config`
-   method against the served checkpoint (the catalog uses `"gemma4_mtp"` as the
-   method; confirm it matches the checkpoint's draft head).
-3. **131072 native context** — confirm the 128K native context window; the catalog
-   uses this as a safe default until measured.
-4. **Measured GPU utilization** — confirm the `0.12` util budget accounts for
-   vision+audio KV cache overhead (the 14B middle used `0.12` for text-only;
-   multimodal KV may differ).
+Gemma 4 12B's architecture is **`model_type: gemma4_unified`** (all community
+NVFP4 12B checkpoints use it). Neither released image registers it:
+
+| Image | vLLM | Transformers | `gemma4_unified` |
+|---|---|---|---|
+| `nvcr.io/nvidia/vllm:26.04-py3` (current fleet) | 0.19.0 | 4.57.6 | ❌ |
+| `nvcr.io/nvidia/vllm:26.05.post1-py3` | 0.21.0 | 5.6.0 | ❌ (ships `Gemma4MTPModel` + standard `Gemma4`, not `Unified`) |
+
+vLLM crashes at config load (`model type gemma4_unified ... install Transformers
+from source`). **r1** (checkpoint exists/valid) is resolved ✓; **r3** (loads on
+the image) is resolved-negative ✗; the rest are untestable until r3 clears:
+
+1. **r3 — runtime support** *(the blocker, → #71)*: needs a vLLM image whose
+   Transformers registers `gemma4_unified` (build from a 26.05 base + nightly
+   Transformers, or await an NGC release).
+2. **r4 — `gemma4_mtp` method string** — verify the native-MTP
+   `--speculative-config` against vLLM 0.21.0's `Gemma4MTPModel` once it loads.
+3. **r5 — measured GPU utilization** — confirm the `0.12` util budget covers the
+   vision+audio KV overhead (the 14B middle used `0.12` text-only).
+4. **context** — confirm the `131072` (128K) native window once measurable.
 
 ## Related docs
 
