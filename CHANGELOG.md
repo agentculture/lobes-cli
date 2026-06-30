@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.1] - 2026-06-30
+
+### Added
+
+- docs/specs: Gemma 4 12B multimodal-duo spec (issue #69) — /think frame for default-serving the Qwen3.6-27B-MTP + Gemma4-12B duo as main/minor/multimodal tiers (vision+audio), native-MTP on by default, DSpark draft as a disabled experiment, 14B demoted to a legacy candidate
+
 ## [0.32.0] - 2026-06-30
 
 ### Added
