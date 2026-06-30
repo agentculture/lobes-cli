@@ -378,7 +378,7 @@ services:
   vllm-multimodal:
     # Gemma 4's gemma4_unified arch is not registered by the stock NGC image's
     # Transformers, so this service uses a custom Dockerfile (Dockerfile.vllm-gemma4)
-    # built FROM nvcr.io/nvidia/vllm:26.05.post1-py3 (vLLM 0.21.x) with a Transformers
+    # built FROM nvcr.io/nvidia/vllm:26.06-py3 (vLLM 0.22.1) with a Transformers
     # build that registers gemma4_unified.
     # When MULTIMODAL_IMAGE is unset, `lobes fleet up` (which runs `up -d --build`)
     # builds Dockerfile.vllm-gemma4 and tags the result as lobes/vllm-gemma4:local;

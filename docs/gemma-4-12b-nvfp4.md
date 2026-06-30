@@ -59,7 +59,7 @@ Key env vars (from `env.example`):
 | `MULTIMODAL_MAX_MODEL_LEN` | `131072` | 128K (native, confirmed) |
 | `MULTIMODAL_QUANTIZATION` | `compressed-tensors` | the checkpoint's own quant_method |
 | `MULTIMODAL_ATTENTION_BACKEND` | `TRITON_ATTN` | required for the non-square attention (#71) |
-| `MULTIMODAL_IMAGE` | _(unset → local build)_ | or a `ghcr.io`/local-registry tag |
+| `MULTIMODAL_IMAGE` | *(unset → local build)* | or a `ghcr.io`/local-registry tag |
 
 Compose flags used by the `vllm-multimodal` service:
 
