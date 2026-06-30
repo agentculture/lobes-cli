@@ -1,0 +1,281 @@
+{
+  "slug": "lobes-ships-a-custom-vllm-image-from-nvcr-io-nvidi",
+  "title": "lobes ships a custom vLLM image (FROM nvcr.io/nvidia/vllm:26.05.post1-py3 + a Transformers build that registers gemma4_unified) so the Gemma 4 12B multimodal gear finally loads on the DGX Spark, is live-validated, and is promoted from configured to load-tested",
+  "frame_slug": "lobes-ships-a-custom-vllm-image-from-nvcr-io-nvidi",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-06-30T16:23:39Z",
+  "updated": "2026-06-30T16:27:52Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships a custom vLLM image (FROM nvcr.io/nvidia/vllm:26.05.post1-py3 + a Transformers build that registers gemma4_unified) so the Gemma 4 12B multimodal gear finally loads on the DGX Spark, is live-validated, and is promoted from configured to load-tested"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "the custom image recipe lands in the repo (Dockerfile + compose wiring) and the gear either reaches load-tested or stays configured with a documented residual \u2014 the announcement holds on either branch"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "lobes operators on the DGX Spark, and the Culture-mesh callers who address the generate lane as model=multimodal (back-compat normal)"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "a model=multimodal (and back-compat model=normal) request resolves to the Gemma gear via the gateway once vllm-multimodal is up and healthy"
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "the vllm-multimodal gear boots on the custom image (gemma4_unified loads), answers an image+text and an audio+text request, and the catalog status reads load-tested"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "after the work, docker ps shows model-gear-vllm-multimodal healthy and both an image+text and an audio+text request return valid assistant output"
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "gemma4_unified registers on no released NGC vLLM image (26.04/vLLM0.19 and 26.05.post1/vLLM0.21 both crash at config load), so the gear ships status=configured and the vllm-multimodal container never starts"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "today, starting vllm-multimodal on 26.04 or 26.05.post1 crashes at config load with the gemma4_unified 'not recognized / install Transformers from source' error (the recorded t7 finding)"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "the main+multimodal duo (#69) promises native vision+audio on the generate lane without the realtime overlay \u2014 that headline is vapor until the gear actually loads"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "with the gear loaded, the generate lane serves vision+audio natively for chat input \u2014 no realtime /v1/audio overlay needed for image/audio-in"
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "not in scope: migrating primary/embed/rerank to the 26.05 base (3 follow-up issues, only if multimodal works well); changing tier vocabulary or gateway routing; touching the realtime /v1/audio overlay (Parakeet/Chatterbox); making a container registry a hard dependency"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the diff touches only vllm-multimodal's image/build plus the multimodal catalog status and its doc; primary/embed/rerank image lines and the realtime overlay are untouched"
+    },
+    {
+      "id": "c8",
+      "kind": "success_signal",
+      "text": "model=multimodal answers an image+text and an audio+text request on the Spark, the gated tests/test_smoke_duo.py Layer B passes with LOBES_SMOKE_BASE_URL set, and the catalog reads status=load-tested (pass) OR a documented parked residual with the gear left configured (fail) \u2014 recipe merged either way"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "tests/test_smoke_duo.py Layer B passes against the live gateway with LOBES_SMOKE_BASE_URL set"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "ship templates/fleet/Dockerfile.vllm-gemma4 (FROM nvcr.io/nvidia/vllm:26.05.post1-py3; uv pip install --system a PINNED transformers ref that registers gemma4_unified) and a compose build: directive on vllm-multimodal ONLY \u2014 primary/embed/rerank keep image: nvcr.io/nvidia/vllm:26.04-py3"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "inside the built image: AutoConfig.from_pretrained(gemma checkpoint, trust_remote_code=True) succeeds, ModelRegistry shows the Gemma4 unified arch, AND vLLM still imports and 'vllm serve' boots (the transformers bump did not break vLLM 0.21.0)"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "make the vllm-multimodal image overridable via a MULTIMODAL_IMAGE env var (default = the local build) so an operator can point at a tag pushed to ghcr.io/agentculture or a local registry, without a registry being required for the default path"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "with MULTIMODAL_IMAGE set, docker compose uses that image and skips the local build; unset, it builds Dockerfile.vllm-gemma4"
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "build the image and live-validate co-resident with ZERO disruption to the running fleet (multimodal on a free host port alongside the live primary/embed/rerank; no recreate/restart of those containers)"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "during build+validate, vllm-primary/embed/rerank keep their container IDs and uptime (not recreated/restarted) and the gateway keeps serving"
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "IF and only if validation passes (boots, image+text, audio+text, MTP draft acceptance > 0 or corrected method string, util within the 0.69 budget), flip the catalog multimodal status configured -> load-tested and record the measured numbers in docs/gemma-4-12b-nvfp4.md"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the catalog status edit is conditional: a passing run sets load-tested with measured numbers in the doc; a failing run leaves status=configured and records the residual"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Author lobes/templates/fleet/Dockerfile.vllm-gemma4",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "new file FROM nvcr.io/nvidia/vllm:26.05.post1-py3",
+        "transformers installed via uv pip install --system (not bare pip install transformers); a TRANSFORMERS_REF build ARG parameterizes the pinned ref",
+        "a build-stage verification RUN asserts AutoConfig loads the gemma checkpoint and ModelRegistry shows the Gemma4 unified arch",
+        "tests/test_gemma4_dockerfile.py asserts the FROM base, uv usage, the ARG, and the verification step (static file assertions, no docker daemon)"
+      ],
+      "deps": [],
+      "covers": [
+        "c9"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Wire vllm-multimodal to the custom image with a MULTIMODAL_IMAGE override; leave primary/embed/rerank on 26.04",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docker-compose.yml: vllm-multimodal gains a build: block (dockerfile Dockerfile.vllm-gemma4) plus image: ${MULTIMODAL_IMAGE:-local-tag}; primary/embed/rerank keep image: nvcr.io/nvidia/vllm:26.04-py3 unchanged",
+        "env.example documents MULTIMODAL_IMAGE (unset = local build; set = a ghcr.io/agentculture or local-registry tag)",
+        "with MULTIMODAL_IMAGE set the fleet uses that tag and skips the build; unset it builds locally (the lobes fleet up --build interaction is documented)",
+        "tests/test_gemma4_compose.py asserts the compose structure: multimodal build+override present; other vLLM services still pinned to 26.04; realtime overlay untouched"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "c10",
+        "c6",
+        "h2",
+        "h10"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Build the image on the Spark and verify gemma4_unified registers without breaking vLLM 0.21.0; pin the working transformers ref",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "image builds from Dockerfile.vllm-gemma4",
+        "inside the image: AutoConfig.from_pretrained(checkpoint, trust_remote_code=True) succeeds AND ModelRegistry lists the Gemma4 unified arch AND import vllm + vllm serve --help work",
+        "the verified transformers ref is pinned as the TRANSFORMERS_REF default in the Dockerfile",
+        "if no ref satisfies both, record the residual and stop (gear stays configured) per the spec fallback"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h1"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Co-resident live serve + functional validation (image+text, audio+text) with zero fleet disruption",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "vllm-multimodal boots healthy on a free host port alongside the running fleet; vllm-primary/embed/rerank keep their container IDs and uptime (not recreated) and the gateway keeps serving",
+        "an image+text and an audio+text chat request both return valid assistant output (vision + audio active, no realtime overlay)",
+        "model=multimodal (and back-compat normal) routes to the Gemma gear via the gateway",
+        "record MTP draft acceptance (confirm the correct gemma4_mtp method string), measured GPU util vs 0.12/0.69, and the native context window"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c2",
+        "c3",
+        "c11",
+        "h3",
+        "h6",
+        "h7",
+        "h9"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Run the gated smoke Layer B against the live gateway",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "LOBES_SMOKE_BASE_URL=<gateway> uv run pytest tests/test_smoke_duo.py passes (Layer B image+text and audio+text via model=multimodal)",
+        "no changes to Layer A; any needed test fixes are minimal and documented"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c8",
+        "h11"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Conditional promotion: flip catalog status + record numbers, or document the residual",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "IF all validation passed: catalog.py multimodal status configured->load-tested and docs/gemma-4-12b-nvfp4.md records measured MTP/util/context numbers",
+        "IF any check failed: status stays configured and the doc records the parked residual + next step (await NGC release)",
+        "tests/test_catalog.py passes; the diff still touches only the multimodal entry and its doc (announcement holds on either branch)"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c1",
+        "c4",
+        "c5",
+        "c12",
+        "h4",
+        "h5",
+        "h8"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "no transformers ref both registers gemma4_unified AND keeps vLLM 0.21.0 importing/serving -> gear stays configured, recipe still merges, await an NGC release (v1)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3"
+    },
+    {
+      "id": "r2",
+      "text": "correct Gemma4 native-MTP --speculative-config method string on vLLM 0.21.0 (gemma4_mtp unconfirmed) \u2014 r4/v2",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r3",
+      "text": "measured vision+audio GPU util vs the 0.12 / 0.69 default-fleet budget \u2014 r5/v3",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r4",
+      "text": "confirmed Gemma 4 12B native context window (131072 default until measured) \u2014 v4",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r5",
+      "text": "lobes fleet up --build always rebuilds; the MULTIMODAL_IMAGE skip-build path may need a no-build invocation or pull step",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r6",
+      "text": "if multimodal works well, open 3 follow-up issues to migrate primary, embed, and rerank to the 26.05 base one-by-one",
+      "kind": "follow_up",
+      "task_id": null
+    }
+  ]
+}
