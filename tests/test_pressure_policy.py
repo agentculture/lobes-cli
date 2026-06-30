@@ -3,12 +3,26 @@
 All tests are pure: they call decide() with explicit numeric inputs and assert
 the returned dict.  No I/O, no /proc, no sampler imports.
 
+Vocabulary reframed to **main / minor / multimodal** (issue #69) and the
+pressure seam resolved (t6): ``multimodal`` is a *different capability*
+(vision+audio), NOT a cheaper rung below ``main``.  The capability ladder is
+therefore not linear, so "downgrade under pressure" cannot walk
+``main -> multimodal -> minor``.  The only cheaper target is ``minor``:
+
+* **degraded** (swap > 75 OR iowait > 50) → ``max_allowed_tier = minor``;
+  every request (``main`` AND ``multimodal``) downgrades to ``minor``.
+* **otherwise** → the ceiling is the full tier (``main``/``multimodal`` allowed);
+  nothing is downgraded.
+
+Back-compat input tiers (``cheap``/``normal``/``hard``) are still accepted and
+normalize to the new vocabulary (cheap→minor, normal→multimodal, hard→main).
+
 Threshold defaults (module-level constants, strict >):
-    SWAP_NO_HARD_THRESHOLD      = 50.0   swap > 50 → max normal
-    SWAP_PREFER_CHEAP_THRESHOLD = 65.0   swap > 65 → still max normal (stronger warn)
-    SWAP_DEGRADED_THRESHOLD     = 75.0   swap > 75 → degraded, max cheap
-    IOWAIT_NO_HARD_THRESHOLD    = 25.0   iowait > 25 → max normal
-    IOWAIT_DEGRADED_THRESHOLD   = 50.0   iowait > 50 → degraded, max cheap
+    SWAP_DEGRADED_THRESHOLD     = 75.0   swap > 75 → degraded, ceiling = minor
+    IOWAIT_DEGRADED_THRESHOLD   = 50.0   iowait > 50 → degraded, ceiling = minor
+    SWAP_NO_HARD_THRESHOLD      = 50.0   retained constant (advisory; no rung)
+    SWAP_PREFER_CHEAP_THRESHOLD = 65.0   retained constant (advisory; no rung)
+    IOWAIT_NO_HARD_THRESHOLD    = 25.0   retained constant (advisory; no rung)
 """
 
 from __future__ import annotations
@@ -29,7 +43,11 @@ from lobes.gateway._pressure_policy import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ALL_TIERS = ("cheap", "normal", "hard")
+# Primary-vocabulary tiers.
+_NEW_TIERS = ("main", "minor", "multimodal")
+# Back-compat aliases that still reach decide() from older callers / clients.
+_BACK_COMPAT_TIERS = ("cheap", "normal", "hard")
+_ALL_TIERS = _NEW_TIERS + _BACK_COMPAT_TIERS
 
 
 def _decide(swap: float, iowait: float, tier: str) -> dict:
@@ -38,279 +56,240 @@ def _decide(swap: float, iowait: float, tier: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 1. No-pressure baseline
+# 1. No-pressure baseline — full tiers granted as requested, nothing downgraded
 # ---------------------------------------------------------------------------
 
 
 class TestNoPressure:
-    """swap=10, iowait=5 — everything should be warm and unconstrained."""
+    """swap=0, iowait=0 — everything warm and unconstrained (no downgrade)."""
 
-    def test_hard_request_stays_hard(self):
-        r = _decide(10.0, 5.0, "hard")
+    def test_main_request_stays_main(self):
+        r = _decide(0.0, 0.0, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "hard"
-        assert r["allowed_tier"] == "hard"
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "main"
         assert r["reason"] == "default"
 
-    def test_normal_request_stays_normal(self):
-        r = _decide(10.0, 5.0, "normal")
+    def test_multimodal_request_stays_multimodal(self):
+        """multimodal is a sibling full tier, NOT a downgrade target — it stays."""
+        r = _decide(0.0, 0.0, "multimodal")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "hard"
-        assert r["allowed_tier"] == "normal"
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "multimodal"
         assert r["reason"] == "default"
 
-    def test_cheap_request_stays_cheap(self):
-        r = _decide(10.0, 5.0, "cheap")
+    def test_minor_request_stays_minor(self):
+        r = _decide(0.0, 0.0, "minor")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "hard"
-        assert r["allowed_tier"] == "cheap"
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "default"
+
+    def test_mild_pressure_below_degraded_does_not_downgrade(self):
+        """swap=60, iowait=30 — below the degraded floor → still full tier.
+
+        The OLD linear policy capped this band to ``normal``; the seam
+        resolution collapses that band because ``multimodal`` is not a cheaper
+        rung, so a ``main`` request is NOT downgraded until degraded.
+        """
+        for tier in ("main", "multimodal"):
+            r = _decide(60.0, 30.0, tier)
+            assert r["mode"] == "warm", tier
+            assert r["max_allowed_tier"] == "main", tier
+            assert r["reason"] == "default", tier
 
 
 # ---------------------------------------------------------------------------
-# 2. swap > 50 band (no-hard, max = normal, mode = warm)
+# 2. Degraded via swap (> 75) — the seam: main AND multimodal → minor
 # ---------------------------------------------------------------------------
 
 
-class TestSwap55:
-    """swap=55 triggers the no-hard band (max_allowed_tier=normal, mode=warm)."""
+class TestDegradedSwap:
+    """swap=80 → degraded; every request resolves to the minor floor."""
 
-    def test_hard_request_downgraded_to_normal(self):
-        r = _decide(55.0, 5.0, "hard")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "normal"
-        assert r["reason"] == "pressure"
-
-    def test_normal_request_stays_normal(self):
-        r = _decide(55.0, 5.0, "normal")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "normal"
-        assert r["reason"] == "default"
-
-    def test_cheap_request_stays_cheap_reason_default(self):
-        """cheap is below the max — not constrained — so reason is default."""
-        r = _decide(55.0, 5.0, "cheap")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "cheap"
-        assert r["reason"] == "default"
-
-
-# ---------------------------------------------------------------------------
-# 3. swap > 65 band (stronger warn, still max = normal)
-# ---------------------------------------------------------------------------
-
-
-class TestSwap70:
-    """swap=70 enters the stronger-warn band — still max=normal, mode=warm."""
-
-    def test_hard_request_downgraded_to_normal(self):
-        r = _decide(70.0, 5.0, "hard")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "normal"
-        assert r["reason"] == "pressure"
-
-    def test_cheap_request_stays_cheap(self):
-        r = _decide(70.0, 5.0, "cheap")
-        assert r["mode"] == "warm"
-        assert r["allowed_tier"] == "cheap"
-        assert r["reason"] == "default"
-
-
-# ---------------------------------------------------------------------------
-# 4. swap > 75 band — degraded, max = cheap
-# ---------------------------------------------------------------------------
-
-
-class TestSwap80Degraded:
-    """swap=80 triggers degraded mode.  Every request resolves to cheap."""
-
-    def test_hard_degraded_to_cheap(self):
-        r = _decide(80.0, 5.0, "hard")
+    def test_main_degraded_to_minor(self):
+        r = _decide(80.0, 5.0, "main")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_normal_degraded_to_cheap(self):
-        r = _decide(80.0, 5.0, "normal")
+    def test_multimodal_degraded_to_minor(self):
+        """The seam: multimodal is a capability, not a rung — it degrades to
+        minor like main does (not to some 'cheaper multimodal')."""
+        r = _decide(80.0, 5.0, "multimodal")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_cheap_stays_cheap_but_reason_pressure(self):
-        """cheap is the only permitted tier; even though allowed==requested,
-        the reason is still 'pressure' because we are in degraded mode."""
-        r = _decide(80.0, 5.0, "cheap")
+    def test_minor_stays_minor_but_reason_pressure(self):
+        """minor is already the floor; allowed==requested but degraded mode still
+        marks reason='pressure'."""
+        r = _decide(80.0, 5.0, "minor")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
 
 # ---------------------------------------------------------------------------
-# 5. iowait > 25 band (max = normal, mode = warm)
+# 3. Degraded via iowait (> 50) — same seam behaviour
 # ---------------------------------------------------------------------------
 
 
-class TestIowait30:
-    """iowait=30 triggers the no-hard band via iowait."""
+class TestDegradedIowait:
+    """iowait=60 → emergency-degraded; main AND multimodal → minor."""
 
-    def test_hard_downgraded_to_normal(self):
-        r = _decide(10.0, 30.0, "hard")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "normal"
+    def test_main_degraded_to_minor(self):
+        r = _decide(5.0, 60.0, "main")
+        assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_cheap_stays_cheap(self):
-        r = _decide(10.0, 30.0, "cheap")
-        assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "cheap"
+    def test_multimodal_degraded_to_minor(self):
+        r = _decide(5.0, 60.0, "multimodal")
+        assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
+        assert r["reason"] == "pressure"
+
+
+# ---------------------------------------------------------------------------
+# 4. Back-compat input vocabulary (cheap/normal/hard) normalizes to new vocab
+# ---------------------------------------------------------------------------
+
+
+class TestBackCompatVocabulary:
+    """Old-vocabulary requests still work and normalize to main/minor/multimodal."""
+
+    def test_hard_normalizes_to_main_no_pressure(self):
+        r = _decide(0.0, 0.0, "hard")
+        assert r["allowed_tier"] == "main"
+        assert r["max_allowed_tier"] == "main"
         assert r["reason"] == "default"
 
+    def test_normal_normalizes_to_multimodal_no_pressure(self):
+        r = _decide(0.0, 0.0, "normal")
+        assert r["allowed_tier"] == "multimodal"
+        assert r["reason"] == "default"
 
-# ---------------------------------------------------------------------------
-# 6. iowait > 50 band — emergency degraded, max = cheap
-# ---------------------------------------------------------------------------
+    def test_cheap_normalizes_to_minor_no_pressure(self):
+        r = _decide(0.0, 0.0, "cheap")
+        assert r["allowed_tier"] == "minor"
+        assert r["reason"] == "default"
 
-
-class TestIowait60Degraded:
-    """iowait=60 triggers emergency-degraded mode."""
-
-    def test_hard_degraded_to_cheap(self):
-        r = _decide(10.0, 60.0, "hard")
+    def test_hard_degraded_to_minor(self):
+        r = _decide(80.0, 0.0, "hard")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_normal_degraded_to_cheap(self):
-        r = _decide(10.0, 60.0, "normal")
+    def test_normal_degraded_to_minor(self):
+        r = _decide(80.0, 0.0, "normal")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
-        assert r["reason"] == "pressure"
-
-    def test_cheap_stays_cheap_reason_pressure(self):
-        r = _decide(10.0, 60.0, "cheap")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "cheap"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
 
 # ---------------------------------------------------------------------------
-# 7. Combined pressure — most restrictive wins
+# 5. Combined pressure — either degraded signal triggers the floor
 # ---------------------------------------------------------------------------
 
 
 class TestCombinedPressure:
-    """swap=55 (max=normal) + iowait=60 (max=cheap,degraded) → cheap + degraded."""
-
-    def test_most_restrictive_across_signals(self):
-        r = _decide(55.0, 60.0, "hard")
+    def test_swap_degraded_dominates(self):
+        """swap=80 (degraded) + iowait=30 (mild) → minor + degraded."""
+        r = _decide(80.0, 30.0, "main")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_combined_swap_degraded_and_iowait_no_hard(self):
-        """swap=80 (degraded/cheap) + iowait=30 (normal) → cheap + degraded."""
-        r = _decide(80.0, 30.0, "normal")
+    def test_iowait_degraded_dominates(self):
+        """swap=60 (mild) + iowait=60 (degraded) → minor + degraded."""
+        r = _decide(60.0, 60.0, "multimodal")
         assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["allowed_tier"] == "cheap"
+        assert r["allowed_tier"] == "minor"
         assert r["reason"] == "pressure"
 
-    def test_two_independent_no_hard_signals_give_normal(self):
-        """swap=55 (normal) + iowait=30 (normal) → max=normal, mode=warm."""
-        r = _decide(55.0, 30.0, "hard")
+    def test_two_mild_signals_do_not_degrade(self):
+        """swap=60 + iowait=30 — both below the degraded floor → full tier."""
+        r = _decide(60.0, 30.0, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "normal"
-        assert r["allowed_tier"] == "normal"
-        assert r["reason"] == "pressure"
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "main"
+        assert r["reason"] == "default"
 
 
 # ---------------------------------------------------------------------------
-# 8. Boundary values — strict > (threshold value itself is NOT triggered)
+# 6. Boundary values — strict > on the degraded thresholds
 # ---------------------------------------------------------------------------
 
 
 class TestBoundaries:
-    """Strict greater-than: the threshold value itself does NOT trigger the band.
-
-    E.g. swap_used_percent == 50.0 does NOT enter the no-hard band;
-    50.0001 does.  Same logic for all five thresholds.
-    """
-
-    def test_swap_exactly_at_no_hard_threshold_not_triggered(self):
-        """swap == SWAP_NO_HARD_THRESHOLD (50) → still max_allowed_tier = hard."""
-        r = _decide(SWAP_NO_HARD_THRESHOLD, 0.0, "hard")
-        assert r["max_allowed_tier"] == "hard"
-        assert r["mode"] == "warm"
-        assert r["reason"] == "default"
-
-    def test_swap_just_above_no_hard_threshold_triggered(self):
-        """swap == 50 + ε → max = normal."""
-        r = _decide(SWAP_NO_HARD_THRESHOLD + 0.001, 0.0, "hard")
-        assert r["max_allowed_tier"] == "normal"
-
-    def test_swap_exactly_at_prefer_cheap_threshold_still_normal(self):
-        """swap == SWAP_PREFER_CHEAP_THRESHOLD (65) → the no-hard band (>50) IS
-        triggered, so max=normal; the prefer-cheap band itself is not (65 > 65
-        is False) but that band also gives max=normal, so the result is normal."""
-        r = _decide(SWAP_PREFER_CHEAP_THRESHOLD, 0.0, "hard")
-        assert r["max_allowed_tier"] == "normal"
-        assert r["mode"] == "warm"
+    """Strict greater-than on the degraded thresholds (the floor triggers)."""
 
     def test_swap_exactly_at_degraded_threshold_not_degraded(self):
-        """swap == SWAP_DEGRADED_THRESHOLD (75) → the no-hard / prefer-cheap
-        bands fire (>50, >65) giving max=normal; the degraded band (>75) does
-        NOT fire (75 > 75 is False) so mode stays warm."""
-        r = _decide(SWAP_DEGRADED_THRESHOLD, 0.0, "hard")
-        assert r["max_allowed_tier"] == "normal"
+        """swap == 75 → NOT degraded (75 > 75 is False) → full tier, warm."""
+        r = _decide(SWAP_DEGRADED_THRESHOLD, 0.0, "main")
         assert r["mode"] == "warm"
-
-    def test_swap_just_above_degraded_threshold_triggers_degraded(self):
-        """swap == 75 + ε → max = cheap, mode = degraded."""
-        r = _decide(SWAP_DEGRADED_THRESHOLD + 0.001, 0.0, "hard")
-        assert r["max_allowed_tier"] == "cheap"
-        assert r["mode"] == "degraded"
-
-    def test_iowait_exactly_at_no_hard_threshold_not_triggered(self):
-        """iowait == IOWAIT_NO_HARD_THRESHOLD (25) → max = hard (not triggered)."""
-        r = _decide(0.0, IOWAIT_NO_HARD_THRESHOLD, "hard")
-        assert r["max_allowed_tier"] == "hard"
-        assert r["mode"] == "warm"
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "main"
         assert r["reason"] == "default"
 
-    def test_iowait_just_above_no_hard_threshold_triggered(self):
-        """iowait == 25 + ε → max = normal."""
-        r = _decide(0.0, IOWAIT_NO_HARD_THRESHOLD + 0.001, "hard")
-        assert r["max_allowed_tier"] == "normal"
+    def test_swap_just_above_degraded_threshold_triggers_minor(self):
+        """swap == 75 + ε → degraded, ceiling = minor."""
+        r = _decide(SWAP_DEGRADED_THRESHOLD + 0.001, 0.0, "main")
+        assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
 
     def test_iowait_exactly_at_degraded_threshold_not_degraded(self):
-        """iowait == IOWAIT_DEGRADED_THRESHOLD (50) → the no-hard band (>25) IS
-        triggered (max=normal); the degraded band (>50) is NOT (50 > 50 is False)
-        so mode=warm."""
-        r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD, "hard")
-        assert r["max_allowed_tier"] == "normal"
+        """iowait == 50 → NOT degraded (50 > 50 is False) → full tier, warm."""
+        r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD, "main")
         assert r["mode"] == "warm"
+        assert r["max_allowed_tier"] == "main"
+        assert r["reason"] == "default"
 
-    def test_iowait_just_above_degraded_threshold_triggers_degraded(self):
-        """iowait == 50 + ε → max = cheap, mode = degraded."""
-        r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD + 0.001, "hard")
-        assert r["max_allowed_tier"] == "cheap"
+    def test_iowait_just_above_degraded_threshold_triggers_minor(self):
+        """iowait == 50 + ε → degraded, ceiling = minor."""
+        r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD + 0.001, "main")
         assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
 
 
 # ---------------------------------------------------------------------------
-# 9. Return-dict shape
+# 7. No-hard / prefer-cheap thresholds are retained but advisory (no rung)
+# ---------------------------------------------------------------------------
+
+
+class TestRetainedAdvisoryThresholds:
+    """The no-hard / prefer-cheap thresholds are kept (env-overridable) but no
+    longer impose a tier ceiling — there is no intermediate rung to drop to."""
+
+    def test_constants_still_exist(self):
+        assert SWAP_NO_HARD_THRESHOLD == 50.0
+        assert SWAP_PREFER_CHEAP_THRESHOLD == 65.0
+        assert IOWAIT_NO_HARD_THRESHOLD == 25.0
+
+    def test_above_no_hard_band_does_not_downgrade(self):
+        """swap just over the (advisory) no-hard threshold → still full tier."""
+        r = _decide(SWAP_NO_HARD_THRESHOLD + 1.0, 0.0, "main")
+        assert r["max_allowed_tier"] == "main"
+        assert r["allowed_tier"] == "main"
+        assert r["mode"] == "warm"
+        assert r["reason"] == "default"
+
+    def test_above_iowait_no_hard_band_does_not_downgrade(self):
+        r = _decide(0.0, IOWAIT_NO_HARD_THRESHOLD + 1.0, "main")
+        assert r["max_allowed_tier"] == "main"
+        assert r["mode"] == "warm"
+        assert r["reason"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# 8. Return-dict shape
 # ---------------------------------------------------------------------------
 
 
@@ -333,14 +312,15 @@ class TestReturnShape:
         assert r["reason"] in ("default", "pressure")
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
-    def test_tier_values_valid(self, tier: str):
+    def test_tier_values_in_new_vocab(self, tier: str):
+        """max_allowed_tier / allowed_tier are always emitted in the new vocab."""
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert r["max_allowed_tier"] in ("cheap", "normal", "hard")
-        assert r["allowed_tier"] in ("cheap", "normal", "hard")
+        assert r["max_allowed_tier"] in ("main", "minor", "multimodal")
+        assert r["allowed_tier"] in ("main", "minor", "multimodal")
 
 
 # ---------------------------------------------------------------------------
-# 10. Invalid tier raises ValueError
+# 9. Invalid tier raises ValueError
 # ---------------------------------------------------------------------------
 
 
@@ -355,7 +335,7 @@ class TestInvalidTier:
 
 
 # ---------------------------------------------------------------------------
-# 11. Pure: no I/O side effects
+# 10. Pure: no I/O side effects
 # ---------------------------------------------------------------------------
 
 
@@ -363,15 +343,12 @@ class TestPurity:
     """decide() must be importable and callable without any /proc access."""
 
     def test_callable_without_proc(self):
-        """If this import+call succeeds, the module has no implicit I/O at import."""
-        # The import already happened at the top of the file; this just documents
-        # that calling decide() in a sandbox with no /proc is fine.
-        r = decide(swap_used_percent=0.0, iowait_percent=0.0, requested_tier="hard")
+        r = decide(swap_used_percent=0.0, iowait_percent=0.0, requested_tier="main")
         assert isinstance(r, dict)
 
 
 # ---------------------------------------------------------------------------
-# 12. _env_float rejects non-finite values (nan / inf / -inf)
+# 11. _env_float rejects non-finite values (nan / inf / -inf)
 # ---------------------------------------------------------------------------
 
 
