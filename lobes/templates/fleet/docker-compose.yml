@@ -376,10 +376,12 @@ services:
   # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
 
   vllm-multimodal:
-    # Gemma 4's gemma4_unified arch is not registered by the stock NGC image's
-    # Transformers, so this service uses a custom Dockerfile (Dockerfile.vllm-gemma4)
-    # built FROM nvcr.io/nvidia/vllm:26.06-py3 (vLLM 0.22.1) with a Transformers
-    # build that registers gemma4_unified.
+    # Gemma 4's gemma4_unified arch (early-fusion multimodal, heterogeneous
+    # per-layer head sizes) needs vLLM's NATIVE Gemma4UnifiedForConditionalGeneration
+    # class, which only exists in vLLM nightly (>= 0.23.1rc1). So this service uses
+    # a custom Dockerfile (Dockerfile.vllm-gemma4) built FROM the official
+    # vllm/vllm-openai nightly image (pinned by digest) + the vllm[audio] extra.
+    # Live-validated on the DGX Spark GB10 (#71, 2026-07-01): text+image+audio serve.
     # When MULTIMODAL_IMAGE is unset, `lobes fleet up` (which runs `up -d --build`)
     # builds Dockerfile.vllm-gemma4 and tags the result as lobes/vllm-gemma4:local;
     # a subsequent `docker compose up` (no --build) reuses that local tag.
@@ -412,12 +414,16 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      # Gemma 4's attention is non-square (global_head_dim 512 ≠ head_dim 256), so
-      # the default FlashAttention backend produces the wrong o_proj input width and
-      # serving crashes (marlin_gemm 4096≠8192). TRITON_ATTN handles it. NOTE (#71):
-      # gemma4_unified currently runs via vLLM's transformers-modeling backend, which
-      # did NOT honor this env in testing — serve-enablement is a tracked follow-up.
+      # Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
+      # TRITON_ATTN. The native gemma4_unified class auto-forces it, but we set it
+      # explicitly too (belt-and-suspenders; matches the vLLM recipe).
       - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
+      # vLLM 0.23 reserves an ESTIMATED cudagraph-memory headroom inside the util
+      # budget, and for this gear it wildly overshoots — 12.74 GiB estimated vs
+      # 0.46 GiB actual (#71) — starving the KV cache so util 0.12 fails with "No
+      # available memory for the cache blocks". Disabling the estimate maps the
+      # util knob back to true usage (~15.7 GiB actual ≈ 0.12 of the 128 GB GB10).
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal   # → /logs/model-gear/multimodal-<boot>.log
     volumes:
@@ -439,14 +445,21 @@ services:
       # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
       # config.json quant_method; modelopt_fp4 fails with a method mismatch (#71).
       - --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
-      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-131072}
-      # TODO(#71): measure real multimodal util (vision+audio KV) once it serves.
+      # NOT the 128K native context: at the co-resident util 0.12 the KV cache holds
+      # ~24K tokens (measured #71). Serving --max-model-len 131072 fails ("max seq
+      # len larger than KV cache"). 128K native needs a much larger util than the
+      # 0.12 lane budget allows. Default to a co-resident-safe context; raise both
+      # this and the util together if you need more. (Live-validated at 4096.)
+      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-8192}
+      # Measured #71: ~15.7 GiB actual footprint (weights 8.1 + graphs 0.46 + KV 7.2)
+      # ≈ 0.12 of the 128 GB GB10 — fits the 0.69 default-fleet budget. Requires the
+      # VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see note there).
       - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.12}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
       # No speculative-decoding flag here: Gemma4 native MTP needs a separate
-      # gemma4_assistant draft model on vLLM 0.21/0.22 (the "-MTP" checkpoint exposes
-      # none), and the gemma4_mtp method is rejected. Sourcing a draft is a follow-up (#71).
+      # gemma4_assistant draft model (the "-MTP" checkpoint exposes none), and the
+      # gemma4_mtp method is rejected. Sourcing a draft was scoped in #75 (closed).
       - --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

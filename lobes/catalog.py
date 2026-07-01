@@ -219,15 +219,15 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # calls use the Python-style "pythonic" parser (matches runtime._parser.
         # infer_parser, which returns "pythonic" for gemma-4* ids — set in t1).
         #
-        # status="configured" (NOT load-tested). Live validation on the Spark (#71,
-        # 2026-06-30) established: the custom image (docs/gemma-4-12b-nvfp4.md;
-        # Dockerfile.vllm-gemma4 = NGC 26.06 / vLLM 0.22.1 + transformers @181beb3)
-        # registers gemma4_unified and LOADS the weights, but the gear does not yet
-        # SERVE — Gemma 4's non-square attention (global_head_dim 512 ≠ head_dim 256)
-        # needs VLLM_ATTENTION_BACKEND=TRITON_ATTN, which vLLM's transformers-modeling
-        # backend did not honor in our runs (o_proj marlin_gemm shape mismatch
-        # 4096≠8192). Serve-enablement is a tracked follow-up; promotion to
-        # load-tested waits on it. See docs/gemma-4-12b-nvfp4.md and issue #71.
+        # status="load-tested". Serve-enablement RESOLVED on the Spark GB10 (#71/#73,
+        # 2026-07-01): the gear SERVES on the custom image (Dockerfile.vllm-gemma4 =
+        # vllm/vllm-openai nightly, vLLM 0.23.1rc1 + the vllm[audio] extra) via vLLM's
+        # NATIVE Gemma4UnifiedForConditionalGeneration class, which handles the
+        # heterogeneous per-layer head sizes (40 sliding@256 + 8 full@512) that broke
+        # released vLLM <=0.22.1 (transformers-backend fallback → o_proj marlin_gemm
+        # 4096≠8192; a backend flag does NOT fix it — the native class does). Validated
+        # live: text ✓, image+text ✓, audio+text ✓ (transcribed a TTS clip verbatim);
+        # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
         role_hint="multimodal",
         shape="unified multimodal (text+image+audio)",
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
@@ -240,7 +240,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # nvidia modelopt. vLLM must be told --quantization=compressed-tensors;
         # passing modelopt_fp4 fails with a quant-method-mismatch (verified #71).
         quantization="compressed-tensors",
-        status="configured",
+        status="load-tested",  # GB10 2026-07-01: text+image+audio ✓ on vLLM nightly (#71/#73)
         doc="gemma-4-12b-nvfp4.md",
         task="generate",
         # No speculative_config: despite the "-MTP" name, this unified checkpoint

@@ -308,7 +308,7 @@ def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
     # NVFP4 in compressed-tensors format (config.json quant_method), NOT modelopt —
     # verified live on the Spark (#71); modelopt_fp4 fails with a method mismatch.
     assert gemma.quantization == "compressed-tensors"
-    assert gemma.status == "configured"  # not load-tested yet (#71 serve-enablement)
+    assert gemma.status == "load-tested"  # GB10 2026-07-01: text+image+audio ✓ on nightly (#71/#73)
     assert gemma.doc == "gemma-4-12b-nvfp4.md"
     assert gemma.native_max_model_len == 131072
     assert gemma.dimension == 0
