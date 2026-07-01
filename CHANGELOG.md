@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.1] - 2026-07-01
+
+### Added
+
+- docs/gemma-4-12b-nvfp4.md — first throughput/prefill benchmark for the Gemma 4 12B multimodal gear on the DGX Spark GB10: ~23 tok/s single-stream decode (23.0 sustained over 1,500 tok), prefill ~2,650 tok/s (847 tok) / ~1,954 tok/s (6,682 tok), on vLLM 0.23.1rc1.dev672 native gemma4_unified
+- README acknowledgement of Mieszko Syty (FutureProofHomes; Jetson AI Lab) alongside shahizat
+
+### Changed
+
+- docs/gemma-4-12b-nvfp4.md notes a config-drift follow-up: on the current :nightly-audio (dev672) image the default lane util 0.12 + VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 no longer boots 8192 co-resident (cudagraph accounting changed) — benchmarked at util 0.15 with a trimmed cudagraph capture set
+
+### Fixed
+
+- docs/gemma-4-12b-nvfp4.md — made the #75 speculative-decoding section internally consistent: it now reads as CLOSED (route resolved, wire/measure/verdict not implemented) throughout, matching the "Resolved" bullet, instead of framing #75 as active work (Qodo); also corrected the stale claim that the 12B lane decodes slower than the primary — the benchmark shows it out-decodes the primary single-stream (~23 vs ~18–19 tok/s)
+
 ## [0.34.0] - 2026-07-01
 
 ### Added

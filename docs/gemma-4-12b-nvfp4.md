@@ -145,6 +145,14 @@ DSpark is unvalidated on this checkpoint — measure before enabling.
 
 ## Speculative decoding (#75): before-state and scope
 
+> **Status: #75 is CLOSED — scoped, not implemented.** The draft route was
+> resolved (see [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md)), but the
+> wire → measure → verdict legs never landed: the `multimodal` lane still serves
+> with **no `speculative_config`**, and the benchmark below (~23 tok/s
+> single-stream, no draft) *is* that no-spec baseline. Reviving speculative
+> decoding for this gear is **new work** (a future issue), not #75. The scope
+> recorded here is retained as the historical framing.
+
 **Audience:** lobes operators/maintainers and the Culture mesh that consumes the
 `multimodal` (Gemma 4 12B) generate lane — i.e. anyone calling `model=multimodal`
 or the back-compat `model=normal` (see [Tier alias usage](#tier-alias-usage)).
@@ -170,10 +178,12 @@ disabled and unvalidated, alternative route).
 single-stream decode speedup** from MTP speculative decoding (72–79 % draft
 acceptance) — see
 [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md). The
-`multimodal`/`normal` lane has no equivalent boost: it serves with no
-speculative config at all, so per-stream decode is comparatively slow relative
-to the primary, and that gap is real (not assumed) once #71 lands and the lane
-takes live mesh traffic.
+`multimodal`/`normal` lane has no equivalent multiplier: it serves with no
+speculative config at all. In *absolute* terms the 12B still out-decodes the
+primary single-stream (~23 vs ~18–19 tok/s — see the benchmark below) because it
+is under half the parameters; the gap is against its own *potential* — a working
+draft would push it well past 23 tok/s — not against the primary. Now that #71
+has landed and the lane is measured, that potential gap is concrete, not assumed.
 
 **Scope split.**
 
@@ -181,18 +191,18 @@ takes live mesh traffic.
 |---|---|
 | Serve-enablement — force `TRITON_ATTN` on the transformers backend so the gear actually serves | issue #71 (see [Live-validation status](#live-validation-status-71) below) |
 | Draft-model training/distilling (building a native `gemma4_assistant` head from scratch) | a separate follow-up, not #75 |
-| Resolve a draft route, wire `--speculative-config`, measure, and decide | **issue #75 (this work)** |
+| Resolve a draft route, wire `--speculative-config`, measure, and decide | **issue #75 (CLOSED — route resolved; wire/measure/verdict not implemented)** |
 
-Issue #75 does not train a draft model. It resolves to exactly one concrete
+As scoped, #75 did not train a draft model. It resolved to exactly one concrete
 route (a validated `draft_model` such as DSpark, a sourced `gemma4_assistant`
-draft, or a documented "no compatible draft available"), wires it through the
-same catalog-to-compose pattern the 27B MTP primary uses today
-(`speculative_config` on the catalog entry drives the compose
-`--speculative-config` items), measures draft acceptance and decode speedup on
-a live co-resident serve, and commits a verdict: restore `speculative_config`
-by default if it beats the no-spec baseline, or document the negative with the
-numbers that ruled it out. **Done = a measured verdict, not merely a wired
-draft.** #75 is gated on #71 — no draft can be measured until the gear serves.
+draft, or a documented "no compatible draft available") to wire through the same
+catalog-to-compose pattern the 27B MTP primary uses today (`speculative_config`
+on the catalog entry drives the compose `--speculative-config` items), then
+measure draft acceptance and decode speedup on a live co-resident serve and
+commit a verdict. **#75 closed with the route resolved (see
+[`gemma4-mtp-draft.md`](gemma4-mtp-draft.md)) but the wire → measure → verdict
+legs unbuilt.** Its serve gate (#71) has since landed, so a future issue can
+resume from the resolved route against a now-serving gear.
 
 ## Live-validation status (#71/#73) {#live-validation-status-71}
 
@@ -257,6 +267,71 @@ Resolved:
 - ✅ **Quantization** — `compressed-tensors` (not `modelopt_fp4`).
 - ✅ **GPU util** — ~15.7 GiB ≈ 0.12 budget.
 - ⛔ **Native MTP** — still needs a separate `gemma4_assistant` draft model (scoped in #75, closed); the gear serves without spec-decode.
+
+## Benchmark — 2026-07-01, DGX Spark (GB10), standalone
+
+> First throughput/prefill numbers for the gear. Measured on the shared GB10
+> **standalone** (own container on host port 8010, **not** co-resident behind the
+> gateway) so the live 27B primary kept serving mesh traffic. Image
+> `lobes/vllm-gemma4:nightly-audio` (vLLM **0.23.1rc1.dev672**, native
+> `Gemma4UnifiedForConditionalGeneration`, `TRITON_ATTN`, `compressed-tensors`
+> NVFP4, `--max-model-len 8192`). Driven by `lobes benchmark` + a manual
+> forced-decode probe.
+
+| Property | Value |
+|---|---|
+| Health / `max_model_len` | `/health` 200; `8192` |
+| Architecture resolved | ✅ native `Gemma4UnifiedForConditionalGeneration` (not the transformers fallback) |
+| Correctness | `17 × 23 = 391` ✅ (finish=stop, 4 tok) |
+| **Decode throughput** | **~23 tok/s** (batch=1, greedy — 21.7–23.3 across balanced/prompt-heavy; **23.0 tok/s sustained over 1,500 forced tokens** in 65.2 s) |
+| Prefill (balanced) | 847 prompt tokens + 16 gen in **0.32 s** (~2,650 tok/s) |
+| Prefill (prompt-heavy) | 6,682 prompt tokens in **3.42 s** (~1,954 tok/s) |
+| Weights (EngineCore) | **8,113 MiB** (~7.9 GiB) |
+| CUDA-graph memory | 0.96 GiB (trimmed capture set — see config note) |
+| KV cache | **8.47 GiB → 57,636 tokens**; **7.04×** max concurrency at 8,192 tokens/request |
+| Speculative decoding | **none** — no MTP draft (see ["No native MTP"](#what-it-is)); this is raw single-stream decode |
+
+**Decode context.** At ~**23 tok/s single-stream**, the 12B `multimodal` lane is
+actually a touch *faster* per-stream than the 27B `primary` (~18–19 tok/s, and
+that is *with* its ~2.4× MTP boost) — it is less than half the parameters. So the
+lane with **no spec-decode** still out-decodes the primary single-stream, while
+adding native vision+audio; the primary remains the more capable text model. The
+speculative-decoding gap called out in
+[Speculative decoding (#75)](#speculative-decoding-75-before-state-and-scope)
+is about closing the *potential* gap (a draft would push the 12B well past 23
+tok/s), not a current regression.
+
+**Config note — why not the production `util 0.12`.** The default fleet lane runs
+`MULTIMODAL_GPU_MEM_UTIL=0.12` with `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`.
+That combination was validated on #71's earlier nightly digest; the **current**
+`:nightly-audio` build (dev672) behaves differently in two ways that forced a
+bench-only config:
+
+1. **Cudagraph accounting flipped.** With `…ESTIMATE_CUDAGRAPHS=0`, dev672 now
+   *warns* that CUDA-graph memory is **not accounted** during KV allocation and
+   recommends re-enabling it and raising util (it suggested `0.12 → 0.2427`). The
+   full capture list (51 sizes, 1…512) estimates **14.93 GiB** of graph memory,
+   which starves KV at `util 0.12` (KV came out at 1.11 GiB < the 1.2 GiB needed
+   for one 8,192-token request).
+2. **Co-resident memory ceiling.** With the primary (reduced to 64K / util 0.38)
+   plus embed and rerank live, only **~19 GiB was CUDA-visible free** to a new
+   process on the unified memory — not enough for the weights (8 GiB) plus the
+   full 15 GiB of graphs.
+
+So the benchmark trimmed the capture set to
+`--compilation-config '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64]}'` (graphs →
+0.96 GiB) at `--gpu-memory-utilization 0.15`. **Single-stream decode and prefill
+are util- and capture-set-independent** (batch=1 stays graph-captured), so the
+headline numbers above are representative; only *aggregate throughput above
+concurrency 64* would read low versus a full-capture production serve. Total
+standalone footprint here: ~**17.4 GiB** (weights 7.9 + graphs 0.96 + KV 8.47) at
+util 0.15.
+
+> **Follow-up (config drift):** the default lane's `util 0.12` +
+> `…ESTIMATE_CUDAGRAPHS=0` should be re-validated against the pinned dev672 image
+> and, if the accounting change sticks, either the util raised or the capture set
+> trimmed in the compose so the gear boots 8,192 co-resident. Tracked with the
+> serve config in [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) / the fleet compose.
 
 ## Related docs
 
