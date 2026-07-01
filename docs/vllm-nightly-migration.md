@@ -283,20 +283,38 @@ plan's DSpark-first route) **fails to load** on nightly. Two findings, in order:
    supported speculative-draft set. The DSpark `draft_model` route is a dead end
    on this engine.
 
-**The native route IS supported.** `Gemma4MTPModel` **is** in that same supported
-list — so the escalation route, Google's `google/gemma-4-12B-it-assistant`
-(`gemma4_unified_assistant` → `gemma4_mtp` → `Gemma4MTPModel`, method `mtp`,
-`n_predict=1`), is the **viable Gemma-MTP path** on nightly. Measuring it is the
-follow-up (`r6` / `v4`), not done in this window.
+**The native route works — measured (2026-07-01).** `Gemma4MTPModel` **is** in the
+supported list, so I served the coder checkpoint with Google's
+`google/gemma-4-12B-it-assistant` draft (`method=mtp`, `model=<assistant>`,
+`num_speculative_tokens=1`). It **loads and drafts**: the engine logs `Detected MTP
+model. Sharing target model embedding weights with the draft model` and maps the
+draft layers to the target's late layers (`draft layer → layers.46/47`, KV-shared).
+Measured on nightly:
+
+| Gemma 4 12B **coder** + native MTP | value |
+|---|---|
+| Decode | **~24.0 tok/s** (vs ~23 no-spec — a **marginal ~6 % win**) |
+| MTP draft acceptance | **30.8 %** (188 / 611, 611 drafts @ n_predict=1) |
+
+**Why the win is only marginal — a checkpoint mismatch.** The assistant was trained
+to draft for the **base** `google/gemma-4-12B-it`, but the fleet serves a **coder
+fine-tune** (`…coder-fable5-composer2.5…`). The fine-tune's shifted output
+distribution drops acceptance to ~31 % (vs the 27B MTP's ~60 %) — exactly the risk
+`docs/gemma4-mtp-draft.md` flagged. At `n_predict=1` and ~31 % acceptance the speedup
+is small. **Direction (user, 2026-07-01):** serve the **base `google/gemma-4-12B-it`**
+(the assistant's exact target) for much higher acceptance — "less coder, more MTP" —
+and **support both** checkpoints in the catalog so callers pick coding-strength vs
+MTP-throughput. That base measurement + dual catalog entry is the next leg.
 
 ### Verdict feeding t7
 
-DSpark-first (the plan's chosen route) is **invalid on vLLM 0.23** → t7's verdict
-is **keep Gemma no-spec by default; do NOT wire DSpark**; the native
-`gemma-4-12B-it-assistant` MTP route is the escalation, measurement deferred to a
-follow-up. Side note for t7/t9 cleanup: `VLLM_ATTENTION_BACKEND` is flagged an
-"unknown env var" on this nightly — the native `Gemma4UnifiedForConditionalGeneration`
-class auto-forces TRITON, so that compose env line is now a no-op warning.
+DSpark-first is **invalid on vLLM 0.23**; the native assistant route **works but is
+marginal on the coder checkpoint** (~31 % accept, ~6 % decode gain). So t7's verdict
+is **do NOT wire DSpark**, and native MTP on the coder gear is a marginal/optional
+win — the real MTP payoff needs the **base `gemma-4-12B-it`** gear (next leg). Side
+note for t7/t9 cleanup: `VLLM_ATTENTION_BACKEND` is flagged an "unknown env var" on
+this nightly (the native class auto-forces TRITON), so that compose env line is a
+no-op warning.
 
 ## Scope note
 
