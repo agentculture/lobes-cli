@@ -24,6 +24,16 @@ GATEWAY_FLEET_DOC = REPO_ROOT / "docs" / "gateway-fleet.md"
 
 PINNED_TODAY_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
 
+# t4 (devague plan `lobes-unifies-its-generate-lane-on-one-vllm-nightl`) flipped
+# the primary/embed/rerank services from PINNED_TODAY_IMAGE to this pinned
+# nightly digest — the SAME digest Dockerfile.vllm-gemma4 already bases off,
+# unifying the fleet's generate/embed/rerank engine on one vLLM nightly
+# (0.23.1rc1.dev672). See docs/vllm-nightly-migration.md §4/§5 (t2/t3 GO
+# verdicts) for the live validation that preceded this flip.
+NIGHTLY_DIGEST_IMAGE = (
+    "vllm/vllm-openai@sha256:" "7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+)
+
 # Services that the plan says pin the NGC image today (t4 will migrate these
 # to nightly later — t1 only verifies where they stand right now).
 _NGC_PINNED_SERVICES = ("vllm-primary", "vllm-embed", "vllm-rerank")
@@ -57,26 +67,42 @@ def test_doc_does_not_mutate_image_pins() -> None:
     # mutation-avoidance is enforced by the git diff at commit time, not here.
 
 
-def test_doc_claims_match_actual_ngc_pins_for_primary_embed_rerank() -> None:
-    """The doc's claim that primary/embed/rerank pin the NGC 26.04-py3 image
-    must match the REAL template today — parsed, not assumed, so the doc's
-    factual claim can't silently drift from the compose file."""
+def test_doc_records_the_before_state_ngc_pin_as_history() -> None:
+    """docs/vllm-nightly-migration.md §1 is a HISTORICAL before-state record
+    (t1, written before t4 flipped the pins) — its prose must still cite the
+    NGC 26.04-py3 image and the 0.19.0 engine version it describes. This is a
+    doc-content check only; it does NOT cross-check the live compose (that's
+    test_fleet_primary_embed_rerank_pin_the_nightly_digest below) — t1's
+    before-state narrative doesn't get rewritten just because t4 shipped."""
     doc_text = DOC.read_text(encoding="utf-8")
-    compose_text = FLEET_COMPOSE.read_text(encoding="utf-8")
 
     assert PINNED_TODAY_IMAGE in doc_text, (
-        f"doc must cite today's pinned image {PINNED_TODAY_IMAGE!r} for the "
-        "primary/embed/rerank services"
+        f"doc must still cite the before-state pinned image {PINNED_TODAY_IMAGE!r} for the "
+        "primary/embed/rerank services (historical record, not live state)"
     )
     assert (
         "0.19.0" in doc_text
-    ), "doc must cite the vLLM engine version (0.19.0) behind that image tag"
+    ), "doc must cite the vLLM engine version (0.19.0) behind that before-state image tag"
+
+
+def test_fleet_primary_embed_rerank_pin_the_nightly_digest() -> None:
+    """t4 flip: the LIVE fleet compose no longer pins PINNED_TODAY_IMAGE for
+    primary/embed/rerank — it now pins the same nightly digest
+    Dockerfile.vllm-gemma4 bases off. docs/vllm-nightly-migration.md §1 is
+    deliberately left as a before-state record (see the test above); this
+    test is the one that must fail loudly if the live template drifts from
+    that flip, not the historical-doc check."""
+    compose_text = FLEET_COMPOSE.read_text(encoding="utf-8")
 
     for service in _NGC_PINNED_SERVICES:
         block = _service_block(compose_text, service)
-        assert PINNED_TODAY_IMAGE in block, (
-            f"template regression: {service} no longer pins {PINNED_TODAY_IMAGE!r} in "
-            f"{FLEET_COMPOSE} — docs/vllm-nightly-migration.md's before-state claim is now stale"
+        assert PINNED_TODAY_IMAGE not in block, (
+            f"template regression: {service} still pins the pre-t4 image "
+            f"{PINNED_TODAY_IMAGE!r} in {FLEET_COMPOSE} — t4 flipped this to the nightly digest"
+        )
+        assert NIGHTLY_DIGEST_IMAGE in block, (
+            f"template regression: {service} does not pin the nightly digest "
+            f"{NIGHTLY_DIGEST_IMAGE!r} in {FLEET_COMPOSE}"
         )
 
 

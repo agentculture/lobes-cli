@@ -20,8 +20,23 @@
 # vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
 # drop both generate GPU utils so they sum well under 1.0.
 services:
+  # vllm-primary / vllm-embed / vllm-rerank pin the SAME nightly digest
+  # Dockerfile.vllm-gemma4 already bases off (vLLM 0.23.1rc1.dev672) — one
+  # engine, fleet-wide, for the default-on generate/embed/rerank gears (t4 of
+  # devague plan lobes-unifies-its-generate-lane-on-one-vllm-nightl; replaces
+  # the pre-t4 nvcr.io/nvidia/vllm:26.04-py3 NGC pin). Live-validated by the t2
+  # (27B, GO) and t3 (embed+rerank, GO) spikes — see
+  # docs/vllm-nightly-migration.md §4/§5. Bump the digest DELIBERATELY (and
+  # re-validate) rather than floating the moving :nightly tag, same discipline
+  # as Dockerfile.vllm-gemma4.
+  #
+  # §5 finding: nightly's memory-profiler asserts free GPU memory stays
+  # CONSTANT while it profiles — bring these gears up when fleet memory is
+  # stable, not mid-churn (concurrent teardown of another container on the
+  # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
+  # a settle gap over a simultaneous multi-gear `docker compose up`.
   vllm-primary:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
+    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
     container_name: model-gear-vllm-primary
     restart: unless-stopped
     deploy:
@@ -39,6 +54,10 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71): disable the ESTIMATED cudagraph-memory headroom so the
+      # util knob maps back to true usage instead of starving the KV cache.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
     volumes:
@@ -73,6 +92,10 @@ services:
       # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
       # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
       # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # Unchanged by the t4 nightly flip: the t2 spike proved nightly auto-maps
+      # the deprecated "qwen3_5_mtp" method string to "mtp" internally with MTP
+      # still active (69.9% draft acceptance, near the 0.19.0 72-79% baseline)
+      # — no caller/config change needed. See docs/vllm-nightly-migration.md §4.
       # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
       # is only needed to download gated repos (these defaults are public) — leave it
       # empty or use a minimal-scope read-only token; pin revisions you trust.
@@ -108,7 +131,10 @@ services:
   # and would interfere with --runner/--convert.
 
   vllm-embed:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up.
+    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
     container_name: model-gear-vllm-embed
     restart: unless-stopped
     deploy:
@@ -126,6 +152,9 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
     volumes:
@@ -161,7 +190,11 @@ services:
       start_period: 600s
 
   vllm-rerank:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up (§5's spike crash was this exact gear, tripped by concurrent
+    # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
+    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
     container_name: model-gear-vllm-rerank
     restart: unless-stopped
     deploy:
@@ -179,6 +212,9 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
     volumes:
