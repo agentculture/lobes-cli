@@ -19,6 +19,24 @@ tool-calling gate passed (see "Tool calling — verified" below). Filed as
 > template. For the catalog-vs-warm distinction — what you *can* load vs. what's
 > loaded *now* — see
 > [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
+>
+> **Now serving on vLLM nightly, 64K fleet default (since t4, 2026-07-01 —
+> `docs/vllm-nightly-migration.md` §4/§8).** The fleet flipped this gear (plus
+> embed/rerank) from the NGC `26.04-py3` image (vLLM `0.19.0+nv26.04`, the
+> engine every benchmark below was measured on) to the same pinned vLLM-nightly
+> digest (`0.23.1rc1.dev672`) the Gemma multimodal gear already ran — one
+> engine, fleet-wide. Nightly auto-maps the deprecated `qwen3_5_mtp` method
+> string to `mtp` with MTP staying active (69.9 % draft acceptance on the t2
+> spike, near the 72–79 % below; a same-engine head-to-head later measured
+> 60.6 %, §6) — no caller/config change needed. The **fleet-default context is
+> also now 64K, not the 256K described below**:
+> `PRIMARY_MAX_MODEL_LEN=65536` / `PRIMARY_GPU_MEM_UTIL=0.30`, trimmed so the
+> always-on Gemma 4 12B multimodal gear can co-reside at its full 128K native
+> context (`docs/vllm-nightly-migration.md` §8; see
+> [`gateway-fleet.md`](gateway-fleet.md#memory) for the duo budget). The
+> benchmarks below (0.19.0 engine, 32K/128K/256K context) remain the
+> historical promotion record, not re-measured at 64K/nightly here — see
+> `docs/vllm-nightly-migration.md` §4/§6 for the nightly-engine numbers.
 
 Source: <https://huggingface.co/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP>.
 
@@ -311,3 +329,9 @@ and the only vision-capable 27B). Ideally fix the checkpoint's
 `tokenizer_config.json` upstream so no `--tokenizer` override is needed. The same
 MTP-grafted-checkpoint strategy is the path to MTP on the 35B (see the 35B
 follow-up).
+
+This gear has since moved off the stock nv26.04 image onto the fleet-wide vLLM
+nightly digest (t4, `docs/vllm-nightly-migration.md` §4) and its fleet-default
+context trimmed to 64K to share the box with the always-on Gemma multimodal
+gear (§8) — MTP survives both changes unchanged (the deprecated method string
+auto-maps, no config edit needed); see the status note at the top of this doc.

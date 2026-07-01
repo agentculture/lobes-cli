@@ -3,6 +3,15 @@
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
+>
+> **On vLLM nightly since the fleet-wide nightly-unification migration**
+> (`docs/vllm-nightly-migration.md` §3/§5, t3/t4) — this gear now runs the same
+> pinned `vllm/vllm-openai@sha256:7c5a10e9...` digest (vLLM `0.23.1rc1.dev672`)
+> as the primary and multimodal gears, not the `nv26.04-py3` / `0.19.0` build
+> the 2026-06-19 benchmark below was measured on. The nightly t3 spike (§5)
+> re-confirmed `/v1/embeddings` → 1024-dim, matryoshka `--hf-overrides`
+> accepted, `--runner pooling --convert embed` unchanged — no serving-flag
+> drift. The benchmark numbers below remain the historical 0.19.0 record.
 
 ## What it is
 
@@ -13,7 +22,8 @@
   re-serving the model.
 - **32K native** context, served at `--max-model-len 8192` (tiny KV footprint).
 - Served via vLLM's `/v1/embeddings` endpoint in pooling mode
-  (`--runner pooling --convert embed` on the nv26.04 build).
+  (`--runner pooling --convert embed`; unchanged since the fleet's move to
+  vLLM nightly — see the note above).
 - No tool parser, no quantization flag — this is a pooling model, not a chat model.
 - **Served name == catalog id:** `Qwen/Qwen3-Embedding-0.6B`.
 
@@ -147,3 +157,9 @@ Served on this vLLM build (`0.19.0+nv26.04`) with `--runner pooling --convert em
 — the older `--task embed` is rejected (`unrecognized arguments`). The probes use
 plain `curl` against `/v1/embeddings` (the `lobes assess` arithmetic/tool probes are
 chat-oriented and not applicable to a pooling model).
+
+This flag set is unchanged on the fleet's current vLLM nightly build
+(`docs/vllm-nightly-migration.md` §5, t3 spike, live 2026-07-01) —
+`--runner pooling --convert embed`, the matryoshka `--hf-overrides`, and the
+1024-dim output all still work identically; the numbers above were not
+re-measured on nightly but the serving contract did not change.
