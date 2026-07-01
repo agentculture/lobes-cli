@@ -325,30 +325,35 @@ greedy, `max_len 8192`):
 
 | Gear | quant | no-spec | + native MTP | MTP accept | MTP speedup |
 |---|---|---|---|---|---|
-| Gemma **coder** (`…coder-fable5-composer2.5…`) | NVFP4 | ~23 tok/s | ~24 tok/s | **30.8 %** | ~1.04× |
-| Gemma **base** (`google/gemma-4-12B-it`) | bf16 | **6.5 tok/s** | **14.6 tok/s** | **93.9 %** | **~2.25×** |
-| (ref) Qwen 27B primary | NVFP4 | — | ~18 tok/s | 60.6 % | ~2.4× (its doc) |
+| Gemma **coder** (`…coder-fable5-composer2.5…`) | NVFP4 | ~23 tok/s | ~24 tok/s | 30.8 % | ~1.04× |
+| Gemma **base** (`google/gemma-4-12B-it`) | bf16 | 6.5 tok/s | 14.6 tok/s | **93.9 %** | ~2.25× |
+| **Gemma base NVFP4** (`coolthor/gemma-4-12B-it-NVFP4A16`) | NVFP4 | 19.8 tok/s | **28.6 tok/s** | 57.9 % | **~1.45×** |
+| (ref) Qwen 27B primary | NVFP4 | — | ~18 tok/s | 60.6 % | ~2.4× |
 
 **Findings:**
 1. **User insight confirmed.** The native assistant (`google/gemma-4-12B-it-assistant`)
-   drafts near-perfectly (**93.9 %**) for its exact target, the **base**
-   `gemma-4-12B-it` — vs 30.8 % on the coder fine-tune. MTP goes from a marginal
-   ~1.04× (coder) to a strong **~2.25×** (base). The "less coder, enjoy MTP more"
-   acceptance is real.
-2. **But bf16 makes the base compute-bound.** Base no-spec is only 6.5 tok/s (bf16
-   12B on the GB10); even the 2.25× MTP win lands at **14.6 tok/s — still slower
-   than the NVFP4 coder (23–24)**. Fast NVFP4 GEMMs beat high-acceptance bf16.
-3. **The winning gear is an NVFP4 base-IT checkpoint** — NVFP4 speed (≈ the coder's
-   ~23 no-spec) × the base's ~90 %+ acceptance ≈ a genuinely fast, high-MTP gear.
-   Candidate: `coolthor/gemma-4-12B-it-NVFP4A16` (NVFP4 of the base it-model). The
-   bf16 base measured here is the **definitive acceptance proof**, not the gear to
-   ship (too slow to serve co-resident).
+   drafts far better for the base it-model it was trained for: **93.9 %** accept on
+   the bf16 base and **57.9 %** on the NVFP4 base — vs **30.8 %** on the coder
+   fine-tune. "Less coder → more MTP" is real.
+2. **bf16 is a trap: best acceptance, worst speed.** The bf16 base gets 93.9 %
+   accept but its no-spec floor is only 6.5 tok/s, so even ~2.25× MTP lands at
+   14.6 tok/s — *slower* than the NVFP4 coder. High acceptance can't rescue slow
+   compute.
+3. **The NVFP4 base is the winner — measured.** `coolthor/gemma-4-12B-it-NVFP4A16`
+   + native MTP = **28.6 tok/s** (19.8 no-spec × **~1.45×** MTP @ 57.9 % accept) —
+   the **fastest Gemma config measured**, beating the coder (24), coder+MTP (24),
+   and bf16 base+MTP (14.6). NVFP4 quant drops acceptance from the bf16 base's
+   93.9 % to 57.9 % (the quantized target's distribution shifts vs what the bf16
+   assistant expects), but NVFP4 speed more than compensates.
 
-**"Support both" recommendation:** catalog carries two Gemma gears — the **coder**
-(NVFP4, coding-strong, MTP not worth wiring at 30.8 %) and a **base** (NVFP4,
-general, native MTP default-on at ~90 %+ accept) — callers pick coding-strength vs
-MTP-throughput. Next leg: source/confirm an NVFP4 base-IT checkpoint, measure it +
-native MTP, then wire both into `catalog.py` + compose.
+**"Support both" — confirmed plan.** Catalog carries two Gemma gears:
+- **coder** (`sakamakismile/…NVFP4`): coding-strong, MTP **not** worth wiring (30.8 %).
+- **base** (`coolthor/gemma-4-12B-it-NVFP4A16`): general, **native MTP default-on**
+  (`--speculative-config '{"method":"mtp","model":"google/gemma-4-12B-it-assistant","num_speculative_tokens":1}'`),
+  ~28.6 tok/s.
+
+Callers pick coding-strength vs MTP-throughput. Next leg: wire both into
+`catalog.py` + compose (the base gear carries the assistant draft as a pinned dep).
 
 ## Scope note
 
