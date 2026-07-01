@@ -299,3 +299,72 @@ def test_fleet_compose_middle_is_behind_profile() -> None:
     assert (
         "profiles:" in block
     ), "vllm-middle must be behind a profiles: key — it is a legacy opt-in candidate"
+
+
+# --- t4: default-on generate/embed/rerank gears unify on the pinned nightly --
+# digest (devague plan lobes-unifies-its-generate-lane-on-one-vllm-nightl,
+# task t4). Same digest Dockerfile.vllm-gemma4 already bases off — see
+# docs/vllm-nightly-migration.md §4/§5 for the t2/t3 spikes that validated it.
+
+_PRE_T4_NGC_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
+_NIGHTLY_DIGEST_IMAGE = (
+    "vllm/vllm-openai@sha256:" "7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+)
+
+
+def _audio_compose_text() -> str:
+    from importlib.resources import files
+
+    return (files("lobes.templates") / "fleet" / "docker-compose.audio.yml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_fleet_generate_embed_rerank_on_nightly() -> None:
+    """t4: vllm-primary/vllm-embed/vllm-rerank now pin the SAME nightly digest
+    Dockerfile.vllm-gemma4 already bases off — one engine, fleet-wide, for the
+    default-on gears. vllm-multimodal was already nightly (via its Dockerfile
+    build); the realtime sidecars + gateway are untouched (no vLLM at all)."""
+    text = _fleet_compose_text()
+
+    for service in ("vllm-primary", "vllm-embed", "vllm-rerank"):
+        block = _service_block(text, service)
+        assert (
+            _NIGHTLY_DIGEST_IMAGE in block
+        ), f"{service} must pin the nightly digest {_NIGHTLY_DIGEST_IMAGE!r} (t4 flip)"
+        assert (
+            _PRE_T4_NGC_IMAGE not in block
+        ), f"{service} must no longer pin the pre-t4 image {_PRE_T4_NGC_IMAGE!r}"
+        assert "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0" in block, (
+            f"{service} must disable the nightly cudagraph memory estimate "
+            "(the same gotcha vllm-multimodal already works around)"
+        )
+
+    # vllm-multimodal: already nightly, via its Dockerfile build (unchanged by t4).
+    multimodal_block = _service_block(text, "vllm-multimodal")
+    assert "Dockerfile.vllm-gemma4" in multimodal_block
+    assert _PRE_T4_NGC_IMAGE not in multimodal_block
+
+    # gateway: not a vLLM service at all — builds Dockerfile.gateway, untouched.
+    gateway_block = _service_block(text, "gateway")
+    assert _NIGHTLY_DIGEST_IMAGE not in gateway_block
+    assert _PRE_T4_NGC_IMAGE not in gateway_block
+    assert "Dockerfile.gateway" in gateway_block
+
+    # Opt-in minor/middle gears are OUT OF SCOPE for t4 (that's task t8) — they
+    # must still pin the pre-t4 NGC image, unchanged.
+    for service in ("vllm-minor", "vllm-middle"):
+        block = _service_block(text, service)
+        assert _PRE_T4_NGC_IMAGE in block, (
+            f"{service} is out of scope for t4 (trailing task t8) — must still pin "
+            f"{_PRE_T4_NGC_IMAGE!r}"
+        )
+        assert _NIGHTLY_DIGEST_IMAGE not in block
+
+    # Realtime sidecars (Parakeet/Chatterbox/realtime bridge) live in the audio
+    # overlay compose — out of scope for t4, not vLLM at all, must be unchanged.
+    audio_text = _audio_compose_text()
+    for service in ("chatterbox", "stt", "realtime"):
+        block = _service_block(audio_text, service)
+        assert _NIGHTLY_DIGEST_IMAGE not in block
+        assert "vllm" not in block.lower()
