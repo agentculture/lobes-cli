@@ -204,10 +204,44 @@ co-resident 27B even at low util. So t2 required **stopping the live primary**
 **t6's head-to-head will likely need the sequential/standalone method**, and t4's
 flip must mind the util budget. (The nightly image was already local; no pull.)
 
+## 5. t3 spike — embed + rerank serve on nightly (live, 2026-07-01): **GO**
+
+Standalone spikes on `vllm/vllm-openai:nightly` (0.23.1rc1.dev672), run in a
+**light window** — only the opt-in `minor` gear was stopped (~13 GiB) to free
+room; the generate lane (primary) stayed up. Each 0.6B pooling gear replicates
+its compose flags (`util 0.06`, `--max-model-len 8192`), run **one at a time**.
+
+**Verdict: GO** — both pooling task families work on nightly. Resolves the
+embed/rerank half of assumption `c23` and honesty `h2`.
+
+| Gear | Result on nightly |
+|---|---|
+| embed (`Qwen3-Embedding-0.6B`, `--runner pooling --convert embed`) | ✅ `/v1/embeddings` → **1024-dim** vector; `Supported tasks: ['token_embed','embed']`; matryoshka `--hf-overrides` accepted |
+| rerank (`Qwen3-Reranker-0.6B`, `--runner pooling --convert classify`) | ✅ `Resolved architecture: Qwen3ForSequenceClassification`; `/v1/rerank` correct ranking (0.98 / 0.94 / 0.89), `/v1/score` [0.98, 0.90]; `Supported tasks: ['token_classify','classify']` |
+
+### Finding: nightly's memory-profiling assertion is strict on the shared GB10
+
+The rerank spike **crashed on its first launch** — *not* a model/nightly
+incompatibility, but a nightly-vLLM assertion:
+`AssertionError: Error in memory profiling. Initial free memory 22.02 GiB,
+current free memory 22.11 GiB. This happens when other processes sharing the same
+container release GPU memory while vLLM is profiling`. It tripped because the
+embed spike was torn down (releasing memory) **while** rerank was profiling — on
+the unified-memory GB10 every container shares one pool, so free memory
+fluctuates. Relaunching once memory was quiescent succeeded immediately.
+
+**Migration implication (t4 / t6 / t8):** nightly gears must be (re)started when
+fleet memory is **stable**, not mid-churn — a `docker compose up` that brings
+several nightly gears up at once (or alongside a gear being torn down) can hit
+this. Mitigations for t4: bring gears up **one at a time** / with a settle gap,
+or find the nightly flag to relax the profiler tolerance. Recorded as a new
+migration risk to carry into the t4 flip and the t6 head-to-head.
+
 ## Scope note
 
-Sections §1–§3 are **before-state only** (t1) — no default flipped, no
-`docker-compose.yml` / `env.example` / `catalog.py` change. §4 records the **t2**
-live spike verdict (GO). Still pending: t3 (embed/rerank-on-nightly spike), then
-t4's actual image-pin flip, t5–t7 Gemma DSpark, t8 trailing gears, t9
-shipped-state docs.
+Sections §1–§3 are **before-state only** (t1). §4 records the **t2** verdict (27B
+on nightly, GO); §5 the **t3** verdict (embed + rerank on nightly, GO). Both
+spikes are standalone — no default flipped, no `docker-compose.yml` /
+`env.example` / `catalog.py` change yet. Now unblocked: **t4** (flip the
+primary/embed/rerank default images to nightly). Still pending after t4: t5–t7
+Gemma DSpark, t8 trailing minor/14B, t9 shipped-state docs.
