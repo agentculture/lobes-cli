@@ -15,6 +15,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - docs/gemma-4-12b-nvfp4.md notes a config-drift follow-up: on the current :nightly-audio (dev672) image the default lane util 0.12 + VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 no longer boots 8192 co-resident (cudagraph accounting changed) — benchmarked at util 0.15 with a trimmed cudagraph capture set
 
+### Fixed
+
+- docs/gemma-4-12b-nvfp4.md — made the #75 speculative-decoding section internally consistent: it now reads as CLOSED (route resolved, wire/measure/verdict not implemented) throughout, matching the "Resolved" bullet, instead of framing #75 as active work (Qodo); also corrected the stale claim that the 12B lane decodes slower than the primary — the benchmark shows it out-decodes the primary single-stream (~23 vs ~18–19 tok/s)
+
 ## [0.34.0] - 2026-07-01
 
 ### Added

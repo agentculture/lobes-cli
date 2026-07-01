@@ -145,6 +145,14 @@ DSpark is unvalidated on this checkpoint — measure before enabling.
 
 ## Speculative decoding (#75): before-state and scope
 
+> **Status: #75 is CLOSED — scoped, not implemented.** The draft route was
+> resolved (see [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md)), but the
+> wire → measure → verdict legs never landed: the `multimodal` lane still serves
+> with **no `speculative_config`**, and the benchmark below (~23 tok/s
+> single-stream, no draft) *is* that no-spec baseline. Reviving speculative
+> decoding for this gear is **new work** (a future issue), not #75. The scope
+> recorded here is retained as the historical framing.
+
 **Audience:** lobes operators/maintainers and the Culture mesh that consumes the
 `multimodal` (Gemma 4 12B) generate lane — i.e. anyone calling `model=multimodal`
 or the back-compat `model=normal` (see [Tier alias usage](#tier-alias-usage)).
@@ -170,10 +178,12 @@ disabled and unvalidated, alternative route).
 single-stream decode speedup** from MTP speculative decoding (72–79 % draft
 acceptance) — see
 [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md). The
-`multimodal`/`normal` lane has no equivalent boost: it serves with no
-speculative config at all, so per-stream decode is comparatively slow relative
-to the primary, and that gap is real (not assumed) once #71 lands and the lane
-takes live mesh traffic.
+`multimodal`/`normal` lane has no equivalent multiplier: it serves with no
+speculative config at all. In *absolute* terms the 12B still out-decodes the
+primary single-stream (~23 vs ~18–19 tok/s — see the benchmark below) because it
+is under half the parameters; the gap is against its own *potential* — a working
+draft would push it well past 23 tok/s — not against the primary. Now that #71
+has landed and the lane is measured, that potential gap is concrete, not assumed.
 
 **Scope split.**
 
@@ -181,18 +191,18 @@ takes live mesh traffic.
 |---|---|
 | Serve-enablement — force `TRITON_ATTN` on the transformers backend so the gear actually serves | issue #71 (see [Live-validation status](#live-validation-status-71) below) |
 | Draft-model training/distilling (building a native `gemma4_assistant` head from scratch) | a separate follow-up, not #75 |
-| Resolve a draft route, wire `--speculative-config`, measure, and decide | **issue #75 (this work)** |
+| Resolve a draft route, wire `--speculative-config`, measure, and decide | **issue #75 (CLOSED — route resolved; wire/measure/verdict not implemented)** |
 
-Issue #75 does not train a draft model. It resolves to exactly one concrete
+As scoped, #75 did not train a draft model. It resolved to exactly one concrete
 route (a validated `draft_model` such as DSpark, a sourced `gemma4_assistant`
-draft, or a documented "no compatible draft available"), wires it through the
-same catalog-to-compose pattern the 27B MTP primary uses today
-(`speculative_config` on the catalog entry drives the compose
-`--speculative-config` items), measures draft acceptance and decode speedup on
-a live co-resident serve, and commits a verdict: restore `speculative_config`
-by default if it beats the no-spec baseline, or document the negative with the
-numbers that ruled it out. **Done = a measured verdict, not merely a wired
-draft.** #75 is gated on #71 — no draft can be measured until the gear serves.
+draft, or a documented "no compatible draft available") to wire through the same
+catalog-to-compose pattern the 27B MTP primary uses today (`speculative_config`
+on the catalog entry drives the compose `--speculative-config` items), then
+measure draft acceptance and decode speedup on a live co-resident serve and
+commit a verdict. **#75 closed with the route resolved (see
+[`gemma4-mtp-draft.md`](gemma4-mtp-draft.md)) but the wire → measure → verdict
+legs unbuilt.** Its serve gate (#71) has since landed, so a future issue can
+resume from the resolved route against a now-serving gear.
 
 ## Live-validation status (#71/#73) {#live-validation-status-71}
 
