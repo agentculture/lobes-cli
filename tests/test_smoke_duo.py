@@ -50,7 +50,11 @@ _TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
 _FLEET_COMPOSE = _TEMPLATES / "fleet" / "docker-compose.yml"
 
 _LEGACY_14B_ID = "nvidia/Qwen3-14B-NVFP4"
-_GEMMA_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+# "Support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the default
+# "multimodal" gear is now the NVFP4 base it-model with native MTP wired
+# (coolthor/…); the coder fine-tune (sakamakismile/…) is kept but demoted to a
+# candidate — see tests/test_catalog.py for the dedicated coder coverage.
+_GEMMA_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _MINOR_ID = "Qwen/Qwen3.5-4B"
 _PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 

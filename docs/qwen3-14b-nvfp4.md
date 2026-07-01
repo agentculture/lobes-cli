@@ -2,10 +2,12 @@
 
 > **DEMOTED (issue #69):** This gear is no longer the fleet's `normal`/middle
 > tier. The `normal` tier alias now resolves to the **Gemma 4 12B multimodal
-> gear** (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`,
-> [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md)), which is **default-on**.
-> The 14B is kept as a **legacy `candidate`** — selectable explicitly by model id
-> or via `COMPOSE_PROFILES=middle` — but no tier alias resolves to it.
+> gear** (`coolthor/gemma-4-12B-it-NVFP4A16`, native MTP default-on — see
+> [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md) and
+> [`docs/vllm-nightly-migration.md` §7](vllm-nightly-migration.md)), which is
+> **default-on**. The 14B is kept as a **legacy `candidate`** — selectable
+> explicitly by model id or via `COMPOSE_PROFILES=middle` — but no tier alias
+> resolves to it.
 >
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —

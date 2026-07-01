@@ -474,8 +474,8 @@ services:
     command:
       - vllm
       - serve
-      - ${MULTIMODAL_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
-      - --served-model-name=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
+      - --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
       - --host=0.0.0.0
       - --port=8000
       # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
@@ -493,9 +493,93 @@ services:
       - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.12}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
-      # No speculative-decoding flag here: Gemma4 native MTP needs a separate
-      # gemma4_assistant draft model (the "-MTP" checkpoint exposes none), and the
-      # gemma4_mtp method is rejected. Sourcing a draft was scoped in #75 (closed).
+      # Native MTP, default-on (docs/vllm-nightly-migration.md §7, measured
+      # 2026-07-02): the public google/gemma-4-12B-it-assistant draft against this
+      # NVFP4 base target — 57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6
+      # tok/s), the fastest Gemma config measured. MUST match
+      # lobes.catalog.SUPPORTED_MODELS' coolthor/gemma-4-12B-it-NVFP4A16 entry byte
+      # for byte (tests/test_catalog.py guards the two against drift). Note the
+      # "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig rejects
+      # that outdated key (verified live, §6).
+      - '--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in coder co-resident generate backend (Gemma 4 12B coder fine-tune) --
+  # KEPT (cite-don't-delete), DEMOTED from the default "multimodal" gear by the
+  # "support both" decision (docs/vllm-nightly-migration.md §7, 2026-07-02):
+  # coding-strong, but native MTP only reaches 30.8% draft acceptance on this
+  # fine-tune (the assistant draft was trained against the base it-model, not this
+  # coder checkpoint) — a marginal ~6% decode win, not worth wiring by default.
+  # Activate with `docker compose --profile multimodal-coder up -d` (or add
+  # "multimodal-coder" to COMPOSE_PROFILES in .env). When active, set
+  # MULTIMODAL_CODER_BASE_URL so the gateway routes the "multimodal-coder" alias
+  # (and the coder's served id) here — see MULTIMODAL_CODER_* in env.example.
+  #
+  # Same custom image as vllm-multimodal (Dockerfile.vllm-gemma4 — the native
+  # gemma4_unified class needs vLLM nightly): both services build the SAME
+  # Dockerfile and default to the SAME local tag (lobes/vllm-gemma4:local), only
+  # the --model / --served-model-name arg differs at runtime.
+  #
+  # GPU budget: adds util 0.12 (~15 GiB) ON TOP of the default 0.69 fleet budget
+  # when active — see env.example for the combined math.
+
+  vllm-multimodal-coder:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_CODER_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-multimodal-coder
+    profiles:
+      - multimodal-coder
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-multimodal-coder:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MULTIMODAL_CODER_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --served-model-name=${MULTIMODAL_CODER_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MULTIMODAL_CODER_QUANTIZATION:-compressed-tensors}
+      - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=pythonic
+      # No speculative-decoding flag here: native MTP measured only 30.8% draft
+      # acceptance on this coder fine-tune (§6/§7) — not worth wiring. See the
+      # catalog entry's comment (role_hint="candidate", speculative_config="").
       - --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -535,9 +619,16 @@ services:
       # backend is wired unless the operator explicitly opts in).
       - MIDDLE_BASE_URL=${MIDDLE_BASE_URL:-}
       - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
-      # Multimodal gear (default-on: always started, always wired).
+      # Multimodal gear (default-on: always started, always wired). Default id is
+      # the NVFP4 base + native-MTP gear (docs/vllm-nightly-migration.md §7).
       - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}
-      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
+      # Opt-in coder gear (activate with --profile multimodal-coder and set
+      # MULTIMODAL_CODER_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in). Reachable via the
+      # "multimodal-coder" alias once wired — see lobes/gateway/_config.py.
+      - MULTIMODAL_CODER_BASE_URL=${MULTIMODAL_CODER_BASE_URL:-}
+      - MULTIMODAL_CODER_SERVED_NAME=${MULTIMODAL_CODER_SERVED_NAME:-}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).

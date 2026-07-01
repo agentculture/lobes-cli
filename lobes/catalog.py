@@ -210,12 +210,59 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
     ),
     SupportedModel(
+        id="coolthor/gemma-4-12B-it-NVFP4A16",
+        # Gemma 4 12B (Google DeepMind) BASE it-model, NVFP4 — the fleet's DEFAULT
+        # "multimodal" generate gear (and the "normal" tier) as of the "support both"
+        # decision (docs/vllm-nightly-migration.md §7, 2026-07-02). Same UNIFIED
+        # architecture as the coder entry below (Gemma4UnifiedForConditionalGeneration:
+        # text + image + AUDIO in one checkpoint, no separate sidecars). Promoted over
+        # the coder because it is the exact target the public
+        # google/gemma-4-12B-it-assistant MTP draft was trained for: measured **28.6
+        # tok/s decode at 57.9% draft acceptance** with native MTP on — the FASTEST
+        # Gemma config measured (beats the coder's 24 tok/s no-spec/+MTP, and the bf16
+        # base+MTP's 14.6 tok/s — bf16 has higher 93.9% acceptance but a much slower
+        # no-spec floor). "Less coder, more MTP" — see §7 for the full comparison
+        # table. Tool calls use the Python-style "pythonic" parser (matches
+        # runtime._parser.infer_parser, which returns "pythonic" for gemma-4* ids).
+        role_hint="multimodal",
+        shape="unified multimodal (text+image+audio)",
+        # Same base-model family as the coder entry — text_config.max_position_
+        # embeddings=131072 confirmed for the Unified 12B IT line (#71); not
+        # independently re-measured for this exact NVFP4A16 export.
+        context="128K native",
+        native_max_model_len=131072,
+        tool_parser="pythonic",
+        # quantization matches the coder entry's compressed-tensors NVFP4 path
+        # (config.json quant_method="compressed-tensors"); modelopt_fp4 fails with a
+        # quant-method mismatch on this checkpoint family (verified #71).
+        quantization="compressed-tensors",
+        status="load-tested",  # GB10 2026-07-02: 19.8 tok/s no-spec, 28.6 tok/s +MTP (§7)
+        doc="gemma-4-12b-nvfp4.md",
+        task="generate",
+        # Native MTP, default-on (§7, measured 2026-07-02): the public assistant
+        # draft, wired with the "model" key (NOT "draft_model_id" — vLLM 0.23's
+        # SpeculativeConfig rejects that outdated key; verified live). 57.9% draft
+        # acceptance, ~1.45x decode speedup (19.8 -> 28.6 tok/s).
+        speculative_config=(
+            '{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",'
+            ' "num_speculative_tokens": 1}'
+        ),
+    ),
+    SupportedModel(
         id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4",
-        # Gemma 4 12B (Google DeepMind) — the fleet's "multimodal" generate gear and
-        # the new "normal" tier (replacing the demoted 14B "middle"). A UNIFIED
-        # multimodal model: a single Gemma4UnifiedForConditionalGeneration serves
-        # text + image + AUDIO in one checkpoint (no separate sidecars), so the
-        # generate lane gains native vision+audio without the realtime overlay. Tool
+        # Gemma 4 12B (Google DeepMind) CODER fine-tune — KEPT as an opt-in
+        # candidate (cite-don't-delete), DEMOTED from the default "multimodal" gear
+        # by the "support both" decision (docs/vllm-nightly-migration.md §7,
+        # 2026-07-02): coding-strong, but native MTP is only 30.8% draft acceptance
+        # here (the coder fine-tune's output distribution has shifted away from what
+        # the assistant draft — trained against the base it-model — expects), a
+        # marginal ~6% decode win not worth wiring by default. The NVFP4 base entry
+        # above is the new default "multimodal"/"normal" tier gear. This entry stays
+        # selectable by id (`lobes switch coolthor/... ` is the default; this coder
+        # checkpoint remains a supported candidate for coding-heavy workloads).
+        #
+        # A UNIFIED multimodal model: a single Gemma4UnifiedForConditionalGeneration
+        # serves text + image + AUDIO in one checkpoint (no separate sidecars). Tool
         # calls use the Python-style "pythonic" parser (matches runtime._parser.
         # infer_parser, which returns "pythonic" for gemma-4* ids — set in t1).
         #
@@ -228,7 +275,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # 4096≠8192; a backend flag does NOT fix it — the native class does). Validated
         # live: text ✓, image+text ✓, audio+text ✓ (transcribed a TTS clip verbatim);
         # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
-        role_hint="multimodal",
+        role_hint="candidate",
         shape="unified multimodal (text+image+audio)",
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
         # read from the checkpoint config during #71 live validation).
@@ -243,12 +290,12 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         status="load-tested",  # GB10 2026-07-01: text+image+audio ✓ on vLLM nightly (#71/#73)
         doc="gemma-4-12b-nvfp4.md",
         task="generate",
-        # No speculative_config: despite the "-MTP" name, this unified checkpoint
-        # exposes no gemma4_assistant draft, and vLLM 0.21/0.22 enable Gemma4 MTP
-        # only via a SEPARATE gemma4_assistant draft model (no self-speculation from
-        # the unified target). --speculative-config {"method":"gemma4_mtp"} is
-        # rejected ("Unsupported speculative method"). Sourcing/​building a draft is a
-        # follow-up; the gear serves without spec-decode until then. (#71)
+        # No speculative_config: native MTP was measured on this checkpoint (§6/§7)
+        # but only reaches 30.8% draft acceptance (~6% decode win) — the coder
+        # fine-tune's distribution has shifted too far from what the assistant draft
+        # (trained against the base it-model) expects. Not worth wiring by default;
+        # the NVFP4 base entry above carries the wired MTP config instead. See
+        # docs/vllm-nightly-migration.md §7.
     ),
     SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",

@@ -233,6 +233,8 @@ def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, c
 
 # --- fleet compose template assertions (vllm-multimodal default-on) ----------
 
+_GEMMA_CODER_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+
 
 def _fleet_compose_text() -> str:
     from importlib.resources import files
@@ -267,21 +269,48 @@ def test_fleet_compose_multimodal_is_default_on() -> None:
     ), "vllm-multimodal must not have a profiles: key — it must come up with the default fleet"
 
 
-def test_fleet_compose_multimodal_vision_active_no_spec_decode() -> None:
-    """vllm-multimodal: no --language-model-only (vision+audio active); NO --speculative-config.
+def test_fleet_compose_multimodal_vision_active_has_native_mtp_spec_decode() -> None:
+    """vllm-multimodal: no --language-model-only (vision+audio active); HAS --speculative-config.
 
-    Gemma4 native MTP needs a separate gemma4_assistant draft model on vLLM 0.21/0.22
-    (the unified checkpoint exposes none), and {"method":"gemma4_mtp"} is rejected —
-    verified live on the Spark (#71). The gear serves without spec-decode until a draft
-    is sourced (tracked follow-up).
+    "Support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the default
+    "multimodal" gear is now the NVFP4 BASE it-model wired to the public
+    google/gemma-4-12B-it-assistant native-MTP draft — measured 28.6 tok/s decode
+    at 57.9% draft acceptance, the fastest Gemma config on this hardware. The
+    exact JSON must match lobes.catalog.SUPPORTED_MODELS' coolthor entry (guarded
+    by tests/test_catalog.py's round-trip test).
     """
     block = _service_block(_fleet_compose_text(), "vllm-multimodal")
     assert (
         "--language-model-only" not in block
     ), "vllm-multimodal must NOT pass --language-model-only: vision+audio must stay active"
+    assert "--speculative-config" in block, (
+        "vllm-multimodal must carry --speculative-config: native MTP is default-on for "
+        "the NVFP4 base gear (§7, 28.6 tok/s @ 57.9% draft acceptance)"
+    )
+    assert (
+        '{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",'
+        ' "num_speculative_tokens": 1}' in block
+    ), "vllm-multimodal --speculative-config must be the exact native-MTP config measured in §7"
+
+
+def test_fleet_compose_multimodal_coder_is_opt_in_with_no_spec_decode() -> None:
+    """vllm-multimodal-coder: opt-in (profiles: key), NO --speculative-config.
+
+    The coder fine-tune is kept but demoted (§7): native MTP only reaches 30.8%
+    draft acceptance on it — not worth wiring, unlike the default base gear above.
+    """
+    text = _fleet_compose_text()
+    assert (
+        "vllm-multimodal-coder:" in text
+    ), "vllm-multimodal-coder service must be defined in fleet compose (opt-in coder gear)"
+    block = _service_block(text, "vllm-multimodal-coder")
+    assert (
+        "profiles:" in block
+    ), "vllm-multimodal-coder must be behind a profiles: key — it is opt-in"
     assert (
         "--speculative-config" not in block
-    ), "vllm-multimodal must NOT carry --speculative-config (gemma4_mtp needs a draft model; #71)"
+    ), "vllm-multimodal-coder must NOT carry --speculative-config (only 30.8% draft accept; §6/§7)"
+    assert _GEMMA_CODER_ID in block, f"vllm-multimodal-coder must reference {_GEMMA_CODER_ID!r}"
 
 
 def test_fleet_compose_multimodal_forces_triton_attention() -> None:
