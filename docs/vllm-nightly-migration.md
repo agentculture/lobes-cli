@@ -237,11 +237,73 @@ this. Mitigations for t4: bring gears up **one at a time** / with a settle gap,
 or find the nightly flag to relax the profiler tolerance. Recorded as a new
 migration risk to carry into the t4 flip and the t6 head-to-head.
 
+## 6. t6 head-to-head — both generate gears on the same nightly (live, 2026-07-01)
+
+Full maintenance window (primary stopped ~20 min, restored after). Both gears
+served **standalone** on the SAME engine — vLLM **0.23.1rc1.dev672** — because
+`r2` (§4) means the fleet cannot co-reside a second large gear. Batch=1 greedy,
+`--max-model-len 8192`, an `ignore_eos`-forced 800-token decode + a 3,201-token
+prefill probe.
+
+### Results
+
+| Metric | Qwen 27B (MTP) | Gemma 12B (no-spec) |
+|---|---|---|
+| Image / quant / util | `vllm/vllm-openai:nightly`, modelopt_fp4, 0.40 | `lobes/vllm-gemma4:nightly-audio`, compressed-tensors, 0.30 |
+| **Decode tok/s** (vLLM-logged) | **~17.6–18.0** (17.0 wall) | **~22.8–23.0** (22.5 wall) |
+| **Prefill tok/s** | **~2,190** (3,201 tok / 1.46 s) | **~1,966** (3,201 tok / 1.63 s) |
+| MTP draft acceptance | 60.6 % (516 / 852, 284 drafts) | — (no spec-decode) |
+
+**Read (inform-only, no swap per `c19`):** the **Gemma 12B out-decodes the 27B
+(~23 vs ~18 tok/s)** purely by being the smaller model — even with the 27B running
+MTP and Gemma running no spec-decode. The 27B has slightly faster prefill. This is
+*not* like-for-like (different size / quant / role); it is the generate-lane
+throughput picture on one engine, which is what the head-to-head was for.
+
+Caveat vs the 0.19.0 baseline: the 27B's nightly numbers (~17.6–18 tok/s, 60.6 %
+accept) are **modestly below** its 0.19.0 baseline (18.7–19.1 tok/s, 72–79 %) on
+this single spike (trimmed context, util 0.40, `ignore_eos` forcing). Nightly is
+roughly at **parity, not a speed win**, for the 27B — consistent with §4. Since
+`c18` committed to nightly for fleet **unification** (not a 27B speedup), this does
+not change the migration; recorded honestly.
+
+### DSpark MTP route for Gemma: **INVALID on vLLM 0.23** (`h5` resolved — negative)
+
+Serving Gemma with the DSpark draft (`deepseek-ai/dspark_gemma4_12b_block7`, the
+plan's DSpark-first route) **fails to load** on nightly. Two findings, in order:
+
+1. **Config-key correction.** The disabled-experiment config in
+   `docs/gemma-4-12b-nvfp4.md` (and echoed by t5) —
+   `{"method":"draft_model","draft_model_id":"…"}` — uses an **outdated key**.
+   vLLM 0.23's `SpeculativeConfig` rejects `draft_model_id` ("Unexpected keyword
+   argument"); the draft id must go in **`model`**. (t5/t7 must fix this.)
+2. **Architecture unsupported (decisive).** With the corrected `model` key, load
+   fails: `Value error, Model architectures ['Gemma4DSparkModel'] are not
+   supported for now.` DSpark's custom drafter arch is **not** in vLLM 0.23's
+   supported speculative-draft set. The DSpark `draft_model` route is a dead end
+   on this engine.
+
+**The native route IS supported.** `Gemma4MTPModel` **is** in that same supported
+list — so the escalation route, Google's `google/gemma-4-12B-it-assistant`
+(`gemma4_unified_assistant` → `gemma4_mtp` → `Gemma4MTPModel`, method `mtp`,
+`n_predict=1`), is the **viable Gemma-MTP path** on nightly. Measuring it is the
+follow-up (`r6` / `v4`), not done in this window.
+
+### Verdict feeding t7
+
+DSpark-first (the plan's chosen route) is **invalid on vLLM 0.23** → t7's verdict
+is **keep Gemma no-spec by default; do NOT wire DSpark**; the native
+`gemma-4-12B-it-assistant` MTP route is the escalation, measurement deferred to a
+follow-up. Side note for t7/t9 cleanup: `VLLM_ATTENTION_BACKEND` is flagged an
+"unknown env var" on this nightly — the native `Gemma4UnifiedForConditionalGeneration`
+class auto-forces TRITON, so that compose env line is now a no-op warning.
+
 ## Scope note
 
-Sections §1–§3 are **before-state only** (t1). §4 records the **t2** verdict (27B
-on nightly, GO); §5 the **t3** verdict (embed + rerank on nightly, GO). Both
-spikes are standalone — no default flipped, no `docker-compose.yml` /
-`env.example` / `catalog.py` change yet. Now unblocked: **t4** (flip the
-primary/embed/rerank default images to nightly). Still pending after t4: t5–t7
-Gemma DSpark, t8 trailing minor/14B, t9 shipped-state docs.
+Sections §1–§3 are **before-state only** (t1). §4 = **t2** (27B on nightly, GO),
+§5 = **t3** (embed+rerank on nightly, GO), §6 = **t6** (head-to-head + DSpark
+verdict). t4 flipped the primary/embed/rerank default images to nightly (merged).
+**Remaining:** t7 (commit the Gemma verdict — keep no-spec, document the DSpark
+negative, fix the config-key), t8 (trailing minor/14B), t9 (shipped-state docs).
+Follow-up beyond the plan: measure the native `gemma-4-12B-it-assistant` MTP route
+(`r6`).
