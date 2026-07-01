@@ -258,6 +258,71 @@ Resolved:
 - ✅ **GPU util** — ~15.7 GiB ≈ 0.12 budget.
 - ⛔ **Native MTP** — still needs a separate `gemma4_assistant` draft model (scoped in #75, closed); the gear serves without spec-decode.
 
+## Benchmark — 2026-07-01, DGX Spark (GB10), standalone
+
+> First throughput/prefill numbers for the gear. Measured on the shared GB10
+> **standalone** (own container on host port 8010, **not** co-resident behind the
+> gateway) so the live 27B primary kept serving mesh traffic. Image
+> `lobes/vllm-gemma4:nightly-audio` (vLLM **0.23.1rc1.dev672**, native
+> `Gemma4UnifiedForConditionalGeneration`, `TRITON_ATTN`, `compressed-tensors`
+> NVFP4, `--max-model-len 8192`). Driven by `lobes benchmark` + a manual
+> forced-decode probe.
+
+| Property | Value |
+|---|---|
+| Health / `max_model_len` | `/health` 200; `8192` |
+| Architecture resolved | ✅ native `Gemma4UnifiedForConditionalGeneration` (not the transformers fallback) |
+| Correctness | `17 × 23 = 391` ✅ (finish=stop, 4 tok) |
+| **Decode throughput** | **~23 tok/s** (batch=1, greedy — 21.7–23.3 across balanced/prompt-heavy; **23.0 tok/s sustained over 1,500 forced tokens** in 65.2 s) |
+| Prefill (balanced) | 847 prompt tokens + 16 gen in **0.32 s** (~2,650 tok/s) |
+| Prefill (prompt-heavy) | 6,682 prompt tokens in **3.42 s** (~1,954 tok/s) |
+| Weights (EngineCore) | **8,113 MiB** (~7.9 GiB) |
+| CUDA-graph memory | 0.96 GiB (trimmed capture set — see config note) |
+| KV cache | **8.47 GiB → 57,636 tokens**; **7.04×** max concurrency at 8,192 tokens/request |
+| Speculative decoding | **none** — no MTP draft (see ["No native MTP"](#what-it-is)); this is raw single-stream decode |
+
+**Decode context.** At ~**23 tok/s single-stream**, the 12B `multimodal` lane is
+actually a touch *faster* per-stream than the 27B `primary` (~18–19 tok/s, and
+that is *with* its ~2.4× MTP boost) — it is less than half the parameters. So the
+lane with **no spec-decode** still out-decodes the primary single-stream, while
+adding native vision+audio; the primary remains the more capable text model. The
+speculative-decoding gap called out in
+[Speculative decoding (#75)](#speculative-decoding-75-before-state-and-scope)
+is about closing the *potential* gap (a draft would push the 12B well past 23
+tok/s), not a current regression.
+
+**Config note — why not the production `util 0.12`.** The default fleet lane runs
+`MULTIMODAL_GPU_MEM_UTIL=0.12` with `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`.
+That combination was validated on #71's earlier nightly digest; the **current**
+`:nightly-audio` build (dev672) behaves differently in two ways that forced a
+bench-only config:
+
+1. **Cudagraph accounting flipped.** With `…ESTIMATE_CUDAGRAPHS=0`, dev672 now
+   *warns* that CUDA-graph memory is **not accounted** during KV allocation and
+   recommends re-enabling it and raising util (it suggested `0.12 → 0.2427`). The
+   full capture list (51 sizes, 1…512) estimates **14.93 GiB** of graph memory,
+   which starves KV at `util 0.12` (KV came out at 1.11 GiB < the 1.2 GiB needed
+   for one 8,192-token request).
+2. **Co-resident memory ceiling.** With the primary (reduced to 64K / util 0.38)
+   plus embed and rerank live, only **~19 GiB was CUDA-visible free** to a new
+   process on the unified memory — not enough for the weights (8 GiB) plus the
+   full 15 GiB of graphs.
+
+So the benchmark trimmed the capture set to
+`--compilation-config '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64]}'` (graphs →
+0.96 GiB) at `--gpu-memory-utilization 0.15`. **Single-stream decode and prefill
+are util- and capture-set-independent** (batch=1 stays graph-captured), so the
+headline numbers above are representative; only *aggregate throughput above
+concurrency 64* would read low versus a full-capture production serve. Total
+standalone footprint here: ~**17.4 GiB** (weights 7.9 + graphs 0.96 + KV 8.47) at
+util 0.15.
+
+> **Follow-up (config drift):** the default lane's `util 0.12` +
+> `…ESTIMATE_CUDAGRAPHS=0` should be re-validated against the pinned dev672 image
+> and, if the accounting change sticks, either the util raised or the capture set
+> trimmed in the compose so the gear boots 8,192 co-resident. Tracked with the
+> serve config in [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) / the fleet compose.
+
 ## Related docs
 
 - [`gateway-fleet.md`](gateway-fleet.md) — fleet topology (main/minor/multimodal),
