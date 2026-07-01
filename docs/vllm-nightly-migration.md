@@ -158,10 +158,56 @@ callers today, not idle candidates — a regression in either (lost MTP,
 gibberish, a dropped tool-call parser) would degrade the agent the mesh
 actually talks to.
 
+## 4. t2 spike — 27B serves on nightly (live, 2026-07-01): **GO**
+
+Standalone spike run in an **authorized maintenance window** — no in-repo change,
+but the live primary was stopped to free memory on the saturated GB10 (see the
+memory note below), then restarted on its `26.04` image. Container:
+`vllm/vllm-openai:nightly` (already local, no pull) = vLLM
+**0.23.1rc1.dev672+g93d8f834d**, free host port 8100, replicating the primary's
+serving flags at a trimmed `--max-model-len 8192` / `--gpu-memory-utilization
+0.40`.
+
+**Verdict: GO.** The 27B `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` loads and
+serves on nightly with MTP active — validating the plan's load-bearing
+assumption `c22` and resolving risk `r1` (the deprecated `qwen3_5_mtp` method /
+Qwen3.5 hybrid-attention path did **not** break on nightly).
+
+| Check | Result on nightly (0.23.1rc1.dev672) |
+|---|---|
+| Architecture | ✅ `Qwen3_5ForConditionalGeneration` + draft `Qwen3_5MTP` resolve |
+| MTP method | ✅ `qwen3_5_mtp` logged deprecated → **auto-mapped to `mtp`**; `SpeculativeConfig(method='mtp', num_spec_tokens=3)` — MTP stays on, no caller change needed (r1) |
+| Quantization | ✅ `--quantization modelopt` → resolved `modelopt_fp4`, served via `FlashInferCutlassNvFp4LinearKernel` (native NVFP4 cutlass) |
+| Hybrid attention | ✅ `Using Triton/FLA GDN prefill kernel` — Qwen3.5 Gated-DeltaNet/linear-attention path active, no gibber |
+| Correctness | ✅ `17 × 23 = 391` (finish=stop) |
+| Tool call (qwen3_coder) | ✅ `get_weather({"city": "Paris"})`, finish=`tool_calls` |
+| MTP draft acceptance | ✅ **69.9 %** (174 accepted / 249 drafted; 83 drafts — small sample, at/near the 72–79 % 0.19.0 baseline) |
+| Throughput | **~20.7 tok/s** incl. prefill (256 tok in 12.4 s) — parity with the ~18.7–19.1 tok/s 0.19.0 decode baseline |
+| Load | 18.65 GiB weights + 25.68 GiB KV (224,824-token cache @ 8192, 27.4× concurrency); init 141 s (compile 39 s) |
+
+**Caveats (do not change the GO):** the 69.9 % acceptance is a single small-sample
+probe (83 drafts) that lands just under the 72 % floor but within noise (nightly
+also warns `num_speculative_tokens > 1 … may result in lower acceptance rate`);
+the throughput includes prefill at a trimmed 8192 / util 0.40, so it is a
+**functional-parity** signal, not a production-scale number — **t6** does the
+apples-to-apples measurement. MTP works, correctness/tool-calling hold, quant +
+hybrid kernels are native.
+
+### Maintenance-window / memory note (risk `r2`, **confirmed**)
+
+At spike time the GB10 was **memory-saturated**: 118/121 GiB used, swap 15/15 GiB
+full, ~3 GiB free — the running fleet (primary at `util 0.6` + `max-model-len
+262144`, plus minor/embed/rerank + the non-vLLM services) left no room for a
+co-resident 27B even at low util. So t2 required **stopping the live primary**
+(freed ~72 GiB → 62 GiB available) for the run, then restoring it. This is risk
+`r2` confirmed: the fleet cannot co-reside a *second* large gear on nightly — so
+**t6's head-to-head will likely need the sequential/standalone method**, and t4's
+flip must mind the util budget. (The nightly image was already local; no pull.)
+
 ## Scope note
 
-This doc is **before-state only**. It does not record a verdict, does not flip
-any default, and does not change `docker-compose.yml` / `env.example` /
-`catalog.py`. The next legs are the plan's t2 (27B-on-nightly spike) and t3
-(embed/rerank-on-nightly spike) — both standalone, zero default-fleet mutation
-— gating t4's actual image-pin flip.
+Sections §1–§3 are **before-state only** (t1) — no default flipped, no
+`docker-compose.yml` / `env.example` / `catalog.py` change. §4 records the **t2**
+live spike verdict (GO). Still pending: t3 (embed/rerank-on-nightly spike), then
+t4's actual image-pin flip, t5–t7 Gemma DSpark, t8 trailing gears, t9
+shipped-state docs.
