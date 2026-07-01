@@ -12,7 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Dockerfile.vllm-gemma4 rebased FROM vllm/vllm-openai nightly (pinned by digest) + the vllm[audio] extra (was NGC 26.06 / vLLM 0.22.1 + a transformers overlay); vllm-multimodal compose/env now set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 and default MULTIMODAL_MAX_MODEL_LEN 8192 (co-resident util-0.12 KV holds ~24K tokens, not the 128K native)
+- Dockerfile.vllm-gemma4 rebased FROM vllm/vllm-openai nightly (pinned by digest) + the vllm[audio] extra (librosa==0.11.0 soundfile==0.14.0 av==17.1.0 soxr==1.1.0, pinned to the live-validated set) (was NGC 26.06 / vLLM 0.22.1 + a transformers overlay); vllm-multimodal compose/env now set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 and default MULTIMODAL_MAX_MODEL_LEN 8192 (co-resident util-0.12 KV holds ~24K tokens, not the 128K native)
 
 ### Fixed
 

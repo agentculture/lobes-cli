@@ -30,8 +30,13 @@ FROM vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c
 # (verified #71: text+image worked without them; audio needed `av` specifically).
 # Install with uv (ships in the nightly image), not bare pip. --system writes
 # into the image's site-packages where vLLM's import paths resolve.
+#
+# Versions are PINNED to the set live-validated with this digest on the DGX Spark
+# GB10 (2026-07-01, #71). Bump them DELIBERATELY (and re-validate) rather than
+# floating — same reproducibility contract as the digest-pinned base above.
 # ---------------------------------------------------------------------------
-RUN uv pip install --system --no-cache-dir librosa soundfile av soxr
+RUN uv pip install --system --no-cache-dir \
+    librosa==0.11.0 soundfile==0.14.0 av==17.1.0 soxr==1.1.0
 
 # ---------------------------------------------------------------------------
 # Build-stage verification (network-free): assert the base ships the NATIVE
