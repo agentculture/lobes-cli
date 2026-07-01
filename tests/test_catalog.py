@@ -4,6 +4,7 @@ drift from the docs, the parser inference, and the gateway's default primary."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from lobes.catalog import (
     as_dicts,
     mtp_compose_command_items,
     resolve_tier,
+    speculative_config_item,
     supported_models,
 )
 from lobes.gateway import _config
@@ -340,6 +342,62 @@ def test_gemma_has_no_speculative_config() -> None:
         f"{_GEMMA_ID}: speculative_config must be empty — Gemma4 native MTP needs a "
         "separate gemma4_assistant draft model (see docs/gemma-4-12b-nvfp4.md)"
     )
+
+
+# The DSpark draft-model route for the Gemma 4 12B gear (issue #75; plan
+# 2026-07-01-lobes-unifies-its-generate-lane-on-one-vllm-nightl, task t5). This is
+# the EXACT config string t7 must set on the live _GEMMA_ID catalog entry's
+# speculative_config field if the t6 measurement beats the no-spec baseline — at
+# which point test_gemma_has_no_speculative_config (above),
+# test_fleet_compose_multimodal_vision_active_no_spec_decode (tests/test_cli_fleet.py),
+# and test_mtp_command_items_match_packaged_templates (this file) all flip to the
+# spec-enabled invariant. Until then this is a THROWAWAY value only — never assigned
+# to a SUPPORTED_MODELS entry — so t5 stays test-only/wiring, not a live default-on
+# flip (that is t7's job, gated on the t6 verdict).
+_GEMMA_DSPARK_SPECULATIVE_CONFIG = (
+    '{"method": "draft_model", "draft_model_id": "deepseek-ai/dspark_gemma4_12b_block7",'
+    ' "num_speculative_tokens": 3}'
+)
+
+
+def test_gemma_dspark_speculative_config_round_trips_through_helper() -> None:
+    # Mirrors test_speculative_config_only_on_mtp_checkpoints' + test_mtp_command_
+    # items_match_packaged_templates' coverage of the 27B primary's qwen3_5_mtp route,
+    # but for the Gemma DSpark route (#75) — WITHOUT mutating the live catalog. A
+    # throwaway SupportedModel (dataclasses.replace of the real Gemma entry, with only
+    # speculative_config swapped in) proves speculative_config_item() is generic —
+    # not hardcoded to the 27B primary search mtp_compose_command_items() does — by
+    # building the exact --speculative-config compose item and parsing it back to the
+    # same JSON dict the catalog would carry.
+    live_gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
+    throwaway_gemma = replace(live_gemma, speculative_config=_GEMMA_DSPARK_SPECULATIVE_CONFIG)
+
+    item = speculative_config_item(throwaway_gemma)
+
+    assert item == f"--speculative-config={_GEMMA_DSPARK_SPECULATIVE_CONFIG}"
+    # round-trip: strip the flag prefix and parse the JSON back — must equal the
+    # source config exactly (add/remove through `lobes switch` relies on this).
+    parsed = json.loads(item.removeprefix("--speculative-config="))
+    assert parsed == json.loads(_GEMMA_DSPARK_SPECULATIVE_CONFIG)
+    assert parsed["method"] == "draft_model"
+    assert parsed["draft_model_id"] == "deepseek-ai/dspark_gemma4_12b_block7"
+    assert parsed["num_speculative_tokens"] == 3
+
+    # the live catalog entry must be untouched by exercising the throwaway copy —
+    # this is the guard the three existing tests (test_gemma_has_no_speculative_config,
+    # test_fleet_compose_multimodal_vision_active_no_spec_decode,
+    # test_mtp_command_items_match_packaged_templates) all depend on staying true.
+    assert live_gemma.speculative_config == ""
+    still_live = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
+    assert still_live.speculative_config == ""
+
+
+def test_speculative_config_item_matches_27b_primarys_mtp_item() -> None:
+    # speculative_config_item() must be the SAME formatting mtp_compose_command_items()
+    # uses for the 27B primary — proving the extraction is byte-identical, not a
+    # parallel/duplicated implementation that could drift.
+    sak = next(m for m in SUPPORTED_MODELS if m.id == _PRIMARY_ID)
+    assert speculative_config_item(sak) == mtp_compose_command_items()[0]
 
 
 def test_14b_is_demoted_to_candidate() -> None:

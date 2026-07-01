@@ -350,6 +350,28 @@ def resolve_tier(tier: str) -> "SupportedModel":
     )
 
 
+def speculative_config_item(model: SupportedModel) -> str:
+    """The ``--speculative-config=<json>`` compose item for a model's speculative
+    decoding config.
+
+    Generic across *any* gear carrying a non-empty ``speculative_config`` — not
+    hardcoded to the 27B primary. ``mtp_compose_command_items()`` below calls this to
+    build the primary's item; a future gear with its own draft-model route (e.g. a
+    Gemma DSpark ``draft_model`` config — see ``tests/test_catalog.py``'s
+    ``test_gemma_dspark_speculative_config_round_trips_through_helper``, issue #75)
+    can call it directly with its own catalog entry (or a throwaway copy of one)
+    without duplicating the JSON-embedding logic, and without the 27B-specific
+    ``--trust-remote-code`` / ``--language-model-only`` / ``--tokenizer=`` extras that
+    ``mtp_compose_command_items()`` also emits.
+
+    :raises ValueError: if ``model.speculative_config`` is empty — there is nothing
+        to format.
+    """
+    if not model.speculative_config:
+        raise ValueError(f"{model.id}: speculative_config is empty — nothing to format")
+    return f"--speculative-config={model.speculative_config}"
+
+
 def mtp_compose_command_items() -> list[str]:
     """The extra compose ``command:`` items the MTP default primary needs.
 
@@ -365,9 +387,11 @@ def mtp_compose_command_items() -> list[str]:
         (m for m in SUPPORTED_MODELS if m.role_hint == "primary" and m.speculative_config),
         None,
     )
-    spec = primary.speculative_config if primary else '{"method": "..."}'
+    spec_item = (
+        speculative_config_item(primary) if primary else '--speculative-config={"method": "..."}'
+    )
     return [
-        f"--speculative-config={spec}",
+        spec_item,
         "--trust-remote-code",
         "--language-model-only",
         f"--tokenizer={MTP_TOKENIZER_OVERRIDE}",
