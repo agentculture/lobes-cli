@@ -53,12 +53,30 @@ slug: `the-gemma-4-12b-gear-gets-speculative-decoding-lob` · status: `exported`
 
 ## Execution waves (from `devague plan waves` — scheduling metadata, not orchestration)
 
-- **wave 0:** t1, t2 — parallel; file-disjoint (t1 → new `docs/gemma4-mtp-draft.md`, t2 → existing `docs/gemma-4-12b-nvfp4.md`)
-- **wave 1:** t3 — depends on t1 (wire the route t1 resolved)
+- **wave 0:** t1, t2 — parallel; file-disjoint (t1 → new `docs/gemma4-mtp-draft.md`, t2 → existing `docs/gemma-4-12b-nvfp4.md`) — **DONE** (merged)
+- **wave 1:** t3 — **re-binned behind #71** (see correction below)
 - **wave 2:** t4 — depends on t3; **blocked on #71** (gear must serve before any draft can be measured)
 - **wave 3:** t5 — depends on t4 (decide once measured)
 
-Waves 1→3 are serial by content dependency. Only wave 0 parallelises. Waves 2–3
-cannot start until the #71 serve-enablement follow-up lands (risk r2) — until
-then, the buildable work is t1 + t2 + t3 (resolve route, document grounding,
-wire it catalog-driven); the measurement and verdict queue behind serve.
+### Planning correction (2026-07-01): t3 is gated on #71, not buildable-now
+
+The original split binned t3 ("make the gemma wiring catalog-driven") as
+buildable now. On implementation it proved otherwise: the repo **deliberately
+guards** the current no-spec-decode invariant with three tests that name #75 as
+the follow-up —
+
+- `test_gemma_has_no_speculative_config` (asserts `gemma.speculative_config == ""`),
+- `test_fleet_compose_multimodal_vision_active_no_spec_decode` (asserts the
+  `vllm-multimodal` service carries **no** `--speculative-config`),
+- the MTP-items drift guard.
+
+Adding the DSpark `speculative_config` and flipping those guards **is** the
+restore action — which this spec gates behind measurement (t5) and #71. Enabling
+it now would bake an unvalidated draft into a gear that cannot yet serve, on zero
+evidence. So **t3 is re-binned behind #71 alongside t4/t5**: the honest
+buildable-now work was t1 + t2 (both merged). t3 → t5 resume when #71
+serve-enablement lands.
+
+- [follow_up] **serve-enablement (#71) also gates t3**: enabling the gemma
+  speculative_config + flipping the three guard tests is the restore action, only
+  valid after t4's measurement on a serving gear (task t3).
