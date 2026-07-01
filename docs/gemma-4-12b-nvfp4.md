@@ -87,8 +87,8 @@ Key env vars (from `env.example`):
 |---|---|---|
 | `MULTIMODAL_MODEL` | `coolthor/gemma-4-12B-it-NVFP4A16` | HF checkpoint id |
 | `MULTIMODAL_SERVED_NAME` | `coolthor/gemma-4-12B-it-NVFP4A16` | OpenAI `model` id the gateway routes to |
-| `MULTIMODAL_GPU_MEM_UTIL` | `0.12` | ~15 GiB on the 128 GB GB10 |
-| `MULTIMODAL_MAX_MODEL_LEN` | `8192` | co-resident-safe context (see [Live-validation status](#live-validation-status-71)) |
+| `MULTIMODAL_GPU_MEM_UTIL` | `0.22` | ~26 GiB on the 128 GB GB10 (live-validated 2026-07-02, [§8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)) |
+| `MULTIMODAL_MAX_MODEL_LEN` | `131072` | the full 128K native context, co-resident with the 64K-trimmed 27B primary (see [Live-validation status](#live-validation-status-71) and [§8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)) |
 | `MULTIMODAL_QUANTIZATION` | `compressed-tensors` | the checkpoint's own quant_method |
 | `MULTIMODAL_ATTENTION_BACKEND` | `TRITON_ATTN` | required for the non-square attention (#71) |
 | `MULTIMODAL_IMAGE` | *(unset → local build)* | or a `ghcr.io`/local-registry tag |
@@ -99,8 +99,8 @@ Compose flags used by the `vllm-multimodal` service:
 --model ${MULTIMODAL_MODEL}
 --served-model-name ${MULTIMODAL_SERVED_NAME}
 --quantization ${MULTIMODAL_QUANTIZATION:-compressed-tensors}
---max-model-len ${MULTIMODAL_MAX_MODEL_LEN:-8192}
---gpu-memory-utilization ${MULTIMODAL_GPU_MEM_UTIL:-0.12}
+--max-model-len ${MULTIMODAL_MAX_MODEL_LEN:-131072}
+--gpu-memory-utilization ${MULTIMODAL_GPU_MEM_UTIL:-0.22}
 --tool-call-parser=pythonic
 --speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}
 --trust-remote-code
@@ -120,7 +120,7 @@ Activate with `docker compose --profile multimodal-coder up -d` (or add
 | Variable | Default | Notes |
 |---|---|---|
 | `MULTIMODAL_CODER_MODEL` / `MULTIMODAL_CODER_SERVED_NAME` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | HF checkpoint id / OpenAI `model` id |
-| `MULTIMODAL_CODER_GPU_MEM_UTIL` | `0.12` | adds ~15 GiB on top of the default 0.69 fleet budget |
+| `MULTIMODAL_CODER_GPU_MEM_UTIL` | `0.12` | adds ~15 GiB on top of the default 0.64 fleet budget |
 | `MULTIMODAL_CODER_BASE_URL` | *(unset by default)* | set to activate gateway routing |
 
 The `vllm-multimodal-coder` compose service is otherwise identical to
@@ -134,18 +134,24 @@ When the default fleet is active (primary + multimodal + embed + rerank):
 
 | Gear | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|
-| `primary` (27B MTP, 128K) | 0.45 | ~56 |
-| `multimodal` (12B unified base, 128K) | **0.12** | ~15 |
+| `primary` (27B MTP, **64K**, trimmed from 128K) | **0.30** | ~38 |
+| `multimodal` (12B unified base, 128K native) | **0.22** | ~26 |
 | `embed` (0.6B) | 0.06 | ~7 |
 | `rerank` (0.6B) | 0.06 | ~7 |
-| **Total** | **0.69** | ~85 / 128 GB |
+| **Total** | **0.64** | ~78 / 128 GB |
 | *(opt-in)* `multimodal-coder` (12B unified coder) | +0.12 | +~15 |
 
-This leaves ~38 GiB of headroom on the 128 GB GB10 for KV caches and other
-services (before the opt-in coder). The multimodal gear's footprint is
-**measured** (#71, 2026-07-01, applies to both checkpoints — same architecture):
-~15.7 GiB (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈ 0.12 — see
-["Live-validation status"](#live-validation-status-71).
+This "always-on duo" budget was **live-validated co-resident on the DGX Spark
+GB10, 2026-07-02**: the multimodal gear held its full 128K context at 4.67×
+concurrency and the primary held 64K at 6.36× concurrency (measured at util
+0.35, shaved to the shipped 0.30 for extra headroom) at the same time —
+~108 GiB used / ~13 GiB free alongside embed + rerank and other co-tenant
+services. See
+[`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)
+for the full numbers; this supersedes the earlier #71 co-resident-safe
+fallback (8192 tokens @ util 0.12, ~15.7 GiB) described in
+["Live-validation status"](#live-validation-status-71) below, which predates
+this duo-budget measurement.
 
 ## Tier alias usage
 
@@ -309,7 +315,9 @@ Runtime matrix tested:
 - ✅ **Image + text** — described a test image (red circle + text) correctly.
 - ✅ **Audio + text** — transcribed a 24 kHz TTS clip **verbatim** (needed `av`).
 - ✅ **GPU util** — ~**15.7 GiB** actual (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈
-  **0.12** of the 128 GB GB10 → fits the 0.69 default-fleet budget.
+  **0.12** of the then-**0.69** default-fleet budget. **Superseded 2026-07-02**
+  by the always-on duo retune — see the note below and
+  [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 **Two config gotchas (vLLM 0.23), now handled in the compose/env:**
 
@@ -318,10 +326,13 @@ Runtime matrix tested:
   — which starves the KV cache so `util 0.12` fails with *"No available memory for
   the cache blocks"*. The compose sets `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`
   so the util knob maps to true usage.
-- **Context vs util.** At `util 0.12` the KV cache holds only ~24K tokens, so the
-  128K native context is **not** serveable at the co-resident lane budget —
-  `MULTIMODAL_MAX_MODEL_LEN` defaults to `8192` (raise it and the util together for
-  more). 128K would need a much larger util than the lane allows.
+- **Context vs util (historical, superseded 2026-07-02).** At the *original*
+  `util 0.12` the KV cache held only ~24K tokens, so the 128K native context was
+  **not** serveable at that co-resident lane budget — `MULTIMODAL_MAX_MODEL_LEN`
+  defaulted to `8192`. This has since been resolved: the shipped default is now
+  `util 0.22` / `MULTIMODAL_MAX_MODEL_LEN=131072`, live-validated co-resident
+  with the 64K-trimmed 27B primary — see
+  [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 Resolved:
 
@@ -369,10 +380,11 @@ parameters. The **default** base gear now does even better with native MTP:
 [Speculative decoding — "support both" (§7)](#speculative-decoding-support-both-7)
 above for the full picture across both gears.
 
-**Config note — why not the production `util 0.12`.** The default fleet lane runs
+**Config note (historical, 2026-07-01) — why not the then-production `util
+0.12`.** At the time of this benchmark the default fleet lane ran
 `MULTIMODAL_GPU_MEM_UTIL=0.12` with `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`.
-That combination was validated on #71's earlier nightly digest; the **current**
-`:nightly-audio` build (dev672) behaves differently in two ways that forced a
+That combination was validated on #71's earlier nightly digest; the **then-current**
+`:nightly-audio` build (dev672) behaved differently in two ways that forced a
 bench-only config:
 
 1. **Cudagraph accounting flipped.** With `…ESTIMATE_CUDAGRAPHS=0`, dev672 now
@@ -395,11 +407,14 @@ concurrency 64* would read low versus a full-capture production serve. Total
 standalone footprint here: ~**17.4 GiB** (weights 7.9 + graphs 0.96 + KV 8.47) at
 util 0.15.
 
-> **Follow-up (config drift):** the default lane's `util 0.12` +
-> `…ESTIMATE_CUDAGRAPHS=0` should be re-validated against the pinned dev672 image
-> and, if the accounting change sticks, either the util raised or the capture set
-> trimmed in the compose so the gear boots 8,192 co-resident. Tracked with the
-> serve config in [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) / the fleet compose.
+> **Follow-up (config drift) — RESOLVED 2026-07-02.** This note flagged that the
+> then-default lane's `util 0.12` + `…ESTIMATE_CUDAGRAPHS=0` should be
+> re-validated against the pinned dev672 image and the util raised if the
+> accounting change stuck. The always-on duo retune did exactly that: the
+> shipped default is now `util 0.22` (close to the `0.2427` this benchmark
+> suggested) with the full `131072` (128K) context, live-validated co-resident
+> with the 64K-trimmed 27B primary — see
+> [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 ## Related docs
 
