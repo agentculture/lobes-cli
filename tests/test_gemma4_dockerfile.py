@@ -26,7 +26,7 @@ def test_dockerfile_exists():
 
 
 # ---------------------------------------------------------------------------
-# 2. FROM the 26.06 NGC vLLM base (vLLM 0.22.1)
+# 2. FROM the official vLLM nightly image (has the native gemma4_unified class)
 # ---------------------------------------------------------------------------
 
 
@@ -34,27 +34,27 @@ def test_from_base():
     lines = _lines()
     from_lines = [line for line in lines if line.strip().startswith("FROM")]
     assert from_lines, "No FROM instruction found"
-    # 26.06 ships vLLM 0.22.1 (the serve-proven version for Gemma 4) on NGC's
-    # Blackwell torch; bumped from 26.05.post1 after live validation (#71).
+    # The native Gemma4UnifiedForConditionalGeneration class only exists in vLLM
+    # nightly (>= 0.23.1rc1); released <=0.22.1 (incl. NGC 26.06) can't serve it (#71).
     assert any(
-        "nvcr.io/nvidia/vllm:26.06-py3" in line for line in from_lines
-    ), f"Expected FROM nvcr.io/nvidia/vllm:26.06-py3, got: {from_lines}"
+        "vllm/vllm-openai" in line for line in from_lines
+    ), f"Expected FROM vllm/vllm-openai (nightly), got: {from_lines}"
 
 
 # ---------------------------------------------------------------------------
-# 3. TRANSFORMERS_REF build ARG is declared
+# 3. The nightly base is pinned by digest (reproducible, not the moving :nightly)
 # ---------------------------------------------------------------------------
 
 
-def test_transformers_ref_arg_declared():
+def test_base_pinned_by_digest():
     text = DOCKERFILE.read_text()
     assert (
-        "ARG TRANSFORMERS_REF" in text
-    ), "Expected 'ARG TRANSFORMERS_REF' build argument in Dockerfile"
+        "vllm/vllm-openai@sha256:" in text
+    ), "Expected the nightly base pinned by @sha256 digest (not the floating :nightly tag)"
 
 
 # ---------------------------------------------------------------------------
-# 4. Transformers installed via uv pip install --system (not bare pip install)
+# 4. The vllm[audio] extra (av/soundfile/librosa) installed via uv (not bare pip)
 # ---------------------------------------------------------------------------
 
 

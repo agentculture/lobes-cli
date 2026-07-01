@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.0] - 2026-07-01
+
+### Added
+
+- Gemma 4 12B multimodal gear now SERVES (text + image + audio) — live-validated on the DGX Spark GB10 via vLLM nightly's native gemma4_unified class (#71/#73); catalog status promoted configured → load-tested
+
+### Changed
+
+- Dockerfile.vllm-gemma4 rebased FROM vllm/vllm-openai nightly (pinned by digest) + the vllm[audio] extra (was NGC 26.06 / vLLM 0.22.1 + a transformers overlay); vllm-multimodal compose/env now set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 and default MULTIMODAL_MAX_MODEL_LEN 8192 (co-resident util-0.12 KV holds ~24K tokens, not the 128K native)
+
+### Fixed
+
+- Gemma 4 12B serve blocker root-caused and fixed: gemma4_unified has heterogeneous per-layer head sizes (40 sliding@256 + 8 full@512) that only vLLM's native class handles — released vLLM ≤0.22.1 fell back to the transformers backend and crashed the full-attention o_proj (4096≠8192); a TRITON_ATTN backend flag does not fix it
+
 ## [0.33.1] - 2026-07-01
 
 ### Added

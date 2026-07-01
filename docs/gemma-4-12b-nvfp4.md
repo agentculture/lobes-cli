@@ -7,8 +7,10 @@
 **Model id:** `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`
 **Tier alias:** `multimodal` (and `normal` back-compat; resolves here via `model=multimodal` or `model=normal` at the gateway)
 **Role:** `multimodal` — unified text+image+audio gear, the fleet's new "normal" tier
-**Status:** `configured` — the custom image **loads** it, but it does not yet
-**serve** (issue #71 serve-enablement; see ["Live-validation status"](#live-validation-status-71) below)
+**Status:** `load-tested` — serve-enablement **resolved** (#71/#73). The gear
+**serves** on the custom image (vLLM nightly, native `gemma4_unified` class) and
+was live-validated on the DGX Spark GB10 for **text + image + audio** (2026-07-01;
+see ["Live-validation status"](#live-validation-status-71) below).
 
 ## What it is
 
@@ -92,8 +94,9 @@ When the default fleet is active (primary + multimodal + embed + rerank):
 | **Total** | **0.69** | ~85 / 128 GB |
 
 This leaves ~38 GiB of headroom on the 128 GB GB10 for KV caches and other
-services. The measured util for the multimodal gear (vision+audio KV) is an
-accepted plan risk — confirm on the Spark in t7.
+services. The multimodal gear's footprint is **measured** (#71, 2026-07-01):
+~15.7 GiB (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈ 0.12 — see
+["Live-validation status"](#live-validation-status-71).
 
 ## Tier alias usage
 
@@ -191,50 +194,69 @@ by default if it beats the no-spec baseline, or document the negative with the
 numbers that ruled it out. **Done = a measured verdict, not merely a wired
 draft.** #75 is gated on #71 — no draft can be measured until the gear serves.
 
-## Live-validation status (#71) {#live-validation-status-71}
+## Live-validation status (#71/#73) {#live-validation-status-71}
 
-> **Live validation on the DGX Spark (`spark-f8a9`, GB10, 2026-06-30, #71)
-> established that the custom image LOADS the gear but it does not yet SERVE.**
-> `status` stays `configured`. Serve-enablement is tracked as follow-ups.
+> **RESOLVED on the DGX Spark (GB10, sm_121, 2026-07-01, #71/#73): the gear
+> SERVES and answers text + image + audio requests.** `status` = `load-tested`.
 
-**What the custom image fixed.** Gemma 4 12B's `model_type: gemma4_unified` is
-registered by no *stock* NGC image. The custom image
-([`Dockerfile.vllm-gemma4`](../lobes/templates/fleet/Dockerfile.vllm-gemma4)) —
-`FROM nvcr.io/nvidia/vllm:26.06-py3` (vLLM 0.22.1, NGC torch 2.13.0a0) + a
-from-source Transformers pinned to `181beb3` (5.13.0.dev0) — **registers
-`gemma4_unified` and loads the weights**. The Transformers overlay swaps only
-Transformers + safetensors; NGC's Blackwell torch is preserved.
+**The fix: vLLM nightly's native class.** `gemma4_unified` is **early-fusion**
+multimodal (no separate vision/audio towers — a `vision_embedder` and audio
+projection feed tokens straight into the shared 48-layer LM) with **heterogeneous
+per-layer head sizes**: 40 `sliding_attention` layers at `head_dim=256` and 8
+`full_attention` layers at `global_head_dim=512`. Serving it needs vLLM's **native
+`Gemma4UnifiedForConditionalGeneration`** class, which gives the two attention
+types different KV block sizes and auto-forces `TRITON_ATTN`. That class exists
+**only in vLLM nightly (≥ 0.23.1rc1)**. The shipped image
+([`Dockerfile.vllm-gemma4`](../lobes/templates/fleet/Dockerfile.vllm-gemma4)) is
+now `FROM vllm/vllm-openai:nightly` (pinned by digest) + the `vllm[audio]` extra
+(`av`/`soundfile`/`librosa`/`soxr` — audio input resamples via PyAV).
+
+**Why released vLLM ≤ 0.22.1 can't serve it.** With no native unified class, vLLM
+falls back to the generic **Transformers modeling backend**, which builds *every*
+layer's attention with a **single** `head_size` (256). The 8 full-attention layers
+then emit `16×256=4096` but their o_proj wants `16×512=8192` →
+`RuntimeError: Shape mismatch: a.size(1)=4096, size_k=8192` (marlin_gemm) at the
+profiling forward. **This is not an attention-backend problem**: engaging
+`TRITON_ATTN` via the `--attention-backend` CLI flag (0.22.1) was proven live to
+crash *identically* — the single head_size is the wall, and only the native class
+gets per-layer head sizes right.
 
 Runtime matrix tested:
 
-| Base image | vLLM | torch | `gemma4_unified` registers | serves |
-|---|---|---|---|---|
-| `nvcr.io/nvidia/vllm:26.04-py3` | 0.19.0 | — | ❌ (stock) | — |
-| `…:26.05.post1-py3` + Transformers `181beb3` | 0.21.0 | NGC 2.12.0a0 | ✅ | ❌ (see below) |
-| `…:26.06-py3` + Transformers `181beb3` **(shipped)** | 0.22.1 | NGC 2.13.0a0 | ✅ | ❌ (see below) |
-| host venv (out-of-docker) | 0.23.1rc1.dev | stock 2.11.0+cu130 | ✅ | not run |
+| Image | vLLM | native `gemma4_unified` class | serves |
+|---|---|---|---|
+| `nvcr.io/nvidia/vllm:26.04-py3` | 0.19.0 | ❌ | ❌ |
+| `…:26.06-py3` + Transformers `181beb3` | 0.22.1 | ❌ (transformers-backend fallback) | ❌ (o_proj 4096≠8192) |
+| **`vllm/vllm-openai:nightly` (shipped)** | **0.23.1rc1.dev** | **✅** | **✅ text+image+audio** |
 
-**Why it does not serve yet (the serve-enablement follow-up).** The model loads
-but crashes at warmup forward with `RuntimeError: Shape mismatch: a.size(1)=4096,
-size_k=8192` in the o_proj GEMM. Root cause: Gemma 4's **non-square attention**
-(`global_head_dim=512` ≠ `head_dim=256`) — the o_proj expects
-`num_heads×global_head_dim = 8192`, but FlashAttention emits
-`num_heads×head_dim = 4096`. The fix is `VLLM_ATTENTION_BACKEND=TRITON_ATTN`
-(see [ai-muninn.com's recipe](https://ai-muninn.com/en/blog/dgx-spark-gemma4-12b-omni-nvfp4-weight-only),
-which serves `coolthor/gemma-4-12B-it-NVFP4A16` this way), but vLLM runs
-`gemma4_unified` via its *transformers-modeling backend*, which did **not** honor
-the env var in our runs (it still selected `FLASH_ATTN`). The compose sets the env
-in anticipation; making it engage is the open follow-up.
+**Live validation results (util 0.25, `--max-model-len 4096`, GB10):**
 
-Resolved vs open:
+- ✅ **Serves** — `/health` 200, native class resolved, TRITON auto-forced.
+- ✅ **Text** — arithmetic + factual answered correctly.
+- ✅ **Image + text** — described a test image (red circle + text) correctly.
+- ✅ **Audio + text** — transcribed a 24 kHz TTS clip **verbatim** (needed `av`).
+- ✅ **GPU util** — ~**15.7 GiB** actual (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈
+  **0.12** of the 128 GB GB10 → fits the 0.69 default-fleet budget.
 
-- ✅ **Image / arch registration** — custom image registers `gemma4_unified`, loads weights.
+**Two config gotchas (vLLM 0.23), now handled in the compose/env:**
+
+- **Cudagraph memory over-estimate.** vLLM 0.23 reserves an *estimated* cudagraph
+  headroom inside the util budget — here **12.74 GiB estimated vs 0.46 GiB actual**
+  — which starves the KV cache so `util 0.12` fails with *"No available memory for
+  the cache blocks"*. The compose sets `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`
+  so the util knob maps to true usage.
+- **Context vs util.** At `util 0.12` the KV cache holds only ~24K tokens, so the
+  128K native context is **not** serveable at the co-resident lane budget —
+  `MULTIMODAL_MAX_MODEL_LEN` defaults to `8192` (raise it and the util together for
+  more). 128K would need a much larger util than the lane allows.
+
+Resolved:
+
+- ✅ **Serve-enablement** — native `gemma4_unified` class on vLLM nightly + `TRITON_ATTN`.
+- ✅ **Image + audio** — functional (audio needs the `vllm[audio]` extra / PyAV).
 - ✅ **Quantization** — `compressed-tensors` (not `modelopt_fp4`).
-- ✅ **Native context** — 128K (`text_config.max_position_embeddings=131072`).
-- ⛔ **Serve-enablement** — force `TRITON_ATTN` on the transformers backend (and/or
-  validate the blog's `coolthor` checkpoint, possibly switching the catalog default).
-- ⛔ **Native MTP** — needs a separate `gemma4_assistant` draft model; not enabled.
-- ⏳ **GPU util / functional image+audio** — measurable only once it serves.
+- ✅ **GPU util** — ~15.7 GiB ≈ 0.12 budget.
+- ⛔ **Native MTP** — still needs a separate `gemma4_assistant` draft model (scoped in #75, closed); the gear serves without spec-decode.
 
 ## Related docs
 

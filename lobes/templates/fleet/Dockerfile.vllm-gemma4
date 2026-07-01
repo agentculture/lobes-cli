@@ -1,58 +1,50 @@
-# lobes vLLM-Gemma4 — custom vLLM image that registers the gemma4_unified arch.
+# lobes vLLM-Gemma4 — custom image that SERVES the Gemma 4 12B gemma4_unified gear.
 #
-# The NGC vLLM 26.06 base ships vLLM 0.22.1 (the version proven to serve Gemma 4
-# Omni; native Gemma4Unified support) on NGC's Blackwell-built torch 2.13.0a0, but
-# its Transformers (5.6.0) does NOT register gemma4_unified in AutoConfig. This
-# Dockerfile overlays a from-source Transformers build that does — without touching
-# NGC's torch (only Transformers + safetensors are swapped, verified #71). Base
-# bumped 26.05.post1 → 26.06 after live validation on the Spark (#71, 2026-06-30):
-# both bases register gemma4_unified, but 0.22.1 is the serve-proven vLLM.
+# Gemma 4 12B's arch (`gemma4_unified`) is EARLY-FUSION multimodal with
+# HETEROGENEOUS per-layer head sizes: 40 sliding-attention layers at head_dim=256
+# and 8 full-attention layers at global_head_dim=512. Serving it needs vLLM's
+# NATIVE `Gemma4UnifiedForConditionalGeneration` class, which gives the two
+# attention types different KV block sizes and auto-forces TRITON_ATTN.
 #
-# TRANSFORMERS_REF — the Transformers ref to install. Pinned to a specific commit
-# for reproducible rebuilds. This SHA was validated on the DGX Spark (#71): it
-# registers gemma4_unified in AutoConfig AND leaves vLLM importing/serving. It
-# resolves to transformers 5.13.0.dev0. Bump deliberately (and re-validate) rather
-# than floating to main HEAD. Override at build time with --build-arg TRANSFORMERS_REF=…
+# That native class only exists in vLLM NIGHTLY (>= 0.23.1rc1). Released vLLM
+# <= 0.22.1 — including the NGC 26.06 base this file used before — has no native
+# unified class, so it falls back to the generic Transformers modeling backend,
+# which builds every layer with a SINGLE head_size (256) and crashes the 8
+# full-attention layers' o_proj (marlin_gemm: a.size(1)=4096 != size_k=8192).
+# No attention-backend flag fixes that (proven live #71: TRITON engaged via the
+# --attention-backend CLI flag and it crashed identically) — the fix is the
+# native class, i.e. nightly vLLM. See docs/gemma-4-12b-nvfp4.md.
 #
-# Full checkpoint download + live serving is NOT performed at build time (that
-# would require network access to HuggingFace Hub and GPU resources during CI).
-# The build-stage verification below is network-free.
-FROM nvcr.io/nvidia/vllm:26.06-py3
-
-ARG TRANSFORMERS_REF=git+https://github.com/huggingface/transformers.git@181beb3ba4c47098ed8cbc97ee250d1d45ae0107
-
-# ---------------------------------------------------------------------------
-# Overlay the Transformers build that registers gemma4_unified.
-#
-# uv ships in the NGC 26.05 base image (0.11.x), so no bootstrap is needed.
-# `uv pip install --system` writes into the container's system site-packages
-# (/usr), which is where vLLM's import paths resolve. --break-system-packages is
-# required: that interpreter carries a PEP 668 EXTERNALLY-MANAGED marker — the
-# base sets PIP_BREAK_SYSTEM_PACKAGES=1 for pip, but uv needs the explicit flag.
-# (The base also sets PIP_CONSTRAINT=/etc/pip/constraint.txt, which uv ignores —
-# intentional here: we WANT to override the base's pinned Transformers.)
-# ---------------------------------------------------------------------------
-RUN uv pip install --system --break-system-packages --no-cache-dir "${TRANSFORMERS_REF}"
+# Base: the OFFICIAL vLLM nightly image (multi-arch arm64+amd64), pinned by
+# DIGEST for reproducibility. This digest resolves to vLLM 0.23.1rc1.dev672 +
+# transformers 5.12.1 (registers gemma4_unified) on Blackwell-capable torch, and
+# was live-validated on the DGX Spark GB10 (sm_121) on 2026-07-01 (#71): the gear
+# serves and answers text + image + audio requests. Bump the digest DELIBERATELY
+# (and re-validate) rather than floating the moving :nightly tag.
+FROM vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
 
 # ---------------------------------------------------------------------------
-# Build-stage verification (network-free).
-#
-# Asserts that the installed Transformers version registers gemma4_unified in
-# AutoConfig's CONFIG_MAPPING and that vLLM's ModelRegistry exposes at least
-# one Gemma4 architecture.  This proves the overlay worked without requiring
-# the actual checkpoint to be downloaded.
-#
-# Note: a full AutoConfig.from_pretrained(<checkpoint>) needs network at build
-# time and is fragile in CI — we deliberately avoid it here.  The checkpoint
-# load + end-to-end serve path is validated live in task t3 (risk r1).
+# Audio input needs the vllm[audio] extra. Gemma 4's audio path decodes with
+# soundfile/librosa and RESAMPLES with `av` (PyAV) — the stock nightly image
+# ships none of these, so audio requests 500 with "Please install vllm[audio]"
+# (verified #71: text+image worked without them; audio needed `av` specifically).
+# Install with uv (ships in the nightly image), not bare pip. --system writes
+# into the image's site-packages where vLLM's import paths resolve.
 # ---------------------------------------------------------------------------
-# Single logical line: each statement ends with `;` and the physical line is
-# continued with a trailing backslash. A multi-line `python3 -c "..."` WITHOUT
-# backslash continuations makes Docker parse each body line as its own (unknown)
-# instruction — see tests/test_gemma4_dockerfile.py for the lint that guards this.
-RUN python3 -c "import transformers; import vllm; \
-    assert 'gemma4_unified' in transformers.models.auto.configuration_auto.CONFIG_MAPPING, 'gemma4_unified not found in CONFIG_MAPPING — Transformers ref too old or wrong'; \
-    supported = vllm.ModelRegistry.get_supported_archs(); \
-    gemma4_archs = [a for a in supported if 'Gemma4' in a]; \
-    assert gemma4_archs, 'No Gemma4 arch found in vllm.ModelRegistry.get_supported_archs()'; \
-    print('OK — gemma4_unified registered; import vllm OK; Gemma4 arch in ModelRegistry:', gemma4_archs)"
+RUN uv pip install --system --no-cache-dir librosa soundfile av soxr
+
+# ---------------------------------------------------------------------------
+# Build-stage verification (network-free): assert the base ships the NATIVE
+# gemma4_unified class (the whole point of the nightly bump) and that vLLM
+# imports. Single logical line — each statement ends with `;` and physical lines
+# are continued with a trailing backslash (a multi-line python3 -c WITHOUT
+# continuations makes Docker parse each body line as its own instruction; see
+# tests/test_gemma4_dockerfile.py for the lint that guards this).
+# ---------------------------------------------------------------------------
+RUN python3 -c "import vllm; \
+    archs = vllm.ModelRegistry.get_supported_archs(); \
+    unified = [a for a in archs if 'Gemma4Unified' in a]; \
+    assert unified, 'Gemma4UnifiedForConditionalGeneration not in vllm.ModelRegistry — base image predates the native gemma4_unified class (needs vLLM >= 0.23.1rc1)'; \
+    import transformers.models.auto.configuration_auto as cfg; \
+    assert 'gemma4_unified' in cfg.CONFIG_MAPPING, 'transformers does not register gemma4_unified'; \
+    print('OK — native gemma4_unified in ModelRegistry:', unified, '; import vllm OK')"
