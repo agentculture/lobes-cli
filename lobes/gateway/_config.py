@@ -19,7 +19,16 @@ _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
-_DEFAULT_MULTIMODAL = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+# "support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the NVFP4 base +
+# native-MTP gear is the new default "multimodal" gear (28.6 tok/s, 57.9% draft
+# acceptance — the fastest measured Gemma config). The coder fine-tune (kept, opt-in
+# below as _DEFAULT_MULTIMODAL_CODER) is coding-strong but its MTP acceptance is only
+# 30.8%, not worth wiring/defaulting.
+_DEFAULT_MULTIMODAL = "coolthor/gemma-4-12B-it-NVFP4A16"
+# Opt-in coder gear (demoted from default; catalog role_hint="candidate"). Reachable
+# via the "multimodal-coder" alias when its own backend is wired — see
+# _optional_backend(name="multimodal-coder", ...) below.
+_DEFAULT_MULTIMODAL_CODER = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 
 
@@ -164,6 +173,23 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-multimodal:8000",
             default_name=_DEFAULT_MULTIMODAL,
         ),
+        # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
+        # role_hint="candidate" since the "support both" demotion — see
+        # docs/vllm-nightly-migration.md §7). Wired only when
+        # MULTIMODAL_CODER_BASE_URL or MULTIMODAL_CODER_SERVED_NAME is present (the
+        # compose "multimodal-coder" profile sets them). Its backend name
+        # "multimodal-coder" is NOT a TIER_ROLE role, so it gets no tier alias — but
+        # a dedicated "multimodal-coder" alias is added below (once wired) so callers
+        # can reach it without hardcoding the served model id, mirroring the tier
+        # alias ergonomics without making it a capability tier of its own.
+        _optional_backend(
+            env,
+            name="multimodal-coder",
+            url_key="MULTIMODAL_CODER_BASE_URL",
+            name_key="MULTIMODAL_CODER_SERVED_NAME",
+            default_url="http://vllm-multimodal-coder:8000",
+            default_name=_DEFAULT_MULTIMODAL_CODER,
+        ),
         # The legacy 14B Qwen3-NVFP4 "middle" gear. Demoted in #69 from the
         # "normal" tier (now the Gemma multimodal gear) to an opt-in legacy
         # candidate: wired only when MIDDLE_BASE_URL or MIDDLE_SERVED_NAME is
@@ -210,6 +236,13 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # GATEWAY_ALIASES are merged last so an operator override wins over a
     # computed tier alias.
     aliases = tier_aliases(backends, TIER_ROLE)
+    # The opt-in coder alias: only added once its own backend is wired (mirrors the
+    # tier-fallback contract — an alias never points at a served name nothing
+    # actually serves). Computed before the GATEWAY_ALIASES merge so an operator
+    # override still wins if they explicitly set "multimodal-coder=..." themselves.
+    coder_backend = next((b for b in backends if b.name == "multimodal-coder"), None)
+    if coder_backend is not None:
+        aliases["multimodal-coder"] = coder_backend.served_name
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     table = RoutingTable(
         backends=tuple(backends),

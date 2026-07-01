@@ -47,7 +47,7 @@ Five containers by default, all `restart: unless-stopped`:
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
 | `model-gear-vllm-primary` | generate `main` tier (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
-| `model-gear-vllm-multimodal` | generate `multimodal` tier (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`, vision+audio) | internal only |
+| `model-gear-vllm-multimodal` | generate `multimodal` tier (`coolthor/gemma-4-12B-it-NVFP4A16`, vision+audio, native MTP) | internal only |
 | `model-gear-vllm-embed` | embedding gear (`Qwen/Qwen3-Embedding-0.6B`, `/v1/embeddings`) | internal only |
 | `model-gear-vllm-rerank` | reranker gear (`Qwen/Qwen3-Reranker-0.6B`, `/v1/rerank` + `/v1/score`) | internal only |
 
@@ -100,7 +100,8 @@ appropriate warm backend:
 |---|---|---|---|---|
 | `main` | `hard` | `primary` | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | full text capability; default-on |
 | `minor` | `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast, small-brain; opt-in (`--profile minor`) |
-| `multimodal` | `normal` | `multimodal` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | text+image+audio; default-on |
+| `multimodal` | `normal` | `multimodal` | `coolthor/gemma-4-12B-it-NVFP4A16` | text+image+audio, native MTP; default-on |
+| `multimodal-coder` | — | `candidate` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | coding-strong; opt-in `--profile multimodal-coder`, reachable via its own alias once wired (not a tier) |
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back
 **upward** to the nearest available generate tier. `minor`→primary when the minor
@@ -321,7 +322,7 @@ and the legacy 14B are opt-in compose profiles. Default budget:
 | Gear | Model | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|---|
 | `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | 0.45 | ~56 |
-| `multimodal` (default-on) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
+| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16` | 0.12 | ~15 |
 | `embed` | `Qwen/Qwen3-Embedding-0.6B` | 0.06 | ~7 |
 | `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 0.06 | ~7 |
 | **Total (default)** | | **0.69** | ~85 / 128 GB |
@@ -332,6 +333,7 @@ Opt-in gears (add to `COMPOSE_PROFILES`):
 |---|---|---|---|
 | `minor` (cheap, opt-in) | `Qwen/Qwen3.5-4B` | 0.10 | ~13 |
 | `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
+| `multimodal-coder` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
 
 The **primary is trimmed to 128K context** (`PRIMARY_MAX_MODEL_LEN=131072`) and
 `PRIMARY_GPU_MEM_UTIL=0.45` with the default-on multimodal gear co-resident.
