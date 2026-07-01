@@ -355,11 +355,63 @@ greedy, `max_len 8192`):
 Callers pick coding-strength vs MTP-throughput. Next leg: wire both into
 `catalog.py` + compose (the base gear carries the assistant draft as a pinned dep).
 
+## 8. Always-on duo budget (live-validated, 2026-07-02)
+
+**Question answered: can the always-on Gemma multimodal gear serve its full
+128K native context *and* co-reside with the 27B primary, without either
+starving the other?** Yes — live-validated on the DGX Spark GB10.
+
+Both gears are already default/always-on (§7); this only retunes their
+`--max-model-len` / `--gpu-memory-utilization` pair so the co-resident budget
+actually holds 128K on the multimodal side instead of the earlier
+co-resident-safe fallback (8192 tokens @ util 0.12, from #71 — see
+[`gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#live-validation-status-71)).
+
+| Gear | Context | Util | Concurrency (measured) |
+|---|---|---|---|
+| Gemma 4 12B multimodal (base) | **128K** (native max) | **0.22** | **4.67×** |
+| Qwen 27B primary (MTP) | **64K** (trimmed from 128K) | 0.35 measured → **0.30 shipped** | **6.36×** at util 0.35 |
+
+Both held their target context concurrently, alongside the embed + rerank
+gears and the co-tenant services already on the box: **~108 GiB used / ~13 GiB
+free** on the 128 GB GB10. To leave more headroom than the validated 0.35, the
+27B primary's shipped default is shaved to **0.30** — still comfortably holds
+64K (0.35 was the measured ceiling for 6.36× concurrency; 0.30 trades a little
+concurrency for slack).
+
+**New default-fleet budget:**
+
+```text
+primary 0.30 + multimodal 0.22 + embed 0.06 + rerank 0.06 = 0.64
+```
+
+(down from the pre-duo 0.69 default, which paired the primary's 128K/0.45 with
+the multimodal gear's 8192/0.12 fallback context.)
+
+**What changed (baked into `lobes/templates/fleet/docker-compose.yml` and
+`env.example`):**
+
+| Var | Old default | New default |
+|---|---|---|
+| `PRIMARY_MAX_MODEL_LEN` | 131072 (128K) | **65536 (64K)** |
+| `PRIMARY_GPU_MEM_UTIL` | 0.45 | **0.30** |
+| `MULTIMODAL_MAX_MODEL_LEN` | 8192 | **131072 (128K, Gemma's native max)** |
+| `MULTIMODAL_GPU_MEM_UTIL` | 0.12 | **0.22** |
+
+**Answers "can Gemma-128K + Qwen-64K co-reside? → yes"** — this was the open
+question left by the #71 co-resident-safe fallback (the multimodal gear had
+never been measured warm next to a full-size primary at anything beyond a
+trimmed 4096–8192 token ceiling). With both gears retuned as above, the
+always-on duo now serves its two headline capabilities — Qwen's 64K
+tool-calling/reasoning lane and Gemma's full 128K native
+text+image+audio+MTP lane — at the same time, on one GB10.
+
 ## Scope note
 
 Sections §1–§3 are **before-state only** (t1). §4 = **t2** (27B on nightly, GO),
 §5 = **t3** (embed+rerank on nightly, GO), §6 = **t6** (head-to-head + DSpark
-verdict + native-MTP measured), §7 = **checkpoint choice** (coder vs base MTP).
+verdict + native-MTP measured), §7 = **checkpoint choice** (coder vs base MTP),
+§8 = **always-on duo budget** (Gemma 128K + Qwen 64K co-residency, live-validated).
 t4 flipped the primary/embed/rerank default images to nightly (merged).
 **Remaining:** t7 (commit the Gemma verdict), t8 (trailing minor/14B), t9
 (shipped-state docs), and the new **"support both" gears** (coder + NVFP4-base with

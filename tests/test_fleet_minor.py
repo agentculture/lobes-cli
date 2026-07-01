@@ -230,19 +230,20 @@ def test_vllm_middle_has_healthcheck() -> None:
     assert "healthcheck" in svc, "vllm-middle is missing a healthcheck"
 
 
-def test_primary_max_model_len_default_is_128k() -> None:
-    """PRIMARY_MAX_MODEL_LEN default is 131072 (128K, trimmed for co-residency with middle)."""
+def test_primary_max_model_len_default_is_64k() -> None:
+    """PRIMARY_MAX_MODEL_LEN default is 65536 (64K, trimmed to give the always-on
+    Gemma multimodal gear its full 128K — live-validated co-residence, 2026-07-02)."""
     svc = _load_compose()["services"]["vllm-primary"]
     cmd = [str(c) for c in svc.get("command", [])]
     max_len_flag = next((c for c in cmd if c.startswith("--max-model-len=")), None)
     assert max_len_flag is not None, "--max-model-len flag missing from vllm-primary command"
-    # The default (after :-) must be 131072, not the old 262144.
+    # The default (after :-) must be 65536, not the old 131072.
     assert (
-        "131072" in max_len_flag
-    ), f"PRIMARY_MAX_MODEL_LEN default should be 131072 (128K), got: {max_len_flag!r}"
+        "65536" in max_len_flag
+    ), f"PRIMARY_MAX_MODEL_LEN default should be 65536 (64K), got: {max_len_flag!r}"
     assert (
         "262144" not in max_len_flag
-    ), "PRIMARY_MAX_MODEL_LEN default must NOT be 262144 — fleet now uses 128K (t3)"
+    ), "PRIMARY_MAX_MODEL_LEN default must NOT be 262144 — fleet now uses 64K (duo budget)"
 
 
 def test_gateway_has_middle_env_vars() -> None:
