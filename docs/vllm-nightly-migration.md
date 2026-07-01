@@ -316,12 +316,46 @@ note for t7/t9 cleanup: `VLLM_ATTENTION_BACKEND` is flagged an "unknown env var"
 this nightly (the native class auto-forces TRITON), so that compose env line is a
 no-op warning.
 
+## 7. Checkpoint choice for Gemma MTP — coder vs base (live, 2026-07-02)
+
+The §6 result (coder + native MTP: 30.8 % accept, ~6 % win) raised the question:
+does the assistant draft better for the **base** it-model it was trained for?
+Measured both + their no-spec baselines, all on nightly 0.23.1rc1.dev672 (batch=1
+greedy, `max_len 8192`):
+
+| Gear | quant | no-spec | + native MTP | MTP accept | MTP speedup |
+|---|---|---|---|---|---|
+| Gemma **coder** (`…coder-fable5-composer2.5…`) | NVFP4 | ~23 tok/s | ~24 tok/s | **30.8 %** | ~1.04× |
+| Gemma **base** (`google/gemma-4-12B-it`) | bf16 | **6.5 tok/s** | **14.6 tok/s** | **93.9 %** | **~2.25×** |
+| (ref) Qwen 27B primary | NVFP4 | — | ~18 tok/s | 60.6 % | ~2.4× (its doc) |
+
+**Findings:**
+1. **User insight confirmed.** The native assistant (`google/gemma-4-12B-it-assistant`)
+   drafts near-perfectly (**93.9 %**) for its exact target, the **base**
+   `gemma-4-12B-it` — vs 30.8 % on the coder fine-tune. MTP goes from a marginal
+   ~1.04× (coder) to a strong **~2.25×** (base). The "less coder, enjoy MTP more"
+   acceptance is real.
+2. **But bf16 makes the base compute-bound.** Base no-spec is only 6.5 tok/s (bf16
+   12B on the GB10); even the 2.25× MTP win lands at **14.6 tok/s — still slower
+   than the NVFP4 coder (23–24)**. Fast NVFP4 GEMMs beat high-acceptance bf16.
+3. **The winning gear is an NVFP4 base-IT checkpoint** — NVFP4 speed (≈ the coder's
+   ~23 no-spec) × the base's ~90 %+ acceptance ≈ a genuinely fast, high-MTP gear.
+   Candidate: `coolthor/gemma-4-12B-it-NVFP4A16` (NVFP4 of the base it-model). The
+   bf16 base measured here is the **definitive acceptance proof**, not the gear to
+   ship (too slow to serve co-resident).
+
+**"Support both" recommendation:** catalog carries two Gemma gears — the **coder**
+(NVFP4, coding-strong, MTP not worth wiring at 30.8 %) and a **base** (NVFP4,
+general, native MTP default-on at ~90 %+ accept) — callers pick coding-strength vs
+MTP-throughput. Next leg: source/confirm an NVFP4 base-IT checkpoint, measure it +
+native MTP, then wire both into `catalog.py` + compose.
+
 ## Scope note
 
 Sections §1–§3 are **before-state only** (t1). §4 = **t2** (27B on nightly, GO),
 §5 = **t3** (embed+rerank on nightly, GO), §6 = **t6** (head-to-head + DSpark
-verdict). t4 flipped the primary/embed/rerank default images to nightly (merged).
-**Remaining:** t7 (commit the Gemma verdict — keep no-spec, document the DSpark
-negative, fix the config-key), t8 (trailing minor/14B), t9 (shipped-state docs).
-Follow-up beyond the plan: measure the native `gemma-4-12B-it-assistant` MTP route
-(`r6`).
+verdict + native-MTP measured), §7 = **checkpoint choice** (coder vs base MTP).
+t4 flipped the primary/embed/rerank default images to nightly (merged).
+**Remaining:** t7 (commit the Gemma verdict), t8 (trailing minor/14B), t9
+(shipped-state docs), and the new **"support both" gears** (coder + NVFP4-base with
+native MTP) the §7 measurements motivate.
