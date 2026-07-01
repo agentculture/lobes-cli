@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.1] - 2026-07-01
+
+### Added
+
+- Issue #75 spec + plan (Gemma 4 12B gear speculative decoding) converged via devague /think + /spec-to-plan
+- docs/gemma4-mtp-draft.md — resolved spec-decode draft route (DSpark draft_model first; native google/gemma-4-12B-it-assistant recorded as escalation candidate)
+
+### Changed
+
+- docs/gemma-4-12b-nvfp4.md — added the Speculative decoding (#75) before-state / gap / scope-split subsection
+
 ## [0.33.0] - 2026-06-30
 
 ### Added
