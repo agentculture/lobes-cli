@@ -19,6 +19,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+# Shared ``context`` literal — three catalog entries (the archived Mistral
+# fallback and both Gemma 4 12B unified entries) share this exact native
+# context window; a single constant keeps them from drifting independently
+# (SonarCloud: duplicated string literal).
+_CONTEXT_128K_NATIVE = "128K native"
+
 
 @dataclass(frozen=True)
 class SupportedModel:
@@ -75,7 +81,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         id="RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4",
         role_hint="fallback",
         shape="dense (vision-capable)",
-        context="128K native",
+        context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
         tool_parser="mistral",
         quantization="compressed-tensors",
@@ -229,7 +235,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # Same base-model family as the coder entry — text_config.max_position_
         # embeddings=131072 confirmed for the Unified 12B IT line (#71); not
         # independently re-measured for this exact NVFP4A16 export.
-        context="128K native",
+        context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
         tool_parser="pythonic",
         # quantization matches the coder entry's compressed-tensors NVFP4 path
@@ -279,7 +285,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         shape="unified multimodal (text+image+audio)",
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
         # read from the checkpoint config during #71 live validation).
-        context="128K native",
+        context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
         tool_parser="pythonic",
         # This checkpoint is NVFP4 in compressed-tensors format (config.json

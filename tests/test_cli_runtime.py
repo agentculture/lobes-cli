@@ -360,6 +360,94 @@ def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
     assert "--moe-backend" not in out
 
 
+def test_switch_to_gemma_multimodal_needs_compose_edit_despite_own_speculative_config(
+    tmp_path, capsys
+) -> None:
+    # coolthor/gemma-4-12B-it-NVFP4A16 carries its OWN, Gemma-specific
+    # speculative_config (native "mtp" + the assistant draft) — NOT the Qwen MTP
+    # primary's baked-in flags the single-model template ships
+    # (qwen3_5_mtp + --language-model-only + --tokenizer=mmangkad/...). A gating
+    # rule that suppresses the compose-edit notice for ANY non-empty
+    # speculative_config would incorrectly treat this model like the MTP primary
+    # and let `switch --apply` restart the container straight into the
+    # incompatible Qwen flags. It must instead surface the manual-compose-edit
+    # notice, same as any other non-primary model (Qodo #80).
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "coolthor/gemma-4-12B-it-NVFP4A16",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOTE:" in out
+    assert "REMOVE these" in out
+    # The notice names the Qwen MTP primary's flags to remove, not the Gemma
+    # model's own (different) speculative config.
+    assert "qwen3_5_mtp" in out
+    assert '"method": "mtp"' not in out
+    assert "gemma-4-12B-it-assistant" not in out
+
+
+def test_switch_apply_gemma_multimodal_blocks_restart_without_force(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # Same scenario as above but through --apply --json: the switch must write
+    # .env and NOT recreate the container (compose_down/up must not be called)
+    # unless --force is also passed.
+    _scaffold(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(_compose, "compose_down", lambda d: (calls.append("down"), _ok())[1])
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", lambda *a, **k: None)
+
+    rc = main(
+        [
+            "switch",
+            "coolthor/gemma-4-12B-it-NVFP4A16",
+            "--compose-dir",
+            str(tmp_path),
+            "--apply",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restarted"] is False
+    assert payload["blocked_on_compose_edits"] is True
+    assert payload["compose_edits"]
+    assert calls == []  # container NOT recreated with the incompatible Qwen flags
+    assert (
+        _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "coolthor/gemma-4-12B-it-NVFP4A16"
+    )  # .env still written
+
+
+def test_switch_to_mtp_primary_still_needs_no_compose_edit_regression(tmp_path, capsys) -> None:
+    # Regression guard for the fix above: gating the compose-edit notice on
+    # "target IS the MTP primary" (rather than "target has any speculative_config")
+    # must not reintroduce a notice for the actual MTP primary.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "--machine",
+            "spark",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOTE:" not in out
+
+
 def test_switch_clamps_context_to_model_native_ceiling(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
     # spark's machine default is 262144 (256K, for the 256K-native MTP primary), but
