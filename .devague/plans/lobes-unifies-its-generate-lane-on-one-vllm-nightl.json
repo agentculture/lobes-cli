@@ -1,0 +1,328 @@
+{
+  "slug": "lobes-unifies-its-generate-lane-on-one-vllm-nightl",
+  "title": "lobes unifies its generate lane on one vLLM nightly: the Qwen 3.6 27B primary migrates onto the nightly image the Gemma 4 12B gear already runs, both serve with MTP speculative decoding, and lobes publishes a same-engine head-to-head of the two gears decode/prefill throughput and MTP draft acceptance",
+  "frame_slug": "lobes-unifies-its-generate-lane-on-one-vllm-nightl",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-01T18:31:36Z",
+  "updated": "2026-07-01T18:43:01Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes unifies its generate lane on one vLLM nightly: the Qwen 3.6 27B primary migrates onto the nightly image the Gemma 4 12B gear already runs, both serve with MTP speculative decoding, and lobes publishes a same-engine head-to-head of the two gears decode/prefill throughput and MTP draft acceptance"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the shipped state is verifiable in-repo: every vLLM gear serves on the nightly image, the 27B keeps qwen3_5_mtp MTP, the Gemma gear carries a committed MTP verdict, and a same-vLLM head-to-head table exists"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "lobes operators/maintainers on the DGX Spark GB10 and the Culture mesh that consumes the generate lane (main = 27B primary, multimodal = Gemma 12B)"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the audience is real, not hypothetical: lobes operators run this fleet on the GB10 and the Culture mesh actually addresses model=main and model=multimodal (verifiable from gateway routing + culture.yaml)"
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "the 27B primary runs on stock vLLM 0.19.0 (nvcr.io/nvidia/vllm:26.04-py3) with qwen3_5_mtp MTP (~19 tok/s, 72-79% accept); the Gemma 12B gear runs on vLLM nightly (0.23.1rc1) but with NO spec-decode (~23 tok/s); the two gears run different engines so no fair head-to-head exists and Gemma has no measured MTP win"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "verified in-repo: the 27B catalog/compose pins nvcr.io/nvidia/vllm:26.04-py3 today and the gemma gear pins the nightly image; the 27B doc records ~19 tok/s + 72-79 percent MTP accept and the gemma doc records ~23 tok/s no-spec"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "a head-to-head is only trustworthy if both gears run the SAME vLLM engine; unifying on nightly also finally moves the proven primary off the frozen 0.19.0 (the 0.19-to-0.23 jump the 27B doc said was blocked on the 26.04 base, now unblocked by the nightly base image the Gemma gear proved on the GB10) and ends the split-engine fleet; and Gemma per-stream speed gap either closes or is proven unclosable"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the generate lane (main + multimodal) has real mesh traffic worth benchmarking \u2014 not a dormant tier"
+    },
+    {
+      "id": "c9",
+      "kind": "after_state",
+      "text": "the whole vLLM-served fleet runs the same nightly vLLM: the 27B primary default image is flipped to nightly (still serving qwen3_5_mtp MTP), the Gemma 12B gear (already nightly) gains a committed MTP verdict, and the embed + rerank (and opt-in minor/14B) gears also move to nightly and keep serving their task family; plus a committed same-engine head-to-head benchmark of the two generate gears (decode/prefill tok/s + MTP accept), inform-only"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the after-state is checkable in-repo: docker ps / lobes status shows every vLLM gear on the nightly image, and the head-to-head table + the Gemma MTP verdict are committed files"
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "in scope: migrate ALL vLLM-served gears (27B primary, Gemma 12B multimodal, embed, rerank, opt-in minor/14B) onto the nightly vLLM backend, wire+measure Gemma DSpark MTP through the catalog, and the same-engine generate head-to-head. out of scope: training a native gemma4_assistant draft head (separate #75 follow-up), and the realtime /v1/audio sidecars (Parakeet STT + Chatterbox TTS are NOT vLLM, so they stay put)"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the scope line holds: the diff touches vLLM gear images + the gemma catalog speculative_config + the benchmark only; it does NOT touch the realtime Parakeet/Chatterbox sidecars or train a draft head"
+    },
+    {
+      "id": "c11",
+      "kind": "success_signal",
+      "text": "four committed artifacts: (1) every vLLM gear (primary, multimodal, embed, rerank, and opt-in minor/14B when enabled) serves on the nightly image and passes its task-family smoke (generate + tool-call, embeddings, rerank/score); (2) the 27B primary keeps qwen3_5_mtp MTP with acceptance >0 (target >= its 0.19.0 baseline) and tok/s >= ~19; (3) the Gemma gear carries a committed keep/drop MTP verdict with recorded acceptance percent and baseline-vs-spec tok/s; (4) a committed same-vLLM head-to-head table for the two generate gears (decode + prefill tok/s + accept percent), inform-only"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "each of the four success artifacts is a concrete committed check (a passing task-family smoke, a lobes status line, a verdict doc section, a benchmark table) \u2014 not a subjective claim"
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the 27B primary default fleet image flips from nvcr.io/nvidia/vllm:26.04-py3 (0.19.0) to the nightly, and it still SERVES with qwen3_5_mtp MTP active (not merely loads): Qwen3_5ForConditionalGeneration + Qwen3_5MTP resolve, /health 200, a tool-call round-trip passes, and draft acceptance is >0"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "on the nightly image the 27B loads with Qwen3_5ForConditionalGeneration + Qwen3_5MTP resolving, /health 200, a qwen3_coder tool-call round-trip passes, and MTP draft acceptance is >0 (target >= the 0.19.0 baseline 72-79%); gibberish, lost MTP, or a rejected quant is a STOP, not a ship"
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "the embed (Qwen3-Embedding-0.6B, pooling/convert embed) and rerank (Qwen3-Reranker-0.6B, convert classify) gears, plus the opt-in minor (4B bf16) and legacy 14B NVFP4 gears, also move to the nightly vLLM image and each still serves its task family (POST /v1/embeddings returns vectors; /v1/rerank + /v1/score return scores; minor/14B generate) within the GB10 memory budget"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "each migrated non-generate gear proves its task family live on nightly: embed returns a correct-dim vector, rerank returns ordered scores, and (when enabled) minor/14B answer a generate probe \u2014 all within the ~0.69 fleet budget on the 128 GB GB10"
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "the Gemma MTP wiring flows through the catalog: the gemma entry speculative_config drives the compose --speculative-config items (the same mtp_compose_command_items pattern the 27B uses), and the three guard tests that assert no-gemma-spec (test_gemma_has_no_speculative_config, test_fleet_compose_multimodal_vision_active_no_spec_decode, the MTP-items drift guard) are flipped to the spec-enabled invariant"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "lobes switch adds/removes the gemma --speculative-config compose items the same way it does for the 27B primary, the catalog compose-items round-trip test passes, and the three renamed guard tests now assert the spec-enabled invariant (green)"
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "the head-to-head benchmark runs both generate gears on the same nightly vLLM engine version and records decode tok/s, prefill tok/s, and MTP draft acceptance for each, with the method (co-resident vs standalone, util, max-model-len) recorded"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the benchmark artifact records both gears numbers under the SAME nightly vLLM version string, states util/max-model-len/co-resident-vs-standalone method, and flags the 12B-vs-27B size difference so the numbers are not misread as a like-for-like model comparison"
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "the Gemma MTP verdict is committed via the DSpark draft_model route measured FIRST: restore the catalog speculative_config + compose items as default if it beats the ~23 tok/s no-spec baseline, else document the measured negative"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "DSpark loads on the serving gemma checkpoint with no vocab/tokenizer mismatch and yields >0 percent draft acceptance; exactly one outcome is committed (restore speculative_config as default, or a documented negative with the measured numbers)"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Before-state verification + baselines (docs)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/vllm-nightly-migration.md records, verified in-repo, that the primary/embed/rerank services pin nvcr.io/nvidia/vllm:26.04-py3 (vLLM 0.19.0) today and the gemma service pins the nightly image",
+        "the doc records the baselines to beat (27B ~19 tok/s decode + 72-79 percent MTP accept, Gemma ~23 tok/s no-spec) and cites the generate-lane (model=main/multimodal) mesh traffic that justifies the benchmark"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h6",
+        "h7"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Spike: 27B primary serves on nightly (standalone, no fleet mutation)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a standalone 27B NVFP4-MTP container on the pinned nightly image returns /health 200 with Qwen3_5ForConditionalGeneration + Qwen3_5MTP resolved in logs, and the working --speculative-config method string (qwen3_5_mtp or its nightly replacement) plus the quant flag are recorded",
+        "the spike records a passing qwen3_coder tool-call round-trip, MTP draft acceptance > 0, and decode tok/s; a hard regression (gibberish / lost MTP / rejected quant) is recorded as a STOP with the pinned 0.19.0 rollback noted"
+      ],
+      "deps": [],
+      "covers": [
+        "h1"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Spike: embed + rerank pooling gears serve on nightly (standalone)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a standalone embed container on the nightly image returns a correct-dimension vector from POST /v1/embeddings (--runner pooling --convert embed working)",
+        "a standalone rerank container on the nightly image returns ordered scores from /v1/rerank and /v1/score (--convert classify working); findings recorded per gear"
+      ],
+      "deps": [],
+      "covers": [
+        "h2"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Migrate primary + embed + rerank default images to the nightly backend (compose/env)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the fleet compose + env.example templates pin the primary, embed, and rerank services to the nightly image at a single pinned digest (replacing nvcr.io/nvidia/vllm:26.04-py3), and set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 where the nightly cudagraph estimate requires it",
+        "the 27B --speculative-config method matches the t2 spike finding; a template test asserts every vLLM gear service uses the nightly image while the realtime Parakeet/Chatterbox sidecars are unchanged"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c12",
+        "c13"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Wire the Gemma DSpark speculative_config catalog-driven + round-trip test",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/catalog.py carries the gemma speculative_config for the DSpark draft_model route and mtp_compose_command_items emits the gemma --speculative-config items exactly as for the 27B primary",
+        "a round-trip test asserts the gemma --speculative-config items add/remove through lobes switch; the wiring is present and testable but NOT yet default-on (the default flip is gated on the t7 verdict)"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c14",
+        "h3"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Measure Gemma DSpark MTP + assemble the same-nightly head-to-head",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "on the serving gemma gear the DSpark draft loads with no vocab/tokenizer mismatch and yields > 0 percent draft acceptance; acceptance percent and decode tok/s vs the ~23 tok/s no-spec baseline are recorded",
+        "a committed head-to-head table records both generate gears decode + prefill tok/s + MTP accept under the SAME pinned nightly version, states the util/max-model-len/co-resident-vs-standalone method, and flags the 12B-vs-27B size difference"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c15",
+        "h4",
+        "h5"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "Commit the Gemma MTP verdict (flip guards + default-on if it wins, else document negative)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "if the t6 DSpark acceptance/speedup beats the no-spec baseline: the gemma catalog speculative_config + compose items are made default-on and the three guard tests (test_gemma_has_no_speculative_config, test_fleet_compose_multimodal_vision_active_no_spec_decode, MTP-items drift guard) are flipped to the spec-enabled invariant and green",
+        "otherwise the gemma gear keeps no spec-decode and docs/gemma4-mtp-draft.md records the measured negative; exactly one outcome is committed"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c16"
+      ]
+    },
+    {
+      "id": "t8",
+      "summary": "Migrate opt-in minor (4B) + legacy 14B gears to nightly (trailing)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the opt-in minor (4B bf16, COMPOSE_PROFILES=minor) and legacy 14B NVFP4 (COMPOSE_PROFILES=middle) services are pinned to the nightly image and each answers a generate probe when its profile is enabled",
+        "this task is trailing (may land after the default-on gears): if a gear cannot serve on nightly its residual is documented, not silently dropped"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c13"
+      ]
+    },
+    {
+      "id": "t9",
+      "summary": "After-state / shipped-state docs + success-artifact verification",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gateway-fleet.md and the per-gear docs record the shipped state: every vLLM gear on the nightly image (docker ps / lobes status verifiable), the four success artifacts committed, and the scope line held (realtime sidecars + no draft-head-training untouched)",
+        "the docs frame the audience (operators + mesh addressing model=main/multimodal) and why-same-engine-matters without contradicting the committed benchmark numbers"
+      ],
+      "deps": [
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c1",
+        "c2",
+        "c5",
+        "c9",
+        "c10",
+        "c11",
+        "h8",
+        "h9",
+        "h10",
+        "h11",
+        "h12"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the 27B qwen3_5_mtp method is already deprecated on 0.19.0; nightly may require method=mtp or shift the Qwen3.5 hybrid/FLA attention path \u2014 the primary could lose MTP or gibber. Resolved by the t2 spike; fallback method=mtp, rollback the pinned 0.19.0 image",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r2",
+      "text": "nightly vLLM is memory-hungry (may need primary down); the whole fleet co-resident on nightly may exceed the GB10 budget, forcing sequential/standalone benchmark measurement",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6"
+    },
+    {
+      "id": "r3",
+      "text": "the exact nightly image tag/digest to standardize the whole fleet on (audio-extra image vs a lighter text-only nightly at the same version) \u2014 a single pinned digest is the simplest same-engine guarantee (parked v1)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r4",
+      "text": "DSpark recommended num_speculative_tokens on this serving checkpoint (config block_size=7; the disabled experiment used 3) \u2014 measured at serve time (parked v2)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6"
+    },
+    {
+      "id": "r5",
+      "text": "whether the opt-in minor/14B live-validation blocks this effort or trails as a follow-up (parked v3) \u2014 planned as trailing (t8 dep t5), residual documented if a gear cannot serve",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8"
+    },
+    {
+      "id": "r6",
+      "text": "native gemma4_assistant draft (google/gemma-4-12B-it-assistant) as the escalation route if DSpark is insufficient (parked v4, per #75)",
+      "kind": "follow_up",
+      "task_id": "t7"
+    }
+  ]
+}

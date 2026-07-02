@@ -108,13 +108,24 @@ def _mtp_primary():
 
 
 def _mtp_removal_notice(model) -> str | None:
-    """Non-MTP target: the template's baked MTP flags must be removed by hand.
+    """Non-primary target: the template's baked MTP flags must be removed by hand.
 
     The item list is the single source of truth in the catalog (so it can't drift
     from the templates); each renders as a YAML ``command:`` list item —
     ``--speculative-config`` is single-quoted because its JSON value has ``: ``/``{``.
+
+    Gated on the target being the default MTP **primary** specifically (by id),
+    not merely on ``model.speculative_config`` being non-empty. A different gear
+    can carry its own, incompatible ``speculative_config`` (e.g. the Gemma 4 12B
+    multimodal entry's native ``mtp`` + assistant-draft config) — the single-model
+    template only bakes in the Qwen MTP primary's exact flags
+    (``qwen3_5_mtp`` + ``--language-model-only`` + ``--tokenizer=...``), so
+    switching to any other speculative-config-carrying model still needs the
+    manual compose edit; only the actual primary's flags match the template as
+    shipped (Qodo #80).
     """
-    if model.speculative_config:
+    primary = _mtp_primary()
+    if primary is not None and model.id == primary.id:
         return None
     rendered = "".join(
         (f"\n      - '{item}'" if item.startswith("--speculative-config=") else f"\n      - {item}")

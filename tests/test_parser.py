@@ -46,6 +46,8 @@ from lobes.runtime import _parser
         # TODO(risk r2): confirm against the served checkpoint during t7 live
         # validation on the Spark.
         ("sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4", "pythonic"),
+        # NVFP4 base gear (§7 "support both" — the new default multimodal gear).
+        ("coolthor/gemma-4-12B-it-NVFP4A16", "pythonic"),
         ("some/gemma-4-27b-it", "pythonic"),
         ("some/gemma4-9b", "pythonic"),
     ],

@@ -15,6 +15,7 @@ from lobes.catalog import (
     as_dicts,
     mtp_compose_command_items,
     resolve_tier,
+    speculative_config_item,
     supported_models,
 )
 from lobes.gateway import _config
@@ -101,15 +102,28 @@ def test_moe_backend_aligns_with_shape() -> None:
     assert moe.speculative_config == ""
 
 
-def test_speculative_config_only_on_mtp_checkpoints() -> None:
-    # --speculative-config (MTP draft) is carried only by a checkpoint that ships
-    # MTP draft weights — flagged by the -MTP suffix in its id. A baseline NVFP4
-    # export drops the draft head (0% acceptance), so it must stay empty elsewhere.
+def test_speculative_config_only_on_mtp_or_external_draft_checkpoints() -> None:
+    # --speculative-config (MTP draft) is carried by a checkpoint either because it
+    # ships its OWN MTP draft weights (flagged by an "-MTP" suffix in its id, e.g.
+    # the 27B primary's MTP-grafted re-export — a baseline NVFP4 export drops the
+    # draft head, 0% acceptance) OR because it wires a SEPARATE, external draft
+    # model via the "model"/"draft_model_id" key (Gemma4 native MTP — the draft is
+    # a public HF checkpoint, not baked into the served id; see
+    # docs/vllm-nightly-migration.md §7 — coolthor/gemma-4-12B-it-NVFP4A16 carries
+    # no "-MTP" in its id but is wired to the external google/gemma-4-12B-it-
+    # assistant draft).
     for model in SUPPORTED_MODELS:
-        if model.speculative_config:
-            assert "MTP" in model.id.upper(), f"{model.id}: speculative_config on a non-MTP id"
-            method = json.loads(model.speculative_config).get("method")
-            assert method, f"{model.id}: speculative_config missing 'method'"
+        if not model.speculative_config:
+            continue
+        cfg = json.loads(model.speculative_config)
+        method = cfg.get("method")
+        assert method, f"{model.id}: speculative_config missing 'method'"
+        has_mtp_in_id = "MTP" in model.id.upper()
+        has_external_draft = bool(cfg.get("model") or cfg.get("draft_model_id"))
+        assert has_mtp_in_id or has_external_draft, (
+            f"{model.id}: speculative_config carried but neither an -MTP id nor an "
+            "external draft 'model'/'draft_model_id' key is present"
+        )
     # the MTP-grafted 27B primary (issue #26) carries the qwen3_5_mtp draft config.
     sak = next(m for m in SUPPORTED_MODELS if m.id == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP")
     cfg = json.loads(sak.speculative_config)
@@ -291,24 +305,45 @@ def test_minor_gear_quantization_is_none_sentinel() -> None:
 # ---------------------------------------------------------------------------
 # The "normal" tier is reframed from the 14B "middle" gear to the Gemma 4 12B
 # unified-multimodal gear; the 14B is demoted (KEPT) to role_hint="candidate".
+#
+# "Support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the catalog now
+# carries TWO Gemma 4 12B gears — the NVFP4 BASE it-model (coolthor/…, DEFAULT
+# "multimodal" gear, native MTP wired: 28.6 tok/s @ 57.9% draft acceptance, the
+# fastest Gemma config measured) and the CODER fine-tune (sakamakismile/…, KEPT
+# but DEMOTED to role_hint="candidate": coding-strong, but native MTP only reaches
+# 30.8% acceptance on it — not worth wiring). Callers pick coding-strength
+# (explicit id or the opt-in "multimodal-coder" alias) vs MTP-throughput (the
+# default "multimodal"/"normal" tier).
 
-_GEMMA_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+_GEMMA_BASE_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
+_GEMMA_CODER_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _14B_ID = "nvidia/Qwen3-14B-NVFP4"
 _PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+
+# The exact native-MTP speculative_config §7 measured on the NVFP4 base gear —
+# 28.6 tok/s decode at 57.9% draft acceptance (vs the coder's 30.8%/~6% win, and
+# the bf16 base's 93.9% accept but only 14.6 tok/s — bf16 is a speed trap). Note
+# the "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig rejects
+# that outdated key (verified live, §6).
+_GEMMA_BASE_MTP_SPECULATIVE_CONFIG = (
+    '{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",' ' "num_speculative_tokens": 1}'
+)
 
 
 def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
     # The Gemma multimodal gear must be present with exactly the fields the
     # acceptance criteria specify — any field drift is a misconfiguration bug.
-    gemma = next((m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID), None)
-    assert gemma is not None, f"{_GEMMA_ID} not found in catalog"
+    gemma = next((m for m in SUPPORTED_MODELS if m.id == _GEMMA_BASE_ID), None)
+    assert gemma is not None, f"{_GEMMA_BASE_ID} not found in catalog"
     assert gemma.role_hint == "multimodal"
     assert gemma.task == "generate"
     assert gemma.tool_parser == "pythonic"
     # NVFP4 in compressed-tensors format (config.json quant_method), NOT modelopt —
-    # verified live on the Spark (#71); modelopt_fp4 fails with a method mismatch.
+    # matches the coder entry's quantization path; verified live on the Spark
+    # (#71) for the same checkpoint family; modelopt_fp4 fails with a method
+    # mismatch.
     assert gemma.quantization == "compressed-tensors"
-    assert gemma.status == "load-tested"  # GB10 2026-07-01: text+image+audio ✓ on nightly (#71/#73)
+    assert gemma.status == "load-tested"  # GB10 2026-07-02: 28.6 tok/s + MTP (§7)
     assert gemma.doc == "gemma-4-12b-nvfp4.md"
     assert gemma.native_max_model_len == 131072
     assert gemma.dimension == 0
@@ -318,28 +353,100 @@ def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
     shape = gemma.shape.lower()
     assert "multimodal" in shape
     for modality in ("text", "image", "audio"):
-        assert modality in shape, f"{_GEMMA_ID}: shape must mention {modality!r}"
+        assert modality in shape, f"{_GEMMA_BASE_ID}: shape must mention {modality!r}"
 
 
 def test_gemma_tool_parser_matches_infer_parser() -> None:
-    # The catalog's pythonic parser must agree with the runtime's inference (t1).
-    gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
-    assert infer_parser(gemma.id) == "pythonic"
-    assert gemma.tool_parser == infer_parser(gemma.id)
+    # The catalog's pythonic parser must agree with the runtime's inference (t1),
+    # for BOTH Gemma gears (base default + demoted coder candidate).
+    for gemma_id in (_GEMMA_BASE_ID, _GEMMA_CODER_ID):
+        gemma = next(m for m in SUPPORTED_MODELS if m.id == gemma_id)
+        assert infer_parser(gemma.id) == "pythonic"
+        assert gemma.tool_parser == infer_parser(gemma.id)
 
 
-def test_gemma_has_no_speculative_config() -> None:
-    # Despite the "-MTP" name, this unified checkpoint exposes no gemma4_assistant
-    # draft, and vLLM 0.21/0.22 enable Gemma4 MTP only via a SEPARATE gemma4_assistant
-    # draft model — not self-speculation from the unified target. Passing
-    # {"method": "gemma4_mtp"} is rejected ("Unsupported speculative method"), verified
-    # live on the Spark (#71). So the gear carries NO speculative_config until a draft
-    # model is sourced (tracked follow-up); it serves without spec-decode.
-    gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_ID)
-    assert gemma.speculative_config == "", (
-        f"{_GEMMA_ID}: speculative_config must be empty — Gemma4 native MTP needs a "
-        "separate gemma4_assistant draft model (see docs/gemma-4-12b-nvfp4.md)"
+def test_gemma_base_has_native_mtp_speculative_config() -> None:
+    # The NVFP4 base gear is the new default "multimodal" tier — native MTP is
+    # wired ON by default (§7: 28.6 tok/s decode, 57.9% draft acceptance, the
+    # fastest Gemma config measured). Exact-string match: this value is also
+    # baked into lobes/templates/fleet/docker-compose.yml's vllm-multimodal
+    # command (see test_gemma_base_mtp_speculative_config_round_trips_through_helper
+    # + test_fleet_compose_multimodal_vision_active_has_native_mtp_spec_decode
+    # for the drift guards).
+    gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_BASE_ID)
+    assert gemma.speculative_config == _GEMMA_BASE_MTP_SPECULATIVE_CONFIG
+    cfg = json.loads(gemma.speculative_config)
+    assert cfg["method"] == "mtp"
+    assert cfg["model"] == "google/gemma-4-12B-it-assistant"
+    assert cfg["num_speculative_tokens"] == 1
+    assert "draft_model_id" not in cfg, (
+        "vLLM 0.23's SpeculativeConfig rejects the outdated 'draft_model_id' key "
+        "— the draft id must be under 'model' (verified live, §6)"
     )
+
+
+def test_gemma_coder_is_demoted_candidate_with_no_speculative_config() -> None:
+    # "Support both" (§7, 2026-07-02): the coder fine-tune is KEPT (cite-don't-
+    # delete) but DEMOTED from the default "multimodal" gear to role_hint=
+    # "candidate" — coding-strong, but native MTP only reaches 30.8% draft
+    # acceptance on it (a marginal ~6% decode win), so it stays selectable by id
+    # (or the opt-in "multimodal-coder" alias) without carrying a
+    # speculative_config.
+    coder = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_CODER_ID)
+    assert coder.role_hint == "candidate", f"{_GEMMA_CODER_ID}: expected demotion to 'candidate'"
+    assert coder.speculative_config == "", (
+        f"{_GEMMA_CODER_ID}: speculative_config must be empty — native MTP measured "
+        "only 30.8% draft acceptance on this fine-tune (see docs/vllm-nightly-"
+        "migration.md §6/§7), not worth wiring by default"
+    )
+
+
+def test_exactly_one_gemma_multimodal_gear() -> None:
+    # The tier resolver depends on there being exactly one role_hint="multimodal"
+    # gear — two would make resolve_tier("multimodal") ambiguous (first-match).
+    multimodal_gears = [m for m in SUPPORTED_MODELS if m.role_hint == "multimodal"]
+    assert [m.id for m in multimodal_gears] == [_GEMMA_BASE_ID]
+
+
+def test_gemma_base_mtp_speculative_config_round_trips_through_helper() -> None:
+    # Mirrors test_speculative_config_item_matches_27b_primarys_mtp_item's coverage
+    # of the 27B primary's qwen3_5_mtp route, but for the Gemma NVFP4 base's native
+    # MTP route (§7) — against the LIVE catalog entry (not a throwaway replace()),
+    # since this route is the real, wired default now. Proves speculative_config_
+    # item() is generic — not hardcoded to the 27B primary search
+    # mtp_compose_command_items() does — by building the exact --speculative-config
+    # compose item and parsing it back to the same JSON dict the catalog carries.
+    #
+    # Historical note: the DSpark draft-model route (deepseek-ai/dspark_gemma4_12b_
+    # block7) investigated for this gear in #75 is INVALID on vLLM 0.23 — its
+    # custom Gemma4DSparkModel architecture is not in the supported speculative-
+    # draft set (§6, "DSpark MTP route for Gemma: INVALID on vLLM 0.23") — so it is
+    # not wired here or anywhere in the catalog.
+    live_gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_BASE_ID)
+
+    item = speculative_config_item(live_gemma)
+
+    assert item == f"--speculative-config={_GEMMA_BASE_MTP_SPECULATIVE_CONFIG}"
+    # round-trip: strip the flag prefix and parse the JSON back — must equal the
+    # source config exactly (add/remove through `lobes switch` relies on this).
+    parsed = json.loads(item.removeprefix("--speculative-config="))
+    assert parsed == json.loads(_GEMMA_BASE_MTP_SPECULATIVE_CONFIG)
+    assert parsed["method"] == "mtp"
+    assert parsed["model"] == "google/gemma-4-12B-it-assistant"
+    assert parsed["num_speculative_tokens"] == 1
+
+    # This item must ALSO appear verbatim in the fleet compose template — the
+    # single source of truth (catalog) must not drift from the packaged YAML.
+    fleet_text = (_TEMPLATES / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
+    assert item in fleet_text, f"{item!r} missing from templates/fleet/docker-compose.yml (drift)"
+
+
+def test_speculative_config_item_matches_27b_primarys_mtp_item() -> None:
+    # speculative_config_item() must be the SAME formatting mtp_compose_command_items()
+    # uses for the 27B primary — proving the extraction is byte-identical, not a
+    # parallel/duplicated implementation that could drift.
+    sak = next(m for m in SUPPORTED_MODELS if m.id == _PRIMARY_ID)
+    assert speculative_config_item(sak) == mtp_compose_command_items()[0]
 
 
 def test_14b_is_demoted_to_candidate() -> None:
@@ -366,7 +473,7 @@ def test_resolve_tier_multimodal_and_normal_return_gemma() -> None:
     for tier in ("multimodal", "normal"):
         model = resolve_tier(tier)
         assert isinstance(model, SupportedModel)
-        assert model.id == _GEMMA_ID, f"resolve_tier({tier!r}) -> {model.id} (expected Gemma)"
+        assert model.id == _GEMMA_BASE_ID, f"resolve_tier({tier!r}) -> {model.id} (expected Gemma)"
         assert model.role_hint == "multimodal"
 
 

@@ -24,10 +24,15 @@ front of the primary, so:
 - the same front fans `/v1/audio/*` out to the audio overlay (`--audio`).
 
 On the DGX Spark (GB10, 128 GB unified memory) the primary — a hybrid-Mamba
-**27B** — runs solo at its load-tested headroom (util 0.6, full 256K context,
-~75 GiB), owning the box. The prior co-resident dense **24B** Mistral fallback was
-removed (two ~30B NVFP4 models do not co-fit a shared GB10 — see "Live validation
-findings"); Mistral stays a selectable catalog candidate (`lobes overview --list`)
+**27B** — now runs **trimmed to 64K context at util 0.30** so it can co-reside
+with the default-on Gemma 4 12B multimodal gear as the fleet's "always-on duo"
+(live-validated 2026-07-02 — see "Memory" below); serving it **solo** (no
+multimodal gear) restores its load-tested full-256K/util-0.6 headroom
+(~75 GiB). The prior co-resident dense **24B** Mistral *generate-fallback* was
+removed (two ~30B NVFP4 models do not co-fit a shared GB10 — see "Live
+validation findings" below, which predates the Gemma duo and describes a
+different pairing: two ~30B-class dense/MoE models, not the current 27B+12B
+duo); Mistral stays a selectable catalog candidate (`lobes overview --list`)
 and the opt-in fallback example.
 
 ## Topology
@@ -47,7 +52,7 @@ Five containers by default, all `restart: unless-stopped`:
 |---|---|---|
 | `model-gear-gateway` | stdlib reverse proxy (the single OpenAI front) | `${VLLM_PORT:-8000}` |
 | `model-gear-vllm-primary` | generate `main` tier (default: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) | internal only |
-| `model-gear-vllm-multimodal` | generate `multimodal` tier (`sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`, vision+audio) | internal only |
+| `model-gear-vllm-multimodal` | generate `multimodal` tier (`coolthor/gemma-4-12B-it-NVFP4A16`, vision+audio, native MTP) | internal only |
 | `model-gear-vllm-embed` | embedding gear (`Qwen/Qwen3-Embedding-0.6B`, `/v1/embeddings`) | internal only |
 | `model-gear-vllm-rerank` | reranker gear (`Qwen/Qwen3-Reranker-0.6B`, `/v1/rerank` + `/v1/score`) | internal only |
 
@@ -60,6 +65,35 @@ Each vLLM gear runs through `mg-logwrap` so its output (and any crash trace)
 persists to per-boot files under the host log dir and **survives restart/recreate** —
 read them with `lobes logs {primary,embed,rerank}` even after a container is gone.
 See [docs/durable-logs.md](durable-logs.md) (issue #50).
+
+### Engine: one vLLM nightly across the default fleet
+
+Since the fleet-wide nightly-unification migration
+(`docs/vllm-nightly-migration.md` §4–§8), the four default-on gears —
+`vllm-primary`, `vllm-multimodal`, `vllm-embed`, and `vllm-rerank` — all pin
+the **same** vLLM nightly digest
+(`vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9`,
+vLLM `0.23.1rc1.dev672`) that the Gemma multimodal gear already ran before the
+migration. `vllm-primary`/`vllm-embed`/`vllm-rerank` pull that digest
+directly; `vllm-multimodal` (and the opt-in `vllm-multimodal-coder`) build it
+via `Dockerfile.vllm-gemma4` (needed for the native `gemma4_unified` class +
+audio extras) — same base image, different Dockerfile. One engine, fleet-wide,
+for every gear a caller reaches through the gateway by default; a same-engine
+27B-vs-12B comparison (`docs/vllm-nightly-migration.md` §6) is no longer
+confounded by engine version.
+
+**Opt-in gears still pin the pre-migration NGC image.** `vllm-minor` (4B) and
+`vllm-middle` (legacy 14B) — both gated behind `COMPOSE_PROFILES`, neither
+default-on — still pin `nvcr.io/nvidia/vllm:26.04-py3` (vLLM `0.19.0+nv26.04`).
+Migrating them is devague plan task **t8**, explicitly **parked** as a
+trailing follow-up (depends on t5; per its acceptance criteria, "if a gear
+cannot serve on nightly its residual is documented, not silently dropped").
+Until t8 lands, activating `minor` or `middle` runs two engines side by side
+(nightly for the default gears, NGC 26.04 for the opt-in ones) — each gear is
+independent so this is functionally fine, just worth knowing when diagnosing
+version-specific behavior. This split lives in the **templates**
+(`lobes/templates/fleet/`); a live redeploy (`lobes fleet up --apply`) is what
+actually activates a template change on a running fleet.
 
 ### Adding a fallback
 
@@ -100,7 +134,8 @@ appropriate warm backend:
 |---|---|---|---|---|
 | `main` | `hard` | `primary` | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | full text capability; default-on |
 | `minor` | `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast, small-brain; opt-in (`--profile minor`) |
-| `multimodal` | `normal` | `multimodal` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | text+image+audio; default-on |
+| `multimodal` | `normal` | `multimodal` | `coolthor/gemma-4-12B-it-NVFP4A16` | text+image+audio, native MTP; default-on |
+| `multimodal-coder` | — | `candidate` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | coding-strong; opt-in `--profile multimodal-coder`, reachable via its own alias once wired (not a tier) |
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back
 **upward** to the nearest available generate tier. `minor`→primary when the minor
@@ -111,9 +146,11 @@ task-family-routed, not tier-routed.
 
 The `minor` (4B) backend and the legacy `middle` (14B) backend are opt-in compose
 profiles (`--profile minor` / `--profile middle`). Uncomment their `*_BASE_URL` in
-`.env` after activating. See [`docs/qwen3-14b-nvfp4.md`](qwen3-14b-nvfp4.md) for
-the legacy 14B serving details and [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md)
-for the multimodal gear.
+`.env` after activating. Both still run the pre-migration NGC image (26.04-py3 /
+vLLM 0.19.0) — see "Engine" above; migrating them to nightly is the parked task
+t8. See [`docs/qwen3-14b-nvfp4.md`](qwen3-14b-nvfp4.md) for the legacy 14B
+serving details and [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md) for the
+multimodal gear.
 
 **Caller migration example:** switch from a hardcoded model id to a tier alias
 with no other change:
@@ -316,28 +353,51 @@ up --apply`. (A fallback, when wired up, uses the parallel `FALLBACK_*` keys.)
 The fleet default is **four always-warm backends** — the 27B generate primary
 (`main` tier), the Gemma 4 12B multimodal gear (`multimodal` tier), the 0.6B
 embedding gear, and the 0.6B reranker gear. The 4B `minor` (back-compat `cheap`)
-and the legacy 14B are opt-in compose profiles. Default budget:
+and the legacy 14B are opt-in compose profiles. Default budget — the
+**"always-on duo"**, live-validated co-resident on the DGX Spark GB10
+2026-07-02 (`docs/vllm-nightly-migration.md` §8):
 
-| Gear | Model | `--gpu-memory-utilization` | Approx GiB |
-|---|---|---|---|
-| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | 0.45 | ~56 |
-| `multimodal` (default-on) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
-| `embed` | `Qwen/Qwen3-Embedding-0.6B` | 0.06 | ~7 |
-| `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 0.06 | ~7 |
-| **Total (default)** | | **0.69** | ~85 / 128 GB |
+| Gear | Model | Context | `--gpu-memory-utilization` | Approx GiB |
+|---|---|---|---|---|
+| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | **64K** (trimmed from 128K) | **0.30** | ~38 |
+| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16`, native MTP on | **128K** (full native) | **0.22** | ~26 |
+| `embed` | `Qwen/Qwen3-Embedding-0.6B` | 8K | 0.06 | ~7 |
+| `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 8K | 0.06 | ~7 |
+| **Total (default)** | | | **0.64** | ~78 / 128 GB |
 
-Opt-in gears (add to `COMPOSE_PROFILES`):
+Opt-in gears (add to `COMPOSE_PROFILES`) — `minor`/`middle` still run the
+pre-migration NGC image (see "Engine" above; t8 parked):
 
 | Gear | Model | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|---|
 | `minor` (cheap, opt-in) | `Qwen/Qwen3.5-4B` | 0.10 | ~13 |
 | `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
+| `multimodal-coder` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
 
-The **primary is trimmed to 128K context** (`PRIMARY_MAX_MODEL_LEN=131072`) and
-`PRIMARY_GPU_MEM_UTIL=0.45` with the default-on multimodal gear co-resident.
-Without the multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6`
-and optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
+The **primary is trimmed to 64K context** (`PRIMARY_MAX_MODEL_LEN=65536`,
+`PRIMARY_GPU_MEM_UTIL=0.30`, down from a pre-duo 128K/0.45) so the default-on
+multimodal gear can co-reside at its **full 128K native context**
+(`MULTIMODAL_MAX_MODEL_LEN=131072`, `MULTIMODAL_GPU_MEM_UTIL=0.22`, up from an
+earlier 8K/0.12 co-resident-safe fallback) — both retuned and live-validated
+co-resident 2026-07-02 (see "Always-on duo budget" below). Without the
+multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6` and
+optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
 (the load-tested default; see findings below).
+
+### Always-on duo budget (live-validated, 2026-07-02)
+
+Can the always-on Gemma multimodal gear hold its full 128K native context
+*and* co-reside with the 27B primary, without either starving the other?
+**Yes** — live-validated on the DGX Spark GB10
+(`docs/vllm-nightly-migration.md` §8): the multimodal gear held 128K at
+**4.67×** measured concurrency and the primary held 64K at **6.36×** measured
+concurrency (at util 0.35, shaved to the shipped 0.30 for extra headroom) —
+both simultaneously, alongside embed + rerank and the box's other co-tenant
+services: **~108 GiB used / ~13 GiB free** on the 128 GB GB10. This supersedes
+the earlier #71 co-resident-safe fallback (8K context @ util 0.12 for the
+multimodal gear — see
+[`gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#live-validation-status-71)) that
+predated the duo-budget retune.
 
 The co-resident embedding and reranker gears are ~0.6B each at `*_GPU_MEM_UTIL=0.06`
 (a couple GiB apiece), so they tuck into the remaining headroom without crowding
@@ -372,15 +432,26 @@ also running, ~12–20 GiB baseline). Measured with `dgx-spark-cli` (`spark`):
 | Co-residence (27B + 35B-A3B) | **Not viable on this box.** 27B alone (~75 GiB) + 35B-A3B (~24 GiB weights + KV) + baseline services exceed the 121.7 GiB unified pool → OOM + swap thrash (swap hit 68 %). |
 | **Mistral-24B (new fallback) solo load → `/health`** | **Loaded cleanly** (port 8001, util 0.4): 15.05 GiB weights, 30.69 GiB KV, ~49.6 GiB total. Decode **14.9 tok/s**; prefill 2,009 tok in 1.49 s; tool calling ✅. See [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md). |
 
-**Conclusion — the "two always-warm *generate* models" premise needs a dedicated
-box, so the default is one generate backend.** On a GB10 shared with other
-services, two ~30B NVFP4 models do not co-fit with usable KV caches. The default
-fleet therefore serves the **Qwen generate primary** at its load-tested solo
-headroom (util 0.6, full 256K, ~75 GiB), with the tiny embedding + reranker gears
-co-resident (util 0.06 each). If you genuinely need two warm models, run on a dedicated machine,
-pair two small models, or wire the opt-in fallback (see "Adding a fallback") and
-drop both utils. Single-model `lobes switch` (one warm at a time) remains the
-other path.
+**Conclusion (2026-05-30, scoped to this pairing) — the "two always-warm ~30B
+*generate* models" premise needs a dedicated box.** On a GB10 shared with other
+services, two ~30B NVFP4 models do not co-fit with usable KV caches. At the
+time, the default fleet therefore served the **Qwen generate primary** at its
+load-tested solo headroom (util 0.6, full 256K, ~75 GiB), with the tiny
+embedding + reranker gears co-resident (util 0.06 each). If you genuinely need
+two *~30B-class* warm generate models, run on a dedicated machine, pair two
+small models, or wire the opt-in fallback (see "Adding a fallback") and drop
+both utils. Single-model `lobes switch` (one warm at a time) remains the other
+path for that case.
+
+**Superseded by the always-on duo (2026-07-02).** This conclusion is about
+pairing the 27B primary with a *second ~30B-class* model (35B-A3B / 24B
+Mistral) — it does not rule out the Gemma 4 12B multimodal gear, which is
+smaller and retuned for co-residency (see "Always-on duo budget" above). The
+default fleet today runs **two** generate backends — `main` (27B, 64K,
+util 0.30) and `multimodal` (12B, 128K, util 0.22) — live-validated
+co-resident on this same GB10, per `docs/vllm-nightly-migration.md` §8. The
+"one generate backend" constraint above still applies to a *second ~30B-class*
+warm fallback (the opt-in path), not to the multimodal gear.
 
 **Fallback history.** The original 35B-A3B MoE fallback never loaded
 ([`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)); it was replaced

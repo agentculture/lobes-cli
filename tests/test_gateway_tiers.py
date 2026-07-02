@@ -24,6 +24,7 @@ from lobes.gateway._config import (
     _DEFAULT_MIDDLE,
     _DEFAULT_MINOR,
     _DEFAULT_MULTIMODAL,
+    _DEFAULT_MULTIMODAL_CODER,
     _DEFAULT_PRIMARY,
     build_config,
 )
@@ -63,9 +64,11 @@ def test_multimodal_served_name_alone_wires_backend() -> None:
 
 def test_multimodal_default_served_name_is_pinned_gemma_id() -> None:
     # The pinned Gemma 4 12B id is the default when MULTIMODAL_SERVED_NAME is absent.
+    # "Support both" (§7, 2026-07-02): the default is now the NVFP4 base gear with
+    # native MTP wired, not the coder fine-tune (kept, demoted — see below).
     table, _ = build_config({"MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000"})
     mm = next(b for b in table.backends if b.name == "multimodal")
-    assert mm.served_name == "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
+    assert mm.served_name == "coolthor/gemma-4-12B-it-NVFP4A16"
 
 
 # --- legacy middle (14B) backend: opt-in, reachable by served name only ------
@@ -108,6 +111,71 @@ def test_middle_is_not_a_tier_alias() -> None:
     assert resolve_model(table, "middle") == _DEFAULT_PRIMARY  # unknown → default
     assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
+
+
+# --- opt-in coder (Gemma 4 12B coder fine-tune) backend + alias --------------
+# "Support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the coder is
+# demoted from the default "multimodal" gear (catalog role_hint="candidate") but
+# stays reachable — wired only when its own env is present (mirrors middle), PLUS
+# a dedicated "multimodal-coder" alias (unlike middle, which has none) so callers
+# don't need to hardcode the served model id.
+
+
+def test_multimodal_coder_backend_absent_by_default() -> None:
+    # No MULTIMODAL_CODER_* env → the coder gear is opt-in and not wired.
+    table, _ = build_config({})
+    assert not any(b.name == "multimodal-coder" for b in table.backends)
+    assert "multimodal-coder" not in table.aliases
+
+
+def test_multimodal_coder_base_url_wires_generate_backend_with_default_name() -> None:
+    # MULTIMODAL_CODER_BASE_URL alone wires it (mirrors MIDDLE_BASE_URL/MINOR_BASE_URL).
+    table, _ = build_config({"MULTIMODAL_CODER_BASE_URL": "http://vllm-multimodal-coder:8000/"})
+    coder = next(b for b in table.backends if b.name == "multimodal-coder")
+    assert coder.task == "generate"
+    assert coder.served_name == _DEFAULT_MULTIMODAL_CODER
+    assert coder.base_url == "http://vllm-multimodal-coder:8000"  # trailing slash stripped
+
+
+def test_multimodal_coder_alias_resolves_once_wired() -> None:
+    # The "multimodal-coder" alias is added ONLY once the backend is wired — it
+    # never points at a served name nothing actually serves.
+    table, _ = build_config({"MULTIMODAL_CODER_BASE_URL": "http://vllm-multimodal-coder:8000"})
+    assert resolve_model(table, "multimodal-coder") == _DEFAULT_MULTIMODAL_CODER
+
+
+def test_multimodal_coder_reachable_by_explicit_served_name() -> None:
+    # The coder is also addressable by its served name once the profile is active,
+    # same as any other wired backend.
+    table, _ = build_config({"MULTIMODAL_CODER_SERVED_NAME": "custom/gemma-coder"})
+    assert resolve_model(table, "custom/gemma-coder") == "custom/gemma-coder"
+
+
+def test_multimodal_coder_is_not_a_tier_alias() -> None:
+    # "multimodal-coder" is not a TIER_ROLE role, so wiring it grants no tier
+    # alias: the tier vocabulary keeps resolving "multimodal"/"normal" to the
+    # default NVFP4 base gear, not the coder.
+    table, _ = build_config(
+        {
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_CODER_BASE_URL": "http://vllm-multimodal-coder:8000",
+        }
+    )
+    assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
+    assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
+    assert resolve_model(table, "multimodal-coder") == _DEFAULT_MULTIMODAL_CODER
+
+
+def test_gateway_aliases_override_wins_over_computed_coder_alias() -> None:
+    # An explicit operator GATEWAY_ALIASES entry for "multimodal-coder" still wins
+    # over the computed default (mirrors the tier-alias override contract).
+    table, _ = build_config(
+        {
+            "MULTIMODAL_CODER_BASE_URL": "http://vllm-multimodal-coder:8000",
+            "GATEWAY_ALIASES": "multimodal-coder=custom/override",
+        }
+    )
+    assert resolve_model(table, "multimodal-coder") == "custom/override"
 
 
 # --- primary vocabulary: main / minor / multimodal ---------------------------

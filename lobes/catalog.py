@@ -19,6 +19,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+# Shared ``context`` literal — three catalog entries (the archived Mistral
+# fallback and both Gemma 4 12B unified entries) share this exact native
+# context window; a single constant keeps them from drifting independently
+# (SonarCloud: duplicated string literal).
+_CONTEXT_128K_NATIVE = "128K native"
+
 
 @dataclass(frozen=True)
 class SupportedModel:
@@ -75,7 +81,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         id="RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4",
         role_hint="fallback",
         shape="dense (vision-capable)",
-        context="128K native",
+        context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
         tool_parser="mistral",
         quantization="compressed-tensors",
@@ -210,12 +216,59 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
     ),
     SupportedModel(
+        id="coolthor/gemma-4-12B-it-NVFP4A16",
+        # Gemma 4 12B (Google DeepMind) BASE it-model, NVFP4 — the fleet's DEFAULT
+        # "multimodal" generate gear (and the "normal" tier) as of the "support both"
+        # decision (docs/vllm-nightly-migration.md §7, 2026-07-02). Same UNIFIED
+        # architecture as the coder entry below (Gemma4UnifiedForConditionalGeneration:
+        # text + image + AUDIO in one checkpoint, no separate sidecars). Promoted over
+        # the coder because it is the exact target the public
+        # google/gemma-4-12B-it-assistant MTP draft was trained for: measured **28.6
+        # tok/s decode at 57.9% draft acceptance** with native MTP on — the FASTEST
+        # Gemma config measured (beats the coder's 24 tok/s no-spec/+MTP, and the bf16
+        # base+MTP's 14.6 tok/s — bf16 has higher 93.9% acceptance but a much slower
+        # no-spec floor). "Less coder, more MTP" — see §7 for the full comparison
+        # table. Tool calls use the Python-style "pythonic" parser (matches
+        # runtime._parser.infer_parser, which returns "pythonic" for gemma-4* ids).
+        role_hint="multimodal",
+        shape="unified multimodal (text+image+audio)",
+        # Same base-model family as the coder entry — text_config.max_position_
+        # embeddings=131072 confirmed for the Unified 12B IT line (#71); not
+        # independently re-measured for this exact NVFP4A16 export.
+        context=_CONTEXT_128K_NATIVE,
+        native_max_model_len=131072,
+        tool_parser="pythonic",
+        # quantization matches the coder entry's compressed-tensors NVFP4 path
+        # (config.json quant_method="compressed-tensors"); modelopt_fp4 fails with a
+        # quant-method mismatch on this checkpoint family (verified #71).
+        quantization="compressed-tensors",
+        status="load-tested",  # GB10 2026-07-02: 19.8 tok/s no-spec, 28.6 tok/s +MTP (§7)
+        doc="gemma-4-12b-nvfp4.md",
+        task="generate",
+        # Native MTP, default-on (§7, measured 2026-07-02): the public assistant
+        # draft, wired with the "model" key (NOT "draft_model_id" — vLLM 0.23's
+        # SpeculativeConfig rejects that outdated key; verified live). 57.9% draft
+        # acceptance, ~1.45x decode speedup (19.8 -> 28.6 tok/s).
+        speculative_config=(
+            '{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",'
+            ' "num_speculative_tokens": 1}'
+        ),
+    ),
+    SupportedModel(
         id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4",
-        # Gemma 4 12B (Google DeepMind) — the fleet's "multimodal" generate gear and
-        # the new "normal" tier (replacing the demoted 14B "middle"). A UNIFIED
-        # multimodal model: a single Gemma4UnifiedForConditionalGeneration serves
-        # text + image + AUDIO in one checkpoint (no separate sidecars), so the
-        # generate lane gains native vision+audio without the realtime overlay. Tool
+        # Gemma 4 12B (Google DeepMind) CODER fine-tune — KEPT as an opt-in
+        # candidate (cite-don't-delete), DEMOTED from the default "multimodal" gear
+        # by the "support both" decision (docs/vllm-nightly-migration.md §7,
+        # 2026-07-02): coding-strong, but native MTP is only 30.8% draft acceptance
+        # here (the coder fine-tune's output distribution has shifted away from what
+        # the assistant draft — trained against the base it-model — expects), a
+        # marginal ~6% decode win not worth wiring by default. The NVFP4 base entry
+        # above is the new default "multimodal"/"normal" tier gear. This entry stays
+        # selectable by id (`lobes switch coolthor/... ` is the default; this coder
+        # checkpoint remains a supported candidate for coding-heavy workloads).
+        #
+        # A UNIFIED multimodal model: a single Gemma4UnifiedForConditionalGeneration
+        # serves text + image + AUDIO in one checkpoint (no separate sidecars). Tool
         # calls use the Python-style "pythonic" parser (matches runtime._parser.
         # infer_parser, which returns "pythonic" for gemma-4* ids — set in t1).
         #
@@ -228,11 +281,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # 4096≠8192; a backend flag does NOT fix it — the native class does). Validated
         # live: text ✓, image+text ✓, audio+text ✓ (transcribed a TTS clip verbatim);
         # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
-        role_hint="multimodal",
+        role_hint="candidate",
         shape="unified multimodal (text+image+audio)",
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
         # read from the checkpoint config during #71 live validation).
-        context="128K native",
+        context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
         tool_parser="pythonic",
         # This checkpoint is NVFP4 in compressed-tensors format (config.json
@@ -243,12 +296,12 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         status="load-tested",  # GB10 2026-07-01: text+image+audio ✓ on vLLM nightly (#71/#73)
         doc="gemma-4-12b-nvfp4.md",
         task="generate",
-        # No speculative_config: despite the "-MTP" name, this unified checkpoint
-        # exposes no gemma4_assistant draft, and vLLM 0.21/0.22 enable Gemma4 MTP
-        # only via a SEPARATE gemma4_assistant draft model (no self-speculation from
-        # the unified target). --speculative-config {"method":"gemma4_mtp"} is
-        # rejected ("Unsupported speculative method"). Sourcing/​building a draft is a
-        # follow-up; the gear serves without spec-decode until then. (#71)
+        # No speculative_config: native MTP was measured on this checkpoint (§6/§7)
+        # but only reaches 30.8% draft acceptance (~6% decode win) — the coder
+        # fine-tune's distribution has shifted too far from what the assistant draft
+        # (trained against the base it-model) expects. Not worth wiring by default;
+        # the NVFP4 base entry above carries the wired MTP config instead. See
+        # docs/vllm-nightly-migration.md §7.
     ),
     SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
@@ -350,6 +403,28 @@ def resolve_tier(tier: str) -> "SupportedModel":
     )
 
 
+def speculative_config_item(model: SupportedModel) -> str:
+    """The ``--speculative-config=<json>`` compose item for a model's speculative
+    decoding config.
+
+    Generic across *any* gear carrying a non-empty ``speculative_config`` — not
+    hardcoded to the 27B primary. ``mtp_compose_command_items()`` below calls this to
+    build the primary's item; a future gear with its own draft-model route (e.g. a
+    Gemma DSpark ``draft_model`` config — see ``tests/test_catalog.py``'s
+    ``test_gemma_dspark_speculative_config_round_trips_through_helper``, issue #75)
+    can call it directly with its own catalog entry (or a throwaway copy of one)
+    without duplicating the JSON-embedding logic, and without the 27B-specific
+    ``--trust-remote-code`` / ``--language-model-only`` / ``--tokenizer=`` extras that
+    ``mtp_compose_command_items()`` also emits.
+
+    :raises ValueError: if ``model.speculative_config`` is empty — there is nothing
+        to format.
+    """
+    if not model.speculative_config:
+        raise ValueError(f"{model.id}: speculative_config is empty — nothing to format")
+    return f"--speculative-config={model.speculative_config}"
+
+
 def mtp_compose_command_items() -> list[str]:
     """The extra compose ``command:`` items the MTP default primary needs.
 
@@ -365,9 +440,11 @@ def mtp_compose_command_items() -> list[str]:
         (m for m in SUPPORTED_MODELS if m.role_hint == "primary" and m.speculative_config),
         None,
     )
-    spec = primary.speculative_config if primary else '{"method": "..."}'
+    spec_item = (
+        speculative_config_item(primary) if primary else '--speculative-config={"method": "..."}'
+    )
     return [
-        f"--speculative-config={spec}",
+        spec_item,
         "--trust-remote-code",
         "--language-model-only",
         f"--tokenizer={MTP_TOKENIZER_OVERRIDE}",

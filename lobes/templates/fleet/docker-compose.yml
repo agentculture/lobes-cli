@@ -12,16 +12,33 @@
 #   lobes fleet status             # container states + gateway /health + /v1/models
 #
 # Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). Default
-# fleet: the Qwen primary (util 0.45, 128K context), the Gemma 4 12B multimodal
-# gear (util 0.12, vision+audio+MTP), and the two ~0.6B embed/rerank gears (util
-# 0.06 each). Total default budget: 0.69 on the 128 GB GB10. Opt-in: the 4B minor
-# (profile `minor`) and the legacy 14B middle (profile `middle` / `legacy`).
+# "always-on duo" fleet (live-validated co-resident, 2026-07-02 — see
+# docs/vllm-nightly-migration.md §8): the Qwen primary trimmed to 64K context
+# (util 0.30) so the Gemma 4 12B multimodal gear can serve its full 128K native
+# context (util 0.22, vision+audio+MTP), plus the two ~0.6B embed/rerank gears
+# (util 0.06 each). Total default budget: 0.64 on the 128 GB GB10. Opt-in: the 4B
+# minor (profile `minor`) and the legacy 14B middle (profile `middle` / `legacy`).
 # See env.example GPU budget. To add a warm *generate* fallback, wire a
 # vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
 # drop both generate GPU utils so they sum well under 1.0.
 services:
+  # vllm-primary / vllm-embed / vllm-rerank pin the SAME nightly digest
+  # Dockerfile.vllm-gemma4 already bases off (vLLM 0.23.1rc1.dev672) — one
+  # engine, fleet-wide, for the default-on generate/embed/rerank gears (t4 of
+  # devague plan lobes-unifies-its-generate-lane-on-one-vllm-nightl; replaces
+  # the pre-t4 nvcr.io/nvidia/vllm:26.04-py3 NGC pin). Live-validated by the t2
+  # (27B, GO) and t3 (embed+rerank, GO) spikes — see
+  # docs/vllm-nightly-migration.md §4/§5. Bump the digest DELIBERATELY (and
+  # re-validate) rather than floating the moving :nightly tag, same discipline
+  # as Dockerfile.vllm-gemma4.
+  #
+  # §5 finding: nightly's memory-profiler asserts free GPU memory stays
+  # CONSTANT while it profiles — bring these gears up when fleet memory is
+  # stable, not mid-churn (concurrent teardown of another container on the
+  # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
+  # a settle gap over a simultaneous multi-gear `docker compose up`.
   vllm-primary:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # NGC ARM64/Blackwell build (see README to verify the tag)
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-primary
     restart: unless-stopped
     deploy:
@@ -39,6 +56,10 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71): disable the ESTIMATED cudagraph-memory headroom so the
+      # util knob maps back to true usage instead of starving the KV cache.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
     volumes:
@@ -61,8 +82,12 @@ services:
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
       - --kv-cache-dtype=fp8
-      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.45}
+      # Trimmed to 64K (from 128K) so the always-on Gemma multimodal gear can serve
+      # its full 128K native context. Live-validated co-resident on the DGX Spark
+      # GB10, 2026-07-02: 64K holds 6.36x concurrency at util 0.35; shaved to 0.30
+      # here for extra headroom. See docs/vllm-nightly-migration.md §8.
+      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-65536}
+      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
       - --enable-auto-tool-choice
@@ -73,6 +98,10 @@ services:
       # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
       # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
       # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # Unchanged by the t4 nightly flip: the t2 spike proved nightly auto-maps
+      # the deprecated "qwen3_5_mtp" method string to "mtp" internally with MTP
+      # still active (69.9% draft acceptance, near the 0.19.0 72-79% baseline)
+      # — no caller/config change needed. See docs/vllm-nightly-migration.md §4.
       # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
       # is only needed to download gated repos (these defaults are public) — leave it
       # empty or use a minimal-scope read-only token; pin revisions you trust.
@@ -108,7 +137,10 @@ services:
   # and would interfere with --runner/--convert.
 
   vllm-embed:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up.
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-embed
     restart: unless-stopped
     deploy:
@@ -126,6 +158,9 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
     volumes:
@@ -161,7 +196,11 @@ services:
       start_period: 600s
 
   vllm-rerank:
-    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up (§5's spike crash was this exact gear, tripped by concurrent
+    # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-rerank
     restart: unless-stopped
     deploy:
@@ -179,6 +218,9 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
     volumes:
@@ -370,9 +412,10 @@ services:
   # qwen3_5_mtp config). Tool calls use the Python-style "pythonic" parser.
   # NVFP4 (modelopt_fp4). NO --profiles key — starts with the default fleet.
   #
-  # GPU budget: util 0.12 (~15 GiB) alongside the 27B primary (util 0.45,
-  # ~56 GiB) + embed/rerank (util 0.06 each): 0.45+0.12+0.06+0.06 = 0.69 on
-  # the 128 GB GB10 with ~38 GiB headroom for caches and other services.
+  # GPU budget: util 0.22 (~26 GiB, 128K context) alongside the 27B primary
+  # (util 0.30, 64K context, ~38 GiB) + embed/rerank (util 0.06 each):
+  # 0.30+0.22+0.06+0.06 = 0.64 on the 128 GB GB10. Live-validated co-resident
+  # 2026-07-02 — see docs/vllm-nightly-migration.md §8.
   # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
 
   vllm-multimodal:
@@ -438,28 +481,113 @@ services:
     command:
       - vllm
       - serve
-      - ${MULTIMODAL_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
-      - --served-model-name=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
+      - --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
       - --host=0.0.0.0
       - --port=8000
       # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
       # config.json quant_method; modelopt_fp4 fails with a method mismatch (#71).
       - --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
-      # NOT the 128K native context: at the co-resident util 0.12 the KV cache holds
-      # ~24K tokens (measured #71). Serving --max-model-len 131072 fails ("max seq
-      # len larger than KV cache"). 128K native needs a much larger util than the
-      # 0.12 lane budget allows. Default to a co-resident-safe context; raise both
-      # this and the util together if you need more. (Live-validated at 4096.)
-      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-8192}
-      # Measured #71: ~15.7 GiB actual footprint (weights 8.1 + graphs 0.46 + KV 7.2)
-      # ≈ 0.12 of the 128 GB GB10 — fits the 0.69 default-fleet budget. Requires the
+      # The 128K native context, live-validated co-resident with the 64K-trimmed
+      # 27B primary on the DGX Spark GB10, 2026-07-02: at util 0.22 the KV cache
+      # holds the full 128K at ~4.67x concurrency. Superseded the earlier
+      # co-resident-safe 8192/util-0.12 pairing (#71) once headroom was measured
+      # with both gears warm together. See docs/vllm-nightly-migration.md §8.
+      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-131072}
+      # Live-validated 2026-07-02 (§8): ~26 GiB actual footprint (weights 9.25 GiB
+      # incl. the assistant draft + graph 4.17 GiB + KV ~12.6 GiB) ≈ 0.22 of the
+      # 128 GB GB10 — fits the 0.64 default-fleet budget. Requires the
       # VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see note there).
-      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.12}
+      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.22}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
-      # No speculative-decoding flag here: Gemma4 native MTP needs a separate
-      # gemma4_assistant draft model (the "-MTP" checkpoint exposes none), and the
-      # gemma4_mtp method is rejected. Sourcing a draft was scoped in #75 (closed).
+      # Native MTP, default-on (docs/vllm-nightly-migration.md §7, measured
+      # 2026-07-02): the public google/gemma-4-12B-it-assistant draft against this
+      # NVFP4 base target — 57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6
+      # tok/s), the fastest Gemma config measured. MUST match
+      # lobes.catalog.SUPPORTED_MODELS' coolthor/gemma-4-12B-it-NVFP4A16 entry byte
+      # for byte (tests/test_catalog.py guards the two against drift). Note the
+      # "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig rejects
+      # that outdated key (verified live, §6).
+      - '--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in coder co-resident generate backend (Gemma 4 12B coder fine-tune) --
+  # KEPT (cite-don't-delete), DEMOTED from the default "multimodal" gear by the
+  # "support both" decision (docs/vllm-nightly-migration.md §7, 2026-07-02):
+  # coding-strong, but native MTP only reaches 30.8% draft acceptance on this
+  # fine-tune (the assistant draft was trained against the base it-model, not this
+  # coder checkpoint) — a marginal ~6% decode win, not worth wiring by default.
+  # Activate with `docker compose --profile multimodal-coder up -d` (or add
+  # "multimodal-coder" to COMPOSE_PROFILES in .env). When active, set
+  # MULTIMODAL_CODER_BASE_URL so the gateway routes the "multimodal-coder" alias
+  # (and the coder's served id) here — see MULTIMODAL_CODER_* in env.example.
+  #
+  # Same custom image as vllm-multimodal (Dockerfile.vllm-gemma4 — the native
+  # gemma4_unified class needs vLLM nightly): both services build the SAME
+  # Dockerfile and default to the SAME local tag (lobes/vllm-gemma4:local), only
+  # the --model / --served-model-name arg differs at runtime.
+  #
+  # GPU budget: adds util 0.12 (~15 GiB) ON TOP of the default 0.69 fleet budget
+  # when active — see env.example for the combined math.
+
+  vllm-multimodal-coder:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_CODER_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-multimodal-coder
+    profiles:
+      - multimodal-coder
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-multimodal-coder:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MULTIMODAL_CODER_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --served-model-name=${MULTIMODAL_CODER_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MULTIMODAL_CODER_QUANTIZATION:-compressed-tensors}
+      - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=pythonic
+      # No speculative-decoding flag here: native MTP measured only 30.8% draft
+      # acceptance on this coder fine-tune (§6/§7) — not worth wiring. See the
+      # catalog entry's comment (role_hint="candidate", speculative_config="").
       - --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -499,9 +627,16 @@ services:
       # backend is wired unless the operator explicitly opts in).
       - MIDDLE_BASE_URL=${MIDDLE_BASE_URL:-}
       - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
-      # Multimodal gear (default-on: always started, always wired).
+      # Multimodal gear (default-on: always started, always wired). Default id is
+      # the NVFP4 base + native-MTP gear (docs/vllm-nightly-migration.md §7).
       - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}
-      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
+      # Opt-in coder gear (activate with --profile multimodal-coder and set
+      # MULTIMODAL_CODER_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in). Reachable via the
+      # "multimodal-coder" alias once wired — see lobes/gateway/_config.py.
+      - MULTIMODAL_CODER_BASE_URL=${MULTIMODAL_CODER_BASE_URL:-}
+      - MULTIMODAL_CODER_SERVED_NAME=${MULTIMODAL_CODER_SERVED_NAME:-}
       - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).

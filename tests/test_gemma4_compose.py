@@ -3,10 +3,19 @@
 Asserts that:
   - vllm-multimodal gains a build: block (context: ., dockerfile: Dockerfile.vllm-gemma4)
     AND an image: override (${MULTIMODAL_IMAGE:-lobes/vllm-gemma4:local}).
-  - vllm-primary, vllm-embed, and vllm-rerank keep image: nvcr.io/nvidia/vllm:26.04-py3
-    unchanged.
+  - vllm-primary, vllm-embed, and vllm-rerank do NOT gain a build: block (they pull
+    the raw nightly digest directly, no custom Dockerfile — see below).
   - docker-compose.audio.yml does NOT gain a build/image override for vllm-multimodal
     (the audio overlay is untouched by t2).
+
+NOTE (devague plan `lobes-unifies-its-generate-lane-on-one-vllm-nightl`, task
+t4, post-#71): vllm-primary/embed/rerank originally kept
+`nvcr.io/nvidia/vllm:26.04-py3` unchanged by #71 (this file's original intent
+below `TestOtherServicesUnchanged`). t4 deliberately flipped that pin to the
+SAME nightly digest `Dockerfile.vllm-gemma4` bases off — unifying the fleet's
+generate/embed/rerank engine — so `TestOtherServicesUnchanged` now asserts the
+nightly-digest state, not the pre-t4 stock NGC image. See
+docs/vllm-nightly-migration.md §4/§5 for the t2/t3 spikes that validated it.
 """
 
 from __future__ import annotations
@@ -20,6 +29,9 @@ _FLEET_COMPOSE = _TEMPLATES / "fleet" / "docker-compose.yml"
 _AUDIO_COMPOSE = _TEMPLATES / "fleet" / "docker-compose.audio.yml"
 
 _STOCK_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
+_NIGHTLY_VLLM_IMAGE = (
+    "vllm/vllm-openai@sha256:" "7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+)
 _CUSTOM_DOCKERFILE = "Dockerfile.vllm-gemma4"
 _LOCAL_TAG = "lobes/vllm-gemma4:local"
 _MULTIMODAL_IMAGE_VAR = "MULTIMODAL_IMAGE"
@@ -81,28 +93,36 @@ class TestMultimodalServiceHasBuildBlock:
 
 
 class TestOtherServicesUnchanged:
-    """vllm-primary, vllm-embed, and vllm-rerank must keep the stock NGC image."""
+    """vllm-primary, vllm-embed, and vllm-rerank do not gain a build: block —
+    they pull the pinned nightly digest directly (t4 flip; see module docstring).
+    """
 
-    def test_vllm_primary_keeps_stock_image(self) -> None:
+    def test_vllm_primary_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-primary"]
-        assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-primary must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
+            f"vllm-primary must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
+            f"(got {svc.get('image')!r})"
         )
+        assert svc.get("image") != _STOCK_VLLM_IMAGE
 
-    def test_vllm_embed_keeps_stock_image(self) -> None:
+    def test_vllm_embed_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-embed"]
-        assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-embed must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
+            f"vllm-embed must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
+            f"(got {svc.get('image')!r})"
         )
+        assert svc.get("image") != _STOCK_VLLM_IMAGE
 
-    def test_vllm_rerank_keeps_stock_image(self) -> None:
+    def test_vllm_rerank_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-rerank"]
-        assert svc.get("image") == _STOCK_VLLM_IMAGE, (
-            f"vllm-rerank must keep image: {_STOCK_VLLM_IMAGE!r} " f"(got {svc.get('image')!r})"
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
+            f"vllm-rerank must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
+            f"(got {svc.get('image')!r})"
         )
+        assert svc.get("image") != _STOCK_VLLM_IMAGE
 
     def test_vllm_primary_has_no_build_key(self) -> None:
         compose = _load_fleet()

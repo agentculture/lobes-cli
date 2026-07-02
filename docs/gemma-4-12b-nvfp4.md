@@ -3,23 +3,46 @@
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
+>
+> **"Support both" (2026-07-02).** The catalog carries **two** Gemma 4 12B
+> gears — see [`docs/vllm-nightly-migration.md` §7](vllm-nightly-migration.md)
+> for the full benchmark evidence behind this split:
+>
+> - **Base (default)** — `coolthor/gemma-4-12B-it-NVFP4A16`, the fleet's
+>   default `multimodal`/`normal` tier gear, **native MTP wired ON by
+>   default**: measured **28.6 tok/s decode at 57.9% draft acceptance** — the
+>   fastest Gemma config measured on this hardware.
+> - **Coder (opt-in)** — `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`,
+>   KEPT (cite-don't-delete) but DEMOTED to a `candidate`: coding-strong, but
+>   native MTP only reaches **30.8%** draft acceptance on this fine-tune (a
+>   marginal ~6% decode win), so it is **not** wired by default. Reachable by
+>   explicit id or the opt-in `multimodal-coder` gateway alias.
+>
+> Everything below that is shared architecture (the `Gemma4UnifiedForConditionalGeneration`
+> class, the serve-enablement story, `TRITON_ATTN`, `compressed-tensors` NVFP4,
+> the #71/#73 live-validation) applies to **both** checkpoints — they are the
+> same unified multimodal family, one a base it-model, one a coder fine-tune of
+> it. Sections that differ between the two (model id, speculative decoding,
+> serving env vars) call out each gear explicitly.
 
-**Model id:** `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`
-**Tier alias:** `multimodal` (and `normal` back-compat; resolves here via `model=multimodal` or `model=normal` at the gateway)
-**Role:** `multimodal` — unified text+image+audio gear, the fleet's new "normal" tier
-**Status:** `load-tested` — serve-enablement **resolved** (#71/#73). The gear
-**serves** on the custom image (vLLM nightly, native `gemma4_unified` class) and
-was live-validated on the DGX Spark GB10 for **text + image + audio** (2026-07-01;
-see ["Live-validation status"](#live-validation-status-71) below).
+**Model id (default, base):** `coolthor/gemma-4-12B-it-NVFP4A16`
+**Model id (opt-in, coder):** `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4`
+**Tier alias:** `multimodal` (and `normal` back-compat; resolves to the **base** gear via `model=multimodal` or `model=normal` at the gateway). The coder is reachable via `model=multimodal-coder` once its opt-in backend is wired, or by its explicit id.
+**Role:** `multimodal` (base) / `candidate` (coder) — unified text+image+audio gear(s); the base is the fleet's "normal" tier
+**Status:** `load-tested` (both). Serve-enablement **resolved** (#71/#73) for the
+shared architecture; the base gear's native-MTP speedup was measured in §7
+(2026-07-02, 28.6 tok/s @ 57.9% acceptance). See
+["Live-validation status"](#live-validation-status-71) below.
 
 ## What it is
 
-The Gemma 4 12B is the fleet's **unified multimodal** gear: a single checkpoint
-serving text, image, and audio through `Gemma4UnifiedForConditionalGeneration` —
-no separate vision or audio sidecars needed. It is quantized to **NVFP4** in
+The Gemma 4 12B family is the fleet's **unified multimodal** gear(s): a single
+checkpoint serving text, image, and audio through
+`Gemma4UnifiedForConditionalGeneration` — no separate vision or audio sidecars
+needed. Both the base and coder checkpoints are quantized to **NVFP4** in
 **`compressed-tensors`** format (not nvidia modelopt).
 
-Architecture highlights:
+Architecture highlights (shared by both gears):
 
 - **Unified multimodal** (`Gemma4UnifiedForConditionalGeneration`) — text, image,
   and audio in one checkpoint; the generate lane gains native vision and audio
@@ -31,34 +54,41 @@ Architecture highlights:
 - **Non-square attention** — `global_head_dim=512` is double `head_dim=256`, so
   the o_proj input is `num_heads × global_head_dim = 8192`. The default
   FlashAttention backend emits `num_heads × head_dim = 4096` and serving crashes;
-  **`VLLM_ATTENTION_BACKEND=TRITON_ATTN`** is required (see #71 below).
-- **No native MTP via this checkpoint** — despite the `-MTP` name, it exposes no
-  `gemma4_assistant` draft, and vLLM 0.21/0.22 enable Gemma4 MTP only via a
-  *separate* draft model. So **no `--speculative-config`** is carried (the
-  `gemma4_mtp` method is rejected). The gear serves without spec-decode.
+  **`VLLM_ATTENTION_BACKEND=TRITON_ATTN`** is required (see #71 below; §6 later
+  found this env is a no-op *warning* on the pinned nightly digest — the native
+  class auto-forces TRITON regardless — but it is kept, belt-and-suspenders).
+- **Native MTP differs by checkpoint** — see
+  ["Speculative decoding"](#speculative-decoding-support-both-7) below: the
+  **base** gear has it wired ON by default (57.9% acceptance); the **coder**
+  gear does not (measured 30.8%, not worth it).
 - **Pythonic tool calls** (`--tool-call-parser pythonic`).
 - **128K native context** — confirmed from `text_config.max_position_embeddings =
-  131072` in the checkpoint config (#71).
+  131072` in the checkpoint config (#71); the base checkpoint shares this family
+  config (not independently re-measured for the exact NVFP4A16 export).
 - **No `--language-model-only`** — vision and audio towers are active by default;
   adding that flag would disable them and defeat the headline capability.
 
 ## Serving (fleet)
 
-The multimodal gear is **default-on** in the fleet — it starts with the standard
+The **base** gear is **default-on** in the fleet — it starts with the standard
 `docker compose up` (no `--profile` needed). The `vllm-multimodal` service is
-always-warm alongside the primary, embed, and rerank gears.
+always-warm alongside the primary, embed, and rerank gears. The **coder** gear
+is **opt-in** — its `vllm-multimodal-coder` service sits behind the
+`multimodal-coder` compose profile (mirrors `vllm-minor`/`vllm-middle`).
 
 Once the fleet is running, the gateway automatically wires `MULTIMODAL_BASE_URL`
-to `http://vllm-multimodal:8000` — no `.env` edit required.
+to `http://vllm-multimodal:8000` — no `.env` edit required for the base gear.
+
+### Base gear (default)
 
 Key env vars (from `env.example`):
 
 | Variable | Default | Notes |
 |---|---|---|
-| `MULTIMODAL_MODEL` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | HF checkpoint id |
-| `MULTIMODAL_SERVED_NAME` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | OpenAI `model` id the gateway routes to |
-| `MULTIMODAL_GPU_MEM_UTIL` | `0.12` | ~15 GiB on the 128 GB GB10 |
-| `MULTIMODAL_MAX_MODEL_LEN` | `131072` | 128K (native, confirmed) |
+| `MULTIMODAL_MODEL` | `coolthor/gemma-4-12B-it-NVFP4A16` | HF checkpoint id |
+| `MULTIMODAL_SERVED_NAME` | `coolthor/gemma-4-12B-it-NVFP4A16` | OpenAI `model` id the gateway routes to |
+| `MULTIMODAL_GPU_MEM_UTIL` | `0.22` | ~26 GiB on the 128 GB GB10 (live-validated 2026-07-02, [§8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)) |
+| `MULTIMODAL_MAX_MODEL_LEN` | `131072` | the full 128K native context, co-resident with the 64K-trimmed 27B primary (see [Live-validation status](#live-validation-status-71) and [§8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)) |
 | `MULTIMODAL_QUANTIZATION` | `compressed-tensors` | the checkpoint's own quant_method |
 | `MULTIMODAL_ATTENTION_BACKEND` | `TRITON_ATTN` | required for the non-square attention (#71) |
 | `MULTIMODAL_IMAGE` | *(unset → local build)* | or a `ghcr.io`/local-registry tag |
@@ -70,16 +100,33 @@ Compose flags used by the `vllm-multimodal` service:
 --served-model-name ${MULTIMODAL_SERVED_NAME}
 --quantization ${MULTIMODAL_QUANTIZATION:-compressed-tensors}
 --max-model-len ${MULTIMODAL_MAX_MODEL_LEN:-131072}
---gpu-memory-utilization ${MULTIMODAL_GPU_MEM_UTIL:-0.12}
+--gpu-memory-utilization ${MULTIMODAL_GPU_MEM_UTIL:-0.22}
 --tool-call-parser=pythonic
+--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}
 --trust-remote-code
 # env: VLLM_ATTENTION_BACKEND=TRITON_ATTN
-# NO --speculative-config (Gemma4 native MTP needs a separate gemma4_assistant draft)
 ```
 
 Note: **no `--language-model-only`** — the vision and audio towers are active.
 This is the key difference from the `vllm-minor` service, which *does* use
 `--language-model-only` to drop the ViT tower.
+
+### Coder gear (opt-in)
+
+Activate with `docker compose --profile multimodal-coder up -d` (or add
+`multimodal-coder` to `COMPOSE_PROFILES` in `.env`), then set
+`MULTIMODAL_CODER_BASE_URL` so the gateway wires it:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MULTIMODAL_CODER_MODEL` / `MULTIMODAL_CODER_SERVED_NAME` | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | HF checkpoint id / OpenAI `model` id |
+| `MULTIMODAL_CODER_GPU_MEM_UTIL` | `0.12` | adds ~15 GiB on top of the default 0.64 fleet budget |
+| `MULTIMODAL_CODER_BASE_URL` | *(unset by default)* | set to activate gateway routing |
+
+The `vllm-multimodal-coder` compose service is otherwise identical to
+`vllm-multimodal` (same custom image, `Dockerfile.vllm-gemma4`) but carries
+**no `--speculative-config`** — native MTP measured only 30.8% draft
+acceptance on this checkpoint (§6/§7), not worth wiring.
 
 ## GPU memory budget
 
@@ -87,16 +134,24 @@ When the default fleet is active (primary + multimodal + embed + rerank):
 
 | Gear | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|
-| `primary` (27B MTP, 128K) | 0.45 | ~56 |
-| `multimodal` (12B unified, 128K) | **0.12** | ~15 |
+| `primary` (27B MTP, **64K**, trimmed from 128K) | **0.30** | ~38 |
+| `multimodal` (12B unified base, 128K native) | **0.22** | ~26 |
 | `embed` (0.6B) | 0.06 | ~7 |
 | `rerank` (0.6B) | 0.06 | ~7 |
-| **Total** | **0.69** | ~85 / 128 GB |
+| **Total** | **0.64** | ~78 / 128 GB |
+| *(opt-in)* `multimodal-coder` (12B unified coder) | +0.12 | +~15 |
 
-This leaves ~38 GiB of headroom on the 128 GB GB10 for KV caches and other
-services. The multimodal gear's footprint is **measured** (#71, 2026-07-01):
-~15.7 GiB (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈ 0.12 — see
-["Live-validation status"](#live-validation-status-71).
+This "always-on duo" budget was **live-validated co-resident on the DGX Spark
+GB10, 2026-07-02**: the multimodal gear held its full 128K context at 4.67×
+concurrency and the primary held 64K at 6.36× concurrency (measured at util
+0.35, shaved to the shipped 0.30 for extra headroom) at the same time —
+~108 GiB used / ~13 GiB free alongside embed + rerank and other co-tenant
+services. See
+[`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02)
+for the full numbers; this supersedes the earlier #71 co-resident-safe
+fallback (8192 tokens @ util 0.12, ~15.7 GiB) described in
+["Live-validation status"](#live-validation-status-71) below, which predates
+this duo-budget measurement.
 
 ## Tier alias usage
 
@@ -104,21 +159,26 @@ Callers use capability-tier aliases instead of hardcoded model ids:
 
 | Alias | Routes to | Fallback when absent |
 |---|---|---|
-| `multimodal` | **12B `multimodal`** | primary |
-| `normal` | **12B `multimodal`** | primary (back-compat) |
+| `multimodal` | **12B `multimodal` (base, native MTP)** | primary |
+| `normal` | **12B `multimodal` (base, native MTP)** | primary (back-compat) |
+| `multimodal-coder` | **12B coder** (opt-in) | primary (unresolved when not wired) |
 | `main` | 27B `primary` | always present |
 | `hard` | 27B `primary` | always present (back-compat) |
 | `minor` | 4B `minor` | primary |
 | `cheap` | 4B `minor` | primary (back-compat) |
 
-Send `model=multimodal` or `model=normal` and the gateway resolves to this gear
-when it is wired and healthy. If the multimodal backend is not started, the
-alias falls back upward to the primary — the caller's code is unchanged.
+Send `model=multimodal` or `model=normal` and the gateway resolves to the
+**base** gear when it is wired and healthy. If the multimodal backend is not
+started, the alias falls back upward to the primary — the caller's code is
+unchanged. `multimodal-coder` is not part of the tier vocabulary — it is a
+dedicated alias, added only once the opt-in coder backend is wired (mirrors the
+tier-fallback contract: an alias never points at a served name nothing actually
+serves).
 
 ```python
 # Before: hardcoded model id
 response = client.chat.completions.create(
-    model="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4",
+    model="coolthor/gemma-4-12B-it-NVFP4A16",
     messages=[{"role": "user", "content": "..."}],
 )
 
@@ -127,65 +187,66 @@ response = client.chat.completions.create(
     model="multimodal",
     messages=[{"role": "user", "content": "..."}],
 )
+
+# Coding-heavy workload: opt into the coder gear explicitly (once its
+# --profile multimodal-coder service is up and MULTIMODAL_CODER_BASE_URL is set)
+response = client.chat.completions.create(
+    model="multimodal-coder",
+    messages=[{"role": "user", "content": "..."}],
+)
 ```
 
-## DSpark experiment
+## DSpark experiment — INVALID, do not wire (§6)
 
-The DSpark experiment is **disabled by default**. DSpark
-(`deepseek-ai/dspark_gemma4_12b_block7`) is a DeepSeek *speculative-decoding draft
-model* for Gemma 4 12B. Because the default serve carries **no** `--speculative-config`
-(see below), trying it requires both adding a `--speculative-config` flag to the
-`vllm-multimodal` command in `docker-compose.yml` **and** setting in `.env`:
+The DSpark route (`deepseek-ai/dspark_gemma4_12b_block7`, a DeepSeek
+*speculative-decoding draft model* for Gemma 4 12B) was investigated in #75 and
+found **INVALID on vLLM 0.23** (`docs/vllm-nightly-migration.md` §6, live,
+2026-07-01): its custom `Gemma4DSparkModel` drafter architecture is not in
+vLLM 0.23's supported speculative-draft set (`Model architectures
+['Gemma4DSparkModel'] are not supported for now`). Do not wire it — the native
+`mtp` route (the public `google/gemma-4-12B-it-assistant` draft, wired on the
+base gear above) is the one that works.
 
-```env
-MULTIMODAL_SPECULATIVE_CONFIG={"method": "draft_model", "draft_model_id": "deepseek-ai/dspark_gemma4_12b_block7", "num_speculative_tokens": 3}
-```
+## Speculative decoding — "support both" (§7) {#speculative-decoding-support-both-7}
 
-DSpark is unvalidated on this checkpoint — measure before enabling.
-
-## Speculative decoding (#75): before-state and scope
-
-> **Status: #75 is CLOSED — scoped, not implemented.** The draft route was
-> resolved (see [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md)), but the
-> wire → measure → verdict legs never landed: the `multimodal` lane still serves
-> with **no `speculative_config`**, and the benchmark below (~23 tok/s
-> single-stream, no draft) *is* that no-spec baseline. Reviving speculative
-> decoding for this gear is **new work** (a future issue), not #75. The scope
-> recorded here is retained as the historical framing.
+> **Status: RESOLVED for the base gear (2026-07-02).** The base gear
+> (`coolthor/gemma-4-12B-it-NVFP4A16`) now serves with native MTP **ON by
+> default**: `{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",
+> "num_speculative_tokens": 1}`, measured **28.6 tok/s decode at 57.9% draft
+> acceptance** (up from 19.8 tok/s no-spec, ~1.45×) — see
+> [`docs/vllm-nightly-migration.md` §7](vllm-nightly-migration.md) for the full
+> comparison table (coder no-spec/+MTP, bf16 base+MTP, and this NVFP4 base+MTP).
+> The **coder** gear (`sakamakismile/…`) was also measured with native MTP —
+> only **30.8%** draft acceptance, a marginal ~6% decode win — so it is KEPT
+> opt-in but **not** wired by default. The sections below are the historical
+> framing from before this resolution (issue #75, closed with the route
+> resolved but wire→measure→verdict unbuilt); retained for context.
 
 **Audience:** lobes operators/maintainers and the Culture mesh that consumes the
 `multimodal` (Gemma 4 12B) generate lane — i.e. anyone calling `model=multimodal`
 or the back-compat `model=normal` (see [Tier alias usage](#tier-alias-usage)).
 
-**Before-state (verified in-repo).** The gemma catalog entry
-(`lobes/catalog.py`, `id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"`)
-carries **no `speculative_config`** today: `SupportedModel.speculative_config`
-defaults to `speculative_config: str = ""`, and the gemma entry never overrides
-it — the comment directly above its closing paren reads "No speculative_config:
-despite the '-MTP' name, this unified checkpoint exposes no gemma4_assistant
-draft...". Compose mirrors this: the only `--speculative-config` item in
-`lobes/templates/docker-compose*.yml` belongs to the 27B `vllm` (primary)
-service (`'--speculative-config={"method": "qwen3_5_mtp", ...}'`); the
-`vllm-multimodal` service carries none — see the compose-flags block above and
-the `# NO --speculative-config` comment in it. The native self-speculation path
-is also closed: `{"method": "gemma4_mtp"}` is rejected by vLLM 0.21/0.22 as an
-"Unsupported speculative method" (see the ["No native MTP via this
-checkpoint"](#what-it-is) bullet above; the [DSpark
-experiment](#dspark-experiment) above is the one currently-documented, but
-disabled and unvalidated, alternative route).
+**Historical before-state (as of #71/#73, pre-§7).** The gemma catalog entry
+(then the coder, `id="sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"`)
+carried **no `speculative_config`**: the native self-speculation path was closed
+(`{"method": "gemma4_mtp"}` rejected as "Unsupported speculative method" on
+vLLM 0.21/0.22), and the DSpark draft-model route documented below was
+disabled and unvalidated. §6/§7 (live, 2026-07-01/02) resolved this: the
+correct method is `"mtp"` (not `"gemma4_mtp"`) with the draft under the
+`"model"` key (not `"draft_model_id"` — vLLM 0.23's `SpeculativeConfig` rejects
+that outdated key), and DSpark was proven **invalid** (unsupported drafter
+architecture). See [DSpark experiment](#dspark-experiment--invalid-do-not-wire-6)
+above.
 
-**The gap this leaves.** The 27B `primary`/`main` gear gets a measured **~2.4×
-single-stream decode speedup** from MTP speculative decoding (72–79 % draft
-acceptance) — see
-[`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md). The
-`multimodal`/`normal` lane has no equivalent multiplier: it serves with no
-speculative config at all. In *absolute* terms the 12B still out-decodes the
-primary single-stream (~23 vs ~18–19 tok/s — see the benchmark below) because it
-is under half the parameters; the gap is against its own *potential* — a working
-draft would push it well past 23 tok/s — not against the primary. Now that #71
-has landed and the lane is measured, that potential gap is concrete, not assumed.
+**The gap this leaves (now closed for the base gear).** The 27B `primary`/`main`
+gear gets a measured **~2.4× single-stream decode speedup** from MTP speculative
+decoding (72–79% draft acceptance) — see
+[`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md). The base
+`multimodal`/`normal` gear now gets its own multiplier (~1.45×, 28.6 tok/s) from
+native MTP — see §7. The coder gear (opt-in) still has the smaller ~1.04× gap
+this section originally described (24 tok/s vs the base's 28.6).
 
-**Scope split.**
+**Scope split (historical).**
 
 | Concern | Owner |
 |---|---|
@@ -208,6 +269,14 @@ resume from the resolved route against a now-serving gear.
 
 > **RESOLVED on the DGX Spark (GB10, sm_121, 2026-07-01, #71/#73): the gear
 > SERVES and answers text + image + audio requests.** `status` = `load-tested`.
+>
+> This #71/#73 validation ran against the **coder** checkpoint (the default
+> gear at the time). The **base** checkpoint (`coolthor/gemma-4-12B-it-NVFP4A16`,
+> promoted to default in §7, 2026-07-02) shares the identical
+> `Gemma4UnifiedForConditionalGeneration` architecture and serve story — the
+> §7 measurement independently re-confirmed it *serves* and *decodes* correctly
+> (28.6 tok/s + MTP) — but the text+image+audio content-correctness checks below
+> were not independently re-run against the base checkpoint specifically.
 
 **The fix: vLLM nightly's native class.** `gemma4_unified` is **early-fusion**
 multimodal (no separate vision/audio towers — a `vision_embedder` and audio
@@ -246,7 +315,9 @@ Runtime matrix tested:
 - ✅ **Image + text** — described a test image (red circle + text) correctly.
 - ✅ **Audio + text** — transcribed a 24 kHz TTS clip **verbatim** (needed `av`).
 - ✅ **GPU util** — ~**15.7 GiB** actual (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈
-  **0.12** of the 128 GB GB10 → fits the 0.69 default-fleet budget.
+  **0.12** of the then-**0.69** default-fleet budget. **Superseded 2026-07-02**
+  by the always-on duo retune — see the note below and
+  [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 **Two config gotchas (vLLM 0.23), now handled in the compose/env:**
 
@@ -255,10 +326,13 @@ Runtime matrix tested:
   — which starves the KV cache so `util 0.12` fails with *"No available memory for
   the cache blocks"*. The compose sets `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`
   so the util knob maps to true usage.
-- **Context vs util.** At `util 0.12` the KV cache holds only ~24K tokens, so the
-  128K native context is **not** serveable at the co-resident lane budget —
-  `MULTIMODAL_MAX_MODEL_LEN` defaults to `8192` (raise it and the util together for
-  more). 128K would need a much larger util than the lane allows.
+- **Context vs util (historical, superseded 2026-07-02).** At the *original*
+  `util 0.12` the KV cache held only ~24K tokens, so the 128K native context was
+  **not** serveable at that co-resident lane budget — `MULTIMODAL_MAX_MODEL_LEN`
+  defaulted to `8192`. This has since been resolved: the shipped default is now
+  `util 0.22` / `MULTIMODAL_MAX_MODEL_LEN=131072`, live-validated co-resident
+  with the 64K-trimmed 27B primary — see
+  [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 Resolved:
 
@@ -266,17 +340,24 @@ Resolved:
 - ✅ **Image + audio** — functional (audio needs the `vllm[audio]` extra / PyAV).
 - ✅ **Quantization** — `compressed-tensors` (not `modelopt_fp4`).
 - ✅ **GPU util** — ~15.7 GiB ≈ 0.12 budget.
-- ⛔ **Native MTP** — still needs a separate `gemma4_assistant` draft model (scoped in #75, closed); the gear serves without spec-decode.
+- ✅ **Native MTP (base gear, default-on)** — the public `google/gemma-4-12B-it-assistant`
+  draft, wired via `{"method": "mtp", "model": "…", "num_speculative_tokens": 1}`:
+  28.6 tok/s @ 57.9% draft acceptance (§7). ⛔ **Not wired on the coder gear**
+  (opt-in) — measured only 30.8% acceptance there, not worth it.
 
-## Benchmark — 2026-07-01, DGX Spark (GB10), standalone
+## Benchmark — 2026-07-01, DGX Spark (GB10), standalone (coder, no-spec)
 
-> First throughput/prefill numbers for the gear. Measured on the shared GB10
+> First throughput/prefill numbers for the gear — measured on the (then-default)
+> **coder** checkpoint, **no speculative decoding**. Measured on the shared GB10
 > **standalone** (own container on host port 8010, **not** co-resident behind the
 > gateway) so the live 27B primary kept serving mesh traffic. Image
 > `lobes/vllm-gemma4:nightly-audio` (vLLM **0.23.1rc1.dev672**, native
 > `Gemma4UnifiedForConditionalGeneration`, `TRITON_ATTN`, `compressed-tensors`
 > NVFP4, `--max-model-len 8192`). Driven by `lobes benchmark` + a manual
-> forced-decode probe.
+> forced-decode probe. See
+> [`docs/vllm-nightly-migration.md` §7](vllm-nightly-migration.md) for the
+> **base** gear's numbers (19.8 tok/s no-spec, 28.6 tok/s + native MTP) and the
+> coder's own +MTP number (24 tok/s @ 30.8% accept) measured the same way.
 
 | Property | Value |
 |---|---|
@@ -289,22 +370,21 @@ Resolved:
 | Weights (EngineCore) | **8,113 MiB** (~7.9 GiB) |
 | CUDA-graph memory | 0.96 GiB (trimmed capture set — see config note) |
 | KV cache | **8.47 GiB → 57,636 tokens**; **7.04×** max concurrency at 8,192 tokens/request |
-| Speculative decoding | **none** — no MTP draft (see ["No native MTP"](#what-it-is)); this is raw single-stream decode |
+| Speculative decoding | **none** — this is the coder's raw single-stream, no-spec baseline (§6). With native MTP the coder reaches ~24 tok/s @ 30.8% accept (§7) — kept opt-in, not wired by default. |
 
-**Decode context.** At ~**23 tok/s single-stream**, the 12B `multimodal` lane is
-actually a touch *faster* per-stream than the 27B `primary` (~18–19 tok/s, and
-that is *with* its ~2.4× MTP boost) — it is less than half the parameters. So the
-lane with **no spec-decode** still out-decodes the primary single-stream, while
-adding native vision+audio; the primary remains the more capable text model. The
-speculative-decoding gap called out in
-[Speculative decoding (#75)](#speculative-decoding-75-before-state-and-scope)
-is about closing the *potential* gap (a draft would push the 12B well past 23
-tok/s), not a current regression.
+**Decode context.** At ~**23 tok/s single-stream** (coder, no-spec), the 12B
+`multimodal` lane is actually a touch *faster* per-stream than the 27B `primary`
+(~18–19 tok/s, and that is *with* its ~2.4× MTP boost) — it is less than half the
+parameters. The **default** base gear now does even better with native MTP:
+**28.6 tok/s** (§7) — see
+[Speculative decoding — "support both" (§7)](#speculative-decoding-support-both-7)
+above for the full picture across both gears.
 
-**Config note — why not the production `util 0.12`.** The default fleet lane runs
+**Config note (historical, 2026-07-01) — why not the then-production `util
+0.12`.** At the time of this benchmark the default fleet lane ran
 `MULTIMODAL_GPU_MEM_UTIL=0.12` with `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`.
-That combination was validated on #71's earlier nightly digest; the **current**
-`:nightly-audio` build (dev672) behaves differently in two ways that forced a
+That combination was validated on #71's earlier nightly digest; the **then-current**
+`:nightly-audio` build (dev672) behaved differently in two ways that forced a
 bench-only config:
 
 1. **Cudagraph accounting flipped.** With `…ESTIMATE_CUDAGRAPHS=0`, dev672 now
@@ -327,14 +407,22 @@ concurrency 64* would read low versus a full-capture production serve. Total
 standalone footprint here: ~**17.4 GiB** (weights 7.9 + graphs 0.96 + KV 8.47) at
 util 0.15.
 
-> **Follow-up (config drift):** the default lane's `util 0.12` +
-> `…ESTIMATE_CUDAGRAPHS=0` should be re-validated against the pinned dev672 image
-> and, if the accounting change sticks, either the util raised or the capture set
-> trimmed in the compose so the gear boots 8,192 co-resident. Tracked with the
-> serve config in [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) / the fleet compose.
+> **Follow-up (config drift) — RESOLVED 2026-07-02.** This note flagged that the
+> then-default lane's `util 0.12` + `…ESTIMATE_CUDAGRAPHS=0` should be
+> re-validated against the pinned dev672 image and the util raised if the
+> accounting change stuck. The always-on duo retune did exactly that: the
+> shipped default is now `util 0.22` (close to the `0.2427` this benchmark
+> suggested) with the full `131072` (128K) context, live-validated co-resident
+> with the 64K-trimmed 27B primary — see
+> [`vllm-nightly-migration.md` §8](vllm-nightly-migration.md#8-always-on-duo-budget-live-validated-2026-07-02).
 
 ## Related docs
 
+- [`vllm-nightly-migration.md`](vllm-nightly-migration.md) — §6/§7: the live
+  head-to-head + checkpoint-choice measurements behind the "support both"
+  decision (coder vs base, DSpark-invalid finding, the exact native-MTP config).
+- [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) — the draft-route research (#75,
+  t1) that resolved the native `google/gemma-4-12B-it-assistant` route.
 - [`gateway-fleet.md`](gateway-fleet.md) — fleet topology (main/minor/multimodal),
   tier alias routing, pressure policy, memory budget.
 - [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md) — the

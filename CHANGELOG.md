@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0] - 2026-07-02
+
+### Added
+
+- catalog: coolthor/gemma-4-12B-it-NVFP4A16 (Gemma 4 12B NVFP4 base it-model) as the new default multimodal gear, native MTP wired ON by default ({"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}) -- measured 28.6 tok/s decode @ 57.9% draft acceptance, the fastest Gemma config on the DGX Spark (docs/vllm-nightly-migration.md §7)
+- fleet compose: opt-in vllm-multimodal-coder service (profiles: [multimodal-coder]) so the demoted coder gear stays reachable; gateway wires an opt-in MULTIMODAL_CODER_BASE_URL/MULTIMODAL_CODER_SERVED_NAME backend + a multimodal-coder alias, added only once wired
+
+### Changed
+
+- catalog: sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4 demoted from role_hint=multimodal to role_hint=candidate (kept, cite-don't-delete) -- native MTP measured only 30.8% draft acceptance on the coder fine-tune, not worth wiring by default
+- gateway: _DEFAULT_MULTIMODAL now points at coolthor/gemma-4-12B-it-NVFP4A16; the multimodal/normal tier aliases resolve to it
+- docs/gemma-4-12b-nvfp4.md, README.md, docs/gateway-fleet.md, docs/qwen3-14b-nvfp4.md updated to describe both Gemma gears (default base + opt-in coder) and cite docs/vllm-nightly-migration.md §7 for the benchmark evidence
+
 ## [0.34.1] - 2026-07-01
 
 ### Added

@@ -3,6 +3,17 @@
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
+>
+> **On vLLM nightly since the fleet-wide nightly-unification migration**
+> (`docs/vllm-nightly-migration.md` §3/§5, t3/t4) — this gear now runs the same
+> pinned `vllm/vllm-openai@sha256:7c5a10e9...` digest (vLLM `0.23.1rc1.dev672`)
+> as the primary and multimodal gears, not the `nv26.04-py3` / `0.19.0` build
+> the 2026-06-19 benchmark below was measured on. The nightly t3 spike (§5)
+> re-confirmed `/v1/rerank` (sorted, correct ranking) and `/v1/score` (raw
+> pairwise), `--runner pooling --convert classify` unchanged — no
+> serving-flag drift (the spike's one hiccup was a memory-profiling race
+> during concurrent teardown, not a model/nightly incompatibility). The
+> benchmark numbers below remain the historical 0.19.0 record.
 
 ## What it is
 
@@ -10,9 +21,10 @@
   `Qwen3ForSequenceClassification` model with a binary **yes / no** logit head.
 - Scores (query, passage) pairs for retrieval re-ranking.
 - **32K native** context, served at `--max-model-len 8192` (tiny KV footprint).
-- Served via vLLM's pooling/scoring mode (`--runner pooling --convert classify` on
-  the nv26.04 build) — one backend handles both `/v1/rerank` (Jina/Cohere shape,
-  sorted best-first) and `/v1/score` (raw pairwise scores, input order).
+- Served via vLLM's pooling/scoring mode (`--runner pooling --convert classify`;
+  unchanged since the fleet's move to vLLM nightly — see the note above) — one
+  backend handles both `/v1/rerank` (Jina/Cohere shape, sorted best-first) and
+  `/v1/score` (raw pairwise scores, input order).
 - No tool parser, no quantization flag — this is a scoring model, not a chat model.
 - **Served name == catalog id:** `Qwen/Qwen3-Reranker-0.6B`.
 
@@ -157,3 +169,9 @@ with the 27B primary and the embedder** (all three simultaneously healthy):
 Served on this vLLM build (`0.19.0+nv26.04`) with `--runner pooling --convert
 classify` — the older `--task score` is rejected (`unrecognized arguments`). The
 probes use plain `curl` against `/v1/rerank` and `/v1/score`.
+
+This flag set is unchanged on the fleet's current vLLM nightly build
+(`docs/vllm-nightly-migration.md` §5, t3 spike, live 2026-07-01) —
+`--runner pooling --convert classify` and the `Qwen3ForSequenceClassification`
+hf-override both still work identically; the numbers above were not
+re-measured on nightly but the serving contract did not change.
