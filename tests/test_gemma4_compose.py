@@ -100,7 +100,7 @@ class TestOtherServicesUnchanged:
     def test_vllm_primary_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-primary"]
-        assert svc.get("image") == _NIGHTLY_VLLM_IMAGE, (
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
             f"vllm-primary must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
             f"(got {svc.get('image')!r})"
         )
@@ -109,7 +109,7 @@ class TestOtherServicesUnchanged:
     def test_vllm_embed_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-embed"]
-        assert svc.get("image") == _NIGHTLY_VLLM_IMAGE, (
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
             f"vllm-embed must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
             f"(got {svc.get('image')!r})"
         )
@@ -118,7 +118,7 @@ class TestOtherServicesUnchanged:
     def test_vllm_rerank_pins_nightly_digest(self) -> None:
         compose = _load_fleet()
         svc = compose["services"]["vllm-rerank"]
-        assert svc.get("image") == _NIGHTLY_VLLM_IMAGE, (
+        assert _NIGHTLY_VLLM_IMAGE in (svc.get("image") or ""), (
             f"vllm-rerank must pin image: {_NIGHTLY_VLLM_IMAGE!r} (t4 flip) "
             f"(got {svc.get('image')!r})"
         )

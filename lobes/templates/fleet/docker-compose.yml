@@ -38,7 +38,7 @@ services:
   # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
   # a settle gap over a simultaneous multi-gear `docker compose up`.
   vllm-primary:
-    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-primary
     restart: unless-stopped
     deploy:
@@ -140,7 +140,7 @@ services:
     # Same nightly digest as vllm-primary — see the comment above vllm-primary
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up.
-    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-embed
     restart: unless-stopped
     deploy:
@@ -200,7 +200,7 @@ services:
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up (§5's spike crash was this exact gear, tripped by concurrent
     # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
-    image: vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-rerank
     restart: unless-stopped
     deploy:

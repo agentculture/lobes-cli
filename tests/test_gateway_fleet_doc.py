@@ -71,7 +71,7 @@ def test_doc_cites_the_nightly_engine_unification() -> None:
     # actually pin that digest today.
     for service in ("vllm-primary", "vllm-embed", "vllm-rerank"):
         assert re.search(
-            rf"  {re.escape(service)}:\n(?:.*\n)*?.*image: {re.escape(NIGHTLY_DIGEST_IMAGE)}",
+            rf"  {re.escape(service)}:\n(?:.*\n)*?.*image:.*{re.escape(NIGHTLY_DIGEST_IMAGE)}",
             compose_text,
         ), (
             f"{service} no longer pins the nightly digest in {FLEET_COMPOSE} — "
