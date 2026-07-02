@@ -331,6 +331,7 @@ greedy, `max_len 8192`):
 | (ref) Qwen 27B primary | NVFP4 | — | ~18 tok/s | 60.6 % | ~2.4× |
 
 **Findings:**
+
 1. **User insight confirmed.** The native assistant (`google/gemma-4-12B-it-assistant`)
    drafts far better for the base it-model it was trained for: **93.9 %** accept on
    the bf16 base and **57.9 %** on the NVFP4 base — vs **30.8 %** on the coder
@@ -340,13 +341,14 @@ greedy, `max_len 8192`):
    14.6 tok/s — *slower* than the NVFP4 coder. High acceptance can't rescue slow
    compute.
 3. **The NVFP4 base is the winner — measured.** `coolthor/gemma-4-12B-it-NVFP4A16`
-   + native MTP = **28.6 tok/s** (19.8 no-spec × **~1.45×** MTP @ 57.9 % accept) —
+   with native MTP = **28.6 tok/s** (19.8 no-spec × **~1.45×** MTP @ 57.9 % accept) —
    the **fastest Gemma config measured**, beating the coder (24), coder+MTP (24),
    and bf16 base+MTP (14.6). NVFP4 quant drops acceptance from the bf16 base's
    93.9 % to 57.9 % (the quantized target's distribution shifts vs what the bf16
    assistant expects), but NVFP4 speed more than compensates.
 
 **"Support both" — confirmed plan.** Catalog carries two Gemma gears:
+
 - **coder** (`sakamakismile/…NVFP4`): coding-strong, MTP **not** worth wiring (30.8 %).
 - **base** (`coolthor/gemma-4-12B-it-NVFP4A16`): general, **native MTP default-on**
   (`--speculative-config '{"method":"mtp","model":"google/gemma-4-12B-it-assistant","num_speculative_tokens":1}'`),
