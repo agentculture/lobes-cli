@@ -263,12 +263,14 @@ def _error_body(message: str, attempts: list[str]) -> bytes:
     ).encode("utf-8")
 
 
-def _busy_body() -> bytes:
+def _busy_body(requested_tier: str) -> bytes:
     """Return the JSON body for a 429 busy (shed) response."""
+    _LANE_LABELS = {"main": "cortex", "multimodal": "senses"}
+    label = _LANE_LABELS.get(requested_tier, requested_tier)
     return json.dumps(
         {
             "error": {
-                "message": "cortex is under pressure; retry shortly",
+                "message": f"{label} is under pressure; retry shortly",
                 "type": "server_busy",
                 "code": "busy",
             }
@@ -293,18 +295,19 @@ def handle_post(
     or 4xx — committed), or a 502 if every backend refused / 5xx'd. ``open_upstream``
     is injected so this is unit-testable without sockets.
 
-    Pressure-aware tier downgrade (t6, #68; vocab #69): when ``pressure`` is
-    supplied *and* the requested model is a capability tier (``main``/``minor``/
-    ``multimodal``, or the ``cheap``/``normal``/``hard`` back-compat aliases), the
-    tier is run through :func:`resolve_tier_request` *in front of*
-    :func:`resolve_model` — under memory/iowait pressure a ``main``/``multimodal``
-    request is downgraded to ``minor`` (the only cheaper rung, since multimodal is
-    a capability, not a tier), and the ``X-Lobes-Override`` header (passed as
-    ``override``) forces the requested tier back. The resolved tier + reason are
-    surfaced as ``X-Lobes-Tier`` / ``X-Lobes-Tier-Reason`` response headers
-    (prepended so they reach the client before the body, streaming included). A
-    plain model id, or ``pressure=None`` (no cache wired), takes the exact
-    existing path. The static alias table is never mutated.
+    Pressure-aware busy shedding (#85): when ``pressure`` is supplied *and* the
+    requested model is a capability tier (``main``/``minor``/``multimodal``, or the
+    ``cheap``/``normal``/``hard`` back-compat aliases), the tier is run through
+    :func:`resolve_tier_request` *in front of* :func:`resolve_model`. Under
+    memory/iowait pressure a ``main`` (cortex) or ``multimodal`` (senses) request
+    is **shed** with HTTP 429 + ``Retry-After`` + ``X-Lobes-Tier-Reason: busy``
+    and an OpenAI-shaped ``server_busy`` error body; no upstream is dialed. An
+    explicit ``minor`` request is the floor and is still served (never shed). The
+    ``X-Lobes-Override`` header (passed as ``override``) forces the requested tier
+    to be served instead of shed. On the served path the ``X-Lobes-Tier`` /
+    ``X-Lobes-Tier-Reason`` headers still travel with the response (prepended,
+    streaming-safe). A plain model id, or ``pressure=None``, takes the existing
+    non-tier path unchanged.
     """
     requested = extract_model(body)
     tier_headers: list[tuple[str, str]] = []
@@ -318,7 +321,7 @@ def handle_post(
                     ("X-Lobes-Tier-Reason", "busy"),
                     ("Content-Type", _CONTENT_TYPE_JSON),
                 ],
-                body=_busy_body(),
+                body=_busy_body(decision["requested_tier"]),
             )
         served = decision["served_name"]
         tier_headers = [

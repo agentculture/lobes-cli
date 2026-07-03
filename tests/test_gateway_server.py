@@ -396,6 +396,7 @@ def test_handle_post_sheds_main_with_429_busy_under_pressure() -> None:
     body = json.loads(resp.body)
     assert body["error"]["type"] == "server_busy"
     assert body["error"]["code"] == "busy"
+    assert "cortex" in body["error"]["message"]
 
 
 def test_handle_post_sheds_senses_with_429_busy_under_pressure() -> None:
@@ -409,6 +410,8 @@ def test_handle_post_sheds_senses_with_429_busy_under_pressure() -> None:
     assert resp.status == 429
     assert calls == []
     assert dict(resp.headers)["X-Lobes-Tier-Reason"] == "busy"
+    body = json.loads(resp.body)
+    assert "senses" in body["error"]["message"]
 
 
 def test_handle_post_minor_still_served_under_pressure() -> None:
