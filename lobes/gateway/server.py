@@ -15,9 +15,12 @@ streaming, there is no retry (the client already has bytes).
 
 from __future__ import annotations
 
+import dataclasses
 import http.client
 import json
+import os
 import sys
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +44,7 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
+from lobes.roles import ROLES, build_role_registry
 
 _CHUNK = 65536
 
@@ -397,6 +401,7 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
         "GET /status",
         "GET /v1/models",
         "GET /v1/models/supported",
+        "GET /capabilities",
         "POST /v1/chat/completions",
         "POST /v1/completions",
     ]
@@ -451,6 +456,47 @@ def fleet_status_payload(
     }
 
 
+# --- role capabilities (the #81 role→endpoint contract, t6) ----------------
+
+# GET /capabilities reuses lobes.roles.build_role_registry — the SAME builder
+# the CLI's `lobes capabilities --json` (t5) calls — so the two payloads are
+# exactly the same shape: a dict keyed by role, each value the full RoleInfo
+# field set. Read-only: no backend socket is opened, no state is mutated.
+
+
+def capabilities_payload(
+    table: RoutingTable, cfg: ServerConfig, env: Mapping[str, str] | None = None
+) -> dict:
+    """The six first-class roles (issue #81), resolved via the shared registry.
+
+    ``env`` defaults to ``os.environ`` — inside the gateway *container* that
+    already carries the deployment's ``PRIMARY_MAX_MODEL_LEN`` and friends, so
+    the served-context overlay (t5) applies for free with no extra config
+    plumbing. The gateway-fronted roles (cortex/senses/embedder/reranker) get
+    the gateway's own base URL (derived from ``cfg.host``/``cfg.port``, same as
+    the CLI derives its localhost:port); stt/tts resolve to ``cfg.audio_url``.
+
+    ``RoleInfo.ready`` is always ``None`` coming out of the registry (live
+    health is t8's concern) — a gateway response must carry a *present*
+    boolean, so it is derived here as ``loaded``: the gateway has no cached
+    per-backend health signal to consult (the one live probe it has,
+    :func:`lobes._metrics.probe_backend`, opens sockets synchronously inside
+    ``/status``'s own bounded fan-out and is not cached, so re-running it
+    inline on every ``/capabilities`` call would make this route block on
+    backend network I/O — a later task (t8) can wire real readiness once a
+    cheap/cached signal exists).
+    """
+    resolved_env = os.environ if env is None else env
+    registry = build_role_registry(table, cfg, env=resolved_env)
+    payload: dict[str, dict] = {}
+    for role in ROLES:
+        info = registry[role]
+        entry = dataclasses.asdict(info)
+        entry["ready"] = info.loaded
+        payload[role] = entry
+    return payload
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -481,6 +527,10 @@ class _Handler(BaseHTTPRequestHandler):
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
+        elif route == "/capabilities":
+            # The #81 role→endpoint contract: SIX first-class roles resolved to
+            # live metadata via the shared lobes.roles registry. Read-only.
+            self._send_json(200, capabilities_payload(self.table, self.server_config))
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
 
