@@ -1,12 +1,30 @@
-"""Pure pressure policy — maps (swap%, iowait%) + requested_tier to a decision dict.
+"""Pure pressure policy — busy/shed semantics under swap/iowait pressure.
 
 This module is **side-effect-free**: no I/O, no ``/proc`` reads, no subprocess
 calls.  It accepts numeric inputs and returns a plain dict.  The sampler
 (:mod:`lobes.runtime._pressure`) is the companion that produces those numbers
 from the live host; ``_pressure_policy`` deliberately does not import it.
 
-Tier vocabulary (main / minor / multimodal) and the pressure seam
------------------------------------------------------------------
+Busy/shed semantics (t1)
+-------------------------
+Under swap/iowait pressure the gateway **stops substituting** a cheaper or
+different model.  Instead it sheds full-tier requests with HTTP 429 +
+Retry-After ("busy, retry shortly").  The degrade-to-minor path is **removed**
+outright — no model substitution occurs.
+
+``minor`` is the floor: an explicit minor request is served even under pressure,
+never shed.  There is no ``LOBES_PRESSURE_POLICY`` toggle.
+
+Return keys from :func:`decide`:
+
+    mode: "warm" | "busy"          — box-level pressure state
+    shed: bool                       — True → shed this request (429)
+    reason: "pressure" | "default"  — "pressure" when shed, else "default"
+    servable_tier: str               — "minor" under pressure, else normalized tier
+    requested_tier: str              — normalize_tier(requested_tier)
+
+Tier vocabulary (main / minor / multimodal)
+-------------------------------------------
 Issue #69 reframed the generate-lane capability tiers to **main / minor /
 multimodal** (mirroring ``catalog.TIER_ROLE``):
 
@@ -14,38 +32,25 @@ multimodal** (mirroring ``catalog.TIER_ROLE``):
     minor       → 4B minor       (fast, low memory, the former "cheap" tier)
     multimodal  → 12B multimodal (text+image+audio — a *different* capability)
 
-**The seam (t6).** ``multimodal`` is NOT a cheaper rung below ``main`` on a
-linear capability ladder — it is a *different capability* (vision+audio).  So
-"downgrade under pressure" cannot simply walk ``main -> multimodal -> minor``:
-swapping a text ``main`` request onto the multimodal gear is not a graceful
-degradation, and a ``multimodal`` request cannot be satisfied by ``main`` at
-all.  The resolution: **the only cheaper target is ``minor``.**  Under degraded
-pressure, a ``main`` *or* a ``multimodal`` request both downgrade to ``minor``
-(``reason="pressure"``) — multimodal degrades to minor just like main does,
-because it is a capability and not a cheaper tier.  This collapses the old
-linear intermediate band: there is no rung between the full tiers and ``minor``.
-
 Back-compat input tiers (``cheap`` / ``normal`` / ``hard``) are still accepted
 and normalize to the new vocabulary on output (``cheap``→``minor``,
 ``normal``→``multimodal``, ``hard``→``main``).
 
-Decision table (#68/#69)
+Decision rules (#68/#69)
 -------------------------
 Comparisons are **strictly greater than** (``>``); a value *exactly equal* to a
-threshold does NOT trigger the band.  Two degraded signals gate the policy:
+threshold does NOT trigger the busy band.  Two pressure signals gate the policy:
 
-+----------------------------------------+--------------------+----------+
-| Condition                              | max_allowed_tier   | mode     |
-+========================================+====================+==========+
-| swap > 75 %  OR  iowait > 50 %         | minor              | degraded |
-+----------------------------------------+--------------------+----------+
-| otherwise                              | main (full tier)   | warm     |
-+----------------------------------------+--------------------+----------+
++----------------------------------------+------+-------------------+
+| Condition                              | mode | shed (non-minor)  |
++========================================+======+===================+
+| swap > 75 %  OR  iowait > 50 %         | busy | True (429)        |
++----------------------------------------+------+-------------------+
+| otherwise                              | warm | False             |
++----------------------------------------+------+-------------------+
 
-Under ``warm`` the full tier is granted as requested (``main`` *and*
-``multimodal`` allowed — ``max_allowed_tier`` reports ``main`` as the apex of
-the ceiling, but ``multimodal`` is a permitted sibling, not a downgrade).  Under
-``degraded`` every request resolves to ``minor``.
+Under ``warm`` the full tier is granted as requested.  Under ``busy`` every
+non-minor request is shed (429); ``minor`` is the floor and is always served.
 
 Retained-but-advisory thresholds
 ---------------------------------
@@ -81,7 +86,7 @@ import os
 
 #: Tier alias (both vocabularies) → backend role. Mirrors ``catalog.TIER_ROLE``.
 #: The capability-ROLE names (``cortex``/``senses``) alias the same backends as
-#: ``main``/``multimodal``, so they normalize (and degrade) identically.
+#: ``main``/``multimodal``, so they normalize (and shed) identically.
 _TIER_ROLE: dict[str, str] = {
     # Primary vocabulary.
     "main": "primary",
@@ -108,12 +113,6 @@ _ROLE_TO_TIER: dict[str, str] = {
 
 _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)
 
-#: The full (non-minor) tiers. Under pressure these all collapse to ``minor`` —
-#: ``main`` and ``multimodal`` are siblings, not rungs on a linear ladder.
-_FULL_CEILING: str = "main"
-#: The single cheaper target under degraded pressure.
-_DEGRADED_FLOOR: str = "minor"
-
 
 def _env_float(key: str, default: float) -> float:
     """Read a float from *key* in ``os.environ``; fall back to *default*.
@@ -134,11 +133,11 @@ def _env_float(key: str, default: float) -> float:
 # Threshold constants (config-driven; each has a named env override)
 # ---------------------------------------------------------------------------
 
-#: swap_used_percent **above** this value: degraded mode, minor tier only.
+#: swap_used_percent **above** this value: busy mode, shed non-minor requests.
 #: Env override: ``LOBES_SWAP_DEGRADED_THRESHOLD`` (default 75.0).
 SWAP_DEGRADED_THRESHOLD: float = _env_float("LOBES_SWAP_DEGRADED_THRESHOLD", 75.0)
 
-#: iowait_percent **above** this value: emergency degraded mode, minor tier only.
+#: iowait_percent **above** this value: busy mode, shed non-minor requests.
 #: Env override: ``LOBES_IOWAIT_DEGRADED_THRESHOLD`` (default 50.0).
 IOWAIT_DEGRADED_THRESHOLD: float = _env_float("LOBES_IOWAIT_DEGRADED_THRESHOLD", 50.0)
 
@@ -159,6 +158,13 @@ SWAP_PREFER_CHEAP_THRESHOLD: float = _env_float("LOBES_SWAP_PREFER_CHEAP_THRESHO
 #: Retained, advisory only (does not cap the tier).
 #: Env override: ``LOBES_IOWAIT_NO_HARD_THRESHOLD`` (default 25.0).
 IOWAIT_NO_HARD_THRESHOLD: float = _env_float("LOBES_IOWAIT_NO_HARD_THRESHOLD", 25.0)
+
+# ---------------------------------------------------------------------------
+# Busy retry-after default (used by the gateway for HTTP 429 Retry-After header)
+# ---------------------------------------------------------------------------
+
+#: Static default seconds for the Retry-After header on busy (429) responses.
+BUSY_RETRY_AFTER_SECONDS: int = 5
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +200,7 @@ def decide(
     iowait_percent: float,
     requested_tier: str,
 ) -> dict:
-    """Map system pressure + a requested tier to a concrete routing decision.
+    """Map system pressure + a requested tier to a busy/shed routing decision.
 
     Parameters
     ----------
@@ -210,26 +216,23 @@ def decide(
 
     Returns
     -------
-    dict with four keys (tiers are always emitted in the new vocabulary):
+    dict with five keys (tiers are always emitted in the new vocabulary):
 
     ``mode``
-        ``"warm"`` under normal operation; ``"degraded"`` when
+        ``"warm"`` under normal operation; ``"busy"`` when
         ``swap_used_percent > SWAP_DEGRADED_THRESHOLD`` or
         ``iowait_percent > IOWAIT_DEGRADED_THRESHOLD``.
-    ``max_allowed_tier``
-        The capability ceiling under current pressure.  ``"minor"`` when
-        degraded (the only cheaper target), otherwise ``"main"`` — the apex of
-        the full ceiling (``multimodal`` is a permitted sibling, not above
-        ``main``).
-    ``allowed_tier``
-        The tier actually granted for *requested_tier*.  Under ``warm`` this is
-        the requested tier (normalized to the new vocabulary, never downgraded —
-        a ``multimodal`` request stays ``multimodal``).  Under ``degraded`` it
-        is always ``"minor"`` (the seam: both ``main`` and ``multimodal``
-        collapse to ``minor``).
+    ``shed``
+        ``True`` when the request must be shed (HTTP 429).  Under ``busy``
+        mode, all non-minor requests are shed; ``minor`` is the floor and is
+        never shed.
     ``reason``
-        ``"pressure"`` when the system is in degraded mode **or** the request
-        was constrained below what was asked; ``"default"`` otherwise.
+        ``"pressure"`` when shed; ``"default"`` otherwise.
+    ``servable_tier``
+        ``"minor"`` under pressure (the only servable tier); otherwise the
+        normalized requested tier.
+    ``requested_tier``
+        The normalized tier name for the input *requested_tier*.
 
     Raises
     ------
@@ -238,35 +241,26 @@ def decide(
 
     Boundary behaviour
     ------------------
-    Both degraded comparisons are **strictly greater than** (``>``).  A value
-    exactly equal to a threshold does **not** trigger degraded mode.  For
-    example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` degrades.
+    Both busy comparisons are **strictly greater than** (``>``).  A value
+    exactly equal to a threshold does **not** trigger busy mode.  For
+    example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` is busy.
     """
     normalized = normalize_tier(requested_tier)  # validates + maps to new vocab
 
-    # Degraded when either signal exceeds its emergency threshold. The seam: the
-    # only cheaper target is ``minor`` — there is no intermediate rung, because
-    # ``multimodal`` is a different capability, not a cheaper version of ``main``.
-    degraded = (
+    under_pressure = (
         swap_used_percent > SWAP_DEGRADED_THRESHOLD or iowait_percent > IOWAIT_DEGRADED_THRESHOLD
     )
-    mode = "degraded" if degraded else "warm"
+    mode = "busy" if under_pressure else "warm"
 
-    if degraded:
-        max_allowed_tier = _DEGRADED_FLOOR  # minor — the only cheaper target
-        allowed_tier = _DEGRADED_FLOOR  # main AND multimodal collapse to minor
-    else:
-        max_allowed_tier = _FULL_CEILING  # main apex; multimodal also permitted
-        allowed_tier = normalized  # granted as requested (no downgrade)
-
-    # Reason: pressure whenever degraded OR the request was constrained below
-    # what was asked (a full-tier request served as minor).
-    constrained = allowed_tier != normalized
-    reason = "pressure" if (degraded or constrained) else "default"
+    # minor is the floor: never shed even under pressure
+    shed = under_pressure and normalized != "minor"
+    reason = "pressure" if shed else "default"
+    servable_tier = "minor" if under_pressure else normalized
 
     return {
         "mode": mode,
-        "max_allowed_tier": max_allowed_tier,
+        "shed": shed,
         "reason": reason,
-        "allowed_tier": allowed_tier,
+        "servable_tier": servable_tier,
+        "requested_tier": normalized,
     }
