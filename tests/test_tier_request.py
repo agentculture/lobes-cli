@@ -1,20 +1,21 @@
-"""Pressure-aware tier downgrade + manual override at the gateway (t6, #68/#69).
+"""Pressure-aware busy/shed backpressure at the gateway (t2, #68/#69/#85).
 
 Two pure, fully-testable pieces live in :mod:`lobes.gateway._tier_request`:
 
 * :func:`resolve_tier_request` — the pure decision function. Given a requested
   tier (or a plain model id), the sampled pressure dict, an override flag and
-  the routing table, it returns ``{"served_name", "served_tier", "reason"}``.
-  It calls :func:`lobes.gateway._pressure_policy.decide` for the tier ceiling.
+  the routing table, it returns ``{"busy", "served_name", "served_tier",
+  "reason", "requested_tier"}``.  When the pressure verdict is ``shed=True``
+  and no override is set, it returns a **busy marker** (``busy=True``,
+  ``served_name=None``) instead of resolving the tier through routing.  This
+  severs issue #85 (silent upward-fallback substitution).
 * :class:`PressureCache` — a non-blocking provider. The 150 ms
   :func:`sample_pressure` never runs on the request path; a background daemon
   thread refreshes a cached value every ``interval`` seconds and ``.current()``
   just returns the cached dict.
 
 Vocabulary: requests/served tiers are reported in the **main/minor/multimodal**
-vocabulary (issue #69). The seam (t6): ``multimodal`` is a *different
-capability*, not a cheaper rung — so under degraded pressure both ``main`` and
-``multimodal`` downgrade to ``minor`` (the only cheaper target).
+vocabulary (issue #69).
 
 These tests use injected samplers only — no ``/proc`` reads, no real timing on
 the assertion path.
@@ -30,6 +31,8 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
+
+# --- Fleet fixtures ---------------------------------------------------------
 
 
 # A full three-tier generate fleet with identifiable served names.
@@ -51,11 +54,26 @@ def _primary_only():
     return table
 
 
+# Primary + multimodal wired, but MINOR is UNWIRED.
+# This is the DEFAULT fleet shape (no minor profile activated).
+# Regression fixture for issue #85: under pressure, a cortex/main request
+# must NOT silently fall back to the multimodal/gemma served name.
+def _primary_plus_multimodal():
+    table, _ = build_config(
+        {
+            "PRIMARY_SERVED_NAME": "PRIMARY",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
+        }
+    )
+    return table
+
+
 _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
-_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → degraded/minor
+_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → busy/shed
 
 
-# --- resolve_tier_request: the pure decision function -----------------------
+# --- is_tier_alias ------------------------------------------------------------
 
 
 def test_is_tier_alias_recognises_the_tiers_both_vocabularies() -> None:
@@ -79,11 +97,20 @@ def test_is_tier_alias_recognises_cortex_and_senses() -> None:
     assert is_tier_alias("senses")
 
 
+# --- resolve_tier_request: busy/shed contract ---------------------------------
+
+
 def test_cortex_routes_to_primary_backend_reason_default() -> None:
     """model=cortex routes to the primary backend (served as the 'main' tier)."""
     table = _full_fleet()
     out = resolve_tier_request("cortex", _NO_PRESSURE, override=False, table=table)
-    assert out == {"served_name": "PRIMARY", "served_tier": "main", "reason": "default"}
+    assert out == {
+        "busy": False,
+        "served_name": "PRIMARY",
+        "served_tier": "main",
+        "reason": "default",
+        "requested_tier": "main",
+    }
 
 
 def test_senses_routes_to_multimodal_backend_reason_default() -> None:
@@ -91,72 +118,156 @@ def test_senses_routes_to_multimodal_backend_reason_default() -> None:
     table = _full_fleet()
     out = resolve_tier_request("senses", _NO_PRESSURE, override=False, table=table)
     assert out == {
+        "busy": False,
         "served_name": "MULTIMODAL",
         "served_tier": "multimodal",
         "reason": "default",
+        "requested_tier": "multimodal",
     }
-
-
-def test_cortex_degrades_to_minor_under_high_pressure() -> None:
-    """cortex normalizes to the primary role, so it degrades to minor like main."""
-    table = _full_fleet()
-    out = resolve_tier_request("cortex", _HIGH_SWAP, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"
-    assert out["reason"] == "pressure"
-
-
-def test_senses_degrades_to_minor_under_high_pressure() -> None:
-    """The seam: senses is the multimodal capability — under pressure it collapses
-    straight to minor (not an intermediate downgrade rung)."""
-    table = _full_fleet()
-    out = resolve_tier_request("senses", _HIGH_SWAP, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"
-    assert out["reason"] == "pressure"
 
 
 def test_no_pressure_main_stays_main_reason_default() -> None:
     table = _full_fleet()
     out = resolve_tier_request("main", _NO_PRESSURE, override=False, table=table)
-    assert out == {"served_name": "PRIMARY", "served_tier": "main", "reason": "default"}
+    assert out == {
+        "busy": False,
+        "served_name": "PRIMARY",
+        "served_tier": "main",
+        "reason": "default",
+        "requested_tier": "main",
+    }
 
 
 def test_no_pressure_multimodal_stays_multimodal_reason_default() -> None:
     table = _full_fleet()
     out = resolve_tier_request("multimodal", _NO_PRESSURE, override=False, table=table)
     assert out == {
+        "busy": False,
         "served_name": "MULTIMODAL",
         "served_tier": "multimodal",
         "reason": "default",
+        "requested_tier": "multimodal",
     }
 
 
-def test_high_swap_downgrades_main_to_minor_reason_pressure() -> None:
+# --- Busy/shed: non-minor tiers under high pressure ---------------------------
+
+
+def test_high_pressure_sheds_main_with_busy_marker() -> None:
+    """Under high pressure, a main request is shed (busy=True, served_name=None)."""
     table = _full_fleet()
     out = resolve_tier_request("main", _HIGH_SWAP, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"  # minor → the minor gear's served name
-    assert out["reason"] == "pressure"
+    assert out == {
+        "busy": True,
+        "served_name": None,
+        "served_tier": None,
+        "reason": "pressure",
+        "requested_tier": "main",
+    }
 
 
-def test_high_swap_downgrades_multimodal_to_minor_reason_pressure() -> None:
-    """The seam: multimodal is a capability, not a rung — it degrades to minor
-    just like main (not to a 'cheaper multimodal', which does not exist)."""
+def test_high_pressure_sheds_multimodal_with_busy_marker() -> None:
+    """Under high pressure, a multimodal request is shed (busy=True, served_name=None)."""
     table = _full_fleet()
     out = resolve_tier_request("multimodal", _HIGH_SWAP, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"
+    assert out == {
+        "busy": True,
+        "served_name": None,
+        "served_tier": None,
+        "reason": "pressure",
+        "requested_tier": "multimodal",
+    }
+
+
+def test_high_pressure_sheds_cortex_with_busy_marker() -> None:
+    """cortex normalizes to main, so it is shed under pressure."""
+    table = _full_fleet()
+    out = resolve_tier_request("cortex", _HIGH_SWAP, override=False, table=table)
+    assert out == {
+        "busy": True,
+        "served_name": None,
+        "served_tier": None,
+        "reason": "pressure",
+        "requested_tier": "main",
+    }
+
+
+def test_high_pressure_sheds_senses_with_busy_marker() -> None:
+    """senses normalizes to multimodal, so it is shed under pressure."""
+    table = _full_fleet()
+    out = resolve_tier_request("senses", _HIGH_SWAP, override=False, table=table)
+    assert out == {
+        "busy": True,
+        "served_name": None,
+        "served_tier": None,
+        "reason": "pressure",
+        "requested_tier": "multimodal",
+    }
+
+
+# --- Regression for issue #85 ------------------------------------------------
+
+
+def test_issue_85_regression_cortex_under_pressure_no_upward_fallback() -> None:
+    """Regression for #85: a cortex/main request under high pressure on a fleet
+    with primary+multimodal wired but minor UNWIRED must return busy=True with
+    served_name=None — it must NEVER resolve to the multimodal/gemma served name.
+
+    Before the fix, the upward-fallback in _served_name_for() would resolve
+    minor (the decided servable_tier) upward to multimodal since minor was
+    absent, silently serving Gemma instead of shedding the request.
+    """
+    table = _primary_plus_multimodal()
+    out = resolve_tier_request("cortex", _HIGH_SWAP, override=False, table=table)
+    assert out["busy"] is True
+    assert out["served_name"] is None
+    assert out["served_tier"] is None
     assert out["reason"] == "pressure"
+    assert out["requested_tier"] == "main"
+    # The served name must NOT be the multimodal/gemma served name.
+    assert out["served_name"] != "MULTIMODAL"
+
+
+def test_issue_85_regression_senses_under_pressure_no_upward_fallback() -> None:
+    """A senses/multimodal request under high pressure on a fleet with primary+
+    multimodal wired but minor UNWIRED also returns busy=True, served_name=None."""
+    table = _primary_plus_multimodal()
+    out = resolve_tier_request("senses", _HIGH_SWAP, override=False, table=table)
+    assert out["busy"] is True
+    assert out["served_name"] is None
+    assert out["served_tier"] is None
+    assert out["reason"] == "pressure"
+    assert out["requested_tier"] == "multimodal"
+
+
+# --- Minor is the floor: served even under pressure ---------------------------
+
+
+def test_minor_request_under_high_pressure_is_served() -> None:
+    """An explicit minor request under high pressure is served (not shed)."""
+    table = _full_fleet()
+    out = resolve_tier_request("minor", _HIGH_SWAP, override=False, table=table)
+    assert out == {
+        "busy": False,
+        "served_name": "MINOR",
+        "served_tier": "minor",
+        "reason": "default",
+        "requested_tier": "minor",
+    }
+
+
+# --- Override forces the requested tier --------------------------------------
 
 
 def test_override_forces_main_under_high_pressure() -> None:
     table = _full_fleet()
     out = resolve_tier_request("main", _HIGH_SWAP, override=True, table=table)
     assert out == {
+        "busy": False,
         "served_name": "PRIMARY",
         "served_tier": "main",
         "reason": "manual_override",
+        "requested_tier": "main",
     }
 
 
@@ -164,31 +275,39 @@ def test_override_forces_multimodal_under_high_pressure() -> None:
     table = _full_fleet()
     out = resolve_tier_request("multimodal", _HIGH_SWAP, override=True, table=table)
     assert out == {
+        "busy": False,
         "served_name": "MULTIMODAL",
         "served_tier": "multimodal",
         "reason": "manual_override",
+        "requested_tier": "multimodal",
     }
 
 
-def test_back_compat_hard_request_normalizes_and_downgrades() -> None:
+# --- Back-compat aliases -----------------------------------------------------
+
+
+def test_back_compat_hard_request_normalizes_and_sheds() -> None:
     """A legacy ``hard`` request still works: normalizes to main, and under
-    high pressure downgrades to minor with reason=pressure."""
+    high pressure is shed with busy=True."""
     table = _full_fleet()
     warm = resolve_tier_request("hard", _NO_PRESSURE, override=False, table=table)
-    assert warm == {"served_name": "PRIMARY", "served_tier": "main", "reason": "default"}
+    assert warm == {
+        "busy": False,
+        "served_name": "PRIMARY",
+        "served_tier": "main",
+        "reason": "default",
+        "requested_tier": "main",
+    }
     hot = resolve_tier_request("hard", _HIGH_SWAP, override=False, table=table)
-    assert hot["served_tier"] == "minor"
+    assert hot["busy"] is True
+    assert hot["served_name"] is None
     assert hot["reason"] == "pressure"
+    assert hot["requested_tier"] == "main"
 
 
 def test_legacy_keyed_operator_override_applies_on_normalized_tier_path() -> None:
     """A ``GATEWAY_ALIASES`` override keyed by a *legacy* alias (``hard``) still
     takes effect even though the request normalizes to the new vocab (main).
-
-    Regression for the tier-normalization seam: ``resolve_tier_request`` resolves
-    the served name from the *normalized* tier (``hard``→``main``), so an override
-    keyed only by ``hard`` would be bypassed without the synonym expansion in
-    ``build_config`` — the request would silently fall back to the primary.
     """
     table, _ = build_config(
         {
@@ -206,67 +325,64 @@ def test_legacy_keyed_operator_override_applies_on_normalized_tier_path() -> Non
     assert forced["served_name"] == "CUSTOM-27B"
 
 
+# --- Pass-through: plain model ids -------------------------------------------
+
+
 def test_plain_model_id_passes_through_unchanged() -> None:
     table = _full_fleet()
     # A concrete model id (not a tier) is returned verbatim, no downgrade.
     out = resolve_tier_request("PRIMARY", _HIGH_SWAP, override=False, table=table)
-    assert out == {"served_name": "PRIMARY", "served_tier": None, "reason": "default"}
+    assert out == {
+        "busy": False,
+        "served_name": "PRIMARY",
+        "served_tier": None,
+        "reason": "default",
+        "requested_tier": None,
+    }
     # Even with override set, a plain id is untouched (override only forces tiers).
     out2 = resolve_tier_request("PRIMARY", _HIGH_SWAP, override=True, table=table)
-    assert out2 == {"served_name": "PRIMARY", "served_tier": None, "reason": "default"}
+    assert out2 == {
+        "busy": False,
+        "served_name": "PRIMARY",
+        "served_tier": None,
+        "reason": "default",
+        "requested_tier": None,
+    }
 
 
-def test_multimodal_under_iowait_pressure_downgrades_to_minor() -> None:
+# --- Iowait pressure ---------------------------------------------------------
+
+
+def test_multimodal_under_iowait_pressure_is_shed() -> None:
+    """iowait > 50 → busy mode, multimodal is shed."""
     table = _full_fleet()
-    # iowait > 50 → degraded, minor ceiling. multimodal requested → served minor.
     pressure = {"swap_used_percent": 0.0, "iowait_percent": 60.0}
     out = resolve_tier_request("multimodal", pressure, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"
+    assert out["busy"] is True
+    assert out["served_name"] is None
     assert out["reason"] == "pressure"
 
 
-def test_minor_request_below_degraded_is_not_marked_pressure() -> None:
-    table = _full_fleet()
-    # swap=60 is below the degraded floor (75): not degraded, and minor is not
-    # downgraded → reason default.
-    pressure = {"swap_used_percent": 60.0, "iowait_percent": 0.0}
-    out = resolve_tier_request("minor", pressure, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "MINOR"
-    assert out["reason"] == "default"
-
-
-def test_main_request_below_degraded_is_not_downgraded() -> None:
-    """The seam collapse: a mid-band swap (60) no longer caps main — there is no
-    intermediate rung, so main is served until the degraded floor."""
+def test_main_request_below_degraded_is_not_shed() -> None:
+    """A mid-band swap (60) does not trigger busy — main is served."""
     table = _full_fleet()
     pressure = {"swap_used_percent": 60.0, "iowait_percent": 30.0}
     out = resolve_tier_request("main", pressure, override=False, table=table)
-    assert out["served_tier"] == "main"
+    assert out["busy"] is False
     assert out["served_name"] == "PRIMARY"
+    assert out["served_tier"] == "main"
     assert out["reason"] == "default"
 
 
-def test_minor_request_in_degraded_mode_is_marked_pressure() -> None:
+def test_minor_request_below_degraded_is_not_marked_pressure() -> None:
+    """swap=60 is below the degraded floor (75): not busy, minor served normally."""
     table = _full_fleet()
-    # swap=80 > 75 → degraded mode. minor can't drop further but mode==degraded
-    # → reason is pressure (the system is under emergency pressure).
-    out = resolve_tier_request("minor", _HIGH_SWAP, override=False, table=table)
+    pressure = {"swap_used_percent": 60.0, "iowait_percent": 0.0}
+    out = resolve_tier_request("minor", pressure, override=False, table=table)
+    assert out["busy"] is False
+    assert out["served_name"] == "MINOR"
     assert out["served_tier"] == "minor"
-    assert out["reason"] == "pressure"
-
-
-def test_downgrade_honours_upward_fallback_when_gear_absent() -> None:
-    # Only the primary is wired → minor falls back UPWARD to primary. A main
-    # request under high pressure is "downgraded" to minor, but minor resolves to
-    # the only wired gear (primary). served_tier reports the decided tier (minor);
-    # served_name honours the upward fallback.
-    table = _primary_only()
-    out = resolve_tier_request("main", _HIGH_SWAP, override=False, table=table)
-    assert out["served_tier"] == "minor"
-    assert out["served_name"] == "PRIMARY"  # minor → primary (no minor gear wired)
-    assert out["reason"] == "pressure"
+    assert out["reason"] == "default"
 
 
 # --- PressureCache: non-blocking provider -----------------------------------
