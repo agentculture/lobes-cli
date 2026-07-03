@@ -365,6 +365,11 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 #:   cheap  → minor      (== minor)
 #:   normal → multimodal (was the 14B "middle"; reframed to the Gemma gear)
 #:   hard   → primary    (== main)
+#:
+#: Capability-ROLE names (new vocabulary layered over the EXISTING backend roles
+#: — no internal service/env/container is renamed):
+#:   cortex → primary    (== main — the "thinking" primary backend)
+#:   senses → multimodal (== multimodal — the vision+audio backend)
 TIER_ROLE: dict[str, str] = {
     # Primary vocabulary.
     "main": "primary",
@@ -374,6 +379,13 @@ TIER_ROLE: dict[str, str] = {
     "cheap": "minor",
     "normal": "multimodal",
     "hard": "primary",
+    # Capability-ROLE names (alias the same backends as main / multimodal).
+    # Order matters: ``tier_aliases`` derives ascending capability order from each
+    # role's *last* occurrence position here, so a multimodal-role alias must
+    # appear before a primary-role one (senses before cortex) to keep the
+    # last-occurrence sequence ascending (minor < multimodal < primary).
+    "senses": "multimodal",
+    "cortex": "primary",
 }
 
 

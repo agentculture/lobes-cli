@@ -80,6 +80,8 @@ import os
 # ---------------------------------------------------------------------------
 
 #: Tier alias (both vocabularies) → backend role. Mirrors ``catalog.TIER_ROLE``.
+#: The capability-ROLE names (``cortex``/``senses``) alias the same backends as
+#: ``main``/``multimodal``, so they normalize (and degrade) identically.
 _TIER_ROLE: dict[str, str] = {
     # Primary vocabulary.
     "main": "primary",
@@ -89,6 +91,11 @@ _TIER_ROLE: dict[str, str] = {
     "cheap": "minor",
     "normal": "multimodal",
     "hard": "primary",
+    # Capability-ROLE names (alias the same backends as main / multimodal). Kept
+    # in the same order as catalog.TIER_ROLE (senses before cortex) so the two
+    # dicts stay identical — the mirror guard test asserts equality.
+    "senses": "multimodal",
+    "cortex": "primary",
 }
 
 #: Backend role → canonical new-vocabulary tier name (the inverse of the primary

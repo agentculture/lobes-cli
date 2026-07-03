@@ -208,6 +208,50 @@ class TestBackCompatVocabulary:
 
 
 # ---------------------------------------------------------------------------
+# 4b. Capability-ROLE vocabulary (cortex/senses) over primary/multimodal roles
+# ---------------------------------------------------------------------------
+
+
+class TestCortexSensesVocabulary:
+    """cortex maps onto the primary role (like main/hard); senses onto the
+    multimodal role (like multimodal/normal). Both are new names for existing
+    backends, so decide() normalizes and degrades them the same way."""
+
+    def test_cortex_normalizes_to_main_no_pressure(self):
+        r = _decide(0.0, 0.0, "cortex")
+        assert r["allowed_tier"] == "main"
+        assert r["max_allowed_tier"] == "main"
+        assert r["reason"] == "default"
+
+    def test_senses_normalizes_to_multimodal_no_pressure(self):
+        r = _decide(0.0, 0.0, "senses")
+        assert r["allowed_tier"] == "multimodal"
+        assert r["reason"] == "default"
+
+    def test_cortex_degraded_to_minor(self):
+        r = _decide(80.0, 0.0, "cortex")
+        assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
+        assert r["reason"] == "pressure"
+
+    def test_senses_degraded_to_minor(self):
+        """The seam: senses collapses straight to minor (a distinct capability,
+        not an intermediate rung), exactly like multimodal."""
+        r = _decide(80.0, 0.0, "senses")
+        assert r["mode"] == "degraded"
+        assert r["max_allowed_tier"] == "minor"
+        assert r["allowed_tier"] == "minor"
+        assert r["reason"] == "pressure"
+
+    def test_senses_degraded_via_iowait_to_minor(self):
+        r = _decide(0.0, 60.0, "senses")
+        assert r["mode"] == "degraded"
+        assert r["allowed_tier"] == "minor"
+        assert r["reason"] == "pressure"
+
+
+# ---------------------------------------------------------------------------
 # 5. Combined pressure — either degraded signal triggers the floor
 # ---------------------------------------------------------------------------
 

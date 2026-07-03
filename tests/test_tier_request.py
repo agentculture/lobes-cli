@@ -73,6 +73,49 @@ def test_is_tier_alias_recognises_the_tiers_both_vocabularies() -> None:
     assert not is_tier_alias(None)
 
 
+def test_is_tier_alias_recognises_cortex_and_senses() -> None:
+    """The new capability-ROLE names are tiers too (single source: catalog.TIER_ROLE)."""
+    assert is_tier_alias("cortex")
+    assert is_tier_alias("senses")
+
+
+def test_cortex_routes_to_primary_backend_reason_default() -> None:
+    """model=cortex routes to the primary backend (served as the 'main' tier)."""
+    table = _full_fleet()
+    out = resolve_tier_request("cortex", _NO_PRESSURE, override=False, table=table)
+    assert out == {"served_name": "PRIMARY", "served_tier": "main", "reason": "default"}
+
+
+def test_senses_routes_to_multimodal_backend_reason_default() -> None:
+    """model=senses routes to the multimodal backend (served as the 'multimodal' tier)."""
+    table = _full_fleet()
+    out = resolve_tier_request("senses", _NO_PRESSURE, override=False, table=table)
+    assert out == {
+        "served_name": "MULTIMODAL",
+        "served_tier": "multimodal",
+        "reason": "default",
+    }
+
+
+def test_cortex_degrades_to_minor_under_high_pressure() -> None:
+    """cortex normalizes to the primary role, so it degrades to minor like main."""
+    table = _full_fleet()
+    out = resolve_tier_request("cortex", _HIGH_SWAP, override=False, table=table)
+    assert out["served_tier"] == "minor"
+    assert out["served_name"] == "MINOR"
+    assert out["reason"] == "pressure"
+
+
+def test_senses_degrades_to_minor_under_high_pressure() -> None:
+    """The seam: senses is the multimodal capability — under pressure it collapses
+    straight to minor (not an intermediate downgrade rung)."""
+    table = _full_fleet()
+    out = resolve_tier_request("senses", _HIGH_SWAP, override=False, table=table)
+    assert out["served_tier"] == "minor"
+    assert out["served_name"] == "MINOR"
+    assert out["reason"] == "pressure"
+
+
 def test_no_pressure_main_stays_main_reason_default() -> None:
     table = _full_fleet()
     out = resolve_tier_request("main", _NO_PRESSURE, override=False, table=table)
