@@ -1,0 +1,262 @@
+{
+  "slug": "under-pressure-lobes-tells-you-the-cortex-model-is",
+  "title": "Under pressure, lobes tells you the cortex model is busy and to retry shortly \u2014 it never silently degrades your request onto a weaker or different-capability model.",
+  "frame_slug": "under-pressure-lobes-tells-you-the-cortex-model-is",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-03T17:50:35Z",
+  "updated": "2026-07-03T17:59:26Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Under pressure, lobes tells you the cortex model is busy and to retry shortly \u2014 it never silently degrades your request onto a weaker or different-capability model."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "On a live pressured fleet, a cortex request observably returns a retryable busy signal (not a Gemma/other-model completion), and a retrying client eventually receives a genuine cortex answer once pressure clears."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Callers of the lobes gateway generate lane \u2014 the Culture mesh acp vllm-local provider and colleague \u2014 plus operators running the memory/swap-pressured GB10 fleet."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The acp vllm-local provider and colleague are the actual pressured-fleet callers of the generate lane (they dial the gateway origin per #87), so THEIR retry behavior is what determines whether busy backpressure is safe in practice."
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "Under pressure the policy caps the tier to minor; with minor unwired the router's upward-fallback silently serves the request from Gemma (multimodal) \u2014 a different capability \u2014 disclosed only via X-Lobes-Tier headers (bug #85)."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The silent Gemma substitution is the real current code path, not a hypothetical: resolve_tier_request('cortex', swap=80%) on a default fleet with minor unwired returns served=Gemma, tier=minor, reason=pressure (reproduced against the live code)."
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "A caller asking cortex for authoritative reasoning must never silently receive a weaker or wrong-capability answer; an honest 'busy, retry' preserves the capability contract (#81) and lets clients back off instead of acting on a degraded result."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "For a cortex caller, a wrong-capability/degraded answer is materially worse than a retry delay \u2014 callers would rather wait and retry than silently act on a Gemma answer to an authoritative-reasoning request."
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Not a request queue/scheduler or admission-control rewrite, and not a change to vLLM's internal batching; the swap/iowait sampling and tunable thresholds (#86) stay as the pressure signal \u2014 only the RESPONSE to pressure changes."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The change is confined to the gateway response/decision path (handle_post + pressure-policy decision); the swap/iowait sampler (_pressure.py) and the threshold env vars (#86) are untouched."
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The busy response carries a disclosure header (X-Lobes-Tier-Reason: busy) plus Retry-After so a client can distinguish transient busy (retry) from the existing hard 502 'all backends unavailable' (don't retry)."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A client can reliably distinguish busy (retry) from the existing 502 all-backends-unavailable (don't retry) from status+header alone, and on the streaming path the busy status is emitted before any SSE body bytes."
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "lobes status --pressure and the gateway /capabilities/GET status surface the busy policy state (mode=busy, current tier ceiling, whether requests are being shed) so operators can see WHY a client is being told to wait."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "lobes status --pressure and the gateway status endpoint report mode=busy and the current tier ceiling WITHOUT issuing a live generate request, and the reported ceiling matches the admission decision handle_post would actually make."
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "A cortex OR senses request under swap/iowait pressure gets an explicit, retryable busy response (HTTP 429 + Retry-After) instead of a silent 2xx answer from a substituted cheaper or different-capability model."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "On the shed path the gateway issues NO upstream model request \u2014 it returns 429 itself \u2014 so a busy cortex/senses request provably never reaches a substitute model."
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Under pressure, the gateway returns HTTP 429 with a Retry-After header and an OpenAI-shaped error body for a generate/multimodal request it would otherwise have substituted onto a different model, instead of rewriting it onto that model."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The acp vllm-local provider, colleague, and generic OpenAI SDKs treat 429 + Retry-After on POST /v1/chat/completions as a retryable transient with backoff, not a fatal error surfaced to the end user."
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "On a pressured fleet with no minor gear, a cortex request returns 429 busy+Retry-After (never a Gemma completion), and a retrying client eventually gets a real cortex answer once pressure clears."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Success is observable end-to-end (not just a unit-tested decision()): a scripted pressured request shows 429+Retry-After for cortex, and after pressure clears a 200 from the real cortex model."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Pressure policy: replace degrade-to-minor with a busy verdict (lobes/gateway/_pressure_policy.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "decide() under swap>SWAP_DEGRADED_THRESHOLD or iowait>IOWAIT_DEGRADED_THRESHOLD returns mode=busy (shed) and NO downgraded served tier (no max_allowed_tier=minor)",
+        "decide() at or below both thresholds returns serve-as-requested (mode=warm) for main, senses and minor, unchanged from today",
+        "an explicit minor request is never marked busy (minor is the floor; served as requested)",
+        "the _DEGRADED_FLOOR degrade path is gone and there is NO LOBES_PRESSURE_POLICY toggle to restore it: no code path rewrites a request onto a cheaper tier under pressure"
+      ],
+      "deps": [],
+      "covers": [
+        "c4"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Tier request: return a busy signal instead of substituting a model under pressure (lobes/gateway/_tier_request.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "resolve_tier_request() under a busy verdict returns a busy marker (busy=True, reason=pressure) and NO served_name: it never resolves the degraded tier through routing",
+        "regression for issue #85: add a fleet fixture to tests/test_tier_request.py with primary+multimodal wired and minor UNWIRED, and assert a cortex request under swap=80 returns busy, never served_name=gemma",
+        "a senses/multimodal request under pressure also returns busy; an explicit minor request resolves to the minor served_name; an unpressured request resolves to its own served_name unchanged"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h7"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Gateway: emit HTTP 429 busy response on the shed path (lobes/gateway/server.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "when resolve_tier_request returns busy, handle_post responds 429 with a Retry-After header, an X-Lobes-Tier-Reason: busy header, and an OpenAI-shaped error object (error.message/error.type/error.code), parallel to the existing 502 _error_body path",
+        "on the shed path NO upstream backend is dialed: assert via a stub that records upstream calls that primary/multimodal/minor are never reached",
+        "the 429 busy is distinguishable from the existing 502 all-backends-unavailable by status code plus header alone; on the streaming path the 429 status is emitted before any SSE body bytes",
+        "fleet_status_payload (GET status) exposes the current busy policy state (mode=busy plus the pressure reason) so operators can see requests are being shed"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c15",
+        "c16",
+        "c10",
+        "c13",
+        "h2",
+        "h10"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "lobes status --pressure reports mode=busy without a live request (lobes/cli/_commands/status.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_cmd_status_pressure reports mode=busy and the current tier ceiling (which tiers would be shed) computed from decide(), WITHOUT issuing a live generate request",
+        "the reported ceiling matches the admission decision handle_post would make for the same pressure sample (main and senses shed, minor served)",
+        "--json output carries the busy mode/reason fields; human output labels the busy state clearly"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c13",
+        "h3"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "End-to-end test: pressured request gets 429, retry after pressure clears gets a real answer (tests/test_gateway_busy_e2e.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with an injected high-pressure sample, a cortex request over the gateway returns 429+Retry-After (never a substitute model), and a senses request likewise returns 429",
+        "with pressure cleared, the same cortex request returns 200 from the real cortex model, proving the busy signal is transient and a retrying client eventually succeeds",
+        "the assertion runs end-to-end through handle_post, not as a unit test of decide() alone"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "c21",
+        "h4",
+        "h11"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Document the busy-backpressure contract; remove degrade-to-minor from the docs (docs/gateway-fleet.md, docs/openai-api.md, lobes/explain)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gateway-fleet.md and lobes explain gateway state: degrade-to-minor is removed; under pressure the gateway returns 429+Retry-After busy for cortex AND senses; explicit minor is still served",
+        "docs/openai-api.md documents the 429+Retry-After contract and states that callers (acp vllm-local provider, colleague, generic OpenAI SDKs) MUST retry with backoff",
+        "the rationale (a wrong-capability answer is worse than a retry delay) and the boundary (only the response changes; lobes/runtime/_pressure.py and the #86 threshold env vars are untouched) are both stated",
+        "grep confirms no doc still claims pressure degrades cortex/main onto minor or Gemma"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c2",
+        "c5",
+        "c6",
+        "h5",
+        "h6",
+        "h8",
+        "h9"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "Version bump + CHANGELOG for the busy-backpressure change (pyproject.toml, CHANGELOG.md)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the version-bump script bumps pyproject.toml above main and prepends a CHANGELOG entry describing the removal of pressure-degrade and the new 429 busy contract, noting it closes #85",
+        "the uv.lock re-pin is committed if the bump changes it"
+      ],
+      "deps": [
+        "t3",
+        "t4",
+        "t5",
+        "t6"
+      ],
+      "covers": []
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Non-retrying callers regress: a client that treats 429 as fatal becomes LESS available under pressure than the old always-answer-with-something behavior. Client retry handling (honesty h5) is cross-repo (culture acp vllm-local backend + colleague) and cannot be built in this repo. Audit those callers and, if needed, file a change against them before relying on busy in production. Track against #85.",
+      "kind": "follow_up",
+      "task_id": "t6"
+    },
+    {
+      "id": "r2",
+      "text": "Queue-depth admission control (shed on vLLM busy.waiting rather than swap/iowait) was considered and deferred (decision c14). Revisit as a follow-up if the swap/iowait signal proves too coarse a trigger for real saturation.",
+      "kind": "out_of_scope",
+      "task_id": null
+    }
+  ]
+}

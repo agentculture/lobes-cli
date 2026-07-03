@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 from lobes import _metrics
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._config import ServerConfig
+from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
@@ -262,6 +263,21 @@ def _error_body(message: str, attempts: list[str]) -> bytes:
     ).encode("utf-8")
 
 
+def _busy_body(requested_tier: str) -> bytes:
+    """Return the JSON body for a 429 busy (shed) response."""
+    _LANE_LABELS = {"main": "cortex", "multimodal": "senses"}
+    label = _LANE_LABELS.get(requested_tier, requested_tier)
+    return json.dumps(
+        {
+            "error": {
+                "message": f"{label} is under pressure; retry shortly",
+                "type": "server_busy",
+                "code": "busy",
+            }
+        }
+    ).encode("utf-8")
+
+
 def handle_post(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -279,23 +295,34 @@ def handle_post(
     or 4xx — committed), or a 502 if every backend refused / 5xx'd. ``open_upstream``
     is injected so this is unit-testable without sockets.
 
-    Pressure-aware tier downgrade (t6, #68; vocab #69): when ``pressure`` is
-    supplied *and* the requested model is a capability tier (``main``/``minor``/
-    ``multimodal``, or the ``cheap``/``normal``/``hard`` back-compat aliases), the
-    tier is run through :func:`resolve_tier_request` *in front of*
-    :func:`resolve_model` — under memory/iowait pressure a ``main``/``multimodal``
-    request is downgraded to ``minor`` (the only cheaper rung, since multimodal is
-    a capability, not a tier), and the ``X-Lobes-Override`` header (passed as
-    ``override``) forces the requested tier back. The resolved tier + reason are
-    surfaced as ``X-Lobes-Tier`` / ``X-Lobes-Tier-Reason`` response headers
-    (prepended so they reach the client before the body, streaming included). A
-    plain model id, or ``pressure=None`` (no cache wired), takes the exact
-    existing path. The static alias table is never mutated.
+    Pressure-aware busy shedding (#85): when ``pressure`` is supplied *and* the
+    requested model is a capability tier (``main``/``minor``/``multimodal``, or the
+    ``cheap``/``normal``/``hard`` back-compat aliases), the tier is run through
+    :func:`resolve_tier_request` *in front of* :func:`resolve_model`. Under
+    memory/iowait pressure a ``main`` (cortex) or ``multimodal`` (senses) request
+    is **shed** with HTTP 429 + ``Retry-After`` + ``X-Lobes-Tier-Reason: busy``
+    and an OpenAI-shaped ``server_busy`` error body; no upstream is dialed. An
+    explicit ``minor`` request is the floor and is still served (never shed). The
+    ``X-Lobes-Override`` header (passed as ``override``) forces the requested tier
+    to be served instead of shed. On the served path the ``X-Lobes-Tier`` /
+    ``X-Lobes-Tier-Reason`` headers still travel with the response (prepended,
+    streaming-safe). A plain model id, or ``pressure=None``, takes the existing
+    non-tier path unchanged.
     """
     requested = extract_model(body)
     tier_headers: list[tuple[str, str]] = []
     if pressure is not None and is_tier_alias(requested):
         decision = resolve_tier_request(requested, pressure, override, table)
+        if decision["busy"]:
+            return GatewayResponse(
+                status=429,
+                headers=[
+                    ("Retry-After", str(BUSY_RETRY_AFTER_SECONDS)),
+                    ("X-Lobes-Tier-Reason", "busy"),
+                    ("Content-Type", _CONTENT_TYPE_JSON),
+                ],
+                body=_busy_body(decision["requested_tier"]),
+            )
         served = decision["served_name"]
         tier_headers = [
             ("X-Lobes-Tier", decision["served_tier"]),
@@ -424,7 +451,10 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
 
 
 def fleet_status_payload(
-    table: RoutingTable, cfg: ServerConfig, probe=_metrics.probe_backend
+    table: RoutingTable,
+    cfg: ServerConfig,
+    pressure: dict | None = None,
+    probe=_metrics.probe_backend,
 ) -> dict:
     """Live status for every backend + an aggregate busy count + the endpoint list.
 
@@ -432,6 +462,13 @@ def fleet_status_payload(
     backend can't make ``/status`` hang for ``timeout × N``. ``base_url`` is
     intentionally **not** in the payload — those are internal-only routing details
     and ``/status`` may be reached over a public tunnel.
+
+    When *pressure* is supplied (the cached ``/proc`` sample), a ``pressure``
+    block is added exposing the busy-policy state a full-tier request would hit
+    right now — ``mode`` (``warm``/``busy``), whether it is ``shed`` (HTTP 429),
+    the ``reason`` and the raw swap/iowait numbers — so operators can see *why*
+    callers are being told to wait (#85). Omitted entirely when *pressure* is
+    ``None`` (no cache wired), keeping the payload back-compatible.
     """
     members = list(table.backends)
     if members:
@@ -456,13 +493,29 @@ def fleet_status_payload(
                 "metrics": st.get("metrics"),
             }
         )
-    return {
+    payload = {
         "object": "lobes.fleet_status",
         "default_model": table.default_model,
         "busy": {"running": running, "waiting": waiting},
         "backends": backends,
         "endpoints": _endpoints_for(table, bool(cfg.audio_url)),
     }
+    if pressure is not None:
+        # Same decide() handle_post consults, probed with a full tier ("main"),
+        # so the reported busy state matches what a live request would receive.
+        d = decide(
+            pressure.get("swap_used_percent", 0.0),
+            pressure.get("iowait_percent", 0.0),
+            requested_tier="main",
+        )
+        payload["pressure"] = {
+            "mode": d["mode"],
+            "shed": d["shed"],
+            "reason": d["reason"],
+            "swap_used_percent": pressure.get("swap_used_percent", 0.0),
+            "iowait_percent": pressure.get("iowait_percent", 0.0),
+        }
+    return payload
 
 
 # --- role capabilities (the #81 role→endpoint contract, t6) ----------------
@@ -530,7 +583,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.
-            self._send_json(200, fleet_status_payload(self.table, self.server_config))
+            # The cached pressure sample surfaces the busy-policy state (#85).
+            pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
+            self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
             self._send_json(200, list_models_payload(self.table))
         elif route == "/v1/models/supported":

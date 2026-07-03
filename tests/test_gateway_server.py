@@ -374,25 +374,80 @@ def _fleet_cfg():
     )
 
 
-_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → degraded/minor
+_HIGH_SWAP = {"swap_used_percent": 80.0, "iowait_percent": 0.0}  # > 75 → busy/shed
 _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 
 
-def test_handle_post_downgrades_to_minor_under_pressure() -> None:
-    # model=hard (back-compat alias for main) under simulated high swap →
-    # forwarded to the minor gear with X-Lobes-Tier-Reason: pressure. The emitted
-    # X-Lobes-Tier is normalized to the new vocabulary (minor), per the t6 seam.
+def test_handle_post_sheds_main_with_429_busy_under_pressure() -> None:
+    # model=hard (back-compat alias for main) under simulated high swap → SHED
+    # with a 429 busy response; the request is NOT forwarded to any backend
+    # (degrade-to-minor is removed; #85). No upstream is dialed (h10).
     table, cfg = _fleet_cfg()
     opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
     )
+    assert resp.status == 429
+    assert resp.upstream is None
+    assert calls == []  # h10: no upstream backend was dialed on the shed path
+    headers = dict(resp.headers)
+    assert headers["Retry-After"] == str(S.BUSY_RETRY_AFTER_SECONDS)
+    assert headers["X-Lobes-Tier-Reason"] == "busy"
+    body = json.loads(resp.body)
+    assert body["error"]["type"] == "server_busy"
+    assert body["error"]["code"] == "busy"
+    assert "cortex" in body["error"]["message"]
+
+
+def test_handle_post_sheds_senses_with_429_busy_under_pressure() -> None:
+    # model=normal (multimodal/senses) is ALSO shed under pressure — not degraded
+    # to minor. Busy applies to any cross-capability substitution (cortex + senses).
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"normal"}', opener, pressure=_HIGH_SWAP
+    )
+    assert resp.status == 429
+    assert calls == []
+    assert dict(resp.headers)["X-Lobes-Tier-Reason"] == "busy"
+    body = json.loads(resp.body)
+    assert "senses" in body["error"]["message"]
+
+
+def test_handle_post_minor_still_served_under_pressure() -> None:
+    # An explicit minor request is the floor — served as requested, never shed.
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"minor"}', opener, pressure=_HIGH_SWAP
+    )
     assert resp.status == 200
-    assert calls[0][0] == "minor"  # degraded → minor backend
-    assert json.loads(calls[0][1])["model"] == "MINOR"  # body rewritten to served name
+    assert calls[0][0] == "minor"  # served, not shed
     headers = dict(resp.headers)
     assert headers["X-Lobes-Tier"] == "minor"
-    assert headers["X-Lobes-Tier-Reason"] == "pressure"
+    assert headers["X-Lobes-Tier-Reason"] == "default"
+
+
+def test_busy_429_is_distinguishable_from_502_all_down() -> None:
+    # The busy 429 (type server_busy) and the hard 502 (type upstream_unavailable)
+    # differ by status code AND error type — a client can tell "retry" from "down".
+    table, cfg = _fleet_cfg()
+    opener, _ = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    busy = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
+    )
+    down_opener, _ = _opener(
+        {
+            "minor": S.UpstreamError("x"),
+            "multimodal": S.UpstreamError("y"),
+            "primary": S.UpstreamError("z"),
+        }
+    )
+    down = S.handle_post(
+        table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', down_opener
+    )
+    assert busy.status == 429 and json.loads(busy.body)["error"]["type"] == "server_busy"
+    assert down.status == 502 and json.loads(down.body)["error"]["type"] == "upstream_unavailable"
 
 
 def test_handle_post_override_forces_main_under_pressure() -> None:
@@ -485,8 +540,10 @@ def tier_gateway(monkeypatch):
         cache.stop()
 
 
-def test_integration_streaming_downgrade_headers_precede_body(tier_gateway) -> None:
-    # Raw socket so we can see the header block lands before the SSE data chunks.
+def test_integration_streaming_request_under_pressure_gets_429_busy(tier_gateway) -> None:
+    # Under pressure a streaming request is SHED with 429 busy — NOT downgraded
+    # and streamed. The busy status + Retry-After + X-Lobes-Tier-Reason: busy
+    # arrive as a complete (Content-Length) response, and no SSE body is emitted.
     host, port = tier_gateway.removeprefix("http://").split(":")
     body = b'{"model":"hard","stream":true}'
     request = (
@@ -498,19 +555,32 @@ def test_integration_streaming_downgrade_headers_precede_body(tier_gateway) -> N
     with socket.create_connection((host, int(port)), timeout=5) as sock:
         sock.sendall(request)
         buf = b""
-        while b"0\r\n\r\n" not in buf:
+        while b"\r\n\r\n" not in buf:
             chunk = sock.recv(4096)
             if not chunk:
                 break
             buf += chunk
-    head, _, _rest = buf.partition(b"\r\n\r\n")
-    # Tier headers are in the HTTP header block (before the body separator).
-    assert b"X-Lobes-Tier: minor" in head
-    assert b"X-Lobes-Tier-Reason: pressure" in head
-    # And the downgrade actually happened on the wire: routed to the minor gear.
-    assert b"data: minor\n\n" in buf
-    # Header block precedes the first data chunk (no metadata smuggled into body).
-    assert buf.index(b"X-Lobes-Tier-Reason") < buf.index(b"data: minor")
+        head, _, rest = buf.partition(b"\r\n\r\n")
+        content_length = next(
+            (
+                int(line.split(b":", 1)[1])
+                for line in head.split(b"\r\n")
+                if line.lower().startswith(b"content-length:")
+            ),
+            0,
+        )
+        while len(rest) < content_length:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            rest += chunk
+    # 429 busy, not a streamed 200 downgrade.
+    assert buf.startswith(b"HTTP/1.1 429")
+    assert b"Retry-After:" in head
+    assert b"X-Lobes-Tier-Reason: busy" in head
+    # No SSE body for a served (downgraded) model was ever sent.
+    assert b"data: minor" not in buf
+    assert json.loads(rest)["error"]["code"] == "busy"
 
 
 def test_integration_override_header_forces_hard(tier_gateway) -> None:
@@ -535,3 +605,34 @@ def test_integration_override_header_forces_hard(tier_gateway) -> None:
     assert b"X-Lobes-Tier: main" in head  # hard normalizes to main
     assert b"X-Lobes-Tier-Reason: manual_override" in head
     assert b"data: primary\n\n" in buf  # override → the 27B primary on the wire
+
+
+# --- /status surfaces the busy-policy state (#85, c13) ------------------------
+
+
+def _stub_probe(base_url, timeout):
+    """Probe stub — no real backend socket."""
+    return {"health": "unreachable", "metrics": None}
+
+
+def test_fleet_status_payload_surfaces_busy_pressure_block() -> None:
+    table, cfg = _fleet_cfg()
+    busy = S.fleet_status_payload(table, cfg, _HIGH_SWAP, probe=_stub_probe)
+    assert busy["pressure"]["mode"] == "busy"
+    assert busy["pressure"]["shed"] is True
+    assert busy["pressure"]["reason"] == "pressure"
+    assert busy["pressure"]["swap_used_percent"] == 80.0
+
+
+def test_fleet_status_payload_pressure_block_warm() -> None:
+    table, cfg = _fleet_cfg()
+    warm = S.fleet_status_payload(table, cfg, _NO_PRESSURE, probe=_stub_probe)
+    assert warm["pressure"]["mode"] == "warm"
+    assert warm["pressure"]["shed"] is False
+
+
+def test_fleet_status_payload_omits_pressure_block_when_unwired() -> None:
+    # Back-compat: no pressure arg → no pressure block in the payload.
+    table, cfg = _fleet_cfg()
+    payload = S.fleet_status_payload(table, cfg, probe=_stub_probe)
+    assert "pressure" not in payload

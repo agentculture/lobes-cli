@@ -1,15 +1,15 @@
-"""Request-layer tier downgrade + manual override for the gateway (t6, #68).
+"""Request-layer busy/shed backpressure for the gateway (t2, #68/#69/#85).
 
 Two pieces, both kept out of :mod:`lobes.gateway.server` so the gateway's
 decision-making core stays unit-testable offline:
 
 * :func:`resolve_tier_request` — the **pure** decision function. It maps a
   requested tier (or a plain model id), the sampled host pressure, an override
-  flag and the routing table to ``{"served_name", "served_tier", "reason"}``.
-  It is the only place that decides *which served name a tier request forwards
-  to* once pressure is folded in; the static alias table from t5 is never
-  mutated — the downgrade is layered in *front* of
-  :func:`lobes.gateway._routing.resolve_model`.
+  flag and the routing table to a result dict with keys ``busy``, ``served_name``,
+  ``served_tier``, ``reason``, and ``requested_tier``.  When the pressure verdict
+  is ``shed=True`` and no override is set, it returns a **busy marker**
+  (``busy=True``, ``served_name=None``) instead of resolving the tier through
+  routing.  This severs issue #85 (silent upward-fallback substitution).
 
 * :class:`PressureCache` — a non-blocking provider for the request path.
   :func:`lobes.runtime._pressure.sample_pressure` sleeps ~150 ms (it takes two
@@ -18,13 +18,6 @@ decision-making core stays unit-testable offline:
   daemon thread every ``interval`` seconds; ``.current()`` only ever returns the
   cached dict — it never samples — so a request reads pressure in O(1) with no
   blocking.
-
-The pure function deliberately calls into :func:`lobes.gateway._pressure_policy.decide`
-for the tier ceiling and resolves the served name the same way
-:func:`lobes.gateway._routing.resolve_model` does — reading the live alias table
-(which :func:`tier_aliases` populated with the upward-fallback baked in: a tier
-whose gear is absent escalates to the nearest higher tier), so the downgraded
-tier honours that fallback too.
 """
 
 from __future__ import annotations
@@ -98,30 +91,40 @@ def resolve_tier_request(
 
     Returns
     -------
-    dict with three keys:
+    dict with five keys:
 
+    ``busy``
+        ``True`` when the request must be shed (HTTP 429).  ``False`` when the
+        request is served normally.
     ``served_name``
-        The served model id to forward to (after rewrite). For a plain model id
-        this is the id itself; for a tier it is the served name the (possibly
-        downgraded) tier resolves to, honouring the upward-fallback.
+        The served model id to forward to (after rewrite), or ``None`` when the
+        request is shed (busy).  For a plain model id this is the id itself.
     ``served_tier``
         The capability tier actually served, in the **new vocabulary**
         (``main`` / ``minor`` / ``multimodal``), or ``None`` when the request was
-        a plain model id (pass-through). The seam (t6): under degraded pressure a
-        ``main`` *or* a ``multimodal`` request both serve ``minor`` — multimodal
-        is a different capability, not a cheaper rung, so it degrades to ``minor``
-        like ``main`` does.
+        a plain model id (pass-through) or when the request is shed (busy).
     ``reason``
         ``"default"`` (served the requested tier, no pressure), ``"pressure"``
-        (downgraded to ``minor``, or the system is in degraded mode), or
-        ``"manual_override"`` (override forced the requested tier).
+        (shed under pressure), or ``"manual_override"`` (override forced the
+        requested tier).
+    ``requested_tier``
+        The normalized tier name for the input, or ``None`` for a plain model id.
 
     Pass-through: a non-tier model id is returned verbatim with
-    ``served_tier=None`` / ``reason="default"`` (override is ignored — it only
-    forces tier requests). The caller then routes it via the normal path.
+    ``busy=False``, ``served_tier=None``, ``requested_tier=None``,
+    ``reason="default"`` (override is ignored — it only forces tier requests).
+    The caller then routes it via the normal path.
     """
     if not is_tier_alias(requested_tier):
-        return {"served_name": requested_tier, "served_tier": None, "reason": "default"}
+        return {
+            "busy": False,
+            "served_name": requested_tier,
+            "served_tier": None,
+            "reason": "default",
+            "requested_tier": None,
+        }
+
+    normalized = _pressure_policy.normalize_tier(requested_tier)
 
     decision = _pressure_policy.decide(
         pressure.get("swap_used_percent", 0.0),
@@ -130,20 +133,35 @@ def resolve_tier_request(
     )
 
     if override:
-        # Force the requested tier (normalized to the new vocabulary) despite
-        # pressure. ``decide`` already validated the alias above.
-        served_tier = _pressure_policy.normalize_tier(requested_tier)
-        reason = "manual_override"
-    else:
-        # ``decide`` already returns the granted tier (new vocab) and the reason
-        # (pressure when degraded or constrained, else default).
-        served_tier = decision["allowed_tier"]
-        reason = decision["reason"]
+        # Force the requested tier despite pressure.
+        return {
+            "busy": False,
+            "served_name": _served_name_for(table, normalized),
+            "served_tier": normalized,
+            "reason": "manual_override",
+            "requested_tier": normalized,
+        }
 
+    if decision["shed"]:
+        # Shed: return busy marker. Do NOT call _served_name_for — that would
+        # trigger the upward-fallback (issue #85: minor absent → resolves up to
+        # multimodal/gemma). A shed request resolves to NO served name.
+        return {
+            "busy": True,
+            "served_name": None,
+            "served_tier": None,
+            "reason": "pressure",
+            "requested_tier": normalized,
+        }
+
+    # Warm or minor-under-pressure: serve normally.
+    served_tier = decision["servable_tier"]
     return {
+        "busy": False,
         "served_name": _served_name_for(table, served_tier),
         "served_tier": served_tier,
-        "reason": reason,
+        "reason": decision["reason"],
+        "requested_tier": normalized,
     }
 
 

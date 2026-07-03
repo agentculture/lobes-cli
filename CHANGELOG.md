@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.0] - 2026-07-03
+
+### Changed
+
+- Under swap/iowait pressure the gateway now **sheds** a `main`/`cortex` or `multimodal`/`senses` request with HTTP 429 + `Retry-After` (busy — retry shortly) instead of silently degrading it onto a different model. The degrade-to-minor path is removed outright (no `LOBES_PRESSURE_POLICY` toggle); an explicit `minor` request is still served as the floor. Busy is disclosed via `X-Lobes-Tier-Reason: busy` and an OpenAI-shaped `server_busy` error body, distinct from the hard 502 `upstream_unavailable`; callers (the acp `vllm-local` provider, colleague, generic OpenAI SDKs) must retry with backoff. `lobes status --pressure` and the gateway `GET /status` now report the busy-policy state (`mode`/`shed`/`retry_after`). The trigger reuses the existing swap/iowait signal; the tunable thresholds (#86) and the `/proc` sampler are untouched.
+
+### Fixed
+
+- Pressure no longer crosses capabilities: on a default fleet with `minor` unwired, a pressured `cortex`/`main` request previously fell through the tier upward-fallback onto the Gemma multimodal gear (a different capability), silently answering an authoritative-reasoning request with a perception model. Removing the degrade path makes that cross-capability substitution structurally impossible. Closes #85.
+
 ## [0.36.2] - 2026-07-03
 
 ### Fixed

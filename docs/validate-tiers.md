@@ -3,8 +3,8 @@
 Generate-fleet tier validation for issue #68, task t9 (updated for issue #69
 vocabulary: `main`/`minor`/`multimodal` with back-compat `hard`/`cheap`/`normal`).
 Runs `scripts/validate-tiers.sh` against an already-running fleet to confirm
-that tier alias routing, pressure downgrade, and manual override all behave
-correctly end-to-end on the live hardware.
+that tier alias routing, pressure busy-backpressure, and manual override all
+behave correctly end-to-end on the live hardware.
 
 ## Prerequisites
 
@@ -96,7 +96,7 @@ are also accepted and emit the new-vocabulary tier in the response header
 **Maps to t9 acceptance criterion:** callers address the generate lane by
 capability-tier alias and the gateway routes to the correct gear.
 
-### D — Pressure downgrade (simulated)
+### D — Pressure backpressure (simulated)
 
 This check simulates an overloaded host **without actually stressing memory**:
 
@@ -119,8 +119,8 @@ This check simulates an overloaded host **without actually stressing memory**:
    The vLLM backends are untouched. The gateway re-imports
    `lobes.gateway._pressure_policy` at container start, picking up the lowered
    threshold.
-4. POST `model=main` and assert `X-Lobes-Tier: minor` and
-   `X-Lobes-Tier-Reason: pressure`.
+4. POST `model=main` and assert the request is **shed** (not substituted):
+   HTTP `429`, a `Retry-After` header, and `X-Lobes-Tier-Reason: busy`.
 
 The `LOBES_SWAP_DEGRADED_THRESHOLD` constant is read at **module import time**
 inside the gateway container. Changing it requires a gateway restart; the
@@ -128,19 +128,21 @@ vLLM backends do not need to restart.
 
 **Why the trap matters:** the override file must be removed and the
 gateway must be recreated at defaults before the script exits, or the fleet will
-stay with a degraded threshold that blocks all `hard` requests permanently.
+stay with a lowered threshold that sheds all `main`/`hard` requests with `429`
+permanently.
 The `trap '_cleanup' EXIT` in the script handles this unconditionally — even if
 the script is killed with Ctrl-C or fails partway through D.
 
-**Maps to t9 acceptance criterion:** swap or iowait pressure above the
-degraded threshold downgrades `main` (and `multimodal`) requests to `minor`.
+**Maps to acceptance criterion:** swap or iowait pressure above the busy
+threshold sheds `main` (and `multimodal`) requests with a `429` busy response —
+it does not substitute another model (issue #85).
 
 ### E — Manual override
 
 With the same lowered threshold still active from D, POSTs `model=main` **with
 `X-Lobes-Override: 1`** and asserts:
 
-- `X-Lobes-Tier: main` (override bypassed the downgrade)
+- `X-Lobes-Tier: main` (override bypassed the shed — served, not `429`)
 - `X-Lobes-Tier-Reason: manual_override`
 
 The gateway's truthy tokens for `X-Lobes-Override` are `1`, `true`, `yes`.
@@ -200,7 +202,7 @@ read at `docker compose up` time. The `multimodal` gear starts automatically
 (no profile needed); if it fails, check that `MULTIMODAL_BASE_URL` is wired in
 the gateway env.
 
-**Check D fails (downgrade not firing):** the gateway container's
+**Check D fails (shed not firing):** the gateway container's
 `LOBES_SWAP_DEGRADED_THRESHOLD` env var was not set. Confirm the
 `docker-compose.validate-tiers.override.yml` was written to `$COMPOSE_DIR`
 before the `--force-recreate` call and that `docker compose up` picked it up

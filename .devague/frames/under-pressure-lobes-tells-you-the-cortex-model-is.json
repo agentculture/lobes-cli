@@ -1,0 +1,329 @@
+{
+  "slug": "under-pressure-lobes-tells-you-the-cortex-model-is",
+  "title": "Under pressure, lobes tells you the cortex model is busy and to retry shortly \u2014 it never silently degrades your request onto a weaker or different-capability model.",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-03T17:09:53Z",
+  "updated": "2026-07-03T17:46:56Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Under pressure, lobes tells you the cortex model is busy and to retry shortly \u2014 it never silently degrades your request onto a weaker or different-capability model.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "On a live pressured fleet, a cortex request observably returns a retryable busy signal (not a Gemma/other-model completion), and a retrying client eventually receives a genuine cortex answer once pressure clears.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Callers of the lobes gateway generate lane \u2014 the Culture mesh acp vllm-local provider and colleague \u2014 plus operators running the memory/swap-pressured GB10 fleet.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "The acp vllm-local provider and colleague are the actual pressured-fleet callers of the generate lane (they dial the gateway origin per #87), so THEIR retry behavior is what determines whether busy backpressure is safe in practice.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "A cortex/main request under swap/iowait pressure gets an explicit, retryable 'busy' response (HTTP 503 + Retry-After) instead of a silent 2xx answer from a substituted cheaper or different-capability model.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "HTTP 503 (server overloaded, matches OpenAI 'engine is overloaded') vs 429 (rate-limited) \u2014 which status best fits 'the model is busy, retry shortly' for our OpenAI-compatible callers?",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "Under pressure the policy caps the tier to minor; with minor unwired the router's upward-fallback silently serves the request from Gemma (multimodal) \u2014 a different capability \u2014 disclosed only via X-Lobes-Tier headers (bug #85).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "The silent Gemma substitution is the real current code path, not a hypothetical: resolve_tier_request('cortex', swap=80%) on a default fleet with minor unwired returns served=Gemma, tier=minor, reason=pressure (reproduced against the live code).",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "A caller asking cortex for authoritative reasoning must never silently receive a weaker or wrong-capability answer; an honest 'busy, retry' preserves the capability contract (#81) and lets clients back off instead of acting on a degraded result.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "For a cortex caller, a wrong-capability/degraded answer is materially worse than a retry delay \u2014 callers would rather wait and retry than silently act on a Gemma answer to an authoritative-reasoning request.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Not a request queue/scheduler or admission-control rewrite, and not a change to vLLM's internal batching; the swap/iowait sampling and tunable thresholds (#86) stay as the pressure signal \u2014 only the RESPONSE to pressure changes.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "The change is confined to the gateway response/decision path (handle_post + pressure-policy decision); the swap/iowait sampler (_pressure.py) and the threshold env vars (#86) are untouched.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "On a pressured fleet with no minor gear, a cortex request returns 503 busy+Retry-After (never a Gemma completion), and a retrying client eventually gets a real cortex answer once pressure clears.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Under pressure, the gateway returns HTTP 503 with a Retry-After header and an OpenAI-shaped error body for a generate request whose requested tier can't be honored, instead of rewriting it onto another model.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "OpenAI-compatible clients (the acp vllm-local provider, colleague, and generic SDKs) treat a 503 + Retry-After on POST /v1/chat/completions as a retryable transient, not a fatal error surfaced to the end user.",
+          "status": "proposed"
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "risk: If a client does NOT retry on 503 (treats it as fatal), turning off degrade makes lobes strictly less available under pressure than today's always-answer-with-something behavior \u2014 a real regression for non-retrying callers.",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c9",
+      "kind": "decision",
+      "text": "The legacy degrade-to-minor behavior becomes selectable, not removed: a pressure-policy MODE (e.g. LOBES_PRESSURE_POLICY=busy|degrade) picks busy-backpressure vs the old silent degrade; the shipped DEFAULT flips to busy.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "Does the user want the silent degrade path REMOVED outright, or kept as an opt-in mode with busy as the new default? The announcement says 'turn off degrading', which could mean either.",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The busy response carries a disclosure header (X-Lobes-Tier-Reason: busy) plus Retry-After so a client can distinguish transient busy (retry) from the existing hard 502 'all backends unavailable' (don't retry).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "A client can reliably distinguish busy (retry) from the existing 502 all-backends-unavailable (don't retry) from status+header alone, and on the streaming path the busy status is emitted before any SSE body bytes.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c11",
+      "kind": "decision",
+      "text": "Busy backpressure applies only within the generate/cortex capability lane; it never substitutes across capabilities. A request that can be honored on its own healthy gear is still served \u2014 busy is returned only when the requested capability itself can't be served under the current tier ceiling.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c12",
+      "kind": "assumption",
+      "text": "The mesh acp vllm-local provider and colleague treat 503+Retry-After as a transient/retryable signal and back off, rather than surfacing it as a hard failure to the end user.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "lobes status --pressure and the gateway /capabilities/GET status surface the busy policy state (mode=busy, current tier ceiling, whether requests are being shed) so operators can see WHY a client is being told to wait.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "lobes status --pressure and the gateway status endpoint report mode=busy and the current tier ceiling WITHOUT issuing a live generate request, and the reported ceiling matches the admission decision handle_post would actually make.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "The busy trigger reuses the EXISTING swap/iowait pressure signal (mode=degraded becomes mode=busy): when the policy would have degraded, it sheds instead. It does NOT introduce vLLM queue-depth (waiting-count) admission control.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q4",
+          "text": "Should 'busy' key on the swap/iowait pressure signal (what degrade uses today) or on real vLLM queue depth (the busy:{running,waiting} already probed for /status)? Pressure means 'box is thrashing'; queue-depth means 'this model is saturated' \u2014 different triggers.",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "A cortex OR senses request under swap/iowait pressure gets an explicit, retryable busy response (HTTP 429 + Retry-After) instead of a silent 2xx answer from a substituted cheaper or different-capability model.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "On the shed path the gateway issues NO upstream model request \u2014 it returns 429 itself \u2014 so a busy cortex/senses request provably never reaches a substitute model.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Under pressure, the gateway returns HTTP 429 with a Retry-After header and an OpenAI-shaped error body for a generate/multimodal request it would otherwise have substituted onto a different model, instead of rewriting it onto that model.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "The acp vllm-local provider, colleague, and generic OpenAI SDKs treat 429 + Retry-After on POST /v1/chat/completions as a retryable transient with backoff, not a fatal error surfaced to the end user.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q5",
+          "text": "risk: If a caller does NOT honor 429/Retry-After (treats it as fatal), removing degrade makes lobes strictly less available under pressure than today's always-answer-with-something behavior \u2014 a real regression for non-retrying callers, and the reason client retry handling is a honesty condition, not an assumption.",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "The silent degrade-to-minor path is REMOVED outright: no 'degrade' mode and no LOBES_PRESSURE_POLICY toggle to restore it. Under pressure the only behavior is busy backpressure \u2014 which makes the cross-capability substitution of #85 structurally impossible.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "Busy applies to ANY request pressure would otherwise substitute \u2014 both cortex (main/hard) and senses (multimodal/normal). The gateway never serves a different model than requested under pressure; a request whose own gear is healthy and served-as-requested is unaffected.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "An explicit model=minor request is still served under pressure (served as requested, not a substitution). Busy is returned only for a request whose requested tier/capability pressure would otherwise have swapped for a different model.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c20",
+      "kind": "assumption",
+      "text": "The mesh acp vllm-local provider and colleague treat a 429 + Retry-After on /v1/chat/completions as a transient/retryable signal and back off, rather than surfacing it as a hard failure to the end user.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "On a pressured fleet with no minor gear, a cortex request returns 429 busy+Retry-After (never a Gemma completion), and a retrying client eventually gets a real cortex answer once pressure clears.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "Success is observable end-to-end (not just a unit-tested decision()): a scripted pressured request shows 429+Retry-After for cortex, and after pressure clears a 200 from the real cortex model.",
+          "status": "confirmed"
+        }
+      ],
+      "hard_questions": [],
+      "links": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Exact Retry-After seconds value and whether it's static or derived from pressure severity / observed queue drain time.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    }
+  ]
+}
