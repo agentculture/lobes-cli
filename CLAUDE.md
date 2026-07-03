@@ -22,39 +22,59 @@ OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`lobes`*
 The served model is **`vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** (a
 Qwen3.6 27B with hybrid Mamba/linear-attention layers, re-exported with its MTP
 draft head restored so vLLM speculative decoding (Multi-Token Prediction) works;
-text-only (ViT vision tower removed), NVFP4, 256K native context served at the full
-256K on the shared DGX Spark; thinking mode with a reasoning trace; ~2.4x
-single-stream decode over the archived baseline). lobes runs it; the `acp`
-`vllm-local` provider connects the lobes agent to it. (It is the fleet's
-default primary. `mmangkad/Qwen3.6-27B-NVFP4` is the archived former primary,
-demoted to a candidate but kept — it is the tokenizer source the MTP primary
-serves with (`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`) and the only vision-capable
-27B; the `nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate —
-see `docs/qwen3-32b-nvfp4.md` and `lobes overview --list`.)
+text-only (ViT vision tower removed), NVFP4, 256K native; thinking mode with a
+reasoning trace; ~2.4x single-stream decode over the archived baseline). This is
+the **`cortex`** role — the fleet's reasoning/deciding/final-authority lobe
+(issue #81). **Served context depends on deployment shape:** the legacy single-model
+scaffold (`lobes serve`, no fleet) still serves the full 256K solo; the default
+**fleet** duo serves `cortex` at **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so it
+can co-reside with the multimodal gear — see "Colleague roles" below and
+`docs/colleague-stack.md#migration-before--after` for the full before→after
+table. lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to
+it. (It is the fleet's default primary/`cortex`. `mmangkad/Qwen3.6-27B-NVFP4` is
+the archived former primary, demoted to a candidate but kept — it is the
+tokenizer source the MTP primary serves with
+(`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`) and the only vision-capable 27B; the
+`nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate — see
+`docs/qwen3-32b-nvfp4.md` and `lobes overview --list`.)
 
-Beyond the generate primary, the **fleet** co-resides two tiny pooling gears
-behind the gateway, routed by **task family** (`generate` / `embed` / `score` /
-`rerank`): an **embedding** gear (`Qwen/Qwen3-Embedding-0.6B` → `POST
-/v1/embeddings`, served `--runner pooling --convert embed`) and a **reranker**
-gear (`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`, `--convert
-classify`). At ~0.6B and `*_GPU_MEM_UTIL=0.06` each they sit alongside the 27B
-primary without crowding it. A default-on **Gemma 4 12B multimodal gear** (`multimodal` tier,
-`COMPOSE_PROFILES` not needed — it starts with the fleet) joins the 27B primary as
-a **main + multimodal duo** at util 0.12, giving the generate lane native
-vision+audio. The 4B `minor` (back-compat `cheap`, `COMPOSE_PROFILES=minor`, util
-0.10) and the legacy 14B Qwen (`COMPOSE_PROFILES=middle`, util 0.12) are
-**opt-in** gears. Default budget: `0.45 + 0.12 + 0.06 + 0.06 = 0.69` on the 128
-GB GB10. Callers address the generate lane by **capability-tier alias** —
-`model=main|minor|multimodal` (back-compat: `hard|cheap|normal`) — rather than
-hardcoded model ids; `normal` now maps to `multimodal` (the Gemma gear), not the
-demoted 14B. A swap/iowait **pressure policy** degrades both `main` and
-`multimodal` requests to `minor` (swap > 75 % or iowait > 50 % → degraded, `minor`
-only — `multimodal` is a different capability, not a cheaper rung);
-`lobes status --pressure` shows the current tier ceiling. LoRA adapter training
-targets the 4B bf16 `minor` only — the 14B NVFP4 is inference-only, and there is
-no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
-`docs/qwen3-reranker-0.6b.md`, `docs/gemma-4-12b-nvfp4.md`, and
-`docs/gateway-fleet.md`.
+### Colleague roles: cortex / senses / embedder / reranker / stt / tts
+
+Beyond `cortex`, the **fleet** exposes SIX first-class, Colleague-facing
+**roles** (issue #81) — the primary contract callers should address, not raw
+model ids: `cortex` (the 27B primary — reasoning/deciding/final authority),
+`senses` (the Gemma 4 12B multimodal gear — vision+audio intake/perception;
+never decides or takes repo actions), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
+`POST /v1/embeddings`), `reranker` (`Qwen/Qwen3-Reranker-0.6B` → `POST
+/v1/rerank` + `/v1/score`), and the opt-in audio overlay's `stt`/`tts`. Roles
+are routed by **task family** (`generate` / `embed` / `score` / `rerank`) and
+discoverable via `lobes capabilities` / `lobes endpoint <role>` / gateway `GET
+/capabilities` — a JSON contract keyed by role (model / runtime / endpoint /
+path / context / quant / mtp / responsibilities / forbidden_responsibilities /
+ready / loaded); see `docs/colleague-stack.md` for the full contract.
+`cortex`/`senses`/`embedder`/`reranker` are default-on and co-reside on the
+DGX Spark GB10: `cortex` serves its **full 128K native context at util 0.30**,
+`senses` is trimmed to **32K at util 0.14**, and the two ~0.6B pooling gears
+run at `*_GPU_MEM_UTIL=0.06` each — default budget `0.30 + 0.14 + 0.06 + 0.06 =
+0.56` on the 128 GB GB10. The 4B `minor` (back-compat `cheap`,
+`COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
+(`COMPOSE_PROFILES=middle`, util 0.12) are **opt-in** gears and are not
+first-class Colleague roles. Callers address the generate lane by
+**capability-tier alias** — `model=main|minor|multimodal` (back-compat:
+`hard|cheap|normal`), or the Colleague-role names `model=cortex|senses` layered
+on top of `main`/`multimodal`; `normal`/`multimodal` maps to the Gemma gear, not
+the demoted 14B. A swap/iowait **pressure policy** degrades both `cortex` and
+`senses` requests to `minor` (swap > 75 % or iowait > 50 % → degraded, `minor`
+only — `senses` is a different capability, not a cheaper rung);
+`lobes status --pressure` shows the current tier ceiling. Start/stop one role at
+a time with `lobes up <role>` (or the full six-role bundle, `lobes up
+colleague-stack`); measure per-role runtime with `lobes measure` and compare
+fleet profiles with `lobes benchmark --profile {cortex-only,cortex+senses,
+senses-direct,qwen-nvfp4-vs-bf16,all}`. LoRA adapter training targets the 4B
+bf16 `minor` only — the 14B NVFP4 is inference-only, and there is no `lobes
+train` verb. See `docs/qwen3-embedding-0.6b.md`, `docs/qwen3-reranker-0.6b.md`,
+`docs/gemma-4-12b-nvfp4.md`, `docs/gateway-fleet.md`, and
+`docs/colleague-stack.md` (the six-role contract).
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as

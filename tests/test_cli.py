@@ -150,6 +150,19 @@ def test_explain_models(capsys: pytest.CaptureFixture[str]) -> None:
     assert "docs/" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("alias", ["roles", "colleague", "colleague-stack", "capabilities"])
+def test_explain_roles(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # issue #81: the six-role Colleague contract (cortex/senses/embedder/
+    # reranker/stt/tts) must render under every documented alias.
+    rc = main(["explain", alias])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for role in ("cortex", "senses", "embedder", "reranker", "stt", "tts"):
+        assert role in out
+    assert "GET /capabilities" in out
+    assert "docs/colleague-stack.md" in out
+
+
 def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain", "switch", "--json"])
     assert rc == 0

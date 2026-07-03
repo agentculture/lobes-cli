@@ -20,6 +20,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/audio/speech` | POST | Chatterbox TTS via the realtime bridge | text → audio bytes (24 kHz) |
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
+| `/capabilities` | GET | gateway | the six-role Colleague contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
 | `/health` | GET | gateway | liveness |
 
 Embeddings, rerank, score, and audio require the **fleet overlay** — they are not
@@ -284,6 +285,45 @@ the gateway defaults to). This is the HTTP equivalent of `lobes overview --list`
 curl -s http://localhost:8000/v1/models/supported
 ```
 
+### Capabilities (the six-role Colleague contract)
+
+`GET /capabilities` — the SIX first-class, Colleague-facing roles (`cortex`,
+`senses`, `embedder`, `reranker`, `stt`, `tts` — issue #81), each resolved to
+live metadata: `role`, `model`, `runtime`, `endpoint`, `path`, `context`,
+`quant`, `mtp`, `responsibilities`, `forbidden_responsibilities`, `ready`, and
+`loaded`. This is the discovery contract a Colleague client uses to drive the
+fleet by capability instead of a hardcoded model id — `lobes capabilities
+--json` returns the identical shape over the CLI. Non-OpenAI (lobes-native), a
+sibling to `/status`.
+
+```bash
+curl -s http://localhost:8000/capabilities
+```
+
+```json
+{
+  "cortex": {
+    "role": "cortex", "model": "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+    "runtime": "vllm", "endpoint": "http://localhost:8000",
+    "path": "/v1/chat/completions", "context": 131072, "quant": "modelopt",
+    "mtp": true, "responsibilities": ["reasoning", "deciding", "..."],
+    "forbidden_responsibilities": [], "ready": true, "loaded": true
+  },
+  "senses": { "...": "..." },
+  "embedder": { "...": "..." },
+  "reranker": { "...": "..." },
+  "stt": { "...": "..." },
+  "tts": { "...": "..." }
+}
+```
+
+All four gateway-fronted roles (`cortex`/`senses`/`embedder`/`reranker`) share
+this **one** gateway `endpoint` — routing between them is by the `model`
+field the contract hands back, not by distinct URLs. See
+[`docs/colleague-stack.md`](colleague-stack.md) for the full contract
+(responsibilities per role, the cortex/senses↔primary/multimodal mapping,
+`lobes up <role>`, `lobes measure`, and the client-flow / rename-safety proof).
+
 ## Loaded vs. supported
 
 Two questions that look alike but are not:
@@ -350,10 +390,12 @@ two-step provisioning flow (`cultureflare` + `lobes tunnel`).
 
 - `lobes explain gateway` — routing semantics (name / default / failover / SSE)
 - `lobes explain fleet` — the multi-container fleet topology
+- `lobes explain roles` — the six-role Colleague contract (`GET /capabilities`)
 - `lobes explain embeddings` — `/v1/embeddings` request/response detail
 - `lobes explain rerank` — `/v1/rerank` request/response detail
 - `lobes explain score` — `/v1/score` request/response detail
 - `lobes explain tunnel` — Cloudflare Tunnel bring-up
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — full fleet topology, memory guidance, live validation findings
+- [`docs/colleague-stack.md`](colleague-stack.md) — the six-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
 - [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), health/readiness, runbooks
 - [`docs/chatterbox-tts.md`](chatterbox-tts.md) — Chatterbox TTS details, voice prompting

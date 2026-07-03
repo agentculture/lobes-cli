@@ -220,8 +220,10 @@ explain gateway` for the routing semantics,
 [`docs/qwen3-embedding-0.6b.md`](docs/qwen3-embedding-0.6b.md) +
 [`docs/qwen3-reranker-0.6b.md`](docs/qwen3-reranker-0.6b.md) for the pooling
 gears, [`docs/gemma-4-12b-nvfp4.md`](docs/gemma-4-12b-nvfp4.md) for the
-multimodal gear, and [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the
-full topology.
+multimodal gear, [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the
+full topology, and [`docs/colleague-stack.md`](docs/colleague-stack.md) for
+the six-role Colleague contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`,
+`lobes capabilities`, `GET /capabilities`).
 
 ### Per-model notes
 
