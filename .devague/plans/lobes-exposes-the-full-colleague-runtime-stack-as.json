@@ -1,0 +1,438 @@
+{
+  "slug": "lobes-exposes-the-full-colleague-runtime-stack-as",
+  "title": "lobes exposes the full Colleague runtime stack as six discoverable, role-based lobes \u2014 cortex (Qwen 3.6 27B NVFP4 MTP @128K), senses (Gemma 4 12B @32K), stt, tts, embedder, reranker \u2014 that Colleague can discover, resolve to endpoints, start/stop, health-check, and measure through a stable machine-readable contract, without hardcoding any single model endpoint.",
+  "frame_slug": "lobes-exposes-the-full-colleague-runtime-stack-as",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-03T08:22:56Z",
+  "updated": "2026-07-03T08:29:17Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes exposes the full Colleague runtime stack as six discoverable, role-based lobes \u2014 cortex (Qwen 3.6 27B NVFP4 MTP @128K), senses (Gemma 4 12B @32K), stt, tts, embedder, reranker \u2014 that Colleague can discover, resolve to endpoints, start/stop, health-check, and measure through a stable machine-readable contract, without hardcoding any single model endpoint."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A Colleague client, given only lobes' machine-readable contract, resolves and consumes cortex+senses (plus stt/tts/embedder/reranker) endpoints BY ROLE with zero hardcoded model ids; and lobes emits only runtime metrics, never task-quality claims."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Colleague (the consuming agent runtime) is the primary client; secondary: the lobes operator running the fleet, and mesh peers. Colleague resolves roles->endpoints programmatically and must never hardcode a model id."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Colleague can be pointed at lobes and resolve every role it needs BY NAME (cortex/senses/stt/tts/embedder/reranker) with no model id in its own config; the operator and mesh peers read the same contract."
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "lobes exposes six first-class roles \u2014 cortex, senses, stt, tts, embedder, reranker \u2014 each resolvable by name to a live endpoint + metadata (model, runtime, context limit, quant, MTP support, responsibilities, forbidden responsibilities, health, loaded state)."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Each of the six roles is enumerable with its full metadata block; an unconfigured/opt-in role (e.g. stt/tts when audio isn't up) reports loaded=false rather than being absent or erroring."
+    },
+    {
+      "id": "c4",
+      "kind": "after_state",
+      "text": "The generate lane is rebalanced: cortex = Qwen 3.6 27B NVFP4 MTP served at 128K; senses = Gemma 4 12B served at 32K. cortex/senses are the primary capability contract; main/multimodal and hard/normal remain as back-compat aliases."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "cortex resolves to the 27B served at 128K and senses to Gemma served at 32K; main|multimodal|hard|normal still resolve to the same backends they do today (no caller breakage)."
+    },
+    {
+      "id": "c5",
+      "kind": "before_state",
+      "text": "Today the generate lane is addressed only by capability-TIER aliases (main|minor|multimodal, back-compat hard|cheap|normal) with no ROLE concept; the current validated balance is INVERTED vs the target \u2014 Qwen 27B at 64K, Gemma 12B at 128K \u2014 and the four service gears (embed, rerank, and the hardcoded Parakeet STT / Chatterbox TTS) exist but are NOT discoverable as first-class named roles, with no machine-readable role->endpoint contract for Colleague."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Verifiable today: grep shows no cortex/senses vocabulary in code; catalog.TIER_ROLE carries only main|minor|multimodal (+cheap/normal/hard); the fleet template serves primary@64K + multimodal@128K; and no role->endpoint JSON contract exists."
+    },
+    {
+      "id": "c6",
+      "kind": "why_it_matters",
+      "text": "Colleague can build a clean cognitive boundary \u2014 cortex as the authoritative reasoning/action/validation layer, senses as the user-facing intake/perception/speak-back front door \u2014 and dynamically measure whether cortex-only or Gemma-senses->Qwen-cortex is the better architecture, instead of hardcoding one monolithic model endpoint."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "With the contract in place Colleague can run the same task through cortex-only and through senses->cortex and get comparable RUNTIME numbers to choose the architecture, without editing lobes."
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "lobes measures the RUNTIME layer only (endpoint readiness, TTFT, decode TPS, prefill, RTF, docs/sec, memory, restart count); it does NOT measure task quality or agent behavior \u2014 that stays Colleague's job."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "Every metric lobes emits is a runtime/serving measurement; no field anywhere in the contract or bench output asserts answer correctness or agent-task success."
+    },
+    {
+      "id": "c12",
+      "kind": "success_signal",
+      "text": "Colleague resolves cortex and senses endpoints from lobes' machine-readable JSON with zero hardcoded model ids, and the payload matches the #81 shape ({role:{endpoint,model,context,ready,responsibilities}})."
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "A from-scratch Colleague config containing zero model ids successfully drives cortex+senses via the resolved endpoints."
+    },
+    {
+      "id": "c13",
+      "kind": "success_signal",
+      "text": "cortex serves 128K context and senses serves 32K context, co-resident and both HEALTHY on the 128 GB GB10 within budget."
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A live GB10 deploy shows cortex /health OK at 128K AND senses /health OK at 32K simultaneously, within the GPU budget."
+    },
+    {
+      "id": "c14",
+      "kind": "success_signal",
+      "text": "'lobes up colleague-stack' (a profile) brings up the expected Colleague combination (cortex + senses + stt + tts + embedder + reranker) and 'lobes up <role>' can start/stop/check any single role."
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "'lobes up colleague-stack --apply' leaves all six roles reachable; 'lobes up <role>' toggles a single role without disturbing the others."
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "REBALANCE: cortex (Qwen 3.6 27B NVFP4 MTP) served context 64K->128K; senses (Gemma 4 12B) served context 128K->32K; util retuned so both co-reside healthy within the GB10 budget; the swap/iowait pressure policy that degrades 'main' is redefined in cortex/senses terms (cortex->minor on pressure; senses is a distinct capability, not a rung)."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "On the fleet template PRIMARY_MAX_MODEL_LEN=131072 (cortex 128K) and the Gemma gear's max-model-len=32768 (senses 32K); a live co-resident deploy on the GB10 shows BOTH cortex and senses HEALTHY with summed GPU utils within budget (<=~0.70); and the pressure policy degrades cortex->minor (senses treated as a distinct capability, not a rung)."
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "ROLE NAMES: add first-class role/capability names cortex, senses, stt, tts, embedder, reranker; cortex/senses are the primary generate-lane contract; main|multimodal|hard|normal are kept as back-compat aliases that resolve to cortex/senses."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "catalog.TIER_ROLE and its two mirrors resolve cortex->primary and senses->multimodal; POSTing model=cortex or model=senses to the gateway routes to the right backend; and model=main|multimodal|hard|normal still resolve unchanged (existing tier tests still pass)."
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "CAPABILITY DISCOVERY: a command/API (e.g. 'lobes capabilities', 'lobes endpoint <role>') lets a client inspect each role \u2014 role, model/alias, runtime, endpoint/base URL, context limit, quant, MTP/spec support, responsibilities, forbidden responsibilities, health status, loaded/unloaded state."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "'lobes capabilities' lists all six roles each with {role, model/alias, runtime, endpoint, context, quant, MTP, responsibilities, forbidden_responsibilities, health, loaded_state}, and 'lobes endpoint <role>' returns a role's base URL \u2014 both read LIVE deploy/gateway state, nothing hardcoded."
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "ROLE-BASED SERVING: start/stop/check services by role \u2014 'lobes up cortex|senses|embedder|reranker|stt|tts' and a 'colleague-stack' profile that starts the expected Colleague combination; respects the repo's dry-run-by-default --apply mutation-safety rule."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "'lobes up <role>' and 'lobes up colleague-stack' start/stop/check the correct container(s); colleague-stack is a real compose profile; and these WRITE verbs default to dry-run and require --apply per the repo mutation-safety rule."
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "PER-ROLE MEASUREMENT: lightweight per-role metrics \u2014 LLM roles: TTFT, decode TPS, prefill, context limit, mem usage, readiness, error/restart count; STT/TTS: in/out duration, latency, real-time factor, failure rate; embedder/reranker: req/sec or docs/sec, batch size, latency, loaded state."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Each role reports its metric set (LLM: TTFT/decode-TPS/prefill/ctx/mem/restart; STT/TTS: in-out duration/latency/RTF/failure; embed/rerank: docs-sec/batch/latency/loaded) via a READ-ONLY verb that never mutates the deployment."
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "COLLEAGUE JSON CONTRACT: a stable machine-readable output (JSON CLI mode and/or local HTTP API and/or config file) matching the #81 shape, so Colleague consumes lobes without parsing human CLI text; roles carry endpoint, model, context, ready, responsibilities."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The emitted JSON round-trips the #81 shape \u2014 a consumer parses each role's {endpoint, model, context, ready, responsibilities} with zero hardcoded model ids \u2014 and the schema is documented + stable (covered by a test that asserts the shape)."
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "MEASUREMENT PROFILES: a benchmark/profile mode comparing cortex-only vs Qwen-cortex+Gemma-senses vs Gemma-senses-direct-for-cheap-tasks vs Qwen NVFP4-vs-BF16 (where both available) \u2014 lobes measures the runtime layer for these profiles."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A benchmark/profile mode runs cortex-only and cortex+senses (and Qwen NVFP4-vs-BF16 where both are present) and emits comparable RUNTIME metrics only; it does not assert task-quality/agent-behavior numbers."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Role vocabulary + resolution layer: add cortex/senses to catalog.TIER_ROLE and its two mirrors (_pressure_policy._TIER_ROLE/_ROLE_TO_TIER, _tier_request); cortex->primary, senses->multimodal; pressure degrades cortex->minor; keep main|multimodal|hard|normal back-compat.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "POST model=cortex routes to the primary backend and model=senses to the multimodal backend; main|multimodal|hard|normal resolve unchanged (existing tier tests stay green)",
+        "under degraded pressure the ceiling maps cortex->minor; senses is NOT treated as a downgrade rung"
+      ],
+      "deps": [],
+      "covers": [
+        "c16",
+        "h3",
+        "c4",
+        "h11"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Generate-lane context rebalance in the fleet template: PRIMARY_MAX_MODEL_LEN 65536->131072 (cortex 128K); Gemma gear max-model-len ->32768 (senses 32K); retune PRIMARY_GPU_MEM_UTIL/MULTIMODAL_GPU_MEM_UTIL; update budget comments.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "fleet env.example sets PRIMARY_MAX_MODEL_LEN=131072 and the Gemma gear max-model-len=32768; the budget comment sums default utils <= ~0.70",
+        "template/doc-alignment tests pass (e.g. test_gateway_fleet_doc)"
+      ],
+      "deps": [],
+      "covers": [
+        "c15",
+        "h2"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Fix FLEET_CONTAINERS senses visibility: add a FLEET_MULTIMODAL constant and include the Gemma container so lobes fleet status reports its loaded/health state.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_compose.fleet_containers() includes model-gear-vllm-multimodal; lobes fleet status reports the senses container's loaded/health state"
+      ],
+      "deps": [],
+      "covers": [
+        "h10"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Role registry + capability metadata core: a module defining the six roles with responsibilities/forbidden_responsibilities and role->backend/endpoint/context/quant/MTP resolution from live config; unconfigured roles report loaded=false.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the registry returns each of the six roles with {role, model, runtime, endpoint, context, quant, mtp, responsibilities, forbidden_responsibilities, loaded_state}",
+        "an unconfigured/opt-in role (e.g. stt when audio isn't up) is present with loaded=false, not absent or erroring"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h10",
+        "c17"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "CLI discovery verbs: 'lobes capabilities' (all six roles, --json) and 'lobes endpoint <role>' (base URL), read-only, consuming the role registry.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes capabilities --json lists all six roles each with the required metadata fields; lobes endpoint cortex prints the base URL",
+        "both verbs are read-only (no compose/deploy mutation) and read live state, nothing hardcoded"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c2",
+        "h9",
+        "h4"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Gateway GET /capabilities endpoint emitting the #81-shape role->endpoint JSON contract, reusing the gateway /status plumbing + the role registry.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /capabilities returns JSON where each role carries {endpoint, model, context, ready, responsibilities}; a test asserts the documented shape round-trips",
+        "zero hardcoded model ids in the payload; unconfigured roles report ready=false"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c20",
+        "h7",
+        "c12"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "Role-based serving: 'lobes up <role>' (start/stop/check one role; dry-run + --apply) and a 'colleague-stack' compose profile bringing up the six-role combination, wired to the gateway via an optional-backend pair.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes up colleague-stack --apply leaves cortex+senses+embedder+reranker (+stt/tts when audio) reachable; dry-run by default, requires --apply",
+        "lobes up <role> toggles a single role without disturbing the others; colleague-stack is a real compose profile"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t5",
+        "t8"
+      ],
+      "covers": [
+        "c18",
+        "h5",
+        "c14",
+        "h17"
+      ]
+    },
+    {
+      "id": "t8",
+      "summary": "Per-role runtime measurement (read-only verb): LLM roles TTFT/decode-TPS/prefill/ctx/mem/restart; STT/TTS in-out duration+latency+RTF+failure; embed/rerank docs-sec/batch/latency/loaded.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each role emits its role-appropriate metric set via a read-only verb that never mutates the deployment",
+        "no emitted field asserts answer correctness or agent-task success (runtime-only)"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c19",
+        "h6",
+        "c7",
+        "h14"
+      ]
+    },
+    {
+      "id": "t9",
+      "summary": "Comparison benchmark profiles: cortex-only vs cortex+senses vs senses-direct vs Qwen NVFP4-vs-BF16 (where both catalog-present); emits comparable RUNTIME metrics only.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a profile mode runs cortex-only and cortex+senses and emits side-by-side runtime metrics; NVFP4-vs-BF16 when both are catalog-present",
+        "output is runtime-only; it asserts no task-quality/agent-behavior numbers"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c21",
+        "h8",
+        "c6",
+        "h13"
+      ]
+    },
+    {
+      "id": "t10",
+      "summary": "Docs + explain entry: document the six-role contract, the JSON shape, the cortex/senses<->primary/multimodal mapping, and the before->after migration (incl. the stale 256K note); add a 'lobes explain' role-contract entry.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs describe the six roles + JSON contract shape + cortex/senses->primary/multimodal mapping + the 64K/128K -> 128K/32K migration; doc-test-alignment passes",
+        "a 'lobes explain' entry for the role contract exists and renders"
+      ],
+      "deps": [
+        "t4",
+        "t5",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c5",
+        "h12",
+        "c1"
+      ]
+    },
+    {
+      "id": "t11",
+      "summary": "End-to-end Colleague-contract test: a zero-model-id client resolves cortex+senses (+service roles) purely by role from the contract and drives them; asserts runtime-only.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a test drives cortex+senses via role-resolved endpoints with zero hardcoded model ids and passes",
+        "the test asserts lobes emits only runtime metrics, never task-quality claims"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "h1",
+        "h15"
+      ]
+    },
+    {
+      "id": "t12",
+      "summary": "Live GB10 co-residence validation: deploy the rebalanced duo; confirm cortex /health@128K AND senses /health@32K simultaneously within budget; record measured utils back into the template defaults.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a live deploy shows cortex /health OK at 128K and senses /health OK at 32K at the same time, summed utils within budget",
+        "the measured PRIMARY_GPU_MEM_UTIL/MULTIMODAL_GPU_MEM_UTIL are recorded back into the fleet template defaults"
+      ],
+      "deps": [
+        "t2",
+        "t7"
+      ],
+      "covers": [
+        "c13",
+        "h16"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Exact retuned GPU utils for cortex@128K/senses@32K are validated live (t12); the fleet template util defaults are provisional until that run records measured values.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12"
+    },
+    {
+      "id": "r2",
+      "text": "Canonical responsibilities/forbidden_responsibilities word lists are finalized at implementation of t4 (issue #81 gives worked examples; final wording is a build-time call).",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r3",
+      "text": "'lobes up <role>' verb surface \u2014 new top-level verb vs extending 'lobes fleet up <role>' vs 'lobes serve <role>' \u2014 resolved when building t7; behavior (one role, dry-run+--apply) is fixed either way.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    },
+    {
+      "id": "r4",
+      "text": "Whether the colleague-stack profile bundles the audio overlay (stt/tts) by default or assumes a separate 'lobes init --fleet --audio' \u2014 decided in t7; affects whether colleague-stack alone yields six roles or four+two.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    },
+    {
+      "id": "r5",
+      "text": "lobes/cli/__init__.py verb-registration is a shared-write hotspot across t5/t7/t8 and lobes/templates/fleet/docker-compose.yml across t2/t7 \u2014 serialized via explicit deps so parallel waves don't collide at merge (waves narrow accordingly).",
+      "kind": "follow_up",
+      "task_id": "t7"
+    },
+    {
+      "id": "r6",
+      "text": "t12 (live GB10 co-residence validation) requires physical DGX Spark hardware; it is an operational verify step, not a mergeable code change, so it can't be fanned out to a code-only workforce agent.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12"
+    }
+  ]
+}
