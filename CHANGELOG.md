@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.2] - 2026-07-03
+
+### Fixed
+
+- Fleet gateway now receives the pressure-policy thresholds (`LOBES_SWAP_DEGRADED_THRESHOLD` / `LOBES_IOWAIT_DEGRADED_THRESHOLD`) via its compose `environment`, so operators can tune the swap/iowait degrade triggers per box through `.env`. Previously those vars were only read from the gateway container's env, which the compose never populated, so the knobs silently stayed on the code defaults (75 / 50). Notably lets a box with an unreliable `/proc/pressure/io` (phantom high iowait on an idle disk, e.g. the DGX Spark GB10) raise `LOBES_IOWAIT_DEGRADED_THRESHOLD` to 100 instead of permanently degrading the generate lane. Documented in `env.example` + regression test added.
+
 ## [0.36.1] - 2026-07-03
 
 ### Fixed

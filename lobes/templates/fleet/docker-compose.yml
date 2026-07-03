@@ -660,6 +660,15 @@ services:
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
+      # Pressure-policy thresholds (issue #68) — the gateway degrades the generate
+      # lane to `minor` when host swap%/iowait% exceed these. Passed here so
+      # operators can tune per box via .env; defaults match the code
+      # (_pressure_policy.py). Raise LOBES_IOWAIT_DEGRADED_THRESHOLD (e.g. 100) on
+      # boxes where /proc/pressure/io reads a phantom high value with an idle disk
+      # (see dgx-spark-cli#22). Without this passthrough the gateway container
+      # never receives the vars, so the knobs are un-tunable.
+      - LOBES_SWAP_DEGRADED_THRESHOLD=${LOBES_SWAP_DEGRADED_THRESHOLD:-75}
+      - LOBES_IOWAIT_DEGRADED_THRESHOLD=${LOBES_IOWAIT_DEGRADED_THRESHOLD:-50}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:
