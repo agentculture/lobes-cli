@@ -95,6 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import stop as _stop_cmd
     from lobes.cli._commands import switch as _switch_cmd
     from lobes.cli._commands import tunnel as _tunnel_cmd
+    from lobes.cli._commands import up as _up_cmd
     from lobes.cli._commands import whoami as _whoami_cmd
 
     parser = _ModelGearArgumentParser(
@@ -119,6 +120,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _benchmark_cmd.register(sub)
     _init_cmd.register(sub)
     _fleet_cmd.register(sub)
+    # Role-based serving (#81, t7): `lobes up <role>` toggles ONE Colleague role's
+    # compose service (or the full `colleague-stack`), reusing the fleet/compose
+    # machinery. WRITE verb — dry-run by default, --apply to commit.
+    _up_cmd.register(sub)
     _logs_cmd.register(sub)
     _tunnel_cmd.register(sub)
 

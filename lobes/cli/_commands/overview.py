@@ -27,6 +27,8 @@ _VERBS = [
     "init [TARGET] — scaffold a deployment dir (--fleet for the gateway; dry-run; --apply)",
     "serve / stop — start / stop the vLLM server (dry-run; --apply)",
     "switch <model> — switch the served model (dry-run; --apply)",
+    "up <role> — start (or --down: stop) ONE Colleague role (cortex/senses/embedder/"
+    "reranker/stt/tts) or the full 'colleague-stack' (dry-run; --apply)",
     "fleet up / down / status — drive the gateway fleet: generate primary + co-resident "
     "embedding + reranker gears, routed by task family (dry-run; --apply)",
     "tunnel — expose the local API at a public hostname via a Cloudflare Tunnel "
@@ -156,7 +158,7 @@ def cli_sections() -> list[dict[str, object]]:
             "title": "Conventions",
             "items": [
                 "every command supports --json",
-                "write verbs (switch/serve/stop/init/tunnel) are dry-run by default; "
+                "write verbs (switch/serve/stop/up/init/fleet/tunnel) are dry-run by default; "
                 "--apply to commit",
                 "results to stdout, errors/diagnostics to stderr (never mixed)",
                 "exit codes: 0 success, 1 user error, 2 environment error, 3+ reserved",

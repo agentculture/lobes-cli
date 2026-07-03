@@ -91,6 +91,7 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
         "switch",
         "serve",
         "stop",
+        "up",
         "init",
         "fleet up",
         "fleet down",

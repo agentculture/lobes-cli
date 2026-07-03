@@ -346,6 +346,27 @@ def compose_up_build(deploy_dir: os.PathLike | str):
     )
 
 
+def compose_service_argv(action: str, compose_files: list[str], services: list[str]) -> list[str]:
+    """Build the ``docker compose ...`` argv for a role-targeted up/stop (t7, #81).
+
+    ``action`` is ``"up"`` (→ ``up -d``) or ``"stop"`` (→ ``stop``). ``compose_files``
+    is the ``-f`` prefix — ``[]`` for the base file only, or ``["-f", COMPOSE_FILE,
+    "-f", AUDIO_OVERLAY]`` when the target reaches into the audio overlay (stt/tts).
+    ``services`` are the compose SERVICE names to target; only these are
+    (re)started/stopped, so one role toggles without disturbing the rest of the
+    fleet. ``lobes up`` renders its dry-run PLAN from this same argv it later runs
+    under ``--apply``, so the two are byte-identical. Note ``stop`` (not ``down``):
+    a project-wide ``docker compose down`` would remove EVERY container.
+    """
+    verb = ["up", "-d"] if action == "up" else ["stop"]
+    return ["docker", "compose"] + list(compose_files) + verb + list(services)
+
+
+def run_compose(deploy_dir: os.PathLike | str, argv: list[str]):
+    """Run a prebuilt ``docker compose ...`` argv in the deployment dir (t7)."""
+    return _run(argv, cwd=str(deploy_dir))
+
+
 def docker_available() -> bool:
     """True if both ``docker`` and ``docker compose`` resolve."""
     d = _probe(["docker", "version"])
