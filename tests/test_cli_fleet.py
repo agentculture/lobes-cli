@@ -86,11 +86,12 @@ def test_fleet_status_json_reports_default_containers(tmp_path, capsys) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     names = [c["name"] for c in payload["containers"]]
-    # The default fleet runs four containers: generate primary, embedding +
-    # reranker gears, and the gateway (the generate fallback is opt-in, excluded).
+    # The default fleet runs five containers: generate primary, multimodal (always-on),
+    # embedding + reranker gears, and the gateway (the generate fallback is opt-in, excluded).
     assert names == list(_compose.FLEET_CONTAINERS)
     assert names == [
         "model-gear-vllm-primary",
+        "model-gear-vllm-multimodal",
         "model-gear-vllm-embed",
         "model-gear-vllm-rerank",
         "model-gear-gateway",

@@ -30,16 +30,18 @@ LOG_DIRNAME = "logs"
 LOG_DIR_ENV = "MODEL_GEAR_LOG_DIR"
 
 # Fleet container names (lobes init --fleet / lobes fleet ...): the always-warm
-# Qwen generate primary, the co-resident embedding + reranker gears, and the
-# stdlib gateway that fronts them on one OpenAI port. All four are in the default
-# fleet compose, so all four are in the default container set. A *generate*
-# fallback (FLEET_FALLBACK) is opt-in (not in the default compose), so it is not.
+# Qwen generate primary, the always-on multimodal (Gemma 4 12B) generate gear, the
+# co-resident embedding + reranker gears, and the stdlib gateway that fronts them on
+# one OpenAI port. All five are in the default fleet compose, so all five are in the
+# default container set. A *generate* fallback (FLEET_FALLBACK) is opt-in (not in the
+# default compose), so it is not.
 FLEET_PRIMARY = "model-gear-vllm-primary"
+FLEET_MULTIMODAL = "model-gear-vllm-multimodal"
 FLEET_EMBED = "model-gear-vllm-embed"
 FLEET_RERANK = "model-gear-vllm-rerank"
 FLEET_FALLBACK = "model-gear-vllm-fallback"  # opt-in; not started by default
 FLEET_GATEWAY = "model-gear-gateway"
-FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_EMBED, FLEET_RERANK, FLEET_GATEWAY)
+FLEET_CONTAINERS = (FLEET_PRIMARY, FLEET_MULTIMODAL, FLEET_EMBED, FLEET_RERANK, FLEET_GATEWAY)
 
 # Audio overlay (lobes init --fleet --audio): STT + TTS + the realtime bridge,
 # layered on the base fleet via a compose override and fronted by the gateway.
