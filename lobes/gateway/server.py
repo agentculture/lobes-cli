@@ -479,8 +479,9 @@ def capabilities_payload(
     """The six first-class roles (issue #81), resolved via the shared registry.
 
     ``env`` defaults to ``os.environ``. The fleet compose passes the served
-    ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` / ``EMBED_`` /
-    ``RERANK_MAX_MODEL_LEN`` into the gateway container's environment (they are
+    ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` /
+    ``EMBED_MAX_MODEL_LEN`` / ``RERANK_MAX_MODEL_LEN`` into the gateway
+    container's environment (they are
     otherwise only given to the gear containers), so the served-context overlay
     (t5) resolves each role's SERVED ``--max-model-len`` here; it falls back to
     the catalog native when a var is unset. The gateway-fronted roles
