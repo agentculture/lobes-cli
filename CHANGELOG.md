@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.0] - 2026-07-03
+
+### Added
+
+- cortex/senses role-based Colleague contract: six first-class roles (cortex, senses, embedder, reranker, stt, tts) with responsibilities/forbidden_responsibilities (#81)
+- lobes capabilities [--json] and lobes endpoint <role> — read-only role discovery over the role registry
+- Gateway GET /capabilities — machine-readable {role: {endpoint, model, context, ready, responsibilities, ...}} contract for Colleague
+- lobes up <role> and lobes up colleague-stack — role-based serving (dry-run by default, --apply to run; colleague-stack bundles the audio overlay)
+- lobes measure [--role] [--json] — per-role runtime-only metrics (TTFT/decode-tps/prefill, docs-per-sec, RTF)
+- lobes benchmark --profile {cortex-only,cortex+senses,senses-direct,qwen-nvfp4-vs-bf16,all} — comparison profiles (runtime-only)
+- lobes explain roles (aliases: colleague, colleague-stack, capabilities) and docs/colleague-stack.md
+
+### Changed
+
+- Fleet context rebalance: cortex (Qwen 27B MTP) served at 128K, senses (Gemma 4 12B) at 32K (util 0.14, provisional); default fleet budget 0.30+0.14+0.06+0.06 = 0.56
+- cortex->primary and senses->multimodal added to catalog.TIER_ROLE as the primary contract; main|multimodal|hard|normal|cheap|minor kept as back-compat aliases; brain forbidden
+- lobes fleet status now reports the always-on Gemma (senses) container (FLEET_MULTIMODAL added to FLEET_CONTAINERS)
+
+### Fixed
+
+- Latent circular import between lobes.roles and lobes.gateway surfaced when lobes.roles was imported first
+
 ## [0.35.0] - 2026-07-02
 
 ### Added
