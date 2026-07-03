@@ -1,28 +1,25 @@
-"""Tests for lobes/gateway/_pressure_policy.py — pure pressure policy / state machine.
+"""Tests for lobes/gateway/_pressure_policy.py — busy/shed pressure policy.
 
 All tests are pure: they call decide() with explicit numeric inputs and assert
 the returned dict.  No I/O, no /proc, no sampler imports.
 
-Vocabulary reframed to **main / minor / multimodal** (issue #69) and the
-pressure seam resolved (t6): ``multimodal`` is a *different capability*
-(vision+audio), NOT a cheaper rung below ``main``.  The capability ladder is
-therefore not linear, so "downgrade under pressure" cannot walk
-``main -> multimodal -> minor``.  The only cheaper target is ``minor``:
+Busy/shed semantics (t1)
+-------------------------
+Under swap/iowait pressure the gateway **sheds** full-tier requests with HTTP
+429 + Retry-After ("busy, retry shortly").  The degrade-to-minor path is
+**removed** — no model substitution occurs.  ``minor`` is the floor: an
+explicit minor request is served even under pressure, never shed.
 
-* **degraded** (swap > 75 OR iowait > 50) → ``max_allowed_tier = minor``;
-  every request (``main`` AND ``multimodal``) downgrades to ``minor``.
-* **otherwise** → the ceiling is the full tier (``main``/``multimodal`` allowed);
-  nothing is downgraded.
-
-Back-compat input tiers (``cheap``/``normal``/``hard``) are still accepted and
-normalize to the new vocabulary (cheap→minor, normal→multimodal, hard→main).
+Return keys:
+    mode: "warm" | "busy"
+    shed: bool (True → shed with 429)
+    reason: "pressure" | "default"
+    servable_tier: str ("minor" under pressure, else normalized requested tier)
+    requested_tier: str (normalized requested tier)
 
 Threshold defaults (module-level constants, strict >):
-    SWAP_DEGRADED_THRESHOLD     = 75.0   swap > 75 → degraded, ceiling = minor
-    IOWAIT_DEGRADED_THRESHOLD   = 50.0   iowait > 50 → degraded, ceiling = minor
-    SWAP_NO_HARD_THRESHOLD      = 50.0   retained constant (advisory; no rung)
-    SWAP_PREFER_CHEAP_THRESHOLD = 65.0   retained constant (advisory; no rung)
-    IOWAIT_NO_HARD_THRESHOLD    = 25.0   retained constant (advisory; no rung)
+    SWAP_DEGRADED_THRESHOLD     = 75.0   swap > 75 → busy
+    IOWAIT_DEGRADED_THRESHOLD   = 50.0   iowait > 50 → busy
 """
 
 from __future__ import annotations
@@ -32,6 +29,7 @@ import pytest
 from lobes.catalog import TIER_ROLE as CATALOG_TIER_ROLE
 from lobes.gateway._pressure_policy import (
     _TIER_ROLE,
+    BUSY_RETRY_AFTER_SECONDS,
     IOWAIT_DEGRADED_THRESHOLD,
     IOWAIT_NO_HARD_THRESHOLD,
     SWAP_DEGRADED_THRESHOLD,
@@ -70,104 +68,112 @@ def _decide(swap: float, iowait: float, tier: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 1. No-pressure baseline — full tiers granted as requested, nothing downgraded
+# 1. No-pressure baseline — full tiers granted as requested, nothing shed
 # ---------------------------------------------------------------------------
 
 
 class TestNoPressure:
-    """swap=0, iowait=0 — everything warm and unconstrained (no downgrade)."""
+    """swap=0, iowait=0 — everything warm and unconstrained (no shed)."""
 
     def test_main_request_stays_main(self):
         r = _decide(0.0, 0.0, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "main"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "main"
+        assert r["requested_tier"] == "main"
         assert r["reason"] == "default"
 
     def test_multimodal_request_stays_multimodal(self):
-        """multimodal is a sibling full tier, NOT a downgrade target — it stays."""
+        """multimodal is a sibling full tier — it stays."""
         r = _decide(0.0, 0.0, "multimodal")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "multimodal"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "multimodal"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "default"
 
     def test_minor_request_stays_minor(self):
         r = _decide(0.0, 0.0, "minor")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "minor"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "minor"
         assert r["reason"] == "default"
 
-    def test_mild_pressure_below_degraded_does_not_downgrade(self):
-        """swap=60, iowait=30 — below the degraded floor → still full tier.
-
-        The OLD linear policy capped this band to ``normal``; the seam
-        resolution collapses that band because ``multimodal`` is not a cheaper
-        rung, so a ``main`` request is NOT downgraded until degraded.
-        """
+    def test_mild_pressure_below_degraded_does_not_shed(self):
+        """swap=60, iowait=30 — below the busy floor → still full tier."""
         for tier in ("main", "multimodal"):
             r = _decide(60.0, 30.0, tier)
             assert r["mode"] == "warm", tier
-            assert r["max_allowed_tier"] == "main", tier
+            assert r["shed"] is False, tier
             assert r["reason"] == "default", tier
 
 
 # ---------------------------------------------------------------------------
-# 2. Degraded via swap (> 75) — the seam: main AND multimodal → minor
+# 2. Busy via swap (> 75) — shed main and multimodal, serve minor
 # ---------------------------------------------------------------------------
 
 
-class TestDegradedSwap:
-    """swap=80 → degraded; every request resolves to the minor floor."""
+class TestBusySwap:
+    """swap=80 → busy; main and multimodal are shed (429), minor is served."""
 
-    def test_main_degraded_to_minor(self):
+    def test_main_shed_under_swap_pressure(self):
         r = _decide(80.0, 5.0, "main")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
-    def test_multimodal_degraded_to_minor(self):
-        """The seam: multimodal is a capability, not a rung — it degrades to
-        minor like main does (not to some 'cheaper multimodal')."""
+    def test_multimodal_shed_under_swap_pressure(self):
+        """multimodal is a capability, not a rung — shed like main."""
         r = _decide(80.0, 5.0, "multimodal")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
-    def test_minor_stays_minor_but_reason_pressure(self):
-        """minor is already the floor; allowed==requested but degraded mode still
-        marks reason='pressure'."""
+    def test_minor_never_shed_under_swap_pressure(self):
+        """minor is the floor — served even under pressure, never shed."""
         r = _decide(80.0, 5.0, "minor")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
-        assert r["reason"] == "pressure"
+        assert r["mode"] == "busy"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "minor"
+        assert r["reason"] == "default"
 
 
 # ---------------------------------------------------------------------------
-# 3. Degraded via iowait (> 50) — same seam behaviour
+# 3. Busy via iowait (> 50) — same shed behaviour
 # ---------------------------------------------------------------------------
 
 
-class TestDegradedIowait:
-    """iowait=60 → emergency-degraded; main AND multimodal → minor."""
+class TestBusyIowait:
+    """iowait=60 → busy; main and multimodal shed, minor served."""
 
-    def test_main_degraded_to_minor(self):
+    def test_main_shed_under_iowait_pressure(self):
         r = _decide(5.0, 60.0, "main")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
-    def test_multimodal_degraded_to_minor(self):
+    def test_multimodal_shed_under_iowait_pressure(self):
         r = _decide(5.0, 60.0, "multimodal")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
+
+    def test_minor_never_shed_under_iowait_pressure(self):
+        r = _decide(5.0, 60.0, "minor")
+        assert r["mode"] == "busy"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "minor"
+        assert r["reason"] == "default"
 
 
 # ---------------------------------------------------------------------------
@@ -180,30 +186,37 @@ class TestBackCompatVocabulary:
 
     def test_hard_normalizes_to_main_no_pressure(self):
         r = _decide(0.0, 0.0, "hard")
-        assert r["allowed_tier"] == "main"
-        assert r["max_allowed_tier"] == "main"
+        assert r["servable_tier"] == "main"
+        assert r["requested_tier"] == "main"
+        assert r["shed"] is False
         assert r["reason"] == "default"
 
     def test_normal_normalizes_to_multimodal_no_pressure(self):
         r = _decide(0.0, 0.0, "normal")
-        assert r["allowed_tier"] == "multimodal"
+        assert r["servable_tier"] == "multimodal"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "default"
 
     def test_cheap_normalizes_to_minor_no_pressure(self):
         r = _decide(0.0, 0.0, "cheap")
-        assert r["allowed_tier"] == "minor"
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "minor"
         assert r["reason"] == "default"
 
-    def test_hard_degraded_to_minor(self):
+    def test_hard_shed_under_pressure(self):
         r = _decide(80.0, 0.0, "hard")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
-    def test_normal_degraded_to_minor(self):
+    def test_normal_shed_under_pressure(self):
         r = _decide(80.0, 0.0, "normal")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
 
@@ -214,107 +227,112 @@ class TestBackCompatVocabulary:
 
 class TestCortexSensesVocabulary:
     """cortex maps onto the primary role (like main/hard); senses onto the
-    multimodal role (like multimodal/normal). Both are new names for existing
-    backends, so decide() normalizes and degrades them the same way."""
+    multimodal role (like multimodal/normal). Both shed under pressure."""
 
     def test_cortex_normalizes_to_main_no_pressure(self):
         r = _decide(0.0, 0.0, "cortex")
-        assert r["allowed_tier"] == "main"
-        assert r["max_allowed_tier"] == "main"
+        assert r["servable_tier"] == "main"
+        assert r["requested_tier"] == "main"
+        assert r["shed"] is False
         assert r["reason"] == "default"
 
     def test_senses_normalizes_to_multimodal_no_pressure(self):
         r = _decide(0.0, 0.0, "senses")
-        assert r["allowed_tier"] == "multimodal"
+        assert r["servable_tier"] == "multimodal"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "default"
 
-    def test_cortex_degraded_to_minor(self):
+    def test_cortex_shed_under_pressure(self):
         r = _decide(80.0, 0.0, "cortex")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
-    def test_senses_degraded_to_minor(self):
-        """The seam: senses collapses straight to minor (a distinct capability,
+    def test_senses_shed_under_pressure(self):
+        """The seam: senses collapses to shed (a distinct capability,
         not an intermediate rung), exactly like multimodal."""
         r = _decide(80.0, 0.0, "senses")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
-    def test_senses_degraded_via_iowait_to_minor(self):
+    def test_senses_shed_via_iowait(self):
         r = _decide(0.0, 60.0, "senses")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
         assert r["reason"] == "pressure"
 
 
 # ---------------------------------------------------------------------------
-# 5. Combined pressure — either degraded signal triggers the floor
+# 5. Combined pressure — either signal triggers busy
 # ---------------------------------------------------------------------------
 
 
 class TestCombinedPressure:
-    def test_swap_degraded_dominates(self):
-        """swap=80 (degraded) + iowait=30 (mild) → minor + degraded."""
+    def test_swap_busy_dominates(self):
+        """swap=80 (busy) + iowait=30 (mild) → busy, shed main."""
         r = _decide(80.0, 30.0, "main")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
         assert r["reason"] == "pressure"
 
-    def test_iowait_degraded_dominates(self):
-        """swap=60 (mild) + iowait=60 (degraded) → minor + degraded."""
+    def test_iowait_busy_dominates(self):
+        """swap=60 (mild) + iowait=60 (busy) → busy, shed multimodal."""
         r = _decide(60.0, 60.0, "multimodal")
-        assert r["mode"] == "degraded"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
         assert r["reason"] == "pressure"
 
-    def test_two_mild_signals_do_not_degrade(self):
-        """swap=60 + iowait=30 — both below the degraded floor → full tier."""
+    def test_two_mild_signals_do_not_trigger_busy(self):
+        """swap=60 + iowait=30 — both below the busy floor → warm."""
         r = _decide(60.0, 30.0, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "main"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "main"
         assert r["reason"] == "default"
 
 
 # ---------------------------------------------------------------------------
-# 6. Boundary values — strict > on the degraded thresholds
+# 6. Boundary values — strict > on the thresholds
 # ---------------------------------------------------------------------------
 
 
 class TestBoundaries:
-    """Strict greater-than on the degraded thresholds (the floor triggers)."""
+    """Strict greater-than on the thresholds (busy triggers only above)."""
 
-    def test_swap_exactly_at_degraded_threshold_not_degraded(self):
-        """swap == 75 → NOT degraded (75 > 75 is False) → full tier, warm."""
+    def test_swap_exactly_at_threshold_not_busy(self):
+        """swap == 75 → NOT busy (75 > 75 is False) → warm."""
         r = _decide(SWAP_DEGRADED_THRESHOLD, 0.0, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "main"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "main"
         assert r["reason"] == "default"
 
-    def test_swap_just_above_degraded_threshold_triggers_minor(self):
-        """swap == 75 + ε → degraded, ceiling = minor."""
+    def test_swap_just_above_threshold_triggers_busy(self):
+        """swap == 75 + ε → busy, shed main."""
         r = _decide(SWAP_DEGRADED_THRESHOLD + 0.001, 0.0, "main")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
-        assert r["allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
 
-    def test_iowait_exactly_at_degraded_threshold_not_degraded(self):
-        """iowait == 50 → NOT degraded (50 > 50 is False) → full tier, warm."""
+    def test_iowait_exactly_at_threshold_not_busy(self):
+        """iowait == 50 → NOT busy (50 > 50 is False) → warm."""
         r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD, "main")
         assert r["mode"] == "warm"
-        assert r["max_allowed_tier"] == "main"
+        assert r["shed"] is False
         assert r["reason"] == "default"
 
-    def test_iowait_just_above_degraded_threshold_triggers_minor(self):
-        """iowait == 50 + ε → degraded, ceiling = minor."""
+    def test_iowait_just_above_threshold_triggers_busy(self):
+        """iowait == 50 + ε → busy, shed main."""
         r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD + 0.001, "main")
-        assert r["mode"] == "degraded"
-        assert r["max_allowed_tier"] == "minor"
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
 
 
 # ---------------------------------------------------------------------------
@@ -331,18 +349,18 @@ class TestRetainedAdvisoryThresholds:
         assert SWAP_PREFER_CHEAP_THRESHOLD == 65.0
         assert IOWAIT_NO_HARD_THRESHOLD == 25.0
 
-    def test_above_no_hard_band_does_not_downgrade(self):
-        """swap just over the (advisory) no-hard threshold → still full tier."""
+    def test_above_no_hard_band_does_not_shed(self):
+        """swap just over the (advisory) no-hard threshold → still warm."""
         r = _decide(SWAP_NO_HARD_THRESHOLD + 1.0, 0.0, "main")
-        assert r["max_allowed_tier"] == "main"
-        assert r["allowed_tier"] == "main"
         assert r["mode"] == "warm"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "main"
         assert r["reason"] == "default"
 
-    def test_above_iowait_no_hard_band_does_not_downgrade(self):
+    def test_above_iowait_no_hard_band_does_not_shed(self):
         r = _decide(0.0, IOWAIT_NO_HARD_THRESHOLD + 1.0, "main")
-        assert r["max_allowed_tier"] == "main"
         assert r["mode"] == "warm"
+        assert r["shed"] is False
         assert r["reason"] == "default"
 
 
@@ -352,17 +370,17 @@ class TestRetainedAdvisoryThresholds:
 
 
 class TestReturnShape:
-    """decide() always returns exactly the four required keys."""
+    """decide() always returns exactly the five required keys."""
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_required_keys_present(self, tier: str):
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert set(r) == {"mode", "max_allowed_tier", "reason", "allowed_tier"}
+        assert set(r) == {"mode", "shed", "reason", "servable_tier", "requested_tier"}
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_mode_values_valid(self, tier: str):
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert r["mode"] in ("warm", "degraded")
+        assert r["mode"] in ("warm", "busy")
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_reason_values_valid(self, tier: str):
@@ -371,14 +389,59 @@ class TestReturnShape:
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_tier_values_in_new_vocab(self, tier: str):
-        """max_allowed_tier / allowed_tier are always emitted in the new vocab."""
+        """servable_tier / requested_tier are always emitted in the new vocab."""
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert r["max_allowed_tier"] in ("main", "minor", "multimodal")
-        assert r["allowed_tier"] in ("main", "minor", "multimodal")
+        assert r["servable_tier"] in ("main", "minor", "multimodal")
+        assert r["requested_tier"] in ("main", "minor", "multimodal")
+
+    @pytest.mark.parametrize("tier", _ALL_TIERS)
+    def test_shed_is_bool(self, tier: str):
+        r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
+        assert isinstance(r["shed"], bool)
 
 
 # ---------------------------------------------------------------------------
-# 9. Invalid tier raises ValueError
+# 9. BUSY_RETRY_AFTER_SECONDS constant
+# ---------------------------------------------------------------------------
+
+
+class TestBusyRetryAfter:
+    """BUSY_RETRY_AFTER_SECONDS is a module-level int constant."""
+
+    def test_constant_exists_and_is_int(self):
+        assert isinstance(BUSY_RETRY_AFTER_SECONDS, int)
+
+    def test_constant_value(self):
+        assert BUSY_RETRY_AFTER_SECONDS == 5
+
+
+# ---------------------------------------------------------------------------
+# 10. No degrade path — no LOBES_PRESSURE_POLICY toggle
+# ---------------------------------------------------------------------------
+
+
+class TestNoDegradePath:
+    """Verify the degrade-to-minor substitution path is gone."""
+
+    def test_no_degraded_mode(self):
+        """mode is never 'degraded' — only 'warm' or 'busy'."""
+        r = _decide(80.0, 5.0, "main")
+        assert r["mode"] == "busy"
+        assert r["mode"] != "degraded"
+
+    def test_no_max_allowed_tier_key(self):
+        """The old 'max_allowed_tier' key must not exist."""
+        r = _decide(80.0, 5.0, "main")
+        assert "max_allowed_tier" not in r
+
+    def test_no_allowed_tier_key(self):
+        """The old 'allowed_tier' key must not exist."""
+        r = _decide(80.0, 5.0, "main")
+        assert "allowed_tier" not in r
+
+
+# ---------------------------------------------------------------------------
+# 11. Invalid tier raises ValueError
 # ---------------------------------------------------------------------------
 
 
@@ -393,7 +456,7 @@ class TestInvalidTier:
 
 
 # ---------------------------------------------------------------------------
-# 10. Pure: no I/O side effects
+# 12. Pure: no I/O side effects
 # ---------------------------------------------------------------------------
 
 
@@ -406,14 +469,14 @@ class TestPurity:
 
 
 # ---------------------------------------------------------------------------
-# 11. _env_float rejects non-finite values (nan / inf / -inf)
+# 13. _env_float rejects non-finite values (nan / inf / -inf)
 # ---------------------------------------------------------------------------
 
 
 class TestEnvFloatNonFinite:
     """_env_float must fall back to *default* when the env var parses to a
     non-finite float.  A nan/inf threshold silently breaks every ``>``
-    comparison so the pressure downgrade never fires — we treat it like a
+    comparison so the pressure shed never fires — we treat it like a
     parse failure instead.
     """
 
