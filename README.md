@@ -202,17 +202,20 @@ curl -s http://localhost:8000/v1/models       # the WARM backend(s) (not the ful
 curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP","messages":[...]}'
 ```
 
-The fleet runs a **default-on `main` + `multimodal` duo** — the 27B Qwen text
-generate primary and the Gemma 4 12B vision+audio gear (`coolthor/gemma-4-12B-it-NVFP4A16`,
+The fleet runs a **default-on `cortex` + `senses` duo** (the `main` + `multimodal`
+backends) — the 27B Qwen text generate primary served at **128K** (`cortex`, util
+`0.30`) and the Gemma 4 12B vision+audio gear served at **32K** (`senses`, util
+`0.14` — provisional pending live validation; `coolthor/gemma-4-12B-it-NVFP4A16`,
 native MTP default-on — the coder fine-tune, `sakamakismile/gemma-4-12B-coder-…`,
 is kept as an opt-in `multimodal-coder` gear; see
 [`docs/vllm-nightly-migration.md` §7](docs/vllm-nightly-migration.md))
-— at a combined `0.45 + 0.12 = 0.57` GPU util, plus the tiny embedding + reranker
-gears (`0.06` each), for a default budget of `0.69` on the 128 GB GB10. The 4B
+— plus the tiny embedding + reranker gears (`0.06` each), for a default budget of
+`0.30 + 0.14 + 0.06 + 0.06 = 0.56` on the 128 GB GB10. The 4B
 `minor` companion and the legacy 14B Qwen are opt-in compose profiles
 (`COMPOSE_PROFILES=minor` / `COMPOSE_PROFILES=middle`). Callers address the
-generate lane by tier alias — `model=main|minor|multimodal` (back-compat:
-`hard|cheap|normal`). `lobes switch` drives the single-model deployment (it can
+generate lane by role/tier alias — `model=cortex|senses` (or
+`main|minor|multimodal`; back-compat `hard|cheap|normal`); see
+[`docs/colleague-stack.md`](docs/colleague-stack.md) for the six-role contract. `lobes switch` drives the single-model deployment (it can
 also serve an embed/score gear solo — auto-detected from the catalog, or forced
 with `--task embed|score`); change the fleet primary by editing the fleet `.env`
 and re-running `lobes fleet up --apply`. See `lobes explain fleet` / `lobes
