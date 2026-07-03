@@ -101,18 +101,20 @@ def test_doc_records_the_parked_t8_minor_middle_migration() -> None:
 
 
 def test_doc_duo_budget_matches_the_real_templates() -> None:
-    """The doc's always-on duo budget (64K/util 0.30 primary, 128K/util 0.22
-    multimodal, 0.64 total) must match the real fleet env.example defaults —
-    not a stale pre-duo number (128K/0.45 primary, 8K/0.12 multimodal, 0.69)."""
+    """The doc's always-on duo budget (128K/util 0.30 primary, 32K/util 0.14
+    multimodal, 0.56 total) must match the real fleet env.example defaults —
+    not a stale pre-rebalance number (64K/0.30 primary, 128K/0.22 multimodal,
+    0.64), nor the older pre-duo number (128K/0.45 primary, 8K/0.12
+    multimodal, 0.69)."""
     doc_text = DOC.read_text(encoding="utf-8")
     env_text = FLEET_ENV_EXAMPLE.read_text(encoding="utf-8")
 
-    assert _env_default(env_text, "PRIMARY_MAX_MODEL_LEN") == "65536"
+    assert _env_default(env_text, "PRIMARY_MAX_MODEL_LEN") == "131072"
     assert _env_default(env_text, "PRIMARY_GPU_MEM_UTIL") == "0.30"
-    assert _env_default(env_text, "MULTIMODAL_MAX_MODEL_LEN") == "131072"
-    assert _env_default(env_text, "MULTIMODAL_GPU_MEM_UTIL") == "0.22"
+    assert _env_default(env_text, "MULTIMODAL_MAX_MODEL_LEN") == "32768"
+    assert _env_default(env_text, "MULTIMODAL_GPU_MEM_UTIL") == "0.14"
 
-    for needle in ("65536", "0.30", "131072", "0.22", "0.64"):
+    for needle in ("131072", "0.30", "32768", "0.14", "0.56"):
         assert needle in doc_text, f"doc must cite the live duo-budget value {needle!r}"
 
     # The stale pre-duo total (0.69) must not be presented as the current

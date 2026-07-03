@@ -359,11 +359,11 @@ and the legacy 14B are opt-in compose profiles. Default budget — the
 
 | Gear | Model | Context | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|---|---|
-| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | **64K** (trimmed from 128K) | **0.30** | ~38 |
-| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16`, native MTP on | **128K** (full native) | **0.22** | ~26 |
+| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | **128K** (full native) | **0.30** | ~38 |
+| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16`, native MTP on | **32K** (trimmed from 128K) | **0.14** | ~18 |
 | `embed` | `Qwen/Qwen3-Embedding-0.6B` | 8K | 0.06 | ~7 |
 | `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 8K | 0.06 | ~7 |
-| **Total (default)** | | | **0.64** | ~78 / 128 GB |
+| **Total (default)** | | | **0.56** | ~70 / 128 GB |
 
 Opt-in gears (add to `COMPOSE_PROFILES`) — `minor`/`middle` still run the
 pre-migration NGC image (see "Engine" above; t8 parked):
@@ -374,12 +374,13 @@ pre-migration NGC image (see "Engine" above; t8 parked):
 | `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
 | `multimodal-coder` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
 
-The **primary is trimmed to 64K context** (`PRIMARY_MAX_MODEL_LEN=65536`,
-`PRIMARY_GPU_MEM_UTIL=0.30`, down from a pre-duo 128K/0.45) so the default-on
-multimodal gear can co-reside at its **full 128K native context**
-(`MULTIMODAL_MAX_MODEL_LEN=131072`, `MULTIMODAL_GPU_MEM_UTIL=0.22`, up from an
-earlier 8K/0.12 co-resident-safe fallback) — both retuned and live-validated
-co-resident 2026-07-02 (see "Always-on duo budget" below). Without the
+The **primary now serves its full 128K native context**
+(`PRIMARY_MAX_MODEL_LEN=131072`, `PRIMARY_GPU_MEM_UTIL=0.30` — util-bound, not
+context-bound, so the earlier 64K trim was not needed to hold this util) while
+the default-on multimodal gear is **trimmed to 32K context**
+(`MULTIMODAL_MAX_MODEL_LEN=32768`, `MULTIMODAL_GPU_MEM_UTIL=0.14`, down from an
+earlier 128K/0.22 pairing) to free the KV headroom the primary's full context
+needs (see "Always-on duo budget" below). Without the
 multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6` and
 optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
 (the load-tested default; see findings below).
