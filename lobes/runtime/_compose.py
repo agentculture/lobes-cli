@@ -284,6 +284,11 @@ def audio_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / AUDIO_OVERLAY).is_file()
 
 
+def is_fleet(deploy_dir: os.PathLike | str) -> bool:
+    """True when the deploy dir is a fleet deployment (``Dockerfile.gateway`` present)."""
+    return (Path(deploy_dir) / DOCKERFILE_GATEWAY).is_file()
+
+
 def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     """Fleet container names, including the audio trio when the overlay is present."""
     if audio_overlay_present(deploy_dir):

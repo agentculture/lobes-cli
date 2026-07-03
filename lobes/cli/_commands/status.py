@@ -110,33 +110,66 @@ def cmd_status(args: argparse.Namespace) -> int:
     env_path = deploy_dir / _compose.ENV_FILE
     port = _runtime_ops.resolve_port(args, env_path)
 
-    report = {
-        "model": _env.read_env(env_path, "VLLM_MODEL", _UNSET),
-        "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", _UNSET),
-        "port": port,
-        "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", _UNSET),
-        "deployment_dir": str(deploy_dir),
-        "container": _compose.CONTAINER,
-        "state": _compose.inspect_state(),
-        "health": "ok" if _health.is_healthy(port) else "not responding",
-    }
+    if _compose.is_fleet(deploy_dir):
+        containers = [
+            {"name": name, "state": _compose.inspect_state(name)}
+            for name in _compose.fleet_containers(deploy_dir)
+        ]
+        report = {
+            "model": _env.read_env(env_path, "VLLM_MODEL", _UNSET),
+            "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", _UNSET),
+            "port": port,
+            "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", _UNSET),
+            "deployment_dir": str(deploy_dir),
+            "deployment": "fleet",
+            "containers": containers,
+            "health": "ok" if _health.is_healthy(port) else "not responding",
+        }
 
-    if json_mode:
-        emit_result(report, json_mode=True)
+        if json_mode:
+            emit_result(report, json_mode=True)
+        else:
+            lines = [
+                f"model:  {report['model']}",
+                f"served: {report['served_name']}  port: {report['port']}",
+                f"parser: {report['tool_call_parser']}",
+                f"dir:    {report['deployment_dir']}",
+            ]
+            for c in containers:
+                lines.append(f"  {c['name']} — {c['state']}")
+            lines.append(f"health: {report['health']} (:{port})")
+            lines.append(
+                "see 'lobes fleet status' / 'lobes capabilities' for the full fleet/role view"
+            )
+            emit_result("\n".join(lines), json_mode=False)
     else:
-        emit_result(
-            "\n".join(
-                [
-                    f"model:  {report['model']}",
-                    f"served: {report['served_name']}  port: {report['port']}",
-                    f"parser: {report['tool_call_parser']}",
-                    f"dir:    {report['deployment_dir']}",
-                    f"state:  {report['container']} — {report['state']}",
-                    f"health: {report['health']} (:{port})",
-                ]
-            ),
-            json_mode=False,
-        )
+        report = {
+            "model": _env.read_env(env_path, "VLLM_MODEL", _UNSET),
+            "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", _UNSET),
+            "port": port,
+            "tool_call_parser": _env.read_env(env_path, "VLLM_TOOL_CALL_PARSER", _UNSET),
+            "deployment_dir": str(deploy_dir),
+            "container": _compose.CONTAINER,
+            "state": _compose.inspect_state(),
+            "health": "ok" if _health.is_healthy(port) else "not responding",
+        }
+
+        if json_mode:
+            emit_result(report, json_mode=True)
+        else:
+            emit_result(
+                "\n".join(
+                    [
+                        f"model:  {report['model']}",
+                        f"served: {report['served_name']}  port: {report['port']}",
+                        f"parser: {report['tool_call_parser']}",
+                        f"dir:    {report['deployment_dir']}",
+                        f"state:  {report['container']} — {report['state']}",
+                        f"health: {report['health']} (:{port})",
+                    ]
+                ),
+                json_mode=False,
+            )
     return 0
 
 
