@@ -2,9 +2,9 @@
 
 The model-ops verbs (``switch``, ``serve``/``stop``, ``status``, ``assess``,
 ``benchmark``, ``init``, ``tunnel``) are the heart of the tool; the agent-first verbs
-(``whoami``, ``learn``, ``explain``, ``overview``, ``doctor``, ``cli``) keep the
-sibling rubric satisfied. Each verb module exposes ``register(sub)`` following
-the same pattern.
+(``whoami``, ``learn``, ``explain``, ``overview``, ``doctor``, ``cli``,
+``capabilities``, ``endpoint``) keep the sibling rubric satisfied. Each verb
+module exposes ``register(sub)`` following the same pattern.
 
 Error propagation contract
 --------------------------
@@ -77,6 +77,7 @@ def _detect_prog() -> str:
 def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import assess as _assess_cmd
     from lobes.cli._commands import benchmark as _benchmark_cmd
+    from lobes.cli._commands import capabilities as _capabilities_cmd
     from lobes.cli._commands import cli as _cli_group
     from lobes.cli._commands import doctor as _doctor_cmd
     from lobes.cli._commands import eval as _eval_cmd
@@ -131,6 +132,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _explain_cmd.register(sub)
     _overview_cmd.register(sub)
     _doctor_cmd.register(sub)
+    # The #81 Colleague contract: the six first-class roles resolved to live
+    # endpoint + metadata (read-only; no --apply — capabilities/endpoint never
+    # touch docker/compose).
+    _capabilities_cmd.register(sub)
     _cli_group.register(sub)
 
     return parser

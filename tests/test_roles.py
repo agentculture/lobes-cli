@@ -21,6 +21,7 @@ from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import build_config
 from lobes.roles import (
     ROLE_FORBIDDEN,
+    ROLE_MAX_MODEL_LEN_ENV,
     ROLE_RESPONSIBILITIES,
     ROLES,
     RoleInfo,
@@ -69,6 +70,11 @@ def _catalog(model_id: str) -> SupportedModel:
 
 def _registry(env: dict[str, str], **kw) -> dict[str, RoleInfo]:
     table, server = build_config(env)
+    # Thread the SAME env through for the served-context overlay (t5) — a test
+    # helper omitting this would silently mask the overlay and always assert
+    # against the catalog native, which is exactly the t4-vs-t5 regression this
+    # module now guards against.
+    kw.setdefault("env", env)
     return build_role_registry(table, server, **kw)
 
 
@@ -263,9 +269,92 @@ def test_explicit_gateway_url_overrides_and_audio_uses_audio_url() -> None:
 
 
 def test_role_registry_from_env_matches_manual_build() -> None:
+    # Include a served-context override so this also proves role_registry_from_env
+    # THREADS the same env through to build_role_registry's overlay (t5) — not
+    # just to build_config.
     env = _full_env()
+    env["PRIMARY_MAX_MODEL_LEN"] = "131072"
     from_env = role_registry_from_env(env)
     table, server = build_config(env)
-    manual = build_role_registry(table, server)
+    manual = build_role_registry(table, server, env=env)
     assert from_env == manual
     assert set(from_env) == _EXPECTED_ROLES
+    assert from_env["cortex"].context == 131072
+
+
+# ---------------------------------------------------------------------------
+# Served-context overlay (issue #81, task t5) — context reports what the
+# deployment ACTUALLY SERVES (--max-model-len), not just the catalog native.
+# ---------------------------------------------------------------------------
+
+
+def test_served_context_overlay_from_deployment_env() -> None:
+    """The fleet env's own defaults (env.example) diverge from catalog native for
+    every gateway-fronted role — a real regression test, not a contrived one."""
+    env = _full_env()
+    env.update(
+        {
+            "PRIMARY_MAX_MODEL_LEN": "131072",
+            "MULTIMODAL_MAX_MODEL_LEN": "32768",
+            "EMBED_MAX_MODEL_LEN": "8192",
+            "RERANK_MAX_MODEL_LEN": "8192",
+        }
+    )
+    registry = _registry(env)
+    assert registry["cortex"].context == 131072
+    assert registry["senses"].context == 32768
+    assert registry["embedder"].context == 8192
+    assert registry["reranker"].context == 8192
+    # Catalog native would have been different for cortex/senses — prove the
+    # overlay actually overrides it, not just coincides with it.
+    assert registry["cortex"].context != _catalog(_PRIMARY_ID).native_max_model_len
+    assert registry["senses"].context != _catalog(_MULTIMODAL_ID).native_max_model_len
+    # Audio roles carry no token context, overlay or not.
+    assert registry["stt"].context == 0
+    assert registry["tts"].context == 0
+
+
+def test_served_context_falls_back_to_catalog_native_when_unset() -> None:
+    """No *_MAX_MODEL_LEN in the env → context is the catalog native — the t4
+    contract is preserved when a deployment doesn't set the overlay."""
+    registry = _registry(_full_env())
+    assert registry["cortex"].context == _catalog(_PRIMARY_ID).native_max_model_len
+    assert registry["senses"].context == _catalog(_MULTIMODAL_ID).native_max_model_len
+    assert registry["embedder"].context == _catalog(_EMBED_ID).native_max_model_len
+    assert registry["reranker"].context == _catalog(_RERANK_ID).native_max_model_len
+
+
+def test_served_context_ignores_malformed_override() -> None:
+    """A non-numeric override degrades to the catalog native rather than raising."""
+    env = _full_env()
+    env["PRIMARY_MAX_MODEL_LEN"] = "not-a-number"
+    registry = _registry(env)
+    assert registry["cortex"].context == _catalog(_PRIMARY_ID).native_max_model_len
+
+
+def test_served_context_ignores_blank_override() -> None:
+    """An empty override (KEY=) falls back to native, mirroring _env.read_env's
+    ``${v:-default}`` semantics elsewhere in this CLI."""
+    env = _full_env()
+    env["MULTIMODAL_MAX_MODEL_LEN"] = ""
+    registry = _registry(env)
+    assert registry["senses"].context == _catalog(_MULTIMODAL_ID).native_max_model_len
+
+
+def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
+    """Audio roles (stt/tts) have no *_MAX_MODEL_LEN entry — they carry no token
+    context regardless of any deployment env (see _audio_role)."""
+    assert set(ROLE_MAX_MODEL_LEN_ENV) == {"cortex", "senses", "embedder", "reranker"}
+    assert "stt" not in ROLE_MAX_MODEL_LEN_ENV
+    assert "tts" not in ROLE_MAX_MODEL_LEN_ENV
+
+
+def test_role_registry_from_env_applies_overlay_via_os_environ(monkeypatch) -> None:
+    """role_registry_from_env(None) resolves os.environ for BOTH build_config and
+    the overlay — a deployment's real process env (e.g. inside the gateway
+    container, t6) drives context without the caller assembling a dict by hand."""
+    monkeypatch.setenv("PRIMARY_URL", "http://vllm-primary:8000")
+    monkeypatch.setenv("PRIMARY_SERVED_NAME", _PRIMARY_ID)
+    monkeypatch.setenv("PRIMARY_MAX_MODEL_LEN", "131072")
+    registry = role_registry_from_env()
+    assert registry["cortex"].context == 131072

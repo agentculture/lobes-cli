@@ -35,6 +35,7 @@ refined without breaking the machine-readable shape.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -128,6 +129,18 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "tts": (),
 }
 
+# role → the deployment env var that carries the SERVED ``--max-model-len`` for
+# that role's backend (issue #81, t5). Mirrors the fleet compose template's
+# `--max-model-len=${...}` flags (see docs/gateway-fleet.md / the fleet
+# env.example). Only the four gateway-fronted roles carry one — stt/tts have no
+# token context (see :func:`_audio_role`), so they are deliberately absent here.
+ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
+    "cortex": "PRIMARY_MAX_MODEL_LEN",
+    "senses": "MULTIMODAL_MAX_MODEL_LEN",
+    "embedder": "EMBED_MAX_MODEL_LEN",
+    "reranker": "RERANK_MAX_MODEL_LEN",
+}
+
 
 @dataclass(frozen=True)
 class RoleInfo:
@@ -143,7 +156,10 @@ class RoleInfo:
     runtime: str  # the serving stack: "vllm" | "parakeet" | "chatterbox"
     endpoint: str  # base URL of the service the caller hits ("" when not wired)
     path: str  # the OpenAI path, e.g. "/v1/chat/completions"
-    context: int  # native max context (tokens) from the catalog; 0 for audio roles
+    # The SERVED context (tokens): the deployment's `--max-model-len` override
+    # (ROLE_MAX_MODEL_LEN_ENV) when the env sets one, else the catalog native
+    # (`SupportedModel.native_max_model_len`) — issue #81 t5. 0 for audio roles.
+    context: int
     quant: str  # vLLM quantization for the model; "" when n/a (pooling/audio)
     mtp: bool  # speculative decoding (MTP draft head) active for this model
     responsibilities: tuple[str, ...]
@@ -180,10 +196,33 @@ def _gateway_base_url(server: ServerConfig) -> str:
     return f"http://{host}:{server.port}"
 
 
+def _served_context(role: str, env: Mapping[str, str], native: int) -> int:
+    """The SERVED context for ``role`` — issue #81 t5.
+
+    Reads the deployment's ``--max-model-len`` override
+    (:data:`ROLE_MAX_MODEL_LEN_ENV`) from ``env`` when present and numeric;
+    falls back to the catalog ``native`` context otherwise (unset key, blank
+    value, or a malformed override — never raises). ``role`` values with no
+    entry in :data:`ROLE_MAX_MODEL_LEN_ENV` (the audio roles) always fall back
+    to ``native`` (which :func:`_audio_role` always passes as ``0``).
+    """
+    key = ROLE_MAX_MODEL_LEN_ENV.get(role)
+    if key is None:
+        return native
+    raw = env.get(key)
+    if not raw:
+        return native
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return native
+
+
 def _gateway_role(
     role: str,
     table: RoutingTable,
     gateway: str,
+    env: Mapping[str, str],
 ) -> RoleInfo:
     """Resolve a gateway-fronted role (cortex/senses/embedder/reranker)."""
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
@@ -197,13 +236,14 @@ def _gateway_role(
     # Metadata: prefer the entry matching the served id; fall back to the role's
     # canonical entry when the operator serves a non-catalog name.
     entry = _catalog_by_id(model_id) or _catalog_by_role_hint(ROLE_ROLE_HINT[role])
+    native_context = entry.native_max_model_len if entry else 0
     return RoleInfo(
         role=role,
         model=model_id,
         runtime=_VLLM_RUNTIME,
         endpoint=gateway,
         path=ROLE_PATH[role],
-        context=entry.native_max_model_len if entry else 0,
+        context=_served_context(role, env, native_context),
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
@@ -235,19 +275,29 @@ def build_role_registry(
     table: RoutingTable,
     server: ServerConfig,
     *,
+    env: Mapping[str, str] | None = None,
     gateway_url: str | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the six first-class roles to live metadata — the #81 contract.
 
     This is the ONE canonical builder both the CLI (t5) and gateway (t6) call.
     Its inputs are exactly what :func:`lobes.gateway._config.build_config`
-    returns (``table``, ``server``), so no new config source is invented.
+    returns (``table``, ``server``), plus the raw ``env`` mapping for the
+    served-context overlay below — no new config source is invented.
 
     :param table: the gateway routing table — its wired :class:`Backend` objects
         tell us which roles are ``loaded`` and each role's served model id.
     :param server: the gateway server config — supplies the audio overlay URL
         (``audio_url``) for stt/tts and, absent ``gateway_url``, the derived
         gateway base URL for the four gateway-fronted roles.
+    :param env: the deployment's environment mapping, consulted ONLY for the
+        served ``--max-model-len`` overlay (:data:`ROLE_MAX_MODEL_LEN_ENV`) —
+        so ``RoleInfo.context`` reports what the deployment actually SERVES
+        (e.g. ``PRIMARY_MAX_MODEL_LEN``), not just the catalog native. ``None``
+        (the default) or a mapping missing the relevant key falls back to the
+        catalog native — the t4 behaviour is unchanged when ``env`` is omitted.
+        Kept separate from ``table``/``server`` (typically built from the SAME
+        env) so a caller assembling those by hand isn't forced to also pass it.
     :param gateway_url: the caller-facing gateway base URL for cortex / senses /
         embedder / reranker. When ``None`` it is derived from ``server`` (host
         ``0.0.0.0`` → ``localhost``). Audio roles ignore this — they resolve to
@@ -260,11 +310,12 @@ def build_role_registry(
     Readiness (``RoleInfo.ready``) is left ``None`` (unknown): live health is a
     later task's concern (t8). Nothing here opens a socket.
     """
+    resolved_env: Mapping[str, str] = env if env is not None else {}
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
     registry: dict[str, RoleInfo] = {}
 
     for role in ("cortex", "senses", "embedder", "reranker"):
-        registry[role] = _gateway_role(role, table, gateway)
+        registry[role] = _gateway_role(role, table, gateway, resolved_env)
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_loaded = bool(audio_url)
@@ -282,10 +333,13 @@ def role_registry_from_env(
 
     A thin convenience over the one canonical builder: it runs the same
     :func:`lobes.gateway._config.build_config` the gateway uses, then delegates
-    to :func:`build_role_registry`. Lets a host-side caller (the CLI, t5) build
-    the registry from a deployment's ``.env`` without assembling a
+    to :func:`build_role_registry` — threading the SAME resolved env through as
+    ``env`` too, so the served-context overlay (``PRIMARY_MAX_MODEL_LEN`` and
+    friends, t5) is applied automatically. Lets a host-side caller (the CLI, t5)
+    build the registry from a deployment's ``.env`` without assembling a
     ``RoutingTable``/``ServerConfig`` pair by hand. ``env`` defaults to
-    ``os.environ`` (via ``build_config``).
+    ``os.environ`` when omitted (matching :func:`build_config`'s default).
     """
-    table, server = build_config(env)
-    return build_role_registry(table, server, gateway_url=gateway_url)
+    resolved_env = os.environ if env is None else env
+    table, server = build_config(resolved_env)
+    return build_role_registry(table, server, env=resolved_env, gateway_url=gateway_url)
