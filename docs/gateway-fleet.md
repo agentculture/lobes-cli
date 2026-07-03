@@ -1,15 +1,25 @@
-# Fleet: the Qwen primary + embedding/reranker gears behind one OpenAI gateway
+# Fleet: the cortex + senses roles behind one OpenAI gateway
 
-The **fleet** runs the always-warm Qwen 27B generate primary and the Gemma 4 12B
-multimodal gear as a **default-on duo** — plus two tiny co-resident **embedding**
-and **reranker** gears — behind a single stdlib OpenAI-compatible gateway, managed
-by lobes as Docker containers. It is an alternative to the bare single-model
-deployment — scaffold it with `lobes init --fleet` (the single-model `lobes init`
-is unchanged and remains the default).
-The gateway routes by **task family** (generate / embed / score / rerank) and by
-**capability-tier alias** (`main` / `minor` / `multimodal`, with back-compat aliases
-`hard` / `cheap` / `normal`); the 4B `minor` and the legacy 14B are opt-in
-(see "Generate-lane tier aliases").
+The **fleet** runs the always-warm Qwen 27B generate primary — the Colleague
+**`cortex`** role — and the Gemma 4 12B multimodal gear — the **`senses`**
+role — as a **default-on duo**, plus two tiny co-resident **embedding**
+(`embedder`) and **reranker** (`reranker`) gears, behind a single stdlib
+OpenAI-compatible gateway, managed by lobes as Docker containers. Together with
+the opt-in audio overlay's `stt`/`tts` roles, these are the SIX first-class
+Colleague-facing roles (issue #81) — see
+[`docs/colleague-stack.md`](colleague-stack.md) for the full role contract
+(`lobes capabilities`, `GET /capabilities`, `lobes up <role>`, `lobes
+measure`). This doc covers the fleet's Docker topology, tuning, and memory
+budget; the role contract lives in that sibling doc.
+
+The fleet is an alternative to the bare single-model deployment — scaffold it
+with `lobes init --fleet` (the single-model `lobes init` is unchanged and
+remains the default). The gateway routes by **task family** (generate / embed
+/ score / rerank) and by **capability-tier alias** (`main` / `minor` /
+`multimodal`, with back-compat aliases `hard` / `cheap` / `normal`, and the
+Colleague-role aliases `cortex` / `senses` layered on top of `main` /
+`multimodal`); the 4B `minor` and the legacy 14B are opt-in (see
+"Generate-lane tier aliases").
 
 ## Why
 
@@ -23,17 +33,22 @@ front of the primary, so:
   backend is wired up;
 - the same front fans `/v1/audio/*` out to the audio overlay (`--audio`).
 
-On the DGX Spark (GB10, 128 GB unified memory) the primary — a hybrid-Mamba
-**27B** — now runs **trimmed to 64K context at util 0.30** so it can co-reside
-with the default-on Gemma 4 12B multimodal gear as the fleet's "always-on duo"
-(live-validated 2026-07-02 — see "Memory" below); serving it **solo** (no
-multimodal gear) restores its load-tested full-256K/util-0.6 headroom
-(~75 GiB). The prior co-resident dense **24B** Mistral *generate-fallback* was
-removed (two ~30B NVFP4 models do not co-fit a shared GB10 — see "Live
-validation findings" below, which predates the Gemma duo and describes a
-different pairing: two ~30B-class dense/MoE models, not the current 27B+12B
-duo); Mistral stays a selectable catalog candidate (`lobes overview --list`)
-and the opt-in fallback example.
+On the DGX Spark (GB10, 128 GB unified memory) the primary (`cortex`) — a
+hybrid-Mamba **27B** — now serves its **full 128K native context at util
+0.30**, co-resident with the default-on Gemma 4 12B multimodal gear
+(`senses`), which is trimmed to **32K at util 0.14**, as the fleet's
+"always-on duo" (retuned 2026-07-02 — see "Memory" below). An earlier
+iteration of the same duo ran `cortex` trimmed to 64K so `senses` could hold
+its full native 128K instead; the current default flips that trade-off in
+`cortex`'s favor (see [`docs/colleague-stack.md`](colleague-stack.md#migration-before--after)
+for the full before→after migration table, including the legacy single-model
+scaffold's 256K). Serving `cortex` **solo** (no multimodal gear) restores its
+load-tested full-256K/util-0.6 headroom (~75 GiB). The prior co-resident dense
+**24B** Mistral *generate-fallback* was removed (two ~30B NVFP4 models do not
+co-fit a shared GB10 — see "Live validation findings" below, which predates
+the Gemma duo and describes a different pairing: two ~30B-class dense/MoE
+models, not the current 27B+12B duo); Mistral stays a selectable catalog
+candidate (`lobes overview --list`) and the opt-in fallback example.
 
 ## Topology
 
@@ -136,6 +151,16 @@ appropriate warm backend:
 | `minor` | `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast, small-brain; opt-in (`--profile minor`) |
 | `multimodal` | `normal` | `multimodal` | `coolthor/gemma-4-12B-it-NVFP4A16` | text+image+audio, native MTP; default-on |
 | `multimodal-coder` | — | `candidate` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | coding-strong; opt-in `--profile multimodal-coder`, reachable via its own alias once wired (not a tier) |
+
+**Colleague-role aliases (issue #81):** `model=cortex` and `model=senses` are
+additional aliases for `main`/`hard` and `multimodal`/`normal` respectively —
+same backends, same fallback contract, just the Colleague-facing role name
+(`cortex` = the reasoning/decision authority, `senses` = perception/intake).
+`minor` has no role-name alias — it is not one of the six first-class
+Colleague roles, only a pressure-degradation target (see "Pressure policy and
+tier downgrade" below). See [`docs/colleague-stack.md`](colleague-stack.md)
+for the full six-role contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`),
+their `responsibilities`/`forbidden_responsibilities`, and `GET /capabilities`.
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back
 **upward** to the nearest available generate tier. `minor`→primary when the minor
@@ -359,11 +384,11 @@ and the legacy 14B are opt-in compose profiles. Default budget — the
 
 | Gear | Model | Context | `--gpu-memory-utilization` | Approx GiB |
 |---|---|---|---|---|
-| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | **64K** (trimmed from 128K) | **0.30** | ~38 |
-| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16`, native MTP on | **128K** (full native) | **0.22** | ~26 |
+| `primary` (main) | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | **128K** (full native) | **0.30** | ~38 |
+| `multimodal` (default-on) | `coolthor/gemma-4-12B-it-NVFP4A16`, native MTP on | **32K** (trimmed from 128K) | **0.14** | ~18 |
 | `embed` | `Qwen/Qwen3-Embedding-0.6B` | 8K | 0.06 | ~7 |
 | `rerank` | `Qwen/Qwen3-Reranker-0.6B` | 8K | 0.06 | ~7 |
-| **Total (default)** | | | **0.64** | ~78 / 128 GB |
+| **Total (default)** | | | **0.56** | ~70 / 128 GB |
 
 Opt-in gears (add to `COMPOSE_PROFILES`) — `minor`/`middle` still run the
 pre-migration NGC image (see "Engine" above; t8 parked):
@@ -374,27 +399,33 @@ pre-migration NGC image (see "Engine" above; t8 parked):
 | `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
 | `multimodal-coder` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
 
-The **primary is trimmed to 64K context** (`PRIMARY_MAX_MODEL_LEN=65536`,
-`PRIMARY_GPU_MEM_UTIL=0.30`, down from a pre-duo 128K/0.45) so the default-on
-multimodal gear can co-reside at its **full 128K native context**
-(`MULTIMODAL_MAX_MODEL_LEN=131072`, `MULTIMODAL_GPU_MEM_UTIL=0.22`, up from an
-earlier 8K/0.12 co-resident-safe fallback) — both retuned and live-validated
-co-resident 2026-07-02 (see "Always-on duo budget" below). Without the
+The **primary now serves its full 128K native context**
+(`PRIMARY_MAX_MODEL_LEN=131072`, `PRIMARY_GPU_MEM_UTIL=0.30` — util-bound, not
+context-bound, so the earlier 64K trim was not needed to hold this util) while
+the default-on multimodal gear is **trimmed to 32K context**
+(`MULTIMODAL_MAX_MODEL_LEN=32768`, `MULTIMODAL_GPU_MEM_UTIL=0.14`, down from an
+earlier 128K/0.22 pairing) to free the KV headroom the primary's full context
+needs (see "Always-on duo budget" below). Without the
 multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6` and
 optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
 (the load-tested default; see findings below).
 
-### Always-on duo budget (live-validated, 2026-07-02)
+### Always-on duo budget (live-validated, 2026-07-03)
 
-Can the always-on Gemma multimodal gear hold its full 128K native context
-*and* co-reside with the 27B primary, without either starving the other?
-**Yes** — live-validated on the DGX Spark GB10
-(`docs/vllm-nightly-migration.md` §8): the multimodal gear held 128K at
-**4.67×** measured concurrency and the primary held 64K at **6.36×** measured
-concurrency (at util 0.35, shaved to the shipped 0.30 for extra headroom) —
-both simultaneously, alongside embed + rerank and the box's other co-tenant
-services: **~108 GiB used / ~13 GiB free** on the 128 GB GB10. This supersedes
-the earlier #71 co-resident-safe fallback (8K context @ util 0.12 for the
+Can `cortex` serve **128K** *and* `senses` serve **32K** co-resident on one GB10,
+without either starving the other? **Yes** — live-validated on the DGX Spark GB10
+2026-07-03 (#81 t12): `cortex` (27B MTP @128K, util 0.30) held **3.58×** measured
+concurrency (18.02 GiB / 468,886-token KV cache) and `senses` (Gemma 4 12B @32K,
+util 0.14) held **5.62×** (8.87 GiB / 184,084-token KV) — both healthy and
+simultaneous, alongside embed + rerank (util 0.06 each). Default budget
+`0.30 + 0.14 + 0.06 + 0.06 = 0.56`.
+
+This confirms the 27B KV is **util-bound, not context-bound**: the prior
+2026-07-02 pairing served `cortex` at 64K/util 0.30 (**6.36×**) and `senses` at
+128K/util 0.22 (**4.67×**); the #81 rebalance to 128K/32K at the *same* primary
+util simply trades cortex concurrency (6.36×→3.58×) for the longer context while
+freeing KV headroom on the senses side (32K at util 0.14 keeps 5.62×). It
+supersedes the #71 co-resident-safe fallback (8K context @ util 0.12 for the
 multimodal gear — see
 [`gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#live-validation-status-71)) that
 predated the duo-budget retune.
@@ -447,11 +478,16 @@ path for that case.
 pairing the 27B primary with a *second ~30B-class* model (35B-A3B / 24B
 Mistral) — it does not rule out the Gemma 4 12B multimodal gear, which is
 smaller and retuned for co-residency (see "Always-on duo budget" above). The
-default fleet today runs **two** generate backends — `main` (27B, 64K,
-util 0.30) and `multimodal` (12B, 128K, util 0.22) — live-validated
-co-resident on this same GB10, per `docs/vllm-nightly-migration.md` §8. The
-"one generate backend" constraint above still applies to a *second ~30B-class*
-warm fallback (the opt-in path), not to the multimodal gear.
+default fleet today runs **two** generate backends — `cortex` (the 27B
+primary; **128K**, util 0.30) and `senses` (the 12B Gemma multimodal gear;
+**32K**, util 0.14) — live-validated co-resident on this same GB10, per
+`docs/vllm-nightly-migration.md` §8. (An earlier retune of this same duo ran
+`cortex` at 64K/util 0.30 and `senses` at its full 128K/util 0.22 before the
+current context rebalance flipped the trade-off in `cortex`'s favor — see
+[`docs/colleague-stack.md`](colleague-stack.md#migration-before--after) for
+the full before→after table.) The "one generate backend" constraint above
+still applies to a *second ~30B-class* warm fallback (the opt-in path), not to
+the `senses` gear.
 
 **Fallback history.** The original 35B-A3B MoE fallback never loaded
 ([`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)); it was replaced

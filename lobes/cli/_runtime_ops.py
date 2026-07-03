@@ -47,6 +47,22 @@ def resolve_port_soft(args: argparse.Namespace) -> tuple[int, object]:
     return port, deploy_dir
 
 
+def deployment_env_soft(args: argparse.Namespace) -> dict[str, str]:
+    """Best-effort ``.env`` contents as a plain dict (``{}`` when unscaffolded).
+
+    Shared by every read-only role-registry consumer (``capabilities``,
+    ``endpoint``, ``measure``, issue #81): a missing deployment must never turn
+    a read-only introspection verb into a hard error — it just means every
+    gateway-fronted role other than the always-present ``cortex`` resolves to
+    its catalog default with ``loaded=False`` (see :mod:`lobes.roles`).
+    """
+    try:
+        deploy_dir = _compose.resolve_deployment_dir(getattr(args, "compose_dir", None))
+    except ModelGearError:
+        return {}
+    return _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+
+
 def probe_tool_calling(port: int, served: str | None) -> dict:
     """Verify tool calling on the just-(re)started server.
 

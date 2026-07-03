@@ -170,11 +170,11 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     env = (target / ".env").read_text()
     assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
     assert "FALLBACK_MODEL=" not in env
-    # The primary is trimmed to 64K context and util 0.30 to give the always-on
-    # Gemma multimodal gear its full 128K (live-validated co-residence,
-    # 2026-07-02 — see env.example GPU budget).
+    # The primary serves its full 128K context at util 0.30 (util-bound, not
+    # context-bound); the always-on Gemma multimodal gear is trimmed to 32K to
+    # free the KV headroom — see env.example GPU budget.
     assert "PRIMARY_GPU_MEM_UTIL=0.30" in env
-    assert "PRIMARY_MAX_MODEL_LEN=65536" in env
+    assert "PRIMARY_MAX_MODEL_LEN=131072" in env
     # init --fleet pins the gateway image to the running lobes-cli version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.

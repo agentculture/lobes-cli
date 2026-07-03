@@ -2,6 +2,13 @@
 
 Renders benchmark results as a GitHub-flavored markdown table comparing
 minor vs primary lobes, with explicit per-metric deltas.
+
+:func:`render_report` stays byte-for-byte unchanged (its ``minor``/``primary``
+keys and delta-column wording are characterization-tested) — the general N-ary
+sibling is :func:`render_side_by_side`, added for issue #81 t9's profile-
+comparison mode, which formats an ARBITRARY set of named columns (role names
+like ``cortex``/``senses``, or catalog-variant labels like ``nvfp4``/``bf16``)
+side by side instead of the fixed two-lobe shape.
 """
 
 from __future__ import annotations
@@ -116,5 +123,62 @@ def render_report(results: dict) -> str:
         delta_str = _format_delta(minor_val, primary_val)
 
         lines.append(f"| {metric_name} | {minor_str} | {primary_str} | {delta_str} |")
+
+    return "\n".join(lines)
+
+
+def render_side_by_side(columns: dict, *, metric_order: list[str] | None = None) -> str:
+    """Render an ARBITRARY number of named columns side by side — issue #81 t9.
+
+    The general sibling of :func:`render_report`: where that function is fixed
+    to exactly the ``minor``/``primary`` pair, this one takes any column count
+    and any column labels (e.g. a single ``cortex`` column, a ``cortex``/
+    ``senses`` pair, or an ``nvfp4``/``bf16`` pair) — the labels come straight
+    from ``columns``' keys, in insertion order.
+
+    Parameters
+    ----------
+    columns : dict
+        Maps a column label to a flat metric dict, e.g.
+        ``{"cortex": {"ttft_ms": 12.3, ...}, "senses": {"ttft_ms": 45.6, ...}}``.
+        Missing metrics in any column render as ``n/a`` (same contract as
+        :func:`render_report`).
+    metric_order : list[str] | None
+        Preferred row order for metric keys that appear in ``columns``. Keys
+        outside this list are appended alphabetically (same fallback
+        :func:`render_report` uses) so the table is deterministic regardless
+        of dict/frozenset iteration order upstream.
+
+    Returns
+    -------
+    str
+        A GitHub-flavored markdown table: ``Metric`` + one column per label.
+        When ``columns`` has EXACTLY two entries, a trailing signed
+        ``Δ (label0−label1)`` column is appended (mirrors :func:`render_report`);
+        for any other column count a pairwise delta is ambiguous, so it is
+        omitted rather than guessed.
+    """
+    names = list(columns)
+    all_metrics: set[str] = set()
+    for data in columns.values():
+        all_metrics |= set(data.keys())
+
+    preferred = metric_order or []
+    ordered_metrics = [m for m in preferred if m in all_metrics]
+    ordered_metrics.extend(sorted(all_metrics - set(ordered_metrics)))
+
+    show_delta = len(names) == 2
+    header_cells = ["Metric", *names]
+    if show_delta:
+        header_cells.append(f"Δ ({names[0]}−{names[1]})")
+    lines = ["| " + " | ".join(header_cells) + " |"]
+    lines.append("|" + "|".join("---" for _ in header_cells) + "|")
+
+    for metric_key in ordered_metrics:
+        values = [columns[name].get(metric_key) for name in names]
+        row_cells = [_format_metric_name(metric_key), *[_format_value(v) for v in values]]
+        if show_delta:
+            row_cells.append(_format_delta(values[0], values[1]))
+        lines.append("| " + " | ".join(row_cells) + " |")
 
     return "\n".join(lines)

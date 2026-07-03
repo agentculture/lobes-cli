@@ -30,6 +30,9 @@ Commands
   lobes stop              Stop the vLLM server. Dry-run; --apply.
   lobes switch <model>    Switch the served model. Dry-run; --apply recreates the
                           container and waits for /health.
+  lobes up <role>         Start ONE Colleague role's gear (cortex/senses/embedder/
+                          reranker/stt/tts) or the full 'colleague-stack' (all six).
+                          --down stops just that role; dry-run; --apply.
   lobes fleet up|down|status
                           Drive the gateway fleet: the generate primary plus
                           co-resident embedding + reranker gears behind one OpenAI
@@ -50,9 +53,10 @@ Commands
 Mutation safety
 ---------------
 Write verbs default to DRY RUN and require --apply to commit: `switch`, `serve`,
-`stop`, `init`, `fleet up`, `fleet down`, `tunnel`. Agents call CLIs in loops, so
+`stop`, `up`, `init`, `fleet up`, `fleet down`, `tunnel`. Agents call CLIs in loops, so
 safe-by-default is mandatory. The read-only verbs (`status`, `assess`, `benchmark`,
-`overview`, `whoami`, `explain`, `doctor`) never change the world.
+`capabilities`, `endpoint`, `measure`, `overview`, `whoami`, `explain`, `doctor`)
+never change the world.
 
 Models: supported vs. warm
 --------------------------
@@ -122,6 +126,7 @@ More detail
   lobes explain rerank       (POST /v1/rerank + /v1/score — the reranker gear)
   lobes explain realtime     (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
   lobes explain api          (the full OpenAI-compatible endpoint surface)
+  lobes explain roles        (the six-role Colleague contract: cortex/senses + services)
   lobes explain gateway      (the fleet front — routing, /status, auth limitation)
   lobes explain tunnel       (expose the local API anywhere via Cloudflare Tunnel)
 
@@ -147,6 +152,13 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["stop"], "summary": "Stop the vLLM server (dry-run; --apply)."},
             {"path": ["switch"], "summary": "Switch the served model (dry-run; --apply)."},
             {
+                "path": ["up"],
+                "summary": (
+                    "Start ONE Colleague role (cortex/senses/embedder/reranker/stt/tts) "
+                    "or the full 'colleague-stack'; --down to stop (dry-run; --apply)."
+                ),
+            },
+            {
                 "path": ["fleet"],
                 "summary": (
                     "Drive the gateway fleet: generate primary + co-resident embedding "
@@ -165,6 +177,21 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["assess"], "summary": "Correctness probes + reasoning-trace field."},
             {"path": ["benchmark"], "summary": "Decode throughput + prefill latency."},
             {
+                "path": ["capabilities"],
+                "summary": (
+                    "Resolve the six Colleague roles (cortex/senses/embedder/reranker/"
+                    "stt/tts) to endpoint + metadata (--json)."
+                ),
+            },
+            {
+                "path": ["endpoint"],
+                "summary": "Print one role's base URL (cortex/senses/embedder/reranker/stt/tts).",
+            },
+            {
+                "path": ["measure"],
+                "summary": "Per-role metrics: TTFT/decode-tps, docs/sec, RTF (--role; --json).",
+            },
+            {
                 "path": ["overview"],
                 "summary": "Tool snapshot + served model + supported catalog (--current/--list).",
             },
@@ -177,6 +204,7 @@ def _as_json_payload() -> dict[str, object]:
                 "switch",
                 "serve",
                 "stop",
+                "up",
                 "init",
                 "fleet up",
                 "fleet down",

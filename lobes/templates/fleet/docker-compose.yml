@@ -12,12 +12,14 @@
 #   lobes fleet status             # container states + gateway /health + /v1/models
 #
 # Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). Default
-# "always-on duo" fleet (live-validated co-resident, 2026-07-02 — see
-# docs/vllm-nightly-migration.md §8): the Qwen primary trimmed to 64K context
-# (util 0.30) so the Gemma 4 12B multimodal gear can serve its full 128K native
-# context (util 0.22, vision+audio+MTP), plus the two ~0.6B embed/rerank gears
-# (util 0.06 each). Total default budget: 0.64 on the 128 GB GB10. Opt-in: the 4B
-# minor (profile `minor`) and the legacy 14B middle (profile `middle` / `legacy`).
+# "always-on duo" fleet, context-rebalanced (t2): the Qwen primary now serves
+# its full 128K native context (util 0.30 — util-bound, not context-bound, so
+# 64K->128K trades concurrency at the same memory) alongside the Gemma 4 12B
+# multimodal gear trimmed to 32K context (util 0.14, vision+audio+MTP; util
+# 0.14 is PROVISIONAL pending live validation, plan task t12), plus the two
+# ~0.6B embed/rerank gears (util 0.06 each). Total default budget: 0.56 on the
+# 128 GB GB10. Opt-in: the 4B minor (profile `minor`) and the legacy 14B middle
+# (profile `middle` / `legacy`). See docs/vllm-nightly-migration.md §8.
 # See env.example GPU budget. To add a warm *generate* fallback, wire a
 # vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
 # drop both generate GPU utils so they sum well under 1.0.
@@ -82,11 +84,11 @@ services:
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
       - --kv-cache-dtype=fp8
-      # Trimmed to 64K (from 128K) so the always-on Gemma multimodal gear can serve
-      # its full 128K native context. Live-validated co-resident on the DGX Spark
-      # GB10, 2026-07-02: 64K holds 6.36x concurrency at util 0.35; shaved to 0.30
-      # here for extra headroom. See docs/vllm-nightly-migration.md §8.
-      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-65536}
+      # Serves its full 128K native context (up from a 64K trim): the 27B KV
+      # cache is util-bound, not context-bound, so 64K->128K trades concurrency
+      # at the same memory footprint. The always-on Gemma multimodal gear frees
+      # the headroom by trimming to 32K instead. See docs/vllm-nightly-migration.md §8.
+      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
       - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
@@ -412,10 +414,11 @@ services:
   # qwen3_5_mtp config). Tool calls use the Python-style "pythonic" parser.
   # NVFP4 (modelopt_fp4). NO --profiles key — starts with the default fleet.
   #
-  # GPU budget: util 0.22 (~26 GiB, 128K context) alongside the 27B primary
-  # (util 0.30, 64K context, ~38 GiB) + embed/rerank (util 0.06 each):
-  # 0.30+0.22+0.06+0.06 = 0.64 on the 128 GB GB10. Live-validated co-resident
-  # 2026-07-02 — see docs/vllm-nightly-migration.md §8.
+  # GPU budget: util 0.14 (~18 GiB, 32K context) alongside the 27B primary
+  # (util 0.30, 128K context, ~38 GiB) + embed/rerank (util 0.06 each):
+  # 0.30+0.14+0.06+0.06 = 0.56 on the 128 GB GB10. util 0.14 is PROVISIONAL,
+  # pending live validation on the GB10 (plan task t12) — see
+  # docs/vllm-nightly-migration.md §8.
   # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
 
   vllm-multimodal:
@@ -488,17 +491,17 @@ services:
       # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
       # config.json quant_method; modelopt_fp4 fails with a method mismatch (#71).
       - --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
-      # The 128K native context, live-validated co-resident with the 64K-trimmed
-      # 27B primary on the DGX Spark GB10, 2026-07-02: at util 0.22 the KV cache
-      # holds the full 128K at ~4.67x concurrency. Superseded the earlier
-      # co-resident-safe 8192/util-0.12 pairing (#71) once headroom was measured
-      # with both gears warm together. See docs/vllm-nightly-migration.md §8.
-      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-131072}
-      # Live-validated 2026-07-02 (§8): ~26 GiB actual footprint (weights 9.25 GiB
-      # incl. the assistant draft + graph 4.17 GiB + KV ~12.6 GiB) ≈ 0.22 of the
-      # 128 GB GB10 — fits the 0.64 default-fleet budget. Requires the
-      # VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see note there).
-      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.22}
+      # Trimmed to 32K (from a 128K/util-0.22 pairing) to free KV headroom for
+      # the 27B primary to serve its full 128K native context — the always-on
+      # duo's context rebalance. See docs/vllm-nightly-migration.md §8.
+      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      # util 0.14 (~18 GiB) is PROVISIONAL — validated live on the GB10 (plan
+      # task t12). DO NOT go lower: Gemma-12B weights+CUDA-graph are ~13.4 GiB
+      # (~util 0.105 floor), so 0.10 would OOM before any KV cache; 0.14 leaves
+      # ~4.6 GiB KV for the 32K context — fits the 0.56 default-fleet budget.
+      # Requires the VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see
+      # note there).
+      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.14}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
       # Native MTP, default-on (docs/vllm-nightly-migration.md §7, measured

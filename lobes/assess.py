@@ -85,10 +85,19 @@ _TOOL_PROBE_TOOLS = [
 ]
 
 
-def _post(url: str, payload: dict, timeout: int = 300) -> dict:
+def _post(
+    url: str, payload: dict, timeout: int = 300, *, path: str = "/v1/chat/completions"
+) -> dict:
+    """POST a JSON body, return the parsed JSON response.
+
+    ``path`` defaults to the chat-completions endpoint every existing caller in
+    this module targets; :mod:`lobes.roles_measure` (issue #81, t8) reuses this
+    same stdlib primitive for the JSON-in/JSON-out pooling roles (embedder,
+    reranker) by overriding it to ``/v1/embeddings`` / ``/v1/rerank``.
+    """
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        url + "/v1/chat/completions",
+        url + path,
         data=data,
         headers={"Content-Type": "application/json"},
     )

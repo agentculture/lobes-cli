@@ -15,9 +15,12 @@ streaming, there is no retry (the client already has bytes).
 
 from __future__ import annotations
 
+import dataclasses
 import http.client
 import json
+import os
 import sys
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +44,16 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
+
+# NOTE: lobes.roles is imported lazily inside capabilities_payload() below, not
+# here at module scope. lobes.roles itself imports lobes.gateway._config (for
+# ServerConfig/build_config), and this package's own __init__.py imports THIS
+# module (`from lobes.gateway.server import serve`) — a genuine import cycle.
+# It only "worked" at module scope when something else happened to import
+# lobes.gateway (fully) before anything imported lobes.roles first; entering
+# via lobes.roles directly (e.g. `import lobes.roles_measure`) hit a partially
+# initialized lobes.roles module and raised ImportError. Deferring the import
+# to call time breaks the cycle without reordering either module.
 
 _CHUNK = 65536
 
@@ -397,6 +410,7 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
         "GET /status",
         "GET /v1/models",
         "GET /v1/models/supported",
+        "GET /capabilities",
         "POST /v1/chat/completions",
         "POST /v1/completions",
     ]
@@ -451,6 +465,44 @@ def fleet_status_payload(
     }
 
 
+# --- role capabilities (the #81 role→endpoint contract, t6) ----------------
+
+# GET /capabilities reuses lobes.roles.build_role_registry — the SAME builder
+# the CLI's `lobes capabilities --json` (t5) calls — so the two payloads are
+# exactly the same shape: a dict keyed by role, each value the full RoleInfo
+# field set. Read-only: no backend socket is opened, no state is mutated.
+
+
+def capabilities_payload(
+    table: RoutingTable, cfg: ServerConfig, env: Mapping[str, str] | None = None
+) -> dict:
+    """The six first-class roles (issue #81), resolved via the shared registry.
+
+    ``env`` defaults to ``os.environ`` — inside the gateway *container* that
+    already carries the deployment's ``PRIMARY_MAX_MODEL_LEN`` and friends, so
+    the served-context overlay (t5) applies for free with no extra config
+    plumbing. The gateway-fronted roles (cortex/senses/embedder/reranker) get
+    the gateway's own base URL (derived from ``cfg.host``/``cfg.port``, same as
+    the CLI derives its localhost:port); stt/tts resolve to ``cfg.audio_url``.
+
+    ``RoleInfo.ready`` already comes out of the registry as a *present*
+    boolean equal to ``loaded`` (:mod:`lobes.roles` computes it, once, for
+    both the CLI and this route — the gateway has no cached per-backend
+    health signal of its own to consult: the one live probe it has,
+    :func:`lobes._metrics.probe_backend`, opens sockets synchronously inside
+    ``/status``'s own bounded fan-out and is not cached, so re-running it
+    inline on every ``/capabilities`` call would make this route block on
+    backend network I/O — a later task (t8) can wire real readiness once a
+    cheap/cached signal exists). This handler therefore just serializes the
+    registry as-is; no per-field override needed to make ``ready`` present.
+    """
+    from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
+
+    resolved_env = os.environ if env is None else env
+    registry = build_role_registry(table, cfg, env=resolved_env)
+    return {role: dataclasses.asdict(registry[role]) for role in ROLES}
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -481,6 +533,10 @@ class _Handler(BaseHTTPRequestHandler):
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
+        elif route == "/capabilities":
+            # The #81 role→endpoint contract: SIX first-class roles resolved to
+            # live metadata via the shared lobes.roles registry. Read-only.
+            self._send_json(200, capabilities_payload(self.table, self.server_config))
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
 

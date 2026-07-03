@@ -31,6 +31,34 @@ def read_env(env_path: os.PathLike | str, key: str, default: str | None = None) 
     return default
 
 
+def read_env_file(env_path: os.PathLike | str) -> dict[str, str]:
+    """Parse a whole ``.env`` file into a plain ``dict`` (``{}`` if unreadable).
+
+    Same ``KEY=VALUE`` line format as :func:`read_env`/:func:`set_env` — no
+    quoting, no variable expansion; blank lines and ``#`` comments are skipped.
+    Lets a host-side, read-only caller (``lobes capabilities`` / ``lobes
+    endpoint``, issue #81 t5) build an env ``Mapping`` for
+    :func:`lobes.roles.role_registry_from_env` from a deployment's ``.env``
+    without hand-listing every key the registry might read — the CLI process
+    never has the deployment's env vars in its own ``os.environ`` (those are
+    injected into the *containers* by ``docker compose``, not the host shell).
+    """
+    try:
+        text = Path(env_path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if not stripped or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if key:
+            out[key] = value.strip()
+    return out
+
+
 def parse_port(value: object, source: str = "VLLM_PORT") -> int:
     """Parse a port to ``int``, turning a bad value into a structured error.
 

@@ -2,9 +2,9 @@
 
 The model-ops verbs (``switch``, ``serve``/``stop``, ``status``, ``assess``,
 ``benchmark``, ``init``, ``tunnel``) are the heart of the tool; the agent-first verbs
-(``whoami``, ``learn``, ``explain``, ``overview``, ``doctor``, ``cli``) keep the
-sibling rubric satisfied. Each verb module exposes ``register(sub)`` following
-the same pattern.
+(``whoami``, ``learn``, ``explain``, ``overview``, ``doctor``, ``cli``,
+``capabilities``, ``endpoint``) keep the sibling rubric satisfied. Each verb
+module exposes ``register(sub)`` following the same pattern.
 
 Error propagation contract
 --------------------------
@@ -77,6 +77,7 @@ def _detect_prog() -> str:
 def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import assess as _assess_cmd
     from lobes.cli._commands import benchmark as _benchmark_cmd
+    from lobes.cli._commands import capabilities as _capabilities_cmd
     from lobes.cli._commands import cli as _cli_group
     from lobes.cli._commands import doctor as _doctor_cmd
     from lobes.cli._commands import eval as _eval_cmd
@@ -85,6 +86,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import init as _init_cmd
     from lobes.cli._commands import learn as _learn_cmd
     from lobes.cli._commands import logs as _logs_cmd
+    from lobes.cli._commands import measure as _measure_cmd
     from lobes.cli._commands import overview as _overview_cmd
     from lobes.cli._commands import route as _route_cmd
     from lobes.cli._commands import run as _run_cmd
@@ -93,6 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import stop as _stop_cmd
     from lobes.cli._commands import switch as _switch_cmd
     from lobes.cli._commands import tunnel as _tunnel_cmd
+    from lobes.cli._commands import up as _up_cmd
     from lobes.cli._commands import whoami as _whoami_cmd
 
     parser = _ModelGearArgumentParser(
@@ -117,6 +120,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _benchmark_cmd.register(sub)
     _init_cmd.register(sub)
     _fleet_cmd.register(sub)
+    # Role-based serving (#81, t7): `lobes up <role>` toggles ONE Colleague role's
+    # compose service (or the full `colleague-stack`), reusing the fleet/compose
+    # machinery. WRITE verb — dry-run by default, --apply to commit.
+    _up_cmd.register(sub)
     _logs_cmd.register(sub)
     _tunnel_cmd.register(sub)
 
@@ -131,6 +138,12 @@ def _build_parser() -> argparse.ArgumentParser:
     _explain_cmd.register(sub)
     _overview_cmd.register(sub)
     _doctor_cmd.register(sub)
+    # The #81 Colleague contract: the six first-class roles resolved to live
+    # endpoint + metadata (read-only; no --apply — capabilities/endpoint never
+    # touch docker/compose).
+    _capabilities_cmd.register(sub)
+    # Per-role RUNTIME measurement (t8): also read-only, no --apply.
+    _measure_cmd.register(sub)
     _cli_group.register(sub)
 
     return parser

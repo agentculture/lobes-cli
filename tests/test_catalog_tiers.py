@@ -145,6 +145,44 @@ def test_resolve_tier_hard_returns_primary_gear() -> None:
     assert model.task == "generate"
 
 
+# ---------------------------------------------------------------------------
+# Capability-ROLE vocabulary (cortex / senses) over the existing backend roles
+# ---------------------------------------------------------------------------
+
+
+def test_tier_role_map_includes_cortex_and_senses() -> None:
+    """cortex maps onto the primary backend, senses onto the multimodal backend.
+
+    These are new capability-ROLE names layered over the EXISTING internal roles
+    (primary / multimodal) — no internal service/env/container was renamed.
+    """
+    assert TIER_ROLE["cortex"] == "primary"
+    assert TIER_ROLE["senses"] == "multimodal"
+
+
+def test_resolve_tier_cortex_returns_primary_gear() -> None:
+    """resolve_tier('cortex') must return the 27B primary generate gear."""
+    model = resolve_tier("cortex")
+    assert model.role_hint == "primary"
+    assert model.task == "generate"
+    assert model.id == _PRIMARY_ID
+
+
+def test_resolve_tier_senses_returns_multimodal_gear() -> None:
+    """resolve_tier('senses') must resolve to the Gemma 'multimodal' gear."""
+    model = resolve_tier("senses")
+    assert model.role_hint == "multimodal"
+    assert model.task == "generate"
+
+
+def test_cortex_and_senses_resolve_same_gears_as_main_and_multimodal() -> None:
+    """cortex is an alias onto the primary backend (same as main/hard) and senses
+    onto the multimodal backend (same as multimodal/normal): every existing alias
+    keeps working and the new names just re-address the same gears."""
+    assert resolve_tier("cortex").id == resolve_tier("main").id == resolve_tier("hard").id
+    assert resolve_tier("senses").id == resolve_tier("multimodal").id == resolve_tier("normal").id
+
+
 def test_resolve_tier_unknown_raises_value_error() -> None:
     """resolve_tier must raise ValueError for an unknown tier name."""
     with pytest.raises(ValueError, match="unknown tier"):

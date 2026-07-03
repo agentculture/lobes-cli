@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lobes.bench.report import render_report
+from lobes.bench.report import render_report, render_side_by_side
 
 # Characterization fixture: fixed 2-lobe dict used by test_render_report_exact_output.
 _CHAR_RESULTS = {
@@ -164,3 +164,65 @@ def test_render_report_exact_output():
     sign formatting, or metric ordering, this test will catch it.
     """
     assert render_report(_CHAR_RESULTS) == _CHAR_EXPECTED
+
+
+# ---------------------------------------------------------------------------
+# render_side_by_side — the general N-column sibling (issue #81, t9)
+# ---------------------------------------------------------------------------
+
+
+def test_render_side_by_side_single_column_no_delta():
+    """A single column (e.g. 'cortex-only') renders with no Δ column."""
+    columns = {"cortex": {"ttft_ms": 12.3, "decode_tps": 18.7}}
+    out = render_side_by_side(columns)
+    assert "|" in out and "---" in out
+    assert "cortex" in out
+    assert "Δ" not in out
+    assert "12.3" in out
+    assert "18.7" in out
+
+
+def test_render_side_by_side_two_columns_has_signed_delta():
+    """Exactly two columns get a trailing Δ (col0−col1) column, like render_report."""
+    columns = {
+        "cortex": {"ttft_ms": 100.0, "decode_tps": 20.0},
+        "senses": {"ttft_ms": 80.0, "decode_tps": 25.0},
+    }
+    out = render_side_by_side(columns)
+    assert "Δ (cortex−senses)" in out
+    # ttft_ms delta: 100.0 - 80.0 = +20
+    assert "+20" in out
+    # decode_tps delta: 20.0 - 25.0 = -5
+    assert "-5" in out
+
+
+def test_render_side_by_side_three_columns_omits_delta():
+    """More than two columns: no pairwise delta column (ambiguous, so omitted)."""
+    columns = {
+        "a": {"latency_ms": 1.0},
+        "b": {"latency_ms": 2.0},
+        "c": {"latency_ms": 3.0},
+    }
+    out = render_side_by_side(columns)
+    assert "Δ" not in out
+    header = out.splitlines()[0]
+    assert "a" in header and "b" in header and "c" in header
+
+
+def test_render_side_by_side_missing_metric_renders_na():
+    columns = {
+        "cortex": {"ttft_ms": 10.0, "decode_tps": 5.0},
+        "senses": {"ttft_ms": 20.0},  # missing decode_tps
+    }
+    out = render_side_by_side(columns)
+    assert "n/a" in out
+
+
+def test_render_side_by_side_respects_metric_order():
+    columns = {
+        "cortex": {"b_metric": 2.0, "a_metric": 1.0},
+    }
+    out = render_side_by_side(columns, metric_order=["a_metric", "b_metric"])
+    lines = [ln for ln in out.splitlines() if ln.startswith("| A") or ln.startswith("| B")]
+    assert lines[0].startswith("| A Metric")
+    assert lines[1].startswith("| B Metric")

@@ -10,6 +10,16 @@ under ``docs/``. Correctness lives in ``lobes assess``.
 ``--all-lobes`` benchmarks BOTH the primary and minor lobes through the gateway
 in one combined report (perf metrics + cat soft-score per lobe, rendered via
 :func:`lobes.bench.report.render_report`).  Read-only — no ``--apply``, no writes.
+
+``--profile <name>`` (issue #81, t9) is a THIRD mode: a RUNTIME-ONLY
+comparison across fleet *profiles* (``cortex-only`` / ``cortex+senses`` /
+``senses-direct`` / ``qwen-nvfp4-vs-bf16``, or ``all`` for every profile),
+built on the per-role probes in :mod:`lobes.roles_measure` (the same probes
+``lobes measure`` uses) rather than the load-test engine ``--all-lobes`` uses.
+See :mod:`lobes.bench.compare` for the profile definitions and the
+RUNTIME-ONLY contract. Read-only — no ``--apply``, no writes, degrades
+gracefully offline (an unreachable/unwired role or a catalog-missing variant
+is reported unavailable, never a crash or a fabricated number).
 """
 
 from __future__ import annotations
@@ -28,11 +38,16 @@ from lobes.assess import (
 )
 from lobes.bench.cat_probe import generate_case
 from lobes.bench.cat_score import score_case
-from lobes.bench.report import render_report
+from lobes.bench.compare import PROFILE_NAMES, run_profiles
+from lobes.bench.report import render_report, render_side_by_side
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
+from lobes.roles import role_registry_from_env
+from lobes.roles_measure import DEFAULT_TIMEOUT as _PROFILE_DEFAULT_TIMEOUT
 from lobes.runtime import _compose, _env
+
+_PROFILE_CHOICES: tuple[str, ...] = (*PROFILE_NAMES, "all")
 
 # Fixed seed set for the cat soft-score probe (3 cases; fully reproducible).
 _CAT_SEEDS: tuple[int, ...] = (0, 1, 2)
@@ -222,8 +237,67 @@ def _run_all_lobes(args: argparse.Namespace, url: str, deploy_dir, json_mode: bo
     return 0
 
 
+def _profile_registry(args: argparse.Namespace):
+    """Build the role registry for ``--profile`` mode — same recipe as ``lobes measure``.
+
+    Read-only: :func:`lobes.cli._runtime_ops.deployment_env_soft` never raises
+    on an unscaffolded deployment (an absent/unwired role just resolves with
+    ``loaded=False``), matching ``--profile``'s graceful-offline contract.
+    """
+    env = _runtime_ops.deployment_env_soft(args)
+    port, _ = _runtime_ops.resolve_port_soft(args)
+    gateway_url = f"http://localhost:{port}"
+    return role_registry_from_env(env, gateway_url=gateway_url)
+
+
+def _render_profile_block(name: str, result: dict) -> str:
+    """One profile's markdown block: a side-by-side table, or an unavailable note."""
+    lines = [f"### {name}"]
+    columns = result["columns"]
+    if columns:
+        flat_columns = {label: col.get("metrics", {}) for label, col in columns.items()}
+        lines.append(render_side_by_side(flat_columns))
+    if not result["available"]:
+        note = (
+            f"_unavailable — {result['reason']}_"
+            if not columns
+            else f"_partial — {result['reason']}_"
+        )
+        lines.append(note)
+    return "\n".join(lines)
+
+
+def _run_profile_mode(args: argparse.Namespace, json_mode: bool) -> int:
+    """``--profile`` mode: RUNTIME-ONLY side-by-side comparison across fleet profiles (t9).
+
+    Read-only — builds the role registry the same soft way ``lobes measure``
+    does and delegates every number to :mod:`lobes.bench.compare` /
+    :mod:`lobes.roles_measure`; never raises on an unreachable backend or a
+    catalog-missing variant (both degrade to ``available=False`` with a
+    ``reason``, not an exception).
+    """
+    profile = args.profile
+    names = list(PROFILE_NAMES) if profile == "all" else [profile]
+    registry = _profile_registry(args)
+    timeout = float(getattr(args, "timeout", None) or _PROFILE_DEFAULT_TIMEOUT)
+
+    results = run_profiles(names, registry, timeout=timeout)
+
+    if json_mode:
+        emit_result(results, json_mode=True)
+        return 0
+
+    markdown = "\n\n".join(_render_profile_block(name, results[name]) for name in names)
+    emit_result(markdown, json_mode=False)
+    return 0
+
+
 def cmd_benchmark(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
+
+    if getattr(args, "profile", None):
+        return _run_profile_mode(args, json_mode)
+
     port, deploy_dir = _runtime_ops.resolve_port_soft(args)
     url = f"http://localhost:{port}"
 
@@ -310,6 +384,30 @@ def register(sub: argparse._SubParsersAction) -> None:
         help=(
             "Concurrency for throughput test: 'auto' (knee-find ramp) "
             "or an integer (default: auto)."
+        ),
+    )
+    # --profile branch: RUNTIME-ONLY fleet-profile comparison (issue #81, t9).
+    # A third, independent mode from --all-lobes: probes via lobes.roles_measure
+    # (the same per-role probes `lobes measure` uses) instead of the load-test
+    # engine, and formats results via lobes.bench.report.render_side_by_side.
+    p.add_argument(
+        "--profile",
+        choices=_PROFILE_CHOICES,
+        default=None,
+        help=(
+            "RUNTIME-ONLY comparison across a fleet profile instead of the "
+            "single-model benchmark: cortex-only, cortex+senses, senses-direct, "
+            "qwen-nvfp4-vs-bf16 (catalog-gated — reported unavailable unless "
+            "both an NVFP4 and a BF16 Qwen ~27B are catalog-present), or 'all'."
+        ),
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=(
+            "Per-role probe timeout in seconds, --profile mode only "
+            f"(default {_PROFILE_DEFAULT_TIMEOUT})."
         ),
     )
     p.set_defaults(func=cmd_benchmark)

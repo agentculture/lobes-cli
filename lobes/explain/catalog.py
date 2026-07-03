@@ -64,6 +64,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain tuning` (purpose + machine profiles)
 - `lobes explain fleet`
 - `lobes explain gateway`
+- `lobes explain roles` (the six-role Colleague contract: cortex/senses/embedder/reranker/stt/tts)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
 - `lobes explain backend`
@@ -750,6 +751,7 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 | `/v1/audio/speech` | POST | Chatterbox TTS (audio overlay) |
 | `/v1/models` | GET | the backends loaded now (what's hot) |
 | `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
+| `/capabilities` | GET | the six-role Colleague contract (`lobes explain roles`) |
 | `/health` | GET | gateway liveness |
 
 ## Routing
@@ -764,8 +766,97 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 - **Audio** is fanned to the realtime bridge (`AUDIO_URL`).
 
 See `lobes explain gateway` (routing), `lobes explain embeddings|rerank|score`
-(per-endpoint shapes), `lobes explain realtime` (audio), and `docs/openai-api.md`
-for the full reference with `curl` examples and auth/exposure.
+(per-endpoint shapes), `lobes explain realtime` (audio), `lobes explain roles`
+(the six-role Colleague contract), and `docs/openai-api.md` for the full
+reference with `curl` examples and auth/exposure.
+"""
+
+_ROLES = """\
+# lobes explain roles — the six-role Colleague contract
+
+lobes exposes the fleet as SIX first-class, Colleague-facing **roles**
+(issue #81) — a caller addresses a *capability*, never a hardcoded model id:
+
+| Role | Backend | Endpoint path |
+|---|---|---|
+| `cortex` | `primary` (27B MTP) | `/v1/chat/completions` |
+| `senses` | `multimodal` (Gemma 4 12B) | `/v1/chat/completions` |
+| `embedder` | `embed` (Qwen3-Embedding-0.6B) | `/v1/embeddings` |
+| `reranker` | `rerank` (Qwen3-Reranker-0.6B) | `/v1/rerank` (+ `/v1/score`) |
+| `stt` | Parakeet (audio overlay, opt-in) | `/v1/audio/transcriptions` |
+| `tts` | Chatterbox (audio overlay, opt-in) | `/v1/audio/speech` |
+
+Responsibilities (what each role owns) / forbidden (what it must NOT do):
+
+- `cortex` — reasoning, deciding, planning, tool_use, code_repo_actions,
+  validation, final_authority. Forbidden: *(none — final authority)*.
+- `senses` — intake, normalize_input, classify_intent,
+  prepare_context_packet, speak_back. Forbidden: final_decision,
+  repo_action, security_decision.
+- `embedder` — vectorization, memory_retrieval_input. Forbidden: *(none)*.
+- `reranker` — retrieval_ordering, relevance_refinement. Forbidden: *(none)*.
+- `stt` — transcribe, audio_input_to_text. Forbidden: *(none)*.
+- `tts` — speech_output, synthesize. Forbidden: *(none)*.
+
+`cortex`/`senses`/`embedder`/`reranker` are always enumerated (present with
+`loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
+**`brain` is not a valid role** — `cortex` is the only decision authority.
+
+## cortex/senses are layered names, not a rename
+
+`cortex` == the `primary` backend == tier alias `main` (back-compat `hard`).
+`senses` == the `multimodal` backend == tier alias `multimodal` (back-compat
+`normal`). All four names resolve to the SAME warm backend — no internal
+service/container/env var was renamed; this is additive vocabulary.
+
+## Discovery: `lobes capabilities` / `lobes endpoint` / `GET /capabilities`
+
+```bash
+lobes capabilities              # human table, all six roles
+lobes capabilities --json       # the machine-readable contract
+lobes endpoint cortex           # just the base URL for one role
+curl -s http://localhost:8000/capabilities   # same contract, over HTTP
+```
+
+Both are built by the ONE canonical registry (`lobes.roles.build_role_registry`),
+so the CLI and gateway payloads are identical in shape. Each role carries:
+`role, model, runtime, endpoint, path, context, quant, mtp, responsibilities,
+forbidden_responsibilities, ready, loaded`. All four gateway-fronted roles
+share ONE `endpoint` (the gateway) — routing is by the `model` field, not
+distinct URLs. An unwired role is never omitted, only `loaded: false`.
+
+## Serving and measuring
+
+- `lobes up <role> [--apply]` — start (or `--down`: stop) ONE role's gear;
+  `lobes up colleague-stack --apply` brings up all six (requires the audio
+  overlay scaffolded). Dry-run by default.
+- `lobes measure [--role <role>] [--json]` — read-only per-role RUNTIME
+  metrics (ttft/decode/prefill for cortex/senses; reqs-per-sec/latency for
+  embedder/reranker; RTF/latency for stt/tts). Never a correctness claim.
+- `lobes benchmark --profile {cortex-only,cortex+senses,senses-direct,
+  qwen-nvfp4-vs-bf16,all}` — RUNTIME-ONLY side-by-side comparison across a
+  fleet profile.
+
+## Context migration
+
+The legacy single-model scaffold (no fleet) serves `cortex` solo at the full
+**256K**. The default fleet duo serves `cortex` at **128K**
+(`PRIMARY_MAX_MODEL_LEN=131072`, util 0.30 — util-bound, not context-bound)
+and `senses` at **32K** (`MULTIMODAL_MAX_MODEL_LEN=32768`, util 0.14) — an
+earlier duo iteration ran the trade-off the other way (`cortex` 64K,
+`senses` 128K) before the rebalance. See
+`docs/colleague-stack.md#migration-before--after` for the full table.
+
+## Runtime-only, always
+
+Every field here — responsibilities, `lobes measure` metrics, benchmark
+profile columns — is a serving/runtime descriptor. **Nothing lobes emits
+asserts answer correctness, task quality, or agent-task success** — that
+judgment is Colleague's job, not lobes'.
+
+See `docs/colleague-stack.md` (the full contract + client-flow example),
+`lobes explain fleet`, `lobes explain gateway`, and `docs/gateway-fleet.md`
+(topology, tier-alias fallback, pressure policy).
 """
 
 ENTRIES: dict[tuple[str, ...], str] = {
@@ -808,4 +899,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("chatterbox",): _TTS,
     ("api",): _API,
     ("openai",): _API,
+    ("roles",): _ROLES,
+    ("colleague",): _ROLES,
+    ("colleague-stack",): _ROLES,
+    ("capabilities",): _ROLES,
 }
