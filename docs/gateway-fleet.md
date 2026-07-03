@@ -410,17 +410,22 @@ multimodal gear (single-primary mode), restore `PRIMARY_GPU_MEM_UTIL=0.6` and
 optionally `PRIMARY_MAX_MODEL_LEN=262144` for the full 256K solo footprint
 (the load-tested default; see findings below).
 
-### Always-on duo budget (live-validated, 2026-07-02)
+### Always-on duo budget (live-validated, 2026-07-03)
 
-Can the always-on Gemma multimodal gear hold its full 128K native context
-*and* co-reside with the 27B primary, without either starving the other?
-**Yes** — live-validated on the DGX Spark GB10
-(`docs/vllm-nightly-migration.md` §8): the multimodal gear held 128K at
-**4.67×** measured concurrency and the primary held 64K at **6.36×** measured
-concurrency (at util 0.35, shaved to the shipped 0.30 for extra headroom) —
-both simultaneously, alongside embed + rerank and the box's other co-tenant
-services: **~108 GiB used / ~13 GiB free** on the 128 GB GB10. This supersedes
-the earlier #71 co-resident-safe fallback (8K context @ util 0.12 for the
+Can `cortex` serve **128K** *and* `senses` serve **32K** co-resident on one GB10,
+without either starving the other? **Yes** — live-validated on the DGX Spark GB10
+2026-07-03 (#81 t12): `cortex` (27B MTP @128K, util 0.30) held **3.58×** measured
+concurrency (18.02 GiB / 468,886-token KV cache) and `senses` (Gemma 4 12B @32K,
+util 0.14) held **5.62×** (8.87 GiB / 184,084-token KV) — both healthy and
+simultaneous, alongside embed + rerank (util 0.06 each). Default budget
+`0.30 + 0.14 + 0.06 + 0.06 = 0.56`.
+
+This confirms the 27B KV is **util-bound, not context-bound**: the prior
+2026-07-02 pairing served `cortex` at 64K/util 0.30 (**6.36×**) and `senses` at
+128K/util 0.22 (**4.67×**); the #81 rebalance to 128K/32K at the *same* primary
+util simply trades cortex concurrency (6.36×→3.58×) for the longer context while
+freeing KV headroom on the senses side (32K at util 0.14 keeps 5.62×). It
+supersedes the #71 co-resident-safe fallback (8K context @ util 0.12 for the
 multimodal gear — see
 [`gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#live-validation-status-71)) that
 predated the duo-budget retune.
