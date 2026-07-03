@@ -65,15 +65,15 @@ resolve to the same backend (`lobes/catalog.py`'s `TIER_ROLE`):
 |---|---|---|---|
 | `primary` | `main` | `hard` | `cortex` |
 | `multimodal` | `multimodal` | `normal` | `senses` |
-| `minor` | `minor` | `cheap` | *(no role name — `minor` has no Colleague role; it's a pressure-degradation target, not a first-class capability)* |
+| `minor` | `minor` | `cheap` | *(no role name — `minor` has no Colleague role; it's the servable floor under pressure, not a first-class capability)* |
 
 A caller can send `model=cortex`, `model=main`, or `model=hard` to
 `/v1/chat/completions` and reach the exact same warm backend. **All the old
 aliases keep working** — this is additive vocabulary, not a rename. See
 [`docs/gateway-fleet.md`](gateway-fleet.md#generate-lane-tier-aliases) for the
-full tier-alias fallback contract (pressure downgrade, `multimodal` falling
-back to `main` when unwired, etc.) — that mechanism is unchanged by the role
-layer.
+full tier-alias fallback contract (busy backpressure under pressure,
+`multimodal` falling back to `main` when unwired, etc.) — that mechanism is
+unchanged by the role layer.
 
 ## Discovery: `GET /capabilities` and `lobes capabilities` / `lobes endpoint`
 
@@ -320,8 +320,8 @@ and live-validation history behind this rebalance.
 ## See also
 
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — Docker topology, tier-alias
-  fallback contract, pressure/downgrade policy, memory budget, live validation
-  history.
+  fallback contract, pressure busy-backpressure policy, memory budget, live
+  validation history.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - `lobes explain roles` — the in-CLI version of this doc.

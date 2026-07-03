@@ -333,14 +333,15 @@ fi
 printf '\n'
 
 # ===========================================================================
-# D. Pressure downgrade (simulated — no OOM stressing)
+# D. Pressure backpressure (simulated — no OOM stressing)
 # Technique: read live swap% from lobes status --pressure --json, lower
 # LOBES_SWAP_DEGRADED_THRESHOLD below that reading via a temporary
 # docker-compose.override.yml, restart only the gateway so it re-imports the
-# lowered threshold, then assert model=hard is downgraded to cheap.
+# lowered threshold, then assert model=hard is shed with a 429 busy response
+# (not substituted onto another model — issue #85).
 # The EXIT trap always removes the override and restores the gateway.
 # ===========================================================================
-printf '--- D: Pressure downgrade (simulated) ---\n'
+printf '--- D: Pressure backpressure (simulated) ---\n'
 
 # Read live swap%
 _p_json=$(lobes status --pressure --json 2>/dev/null) || _p_json='{}'
@@ -367,8 +368,8 @@ _OVERRIDE_FILE="${COMPOSE_DIR}/docker-compose.validate-tiers.override.yml"
 cat > "${_OVERRIDE_FILE}" << OVERRIDE_EOF
 # Temporary file written by scripts/validate-tiers.sh (checks D + E).
 # Removed automatically by the EXIT trap — do not edit while validate-tiers.sh runs.
-# Injects LOBES_SWAP_DEGRADED_THRESHOLD below the live swap% so the pressure-
-# downgrade path fires. It is passed explicitly via -f (alongside the base compose
+# Injects LOBES_SWAP_DEGRADED_THRESHOLD below the live swap% so the pressure
+# busy/shed path fires. It is passed explicitly via -f (alongside the base compose
 # and the audio overlay when present), so the gateway keeps its full config and a
 # leftover copy never auto-merges into a later 'lobes fleet up'. The gateway
 # re-imports _pressure_policy at container start, picking up the lowered threshold.
@@ -400,28 +401,23 @@ if [[ "${_health_ok}" != true ]]; then
   _fail_hard 'D' "gateway /health not reachable within 60 s after restart"
   d_failures=$((d_failures + 1))
 else
-  printf '  model=hard → expect X-Lobes-Tier: cheap, X-Lobes-Tier-Reason: pressure\n'
+  printf '  model=hard → expect HTTP 429 busy, X-Lobes-Tier-Reason: busy (shed, not substituted)\n'
   IFS='|' read -r _st _bm _tier _reason < <(_gateway_post "hard")
 
-  if [[ "${_st}" != "200" ]]; then
-    _fail_hard 'D' "model=hard: HTTP ${_st} (expected 200)"
+  if [[ "${_st}" != "429" ]]; then
+    _fail_hard 'D' "model=hard: HTTP ${_st} (expected 429 busy — the request must be shed under pressure, not served or substituted)"
     d_failures=$((d_failures + 1))
   else
-    if [[ "${_tier}" != "cheap" ]]; then
-      _fail_hard 'D' "X-Lobes-Tier=${_tier} (expected cheap — downgrade not firing; check that the override file reached the gateway)"
-      d_failures=$((d_failures + 1))
-    else
-      printf '  X-Lobes-Tier:        %s (ok)\n' "${_tier}"
-    fi
-    if [[ "${_reason}" != "pressure" ]]; then
-      _fail_hard 'D' "X-Lobes-Tier-Reason=${_reason} (expected pressure)"
+    printf '  HTTP status:         %s (ok)\n' "${_st}"
+    if [[ "${_reason}" != "busy" ]]; then
+      _fail_hard 'D' "X-Lobes-Tier-Reason=${_reason} (expected busy)"
       d_failures=$((d_failures + 1))
     else
       printf '  X-Lobes-Tier-Reason: %s (ok)\n' "${_reason}"
     fi
-    if [[ "${d_failures}" -eq 0 ]]; then
-      _pass 'D' "model=hard downgraded to cheap (swap=${_real_swap}% > degraded threshold=${_lowered}%, reason=pressure)"
-    fi
+  fi
+  if [[ "${d_failures}" -eq 0 ]]; then
+    _pass 'D' "model=hard shed with 429 busy (swap=${_real_swap}% > busy threshold=${_lowered}%, reason=busy)"
   fi
 fi
 printf '\n'

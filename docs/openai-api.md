@@ -54,6 +54,30 @@ bytes. By default the fleet runs **one** generate backend (the primary), so ther
 is no failover peer for generate; the embed/rerank gears are separate task families
 and are never failover targets for each other.
 
+### Pressure backpressure (busy, `429`)
+
+When the host is under swap/iowait pressure, a full-tier generate request
+(`main`/`cortex` or `multimodal`/`senses`) is **shed** with **`429 Too Many
+Requests`** rather than silently degraded onto a different model — under
+pressure the gateway never substitutes a cheaper or different-capability model
+(issue #85). An explicit `model=minor` request is the servable floor and is
+always served. The `429` carries:
+
+| Field | Value |
+|---|---|
+| `Retry-After` | seconds to wait before retrying (`5` by default) |
+| `X-Lobes-Tier-Reason` | `busy` |
+| Body | `{"error": {"type": "server_busy", "code": "busy", "message": "…"}}` |
+
+This is distinct from a **`502`** (`type: upstream_unavailable`, every backend
+down — do *not* retry): a `429` means the model is up but the box is pressured.
+**Clients MUST treat `429` + `Retry-After` as a retryable transient and back off**
+— the `acp` `vllm-local` provider, colleague, and generic OpenAI SDKs all do.
+Send `X-Lobes-Override: true` to force the requested tier and be served instead of
+shed (the manual escape hatch). See
+[`docs/gateway-fleet.md`](gateway-fleet.md#pressure-policy-and-busy-backpressure)
+for the full policy and thresholds.
+
 ### SSE streaming
 
 `"stream": true` requests are relayed chunk-by-chunk with per-chunk flushing.

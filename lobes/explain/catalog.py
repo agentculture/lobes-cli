@@ -308,6 +308,19 @@ container (`python -m lobes.gateway`).
   body starts streaming, there is no retry. SSE streams (`"stream": true`) are
   relayed chunk-by-chunk with per-chunk flushing.
 
+## Pressure (busy backpressure)
+
+Under swap/iowait pressure the gateway **sheds** a full-tier request
+(`main`/`cortex` or `multimodal`/`senses`) with **HTTP 429 + `Retry-After`** and
+`X-Lobes-Tier-Reason: busy` — it never substitutes a cheaper or
+different-capability model in its place (issue #85). An explicit `model=minor`
+request is the floor and is always served. There is no silent degrade and no
+`LOBES_PRESSURE_POLICY` toggle. The `429` (`type: server_busy`) is distinct from
+the hard `502` (`type: upstream_unavailable`, all backends down); clients must
+honour `429` + `Retry-After` and retry with backoff. `X-Lobes-Override: true`
+forces the requested tier (served, not shed). `lobes status --pressure` and the
+gateway `GET /status` (`pressure` block) report the current busy state.
+
 ## Endpoints
 
 - `/v1/chat/completions`, `/v1/completions` — chat and completion requests;

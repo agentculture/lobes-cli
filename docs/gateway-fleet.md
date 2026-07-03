@@ -157,8 +157,9 @@ additional aliases for `main`/`hard` and `multimodal`/`normal` respectively —
 same backends, same fallback contract, just the Colleague-facing role name
 (`cortex` = the reasoning/decision authority, `senses` = perception/intake).
 `minor` has no role-name alias — it is not one of the six first-class
-Colleague roles, only a pressure-degradation target (see "Pressure policy and
-tier downgrade" below). See [`docs/colleague-stack.md`](colleague-stack.md)
+Colleague roles; it is the servable floor under pressure (an explicit `minor`
+request is always served, while full tiers are shed — see "Pressure policy and
+busy backpressure" below). See [`docs/colleague-stack.md`](colleague-stack.md)
 for the full six-role contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`),
 their `responsibilities`/`forbidden_responsibilities`, and `GET /capabilities`.
 
@@ -210,26 +211,34 @@ curl http://localhost:8000/v1/chat/completions \
 (`Qwen/Qwen3.5-4B`) — not the 14B or 27B. The 14B NVFP4 and the Gemma 4 12B
 multimodal are inference-only; there is no `lobes train` verb.
 
-### Pressure policy and tier downgrade
+### Pressure policy and busy backpressure
 
-The gateway enforces a **memory-pressure policy** that can downgrade the granted
-tier when the host is under swap or I/O pressure. The policy is side-effect-free
-and purely computed from `/proc` readings (`lobes.gateway._pressure_policy`).
+The gateway enforces a **memory-pressure policy** that **sheds** full-tier
+requests when the host is under swap or I/O pressure — instead of silently
+degrading them onto a different model. The policy is side-effect-free and purely
+computed from `/proc` readings (`lobes.gateway._pressure_policy`).
+
+Under pressure a `main`/`cortex` or `multimodal`/`senses` request is shed with
+**HTTP 429 + `Retry-After`** ("busy, retry shortly") — the gateway never
+substitutes a cheaper or different-capability model in its place (issue #85). An
+explicit `minor` request is the floor and is **always served** (served as
+requested, not a substitution). This replaced the former degrade-to-minor
+behaviour: there is no `LOBES_PRESSURE_POLICY` toggle and no silent downgrade —
+which makes the old cross-capability substitution (a `cortex` request answered by
+Gemma when `minor` was unwired) structurally impossible.
 
 **Threshold table** (all comparisons are strictly `>` — exactly equal does not trigger):
 
-| Condition | Max allowed tier | Mode |
-|---|---|---|
-| swap > 75 % OR iowait > 50 % | `minor` | **degraded** |
-| *(none)* | `main` (+ `multimodal` permitted) | warm |
+| Condition | `main` / `multimodal` request | `minor` request | Mode |
+|---|---|---|---|
+| swap > 75 % OR iowait > 50 % | **shed → 429 busy** | served | **busy** |
+| *(none)* | served as requested | served | warm |
 
-Under `warm`, both `main` and `multimodal` are granted as requested — `multimodal`
-is a different capability (vision+audio), not a cheaper rung below `main`. Under
-`degraded`, **every** generate request (both `main` and `multimodal`) collapses to
-`minor`. The old intermediate swap bands (`LOBES_SWAP_NO_HARD_THRESHOLD`,
-`LOBES_SWAP_PREFER_CHEAP_THRESHOLD`, `LOBES_IOWAIT_NO_HARD_THRESHOLD`) are
-retained as named env constants for observability and tuning but no longer impose a
-tier ceiling — there is no intermediate rung to cap to.
+The trigger reuses the existing swap/iowait signal — this is *not* queue-depth
+admission control (considered and deferred). The old intermediate swap bands
+(`LOBES_SWAP_NO_HARD_THRESHOLD`, `LOBES_SWAP_PREFER_CHEAP_THRESHOLD`,
+`LOBES_IOWAIT_NO_HARD_THRESHOLD`) are retained as named env constants for
+observability/tuning but no longer impose a tier ceiling.
 
 Each threshold is a named env constant with a `LOBES_*` override:
 
@@ -241,33 +250,60 @@ Each threshold is a named env constant with a `LOBES_*` override:
 | `LOBES_IOWAIT_NO_HARD_THRESHOLD` | 25.0 |
 | `LOBES_IOWAIT_DEGRADED_THRESHOLD` | 50.0 |
 
-**Response headers** (set by t6 — tier and downgrade reason travel with every
-response, streaming-safe — headers precede the body):
+**The 429 busy response.** A shed request receives:
+
+| Field | Value |
+|---|---|
+| Status | `429 Too Many Requests` |
+| `Retry-After` | seconds to wait before retrying (`5` by default) |
+| `X-Lobes-Tier-Reason` | `busy` |
+| Body | OpenAI-shaped `{"error": {"type": "server_busy", "code": "busy", "message": "…"}}` |
+
+It is distinct from the hard **`502`** (`type: upstream_unavailable` — all
+backends down, do *not* retry): a `429` means "the model is up but the box is
+pressured; retry shortly." **Callers must honour `429` + `Retry-After` and retry
+with backoff** — the acp `vllm-local` provider, colleague, and generic OpenAI
+SDKs all treat `429` as a retryable transient. A caller that would rather wait
+and retry than silently act on a weaker/wrong-capability answer is exactly who
+this protects; a caller that treats `429` as fatal is strictly *less* available
+under pressure than the old always-answer behaviour, so client-side retry is a
+requirement, not an assumption.
+
+**Served-path headers** (unchanged; travel with every served response,
+streaming-safe — headers precede the body):
 
 | Header | Value |
 |---|---|
-| `X-Lobes-Tier` | The tier actually served (e.g. `minor`, `multimodal`, `main`) |
-| `X-Lobes-Tier-Reason` | `default` \| `pressure` \| `manual_override` |
+| `X-Lobes-Tier` | The tier actually served (`main` / `minor` / `multimodal`) |
+| `X-Lobes-Tier-Reason` | `default` \| `manual_override` |
 
 **Override header:** send `X-Lobes-Override: true` on the request to force the
-gateway to serve the requested tier regardless of current pressure (manual
-override path).
+gateway to serve the requested tier regardless of current pressure (the manual
+escape hatch — the request is served, not shed).
+
+**Boundary.** Only the *response* to pressure changed. The `/proc` sampler
+(`lobes.runtime._pressure`) and the threshold env vars are untouched; this is not
+a queue/scheduler or vLLM-batching change.
 
 **Observability:** `lobes status --pressure` reads `/proc` live and reports the
-highest tier currently permitted — read-only, no deployment dir or Docker needed:
+busy-policy decision a full-tier request would receive right now — read-only, no
+deployment dir or Docker needed. The gateway's `GET /status` carries the same
+state in a `pressure` block:
 
 ```bash
 lobes status --pressure
-# tier:    main
-# model:   sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
-# mode:    warm
-# reason:  default
-# swap:    22.4%
+# mode:    busy
+# shed:    main/cortex + senses requests return 429 busy (retry after 5s)
+# servable: minor
+# model:   Qwen/Qwen3.5-4B
+# reason:  pressure
+# swap:    82.4%
 # iowait:  0.8%
 
 lobes status --pressure --json
-# {"tier": "main", "model": "...", "mode": "warm", "reason": "default",
-#  "pressure": {"swap_used_percent": 22.4, "iowait_percent": 0.8}}
+# {"mode": "busy", "shed": true, "servable_tier": "minor", "model": "...",
+#  "reason": "pressure", "retry_after": 5,
+#  "pressure": {"swap_used_percent": 82.4, "iowait_percent": 0.8}}
 ```
 
 ## The gateway
