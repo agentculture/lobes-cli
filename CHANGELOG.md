@@ -9,9 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - cortex/senses role-based Colleague contract: six first-class roles (cortex, senses, embedder, reranker, stt, tts) with responsibilities/forbidden_responsibilities (#81)
-- lobes capabilities [--json] and lobes endpoint <role> — read-only role discovery over the role registry
+- `lobes capabilities [--json]` and `lobes endpoint <role>` — read-only role discovery over the role registry
 - Gateway GET /capabilities — machine-readable {role: {endpoint, model, context, ready, responsibilities, ...}} contract for Colleague
-- lobes up <role> and lobes up colleague-stack — role-based serving (dry-run by default, --apply to run; colleague-stack bundles the audio overlay)
+- `lobes up <role>` and `lobes up colleague-stack` — role-based serving (dry-run by default, --apply to run; colleague-stack bundles the audio overlay)
 - lobes measure [--role] [--json] — per-role runtime-only metrics (TTFT/decode-tps/prefill, docs-per-sec, RTF)
 - lobes benchmark --profile {cortex-only,cortex+senses,senses-direct,qwen-nvfp4-vs-bf16,all} — comparison profiles (runtime-only)
 - lobes explain roles (aliases: colleague, colleague-stack, capabilities) and docs/colleague-stack.md
