@@ -5,19 +5,22 @@ lifecycle + health state, and whether ``/health`` is responding. This is the
 *configured* served model (from ``.env``) + health — not a live ``/v1/models``
 query; for the full supported catalog you can switch to, use ``lobes overview --list``.
 
-``--pressure`` sub-mode (issue #68/#69, t6/t7)
-----------------------------------------------
+``--pressure`` sub-mode (issue #68/#69/#85)
+-------------------------------------------
 Reads host memory pressure from ``/proc`` (via
-:func:`lobes.runtime._pressure.sample_pressure`) and maps it to the highest
-tier currently permitted under that pressure via
-:func:`lobes.gateway._pressure_policy.decide` (called with
-``requested_tier="main"`` so the result shows how far the top tier would be
-downgraded right now).  The tier/model are reported in the new **main / minor /
-multimodal** vocabulary (issue #69): under degraded pressure the ceiling drops
-to ``minor`` — the only cheaper target — because ``multimodal`` is a *different
-capability*, not a cheaper rung below ``main`` (the t6 seam).  This path is
-**strictly read-only**: it touches neither the deployment dir nor the Docker
-socket.
+:func:`lobes.runtime._pressure.sample_pressure`) and maps it to a busy/serve
+decision via :func:`lobes.gateway._pressure_policy.decide` (called with
+``requested_tier="main"`` so the result shows what a full-tier request would get
+right now).  Under swap/iowait pressure the gateway no longer degrades a
+``main``/``senses`` request onto a different model — it **sheds** it with HTTP
+429 (busy, retry shortly), issue #85.  So this command reports the *box-level*
+``mode`` (``warm`` / ``busy``), whether a full-tier request is being ``shed``,
+the ``servable_tier`` that still answers under pressure (``minor`` — the floor —
+is always served, never shed), and the ``retry_after`` a busy caller would get.
+Because it calls the same :func:`decide` handle_post consults, the reported
+decision matches what a live request would receive — without issuing one.  This
+path is **strictly read-only**: it touches neither the deployment dir nor the
+Docker socket.
 """
 
 from __future__ import annotations
@@ -38,9 +41,13 @@ _UNSET = "(unset)"
 def _cmd_status_pressure(json_mode: bool) -> int:
     """Handle ``lobes status --pressure`` — a read-only /proc snapshot.
 
-    Computes the highest tier currently permitted under live host pressure and
-    resolves the model id that would serve that tier.  No deployment dir,
-    no docker compose, no .env reads.
+    Samples live host pressure and reports the busy/serve decision a full-tier
+    (``main``) request would receive right now: the box-level ``mode``, whether
+    such a request is ``shed`` (HTTP 429), the ``servable_tier`` that still
+    answers (``minor`` — the floor — is never shed), and the ``retry_after`` a
+    busy caller would get.  Calls the same :func:`decide` handle_post consults,
+    so the reported decision matches a live request without issuing one.  No
+    deployment dir, no docker compose, no .env reads.
     """
     p = _pressure_mod.sample_pressure()
     d = _pressure_policy.decide(
@@ -48,28 +55,40 @@ def _cmd_status_pressure(json_mode: bool) -> int:
         p["iowait_percent"],
         requested_tier="main",
     )
-    # New-vocabulary ceiling: "main" (full) when warm, "minor" under degraded
-    # pressure (the only cheaper target — multimodal is not a rung; t6 seam).
-    tier = d["max_allowed_tier"]
-    model = catalog.resolve_tier(tier).id
+    # Under pressure a full-tier (main / senses) request is shed with 429; the
+    # only tier that still serves is ``minor`` (the floor). ``servable_tier`` is
+    # "minor" when busy, else "main" — the model resolves that tier (#85).
+    servable_tier = d["servable_tier"]
+    model = catalog.resolve_tier(servable_tier).id
+    shed = d["shed"]
+    retry_after = _pressure_policy.BUSY_RETRY_AFTER_SECONDS if shed else None
 
     result = {
-        "tier": tier,
-        "model": model,
         "mode": d["mode"],
+        "shed": shed,
+        "servable_tier": servable_tier,
+        "model": model,
         "reason": d["reason"],
+        "retry_after": retry_after,
         "pressure": p,
     }
 
     if json_mode:
         emit_result(result, json_mode=True)
     else:
+        shed_line = (
+            f"shed:    main/cortex + senses requests return 429 busy "
+            f"(retry after {retry_after}s)"
+            if shed
+            else "shed:    none — all tiers served"
+        )
         emit_result(
             "\n".join(
                 [
-                    f"tier:    {result['tier']}",
-                    f"model:   {result['model']}",
                     f"mode:    {result['mode']}",
+                    shed_line,
+                    f"servable: {result['servable_tier']}",
+                    f"model:   {result['model']}",
                     f"reason:  {result['reason']}",
                     f"swap:    {p['swap_used_percent']:.1f}%",
                     f"iowait:  {p['iowait_percent']:.1f}%",
