@@ -42,6 +42,8 @@ _VERBS = [
     "capabilities [--json] — read-only: the six first-class roles (cortex/senses/"
     "embedder/reranker/stt/tts) resolved to live endpoint + metadata (issue #81)",
     "endpoint <role> — read-only: print one role's base URL",
+    "measure [--role <role>] [--json] — read-only: per-role RUNTIME metrics "
+    "(latency/throughput/RTF/mem/readiness), organized by role (issue #81)",
 ]
 
 _CAPABILITIES = [

@@ -44,7 +44,16 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
-from lobes.roles import ROLES, build_role_registry
+
+# NOTE: lobes.roles is imported lazily inside capabilities_payload() below, not
+# here at module scope. lobes.roles itself imports lobes.gateway._config (for
+# ServerConfig/build_config), and this package's own __init__.py imports THIS
+# module (`from lobes.gateway.server import serve`) — a genuine import cycle.
+# It only "worked" at module scope when something else happened to import
+# lobes.gateway (fully) before anything imported lobes.roles first; entering
+# via lobes.roles directly (e.g. `import lobes.roles_measure`) hit a partially
+# initialized lobes.roles module and raised ImportError. Deferring the import
+# to call time breaks the cycle without reordering either module.
 
 _CHUNK = 65536
 
@@ -486,6 +495,8 @@ def capabilities_payload(
     backend network I/O — a later task (t8) can wire real readiness once a
     cheap/cached signal exists).
     """
+    from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
+
     resolved_env = os.environ if env is None else env
     registry = build_role_registry(table, cfg, env=resolved_env)
     payload: dict[str, dict] = {}

@@ -40,30 +40,14 @@ from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
 from lobes.roles import ROLES, RoleInfo, role_registry_from_env
-from lobes.runtime import _compose, _env
 
 _JSON_HELP = "Emit structured JSON."
 _COMPOSE_DIR_HELP = "Deployment dir (default: $LOBES_DIR or ~/.lobes)."
 _PORT_HELP = "Gateway host port (default: VLLM_PORT in .env)."
 
 
-def _deployment_env(args: argparse.Namespace) -> dict[str, str]:
-    """Best-effort ``.env`` contents as a plain dict (``{}`` when unscaffolded).
-
-    Soft by design: this is a read-only introspection verb, so a missing
-    deployment must never turn into a hard error — it just means every
-    gateway-fronted role other than the always-present ``cortex`` resolves to
-    its catalog default with ``loaded=False`` (see :mod:`lobes.roles`).
-    """
-    try:
-        deploy_dir = _compose.resolve_deployment_dir(getattr(args, "compose_dir", None))
-    except ModelGearError:
-        return {}
-    return _env.read_env_file(deploy_dir / _compose.ENV_FILE)
-
-
 def _registry(args: argparse.Namespace) -> dict[str, RoleInfo]:
-    env = _deployment_env(args)
+    env = _runtime_ops.deployment_env_soft(args)
     port, _ = _runtime_ops.resolve_port_soft(args)
     gateway_url = f"http://localhost:{port}"
     return role_registry_from_env(env, gateway_url=gateway_url)

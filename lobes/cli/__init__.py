@@ -86,6 +86,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import init as _init_cmd
     from lobes.cli._commands import learn as _learn_cmd
     from lobes.cli._commands import logs as _logs_cmd
+    from lobes.cli._commands import measure as _measure_cmd
     from lobes.cli._commands import overview as _overview_cmd
     from lobes.cli._commands import route as _route_cmd
     from lobes.cli._commands import run as _run_cmd
@@ -136,6 +137,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # endpoint + metadata (read-only; no --apply — capabilities/endpoint never
     # touch docker/compose).
     _capabilities_cmd.register(sub)
+    # Per-role RUNTIME measurement (t8): also read-only, no --apply.
+    _measure_cmd.register(sub)
     _cli_group.register(sub)
 
     return parser
