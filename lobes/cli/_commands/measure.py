@@ -63,7 +63,7 @@ def _render_table(results: dict[str, dict], roles: tuple[str, ...]) -> str:
             or "(unavailable)"
         )
         lines.append(
-            f"{r['role']:<9} {r['family']:<12} " f"{'yes' if r['ready'] else 'no ':<6} {metrics}"
+            f"{r['role']:<9} {r['family']:<12} {'yes' if r['ready'] else 'no ':<6} {metrics}"
         )
     return "\n".join(lines)
 

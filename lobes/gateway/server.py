@@ -485,27 +485,22 @@ def capabilities_payload(
     the gateway's own base URL (derived from ``cfg.host``/``cfg.port``, same as
     the CLI derives its localhost:port); stt/tts resolve to ``cfg.audio_url``.
 
-    ``RoleInfo.ready`` is always ``None`` coming out of the registry (live
-    health is t8's concern) — a gateway response must carry a *present*
-    boolean, so it is derived here as ``loaded``: the gateway has no cached
-    per-backend health signal to consult (the one live probe it has,
+    ``RoleInfo.ready`` already comes out of the registry as a *present*
+    boolean equal to ``loaded`` (:mod:`lobes.roles` computes it, once, for
+    both the CLI and this route — the gateway has no cached per-backend
+    health signal of its own to consult: the one live probe it has,
     :func:`lobes._metrics.probe_backend`, opens sockets synchronously inside
     ``/status``'s own bounded fan-out and is not cached, so re-running it
     inline on every ``/capabilities`` call would make this route block on
     backend network I/O — a later task (t8) can wire real readiness once a
-    cheap/cached signal exists).
+    cheap/cached signal exists). This handler therefore just serializes the
+    registry as-is; no per-field override needed to make ``ready`` present.
     """
     from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
 
     resolved_env = os.environ if env is None else env
     registry = build_role_registry(table, cfg, env=resolved_env)
-    payload: dict[str, dict] = {}
-    for role in ROLES:
-        info = registry[role]
-        entry = dataclasses.asdict(info)
-        entry["ready"] = info.loaded
-        payload[role] = entry
-    return payload
+    return {role: dataclasses.asdict(registry[role]) for role in ROLES}
 
 
 # --- the HTTP handler ------------------------------------------------------

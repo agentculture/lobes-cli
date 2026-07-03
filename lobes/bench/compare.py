@@ -139,7 +139,7 @@ def _measure_catalog_variant(entry: SupportedModel, endpoint: str, *, timeout: f
         mtp=bool(entry.speculative_config),
         responsibilities=(),
         forbidden_responsibilities=(),
-        ready=None,
+        ready=bool(endpoint),
         loaded=bool(endpoint),
     )
     return measure_role("cortex", info, timeout=timeout)

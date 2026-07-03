@@ -189,9 +189,7 @@ def _as_json_payload() -> dict[str, object]:
             },
             {
                 "path": ["measure"],
-                "summary": (
-                    "Per-role runtime metrics — TTFT/decode-tps, docs/sec, RTF " "(--role; --json)."
-                ),
+                "summary": "Per-role metrics: TTFT/decode-tps, docs/sec, RTF (--role; --json).",
             },
             {
                 "path": ["overview"],

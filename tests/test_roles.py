@@ -105,8 +105,11 @@ def test_every_role_carries_the_full_metadata_block() -> None:
         assert isinstance(info.responsibilities, tuple) and info.responsibilities
         assert isinstance(info.forbidden_responsibilities, tuple)
         assert isinstance(info.loaded, bool)
-        # Live health is a later task's concern (t8) — unknown without a probe.
-        assert info.ready is None
+        # Coarse "configured/wired" readiness — always a present boolean, equal
+        # to `loaded` (the CLI and gateway must agree, issue #81). Live health
+        # is a later task's concern (t8, `lobes measure`) and lives elsewhere.
+        assert isinstance(info.ready, bool)
+        assert info.ready == info.loaded
 
 
 def test_role_info_is_frozen() -> None:
@@ -258,6 +261,30 @@ def test_gateway_roles_endpoint_defaults_to_derived_gateway_url() -> None:
     registry = _registry(_full_env())
     for name in ("cortex", "senses", "embedder", "reranker"):
         assert registry[name].endpoint == "http://localhost:8000"
+
+
+def test_gateway_roles_endpoint_brackets_ipv6_host() -> None:
+    """An IPv6 literal GATEWAY_HOST must be bracketed per RFC 3986 — an
+    unbracketed 'http://::1:8000' is not a valid/parseable URL authority
+    (the address's own colons collide with the ':<port>' separator)."""
+    env = _full_env()
+    env["GATEWAY_HOST"] = "::1"
+    registry = _registry(env)
+    for name in ("cortex", "senses", "embedder", "reranker"):
+        assert registry[name].endpoint == "http://[::1]:8000"
+
+
+def test_gateway_roles_endpoint_leaves_ipv4_and_hostnames_unbracketed() -> None:
+    """IPv4 literals and hostnames carry no colon — bracketing must be scoped
+    to IPv6 only, never applied to these."""
+    for host, expected in (
+        ("127.0.0.1", "http://127.0.0.1:8000"),
+        ("gateway.internal", "http://gateway.internal:8000"),
+    ):
+        env = _full_env()
+        env["GATEWAY_HOST"] = host
+        registry = _registry(env)
+        assert registry["cortex"].endpoint == expected
 
 
 def test_explicit_gateway_url_overrides_and_audio_uses_audio_url() -> None:

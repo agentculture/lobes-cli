@@ -164,9 +164,12 @@ class RoleInfo:
     mtp: bool  # speculative decoding (MTP draft head) active for this model
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
-    # None = readiness unknown without a live probe (deferred to t8). Only ever
-    # set here if the config already carries readiness (it does not today).
-    ready: bool | None = None
+    # Coarse "configured/wired" readiness — always == `loaded` today. This is
+    # the same proxy the gateway's GET /capabilities uses (issue #81), so the
+    # CLI and gateway agree on one boolean. It is NOT a live health probe;
+    # true liveness (did the backend answer a request just now) is
+    # `lobes measure`'s job (t8), not this dataclass.
+    ready: bool = False
     # Is this role's backend/service wired/present in THIS deployment? An
     # unconfigured/opt-in role is still returned, with loaded=False.
     loaded: bool = False
@@ -189,10 +192,18 @@ def _gateway_base_url(server: ServerConfig) -> str:
     binding, not as a client target), so it is normalized to ``localhost``.
     Callers that know the real reachable address (a published host port, a tunnel
     URL) should pass an explicit ``gateway_url`` to :func:`build_role_registry`.
+
+    An IPv6 literal host (e.g. ``GATEWAY_HOST=::1``) is bracketed per RFC 3986
+    (``http://[::1]:8000``) — an unbracketed IPv6 literal ahead of ``:<port>``
+    is not a valid URL authority (the address's own colons collide with the
+    port separator). IPv4 literals and hostnames carry no colon and pass
+    through unchanged.
     """
     host = server.host
     if host in ("0.0.0.0", "::", ""):  # nosec B104 — a comparison, not a bind
         host = "localhost"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return f"http://{host}:{server.port}"
 
 
@@ -248,7 +259,7 @@ def _gateway_role(
         mtp=bool(entry.speculative_config) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
-        ready=None,
+        ready=loaded,
         loaded=loaded,
     )
 
@@ -266,7 +277,7 @@ def _audio_role(role: str, model: str, runtime: str, endpoint: str, loaded: bool
         mtp=False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
-        ready=None,
+        ready=loaded,
         loaded=loaded,
     )
 
@@ -307,8 +318,11 @@ def build_role_registry(
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
 
-    Readiness (``RoleInfo.ready``) is left ``None`` (unknown): live health is a
-    later task's concern (t8). Nothing here opens a socket.
+    Readiness (``RoleInfo.ready``) is set to the same coarse "configured/wired"
+    proxy as ``loaded`` — the CLI (t5) and the gateway's ``GET /capabilities``
+    (t6) must agree on one boolean, so it is computed here, once, for both.
+    This is NOT a live health probe (it opens no socket); true liveness is a
+    later task's concern (``lobes measure``, t8).
     """
     resolved_env: Mapping[str, str] = env if env is not None else {}
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
