@@ -153,3 +153,26 @@ def test_gateway_service_passes_served_context_lengths() -> None:
             f"context overlay resolves in the gateway container (else /capabilities "
             f"reports catalog-native context)"
         )
+
+
+def test_gateway_service_passes_pressure_thresholds() -> None:
+    """The gateway runs the pressure policy (issue #68) and reads its thresholds
+    from the environment (``LOBES_SWAP_DEGRADED_THRESHOLD`` /
+    ``LOBES_IOWAIT_DEGRADED_THRESHOLD``). The fleet compose must pass them into
+    the gateway service so operators can tune the trigger per box via ``.env`` —
+    otherwise the container never receives them and the knobs are un-tunable
+    (they silently stay on the code defaults). Regression guard for the 0.36.2
+    fix (raising the iowait threshold on a GB10 with phantom PSI-io).
+    """
+    compose_text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    after_gateway = compose_text.split("\n  gateway:\n", 1)
+    assert len(after_gateway) == 2, "gateway service not found in the fleet compose"
+    tail = after_gateway[1]
+    next_service = re.search(r"\n  [a-z][\w-]*:\n", tail)
+    gateway_block = tail[: next_service.start()] if next_service else tail
+
+    for var in ("LOBES_SWAP_DEGRADED_THRESHOLD", "LOBES_IOWAIT_DEGRADED_THRESHOLD"):
+        assert re.search(rf"-\s*{var}=", gateway_block), (
+            f"gateway service must pass {var} into its environment so the pressure "
+            f"policy threshold is tunable via .env (else it stays on the code default)"
+        )
