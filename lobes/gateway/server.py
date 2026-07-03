@@ -478,10 +478,13 @@ def capabilities_payload(
 ) -> dict:
     """The six first-class roles (issue #81), resolved via the shared registry.
 
-    ``env`` defaults to ``os.environ`` — inside the gateway *container* that
-    already carries the deployment's ``PRIMARY_MAX_MODEL_LEN`` and friends, so
-    the served-context overlay (t5) applies for free with no extra config
-    plumbing. The gateway-fronted roles (cortex/senses/embedder/reranker) get
+    ``env`` defaults to ``os.environ``. The fleet compose passes the served
+    ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` / ``EMBED_`` /
+    ``RERANK_MAX_MODEL_LEN`` into the gateway container's environment (they are
+    otherwise only given to the gear containers), so the served-context overlay
+    (t5) resolves each role's SERVED ``--max-model-len`` here; it falls back to
+    the catalog native when a var is unset. The gateway-fronted roles
+    (cortex/senses/embedder/reranker) get
     the gateway's own base URL (derived from ``cfg.host``/``cfg.port``, same as
     the CLI derives its localhost:port); stt/tts resolve to ``cfg.audio_url``.
 

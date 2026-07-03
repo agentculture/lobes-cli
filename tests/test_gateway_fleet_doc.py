@@ -122,3 +122,34 @@ def test_doc_duo_budget_matches_the_real_templates() -> None:
     assert (
         "**0.69**" not in doc_text
     ), "doc still presents the stale pre-duo 0.69 total as the current default budget"
+
+
+def test_gateway_service_passes_served_context_lengths() -> None:
+    """The gateway container must receive each role's served ``--max-model-len``
+    (``PRIMARY_``/``MULTIMODAL_``/``EMBED_``/``RERANK_MAX_MODEL_LEN``) in its
+    ``environment``. Those vars are otherwise passed only to the gear
+    containers, so without them the gateway's ``GET /capabilities`` +
+    ``lobes capabilities`` served-context overlay (issue #81) falls back to the
+    catalog *native* length instead of the *served* length. Regression guard
+    for the 0.36.1 fix.
+    """
+    compose_text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    # Isolate the gateway service block so we don't accidentally match the
+    # ${*_MAX_MODEL_LEN} interpolations in the gear services' --max-model-len args.
+    after_gateway = compose_text.split("\n  gateway:\n", 1)
+    assert len(after_gateway) == 2, "gateway service not found in the fleet compose"
+    tail = after_gateway[1]
+    next_service = re.search(r"\n  [a-z][\w-]*:\n", tail)
+    gateway_block = tail[: next_service.start()] if next_service else tail
+
+    for var in (
+        "PRIMARY_MAX_MODEL_LEN",
+        "MULTIMODAL_MAX_MODEL_LEN",
+        "EMBED_MAX_MODEL_LEN",
+        "RERANK_MAX_MODEL_LEN",
+    ):
+        assert re.search(rf"-\s*{var}=", gateway_block), (
+            f"gateway service must pass {var} into its environment so the served-"
+            f"context overlay resolves in the gateway container (else /capabilities "
+            f"reports catalog-native context)"
+        )

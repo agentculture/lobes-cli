@@ -647,6 +647,16 @@ services:
       - EMBED_SERVED_NAME=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
       - RERANK_URL=${RERANK_URL:-http://vllm-rerank:8000}
       - RERANK_SERVED_NAME=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      # Served context lengths — the gateway reads these so GET /capabilities and
+      # 'lobes capabilities' report each role's SERVED --max-model-len (issue #81),
+      # not the catalog native. Kept in sync with the gear services' own
+      # ${*_MAX_MODEL_LEN} defaults; the overlay falls back to catalog native when
+      # a var is unset. (These are otherwise passed only to the gear containers,
+      # so without them the gateway couldn't see the served lengths.)
+      - PRIMARY_MAX_MODEL_LEN=${PRIMARY_MAX_MODEL_LEN:-131072}
+      - MULTIMODAL_MAX_MODEL_LEN=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
+      - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
