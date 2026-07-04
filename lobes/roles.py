@@ -325,8 +325,9 @@ def build_role_registry(
         ``0.0.0.0`` → ``localhost``). Audio roles also use this origin as their
         endpoint (issue #87).
     :param audio_ready: optional live-readiness override for stt/tts (issue #89).
-        When not ``None``, the audio roles' ``ready`` (and ``loaded``) reflect
-        this value; when ``None``, fall back to ``bool(audio_url)`` (back-compat).
+        When not ``None`` it sets the audio roles' ``ready`` (the runtime signal)
+        — ``loaded`` stays the config fact ``bool(audio_url)``. When ``None``,
+        ``ready`` falls back to ``bool(audio_url)`` (the CLI/back-compat path).
     :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
@@ -347,15 +348,23 @@ def build_role_registry(
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
-    if audio_ready is not None:
-        audio_loaded = audio_ready
-    else:
-        audio_loaded = audio_configured
+    # `loaded` is a config fact — is the audio overlay wired in THIS deployment —
+    # kept SEPARATE from `ready`, the runtime signal. `ready` is the gateway's
+    # live probe (`audio_ready`) when it supplied one, else it falls back to the
+    # configured signal. Keeping them apart means a warming backend reports
+    # loaded=True/ready=False (deployed but not yet consumable) instead of
+    # masquerading as not-deployed, and an unconfigured overlay never reports a
+    # ready role with an empty endpoint.
+    audio_ready_signal = audio_ready if audio_ready is not None else audio_configured
     # Audio roles use the gateway origin when the overlay is wired (issue #87),
     # but fall back to empty endpoint when it is not wired.
     audio_endpoint = gateway if audio_configured else ""
-    registry["stt"] = _audio_role("stt", _STT_MODEL, _STT_RUNTIME, audio_endpoint, audio_loaded)
-    registry["tts"] = _audio_role("tts", _TTS_MODEL, _TTS_RUNTIME, audio_endpoint, audio_loaded)
+    registry["stt"] = _audio_role(
+        "stt", _STT_MODEL, _STT_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
+    )
+    registry["tts"] = _audio_role(
+        "tts", _TTS_MODEL, _TTS_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
+    )
     return registry
 
 

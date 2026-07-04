@@ -401,10 +401,13 @@ def handle_audio_post(
             body=_error_body("audio endpoints are not configured on this deployment", []),
         )
     if audio_ready is False:
+        # Reachable but not ready — Chatterbox/Parakeet still warming up, or a
+        # transient backend error its /v1/health/ready reported. A retryable 503,
+        # distinct from the 502 an *unreachable* backend gets below.
         return GatewayResponse(
             status=503,
             headers=[("Content-Type", _CONTENT_TYPE_JSON), ("Retry-After", "5")],
-            body=_error_body("audio backend is warming up — not ready yet", []),
+            body=_error_body("audio backend not ready yet (warming up) — retry shortly", []),
         )
     backend = Backend(name="audio", base_url=cfg.audio_url, served_name="")
     fwd_headers = filter_headers(req_headers)

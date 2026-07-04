@@ -421,24 +421,29 @@ def test_audio_roles_empty_endpoint_when_audio_not_configured() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_audio_ready_false_overrides_loaded_when_audio_url_set() -> None:
-    """When audio_ready=False is passed, stt/tts report ready=False and loaded=False
-    even though AUDIO_URL is present (issue #89)."""
+def test_audio_ready_false_overrides_ready_not_loaded() -> None:
+    """audio_ready=False sets ready=False but keeps loaded=True — the overlay IS
+    wired, it is just warming. `loaded` is a config fact, separate from the
+    runtime `ready` signal (issue #89)."""
     registry = _registry(_full_env(), audio_ready=False)
     for name in ("stt", "tts"):
         info = registry[name]
-        assert info.loaded is False
-        assert info.ready is False
+        assert info.loaded is True  # configured/deployed...
+        assert info.ready is False  # ...but not consumable right now
+        assert info.endpoint  # still advertises a dial-able endpoint
 
 
-def test_audio_ready_true_sets_loaded_when_audio_url_unset() -> None:
-    """When audio_ready=True is passed, stt/tts report ready=True and loaded=True
-    even when AUDIO_URL is not set (issue #89)."""
+def test_audio_ready_never_fabricates_loaded_when_unconfigured() -> None:
+    """audio_ready must NOT force loaded=True when AUDIO_URL is unset: `loaded`
+    is a config fact, so an unwired overlay never reports a role with an empty
+    endpoint that a client would try to dial (issue #89 review finding)."""
     registry = _registry(_primary_only_env(), audio_ready=True)
     for name in ("stt", "tts"):
         info = registry[name]
-        assert info.loaded is True
-        assert info.ready is True
+        assert info.loaded is False  # not configured in this deployment
+        assert info.endpoint == ""  # nothing to dial — never ready+empty-endpoint
+        # Invariant: a role is never advertised loaded with no endpoint.
+        assert not (info.loaded and info.endpoint == "")
 
 
 def test_audio_ready_none_falls_back_to_audio_url() -> None:
