@@ -119,6 +119,20 @@ except ImportError:  # pragma: no cover
 
 _model = None  # ChatterboxTTS singleton
 _model_lock = threading.Lock()
+_cuda_poisoned: bool = False
+
+
+def readiness_status(model_loaded: bool, cuda_poisoned: bool) -> tuple[int, dict]:
+    """Return an ``(http_status, body)`` pair reflecting real TTS readiness.
+
+    Pure function — no torch / fastapi imports — so it is unit-testable in the
+    offline CI environment (no GPU, no container deps).
+    """
+    if not model_loaded:
+        return 503, {"status": "loading"}
+    if cuda_poisoned:
+        return 503, {"status": "unavailable", "reason": "cuda_context_poisoned"}
+    return 200, {"status": "ready"}
 
 
 def _get_model():  # pragma: no cover
@@ -144,9 +158,8 @@ if _FASTAPI_AVAILABLE:
 
     @app.get("/v1/health/ready")  # pragma: no cover
     async def health() -> Response:
-        if _model is not None:
-            return JSONResponse(content={"status": "ok"})
-        return JSONResponse(status_code=503, content={"status": "loading"})
+        code, body = readiness_status(_model is not None, _cuda_poisoned)
+        return JSONResponse(status_code=code, content=body)
 
     @app.post("/v1/audio/synthesize")  # pragma: no cover
     async def synthesize(request_body: dict) -> Response:
@@ -158,6 +171,7 @@ if _FASTAPI_AVAILABLE:
         Returns:
             audio/pcm — raw PCM16 little-endian mono 24 kHz.
         """
+        global _cuda_poisoned
         text = (request_body.get("text") or "").strip()
         if not text:
             return JSONResponse(
@@ -176,7 +190,19 @@ if _FASTAPI_AVAILABLE:
             # PCM16 in a container, so return raw bytes per the audio/pcm contract.
             return float_tensor_to_pcm16(wav_tensor)
 
-        pcm = await anyio.to_thread.run_sync(_generate)
+        try:
+            pcm = await anyio.to_thread.run_sync(_generate)
+        except Exception as exc:
+            exc_msg = f"{type(exc).__name__}: {exc}"
+            if "cuda" in exc_msg.lower() or "accelerator" in exc_msg.lower():
+                _cuda_poisoned = True
+                log.warning("[Chatterbox] CUDA/accelerator error — marking poisoned: %s", exc_msg)
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": {"message": "CUDA context error", "detail": exc_msg}},
+                )
+            raise
+        _cuda_poisoned = False
         return Response(content=pcm, media_type="audio/pcm")
 
 
