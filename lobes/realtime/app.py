@@ -21,7 +21,12 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from ._settings import settings
-from .audio_facade import SpeechRequestError, parse_speech_request, pcm_to_container
+from .audio_facade import (
+    SpeechRequestError,
+    aggregate_audio_ready,
+    parse_speech_request,
+    pcm_to_container,
+)
 from .tts_client import synthesize
 
 log = logging.getLogger(__name__)
@@ -32,6 +37,30 @@ app = FastAPI(title="lobes realtime", version="1")
 @app.get("/health")  # pragma: no cover - exercised live, not in the offline suite
 async def health() -> dict:
     return {"status": "ok", "service": "model-gear-realtime"}
+
+
+@app.get("/v1/health/ready")  # pragma: no cover - exercised live, not in the offline suite
+async def ready() -> Response:
+    """Aggregate readiness over the TTS (Chatterbox) + STT (Parakeet) backends.
+
+    The gateway probes this so it advertises stt/tts as consumable in
+    GET /capabilities only when an audio round-trip would actually succeed
+    (issue #89). 200 iff both backends report ready; else 503.
+    """
+    tts_ok = await _probe_backend_ready(settings.tts_url)
+    stt_ok = await _probe_backend_ready(settings.stt_url)
+    code, body = aggregate_audio_ready(tts_ok, stt_ok)
+    return JSONResponse(status_code=code, content=body)
+
+
+async def _probe_backend_ready(base_url: str) -> bool:  # pragma: no cover
+    url = base_url.rstrip("/") + "/v1/health/ready"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+        return resp.status_code == 200
+    except httpx.HTTPError:
+        return False
 
 
 @app.post("/v1/audio/speech")  # pragma: no cover

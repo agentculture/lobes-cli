@@ -264,8 +264,18 @@ def _gateway_role(
     )
 
 
-def _audio_role(role: str, model: str, runtime: str, endpoint: str, loaded: bool) -> RoleInfo:
+def _audio_role(
+    role: str,
+    model: str,
+    runtime: str,
+    endpoint: str,
+    loaded: bool,
+    *,
+    ready: bool | None = None,
+) -> RoleInfo:
     """Resolve an audio-overlay role (stt/tts). No catalog entry → 0/""/False."""
+    if ready is None:
+        ready = loaded
     return RoleInfo(
         role=role,
         model=model,
@@ -277,7 +287,7 @@ def _audio_role(role: str, model: str, runtime: str, endpoint: str, loaded: bool
         mtp=False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
-        ready=loaded,
+        ready=ready,
         loaded=loaded,
     )
 
@@ -288,6 +298,7 @@ def build_role_registry(
     *,
     env: Mapping[str, str] | None = None,
     gateway_url: str | None = None,
+    audio_ready: bool | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the six first-class roles to live metadata — the #81 contract.
 
@@ -311,8 +322,12 @@ def build_role_registry(
         env) so a caller assembling those by hand isn't forced to also pass it.
     :param gateway_url: the caller-facing gateway base URL for cortex / senses /
         embedder / reranker. When ``None`` it is derived from ``server`` (host
-        ``0.0.0.0`` → ``localhost``). Audio roles ignore this — they resolve to
-        ``server.audio_url`` (the /v1/audio/* overlay).
+        ``0.0.0.0`` → ``localhost``). Audio roles also use this origin as their
+        endpoint (issue #87).
+    :param audio_ready: optional live-readiness override for stt/tts (issue #89).
+        When not ``None`` it sets the audio roles' ``ready`` (the runtime signal)
+        — ``loaded`` stays the config fact ``bool(audio_url)``. When ``None``,
+        ``ready`` falls back to ``bool(audio_url)`` (the CLI/back-compat path).
     :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
@@ -332,9 +347,29 @@ def build_role_registry(
         registry[role] = _gateway_role(role, table, gateway, resolved_env)
 
     audio_url = (server.audio_url or "").rstrip("/")
-    audio_loaded = bool(audio_url)
-    registry["stt"] = _audio_role("stt", _STT_MODEL, _STT_RUNTIME, audio_url, audio_loaded)
-    registry["tts"] = _audio_role("tts", _TTS_MODEL, _TTS_RUNTIME, audio_url, audio_loaded)
+    audio_configured = bool(audio_url)
+    # `loaded` is a config fact — is the audio overlay wired in THIS deployment —
+    # kept SEPARATE from `ready`, the runtime signal. `ready` is the gateway's
+    # live probe (`audio_ready`) when it supplied one, else it falls back to the
+    # configured signal. Keeping them apart means a warming backend reports
+    # loaded=True/ready=False (deployed but not yet consumable) instead of
+    # masquerading as not-deployed, and an unconfigured overlay never reports a
+    # ready role with an empty endpoint.
+    #
+    # Clamp on `audio_configured` so that last invariant holds STRUCTURALLY, not
+    # merely by caller discipline: an unconfigured overlay is never ready, no
+    # matter what `audio_ready` a caller passes. When configured, use the live
+    # probe signal if one was supplied, else fall back to the configured fact.
+    audio_ready_signal = audio_configured and (audio_ready if audio_ready is not None else True)
+    # Audio roles use the gateway origin when the overlay is wired (issue #87),
+    # but fall back to empty endpoint when it is not wired.
+    audio_endpoint = gateway if audio_configured else ""
+    registry["stt"] = _audio_role(
+        "stt", _STT_MODEL, _STT_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
+    )
+    registry["tts"] = _audio_role(
+        "tts", _TTS_MODEL, _TTS_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
+    )
     return registry
 
 
@@ -342,6 +377,7 @@ def role_registry_from_env(
     env: Mapping[str, str] | None = None,
     *,
     gateway_url: str | None = None,
+    audio_ready: bool | None = None,
 ) -> dict[str, RoleInfo]:
     """Build the role registry straight from an env mapping.
 
@@ -356,4 +392,6 @@ def role_registry_from_env(
     """
     resolved_env = os.environ if env is None else env
     table, server = build_config(resolved_env)
-    return build_role_registry(table, server, env=resolved_env, gateway_url=gateway_url)
+    return build_role_registry(
+        table, server, env=resolved_env, gateway_url=gateway_url, audio_ready=audio_ready
+    )

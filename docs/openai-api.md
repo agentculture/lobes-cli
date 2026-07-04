@@ -341,9 +341,13 @@ curl -s http://localhost:8000/capabilities
 }
 ```
 
-All four gateway-fronted roles (`cortex`/`senses`/`embedder`/`reranker`) share
-this **one** gateway `endpoint` — routing between them is by the `model`
-field the contract hands back, not by distinct URLs. See
+**All six roles** report this **one** client-reachable gateway `endpoint` —
+including `stt`/`tts` — because routing is by the `model` field / OpenAI `path`,
+not by distinct URLs (issue #87). The gateway advertises the origin you dialed
+(the request `Host` header; override with `GATEWAY_PUBLIC_URL` for a tunnel), so
+`endpoint` is reachable as-is and internal hosts are never leaked. For `stt`/`tts`,
+`GET /capabilities` reports a **live** readiness probe (issue #89) — `ready: true`
+only when an audio round-trip would truly succeed. See
 [`docs/colleague-stack.md`](colleague-stack.md) for the full contract
 (responsibilities per role, the cortex/senses↔primary/multimodal mapping,
 `lobes up <role>`, `lobes measure`, and the client-flow / rename-safety proof).

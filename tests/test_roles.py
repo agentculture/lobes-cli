@@ -68,14 +68,14 @@ def _catalog(model_id: str) -> SupportedModel:
     return next(m for m in SUPPORTED_MODELS if m.id == model_id)
 
 
-def _registry(env: dict[str, str], **kw) -> dict[str, RoleInfo]:
+def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> dict[str, RoleInfo]:
     table, server = build_config(env)
     # Thread the SAME env through for the served-context overlay (t5) — a test
     # helper omitting this would silently mask the overlay and always assert
     # against the catalog native, which is exactly the t4-vs-t5 regression this
     # module now guards against.
     kw.setdefault("env", env)
-    return build_role_registry(table, server, **kw)
+    return build_role_registry(table, server, audio_ready=audio_ready, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +216,8 @@ def test_audio_roles_loaded_when_audio_url_set() -> None:
     for name in ("stt", "tts"):
         info = registry[name]
         assert info.loaded is True
-        assert info.endpoint == "http://realtime:8080"
+        # Audio roles report the SAME gateway origin as the other roles (issue #87).
+        assert info.endpoint == "http://localhost:8000"
         assert info.runtime  # a named audio runtime
 
 
@@ -287,12 +288,14 @@ def test_gateway_roles_endpoint_leaves_ipv4_and_hostnames_unbracketed() -> None:
         assert registry["cortex"].endpoint == expected
 
 
-def test_explicit_gateway_url_overrides_and_audio_uses_audio_url() -> None:
+def test_explicit_gateway_url_applies_to_all_roles_including_audio() -> None:
+    """Audio roles now also use the gateway origin (issue #87)."""
     registry = _registry(_full_env(), gateway_url="https://tunnel.example/")
     assert registry["cortex"].endpoint == "https://tunnel.example"  # trailing slash trimmed
     assert registry["embedder"].endpoint == "https://tunnel.example"
-    # Audio roles ignore gateway_url — they hit the audio overlay directly.
-    assert registry["stt"].endpoint == "http://realtime:8080"
+    # Audio roles also use the gateway origin, not the internal audio_url.
+    assert registry["stt"].endpoint == "https://tunnel.example"
+    assert registry["tts"].endpoint == "https://tunnel.example"
 
 
 def test_role_registry_from_env_matches_manual_build() -> None:
@@ -385,3 +388,93 @@ def test_role_registry_from_env_applies_overlay_via_os_environ(monkeypatch) -> N
     monkeypatch.setenv("PRIMARY_MAX_MODEL_LEN", "131072")
     registry = role_registry_from_env()
     assert registry["cortex"].context == 131072
+
+
+# ---------------------------------------------------------------------------
+# Issue #87 — audio roles report the gateway origin, not the internal audio_url
+# ---------------------------------------------------------------------------
+
+
+def test_audio_roles_use_gateway_origin_when_audio_configured() -> None:
+    """Audio roles (stt/tts) report the same gateway origin as the other roles
+    when the audio overlay is wired (issue #87)."""
+    registry = _registry(_full_env())
+    # Gateway-fronted roles use the derived gateway URL.
+    assert registry["cortex"].endpoint == "http://localhost:8000"
+    # Audio roles use the SAME origin.
+    assert registry["stt"].endpoint == "http://localhost:8000"
+    assert registry["tts"].endpoint == "http://localhost:8000"
+
+
+def test_audio_roles_empty_endpoint_when_audio_not_configured() -> None:
+    """When AUDIO_URL is not set, audio roles stay unloaded with empty endpoint."""
+    registry = _registry(_primary_only_env())
+    for name in ("stt", "tts"):
+        info = registry[name]
+        assert info.loaded is False
+        assert info.endpoint == ""
+        assert info.ready is False
+
+
+# ---------------------------------------------------------------------------
+# Issue #89 — audio_ready override
+# ---------------------------------------------------------------------------
+
+
+def test_audio_ready_false_overrides_ready_not_loaded() -> None:
+    """audio_ready=False sets ready=False but keeps loaded=True — the overlay IS
+    wired, it is just warming. `loaded` is a config fact, separate from the
+    runtime `ready` signal (issue #89)."""
+    registry = _registry(_full_env(), audio_ready=False)
+    for name in ("stt", "tts"):
+        info = registry[name]
+        assert info.loaded is True  # configured/deployed...
+        assert info.ready is False  # ...but not consumable right now
+        assert info.endpoint  # still advertises a dial-able endpoint
+
+
+def test_audio_ready_never_fabricates_loaded_when_unconfigured() -> None:
+    """audio_ready must NOT force loaded/ready True when AUDIO_URL is unset:
+    `loaded` is a config fact and `ready` is clamped on it, so an unwired overlay
+    never reports a role with an empty endpoint that a client would try to dial,
+    and never reports ready=True with no backend (issue #89 review findings)."""
+    registry = _registry(_primary_only_env(), audio_ready=True)
+    for name in ("stt", "tts"):
+        info = registry[name]
+        assert info.loaded is False  # not configured in this deployment
+        assert info.ready is False  # unconfigured ⇒ never ready, even if a caller
+        #                             passes audio_ready=True (Qodo #90 finding)
+        assert info.endpoint == ""  # nothing to dial — never ready+empty-endpoint
+        # Invariant: a role is never advertised loaded/ready with no endpoint.
+        assert not (info.loaded and info.endpoint == "")
+        assert not (info.ready and info.endpoint == "")
+
+
+def test_audio_ready_none_falls_back_to_audio_url() -> None:
+    """When audio_ready is None (default), readiness follows bool(audio_url) —
+    the back-compat behaviour (issue #89)."""
+    # With AUDIO_URL set → loaded/ready True.
+    registry = _registry(_full_env())
+    for name in ("stt", "tts"):
+        assert registry[name].loaded is True
+        assert registry[name].ready is True
+    # Without AUDIO_URL → loaded/ready False.
+    registry = _registry(_primary_only_env())
+    for name in ("stt", "tts"):
+        assert registry[name].loaded is False
+        assert registry[name].ready is False
+
+
+# ---------------------------------------------------------------------------
+# All six roles expose the identical key set
+# ---------------------------------------------------------------------------
+
+
+def test_all_six_roles_expose_identical_key_set() -> None:
+    """Every role's asdict keys are identical — no role has extra or missing fields."""
+    import dataclasses
+
+    registry = _registry(_full_env())
+    first_keys = set(dataclasses.asdict(registry["cortex"]).keys())
+    for name in ("senses", "embedder", "reranker", "stt", "tts"):
+        assert set(dataclasses.asdict(registry[name]).keys()) == first_keys

@@ -616,6 +616,7 @@ services:
       - vllm-rerank
     environment:
       - GATEWAY_PORT=8000
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-}
       - PRIMARY_URL=http://vllm-primary:8000
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the

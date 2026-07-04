@@ -80,7 +80,7 @@ FastAPI server (`lobes/realtime/chatterbox_server.py`):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/v1/health/ready` | Readiness probe → 503 `{"status":"loading"}` until model is loaded; 200 `{"status":"ok"}` once ready |
+| `GET` | `/v1/health/ready` | Readiness probe → 503 `{"status":"loading"}` until model is loaded; 503 `{"status":"unavailable","reason":"cuda_context_poisoned"}` if a CUDA error poisoned the context (issue #89); 200 `{"status":"ready"}` once serving |
 | `POST` | `/v1/audio/synthesize` | Synthesize text → raw PCM16 mono 24 kHz |
 
 ### POST /v1/audio/synthesize

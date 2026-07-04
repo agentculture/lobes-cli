@@ -140,6 +140,19 @@ class TestOtherServicesUnchanged:
         assert "build" not in svc, "vllm-rerank must NOT have a build: block"
 
 
+class TestGatewayPublicUrl:
+    """The fleet gateway service must expose a GATEWAY_PUBLIC_URL environment
+    variable passthrough so operators can override the advertised origin for
+    GET /capabilities (issue #87)."""
+
+    def test_gateway_environment_has_gateway_public_url(self) -> None:
+        compose = _load_fleet()
+        svc = compose["services"]["gateway"]
+        env: list[str] = svc["environment"]
+        keys = {e.split("=", 1)[0] for e in env if "=" in e}
+        assert "GATEWAY_PUBLIC_URL" in keys, "gateway environment must include GATEWAY_PUBLIC_URL"
+
+
 class TestAudioOverlayUntouched:
     """The audio overlay compose must not reference vllm-multimodal at all
     (it has no reason to override that service's image)."""

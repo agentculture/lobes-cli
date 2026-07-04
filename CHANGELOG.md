@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.0] - 2026-07-04
+
+### Added
+
+- `GET /capabilities` now advertises a **client-reachable** origin for every role's `endpoint` — derived from the request `Host` header, overridable with the new optional `GATEWAY_PUBLIC_URL` env (for tunnels / Host-rewriting proxies) — so a consumer can dial any role's `endpoint` directly instead of a non-routable internal host (`vllm-primary:8000`, `realtime:8080`). This covers all six roles, including `stt`/`tts`. Closes #87.
+- The realtime bridge exposes `GET /v1/health/ready`, aggregating Chatterbox (TTS) + Parakeet (STT) readiness into one signal the gateway live-probes.
+
+### Changed
+
+- `lobes status` is now **fleet-aware**: on a fleet deployment it reports per-gear container states and points at `lobes fleet status` / `lobes capabilities`, instead of the contradictory single-model `state: model-gear-vllm — not created` line printed next to `health: ok`. A single-model deployment's output is byte-for-byte unchanged. Closes #84.
+- `GET /capabilities` reports `stt`/`tts` `ready` from a **live** probe of the audio backend (not merely `AUDIO_URL` being set), so an advertised-ready audio role is genuinely consumable; `lobes capabilities --json` keeps the configured signal since the host CLI can't reach the internal backends. Closes #89 (readiness).
+
+### Fixed
+
+- The gateway returns a clear **503** (`Retry-After`) for `/v1/audio/transcriptions` and `/v1/audio/speech` when the audio backend is reachable but still warming (Chatterbox/Parakeet loading, or a poisoned-CUDA context now surfaced honestly by Chatterbox's `/v1/health/ready`), distinct from the **502** for a genuinely unreachable backend — closing the "advertised ready but 502s / not client-consumable" gap. Closes #89.
+- The gateway's audio-readiness probe (`probe_audio_ready`) now degrades a malformed `AUDIO_URL` (a non-numeric port makes `urlsplit(...).port` raise `ValueError`) or a broken HTTP exchange (`http.client.HTTPException`) to "readiness unknown" instead of letting the exception crash the `GET /capabilities` / `POST /v1/audio/*` handler — mirroring `open_upstream`'s guard. (Qodo review, #90.)
+- `build_role_registry` clamps the stt/tts `ready` signal on the audio overlay being configured, so an unconfigured overlay can never report `ready=True` with an empty endpoint even if a caller passes `audio_ready=True` — the public builder now enforces the "unconfigured ⇒ not ready" invariant its docstring already promised. (Qodo review, #90.)
+- `cmd_status` is split into `_cmd_status_fleet` / `_cmd_status_single` render helpers (mirroring the existing `_cmd_status_pressure`), leaving the verb as pure dispatch — dropping its Cognitive Complexity from 16 to under the gate's 15. Each helper uses a single-`return` `if/else` (like `_cmd_status_pressure`) rather than an early return, so it renders its one exit path without tripping `python:S3516` ("always returns the same value"). Behavior-preserving; the fleet and single-model outputs are byte-for-byte unchanged. (SonarCloud `python:S3776` + `python:S3516`, #90.)
+
 ## [0.37.0] - 2026-07-03
 
 ### Changed

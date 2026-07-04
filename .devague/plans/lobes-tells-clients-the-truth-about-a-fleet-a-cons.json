@@ -1,0 +1,233 @@
+{
+  "slug": "lobes-tells-clients-the-truth-about-a-fleet-a-cons",
+  "title": "lobes tells clients the truth about a fleet: a consumer can resolve any role from /capabilities, dial the one client-reachable URL the contract names, and get a working answer -- for chat AND audio -- while 'lobes status' reports the fleet that is actually running instead of a phantom single-model container.",
+  "frame_slug": "lobes-tells-clients-the-truth-about-a-fleet-a-cons",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-03T23:11:24Z",
+  "updated": "2026-07-03T23:15:17Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes tells clients the truth about a fleet: a consumer can resolve any role from /capabilities, dial the one client-reachable URL the contract names, and get a working answer -- for chat AND audio -- while 'lobes status' reports the fleet that is actually running instead of a phantom single-model container."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A consumer resolving any of the six roles from /capabilities and dialing the one documented field reaches a working OpenAI endpoint for that role (chat / embeddings / rerank / audio), and 'lobes status' on a fleet names the running gears -- with no field a reasonable consumer would dial pointing at a 404 or unreachable host."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The fleet's machine consumers -- chiefly colleague, which resolves cortex/senses/stt/tts from GET /capabilities and dials them to run the model -- plus human operators running 'lobes status' on a fleet deployment."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The fix is verified from the consumers' vantage -- colleague resolving cortex/senses/stt/tts, and an operator running 'lobes status' on a fleet -- not only via unit internals."
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Today on a fleet: (a) 'lobes status' shows the single-model view and prints 'state: model-gear-vllm -- not created' next to 'health: ok', contradicting itself and never mentioning senses/embedder/reranker; (b) each role's /capabilities 'endpoint' points at a non-routable host (http://localhost:8000 for cortex/senses, http://realtime:8080 for stt/tts) that 404s, so a consumer must discover-by-probing that only the gateway origin :8001 answers; (c) even the gateway origin 502s for /v1/audio/transcriptions and /v1/audio/speech, so stt/tts advertise ready:true but are not client-consumable through any reachable URL."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "Each of the three documented pre-fix failures (phantom status container; endpoint on a non-routable host; audio 502) is pinned by a regression test asserting the pre-fix wrongness, so the fix demonstrably closes a real gap."
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "/capabilities is a machine-readable contract whose entire purpose is discovery: a consumer resolves a role and dials it without human help. A field that 404s, a status line that contradicts /health, and an advertised-ready audio role that 502s each force every consumer into the same live-probe-then-hardcode-a-workaround cycle -- exactly what the contract exists to prevent. It is the concrete blocker for colleague#286 (senses voice arc)."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "After the fix a consumer needs no live-probe-then-hardcode workaround: the contract alone yields the reachable URL and truthful readiness, unblocking colleague#286's voice round-trip to move from SKIP toward PASS."
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "Scope is reachability/reporting truth only: fix 'lobes status' fleet-awareness (#84), make the /capabilities contract name a client-reachable URL and stop advertising non-routable per-role endpoints (#87), and make the advertised-ready audio routes actually round-trip through the reachable origin OR stop advertising them ready (#89). It is NOT a change to the served models, the cortex/senses context/util rebalance, the role set, or the audio backends (Parakeet/Chatterbox); it does not add new external per-role host ports or a new service-discovery mechanism."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The diff touches only reporting/reachability/readiness surfaces (status.py, roles.py, the gateway /capabilities route + audio proxy, compose env) and leaves served models, the cortex/senses context/util rebalance, the role set, and the audio backend images unchanged."
+    },
+    {
+      "id": "c7",
+      "kind": "after_state",
+      "text": "On a fleet, 'lobes status' detects the fleet and reports it AS a fleet: per-gear container states via the existing _compose.fleet_containers(deploy_dir) + inspect_state(name) loop (the same building block lobes fleet status uses), the gateway health, and a pointer to 'lobes fleet status' / 'lobes capabilities'. It no longer prints 'model-gear-vllm -- not created' next to 'health: ok'. A genuine single-model deployment is byte-for-byte unchanged. Both human and --json outputs reflect the fleet shape (e.g. a deployment: fleet|single field)."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "On a live fleet, 'lobes status' reports deployment=fleet with per-gear states + gateway health and never prints 'model-gear-vllm -- not created'; a single-model deployment's output is byte-for-byte unchanged -- both asserted by tests."
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Status fleet-detection reuses existing primitives -- no new detection heuristic invented ad hoc: _compose already exposes FLEET_CONTAINERS (now including FLEET_MULTIMODAL), fleet_containers(deploy_dir), audio_overlay_present, and the fleet-only Dockerfile.gateway marker. The fix delegates to the same fleet_containers + inspect_state(name) loop cmd_fleet_status already uses."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The status fleet path calls _compose.fleet_containers(deploy_dir) + inspect_state(name) (the primitives cmd_fleet_status already uses) with a fleet-vs-single detector built from an existing on-disk marker (e.g. Dockerfile.gateway presence / fleet-container existence) -- no parallel ad-hoc heuristic."
+    },
+    {
+      "id": "c13",
+      "kind": "success_signal",
+      "text": "All three issues close with tests + one live confirmation: (a) #84 -- a fleet-shaped 'lobes status' test asserts no phantom 'model-gear-vllm -- not created' line and shows per-gear states, and a single-model test asserts byte-identical legacy output; (b) #87 -- a /capabilities test asserts every role's endpoint is the reachable gateway origin (Host-derived, GATEWAY_PUBLIC_URL-overridable), with none pointing at :8000-when-VLLM_PORT-differs or realtime:8080; (c) #89 -- a readiness test asserts stt/tts 'ready' follows the backend health probe (ready:false while a backend 503s) and the audio proxy returns a clear 503 for a warming backend. Live on the GB10: colleague resolves the roles from /capabilities and round-trips both chat AND audio through the gateway origin."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Each listed test exists and passes in CI, and the live GB10 chat+audio confirmation is actually run, not asserted on faith."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "#84: make 'lobes status' fleet-aware (status.py + a _compose is_fleet detector)",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "On a fleet-deployment fixture, 'lobes status' (human + --json) reports deployment=fleet with per-gear states from _compose.fleet_containers(deploy_dir)+inspect_state(name), shows gateway health, points at 'lobes fleet status'/'lobes capabilities', and contains NO 'model-gear-vllm -- not created' line.",
+        "On a single-model fixture, 'lobes status' output is byte-for-byte identical to pre-change (regression test guards the legacy path).",
+        "Fleet detection is a new _compose helper (is_fleet(deploy_dir)) built from an existing on-disk marker (Dockerfile.gateway presence / fleet-container existence) -- no new compose-file parser."
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "c7",
+        "c8",
+        "h7",
+        "h8",
+        "h4",
+        "c2"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "#87+#89: roles.py -- audio endpoint via gateway origin + optional live-readiness signal",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_audio_role builds endpoint = <gateway origin> + role path; tests/test_roles.py asserts stt/tts endpoint is the gateway origin (NOT http://realtime:8080), replacing the two verbatim :8080 assertions at test_roles.py:219,295.",
+        "build_role_registry accepts an optional audio-readiness signal; when supplied, stt/tts ready/loaded reflect it (test: ready=False passed -> ready:false even though audio_url is set); when omitted, falls back to configured bool(audio_url) for back-compat.",
+        "All six roles keep an identical JSON key set (dataclasses.asdict shape unchanged)."
+      ],
+      "deps": [],
+      "covers": [
+        "h2",
+        "h4"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "#87: wire GATEWAY_PUBLIC_URL through the fleet gateway service (templates/env.example)",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The fleet gateway service passes GATEWAY_PUBLIC_URL through to the gateway container (default derived from VLLM_PORT, overridable); env.example documents it.",
+        "A template/compose test asserts GATEWAY_PUBLIC_URL is wired on the fleet gateway service."
+      ],
+      "deps": [],
+      "covers": [
+        "h6"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "#89: chatterbox /v1/health/ready reports 503 on a poisoned-CUDA / non-synthesizing state",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "chatterbox_server /v1/health/ready returns 503 (not 200) when the CUDA context is poisoned / the model cannot synthesize, so a live readiness probe surfaces the stale-CUDA failure honestly; a test stubs a poisoned-context state and asserts 503."
+      ],
+      "deps": [],
+      "covers": [
+        "h4"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "#87+#89: gateway server.py -- Host-derived reachable origin, GATEWAY_PUBLIC_URL override, live audio-readiness probe, 503-for-warming",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "capabilities_payload derives the reachable origin from the request Host header + scheme and passes it as gateway_url to build_role_registry; a gateway test with Host: localhost:8001 asserts every role endpoint origin is http://localhost:8001, not :8000.",
+        "ServerConfig reads GATEWAY_PUBLIC_URL; when set it overrides the Host-derived origin (test asserts a tunnel URL wins over Host).",
+        "The gateway live-probes the audio backends' /v1/health/ready and passes the signal into build_role_registry; /capabilities reports stt/tts ready:false while a stubbed backend 503s.",
+        "handle_audio_post returns 503 ('backend warming/not ready') when the audio backend is up-but-not-ready, distinct from 502 when unreachable; both asserted by tests.",
+        "GET /capabilities and 'lobes capabilities --json' stay shape-identical (same per-role keys)."
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c1",
+        "h2",
+        "c4",
+        "h5",
+        "h4"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "integration: live GB10 chat+audio round-trip via gateway origin, docs, version bump",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Version bumped via the version-bump skill (pyproject.toml + CHANGELOG) so version-check CI passes.",
+        "Docs updated (docs/colleague-stack.md + docs/openai-api.md) to state endpoint is the client-reachable gateway origin and stt/tts ready is a live health signal.",
+        "Live on the GB10: colleague resolves cortex/senses/stt/tts from GET /capabilities and round-trips BOTH a chat completion AND audio transcription+speech through the gateway origin (or, if a backend is warming, /capabilities honestly reports ready:false and the round-trip is retried after warmup) -- result recorded, not asserted on faith.",
+        "The full diff touches only status.py, _compose.py, roles.py, gateway/{server,_config}.py, realtime/chatterbox_server.py, templates/, docs/ and tests -- no served-model/catalog/util change (scope check)."
+      ],
+      "deps": [
+        "t1",
+        "t3",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c5",
+        "h6",
+        "c13",
+        "h9",
+        "h3",
+        "c2",
+        "h5"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Where the live audio-readiness probe lives: gateway-computed (server.py probes the backends' /v1/health/ready and passes a signal into build_role_registry, mirroring fleet_status's existing _metrics.probe_backend pattern) vs roles.py self-probing. RECOMMENDED: gateway-computed -- keeps roles.py pure (it currently does no network I/O; the code comment says liveness is not the dataclass's job).",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5"
+    },
+    {
+      "id": "r2",
+      "text": "CLI 'lobes capabilities' readiness divergence: the host CLI generally cannot reach the compose-internal realtime:8080 to probe, so it reports configured-readiness while the gateway reports live. Both transports keep an identical KEY shape (the honesty condition), only the 'ready' VALUE may differ by vantage. RECOMMENDED: gateway is colleague's source of truth; document that the CLI reports configured-readiness.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r3",
+      "text": "Stale-CUDA Chatterbox remedy in this PR: report 503 from /v1/health/ready on a poisoned context (so the gateway probe surfaces it honestly) vs an active self-heal restart. RECOMMENDED: report 503 now (honest readiness); auto-restart is a follow-up issue, not this PR.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r4",
+      "text": "Scheme detection for the Host-derived origin (http vs https behind a tunnel): the request may arrive http even when the public URL is https. RECOMMENDED: default http from the Host header; rely on the GATEWAY_PUBLIC_URL override for https tunnels / reverse proxies that rewrite scheme.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5"
+    }
+  ]
+}

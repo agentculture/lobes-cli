@@ -375,6 +375,8 @@ def handle_audio_post(
     req_headers: Iterable[tuple[str, str]],
     body: bytes,
     open_upstream: OpenUpstream,
+    *,
+    audio_ready: bool | None = None,
 ) -> GatewayResponse:
     """Proxy an ``/v1/audio/*`` POST to the fixed audio backend.
 
@@ -384,12 +386,28 @@ def handle_audio_post(
     file or a small JSON) is relayed **streamed** (chunked). Returns 404 when no
     audio backend is configured (a text-only fleet leaves ``AUDIO_URL`` unset).
     ``open_upstream`` is injected so this is unit-testable without sockets.
+
+    ``audio_ready`` is the caller's live readiness probe (issue #89): a value of
+    ``False`` means the backend is reachable but still warming (Chatterbox/
+    Parakeet loading, or a poisoned CUDA context) — we return a clear **503**
+    with ``Retry-After`` instead of forwarding into a bare relayed 502, so a
+    client can tell "not yet" from "broken". ``True``/``None`` forward as normal
+    (``None`` = unreachable/unknown → the forward surfaces the honest 502).
     """
     if not cfg.audio_url:
         return GatewayResponse(
             status=404,
             headers=[("Content-Type", _CONTENT_TYPE_JSON)],
             body=_error_body("audio endpoints are not configured on this deployment", []),
+        )
+    if audio_ready is False:
+        # Reachable but not ready — Chatterbox/Parakeet still warming up, or a
+        # transient backend error its /v1/health/ready reported. A retryable 503,
+        # distinct from the 502 an *unreachable* backend gets below.
+        return GatewayResponse(
+            status=503,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON), ("Retry-After", "5")],
+            body=_error_body("audio backend not ready yet (warming up) — retry shortly", []),
         )
     backend = Backend(name="audio", base_url=cfg.audio_url, served_name="")
     fwd_headers = filter_headers(req_headers)
@@ -518,45 +536,110 @@ def fleet_status_payload(
     return payload
 
 
-# --- role capabilities (the #81 role→endpoint contract, t6) ----------------
+# --- role capabilities (the #81 role→endpoint contract) --------------------
 
 # GET /capabilities reuses lobes.roles.build_role_registry — the SAME builder
-# the CLI's `lobes capabilities --json` (t5) calls — so the two payloads are
+# the CLI's `lobes capabilities --json` calls — so the two payloads are
 # exactly the same shape: a dict keyed by role, each value the full RoleInfo
-# field set. Read-only: no backend socket is opened, no state is mutated.
+# field set. The route derives a client-reachable origin (#87) and a live audio
+# readiness signal (#89) and hands them to the builder; the pure function keeps
+# its config-derived defaults so the CLI/unit path is unchanged.
+
+
+def reachable_origin(
+    host_header: str | None, public_url: str | None, scheme: str = "http"
+) -> str | None:
+    """The client-reachable gateway origin to advertise in /capabilities (#87).
+
+    Prefers an explicit ``GATEWAY_PUBLIC_URL`` (``public_url``) — for a tunnel or
+    a Host-rewriting reverse proxy — else echoes the origin the client actually
+    dialed, taken from the request ``Host`` header (which already carries
+    ``host:port`` in the right shape, IPv6 brackets included). Returns ``None``
+    when neither is available, so the caller falls back to the config-derived
+    origin (unchanged behaviour).
+    """
+    if public_url:
+        return public_url.rstrip("/")
+    if host_header:
+        return f"{scheme}://{host_header}"
+    return None
+
+
+def _default_ready_probe(url: str, timeout: float) -> int:  # pragma: no cover - opens a socket
+    parts = urlsplit(url)
+    conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=timeout)
+    try:
+        conn.request("GET", parts.path or "/")
+        return conn.getresponse().status
+    finally:
+        conn.close()
+
+
+def probe_audio_ready(
+    audio_url: str,
+    *,
+    timeout: float = _STATUS_PROBE_TIMEOUT,
+    opener: Callable[[str, float], int] | None = None,
+) -> bool | None:
+    """Live-probe the audio backend's aggregate readiness (issue #89).
+
+    GETs ``<audio_url>/v1/health/ready`` (the realtime bridge's aggregate over
+    Chatterbox + Parakeet) and maps the result to a tri-state so /capabilities
+    and the audio proxy can tell a *warming* backend from an *unreachable* one:
+
+    * ``True``  — HTTP 200: backends ready → a client request will round-trip.
+    * ``False`` — reached the backend but it answered non-200 (e.g. 503 while a
+      backend warms up, or a poisoned CUDA context) → advertised, not yet ready.
+    * ``None``  — could not reach the backend at all (refused / timeout) →
+      readiness unknown; the proxy forwards and lets a real request surface 502.
+
+    ``opener`` is injected so this is unit-testable without sockets; the default
+    opens a bounded ``http.client`` GET.
+    """
+    get_status = opener or _default_ready_probe
+    try:
+        return get_status(audio_url.rstrip("/") + "/v1/health/ready", timeout) == 200
+    except (OSError, http.client.HTTPException, ValueError):
+        # Mirror open_upstream's guard: a malformed AUDIO_URL (a non-numeric port
+        # makes urlsplit(...).port raise ValueError) or a broken HTTP exchange
+        # (HTTPException) must degrade to "readiness unknown" (None), never crash
+        # the GET /capabilities or POST /v1/audio/* handler that called us.
+        return None
 
 
 def capabilities_payload(
-    table: RoutingTable, cfg: ServerConfig, env: Mapping[str, str] | None = None
+    table: RoutingTable,
+    cfg: ServerConfig,
+    env: Mapping[str, str] | None = None,
+    *,
+    gateway_url: str | None = None,
+    audio_ready: bool | None = None,
 ) -> dict:
     """The six first-class roles (issue #81), resolved via the shared registry.
 
     ``env`` defaults to ``os.environ``. The fleet compose passes the served
     ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` /
     ``EMBED_MAX_MODEL_LEN`` / ``RERANK_MAX_MODEL_LEN`` into the gateway
-    container's environment (they are
-    otherwise only given to the gear containers), so the served-context overlay
-    (t5) resolves each role's SERVED ``--max-model-len`` here; it falls back to
-    the catalog native when a var is unset. The gateway-fronted roles
-    (cortex/senses/embedder/reranker) get
-    the gateway's own base URL (derived from ``cfg.host``/``cfg.port``, same as
-    the CLI derives its localhost:port); stt/tts resolve to ``cfg.audio_url``.
+    container's environment (they are otherwise only given to the gear
+    containers), so the served-context overlay resolves each role's SERVED
+    ``--max-model-len`` here; it falls back to the catalog native when a var is
+    unset.
 
-    ``RoleInfo.ready`` already comes out of the registry as a *present*
-    boolean equal to ``loaded`` (:mod:`lobes.roles` computes it, once, for
-    both the CLI and this route — the gateway has no cached per-backend
-    health signal of its own to consult: the one live probe it has,
-    :func:`lobes._metrics.probe_backend`, opens sockets synchronously inside
-    ``/status``'s own bounded fan-out and is not cached, so re-running it
-    inline on every ``/capabilities`` call would make this route block on
-    backend network I/O — a later task (t8) can wire real readiness once a
-    cheap/cached signal exists). This handler therefore just serializes the
-    registry as-is; no per-field override needed to make ``ready`` present.
+    ``gateway_url`` is the client-reachable origin every role's ``endpoint`` is
+    built from (issue #87) — the HTTP route derives it from the request Host
+    header / ``GATEWAY_PUBLIC_URL`` via :func:`reachable_origin`. When ``None``
+    the builder derives it from ``cfg.host``/``cfg.port`` (the CLI/unit path,
+    unchanged). ``audio_ready`` is the live stt/tts readiness signal (issue #89)
+    from :func:`probe_audio_ready`; when ``None`` the builder falls back to the
+    configured ``bool(audio_url)`` (again the CLI/unit path). Both default to
+    ``None`` so this pure function's shape is unchanged for its non-HTTP callers.
     """
     from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
 
     resolved_env = os.environ if env is None else env
-    registry = build_role_registry(table, cfg, env=resolved_env)
+    registry = build_role_registry(
+        table, cfg, env=resolved_env, gateway_url=gateway_url, audio_ready=audio_ready
+    )
     return {role: dataclasses.asdict(registry[role]) for role in ROLES}
 
 
@@ -594,8 +677,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         elif route == "/capabilities":
             # The #81 role→endpoint contract: SIX first-class roles resolved to
-            # live metadata via the shared lobes.roles registry. Read-only.
-            self._send_json(200, capabilities_payload(self.table, self.server_config))
+            # live metadata via the shared lobes.roles registry. The endpoint is
+            # the client-reachable origin this request actually dialed (#87) and
+            # stt/tts readiness is a live probe of the audio backend (#89).
+            cfg = self.server_config
+            origin = reachable_origin(self.headers.get("Host"), cfg.public_url)
+            audio_ready = probe_audio_ready(cfg.audio_url) is True if cfg.audio_url else None
+            self._send_json(
+                200,
+                capabilities_payload(self.table, cfg, gateway_url=origin, audio_ready=audio_ready),
+            )
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
 
@@ -604,8 +695,17 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body()
         if is_audio_path(self.path):
             # /v1/audio/* → the audio backend, path-routed (no model rewrite/failover).
+            # Probe readiness first so a warming backend gets a clear 503, not a
+            # bare relayed 502 (#89). audio_url unset → 404 inside handle_audio_post.
+            cfg = self.server_config
+            audio_ready = probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
             resp = handle_audio_post(
-                self.server_config, self.path, list(self.headers.items()), body, open_upstream
+                cfg,
+                self.path,
+                list(self.headers.items()),
+                body,
+                open_upstream,
+                audio_ready=audio_ready,
             )
         else:
             # Read pressure from the cache (O(1), never samples here) and the
