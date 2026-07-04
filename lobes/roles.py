@@ -355,7 +355,12 @@ def build_role_registry(
     # loaded=True/ready=False (deployed but not yet consumable) instead of
     # masquerading as not-deployed, and an unconfigured overlay never reports a
     # ready role with an empty endpoint.
-    audio_ready_signal = audio_ready if audio_ready is not None else audio_configured
+    #
+    # Clamp on `audio_configured` so that last invariant holds STRUCTURALLY, not
+    # merely by caller discipline: an unconfigured overlay is never ready, no
+    # matter what `audio_ready` a caller passes. When configured, use the live
+    # probe signal if one was supplied, else fall back to the configured fact.
+    audio_ready_signal = audio_configured and (audio_ready if audio_ready is not None else True)
     # Audio roles use the gateway origin when the overlay is wired (issue #87),
     # but fall back to empty endpoint when it is not wired.
     audio_endpoint = gateway if audio_configured else ""

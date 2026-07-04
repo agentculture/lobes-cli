@@ -7,6 +7,7 @@ audio file or small JSON) is relayed buffered.
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import urllib.request
@@ -166,6 +167,27 @@ def test_probe_audio_ready_tristate() -> None:
         raise OSError("connection refused")
 
     assert S.probe_audio_ready("http://realtime:8080", opener=boom) is None
+
+
+def test_probe_audio_ready_swallows_valueerror_and_httpexception() -> None:
+    """A malformed AUDIO_URL (urlsplit(...).port raises ValueError) or a broken
+    HTTP exchange (HTTPException) must degrade to unknown (None), never bubble
+    out and crash the caller — mirrors open_upstream's guard (Qodo #90)."""
+
+    def value_boom(_u, _t):
+        raise ValueError("invalid literal for int() with base 10: 'abc'")
+
+    def http_boom(_u, _t):
+        raise http.client.BadStatusLine("garbage")
+
+    assert S.probe_audio_ready("http://realtime:8080", opener=value_boom) is None
+    assert S.probe_audio_ready("http://realtime:8080", opener=http_boom) is None
+
+
+def test_probe_audio_ready_malformed_url_no_crash() -> None:
+    """The DEFAULT opener path: a non-numeric port makes urlsplit(...).port raise
+    ValueError before any socket opens; probe returns None instead of crashing."""
+    assert S.probe_audio_ready("http://realtime:notaport/") is None
 
 
 def test_probe_audio_ready_hits_aggregate_path() -> None:

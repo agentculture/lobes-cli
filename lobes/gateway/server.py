@@ -599,7 +599,11 @@ def probe_audio_ready(
     get_status = opener or _default_ready_probe
     try:
         return get_status(audio_url.rstrip("/") + "/v1/health/ready", timeout) == 200
-    except OSError:
+    except (OSError, http.client.HTTPException, ValueError):
+        # Mirror open_upstream's guard: a malformed AUDIO_URL (a non-numeric port
+        # makes urlsplit(...).port raise ValueError) or a broken HTTP exchange
+        # (HTTPException) must degrade to "readiness unknown" (None), never crash
+        # the GET /capabilities or POST /v1/audio/* handler that called us.
         return None
 
 

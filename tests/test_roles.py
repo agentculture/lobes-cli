@@ -434,16 +434,20 @@ def test_audio_ready_false_overrides_ready_not_loaded() -> None:
 
 
 def test_audio_ready_never_fabricates_loaded_when_unconfigured() -> None:
-    """audio_ready must NOT force loaded=True when AUDIO_URL is unset: `loaded`
-    is a config fact, so an unwired overlay never reports a role with an empty
-    endpoint that a client would try to dial (issue #89 review finding)."""
+    """audio_ready must NOT force loaded/ready True when AUDIO_URL is unset:
+    `loaded` is a config fact and `ready` is clamped on it, so an unwired overlay
+    never reports a role with an empty endpoint that a client would try to dial,
+    and never reports ready=True with no backend (issue #89 review findings)."""
     registry = _registry(_primary_only_env(), audio_ready=True)
     for name in ("stt", "tts"):
         info = registry[name]
         assert info.loaded is False  # not configured in this deployment
+        assert info.ready is False  # unconfigured ⇒ never ready, even if a caller
+        #                             passes audio_ready=True (Qodo #90 finding)
         assert info.endpoint == ""  # nothing to dial — never ready+empty-endpoint
-        # Invariant: a role is never advertised loaded with no endpoint.
+        # Invariant: a role is never advertised loaded/ready with no endpoint.
         assert not (info.loaded and info.endpoint == "")
+        assert not (info.ready and info.endpoint == "")
 
 
 def test_audio_ready_none_falls_back_to_audio_url() -> None:
