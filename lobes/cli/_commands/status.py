@@ -118,19 +118,18 @@ def _cmd_status_fleet(deploy_dir, env_path, port: int, json_mode: bool) -> int:
 
     if json_mode:
         emit_result(report, json_mode=True)
-        return 0
-
-    lines = [
-        f"model:  {report['model']}",
-        f"served: {report['served_name']}  port: {report['port']}",
-        f"parser: {report['tool_call_parser']}",
-        f"dir:    {report['deployment_dir']}",
-    ]
-    for c in containers:
-        lines.append(f"  {c['name']} — {c['state']}")
-    lines.append(f"health: {report['health']} (:{port})")
-    lines.append("see 'lobes fleet status' / 'lobes capabilities' for the full fleet/role view")
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        lines = [
+            f"model:  {report['model']}",
+            f"served: {report['served_name']}  port: {report['port']}",
+            f"parser: {report['tool_call_parser']}",
+            f"dir:    {report['deployment_dir']}",
+        ]
+        for c in containers:
+            lines.append(f"  {c['name']} — {c['state']}")
+        lines.append(f"health: {report['health']} (:{port})")
+        lines.append("see 'lobes fleet status' / 'lobes capabilities' for the full fleet/role view")
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -149,21 +148,20 @@ def _cmd_status_single(deploy_dir, env_path, port: int, json_mode: bool) -> int:
 
     if json_mode:
         emit_result(report, json_mode=True)
-        return 0
-
-    emit_result(
-        "\n".join(
-            [
-                f"model:  {report['model']}",
-                f"served: {report['served_name']}  port: {report['port']}",
-                f"parser: {report['tool_call_parser']}",
-                f"dir:    {report['deployment_dir']}",
-                f"state:  {report['container']} — {report['state']}",
-                f"health: {report['health']} (:{port})",
-            ]
-        ),
-        json_mode=False,
-    )
+    else:
+        emit_result(
+            "\n".join(
+                [
+                    f"model:  {report['model']}",
+                    f"served: {report['served_name']}  port: {report['port']}",
+                    f"parser: {report['tool_call_parser']}",
+                    f"dir:    {report['deployment_dir']}",
+                    f"state:  {report['container']} — {report['state']}",
+                    f"health: {report['health']} (:{port})",
+                ]
+            ),
+            json_mode=False,
+        )
     return 0
 
 
