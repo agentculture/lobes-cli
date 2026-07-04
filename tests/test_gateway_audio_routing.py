@@ -111,6 +111,74 @@ def test_502_when_audio_backend_unreachable() -> None:
     assert json.loads(resp.body)["error"]["attempts"] == ["refused"]
 
 
+# --- #89: warming backend → clear 503, distinct from unreachable's 502 -----
+
+
+def test_503_when_audio_backend_warming_not_ready() -> None:
+    # audio_ready=False → backend reachable but still warming: a clear 503 with
+    # Retry-After, and the upstream is NEVER opened (opener must not be called).
+    _, cfg = _cfg(AUDIO_URL="http://realtime:8080")
+    called = []
+
+    def opener(*a, **k):
+        called.append(1)
+        return _FakeUpstream(200)
+
+    resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=False)
+    assert resp.status == 503 and resp.upstream is None
+    assert not called, "a warming backend must not be dialed"
+    assert dict(resp.headers).get("Retry-After") == "5"
+    assert "warming" in json.loads(resp.body)["error"]["message"]
+
+
+def test_forwards_when_audio_ready_true() -> None:
+    # audio_ready=True → ready → forward normally (opener called).
+    _, cfg = _cfg(AUDIO_URL="http://realtime:8080")
+
+    def opener(*a, **k):
+        return _FakeUpstream(200)
+
+    resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=True)
+    assert resp.status == 200 and resp.upstream is not None
+
+
+def test_audio_ready_none_forwards_as_before() -> None:
+    # audio_ready=None (unknown/unreachable) → forward; an unreachable backend
+    # then surfaces the honest 502, NOT a warming-503.
+    _, cfg = _cfg(AUDIO_URL="http://realtime:8080")
+
+    def opener(*a, **k):
+        raise S.UpstreamError("refused")
+
+    resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=None)
+    assert resp.status == 502 and resp.upstream is None
+
+
+# --- #89: probe_audio_ready tri-state (200 / non-200 / unreachable) --------
+
+
+def test_probe_audio_ready_tristate() -> None:
+    # 200 → True (ready); non-200 → False (reachable, warming); OSError → None.
+    assert S.probe_audio_ready("http://realtime:8080", opener=lambda u, t: 200) is True
+    assert S.probe_audio_ready("http://realtime:8080", opener=lambda u, t: 503) is False
+
+    def boom(_u, _t):
+        raise OSError("connection refused")
+
+    assert S.probe_audio_ready("http://realtime:8080", opener=boom) is None
+
+
+def test_probe_audio_ready_hits_aggregate_path() -> None:
+    seen = {}
+
+    def opener(url, _timeout):
+        seen["url"] = url
+        return 200
+
+    S.probe_audio_ready("http://realtime:8080/", opener=opener)
+    assert seen["url"] == "http://realtime:8080/v1/health/ready"
+
+
 # --- loopback: the real handler routes /v1/audio/* and relays binary -------
 
 

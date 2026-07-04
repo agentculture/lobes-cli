@@ -104,3 +104,18 @@ def pcm_to_container(
     raise SpeechRequestError(
         f"unsupported response_format {fmt!r}; supported: {', '.join(SUPPORTED_FORMATS)}"
     )
+
+
+def aggregate_audio_ready(tts_ready: bool, stt_ready: bool) -> tuple[int, dict]:
+    """Aggregate Chatterbox (TTS) + Parakeet (STT) readiness into one
+    ``(http_status, body)`` for the realtime bridge's ``/v1/health/ready`` (#89).
+
+    Returns ``(200, {"status": "ready"})`` only when BOTH backends are ready;
+    otherwise ``(503, {"status": "not_ready", "not_ready": [...]})`` naming the
+    side(s) that are not ready. The gateway probes this aggregate so it advertises
+    stt/tts as consumable only when an audio round-trip would actually succeed.
+    """
+    not_ready = [name for name, ok in (("tts", tts_ready), ("stt", stt_ready)) if not ok]
+    if not_ready:
+        return 503, {"status": "not_ready", "not_ready": not_ready}
+    return 200, {"status": "ready"}

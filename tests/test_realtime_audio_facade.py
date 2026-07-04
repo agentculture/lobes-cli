@@ -14,6 +14,7 @@ import pytest
 from lobes.realtime.audio_facade import (
     SUPPORTED_FORMATS,
     SpeechRequestError,
+    aggregate_audio_ready,
     parse_speech_request,
     pcm_to_container,
 )
@@ -126,3 +127,21 @@ def test_negative_or_tiny_speed_is_clamped_to_the_min() -> None:
     # Below 0.25 (→ 25%); negatives would otherwise emit SSML rate="-…%".
     assert parse_speech_request({"input": "hi", "speed": -3}).speed == 25
     assert parse_speech_request({"input": "hi", "speed": 0.01}).speed == 25
+
+
+# --- #89: aggregate audio readiness (TTS + STT) ---------------------------
+
+
+def test_aggregate_audio_ready_200_only_when_both_ready() -> None:
+    assert aggregate_audio_ready(True, True) == (200, {"status": "ready"})
+
+
+def test_aggregate_audio_ready_503_names_the_not_ready_side() -> None:
+    code, body = aggregate_audio_ready(False, True)
+    assert code == 503 and body["status"] == "not_ready" and body["not_ready"] == ["tts"]
+
+    code, body = aggregate_audio_ready(True, False)
+    assert code == 503 and body["not_ready"] == ["stt"]
+
+    code, body = aggregate_audio_ready(False, False)
+    assert code == 503 and body["not_ready"] == ["tts", "stt"]

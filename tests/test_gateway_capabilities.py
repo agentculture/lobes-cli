@@ -6,13 +6,12 @@ builder in :mod:`lobes.roles` — the same one the CLI's ``capabilities --json``
 (t5) uses — so the two payloads share exactly one shape: a dict keyed by role,
 each value the full ``RoleInfo`` field set (``dataclasses.asdict``).
 
-The one place the gateway payload diverges from the raw registry: ``ready``.
-``lobes.roles`` always leaves it ``None`` (live health is t8's concern), but a
-gateway response must carry a *present* boolean — this module has no cached
-per-backend health signal (the only probe, ``_metrics.probe_backend``, opens
-sockets synchronously inside ``/status``'s own fan-out; it is not cached and
-not appropriate to run again inline here), so ``ready`` is derived from
-``loaded`` until a live probe is wired.
+``ready``: the pure ``capabilities_payload`` builder derives it from ``loaded``
+by default (``audio_ready`` unset), so the CLI/unit path keeps a present
+boolean without opening a socket. The HTTP route (``do_GET`` /capabilities)
+now injects a *live* stt/tts readiness probe (``probe_audio_ready``, issue #89)
+and a client-reachable origin (``reachable_origin``, issue #87) — exercised by
+the loopback tests below.
 """
 
 from __future__ import annotations
@@ -190,3 +189,61 @@ def test_integration_get_capabilities_is_idempotent_read_only(capabilities_gatew
     with urllib.request.urlopen(capabilities_gateway + "/capabilities", timeout=5) as r2:
         second = json.load(r2)
     assert first == second  # a GET never mutates fleet/routing state
+
+
+# --- #87: the reachable origin (request Host header + GATEWAY_PUBLIC_URL) ----
+
+
+def test_reachable_origin_prefers_public_url_then_host() -> None:
+    # Explicit GATEWAY_PUBLIC_URL wins (a tunnel / Host-rewriting proxy)...
+    assert (
+        S.reachable_origin("localhost:8001", "https://tunnel.example/") == "https://tunnel.example"
+    )
+    # ...else echo the origin the client actually dialed (the Host header)...
+    assert S.reachable_origin("gw.example:8001", None) == "http://gw.example:8001"
+    # ...else None → the caller falls back to the config-derived origin.
+    assert S.reachable_origin(None, None) is None
+
+
+def test_build_config_reads_gateway_public_url() -> None:
+    _, cfg = build_config(_full_env(GATEWAY_PUBLIC_URL="https://tunnel.example/"))
+    assert cfg.public_url == "https://tunnel.example"  # trailing slash trimmed
+    _, cfg2 = build_config(_full_env())
+    assert cfg2.public_url is None  # unset → None (Host-header fallback)
+
+
+def test_capabilities_payload_gateway_url_applies_to_all_roles() -> None:
+    env = _full_env(AUDIO_URL="http://realtime:8080")
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url="https://tunnel.example")
+    for role in ROLES:
+        assert payload[role]["endpoint"] == "https://tunnel.example"
+
+
+def test_capabilities_payload_threads_audio_ready() -> None:
+    env = _full_env(AUDIO_URL="http://realtime:8080")
+    table, cfg = build_config(env)
+    # audio_ready=False → stt/tts advertise ready:false even though AUDIO_URL is set.
+    warming = S.capabilities_payload(table, cfg, env=env, audio_ready=False)
+    for role in ("stt", "tts"):
+        assert warming[role]["ready"] is False
+    # audio_ready=True → ready.
+    live = S.capabilities_payload(table, cfg, env=env, audio_ready=True)
+    for role in ("stt", "tts"):
+        assert live[role]["ready"] is True
+
+
+def test_integration_capabilities_endpoint_reflects_request_host(capabilities_gateway) -> None:
+    """#87: every gateway-fronted role's endpoint is the origin the client dialed."""
+    import http.client
+
+    host_port = capabilities_gateway.removeprefix("http://")
+    conn = http.client.HTTPConnection(host_port, timeout=5)
+    conn.putrequest("GET", "/capabilities", skip_host=True)
+    conn.putheader("Host", "gw.example:8001")
+    conn.endheaders()
+    resp = conn.getresponse()
+    payload = json.load(resp)
+    conn.close()
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["endpoint"] == "http://gw.example:8001"

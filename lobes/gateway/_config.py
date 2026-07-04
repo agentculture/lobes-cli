@@ -43,6 +43,11 @@ class ServerConfig:
     # The audio/realtime backend that serves /v1/audio/* (+ /v1/realtime in PR2).
     # None on a text-only fleet → those paths 404. Set by the --audio overlay.
     audio_url: str | None = None
+    # Optional client-reachable origin the gateway advertises for every role in
+    # GET /capabilities (issue #87). None → the route derives it from the
+    # incoming request Host header (correct for a normal published host port);
+    # set GATEWAY_PUBLIC_URL to override for a tunnel / Host-rewriting proxy.
+    public_url: str | None = None
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -255,5 +260,6 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         connect_timeout=_as_float(env, "GATEWAY_CONNECT_TIMEOUT", 5.0),
         read_timeout=_as_float(env, "GATEWAY_READ_TIMEOUT", 600.0),
         audio_url=(env.get("AUDIO_URL") or "").rstrip("/") or None,
+        public_url=(env.get("GATEWAY_PUBLIC_URL") or "").rstrip("/") or None,
     )
     return table, server
