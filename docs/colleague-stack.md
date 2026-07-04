@@ -107,7 +107,7 @@ by role name, each value carrying exactly these fields:
     "role": str,                          # "cortex" | "senses" | "embedder" | "reranker" | "stt" | "tts"
     "model": str,                         # the served model id this role resolves to (never blank)
     "runtime": str,                       # "vllm" | "parakeet" | "chatterbox"
-    "endpoint": str,                      # base URL to hit ("" when not wired)
+    "endpoint": str,                      # client-reachable base URL to dial ("" when not wired)
     "path": str,                          # the OpenAI path, e.g. "/v1/chat/completions"
     "context": int,                       # SERVED context in tokens (deployment override, else catalog native)
     "quant": str,                         # vLLM quantization; "" for pooling/audio roles
@@ -121,18 +121,26 @@ by role name, each value carrying exactly these fields:
 }
 ```
 
-All four gateway-fronted roles (`cortex`/`senses`/`embedder`/`reranker`) share
-**one `endpoint`** — the gateway's own base URL — because routing between them
-happens via the `model` field, not distinct URLs. `stt`/`tts` resolve to the
-audio-overlay bridge URL (empty string when `--audio` wasn't scaffolded).
+**Every role's `endpoint` is the one client-reachable gateway origin** — dial
+it directly (issue #87). All six roles (`cortex`/`senses`/`embedder`/`reranker`
+**and** `stt`/`tts`) report the same base URL because routing happens via the
+`model` field / the OpenAI `path`, not distinct per-role URLs; the internal
+upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
+fetch `GET /capabilities`, the gateway advertises the origin **you actually
+dialed** (from the request `Host` header), so `endpoint` is reachable as-is; set
+`GATEWAY_PUBLIC_URL` to override it for a tunnel / Host-rewriting reverse proxy.
+A role is `""` only when it isn't wired (e.g. `stt`/`tts` without `--audio`).
 
 **`ready` differs by transport, deliberately.** `lobes capabilities --json`
-always reports `ready: null` — a live health probe would make a read-only CLI
-call block on backend network I/O, so the CLI doesn't do one; use `lobes
-measure` for a live probe. `GET /capabilities` reports `ready` as a proxy for
-`loaded` (cheap, already-known, no extra socket) — it is **not** a live health
-check either, just a same-cost-as-`loaded` boolean the gateway can set for
-free. Neither `ready` value is a task-quality claim.
+reports a **configured** signal (`ready == loaded`) — a read-only CLI on the
+host can't reach the internal backends to probe them, so it doesn't try; use
+`lobes measure` for a CLI-side live probe. `GET /capabilities` is the honest
+one for consumers: for `stt`/`tts` it now reports a **live** readiness probe of
+the audio backend (issue #89) — `ready: true` only when an audio round-trip
+would actually succeed (Chatterbox + Parakeet both up, no poisoned CUDA
+context), `false` while they warm — so an advertised-ready audio role is truly
+consumable. The four gateway-fronted roles still report `ready` as a
+same-cost-as-`loaded` boolean. No `ready` value is a task-quality claim.
 
 Example (`cortex`, fully wired, default fleet):
 
