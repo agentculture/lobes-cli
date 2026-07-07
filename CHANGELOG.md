@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0] - 2026-07-07
+
+### Added
+
+- **`preserve_thinking` on the cortex/main vLLM lane** — both compose templates
+  now launch the primary/cortex service with `--default-chat-template-kwargs
+  '{"preserve_thinking": true}'` next to `--reasoning-parser=qwen3`, so the
+  served Qwen3.6 chat template retains **all** historical `<think>` blocks across
+  a multi-turn conversation (default keeps only the reasoning after the last user
+  turn). Default-on but per-request overridable; scoped to the cortex/main lane
+  (embed/rerank/senses untouched, `lobes route` still forces
+  `enable_thinking=false`). Closes #93.
+- **Reasoning-aware `lobes.minor` client** — `assistant_turn_from_response()`
+  builds an assistant history message preserving the `reasoning` /
+  `reasoning_content` trace, and a new `history=` parameter on `chat_completion`
+  / `chat_text` round-trips it back on subsequent turns (single-turn behaviour
+  unchanged). Part of #93.
+- **`lobes assess --preserve-thinking`** — a read-only two-turn token-delta
+  diagnostic that proves the reasoning round-trip is live (prompt-token count
+  rises when the assistant `<think>` history is preserved vs content-only).
+  Part of #93.
+
 ## [0.38.0] - 2026-07-04
 
 ### Added

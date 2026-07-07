@@ -3,7 +3,11 @@
 Read-only. Runs the two fixed correctness probes and detects the reasoning-trace
 field, then emits a markdown block (plus host-side facts) ready to paste into a
 per-model doc under ``docs/``. ``--tools`` additionally probes OpenAI tool
-calling. Throughput lives in ``lobes benchmark``.
+calling. ``--preserve-thinking`` swaps in the two-turn ``preserve_thinking``
+token-delta diagnostic (issue #93) instead of the correctness probes: it re-sends
+the assistant reasoning trace in history and reports how many extra
+``prompt_tokens`` that costs — a positive delta proves the trace survives across
+turns. Throughput lives in ``lobes benchmark``.
 """
 
 from __future__ import annotations
@@ -24,17 +28,26 @@ def cmd_assess(args: argparse.Namespace) -> int:
         model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
     url = f"http://localhost:{port}"
-    result = _assess.run_correctness(url, model, check_tools=bool(getattr(args, "tools", False)))
-    host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
 
-    if json_mode:
-        emit_result({**result, "host": host}, json_mode=True)
+    # --preserve-thinking is a standalone read-only diagnostic (issue #93): it
+    # runs the two-turn token-delta probe and reports both prompt-token counts +
+    # the delta. No host facts / correctness probes are needed.
+    if bool(getattr(args, "preserve_thinking", False)):
+        pt = _assess.run_preserve_thinking_probe(url, model)
+        emit_result(pt if json_mode else _assess.render_preserve_thinking(pt), json_mode=json_mode)
     else:
-        header = (
-            "### Host-side\n"
-            f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+        result = _assess.run_correctness(
+            url, model, check_tools=bool(getattr(args, "tools", False))
         )
-        emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
+        host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+        if json_mode:
+            emit_result({**result, "host": host}, json_mode=True)
+        else:
+            header = (
+                "### Host-side\n"
+                f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+            )
+            emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
     return 0
 
 
@@ -51,6 +64,15 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--tools",
         action="store_true",
         help="Also probe OpenAI tool calling (tool_choice:auto must return a tool_calls array).",
+    )
+    p.add_argument(
+        "--preserve-thinking",
+        action="store_true",
+        help=(
+            "Run the two-turn preserve_thinking token-delta diagnostic instead: "
+            "re-send the assistant reasoning trace in history and report the "
+            "prompt-token cost (a positive delta proves the trace survives)."
+        ),
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")

@@ -10,6 +10,7 @@ Also re-exports the governance API::
 """
 
 from lobes.minor._client import (
+    assistant_turn_from_response,
     chat_completion,
     chat_text,
     completions_echo,
@@ -27,6 +28,7 @@ from lobes.minor.governance import (
 __all__ = [
     "chat_completion",
     "chat_text",
+    "assistant_turn_from_response",
     "completions_echo",
     "gateway_supports_echo",
     # governance

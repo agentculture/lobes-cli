@@ -1,0 +1,203 @@
+{
+  "slug": "lobes-preserves-qwen-thinking-traces-across-multi",
+  "title": "lobes preserves Qwen thinking traces across multi-turn agent loops on the vLLM cortex, so historical <think> reasoning is carried back into context instead of discarded",
+  "frame_slug": "lobes-preserves-qwen-thinking-traces-across-multi",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-07T05:34:36Z",
+  "updated": "2026-07-07T05:37:10Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes preserves Qwen thinking traces across multi-turn agent loops on the vLLM cortex, so historical <think> reasoning is carried back into context instead of discarded"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "end-to-end: with preserve_thinking on and reasoning re-sent, a later turn's rendered prompt actually contains the earlier <think> (provable by the token-delta diagnostic)"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "the lobes cortex agent (and any Colleague/mesh caller running multi-turn loops against the vLLM 27B primary) whose reasoning quality benefits from seeing its own prior <think> traces"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "a real caller runs multi-turn loops against cortex where its own prior reasoning is useful (the lobes agent / Colleague mesh loops)"
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "vLLM launches with preserve_thinking=true and lobes' generate client round-trips the assistant 'reasoning' field back into history, so a multi-turn call re-feeds prior <think> traces and continuity across planning/validation/agent loops improves"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "after the change a two-turn call re-feeds prior <think> without regressing existing single-turn behavior or route's terse path"
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "--reasoning-parser=qwen3 already exposes the trace as message.reasoning, but the Qwen chat template strips historical <think> blocks and lobes' client keeps only 'content', so every turn discards the model's prior reasoning"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "verified true by template inspection: without preserve_thinking the served mmangkad/Qwen3.6 template strips historical <think> for turns before the last user query, and lobes' client keeps only content"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "Qwen3.6 emits reasoning designed for extended agent chains; preserving historical thinking should improve continuity across multi-turn repo work, planning, validation and agent loops instead of re-deriving it each turn"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "if preserved reasoning yields no measurable continuity benefit, the feature still stays opt-in and costs only prompt tokens \u2014 no correctness regression"
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "not renaming the cortex role, not mandating preserve-thinking globally (lobes route keeps enable_thinking=false), not building an external memory system"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the change touches only the cortex/main generate lane and its client; route, minor/pressure lanes, embedder/reranker/senses stay untouched"
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "a diagnostic command shows prompt-token count rises on a two-turn call when reasoning history is preserved vs content-only, proving the historical <think> is actually re-fed"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the diagnostic's token-delta is reproducible and clearly attributable to reasoning history, not run-to-run noise"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "vLLM primary/cortex launch adds --default-chat-template-kwargs '{\"preserve_thinking\": true}' alongside the existing --reasoning-parser=qwen3, in both templates/docker-compose.yml and templates/fleet/docker-compose.yml"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the deployed vLLM build boots with --default-chat-template-kwargs '{\"preserve_thinking\": true}' (no unknown-arg crash), and the rendered prompt retains historical <think> blocks when that kwarg is set"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the generate client captures assistant message.reasoning alongside message.content, and re-sends both on subsequent turns using the 'reasoning' field so vLLM re-renders the historical <think>"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the served model returns a populated message.reasoning, and re-sending an assistant turn carrying that 'reasoning' key causes vLLM to re-inject it as <think> in the next render rather than silently dropping it"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "a read-only diagnostic verb (e.g. lobes assess/doctor extension) runs a two-turn probe and reports prompt-token delta between content-only and content+reasoning history, proving preservation is live"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "the two-turn probe shows a measurable, repeatable prompt-token increase attributable to re-fed reasoning (signal above run-to-run noise)"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Add --default-chat-template-kwargs preserve_thinking to both compose templates",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "both lobes/templates/docker-compose.yml and lobes/templates/fleet/docker-compose.yml carry --default-chat-template-kwargs '{\"preserve_thinking\": true}' on the vLLM primary/cortex service, adjacent to the existing --reasoning-parser=qwen3",
+        "a test parses both compose YAMLs and asserts the arg is present on the primary/cortex service ONLY (not on the embed/rerank pooling services, which omit reasoning flags)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "c4",
+        "c8",
+        "h1",
+        "h7"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "Make the minor generate client reasoning-aware: capture and re-send assistant reasoning across turns",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/minor/_client.py can accept prior conversation turns and, given a response whose assistant message has a populated 'reasoning' (or 'reasoning_content'), builds the next assistant history message preserving that field alongside 'content'",
+        "a urllib-mocking unit test asserts (a) a two-turn call includes the prior assistant 'reasoning' in the outbound messages, and (b) single-turn calls and the enable_thinking=false path are unchanged when no reasoning is present \u2014 no other lane touched"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h6",
+        "h9"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Add a read-only two-turn token-delta diagnostic proving preserve_thinking is live",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a new function in lobes/assess.py runs two two-turn probes against the served model (one re-sending the assistant 'reasoning' in history, one content-only) and returns each request's usage.prompt_tokens plus the delta",
+        "a read-only CLI surface (new verb registered in lobes/cli/__init__.py, or a lobes assess flag) prints both prompt-token counts and the delta, exits 0, and never mutates the deployment",
+        "a test mocking the server (prompt_tokens rises when <think>/reasoning is present in history) asserts the reported delta is positive with reasoning preserved and ~0 without"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "c10",
+        "h2",
+        "h3",
+        "h4",
+        "h10"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Document preserve_thinking on the cortex lane (CLAUDE.md + Qwen3.6 model doc)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "CLAUDE.md notes preserve_thinking=true is default-on for the cortex/main lane (per-request overridable), route stays enable_thinking=false, and pooling/senses lanes are untouched",
+        "docs/qwen3.6-27b-text-nvfp4-mtp.md documents the --default-chat-template-kwargs flag and the two-turn diagnostic; markdownlint-cli2 passes on the changed docs"
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "c2",
+        "c5",
+        "c6",
+        "h5",
+        "h8"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "Integration: version bump, CHANGELOG entry, full green suite",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version-bump minor applied (pyproject.toml) with a CHANGELOG entry citing #93; uv run pytest -n auto passes; black/isort/flake8/bandit clean"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": []
+    }
+  ],
+  "risks": []
+}
