@@ -31,23 +31,23 @@ def cmd_assess(args: argparse.Namespace) -> int:
 
     # --preserve-thinking is a standalone read-only diagnostic (issue #93): it
     # runs the two-turn token-delta probe and reports both prompt-token counts +
-    # the delta, then returns. No host facts / correctness probes are needed.
+    # the delta. No host facts / correctness probes are needed.
     if bool(getattr(args, "preserve_thinking", False)):
         pt = _assess.run_preserve_thinking_probe(url, model)
         emit_result(pt if json_mode else _assess.render_preserve_thinking(pt), json_mode=json_mode)
-        return 0
-
-    result = _assess.run_correctness(url, model, check_tools=bool(getattr(args, "tools", False)))
-    host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
-
-    if json_mode:
-        emit_result({**result, "host": host}, json_mode=True)
     else:
-        header = (
-            "### Host-side\n"
-            f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+        result = _assess.run_correctness(
+            url, model, check_tools=bool(getattr(args, "tools", False))
         )
-        emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
+        host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+        if json_mode:
+            emit_result({**result, "host": host}, json_mode=True)
+        else:
+            header = (
+                "### Host-side\n"
+                f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+            )
+            emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
     return 0
 
 

@@ -27,6 +27,9 @@ from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
 # urllib.error.URLError is a subclass of OSError, so `except OSError` covers
 # connection failures, timeouts, and HTTPError without listing it redundantly.
 
+# Markdown 2-column table header separator, reused by the render_* helpers.
+_MD_TABLE_SEP = "|---|---|"
+
 
 @contextlib.contextmanager
 def _api_errors(what: str):
@@ -496,7 +499,7 @@ def render_preserve_thinking(result: dict) -> str:
             f"- Endpoint: `{result['endpoint']}` · trace field `{result['trace_field']}`",
             "",
             "| Turn-2 request | prompt_tokens |",
-            "|---|---|",
+            _MD_TABLE_SEP,
             f"| reasoning re-sent (`preserve_thinking`) | {result['with_reasoning']} |",
             f"| content-only | {result['content_only']} |",
             "",
@@ -514,7 +517,7 @@ def render_correctness(result: dict) -> str:
         f"`max_model_len` {result['max_model_len']}",
         "",
         "| Check | Result |",
-        "|---|---|",
+        _MD_TABLE_SEP,
     ]
     for p in result["probes"]:
         mark = "PASS" if p["ok"] else "FAIL"
@@ -750,7 +753,7 @@ def render_benchmark(result: dict) -> str:
             f"shape {result['input_len']} in / {result['output_len']} out",
             "",
             "| Metric | Result |",
-            "|---|---|",
+            _MD_TABLE_SEP,
             f"| **decode throughput** | **{rates} tok/s** (batch=1, greedy, "
             f"{result['output_len']} tok forced) |",
             f"| prefill | {pf['prompt_tokens']} prompt tokens + 16 gen in {pf['seconds']} s |",
