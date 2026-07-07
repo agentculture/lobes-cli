@@ -38,6 +38,21 @@ tokenizer source the MTP primary serves with
 `nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate — see
 `docs/qwen3-32b-nvfp4.md` and `lobes overview --list`.)
 
+**Thinking continuity — `preserve_thinking` (issue #93).** The cortex/main
+vLLM service adds `--default-chat-template-kwargs
+'{"preserve_thinking": true}'` next to `--reasoning-parser=qwen3`, so the
+served Qwen3.6 chat template retains **all** historical `<think>` blocks
+across a multi-turn conversation by default (the template otherwise keeps
+only the reasoning after the last user turn). It is default-on but
+per-request overridable — a caller's own `chat_template_kwargs` wins over the
+server default, so `lobes route`'s terse routing path still forces
+`enable_thinking=false` and gets a thinking-free reply. Scoped to the
+cortex/main generate lane only — the embed/rerank/senses lanes are untouched.
+A read-only preserve-thinking diagnostic (a two-turn prompt-token-count
+delta) proves the input-side round-trip is live; the continuity benefit to
+output quality is expected and opt-in, not guaranteed by the diagnostic. See
+`docs/qwen3.6-27b-text-nvfp4-mtp.md` for the flag and diagnostic detail.
+
 ### Colleague roles: cortex / senses / embedder / reranker / stt / tts
 
 Beyond `cortex`, the **fleet** exposes SIX first-class, Colleague-facing

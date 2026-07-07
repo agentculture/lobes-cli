@@ -170,7 +170,31 @@ heavier co-resident agents need the headroom.
    detection under structured output
    ([vLLM #34650](https://github.com/vllm-project/vllm/issues/34650)). Watch
    JSON-schema responses.
-6. **Tool calling — verified (2026-05-31), gate closed.** The first run's minimal
+6. **`preserve_thinking` — thinking-history continuity (issue #93).** The
+   compose `command:` also adds
+   `--default-chat-template-kwargs '{"preserve_thinking": true}'` next to
+   `--reasoning-parser=qwen3`. `preserve_thinking` is a real variable in the
+   served `mmangkad/Qwen3.6-27B-NVFP4` chat template: by default the template
+   keeps only the `<think>` block(s) after the *last* user turn when it
+   renders a multi-turn history; with the flag set, it keeps **every**
+   historical `<think>` block, so a later turn's prompt includes the model's
+   earlier reasoning, not just its final answers. It is a server-side
+   default, not a hard override — a request's own `chat_template_kwargs`
+   (e.g. `{"preserve_thinking": false}`) still wins, so `lobes route`'s
+   `enable_thinking=false` routing path is unaffected. This is default-on for
+   the cortex/main generate lane only; the embed/rerank/senses lanes don't
+   take this flag and are untouched.
+   - **Read-only diagnostic.** A two-turn prompt-token-count diagnostic
+     proves the round-trip is live without mutating anything: send the same
+     two-turn conversation once with reasoning history included and once
+     with content-only history, and compare `usage.prompt_tokens` on the
+     second turn — with `preserve_thinking` on, the prompt token count is
+     measurably higher (the server re-sent the earlier `<think>` block(s)
+     back into context). This shows the *input side* round-trips correctly;
+     it does not by itself measure whether the extra reasoning context
+     improves the model's answers — that continuity benefit is expected and
+     opt-in, not a guarantee the diagnostic asserts.
+7. **Tool calling — verified (2026-05-31), gate closed.** The first run's minimal
    recipe omitted `--enable-auto-tool-choice`; the promotion run served through the
    compose template (which enables it + `--tool-call-parser=qwen3_coder`) and the
    tool path passed — see "Tool calling — verified" below.
