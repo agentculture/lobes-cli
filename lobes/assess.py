@@ -390,19 +390,22 @@ def run_preserve_thinking_probe(
     """Prove ``preserve_thinking`` is live via a two-turn ``prompt_tokens`` delta.
 
     Runs one turn-1 request that elicits a ``<think>`` reasoning trace, then two
-    turn-2 requests that share the same turn-1 user message and a turn-2
-    follow-up but differ only in the assistant turn carried in history:
+    turn-2 requests that share the same turn-1 user message, a turn-2 follow-up,
+    AND the same ``chat_template_kwargs={"preserve_thinking": true}`` — so the
+    ONLY variable is whether the assistant turn carried in history includes the
+    reasoning field:
 
-    * **A (preserved):** the assistant turn carries BOTH its ``content`` and the
-      reasoning field, and the request body sets
-      ``chat_template_kwargs={"preserve_thinking": true}`` so the template
-      re-renders the ``<think>`` block into the prompt.
-    * **B (content-only):** the assistant turn carries ``content`` only.
+    * **A (reasoning re-sent):** the assistant turn carries BOTH its ``content``
+      and the reasoning field, so the template re-renders the ``<think>`` block
+      into the prompt.
+    * **B (content-only):** the assistant turn carries ``content`` only — there
+      is no trace for the template to re-render.
 
-    If ``preserve_thinking`` is live, A's ``usage.prompt_tokens`` is HIGHER than
-    B's by roughly the length of the re-rendered trace, so ``delta > 0`` is the
-    observable proof. Each turn-2 request uses a tiny ``max_tokens`` — only the
-    ``usage`` block is needed, not the completion.
+    Because ``preserve_thinking`` is held constant on both requests, a positive
+    ``usage.prompt_tokens`` delta is attributable *solely* to the reasoning
+    history being replayed (not to the flag), so ``delta > 0`` is the observable
+    proof that re-sent reasoning survives into turn 2. Each turn-2 request uses a
+    tiny ``max_tokens`` — only the ``usage`` block is needed, not the completion.
 
     Read-only: talks HTTP to the served model only, never touches ``.env`` /
     compose / any file.
@@ -435,8 +438,13 @@ def run_preserve_thinking_probe(
 
         turn2_user = {"role": "user", "content": _PRESERVE_THINKING_FOLLOWUP}
 
-        # A — assistant turn carries content + reasoning; ask the template to
-        # re-render the trace via chat_template_kwargs.
+        # Both turn-2 requests set preserve_thinking=true; the ONLY variable is
+        # whether the assistant history carries the reasoning field, so the delta
+        # isolates the reasoning-history replay (not the flag).
+        preserve_kwargs = {"chat_template_kwargs": {"preserve_thinking": True}}
+
+        # A — assistant turn carries content + reasoning, so the template
+        # re-renders the trace.
         assistant_preserved = {"role": "assistant", "content": content1}
         if field and reasoning:
             assistant_preserved[field] = reasoning
@@ -447,13 +455,14 @@ def run_preserve_thinking_probe(
                 "messages": [turn1_user, assistant_preserved, turn2_user],
                 "max_tokens": 8,
                 "temperature": 0,
-                "chat_template_kwargs": {"preserve_thinking": True},
+                **preserve_kwargs,
             },
             timeout=timeout,
         )
         pt_a = resp_a["usage"]["prompt_tokens"]
 
-        # B — assistant turn carries content only (the trace is dropped).
+        # B — assistant turn carries content only; same preserve_thinking flag,
+        # but there is no trace to re-render.
         assistant_content_only = {"role": "assistant", "content": content1}
         resp_b = _post(
             url,
@@ -462,6 +471,7 @@ def run_preserve_thinking_probe(
                 "messages": [turn1_user, assistant_content_only, turn2_user],
                 "max_tokens": 8,
                 "temperature": 0,
+                **preserve_kwargs,
             },
             timeout=timeout,
         )

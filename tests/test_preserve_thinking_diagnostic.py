@@ -114,6 +114,33 @@ def test_probe_delta_zero_without_reasoning(monkeypatch) -> None:
     assert r["trace_field"] == "(none)"
 
 
+def test_probe_holds_preserve_thinking_constant_across_requests(monkeypatch) -> None:
+    """Confound guard (Qodo #94): both turn-2 requests set the SAME
+    ``preserve_thinking`` flag, so the only variable is whether the assistant
+    history carries the reasoning trace — the delta is attributable solely to the
+    reasoning replay, not to the flag.
+    """
+    monkeypatch.setattr(A, "_get", _fake_get)
+    captured: list[dict] = []
+    base_post = _make_fake_post()
+
+    def _capturing_post(url, payload, timeout=300):
+        captured.append(payload)
+        return base_post(url, payload, timeout)
+
+    monkeypatch.setattr(A, "_post", _capturing_post)
+    A.run_preserve_thinking_probe("http://localhost:8000", "foo/bar")
+
+    turn2 = [p for p in captured if len(p["messages"]) > 1]
+    assert len(turn2) == 2, "expected exactly two turn-2 requests (A and B)"
+    # Both requests carry identical chat_template_kwargs — the flag is held constant.
+    for p in turn2:
+        assert p.get("chat_template_kwargs") == {"preserve_thinking": True}
+    # Exactly one request re-sends reasoning in history (A); the other is content-only (B).
+    with_reasoning = [p for p in turn2 if _reasoning_in_history(p["messages"])]
+    assert len(with_reasoning) == 1, "the reasoning history must be the ONLY variable"
+
+
 def test_probe_performs_no_file_writes(monkeypatch) -> None:
     """Read-only contract: the probe must never open a file for writing."""
     monkeypatch.setattr(A, "_get", _fake_get)
