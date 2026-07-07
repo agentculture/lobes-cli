@@ -5,13 +5,18 @@ dependencies, no reads or writes to .env / docker-compose / any repo file.
 
 Public API
 ----------
-chat_completion(prompt, *, base_url, model, system=None,
+chat_completion(prompt, *, base_url, model, system=None, history=None,
                 timeout=60, max_tokens=None, temperature=None,
                 logprobs=None, top_logprobs=None) -> dict
     POST an OpenAI chat-completions request and return the parsed JSON dict.
 
 chat_text(...) -> str
     Thin wrapper: return just the assistant message content string.
+
+assistant_turn_from_response(response) -> dict
+    Build the next assistant history turn from a chat-completions response,
+    preserving a Qwen thinking-mode ``reasoning``/``reasoning_content`` trace
+    (issue #93) alongside ``content`` so it survives a multi-turn round-trip.
 
 completions_echo(prompt, continuation, *, base_url, model,
                  logprobs=1, timeout=60) -> dict
@@ -34,6 +39,7 @@ def chat_completion(
     base_url: str,
     model: str,
     system: str | None = None,
+    history: list[dict] | None = None,
     timeout: int = 60,
     max_tokens: int | None = None,
     temperature: float | None = None,
@@ -54,6 +60,14 @@ def chat_completion(
         The model identifier to pass in the request body.
     system:
         Optional system message prepended before the user turn.
+    history:
+        Optional list of prior conversation turns (each a ``{"role": ...,
+        "content": ...}`` dict, optionally carrying a ``reasoning`` /
+        ``reasoning_content`` key on assistant turns — see
+        :func:`assistant_turn_from_response`) inserted between the system
+        message (if any) and the new user turn. When ``None`` (the default),
+        behavior is unchanged from before #93: a single-turn ``[system?,
+        user]`` message list.
     timeout:
         Socket timeout in seconds (default 60).
     max_tokens:
@@ -82,9 +96,11 @@ def chat_completion(
     """
     url = base_url.rstrip("/") + "/chat/completions"
 
-    messages: list[dict[str, str]] = []
+    messages: list[dict] = []
     if system is not None:
         messages.append({"role": "system", "content": system})
+    if history:
+        messages.extend(history)
     messages.append({"role": "user", "content": prompt})
 
     payload: dict = {"model": model, "messages": messages}
@@ -115,6 +131,7 @@ def chat_text(
     base_url: str,
     model: str,
     system: str | None = None,
+    history: list[dict] | None = None,
     timeout: int = 60,
     max_tokens: int | None = None,
     temperature: float | None = None,
@@ -129,11 +146,47 @@ def chat_text(
         base_url=base_url,
         model=model,
         system=system,
+        history=history,
         timeout=timeout,
         max_tokens=max_tokens,
         temperature=temperature,
     )
     return result["choices"][0]["message"]["content"]
+
+
+def assistant_turn_from_response(response: dict) -> dict:
+    """Build the next assistant history turn from a chat-completions response.
+
+    Preserves a Qwen thinking-mode reasoning trace (issue #93) alongside
+    ``content`` so a caller can append the returned dict to ``history=`` on
+    the next :func:`chat_completion` call and have the model see its own
+    prior reasoning, not just its final answer.
+
+    Mirrors the tiny key-lookup in :func:`lobes.assess._trace_field` (vLLM
+    builds vary: the trace lands in ``reasoning`` on newer images,
+    ``reasoning_content`` on older ones) without importing from
+    :mod:`lobes.assess`, to avoid coupling the two modules.
+
+    Parameters
+    ----------
+    response:
+        The full parsed JSON dict returned by :func:`chat_completion`.
+
+    Returns
+    -------
+    dict
+        ``{"role": "assistant", "content": <str>}``, plus a ``reasoning`` or
+        ``reasoning_content`` key (whichever the response carried) when a
+        non-empty trace is present.
+    """
+    message = response["choices"][0]["message"]
+    turn: dict = {"role": "assistant", "content": message.get("content") or ""}
+    for key in ("reasoning", "reasoning_content"):
+        value = message.get(key)
+        if isinstance(value, str) and value:
+            turn[key] = value
+            break
+    return turn
 
 
 def completions_echo(
