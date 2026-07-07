@@ -364,6 +364,147 @@ def run_benchmark(
     }
 
 
+# ---------------------------------------------------------------------------
+# preserve_thinking token-delta diagnostic (issue #93, t3)
+# ---------------------------------------------------------------------------
+
+# A short reasoning question that reliably elicits a <think> trace on turn 1,
+# plus a turn-2 follow-up that depends on turn 1 (so re-sending the trace is a
+# realistic multi-turn shape, not a contrived one).
+_PRESERVE_THINKING_PROMPT = (
+    "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the "
+    "ball. How much does the ball cost? Think step by step."
+)
+_PRESERVE_THINKING_FOLLOWUP = "Now double that amount. What is the result?"
+
+
+def run_preserve_thinking_probe(
+    url: str,
+    model: str | None = None,
+    *,
+    timeout: int = 300,
+) -> dict:
+    """Prove ``preserve_thinking`` is live via a two-turn ``prompt_tokens`` delta.
+
+    Runs one turn-1 request that elicits a ``<think>`` reasoning trace, then two
+    turn-2 requests that share the same turn-1 user message and a turn-2
+    follow-up but differ only in the assistant turn carried in history:
+
+    * **A (preserved):** the assistant turn carries BOTH its ``content`` and the
+      reasoning field, and the request body sets
+      ``chat_template_kwargs={"preserve_thinking": true}`` so the template
+      re-renders the ``<think>`` block into the prompt.
+    * **B (content-only):** the assistant turn carries ``content`` only.
+
+    If ``preserve_thinking`` is live, A's ``usage.prompt_tokens`` is HIGHER than
+    B's by roughly the length of the re-rendered trace, so ``delta > 0`` is the
+    observable proof. Each turn-2 request uses a tiny ``max_tokens`` — only the
+    ``usage`` block is needed, not the completion.
+
+    Read-only: talks HTTP to the served model only, never touches ``.env`` /
+    compose / any file.
+
+    Returns::
+
+        {"with_reasoning": ptA, "content_only": ptB, "delta": ptA - ptB,
+         "trace_field": <field name or "(none)">, "preserved": bool,
+         "model": model, "endpoint": url}
+    """
+    url = url.rstrip("/")
+    health_status(url)
+    model, _max_len = served_model(url, model)
+    with _api_errors("preserve-thinking probe"):
+        turn1_user = {"role": "user", "content": _PRESERVE_THINKING_PROMPT}
+        d1 = _post(
+            url,
+            {
+                "model": model,
+                "messages": [turn1_user],
+                "max_tokens": 512,
+                "temperature": 0.3,
+            },
+            timeout=timeout,
+        )
+        msg1 = d1["choices"][0]["message"]
+        content1 = msg1.get("content") or ""
+        field, _tlen = _trace_field(msg1)
+        reasoning = msg1.get(field) if field else None
+
+        turn2_user = {"role": "user", "content": _PRESERVE_THINKING_FOLLOWUP}
+
+        # A — assistant turn carries content + reasoning; ask the template to
+        # re-render the trace via chat_template_kwargs.
+        assistant_preserved = {"role": "assistant", "content": content1}
+        if field and reasoning:
+            assistant_preserved[field] = reasoning
+        resp_a = _post(
+            url,
+            {
+                "model": model,
+                "messages": [turn1_user, assistant_preserved, turn2_user],
+                "max_tokens": 8,
+                "temperature": 0,
+                "chat_template_kwargs": {"preserve_thinking": True},
+            },
+            timeout=timeout,
+        )
+        pt_a = resp_a["usage"]["prompt_tokens"]
+
+        # B — assistant turn carries content only (the trace is dropped).
+        assistant_content_only = {"role": "assistant", "content": content1}
+        resp_b = _post(
+            url,
+            {
+                "model": model,
+                "messages": [turn1_user, assistant_content_only, turn2_user],
+                "max_tokens": 8,
+                "temperature": 0,
+            },
+            timeout=timeout,
+        )
+        pt_b = resp_b["usage"]["prompt_tokens"]
+
+    delta = pt_a - pt_b
+    return {
+        "model": model,
+        "endpoint": url,
+        "trace_field": field or "(none)",
+        "with_reasoning": pt_a,
+        "content_only": pt_b,
+        "delta": delta,
+        "preserved": delta > 0,
+    }
+
+
+def render_preserve_thinking(result: dict) -> str:
+    """Render :func:`run_preserve_thinking_probe` as a short text/markdown block."""
+    delta = result["delta"]
+    if result["preserved"]:
+        verdict = (
+            f"delta +{delta} tokens → preserve_thinking is LIVE "
+            "(the reasoning trace survives into turn 2)"
+        )
+    else:
+        verdict = (
+            f"delta {delta:+d} tokens → reasoning NOT preserved "
+            "(the trace is dropped from turn-2 history)"
+        )
+    return "\n".join(
+        [
+            f"## preserve_thinking diagnostic — `{result['model']}`",
+            "",
+            f"- Endpoint: `{result['endpoint']}` · trace field `{result['trace_field']}`",
+            "",
+            "| Turn-2 request | prompt_tokens |",
+            "|---|---|",
+            f"| reasoning re-sent (`preserve_thinking`) | {result['with_reasoning']} |",
+            f"| content-only | {result['content_only']} |",
+            "",
+            verdict,
+        ]
+    )
+
+
 def render_correctness(result: dict) -> str:
     """Render :func:`run_correctness` output as a markdown block for a per-model doc."""
     lines = [
