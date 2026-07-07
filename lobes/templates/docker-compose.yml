@@ -87,6 +87,8 @@ services:
       - --enable-chunked-prefill           # interleave prefill with decode (default-on in recent vLLM; pairs with max-num-batched-tokens)
       - --async-scheduling                 # overlap scheduling with the forward pass; drop on older vLLM builds without the flag
       - --reasoning-parser=qwen3           # expose the <think> trace (field is `reasoning` on the nv26.04 build, `reasoning_content` on older vLLM; drop the flag on builds without the parser)
+      - --default-chat-template-kwargs
+      - '{"preserve_thinking": true}'      # preserve historical <think> across turns; request-level chat_template_kwargs override this default
       - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
       - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
       - --enable-prefix-caching

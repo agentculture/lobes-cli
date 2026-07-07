@@ -92,6 +92,8 @@ services:
       - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
+      - --default-chat-template-kwargs
+      - '{"preserve_thinking": true}'   # preserve historical <think> across turns; request-level chat_template_kwargs override this default
       - --enable-auto-tool-choice
       - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
       # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
