@@ -339,9 +339,11 @@ def test_capabilities_public_url_wins_over_host_end_to_end() -> None:
 def test_capabilities_payload_threads_backend_ready() -> None:
     # The PURE builder threads a True/False live signal (keyed by internal Backend
     # name) straight into each gateway-fronted role's `ready` — `loaded` stays the
-    # config fact (roles.py t5 contract). The None→not-ready collapse is a
-    # gateway-BOUNDARY concern (a cache None means "unreachable", not roles.py's
-    # "no signal") — exercised end to end by the loopback route test below.
+    # config fact (roles.py t5 contract). A SUPPLIED backend_ready is authoritative,
+    # and the None→not-ready collapse is now the BUILDER's own job (issue #92 /
+    # honesty h14), not a caller-side bridge — proved directly below by
+    # test_capabilities_payload_backend_ready_none_value_is_not_ready and end to
+    # end by the loopback route test.
     env = _full_env()
     table, cfg = build_config(env)
     backend_ready = {"primary": True, "multimodal": False, "embed": False, "rerank": True}
@@ -354,6 +356,25 @@ def test_capabilities_payload_threads_backend_ready() -> None:
     assert payload["reranker"]["ready"] is True
 
 
+def test_capabilities_payload_backend_ready_none_value_is_not_ready() -> None:
+    # #92 / honesty h14, self-enforced by the builder (not a call-site bridge): a
+    # per-backend None in a SUPPLIED mapping — exactly what ReadinessCache.current()
+    # reports for a dead/unreachable backend — collapses to ready=False. `loaded`
+    # stays the config fact. This is the property the deleted _ready_iff_true helper
+    # used to guarantee at the boundary; it now lives inside build_role_registry, so
+    # ANY caller passing current() straight through is safe, not just the HTTP route.
+    env = _full_env()
+    table, cfg = build_config(env)
+    backend_ready = {"primary": None, "multimodal": True, "embed": False, "rerank": None}
+    payload = S.capabilities_payload(
+        table, cfg, env=env, gateway_url=_GATEWAY_URL, backend_ready=backend_ready
+    )
+    assert payload["cortex"]["loaded"] is True and payload["cortex"]["ready"] is False  # None
+    assert payload["senses"]["ready"] is True  # present True
+    assert payload["embedder"]["ready"] is False  # present False
+    assert payload["reranker"]["loaded"] is True and payload["reranker"]["ready"] is False  # None
+
+
 def test_capabilities_payload_backend_ready_none_falls_back_to_loaded() -> None:
     # Default (backend_ready=None): ready falls back to loaded — the CLI/offline
     # path is unchanged, so the pure builder never needs a live signal to work.
@@ -362,15 +383,6 @@ def test_capabilities_payload_backend_ready_none_falls_back_to_loaded() -> None:
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     for role in ("cortex", "senses", "embedder", "reranker"):
         assert payload[role]["ready"] == payload[role]["loaded"]
-
-
-def test_ready_iff_true_collapses_none_and_false_but_keeps_true() -> None:
-    # The gateway-boundary bridge: a cache None (unreachable/dead) must NOT be read
-    # as roles.py's "no signal → fall back to loaded", so it is collapsed to a
-    # definite False; False stays False; only True stays True. This is what keeps a
-    # wired-but-dead backend (which probes None) off the ready list (honesty h14).
-    collapsed = S._ready_iff_true({"primary": True, "multimodal": None, "embed": False})
-    assert collapsed == {"primary": True, "multimodal": False, "embed": False}
 
 
 @pytest.fixture
@@ -408,9 +420,12 @@ def readiness_capabilities_gateway(monkeypatch):
 
 
 def test_capabilities_route_dead_backend_ready_false_h14(readiness_capabilities_gateway) -> None:
-    # h14 end to end: a wired-but-dead backend probes None; the HTTP /capabilities
-    # route collapses that to ready=False (loaded stays True) — the dead backend is
-    # NOT advertised ready, even though roles.py would otherwise fall back to loaded.
+    # h14 end to end: a wired-but-dead backend probes None; the route passes the
+    # cache snapshot STRAIGHT through and build_role_registry (authoritative on a
+    # supplied mapping) collapses that None to ready=False — loaded stays True, the
+    # dead backend is NOT advertised ready. This is the proof the invariant lives in
+    # the builder now (t6b removed the route's _ready_iff_true bridge), so it holds
+    # for every caller, not just this one call site.
     gw = readiness_capabilities_gateway
     # All True initially → every gateway-fronted role ready.
     with urllib.request.urlopen(gw.base + "/capabilities", timeout=5) as r:

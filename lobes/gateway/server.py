@@ -55,6 +55,7 @@ from lobes.gateway._routing import (
     Backend,
     RoutingTable,
     is_audio_path,
+    is_unknown_model,
     list_models_payload,
     order_backends,
     resolve_model,
@@ -306,6 +307,28 @@ def _error_body(
     ).encode("utf-8")
 
 
+def _model_not_found_body(model: str) -> bytes:
+    """OpenAI/vLLM-shaped 404 body for an id that was NEVER advertised (honesty h23).
+
+    Mirrors the ``model_not_found`` error an OpenAI/vLLM backend emits for an
+    unknown model, so a client sees a consistent 404 shape whether it hit the
+    gateway or a backend directly. This is NOT a contradiction of "advertised
+    implies reachable" (issue #92): the invariant is that a model *listed in
+    ``/v1/models``* never 404s — an id that was never listed *should* 404. It is
+    the deliberate converse of the never-404 race guarantee (see
+    :func:`handle_post`).
+    """
+    return json.dumps(
+        {
+            "error": {
+                "message": f"The model `{model}` does not exist.",
+                "type": "model_not_found",
+                "code": "model_not_found",
+            }
+        }
+    ).encode("utf-8")
+
+
 def _busy_body(requested_tier: str) -> bytes:
     """Return the JSON body for a 429 busy (shed) response."""
     _LANE_LABELS = {"main": "cortex", "multimodal": "senses"}
@@ -342,6 +365,18 @@ def handle_post(
     The owner's verdict is authoritative, and the status mapping reflects that a
     request naming a model has exactly one honest place to go:
 
+    * **unknown model id** → a **404** ``model_not_found`` generated HERE, before
+      any routing (honesty h23). A non-empty ``model`` that is neither an alias
+      nor any WIRED backend's served name (:func:`is_unknown_model`) was never
+      advertised, so it must not be silently served under the default backend's
+      weights. This is the deliberate converse of "advertised implies reachable"
+      (issue #92): a model *listed in ``/v1/models``* never 404s, but one never
+      listed *should*. Unknown-ness is decided against the ROUTING TABLE, never
+      the readiness-filtered ``/v1/models`` list — a wired-but-dead backend
+      (dropped from ``/v1/models`` but still in the table) is KNOWN and takes the
+      retryable-503 path below, NOT this 404 (that is what keeps issue #91 fixed).
+      A missing/blank ``model`` is *unspecified*, not unknown → it routes to
+      ``default_model`` and is served.
     * **2xx / 4xx** → commit to the owner and relay verbatim. A 4xx is a genuine
       *client* error (the owner is the only backend that could serve this model,
       so e.g. its 404 "model does not exist" is authoritative — never a reason to
@@ -388,6 +423,21 @@ def handle_post(
             ("X-Lobes-Tier-Reason", decision["reason"]),
         ]
     else:
+        # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
+        # backend's served name) must NOT be silently served under the default
+        # backend's weights — reject it with a 404 model_not_found BEFORE routing,
+        # matching what a real OpenAI/vLLM backend emits. Unknown-ness is decided
+        # against the ROUTING TABLE (is_unknown_model), never the readiness-filtered
+        # /v1/models list — so a wired-but-dead backend (dropped from /v1/models but
+        # still in the table) is KNOWN and routes on to the retryable 503 below, not
+        # a 404 (that distinction is what keeps issue #91 fixed). An UNSPECIFIED
+        # (missing/blank) model is not unknown — it routes to default_model.
+        if is_unknown_model(table, requested):
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_model_not_found_body(requested),
+            )
         served = resolve_model(table, requested)
     streaming = is_streaming(body)
     fwd_body = rewrite_model(body, served)
@@ -696,27 +746,6 @@ def probe_audio_ready(
         return None
 
 
-def _ready_iff_true(snapshot: Mapping[str, bool | None]) -> dict[str, bool]:
-    """Collapse the readiness tri-state to a strict "ready iff True" bool map.
-
-    The background :class:`~lobes.gateway._readiness.ReadinessCache` reports a
-    backend as ``None`` when it is dead / missing / unreachable (a probe that
-    never got a 200 — see that module's docstring). But
-    :func:`lobes.roles._gateway_role` reads a ``None`` signal as "no live signal
-    available → fall back to the coarse ``loaded`` proxy", which for a WIRED
-    backend is ``True``. Those two ``None``s mean OPPOSITE things: the cache's is
-    "definitely not reachable", roles.py's is "I don't know, assume configured".
-    Passing the cache's ``None`` straight through would therefore advertise a
-    wired-but-dead backend as ``ready=True`` in ``/capabilities`` — the exact
-    issue #92 defect (honesty h14). This bridges the vocabularies: only an
-    affirmative ``True`` stays ``True`` (ready); both ``None`` (unreachable) and
-    ``False`` (unhealthy) become a definite ``False``. It mirrors the ``is True``
-    filter :func:`lobes.gateway._routing.list_models_payload` applies, so both
-    advertisement surfaces agree — a dead backend is advertised nowhere.
-    """
-    return {name: signal is True for name, signal in snapshot.items()}
-
-
 def capabilities_payload(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -817,15 +846,15 @@ class _Handler(BaseHTTPRequestHandler):
             cfg = self.server_config
             origin = reachable_origin(self.headers.get("Host"), cfg.public_url)
             audio_ready = probe_audio_ready(cfg.audio_url) is True if cfg.audio_url else None
-            # Collapse the cache's tri-state to a strict "ready iff True" map before
-            # handing it to the registry: at the gateway a None from the cache means
-            # "probed, unreachable", NOT roles.py's "no signal → fall back to
-            # loaded". Without this a wired-but-dead backend would advertise
-            # ready=True here (issue #92 / honesty h14). See _ready_iff_true.
+            # Pass the cache's tri-state snapshot STRAIGHT THROUGH — no boundary
+            # coercion here. build_role_registry treats a SUPPLIED backend_ready
+            # as authoritative and collapses the cache's None (dead/unreachable)
+            # to ready=False itself (issue #92 / honesty h14): coercing the
+            # tri-state is the builder's job, not this call site's, so a dead
+            # backend can never be advertised ready=True no matter who calls the
+            # builder. (This deletes t6's _ready_iff_true bridge — see roles.py.)
             backend_ready = (
-                _ready_iff_true(self.readiness_cache.current())
-                if self.readiness_cache is not None
-                else None
+                self.readiness_cache.current() if self.readiness_cache is not None else None
             )
             self._send_json(
                 200,

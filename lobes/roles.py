@@ -169,11 +169,25 @@ class RoleInfo:
     # for the four gateway-fronted roles, `audio_ready` for stt/tts (issue
     # #89). Generalised from the stt/tts-only split (issue #89/#90) to all six
     # roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
-    # When a caller supplies no signal (the parameter is `None`, the default),
-    # `ready` falls back to the coarse `loaded` "configured/wired" proxy — the
-    # original t4 behaviour, still exercised by every non-HTTP caller (the
-    # CLI's non-live paths, most of this module's own test suite).
-    # Structurally CLAMPED either way: a role whose backend is not wired
+    #
+    # `backend_ready` is TRI-STATE PER BACKEND but resolves to `ready` under a
+    # SUPPLIED-vs-OMITTED rule the builder self-enforces (issue #92 / honesty
+    # h14 — do not let this drift back to caller discipline):
+    #   * mapping OMITTED entirely (`backend_ready is None`, the default) →
+    #     back-compat: `ready == loaded`, the coarse "configured/wired" proxy.
+    #     Still exercised by every non-HTTP caller (the CLI's non-live paths,
+    #     most of this module's own test suite).
+    #   * mapping SUPPLIED → AUTHORITATIVE: `ready = (backend_ready.get(name)
+    #     is True)`. A present `None`, a present `False`, and a MISSING KEY all
+    #     mean NOT ready — "no live signal" is never evidence of health.
+    # THE TRAP this closes: `ReadinessCache.current()` reports a dead/missing/
+    # unreachable backend as `None`. That cache-`None` means UNREACHABLE — the
+    # OPPOSITE of "no signal, assume the wired/`loaded` default". A caller that
+    # passes `current()` straight in (exactly what this contract invites) must
+    # get `ready=False` for that backend, NOT a resurrected #92 `ready=True`.
+    # Because the SUPPLIED branch is authoritative, it does.
+    #
+    # Structurally CLAMPED regardless: a role whose backend is not wired
     # (`loaded is False`) or whose `endpoint` is empty can never report
     # `ready=True`, no matter what signal a caller passes in. This mirrors —
     # and is enforced by the same code path as — the stt/tts clamp on
@@ -256,13 +270,23 @@ def _gateway_role(
 ) -> RoleInfo:
     """Resolve a gateway-fronted role (cortex/senses/embedder/reranker).
 
-    ``ready_signal`` is the caller's live-readiness tri-state for THIS role's
-    backend (the value :func:`build_role_registry` looked up in its
-    ``backend_ready`` mapping by :data:`ROLE_BACKEND` name) — ``True``/
-    ``False`` reflect an actual probe result; ``None`` means no live signal is
-    available (no ``backend_ready`` mapping was supplied, or it had no entry
-    for this backend), in which case ``ready`` falls back to the coarse
-    ``loaded`` proxy, matching the original t4 behaviour.
+    ``ready_signal`` carries only TWO meanings here, never the readiness cache's
+    tri-state — :func:`build_role_registry` has already resolved that away:
+
+    * ``True``/``False`` — an AUTHORITATIVE readiness verdict for this backend.
+      The builder passes a concrete bool whenever a ``backend_ready`` mapping was
+      supplied, having already collapsed a present ``None``, a present ``False``,
+      and a missing key all to ``False`` (issue #92 / honesty h14). ``ready``
+      takes this value directly (subject to the clamp below).
+    * ``None`` — NO live signal at all (``backend_ready`` was omitted entirely),
+      in which case ``ready`` falls back to the coarse ``loaded`` proxy — the
+      original t4 behaviour.
+
+    Crucially, ``None`` here is *only ever* "no mapping supplied", never "the
+    cache said unreachable": those two ``None``s mean opposite things, and
+    conflating them (reading the cache's unreachable-``None`` as "fall back to
+    loaded=True") is the #92 defect. The builder resolves the cache's ``None`` to
+    a concrete ``False`` on the supplied path so this function can never see it.
 
     Either way, ``ready`` is CLAMPED to ``False`` whenever the backend is not
     wired (``loaded is False``) or the resolved ``endpoint`` is empty (see
@@ -382,16 +406,26 @@ def build_role_registry(
         values — ``"primary"``/``"multimodal"``/``"embed"``/``"rerank"``), one
         tri-state value (``True``/``False``/``None``) per backend — exactly
         the shape :meth:`lobes.gateway._readiness.ReadinessCache.current`
-        returns. Mirrors ``audio_ready``'s shape and defaulting: when a role's
-        backend has an entry, that entry sets ``ready`` (the runtime signal);
-        ``loaded`` stays the config fact "is this backend wired". When
-        ``backend_ready`` is ``None`` (the default) — OR a role's backend has
-        no entry in it — ``ready`` falls back to ``loaded``, the original t4
-        behaviour, so every existing non-HTTP caller (the CLI, this module's
-        own offline test suite) is unchanged. ``roles.py`` itself never probes
-        anything to produce this signal — it is computed elsewhere (t3's
-        :class:`~lobes.gateway._readiness.ReadinessCache`, socket-free to read)
-        and handed in, exactly like ``audio_ready``.
+        returns, so a caller passes ``current()`` STRAIGHT THROUGH with no
+        translation and no per-call-site coercion. **When it is supplied it is
+        AUTHORITATIVE**, and this builder self-enforces the invariant its shape
+        implies (issue #92 / honesty h14): ``ready = (backend_ready.get(name)
+        is True)`` — a present ``None``, a present ``False``, and a MISSING KEY
+        all mean NOT ready. That matters because the readiness cache reports a
+        dead/missing/unreachable backend as ``None`` — and the cache's ``None``
+        means UNREACHABLE, the OPPOSITE of "no signal, assume the wired
+        default". Reading that ``None`` as "fall back to ``loaded`` (=``True``
+        for a wired backend)" is the exact #92 defect a dead backend advertised
+        as ``ready=True``); because the supplied branch is authoritative, that
+        cannot recur, and no caller-side ``_ready_iff_true``-style bridge is
+        needed. Only when ``backend_ready`` is ``None`` (the default — the
+        mapping OMITTED, not a per-backend ``None``) does ``ready`` fall back to
+        ``loaded``, the original t4 behaviour, so every existing non-HTTP caller
+        (the CLI, this module's own offline test suite) is unchanged. ``loaded``
+        stays the config fact "is this backend wired" in all cases. ``roles.py``
+        itself never probes anything to produce this signal — it is computed
+        elsewhere (t3's :class:`~lobes.gateway._readiness.ReadinessCache`,
+        socket-free to read) and handed in, exactly like ``audio_ready``.
     :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
@@ -399,8 +433,9 @@ def build_role_registry(
 
     Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
     (issue #81 t5 — generalising the stt/tts split from issue #89/#90 to all
-    six roles): it reflects ``backend_ready``/``audio_ready`` when the caller
-    supplies a live signal, else it falls back to the coarse "configured/wired"
+    six roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
+    AUTHORITATIVE (a present ``None``/``False`` or a missing key ⇒ not ready);
+    only an OMITTED signal falls back to the coarse "configured/wired"
     ``loaded`` proxy. Either way it is CLAMPED, here, to ``False`` whenever a
     role's backend is not wired OR its resolved ``endpoint`` is empty — a
     caller can never fabricate ``ready=True`` for a role with nothing to dial,
@@ -414,7 +449,26 @@ def build_role_registry(
     registry: dict[str, RoleInfo] = {}
 
     for role in ("cortex", "senses", "embedder", "reranker"):
-        signal = backend_ready.get(ROLE_BACKEND[role]) if backend_ready is not None else None
+        if backend_ready is None:
+            # NOT SUPPLIED → back-compat: no live signal at all, so fall back to
+            # the coarse `loaded` proxy (the original t4 behaviour). `None` here
+            # is `_gateway_role`'s "fall back to loaded" sentinel — never confused
+            # with the AUTHORITATIVE branch below, which never passes it a `None`.
+            signal = None
+        else:
+            # SUPPLIED → AUTHORITATIVE, and resolved to a concrete bool HERE so a
+            # present `None`, a present `False`, and a MISSING KEY all collapse to
+            # "not ready" (issue #92 / honesty h14). This is the invariant this
+            # builder now SELF-ENFORCES rather than leaving to caller discipline:
+            # a supplied mapping is the single source of truth, and "no live
+            # signal" is never evidence of health. In particular
+            # `ReadinessCache.current()` reports a dead/unreachable backend as
+            # `None`; reading that `None` as "no signal → fall back to loaded"
+            # (which for a wired backend is `True`) is the exact #92 defect — the
+            # cache's `None` means UNREACHABLE, the opposite of "unknown, assume
+            # configured". By passing `_gateway_role` a concrete `True`/`False`
+            # (never `None`) on the supplied path, that trap cannot recur.
+            signal = backend_ready.get(ROLE_BACKEND[role]) is True
         registry[role] = _gateway_role(role, table, gateway, resolved_env, signal)
 
     audio_url = (server.audio_url or "").rstrip("/")

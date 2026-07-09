@@ -102,6 +102,16 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
 
     An alias resolves to its target; a name some backend already serves resolves
     to itself; anything else (``None`` or unknown) resolves to ``default_model``.
+
+    This never distinguishes *unspecified* from *unknown* — it always returns a
+    concrete served name so :func:`order_backends` always has an owner to try.
+    That UNSPECIFIED-vs-UNKNOWN policy lives one level up, in
+    :func:`is_unknown_model` + :func:`lobes.gateway.server.handle_post`: an
+    unknown non-empty id is rejected (404) *before* ``handle_post`` ever calls
+    this, so ``resolve_model``'s unknown→default fall-back is now a pure-routing
+    safety net (e.g. for an internal caller passing a stale name), not the path a
+    client's unknown model id takes. Kept unchanged so its many callers (the tier
+    tests, ``order_backends``) are unaffected.
     """
     if requested:
         if requested in table.aliases:
@@ -110,6 +120,50 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
             if backend.served_name == requested:
                 return requested
     return table.default_model
+
+
+def is_unknown_model(table: RoutingTable, requested: str | None) -> bool:
+    """True when ``requested`` is a NON-EMPTY id that was NEVER advertised —
+    neither an alias nor any wired backend's ``served_name`` — so it must not be
+    silently served under the default backend's weights (honesty h23, issue #91).
+
+    Distinguishes UNKNOWN from UNSPECIFIED — the distinction :func:`resolve_model`
+    deliberately does not make:
+
+    * **Unspecified** — ``requested`` is ``None`` or ``""`` (a missing/blank
+      ``model`` field). This is NOT unknown: it intentionally routes to
+      ``default_model`` (see :func:`resolve_model`) and is served. Returns
+      ``False``.
+    * **Known** — ``requested`` is an alias or a wired backend's served name.
+      Returns ``False``.
+    * **Unknown** — a non-empty id that is neither. Returns ``True``; the caller
+      (:func:`lobes.gateway.server.handle_post`) turns this into a 404
+      ``model_not_found`` rather than routing it to the default owner.
+
+    **Decided against the ROUTING TABLE, never the readiness-filtered
+    ``/v1/models`` list.** A backend that is wired but dead/warming is dropped
+    from ``/v1/models`` (see :func:`list_models_payload`) yet its ``served_name``
+    is still in ``table.backends`` — so it is *known*, and a request naming it
+    routes to its owner and yields a retryable **503** (owner down), NOT a 404.
+    Deciding unknown-ness against the readiness list instead would 404 a merely
+    warming/transiently-dead backend and reintroduce issue #91. Unknown-ness is a
+    question about *wiring* ("is this id in the table at all"), not *liveness*.
+
+    ``default_model`` is always treated as KNOWN, even in the degenerate case of a
+    malformed table where no backend actually serves it: naming the deployment's
+    declared default identity explicitly is equivalent to leaving ``model``
+    unspecified — both route to ``default_model`` — so that path stays a terminal
+    **502** ``upstream_unavailable`` (the malformed-table signal), not a 404. In a
+    well-formed table ``default_model`` is some wired backend's served name, so
+    this clause is redundant there; it only matters for the pathological table.
+    """
+    if not requested:
+        return False  # unspecified (missing/blank) → routes to default, not unknown
+    if requested == table.default_model:
+        return False  # the declared default identity is known (see docstring)
+    if requested in table.aliases:
+        return False
+    return not any(backend.served_name == requested for backend in table.backends)
 
 
 def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:

@@ -732,23 +732,43 @@ def test_dead_primary_never_opens_multimodal_connection() -> None:
 # --- the "converse" honesty question: an unknown (never-advertised) model id ---
 
 
-def test_unknown_model_id_routes_to_default_owner_documented_choice() -> None:
-    # DOCUMENTED CHOICE, not an accident (t6 converse honesty condition): today
-    # resolve_model falls back to default_model for an unknown, non-empty model
-    # id, so a request naming a model that was NEVER in /v1/models is served by
-    # the default (primary) backend, its body REWRITTEN to the primary's served
-    # name. This test LOCKS the current behaviour so it is a deliberate choice.
-    # The t6 report recommends this arguably should 404 (model_not_found) to match
-    # OpenAI + the "advertised implies reachable" honesty theme — but resolve_model
-    # lives in _routing.py (out of this task's scope), so it is not changed here.
+def test_unknown_model_id_never_silently_served_returns_404() -> None:
+    # h23 CONVERSE: an id that was NEVER in /v1/models (neither an alias nor any
+    # wired backend's served name) must NOT be silently served by the default
+    # backend under a different model's weights. It 404s (model_not_found) and NO
+    # backend is dialed — the request never touches primary. This REPLACES t6's
+    # test_unknown_model_id_routes_to_default_owner_documented_choice, which locked
+    # in exactly the behaviour h23 forbids (unknown id served under primary's
+    # weights, body rewritten to "P"). This is CONSISTENT with "advertised implies
+    # reachable": a model *listed* in /v1/models never 404s; one never listed
+    # SHOULD 404 (contrast the never-404 race test below).
     table, cfg = _cfg()
     opener, calls = _opener({"primary": 200, "fallback": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"never-in-v1-models"}', opener
     )
-    assert [c[0] for c in calls] == ["primary"]  # routed to the default owner
-    assert json.loads(calls[0][1])["model"] == "P"  # rewritten to primary's served name
-    assert resp.status == 200
+    assert calls == []  # NOT silently served — no backend dialed
+    assert resp.status == 404
+    assert resp.upstream is None
+    body = json.loads(resp.body)
+    assert body["error"]["type"] == "model_not_found"
+    assert "never-in-v1-models" in body["error"]["message"]
+
+
+def test_wired_but_dead_backend_yields_503_not_404() -> None:
+    # CRITICAL distinction (issue #91): "F" IS a wired backend's served name, so it
+    # is KNOWN even though a dead F is filtered out of /v1/models. A request naming
+    # F when F is down must route to F's owner and get the retryable 503 (owner
+    # down), NOT the 404 an UNKNOWN (never-wired) id gets. Getting this backwards
+    # would 404 a merely-down backend and reintroduce #91. Unknown-ness is decided
+    # against the routing table, never the readiness-filtered /v1/models list.
+    table, cfg = _cfg()
+    opener, calls = _opener({"primary": 200, "fallback": S.UpstreamError("refused")})
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"F"}', opener)
+    assert [c[0] for c in calls] == ["fallback"]  # dialed the owner — F is KNOWN
+    assert resp.status == 503  # owner down → retryable, NOT 404
+    assert dict(resp.headers)["Retry-After"] == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
+    assert json.loads(resp.body)["error"]["type"] == "backend_unavailable"
 
 
 # --- issue #92: ReadinessCache wired into /v1/models (advertised => reachable) --
@@ -888,3 +908,48 @@ def test_race_listed_then_owner_killed_yields_503_not_404(ready_gateway) -> None
     assert exc.value.code == 503  # NEVER 404
     assert exc.value.headers.get("Retry-After") == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
     assert json.loads(exc.value.read())["error"]["type"] == "backend_unavailable"
+
+
+def test_wired_but_dead_unlisted_backend_yields_503_not_404(ready_gateway) -> None:
+    # The exact #91 trap, end to end: a backend that is WIRED but dead is filtered
+    # OUT of /v1/models (readiness), yet its served name is still in the routing
+    # table. A completion naming it must return 503 (retry), NOT 404 — unknown-ness
+    # is decided against the routing TABLE, never the readiness-filtered list.
+    # Getting this backwards (deciding unknown-ness against /v1/models) would 404 a
+    # merely-dead backend and reintroduce #91.
+    gw = ready_gateway
+    gw.verdicts["http://vllm-fallback:8000"] = None  # dead → dropped from /v1/models
+    gw.cache.refresh()
+    gw.alive["fallback"] = False  # and the owner is actually down
+    with urllib.request.urlopen(gw.base + "/v1/models", timeout=5) as r:
+        assert "F" not in [m["id"] for m in json.load(r)["data"]]  # NOT listed
+    req = urllib.request.Request(
+        gw.base + "/v1/chat/completions",
+        data=b'{"model":"F"}',
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 503  # wired + dead + unlisted → retry, NOT 404
+    assert exc.value.headers.get("Retry-After") == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
+    assert json.loads(exc.value.read())["error"]["type"] == "backend_unavailable"
+    assert "fallback" in gw.open_calls  # the owner WAS dialed — F is known
+
+
+def test_unknown_unlisted_model_yields_404_not_served(ready_gateway) -> None:
+    # h23 converse at the route: an id that is neither wired nor aliased is never in
+    # /v1/models AND is never silently served under the default backend's weights —
+    # it 404s (model_not_found) and no backend is dialed. Contrast the wired-but-dead
+    # case above (503): the two differ precisely on "is it in the routing table".
+    gw = ready_gateway
+    before = len(gw.open_calls)
+    req = urllib.request.Request(
+        gw.base + "/v1/chat/completions",
+        data=b'{"model":"phantom-never-advertised"}',
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 404  # never advertised → 404, not served under primary
+    assert json.loads(exc.value.read())["error"]["type"] == "model_not_found"
+    assert len(gw.open_calls) == before  # no backend dialed — not silently served
