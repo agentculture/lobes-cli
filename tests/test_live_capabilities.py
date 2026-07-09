@@ -420,11 +420,21 @@ def test_cli_and_gateway_capabilities_agree(caps: dict) -> None:
         proc.returncode == 0
     ), f"`lobes capabilities --json --port {port}` exited {proc.returncode}: {proc.stderr.strip()}"
     cli = json.loads(proc.stdout)
-    assert cli.get("source") == "gateway", (
-        f"`lobes capabilities` degraded to source={cli.get('source')!r} — it could not "
-        f"reach the gateway on port {port} and fell back to its offline .env view. "
-        "The CLI and the gateway can only be proven to agree when the CLI actually "
-        "reaches the gateway (#96); a degraded fallback is itself a reachability fault."
+    # `lobes capabilities --json` no longer carries a top-level "source" key
+    # (Qodo action-required finding on PR #102 — the gateway's own
+    # GET /capabilities returns exactly the six role keys, so the CLI's
+    # gateway-mode JSON must match byte-for-byte, with nothing extra mixed
+    # in). The offline/gateway distinction now lives out-of-band: the CLI
+    # writes a one-line notice to stderr only when it degrades to the
+    # offline .env fallback, and stays silent on stderr when it actually
+    # reached the gateway. So "stderr is empty" is the live signal here.
+    assert not proc.stderr.strip(), (
+        f"`lobes capabilities --json --port {port}` wrote to stderr: "
+        f"{proc.stderr.strip()!r} — that only happens on the offline-fallback path, "
+        f"meaning the CLI could not reach the gateway on port {port} and fell back to "
+        "its offline .env view. The CLI and the gateway can only be proven to agree "
+        "when the CLI actually reaches the gateway (#96); a degraded fallback is "
+        "itself a reachability fault."
     )
     disagreements: list[str] = []
     for role in ROLES:

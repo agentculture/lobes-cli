@@ -72,12 +72,16 @@ def test_capabilities_json_returns_all_six_roles_with_full_metadata(tmp_path, ca
     _scaffold_fleet(tmp_path)
     rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    # "source" is the added top-level sibling (issue #96, t7): no gateway is
-    # listening on the resolved port in this offline fixture, so the CLI
-    # degrades to the .env-derived fallback and says so honestly.
-    assert payload["source"] == "offline"
-    assert set(payload) - {"source"} == set(ROLES)
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    # The JSON payload is the bare six-role dict — no "source"/mode key is
+    # ever mixed in, in ANY mode (Qodo action-required finding on PR #102:
+    # the gateway's own GET /capabilities returns exactly these six keys, so
+    # a strict `set(payload) == ROLES` check must hold here too). No gateway
+    # is listening on the resolved port in this offline fixture, so the CLI
+    # degrades to the .env-derived fallback and says so on stderr instead.
+    assert set(payload) == set(ROLES)
+    assert "offline" in err
     for role in ROLES:
         info = payload[role]
         assert _ROLE_INFO_FIELDS <= set(info)
@@ -132,9 +136,10 @@ def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
     erroring — mirrors 'lobes overview --live' on an empty deployment."""
     rc = main(["capabilities", "--json"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["source"] == "offline"
-    assert set(payload) - {"source"} == set(ROLES)
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert set(payload) == set(ROLES)
+    assert "offline" in err
     assert payload["cortex"]["loaded"] is True  # primary is always wired
     assert payload["senses"]["loaded"] is False
     assert payload["embedder"]["loaded"] is False
@@ -166,8 +171,10 @@ def test_capabilities_offline_fallback_never_reports_ready_true(tmp_path, capsys
     _env.set_env(tmp_path / _compose.ENV_FILE, "AUDIO_URL", "http://realtime:8080")
     rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["source"] == "offline"
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert set(payload) == set(ROLES)
+    assert "offline" in err
     # AUDIO_URL is configured, so stt/tts ARE "loaded" (a config fact) ...
     assert payload["stt"]["loaded"] is True
     assert payload["tts"]["loaded"] is True
@@ -365,14 +372,35 @@ def fake_gateway(monkeypatch):
 def test_capabilities_json_reproduces_live_gateway_payload_exactly(fake_gateway, capsys) -> None:
     """Job 1's core assertion: against a fake gateway serving a known
     /capabilities payload, `lobes capabilities --json` reproduces it exactly
-    (modulo the added `source` sibling)."""
+    byte-for-byte (key-for-key) — no added/removed keys, no reshaping. This
+    is also the fix for the Qodo action-required finding on PR #102: a prior
+    revision added a top-level ``source`` sibling here, which broke exact
+    reproduction of the gateway's own contract."""
     port, known_payload = fake_gateway
     rc = main(["capabilities", "--port", str(port), "--json"])
     assert rc == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload == known_payload
+    # Gateway mode is a live, authoritative answer — nothing to caveat, so no
+    # offline notice (or anything else) is written to stderr.
+    assert err == ""
+
+
+def test_capabilities_json_gateway_mode_keys_exactly_match_roles(fake_gateway, capsys) -> None:
+    """Regression guard for the Qodo action-required finding on PR #102: a
+    strict consumer doing ``set(payload.keys()) == ROLES`` — precisely the
+    kind of contract check this CLI-as-gateway-client rewrite (issue #96,
+    t7) promotes — must pass in gateway mode. The gateway's own
+    ``GET /capabilities`` returns exactly ``{cortex, senses, embedder,
+    reranker, stt, tts}`` and nothing else; the CLI's ``--json`` rendering of
+    a live gateway response must match byte-for-byte, with no extra
+    top-level key (e.g. no ``source``) ever mixed in."""
+    port, _known_payload = fake_gateway
+    rc = main(["capabilities", "--port", str(port), "--json"])
+    assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["source"] == "gateway"
-    rendered_roles = {k: v for k, v in payload.items() if k != "source"}
-    assert rendered_roles == known_payload
+    assert set(payload.keys()) == set(ROLES)
 
 
 def test_capabilities_non_json_table_marks_gateway_source(fake_gateway, capsys) -> None:

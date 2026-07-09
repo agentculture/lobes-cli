@@ -48,10 +48,23 @@ of the gateway:
   fallback is now honest about what it is: every role's ``ready`` is forced
   to ``False`` (a config file was never probed, so it can never be evidence
   of health — this generalises issue #96's fix past stt/tts to all six
-  roles), and both the JSON and the table carry an explicit ``source``
-  marker (``"gateway"`` when live, ``"offline"`` when degraded) so a caller —
-  human or agent — can never mistake a configured-defaults guess for a live
-  observation.
+  roles), and the mode is always discoverable — but NOT by adding a key to
+  the JSON payload. A prior revision of this module added a top-level
+  ``source`` sibling next to the six role keys in ``--json`` output; a Qodo
+  action-required finding on PR #102 correctly flagged that as a second,
+  new divergence from the gateway's own contract (``GET /capabilities``
+  returns *exactly* ``{cortex, senses, embedder, reranker, stt, tts}``, so a
+  caller doing ``set(payload) == ROLES`` broke on the extra key — ironic,
+  since t7's whole point was to make the CLI and gateway agree). The fix:
+  ``--json`` output is now, in EVERY mode, the bare six-role dict and
+  nothing else — byte-for-byte what the gateway would return in gateway
+  mode. The offline/gateway distinction is instead surfaced out-of-band: the
+  human-readable table keeps its ``# source: ...`` header line (stdout,
+  human-facing, not part of any machine contract), and ``--json`` mode
+  additionally writes a one-line "offline" diagnostic to **stderr** — never
+  into the stdout JSON object — when (and only when) it is rendering the
+  fallback. A caller — human or agent — can still always tell live from
+  offline; it just never costs the JSON payload an extra key.
 
 This makes the honesty condition (h3: the CLI's and the gateway's answers
 agree) true **by construction** whenever a gateway is reachable — there is
@@ -88,12 +101,22 @@ import urllib.request
 
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
-from lobes.cli._output import emit_result
+from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.roles import ROLES, RoleInfo, role_registry_from_env
 
 _JSON_HELP = "Emit structured JSON."
 _COMPOSE_DIR_HELP = "Deployment dir (default: $LOBES_DIR or ~/.lobes)."
 _PORT_HELP = "Gateway host port (default: VLLM_PORT in .env)."
+
+# The offline-mode notice. Shown as the table's first line (stdout, human
+# text, not a machine contract) AND, in --json mode only, written to stderr
+# instead of being mixed into the JSON object — see the module docstring for
+# why: the JSON payload's keys must equal exactly `set(ROLES)` in every mode,
+# matching what a live `GET /capabilities` returns byte-for-byte.
+_OFFLINE_NOTICE = (
+    "source: offline — gateway unreachable; showing .env-configured "
+    "defaults, NOT a live probe (every role's ready=false)"
+)
 
 # Bounded so an unreachable/foreign process on the resolved port degrades to
 # the offline fallback quickly — this is a read-only introspection verb, and
@@ -193,10 +216,7 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
     header = f"{'role':<9} {'model':<48} {'context':>8}  loaded  endpoint"
     lines: list[str] = []
     if source == "offline":
-        lines.append(
-            "# source: offline — gateway unreachable; showing .env-configured "
-            "defaults, NOT a live probe (every role's ready=false)"
-        )
+        lines.append(f"# {_OFFLINE_NOTICE}")
     else:
         lines.append("# source: gateway — live GET /capabilities")
     lines.append(header)
@@ -216,11 +236,19 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     payload, source = _capabilities_view(args)
     if json_mode:
-        # "source" is an added top-level sibling of the six role keys — it never
-        # collides with a role name, so every existing consumer that reads
-        # payload[<role>] is unaffected; only a strict `set(payload) == ROLES`
-        # check needs to account for it.
-        emit_result({**payload, "source": source}, json_mode=True)
+        # The JSON payload is the bare six-role dict in EVERY mode — no
+        # "source"/mode key is ever mixed into it. In gateway mode this is
+        # the live GET /capabilities body rendered verbatim; in offline mode
+        # it is the .env-derived fallback (every role's ready forced False),
+        # shaped identically. `set(json.loads(out)) == set(ROLES)` holds
+        # unconditionally — matching what the gateway itself returns
+        # byte-for-byte (Qodo action-required finding on PR #102: a prior
+        # revision's top-level "source" sibling broke exactly that
+        # contract). The offline/gateway distinction still needs to be
+        # discoverable, so it goes out-of-band: stderr, never stdout JSON.
+        if source == "offline":
+            emit_diagnostic(_OFFLINE_NOTICE)
+        emit_result(payload, json_mode=True)
     else:
         emit_result(_render_table(payload, source), json_mode=False)
     return 0
