@@ -1,5 +1,38 @@
 # Gemma 4 12B gear — speculative-decoding draft route (issue #75, task t1)
 
+> **SUPERSEDED — the DSpark route this doc resolved to is INVALID (issue
+> #75).** The "resolved route" below, `deepseek-ai/dspark_gemma4_12b_block7`
+> via the `draft_model` method, was wired and tested live on vLLM 0.23 and
+> **fails to load**: `Value error, Model architectures ['Gemma4DSparkModel']
+> are not supported for now`. DSpark's custom drafter architecture is not in
+> vLLM 0.23's supported speculative-draft set — this is a dead end, not a
+> config problem. The route this repo actually shipped is the **native `mtp`
+> method** with the public `google/gemma-4-12B-it-assistant` draft (documented
+> below as the "escalation candidate" — it turned out to be the only one that
+> works), wired on by default for the base gear. The current, authoritative
+> story lives in two other docs:
+>
+> - [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#dspark-experiment--invalid-do-not-wire-6)
+>   — "DSpark experiment — INVALID, do not wire" and the shipped native-MTP
+>   config.
+> - [`docs/vllm-nightly-migration.md`](vllm-nightly-migration.md) §6 — the live
+>   test that proved DSpark invalid, and §7 — the native-MTP measurement
+>   (28.6 tok/s @ 57.9% draft acceptance) behind the shipped default.
+>
+> This also closes issue #69's last acceptance criterion — "a disabled-by-default
+> DSpark experiment entry" — as **answered-negative**: no catalog entry is
+> shipped for DSpark, because a model that cannot load has nothing to disable
+> into. The catalog instead carries the native-MTP config that actually works
+> (see `lobes/catalog.py`'s `coolthor/gemma-4-12B-it-NVFP4A16` entry).
+>
+> The research below is kept (cite-don't-delete) as the record of how the
+> question was answered — the HF sourcing search, the tokenizer/vocab
+> compatibility check, and the reasoning that led to DSpark being chosen as
+> the route to try first are all still accurate as *history*; only the "wire
+> DSpark next" recommendation at the top is superseded.
+
+---
+
 > Resolves the `unknown_nonblocking` risk in
 > [`docs/specs/2026-07-01-gemma-4-12b-gear-gets-speculative-decoding-draft.md`](specs/2026-07-01-gemma-4-12b-gear-gets-speculative-decoding-draft.md)
 > ("whether a `model_type==gemma4_assistant` draft for this exact
