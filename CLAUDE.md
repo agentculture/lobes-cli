@@ -58,8 +58,11 @@ output quality is expected and opt-in, not guaranteed by the diagnostic. See
 Beyond `cortex`, the **fleet** exposes SIX first-class, Colleague-facing
 **roles** (issue #81) — the primary contract callers should address, not raw
 model ids: `cortex` (the 27B primary — reasoning/deciding/final authority),
-`senses` (the Gemma 4 12B multimodal gear — vision+audio intake/perception;
-never decides or takes repo actions), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
+`senses` (the Gemma 4 12B multimodal gear — vision intake/perception; never
+decides or takes repo actions; the checkpoint declares audio support but it is
+**not currently served** on this vLLM path — issue #101 — so `senses` is
+vision-only in practice, and the purpose-built `stt` role, below, is the
+supported path for speech), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
 `POST /v1/embeddings`), `reranker` (`Qwen/Qwen3-Reranker-0.6B` → `POST
 /v1/rerank` + `/v1/score`), and the opt-in audio overlay's `stt`/`tts`. Roles
 are routed by **task family** (`generate` / `embed` / `score` / `rerank`) and
