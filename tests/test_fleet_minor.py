@@ -45,13 +45,26 @@ def test_minor_backend_added_when_minor_url_set() -> None:
     assert minor.task == "generate"
 
 
-def test_minor_backend_added_when_minor_served_name_set() -> None:
-    """MINOR_SERVED_NAME alone triggers the minor backend with the default URL."""
+def test_minor_backend_not_added_when_only_minor_served_name_set() -> None:
+    """MINOR_SERVED_NAME alone does NOT wire the minor backend — a served name
+    with no URL describes a model, not a reachable backend."""
     table, _ = build_config({"MINOR_SERVED_NAME": _MINOR_SERVED})
+    names = [b.name for b in table.backends]
+    assert "minor" not in names
+    assert names == ["primary"]
+
+
+def test_minor_backend_added_when_both_minor_url_and_served_name_set() -> None:
+    """MINOR_BASE_URL wires the backend; MINOR_SERVED_NAME alongside it just
+    customises the served name (mirrors the default-name case above)."""
+    table, _ = build_config(
+        {"MINOR_BASE_URL": "http://vllm-minor:8000", "MINOR_SERVED_NAME": _MINOR_SERVED}
+    )
     names = [b.name for b in table.backends]
     assert "minor" in names
     minor = next(b for b in table.backends if b.name == "minor")
-    assert minor.base_url == "http://vllm-minor:8000"  # falls back to default
+    assert minor.base_url == "http://vllm-minor:8000"
+    assert minor.served_name == _MINOR_SERVED
 
 
 def test_minor_backend_url_stripped() -> None:

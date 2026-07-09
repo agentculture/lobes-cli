@@ -96,8 +96,16 @@ def test_build_config_defaults_single_backend() -> None:
 def test_build_config_adds_fallback_only_when_configured() -> None:
     # No optional-backend env → just the generate primary.
     assert len(build_config({})[0].backends) == 1
-    # FALLBACK_SERVED_NAME alone is enough to wire a second backend.
+    # FALLBACK_SERVED_NAME alone is NOT enough to wire a second backend — a
+    # served name with no URL describes a model, not a reachable backend
+    # (see _optional_backend's "advertised implies reachable" contract).
     table, _ = build_config({"FALLBACK_SERVED_NAME": "beta"})
+    assert [b.name for b in table.backends] == ["primary"]
+    # FALLBACK_URL is what actually wires the backend; FALLBACK_SERVED_NAME
+    # alongside it only customises the served name.
+    table, _ = build_config(
+        {"FALLBACK_URL": "http://vllm-fallback:8000", "FALLBACK_SERVED_NAME": "beta"}
+    )
     assert [b.name for b in table.backends] == ["primary", "fallback"]
     assert table.backends[1].served_name == "beta"
 
@@ -235,12 +243,17 @@ def test_build_config_embed_url_alone_triggers_embed_backend() -> None:
     assert embed_backend.served_name == "Qwen/Qwen3-Embedding-0.6B"
 
 
-def test_build_config_rerank_served_name_alone_triggers_rerank_backend() -> None:
-    # RERANK_SERVED_NAME alone → rerank backend added with default URL.
+def test_build_config_rerank_served_name_alone_does_not_wire_rerank_backend() -> None:
+    # RERANK_SERVED_NAME alone → no rerank backend (no URL ⇒ nothing reachable).
     table, _ = build_config({"RERANK_SERVED_NAME": "custom/reranker"})
-    assert any(b.name == "rerank" for b in table.backends)
+    assert not any(b.name == "rerank" for b in table.backends)
+    # RERANK_URL is what wires it; RERANK_SERVED_NAME alongside it customises
+    # the served name.
+    table, _ = build_config(
+        {"RERANK_URL": "http://vllm-rerank:9999", "RERANK_SERVED_NAME": "custom/reranker"}
+    )
     rerank_backend = next(b for b in table.backends if b.name == "rerank")
-    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    assert rerank_backend.base_url == "http://vllm-rerank:9999"
     assert rerank_backend.served_name == "custom/reranker"
 
 

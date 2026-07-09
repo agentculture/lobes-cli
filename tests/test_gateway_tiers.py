@@ -53,9 +53,22 @@ def test_multimodal_base_url_wires_generate_backend_with_default_name() -> None:
     assert mm.base_url == "http://vllm-multimodal:8000"  # trailing slash stripped
 
 
-def test_multimodal_served_name_alone_wires_backend() -> None:
-    # MULTIMODAL_SERVED_NAME alone wires it with the default URL (mirror minor).
+def test_multimodal_served_name_alone_does_not_wire_backend() -> None:
+    # MULTIMODAL_SERVED_NAME alone does NOT wire it — no URL ⇒ nothing
+    # reachable (a served name with no URL only describes a model).
     table, _ = build_config({"MULTIMODAL_SERVED_NAME": "custom/gemma"})
+    assert not any(b.name == "multimodal" for b in table.backends)
+
+
+def test_multimodal_url_and_served_name_together_wire_backend() -> None:
+    # MULTIMODAL_BASE_URL wires it; MULTIMODAL_SERVED_NAME alongside it
+    # customises the served name.
+    table, _ = build_config(
+        {
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
+            "MULTIMODAL_SERVED_NAME": "custom/gemma",
+        }
+    )
     mm = next(b for b in table.backends if b.name == "multimodal")
     assert mm.base_url == "http://vllm-multimodal:8000"
     assert mm.served_name == "custom/gemma"
@@ -92,8 +105,14 @@ def test_middle_base_url_wires_generate_backend_with_default_name() -> None:
 
 
 def test_middle_reachable_by_explicit_served_name() -> None:
-    # The 14B is addressable by its served name once the profile is active.
-    table, _ = build_config({"MIDDLE_SERVED_NAME": "nvidia/Qwen3-14B-NVFP4"})
+    # The 14B is addressable by its served name once the profile is active
+    # (the profile sets MIDDLE_BASE_URL, which is what actually wires it).
+    table, _ = build_config(
+        {
+            "MIDDLE_BASE_URL": "http://vllm-middle:8000",
+            "MIDDLE_SERVED_NAME": "nvidia/Qwen3-14B-NVFP4",
+        }
+    )
     assert resolve_model(table, "nvidia/Qwen3-14B-NVFP4") == "nvidia/Qwen3-14B-NVFP4"
 
 
@@ -145,9 +164,15 @@ def test_multimodal_coder_alias_resolves_once_wired() -> None:
 
 
 def test_multimodal_coder_reachable_by_explicit_served_name() -> None:
-    # The coder is also addressable by its served name once the profile is active,
-    # same as any other wired backend.
-    table, _ = build_config({"MULTIMODAL_CODER_SERVED_NAME": "custom/gemma-coder"})
+    # The coder is also addressable by its served name once the profile is
+    # active (the profile sets MULTIMODAL_CODER_BASE_URL, which is what
+    # actually wires it), same as any other wired backend.
+    table, _ = build_config(
+        {
+            "MULTIMODAL_CODER_BASE_URL": "http://vllm-multimodal-coder:8000",
+            "MULTIMODAL_CODER_SERVED_NAME": "custom/gemma-coder",
+        }
+    )
     assert resolve_model(table, "custom/gemma-coder") == "custom/gemma-coder"
 
 
@@ -244,7 +269,9 @@ def test_three_tier_aliases_resolve_to_their_gears_when_all_wired() -> None:
 def test_tier_aliases_track_custom_served_names() -> None:
     table, _ = build_config(
         {
+            "MINOR_BASE_URL": "http://vllm-minor:8000",
             "MINOR_SERVED_NAME": "my/minor",
+            "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "MULTIMODAL_SERVED_NAME": "my/multimodal",
             "PRIMARY_SERVED_NAME": "my/primary",
         }
