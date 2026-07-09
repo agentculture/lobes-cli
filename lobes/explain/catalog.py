@@ -443,10 +443,16 @@ _DOCTOR = """\
 
 Diagnoses the deployment with real checks: `docker_available` (docker + compose
 resolve), `compose_present` (a deployment is scaffolded), `env_coherence`
-(`.env` has `VLLM_SERVED_NAME` and it matches `culture.yaml`), and
-`health_reachable` (`/health` responds). A down model is a *warning*, not a
-failure — only missing docker or an un-scaffolded deployment make the run exit
-non-zero. JSON contract: `{"healthy", "checks"}`. Supports `--json`.
+(`.env` has `VLLM_SERVED_NAME` and it matches `culture.yaml`),
+`health_reachable` (`/health` responds), and `gateway_version_match` (the
+deployed gateway's own `lobes-cli` release, read from its `GET /health`
+`version` field, matches this CLI's — issue #99, catching a stale
+`MODEL_GEAR_VERSION` pin baked into `Dockerfile.gateway` at scaffold time and
+never re-pinned). A down model is a *warning*, not a failure; an unreachable
+gateway degrades the version check to a non-fatal informational result (not a
+false pass) — only missing docker, an un-scaffolded deployment, or an actual
+version *mismatch* make the run exit non-zero. JSON contract: `{"healthy",
+"checks"}`. Supports `--json`.
 """
 
 _EMBEDDINGS = """\
