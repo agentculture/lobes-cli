@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.0] - 2026-07-09
+
+### Added
+
+- `scripts/live-check.sh` + `tests/test_live_capabilities.py` — a LOCAL, single-trigger, unattended pre-PR gate that dials every advertised role endpoint+path, every id in `/v1/models`, checks CLI/gateway agreement, reproduces Colleague's role-discovery path, and fails on deployed-gateway version skew. It FAILS rather than skips when armed. A 429 (pressure shed) and a 503 carrying `Retry-After` count as reachable; only a 404, a connection failure, a `Retry-After`-less 503, or a bare 5xx are faults.
+- `lobes/gateway/_readiness.py` — a bounded background probe of each backend's `/health`, mirroring `PressureCache`. Tri-state (`True` healthy / `False` reached-but-unhealthy / `None` unreachable), daemon thread, socket-free `.current()`, and a probe that degrades to `None` on `OSError`, `http.client.HTTPException` and `ValueError`.
+- `GET /health` now reports `{"version": ...}`, and `lobes doctor` gains a `gateway_version_match` check that fails on skew between the deployed gateway and the CLI wheel (issue #99).
+- `lobes/gateway/_routing.py::is_unknown_model` — a pure predicate separating "unknown model id" from "unspecified model".
+- Ground-truth perception probes for the `senses` role: a stdlib-generated solid-colour PNG whose colour the model must name, and a Chatterbox-synthesized word the model must transcribe. Both carry negative controls; the old placeholder-media tests are relabelled as wire checks.
+
+### Changed
+
+- **No cross-backend failover.** `order_backends` now returns at most one backend. A request naming the cortex model can never be answered by the Gemma backend, which protects the `final_authority` role contract from #81.
+- `GET /v1/models` and `GET /capabilities.ready` are backed by the live readiness cache rather than by configuration. A wired-but-dead backend is no longer advertised.
+- `RoleInfo.ready` is no longer an alias of `loaded` for `cortex`/`senses`/`embedder`/`reranker`. `build_role_registry` self-enforces the invariant: a supplied `backend_ready` map is authoritative, and a present `None`, a present `False`, and a missing key all mean not-ready.
+- `lobes capabilities` / `lobes endpoint` now render the running gateway's `GET /capabilities` when it is reachable, falling back to an offline `.env`-derived view tagged `"source": "offline"` with `ready=false` on every role. The CLI and the gateway can no longer disagree, because there is now one derivation instead of two.
+- A backend is wired only when its `*_BASE_URL` is set; the `or *_SERVED_NAME` clause is gone (issue #97).
+- `senses` is documented as vision-only intake. The checkpoint declares audio support but vLLM's `gemma4_unified` path does not serve it (issue #101); `stt` remains the supported speech path.
+- `docs/gemma4-mtp-draft.md` carries a superseded banner: DSpark does not load on vLLM 0.23 (#75). Issue #69's disabled-experiment-entry criterion is closed answered-negative.
+- README's quickstart no longer claims `lobes init` scaffolds the single-model deployment; the fleet duo has been the default since #69.
+
+### Fixed
+
+- **#91** — a dead cortex backend no longer surfaces as a terminal `404 model does not exist`. `handle_post` rewrote the model id once, before the failover loop, then retried the same body against a backend serving a different model, which correctly 404'd; the `4xx = client error, no failover` rule relayed that as terminal and killed multi-step agent loops. A dead, unreachable or warming owner now yields **503 + `Retry-After`** with `type: backend_unavailable`.
+- **#92 / #95** — the gateway never advertises an origin built from its internal listen port. Precedence is `GATEWAY_PUBLIC_URL` (an operator override for a tunnel or Host-rewriting proxy) > the request `Host` header > an empty endpoint. `GATEWAY_PUBLIC_URL` is deliberately NOT defaulted: a defaulted `public_url` outranks `Host` and would advertise loopback to every remote client.
+- **#96** — `AUDIO_URL` now reaches the gateway from the base fleet compose, so `stt`/`tts` stop advertising `ready=true` on a path that 404s when the audio overlay is not composed in.
+- **#97** — `GET /v1/models` no longer advertises phantom backends wired from a `*_SERVED_NAME` alone against a `default_url` naming a container that need not exist.
+- An unknown model id returns `404 model_not_found` instead of being silently served by the default backend under a different model's weights. Unknown-ness is decided against the routing table, never against the readiness-filtered `/v1/models` list, so a wired-but-dead backend still yields 503 rather than 404.
+- `test_live_main_text_returns_nonempty_content` no longer fails on a thinking model: `max_tokens=16` was consumed entirely by the reasoning trace, leaving `content=None` and `finish_reason=length` (issue #93).
+
 ## [0.39.0] - 2026-07-07
 
 ### Added
