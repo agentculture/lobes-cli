@@ -232,9 +232,26 @@ class ReadinessCache:
             return dict(self._value)
 
     def start(self) -> None:
-        """Start the background refresh thread (idempotent)."""
+        """Start the background refresh thread (idempotent).
+
+        Single-live-thread invariant: at most one refresh thread may be alive
+        at any time. If ``self._thread`` is still genuinely alive, this is a
+        no-op — it never spawns a second, overlapping refresh thread on top
+        of one that is still probing. If ``self._thread`` is set but the
+        thread has already exited (a stale reference left behind by
+        :meth:`stop` when its bounded join timed out before the thread
+        noticed the stop flag — see that method's docstring), this clears
+        the dead reference first so the cache restarts cleanly instead of
+        refusing to run again.
+        """
         if self._thread is not None:
-            return
+            if self._thread.is_alive():
+                return
+            # Stale reference to an already-exited thread (left behind by an
+            # incomplete stop() — see stop()'s docstring). Clear it so we can
+            # restart; do NOT treat a dead Thread object as still "the" live
+            # thread.
+            self._thread = None
         # Clear the stop flag so a cache restarted after stop() runs again.
         self._stop.clear()
         self._thread = threading.Thread(
@@ -254,18 +271,43 @@ class ReadinessCache:
     def stop(self) -> None:
         """Signal the daemon thread to exit and join it (idempotent, clean shutdown).
 
-        Safe to call before :meth:`start` (no thread yet). Joins with a bounded
-        timeout so a caller (e.g. server shutdown) gets deterministic termination
-        without hanging on a probe in flight.
+        Single-live-thread invariant: this must never falsely report the
+        thread gone while it is actually still running. A single refresh
+        pass probes every target *sequentially* (:meth:`_read`), so its
+        worst case is ``len(self._targets) * self._timeout`` — which can
+        exceed a fixed, small join bound. The join below is sized to cover
+        that worst case (plus a fixed margin) so a clean shutdown normally
+        completes within this call. If the
+        thread is STILL alive once the join returns (a pathologically slow
+        probe outlasting even that bound), ``self._thread`` is left
+        referring to it rather than cleared: clearing it here while the
+        thread is still running would let a later :meth:`start` spawn a
+        SECOND, overlapping refresh thread while the first is still
+        probing — exactly the bug this invariant guards against. The stop
+        flag stays set, so the still-running thread exits on its own at its
+        next ``Event.wait`` boundary; :meth:`start` recognizes and clears
+        that now-dead stale reference the next time it is called (see its
+        docstring).
+
+        Safe to call before :meth:`start` (no thread yet). Idempotent —
+        calling stop() again while the thread is still alive (or after it
+        has exited) returns promptly either way and never raises.
         """
         self._stop.set()
         thread = self._thread
         if thread is not None:
-            # Bound the join so shutdown cannot hang on a probe still in flight;
-            # the thread is a daemon, so a (pathological) straggler never blocks
-            # interpreter exit anyway.
-            thread.join(timeout=self._timeout + 1.0)
-            self._thread = None
+            # Bound the join so shutdown cannot hang indefinitely, but size it
+            # to cover one full sequential refresh pass across every target so
+            # a clean shutdown normally completes within this call rather than
+            # racing it. The thread is also a daemon, so a (pathological)
+            # straggler that outlasts even this bound never blocks interpreter
+            # exit anyway.
+            join_bound = len(self._targets) * self._timeout + 1.0
+            thread.join(timeout=join_bound)
+            if not thread.is_alive():
+                self._thread = None
+            # else: the thread is still running — leave self._thread pointing
+            # at it (see docstring above) rather than orphaning it.
 
     # Explicit alias — server shutdown code reads more naturally as close().
     close = stop
