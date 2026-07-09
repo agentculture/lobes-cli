@@ -205,6 +205,23 @@ class ReadinessCache:
         with self._lock:
             self._value = value
 
+    def refresh(self) -> None:
+        """Probe every backend once, synchronously, and update the snapshot NOW.
+
+        A public, blocking one-shot the gateway calls **once before it binds** so
+        ``GET /v1/models`` and ``GET /capabilities`` are correct on the very first
+        request: construction seeds every backend to ``None`` (*unknown*) without
+        probing, so without this a freshly-started cache would report everything
+        unready until the daemon's first background pass lands (up to one
+        ``interval``). This closes that startup window with a single bounded pass
+        (each backend probed once, ``timeout``-capped), then :meth:`start` hands
+        subsequent refreshes to the daemon thread — off the request path. It is a
+        thin public alias for the daemon's own :meth:`_refresh_once`; keeping the
+        internal name private and exposing this one keeps the seed-before-bind
+        intent legible at the one call site (``server.serve``) that needs it.
+        """
+        self._refresh_once()
+
     def current(self) -> dict[str, bool | None]:
         """Return a copy of the latest readiness snapshot. Never probes, never blocks.
 

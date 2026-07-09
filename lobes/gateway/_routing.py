@@ -161,13 +161,32 @@ def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
     return [owner] if owner is not None else []
 
 
-def list_models_payload(table: RoutingTable) -> dict:
-    """OpenAI ``/v1/models`` shape listing every backend's served model."""
+def list_models_payload(
+    table: RoutingTable, ready: Mapping[str, "bool | None"] | None = None
+) -> dict:
+    """OpenAI ``/v1/models`` shape listing the fleet's served models.
+
+    When ``ready`` is supplied — the gateway's live readiness snapshot, keyed by
+    backend **name** (exactly what
+    :meth:`lobes.gateway._readiness.ReadinessCache.current` returns) — only
+    backends whose signal ``is True`` are listed. This is the core of "advertised
+    implies reachable" (issue #92): a backend that is wired but dead/missing
+    (``None``) or reached-but-unhealthy (``False``) must NOT be advertised, so a
+    client can trust that a model id appearing here will reach a live engine.
+    ``None`` (*unknown*) and ``False`` are BOTH treated as not-ready — only an
+    affirmative ``True`` advertises; treating ``None`` as "list it anyway" is the
+    exact defect #92 fixes (a wired-but-dead backend probes ``None``, not
+    ``False``). ``ready=None`` (the default) lists every wired backend unchanged —
+    the offline/CLI path and any caller without a live signal.
+    """
+    backends = table.backends
+    if ready is not None:
+        backends = tuple(b for b in backends if ready.get(b.name) is True)
     return {
         "object": "list",
         "data": [
             {"id": backend.served_name, "object": "model", "owned_by": "lobes"}
-            for backend in table.backends
+            for backend in backends
         ],
     }
 

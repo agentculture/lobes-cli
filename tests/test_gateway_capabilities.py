@@ -21,6 +21,7 @@ import json
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -274,3 +275,164 @@ def test_integration_capabilities_endpoint_reflects_request_host(capabilities_ga
     conn.close()
     for role in ("cortex", "senses", "embedder", "reranker"):
         assert payload[role]["endpoint"] == "http://gw.example:8001"
+
+
+# --- #92 target c29/h25: origin resolution — override > Host > empty ----------
+
+
+def test_reachable_origin_public_url_wins_over_host() -> None:
+    # GATEWAY_PUBLIC_URL always outranks the Host header — a tunnel / Host-
+    # rewriting proxy declares the true external origin (trailing slash trimmed).
+    assert (
+        S.reachable_origin("spark.local:8001", "https://tunnel.example/")
+        == "https://tunnel.example"
+    )
+
+
+def test_reachable_origin_host_header_echoes_client_own_origin() -> None:
+    # No GATEWAY_PUBLIC_URL: echo the origin the client actually dialed — its own
+    # Host — NOT localhost. Regression guard for #92: a LAN client must be told
+    # its OWN origin. Defaulting public_url to localhost (rejected on the rig,
+    # where host :8000 is a foreign uvicorn daemon) would point clients at their
+    # own loopback because public_url outranks Host.
+    assert S.reachable_origin("spark.local:8001", None) == "http://spark.local:8001"
+
+
+def test_reachable_origin_empty_when_nothing_known() -> None:
+    # Neither override nor Host → None, so the caller falls back to an empty
+    # endpoint (never a fabricated host:port URL).
+    assert S.reachable_origin(None, None) is None
+
+
+def test_capabilities_endpoint_empty_never_contains_gateway_port() -> None:
+    # #92 / issue #81 t5 criterion 3, end to end: GATEWAY_PUBLIC_URL unset AND no
+    # Host header (reachable_origin → None) → every gateway-fronted role's endpoint
+    # is "" — NEVER an absolute URL built from GATEWAY_PORT (host :GATEWAY_PORT may
+    # be an unrelated daemon). Drives the exact path do_GET /capabilities takes:
+    # reachable_origin(None, cfg.public_url) → capabilities_payload(gateway_url=...).
+    env = _full_env(GATEWAY_PORT="8001")
+    table, cfg = build_config(env)
+    assert cfg.public_url is None  # GATEWAY_PUBLIC_URL unset stays override-only
+    origin = S.reachable_origin(None, cfg.public_url)  # no Host header, no override
+    assert origin is None
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=origin)
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["endpoint"] == ""
+        assert "8001" not in payload[role]["endpoint"]  # never the internal port
+        assert payload[role]["ready"] is False  # empty endpoint → never advertised ready
+
+
+def test_capabilities_public_url_wins_over_host_end_to_end() -> None:
+    # GATEWAY_PUBLIC_URL set → it wins over any Host header, end to end.
+    env = _full_env(GATEWAY_PUBLIC_URL="https://tunnel.example")
+    table, cfg = build_config(env)
+    origin = S.reachable_origin("spark.local:8001", cfg.public_url)
+    assert origin == "https://tunnel.example"
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=origin)
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["endpoint"] == "https://tunnel.example"
+
+
+# --- #92 target c15/h14: ReadinessCache folded into /capabilities readiness ----
+
+
+def test_capabilities_payload_threads_backend_ready() -> None:
+    # The PURE builder threads a True/False live signal (keyed by internal Backend
+    # name) straight into each gateway-fronted role's `ready` — `loaded` stays the
+    # config fact (roles.py t5 contract). The None→not-ready collapse is a
+    # gateway-BOUNDARY concern (a cache None means "unreachable", not roles.py's
+    # "no signal") — exercised end to end by the loopback route test below.
+    env = _full_env()
+    table, cfg = build_config(env)
+    backend_ready = {"primary": True, "multimodal": False, "embed": False, "rerank": True}
+    payload = S.capabilities_payload(
+        table, cfg, env=env, gateway_url=_GATEWAY_URL, backend_ready=backend_ready
+    )
+    assert payload["cortex"]["loaded"] is True and payload["cortex"]["ready"] is True
+    assert payload["senses"]["loaded"] is True and payload["senses"]["ready"] is False
+    assert payload["embedder"]["loaded"] is True and payload["embedder"]["ready"] is False
+    assert payload["reranker"]["ready"] is True
+
+
+def test_capabilities_payload_backend_ready_none_falls_back_to_loaded() -> None:
+    # Default (backend_ready=None): ready falls back to loaded — the CLI/offline
+    # path is unchanged, so the pure builder never needs a live signal to work.
+    env = _full_env()
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["ready"] == payload[role]["loaded"]
+
+
+def test_ready_iff_true_collapses_none_and_false_but_keeps_true() -> None:
+    # The gateway-boundary bridge: a cache None (unreachable/dead) must NOT be read
+    # as roles.py's "no signal → fall back to loaded", so it is collapsed to a
+    # definite False; False stays False; only True stays True. This is what keeps a
+    # wired-but-dead backend (which probes None) off the ready list (honesty h14).
+    collapsed = S._ready_iff_true({"primary": True, "multimodal": None, "embed": False})
+    assert collapsed == {"primary": True, "multimodal": False, "embed": False}
+
+
+@pytest.fixture
+def readiness_capabilities_gateway(monkeypatch):
+    """A loopback /capabilities gateway wired with a ReadinessCache whose verdicts
+    the test controls and whose probe counts its calls (daemon NOT started; seeded
+    by one synchronous refresh, mirroring serve())."""
+    from lobes.gateway._readiness import ReadinessCache
+
+    env = _full_env()
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    table, cfg = build_config(env)
+    verdicts = {b.base_url: True for b in table.backends}
+    probe_calls: list[str] = []
+
+    def probe(base_url):
+        probe_calls.append(base_url)
+        return verdicts.get(base_url)
+
+    cache = ReadinessCache.from_backends(table.backends, probe=probe, start=False)
+    cache.refresh()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg, None, cache))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+    try:
+        yield SimpleNamespace(
+            base=f"http://{host}:{port}", verdicts=verdicts, probe_calls=probe_calls, cache=cache
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        cache.stop()
+
+
+def test_capabilities_route_dead_backend_ready_false_h14(readiness_capabilities_gateway) -> None:
+    # h14 end to end: a wired-but-dead backend probes None; the HTTP /capabilities
+    # route collapses that to ready=False (loaded stays True) — the dead backend is
+    # NOT advertised ready, even though roles.py would otherwise fall back to loaded.
+    gw = readiness_capabilities_gateway
+    # All True initially → every gateway-fronted role ready.
+    with urllib.request.urlopen(gw.base + "/capabilities", timeout=5) as r:
+        payload = json.load(r)
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["ready"] is True
+    # Kill the multimodal (senses) backend → it probes None.
+    gw.verdicts["http://vllm-multimodal:8000"] = None
+    gw.cache.refresh()
+    with urllib.request.urlopen(gw.base + "/capabilities", timeout=5) as r:
+        payload = json.load(r)
+    assert payload["senses"]["loaded"] is True  # still wired
+    assert payload["senses"]["ready"] is False  # but dead → not advertised ready
+    assert payload["cortex"]["ready"] is True  # the live one is unaffected
+
+
+def test_capabilities_route_opens_no_probe(readiness_capabilities_gateway) -> None:
+    # /capabilities is a read verb: it reads the cache via socket-free .current();
+    # a GET must add zero probe calls beyond the one synchronous seed.
+    gw = readiness_capabilities_gateway
+    seeded = len(gw.probe_calls)
+    for _ in range(4):
+        with urllib.request.urlopen(gw.base + "/capabilities", timeout=5) as r:
+            assert r.status == 200
+    assert len(gw.probe_calls) == seeded
