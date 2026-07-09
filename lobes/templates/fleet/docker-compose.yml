@@ -618,7 +618,19 @@ services:
       - vllm-rerank
     environment:
       - GATEWAY_PORT=8000
-      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-}
+      # Defaults to the PUBLISHED host port (VLLM_PORT, below), not the
+      # internal container port — configured truth, not Host-header inference
+      # (issue #96). Set GATEWAY_PUBLIC_URL explicitly to override for a
+      # tunnel / Host-rewriting reverse proxy (still wins over this default).
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-http://localhost:${VLLM_PORT:-8000}}
+      # Audio/realtime backend for /v1/audio/*. Empty by default — this base
+      # template has no realtime container; the --audio overlay
+      # (docker-compose.audio.yml) supplies the real http://realtime:8080
+      # value via its gateway environment: override (issue #96). Declaring the
+      # key here (rather than leaving it entirely absent) means a base-only
+      # deployment resolves audio_url to unset (stt/tts report loaded=false),
+      # instead of a 404ing endpoint /capabilities still calls ready=true.
+      - AUDIO_URL=${AUDIO_URL:-}
       - PRIMARY_URL=http://vllm-primary:8000
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
