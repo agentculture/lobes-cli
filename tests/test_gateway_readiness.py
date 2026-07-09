@@ -292,6 +292,193 @@ def test_stop_is_idempotent_and_safe_before_start() -> None:
     assert not cache.is_alive()
 
 
+# --- ReadinessCache: slow-probe / short-timeout race (Qodo finding, PR #102) --
+#
+# The bug: a single refresh pass probes every target SEQUENTIALLY, so its
+# worst case is ``len(targets) * timeout``, which can exceed stop()'s bounded
+# join. The old stop() unconditionally cleared ``self._thread`` after the
+# join regardless of whether the thread had actually exited; a later start()
+# then saw ``_thread is None`` and spawned a SECOND, overlapping refresh
+# thread while the first was still probing. These tests force that race with
+# an injected probe that blocks on a ``threading.Event`` (deterministic — no
+# ``time.sleep`` guessing) until the test explicitly releases it.
+
+
+def test_stop_incomplete_join_then_start_never_creates_second_live_thread() -> None:
+    """Reproduces the Qodo finding directly: stop()'s bounded join can return
+    while the refresh thread is still alive (blocked in a slow probe); a
+    subsequent start() must recognize the thread is still live and refuse to
+    spawn a second, concurrently-running refresh thread.
+
+    Against the OLD ``stop()`` (which unconditionally set
+    ``self._thread = None`` after the join, regardless of whether the thread
+    had actually exited), this test FAILS: start() sees ``_thread is None``
+    and spawns a brand-new thread while the first is still blocked inside the
+    probe, so ``cache._thread`` ends up pointing at a second, distinct
+    ``Thread`` object even though the first is still alive.
+    """
+    probe_entered = threading.Event()
+    release_probe = threading.Event()
+
+    def slow_probe(_url: str) -> bool | None:
+        probe_entered.set()
+        # Block until the test releases it. The wait() timeout is just a
+        # safety net against a truly hung test process, not the mechanism
+        # under test — stop()'s own join timeout is what must bound this.
+        release_probe.wait(timeout=5.0)
+        return True
+
+    cache = R.ReadinessCache(
+        {"slow": "http://slow:8000"},
+        probe=slow_probe,
+        timeout=0.05,
+        interval=1000,
+        start=True,
+    )
+    try:
+        assert probe_entered.wait(2.0), "background thread never began probing"
+        first_thread = cache._thread
+        assert first_thread is not None and first_thread.is_alive()
+
+        # stop()'s join is bounded well below how long the probe will block
+        # (release_probe is not set yet), so stop() must return promptly
+        # with the thread STILL alive — this is the race window.
+        cache.stop()
+        assert first_thread.is_alive(), (
+            "test setup invalid: the probe returned before stop()'s join timed out, "
+            "so this run never exercised the race"
+        )
+
+        # The invariant under test: start() after an incomplete stop() must
+        # NOT spawn a second, concurrently-live refresh thread.
+        cache.start()
+        assert cache._thread is first_thread, (
+            "start() spawned a second refresh thread while the first was still "
+            "alive — overlapping refresh loops, the exact bug this test guards"
+        )
+
+        # Let the original probe return so the first thread can exit cleanly
+        # and not leak past this test.
+        release_probe.set()
+        first_thread.join(timeout=5.0)
+        assert not first_thread.is_alive()
+    finally:
+        release_probe.set()
+        cache.stop()
+
+
+def test_start_after_incomplete_stop_thread_exits_then_restart_replaces_stale_reference() -> None:
+    """After a bounded join times out with the thread still alive, ``stop()``
+    leaves ``self._thread`` referring to it (not orphaned, not nulled). Once
+    that thread later actually exits on its own — it notices ``self._stop``
+    at its next ``Event.wait`` boundary — a later ``start()`` must recognize
+    the now-dead-but-still-referenced thread and replace it with a fresh one,
+    rather than treating a dead ``Thread`` object as though it were still the
+    live refresh thread forever.
+    """
+    probe_entered = threading.Event()
+    release_probe = threading.Event()
+
+    def slow_probe(_url: str) -> bool | None:
+        probe_entered.set()
+        release_probe.wait(timeout=5.0)
+        return True
+
+    cache = R.ReadinessCache(
+        {"slow": "http://slow:8000"},
+        probe=slow_probe,
+        timeout=0.05,
+        interval=1000,
+        start=True,
+    )
+    try:
+        assert probe_entered.wait(2.0)
+        stale_thread = cache._thread
+
+        cache.stop()  # bounded join times out; thread is still blocked in-probe
+        assert cache._thread is stale_thread  # not cleared while still alive
+
+        release_probe.set()  # let the blocked probe return so the thread can exit
+        stale_thread.join(timeout=5.0)
+        assert not stale_thread.is_alive()
+
+        # stop() only clears the reference when ITS OWN join observes the
+        # exit; the thread exiting later, on its own, does not retroactively
+        # clear it — start() is responsible for noticing the stale reference.
+        assert cache._thread is stale_thread
+
+        cache.start()
+        assert cache._thread is not stale_thread  # stale dead reference replaced
+        assert cache.is_alive()
+    finally:
+        release_probe.set()
+        cache.stop()
+
+
+def test_start_after_clean_stop_restarts() -> None:
+    # The ordinary path (no race): a fully-completed stop() clears the
+    # reference outright, and start() spawns a normal fresh thread.
+    cache = R.ReadinessCache(
+        {"a": "http://a:8000"}, probe=lambda u: True, interval=0.01, start=True
+    )
+    try:
+        assert cache.is_alive()
+        cache.stop()
+        assert not cache.is_alive()
+        assert cache._thread is None  # a clean, fully-joined stop clears the reference
+
+        cache.start()
+        assert cache.is_alive()
+    finally:
+        cache.stop()
+
+
+def test_stop_on_still_running_thread_does_not_hang_and_is_idempotent() -> None:
+    """stop() must return promptly (its bounded join, not the full probe
+    duration) even when the thread is still blocked in a slow probe, and it
+    must not orphan that thread. A second stop() call afterward — while the
+    thread is still alive — must also return promptly and not raise.
+    """
+    probe_entered = threading.Event()
+    release_probe = threading.Event()
+
+    def slow_probe(_url: str) -> bool | None:
+        probe_entered.set()
+        release_probe.wait(timeout=5.0)
+        return True
+
+    cache = R.ReadinessCache(
+        {"slow": "http://slow:8000"},
+        probe=slow_probe,
+        timeout=0.05,
+        interval=1000,
+        start=True,
+    )
+    try:
+        assert probe_entered.wait(2.0)
+
+        started = time.time()
+        cache.stop()
+        elapsed = time.time() - started
+        # Join bound is on the order of len(targets) * timeout + 1.0 (~1.05s
+        # for one target here) — nowhere near the 5s the probe could block.
+        assert elapsed < 3.0, f"stop() hung waiting on a still-running probe ({elapsed:.2f}s)"
+
+        # Still alive (it deliberately outlasted the join) → not orphaned:
+        # the reference must still point at the real, live thread.
+        assert cache._thread is not None
+        assert cache._thread.is_alive()
+
+        # Idempotent: calling stop() again while the thread is STILL alive
+        # must not hang or raise.
+        started2 = time.time()
+        cache.stop()
+        assert time.time() - started2 < 3.0
+    finally:
+        release_probe.set()
+        cache.stop()
+
+
 # --- ReadinessCache.from_backends: ergonomic constructor --------------------
 
 
