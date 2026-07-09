@@ -68,20 +68,32 @@ def _opener(behavior):
 # --- handle_post: failover / default / rewrite (no sockets) ---------------
 
 
-def test_failover_on_connection_refused() -> None:
+def test_no_failover_on_connection_refused() -> None:
+    # INVERTED for issue #91 ("advertised implies reachable"): a dead primary
+    # must NOT retry against fallback (which serves a different model — the
+    # forwarded body still names "P", and fallback would either 404 on an
+    # unknown id or, worse, silently answer as the wrong model). order_backends
+    # now yields only the owner, so handle_post attempts primary once and stops.
+    # Interim: this surfaces as the existing 502 upstream_unavailable path (t6 /
+    # issue #91 converts that to 503 + Retry-After with a distinguishable error
+    # type — not this task's file, lobes/gateway/server.py is out of scope here).
     table, cfg = _cfg()
     opener, calls = _opener({"primary": S.UpstreamError("refused"), "fallback": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
-    assert [c[0] for c in calls] == ["primary", "fallback"]
-    assert resp.status == 200 and resp.upstream is not None
+    assert [c[0] for c in calls] == ["primary"]  # fallback is never dialed
+    assert resp.status == 502 and resp.upstream is None
 
 
-def test_failover_on_5xx() -> None:
+def test_no_failover_on_5xx() -> None:
+    # INVERTED for issue #91: a same-task 5xx (e.g. EngineDeadError) must not
+    # fail over to a backend serving a different model. See
+    # test_no_failover_on_connection_refused for the full rationale; same t6
+    # note re: 502 -> 503+Retry-After being out of this task's scope.
     table, cfg = _cfg()
     opener, calls = _opener({"primary": 503, "fallback": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
-    assert [c[0] for c in calls] == ["primary", "fallback"]
-    assert resp.status == 200
+    assert [c[0] for c in calls] == ["primary"]  # fallback is never dialed
+    assert resp.status == 502
 
 
 def test_no_failover_on_4xx() -> None:
@@ -93,11 +105,16 @@ def test_no_failover_on_4xx() -> None:
 
 
 def test_all_backends_down_returns_502() -> None:
+    # With no cross-backend failover (issue #91), only the owner is ever
+    # attempted — fallback's outcome is irrelevant to a "P" request and is
+    # never dialed. attempts therefore has a single entry, not one per backend.
+    # (t6 converts this 502 to 503 + Retry-After; out of scope for this task.)
     table, cfg = _cfg()
-    opener, _ = _opener({"primary": S.UpstreamError("x"), "fallback": S.UpstreamError("y")})
+    opener, calls = _opener({"primary": S.UpstreamError("x"), "fallback": S.UpstreamError("y")})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
+    assert [c[0] for c in calls] == ["primary"]  # fallback never dialed
     assert resp.status == 502 and resp.upstream is None
-    assert json.loads(resp.body)["error"]["attempts"] == ["x", "y"]
+    assert json.loads(resp.body)["error"]["attempts"] == ["x"]
 
 
 def test_missing_model_routes_to_default() -> None:
@@ -108,11 +125,15 @@ def test_missing_model_routes_to_default() -> None:
     assert resp.status == 200
 
 
-def test_explicit_fallback_routes_to_fallback_first() -> None:
+def test_explicit_fallback_routes_to_fallback_only() -> None:
+    # RENAMED from test_explicit_fallback_routes_to_fallback_first (issue #91):
+    # "first" implied there could be a second (a failover to primary) — there
+    # no longer is. An explicit "F" request is attempted at fallback and
+    # nowhere else, even though primary is healthy and configured in the table.
     table, cfg = _cfg()
     opener, calls = _opener({"primary": 200, "fallback": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"F"}', opener)
-    assert calls[0][0] == "fallback"
+    assert [c[0] for c in calls] == ["fallback"]  # primary is never dialed
     assert resp.status == 200
 
 
