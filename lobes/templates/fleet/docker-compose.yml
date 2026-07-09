@@ -618,11 +618,17 @@ services:
       - vllm-rerank
     environment:
       - GATEWAY_PORT=8000
-      # Defaults to the PUBLISHED host port (VLLM_PORT, below), not the
-      # internal container port — configured truth, not Host-header inference
-      # (issue #96). Set GATEWAY_PUBLIC_URL explicitly to override for a
-      # tunnel / Host-rewriting reverse proxy (still wins over this default).
-      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-http://localhost:${VLLM_PORT:-8000}}
+      # MUST default to EMPTY (issue #92 / #96). GATEWAY_PUBLIC_URL is an
+      # operator override ONLY — a tunnel URL or a Host-rewriting reverse
+      # proxy. Do NOT default it to a localhost/published-port URL: reachable_origin
+      # prefers a set public_url OVER the request Host header, so ANY default
+      # here (e.g. http://localhost:${VLLM_PORT}) would advertise loopback to
+      # every remote client in GET /capabilities — a LAN/tunnel caller dialing
+      # spark.local:8001 would be told to use http://localhost:8001, a foreign
+      # service on THEIR machine (the #92 defect). Empty → the gateway echoes
+      # the origin the client actually dialed (its Host header); with neither,
+      # it emits an empty endpoint, never one built from the internal GATEWAY_PORT.
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-}
       # Audio/realtime backend for /v1/audio/*. Empty by default — this base
       # template has no realtime container; the --audio overlay
       # (docker-compose.audio.yml) supplies the real http://realtime:8080
