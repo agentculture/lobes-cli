@@ -20,6 +20,7 @@ from __future__ import annotations
 from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import build_config
 from lobes.roles import (
+    ROLE_BACKEND,
     ROLE_FORBIDDEN,
     ROLE_MAX_MODEL_LEN_ENV,
     ROLE_RESPONSIBILITIES,
@@ -39,6 +40,16 @@ _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 
 _EXPECTED_ROLES = {"cortex", "senses", "embedder", "reranker", "stt", "tts"}
+
+# The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
+# GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL
+# listen config, not necessarily a client-reachable address; see
+# lobes.roles._gateway_base_url). Every real caller (the CLI, the gateway's
+# own HTTP route) always passes an explicit, known-reachable `gateway_url` —
+# so this default mirrors that reality for the tests below that aren't
+# specifically exercising the "no gateway_url known" path (which pass their
+# own `gateway_url=None` override instead, see the "no fabrication" tests).
+_DEFAULT_TEST_GATEWAY_URL = "http://localhost:8000"
 
 
 def _full_env() -> dict[str, str]:
@@ -75,6 +86,13 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
     # against the catalog native, which is exactly the t4-vs-t5 regression this
     # module now guards against.
     kw.setdefault("env", env)
+    # Default to a realistic, dialable gateway_url — exactly what every real
+    # caller (the CLI, the gateway's own HTTP route) always supplies (t5,
+    # criterion 3: build_role_registry never fabricates one from GATEWAY_HOST/
+    # GATEWAY_PORT). A test that specifically wants the "no gateway_url known"
+    # path passes `gateway_url=None` explicitly, which `setdefault` respects
+    # (the key is already present, so the default below is skipped).
+    kw.setdefault("gateway_url", _DEFAULT_TEST_GATEWAY_URL)
     return build_role_registry(table, server, audio_ready=audio_ready, **kw)
 
 
@@ -257,35 +275,56 @@ def test_static_responsibility_maps_cover_all_six_roles() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gateway_roles_endpoint_defaults_to_derived_gateway_url() -> None:
-    """host 0.0.0.0 (bind wildcard) is normalized to a caller-usable localhost."""
-    registry = _registry(_full_env())
-    for name in ("cortex", "senses", "embedder", "reranker"):
-        assert registry[name].endpoint == "http://localhost:8000"
-
-
-def test_gateway_roles_endpoint_brackets_ipv6_host() -> None:
-    """An IPv6 literal GATEWAY_HOST must be bracketed per RFC 3986 — an
-    unbracketed 'http://::1:8000' is not a valid/parseable URL authority
-    (the address's own colons collide with the ':<port>' separator)."""
+def test_no_gateway_url_and_no_public_url_yields_empty_endpoint_never_fabricated() -> None:
+    """issue #81 t5, criterion 3 — the core fix. GATEWAY_HOST/GATEWAY_PORT are
+    the gateway's own INTERNAL listen config (where it binds inside its
+    container), not necessarily what a caller outside can dial: on the
+    reference rig the gateway listens on internal container port 8000 but is
+    PUBLISHED on host port 8001, and host port 8000 belongs to an unrelated
+    daemon. Advertising a URL fabricated from GATEWAY_HOST/GATEWAY_PORT would
+    silently point a Colleague client at that foreign service, so absent an
+    explicit gateway_url or an operator-declared GATEWAY_PUBLIC_URL, the
+    endpoint must be empty — never http://<host>:<GATEWAY_PORT>."""
     env = _full_env()
-    env["GATEWAY_HOST"] = "::1"
-    registry = _registry(env)
+    env["GATEWAY_HOST"] = "gateway-internal"  # would have been the old fabrication input
+    env["GATEWAY_PORT"] = "8000"  # the internal-only listen port
+    registry = _registry(env, gateway_url=None)  # explicitly opt out of the test default
     for name in ("cortex", "senses", "embedder", "reranker"):
-        assert registry[name].endpoint == "http://[::1]:8000"
+        info = registry[name]
+        assert info.endpoint == ""
+        assert "gateway-internal" not in info.endpoint
+        assert "8000" not in info.endpoint
+        # loaded stays the config truth even though nothing is dialable...
+        assert info.loaded is True
+        # ...but an empty endpoint can never be advertised ready (criterion 3).
+        assert info.ready is False
 
 
-def test_gateway_roles_endpoint_leaves_ipv4_and_hostnames_unbracketed() -> None:
-    """IPv4 literals and hostnames carry no colon — bracketing must be scoped
-    to IPv6 only, never applied to these."""
-    for host, expected in (
-        ("127.0.0.1", "http://127.0.0.1:8000"),
-        ("gateway.internal", "http://gateway.internal:8000"),
-    ):
-        env = _full_env()
-        env["GATEWAY_HOST"] = host
-        registry = _registry(env)
-        assert registry["cortex"].endpoint == expected
+def test_gateway_public_url_is_the_one_implicit_endpoint_source() -> None:
+    """GATEWAY_PUBLIC_URL is an operator's explicit, caller-reachable origin
+    declaration — read verbatim (trailing slash trimmed), never derived from
+    GATEWAY_HOST/GATEWAY_PORT. It is the only source of an endpoint besides an
+    explicit gateway_url."""
+    env = _full_env()
+    env["GATEWAY_PUBLIC_URL"] = "https://tunnel.example/"
+    registry = _registry(env, gateway_url=None)
+    for name in ("cortex", "senses", "embedder", "reranker"):
+        info = registry[name]
+        assert info.endpoint == "https://tunnel.example"
+        assert info.loaded is True
+        # Non-empty endpoint + loaded + no live signal supplied → falls back
+        # to the coarse loaded proxy, the t4 behaviour.
+        assert info.ready is True
+
+
+def test_explicit_gateway_url_wins_over_public_url() -> None:
+    """An explicit gateway_url (the caller's own reachable origin, issue #87)
+    always takes precedence over a configured GATEWAY_PUBLIC_URL."""
+    env = _full_env()
+    env["GATEWAY_PUBLIC_URL"] = "https://tunnel.example/"
+    registry = _registry(env, gateway_url="https://actual-caller-origin.example")
+    for name in ("cortex", "senses", "embedder", "reranker"):
+        assert registry[name].endpoint == "https://actual-caller-origin.example"
 
 
 def test_explicit_gateway_url_applies_to_all_roles_including_audio() -> None:
@@ -463,6 +502,94 @@ def test_audio_ready_none_falls_back_to_audio_url() -> None:
     for name in ("stt", "tts"):
         assert registry[name].loaded is False
         assert registry[name].ready is False
+
+
+# ---------------------------------------------------------------------------
+# Issue #81 t5 — backend_ready: generalising the stt/tts ready/loaded split
+# (issue #89/#90) to the four gateway-fronted roles. `RoleInfo.ready` is no
+# longer a bare alias of `loaded` for cortex/senses/embedder/reranker either.
+# ---------------------------------------------------------------------------
+
+
+def test_backend_ready_sets_ready_independent_of_loaded() -> None:
+    """A live signal in `backend_ready` (keyed by ROLE_BACKEND name) sets a
+    gateway-fronted role's `ready` — `loaded` stays the config fact."""
+    registry = _registry(
+        _full_env(),
+        backend_ready={"primary": False, "multimodal": True, "embed": False, "rerank": True},
+    )
+    assert registry["cortex"].loaded is True
+    assert registry["cortex"].ready is False  # wired, but the live probe said no
+    assert registry["senses"].loaded is True
+    assert registry["senses"].ready is True
+    assert registry["embedder"].loaded is True
+    assert registry["embedder"].ready is False
+    assert registry["reranker"].loaded is True
+    assert registry["reranker"].ready is True
+
+
+def test_backend_ready_missing_entry_falls_back_to_loaded() -> None:
+    """A backend_ready mapping that simply has no entry for a role's backend
+    (e.g. a readiness cache that hasn't probed it yet) degrades to the coarse
+    `loaded` proxy for THAT role only — never raises, never guesses."""
+    registry = _registry(_full_env(), backend_ready={"primary": True})
+    assert registry["cortex"].ready is True  # has a live entry
+    for role in ("senses", "embedder", "reranker"):
+        info = registry[role]
+        assert info.ready == info.loaded  # no entry → falls back, same as backend_ready=None
+
+
+def test_backend_ready_none_preserves_t4_behaviour() -> None:
+    """backend_ready omitted entirely (the default) → ready == loaded for every
+    gateway-fronted role, exactly the pre-t5 behaviour — every existing
+    non-HTTP caller is unaffected."""
+    registry = _registry(_full_env())
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert registry[role].ready == registry[role].loaded
+
+
+def test_backend_ready_never_fabricates_ready_when_backend_unwired() -> None:
+    """Clamp (Qodo #90-class finding, generalised to all four gateway-fronted
+    roles): a role whose backend is NOT wired in this deployment must never
+    report ready=True, no matter what a caller's backend_ready says. A stale
+    or wrong-keyed live signal can't override 'nothing is actually wired'."""
+    registry = _registry(
+        _primary_only_env(),  # senses/embedder/reranker are NOT wired here
+        backend_ready={"primary": True, "multimodal": True, "embed": True, "rerank": True},
+    )
+    assert registry["cortex"].loaded is True
+    assert registry["cortex"].ready is True
+    for role in ("senses", "embedder", "reranker"):
+        info = registry[role]
+        assert info.loaded is False
+        assert info.ready is False  # never True, despite backend_ready saying so
+        assert not (info.ready and info.endpoint == "")  # never ready+undialable
+
+
+def test_backend_ready_never_fabricates_ready_when_endpoint_empty() -> None:
+    """Clamp, the other half (criterion 3): even a WIRED role with a live
+    True signal must never report ready=True when the resolved endpoint is
+    empty (no gateway_url, no GATEWAY_PUBLIC_URL known) — there is nothing to
+    dial, so 'ready' would be a lie."""
+    registry = _registry(
+        _full_env(),
+        gateway_url=None,  # opt out of the test default → endpoint resolves to ""
+        backend_ready={"primary": True, "multimodal": True, "embed": True, "rerank": True},
+    )
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        info = registry[role]
+        assert info.endpoint == ""
+        assert info.loaded is True
+        assert info.ready is False
+
+
+def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
+    """ROLE_BACKEND's values are exactly the backend names a caller's
+    backend_ready mapping (e.g. lobes.gateway._readiness.ReadinessCache) is
+    keyed by — "primary"/"multimodal"/"embed"/"rerank" — so a caller can pass
+    ReadinessCache.current() straight through with no key translation."""
+    assert set(ROLE_BACKEND.values()) == {"primary", "multimodal", "embed", "rerank"}
+    assert set(ROLE_BACKEND) == {"cortex", "senses", "embedder", "reranker"}
 
 
 # ---------------------------------------------------------------------------
