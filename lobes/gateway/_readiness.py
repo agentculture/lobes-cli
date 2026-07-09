@@ -166,7 +166,7 @@ class ReadinessCache:
         self._thread: threading.Thread | None = None
         # Seed every backend to unknown WITHOUT probing: construction opens no
         # socket and never blocks startup on a down backend (see module docstring).
-        self._value: dict[str, bool | None] = {name: None for name in self._targets}
+        self._value: dict[str, bool | None] = dict.fromkeys(self._targets, None)
         if start:
             self.start()
 
