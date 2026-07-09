@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from lobes import __version__
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 
@@ -224,7 +225,11 @@ def gateway(monkeypatch):
 def test_integration_health_and_models(gateway) -> None:
     with urllib.request.urlopen(gateway + "/health", timeout=5) as r:
         assert r.status == 200
-        assert json.load(r)["status"] == "ok"
+        health = json.load(r)
+    assert health["status"] == "ok"
+    # issue #99: /health reports the deployed lobes-cli release so a remote
+    # client (or `lobes doctor`) can detect artifact skew without docker.
+    assert health["version"] == __version__
     with urllib.request.urlopen(gateway + "/v1/models", timeout=5) as r:
         payload = json.load(r)
     assert [m["id"] for m in payload["data"]] == ["P", "F"]

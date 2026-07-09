@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
-from lobes import _metrics
+from lobes import __version__, _metrics
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._config import ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
@@ -817,7 +817,19 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
         if route == "/health":
-            self._send_json(200, {"status": "ok", "service": "model-gear-gateway"})
+            # `version` is the deployed lobes-cli release THIS gateway process was
+            # built from (`__version__`, read off installed package metadata inside
+            # the container) — additive, issue #99. It is what lets a remote client
+            # (or `lobes doctor`, via lobes.runtime._health.fetch_health) detect
+            # deployed-artifact skew docker-free: Dockerfile.gateway pins
+            # `pip install "lobes-cli==${MODEL_GEAR_VERSION}"` once, at `lobes init`
+            # time, and nothing re-pins it afterwards, so a gateway container can
+            # silently run a stale release for days after the host CLI (and PyPI)
+            # moved on — exactly what made issue #92 look like a code regression
+            # when the fix was already published and simply undeployed.
+            self._send_json(
+                200, {"status": "ok", "service": "model-gear-gateway", "version": __version__}
+            )
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.
