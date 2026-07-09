@@ -1,0 +1,454 @@
+{
+  "slug": "lobes-never-advertises-a-capability-it-cannot-serv",
+  "title": "lobes never advertises a capability it cannot serve: every endpoint, model and role in the machine-readable contract is proven reachable, and a fleet fault degrades to a retryable 503 instead of a terminal 404",
+  "frame_slug": "lobes-never-advertises-a-capability-it-cannot-serv",
+  "schema_version": 1,
+  "status": "exported",
+  "created": "2026-07-09T05:37:28Z",
+  "updated": "2026-07-09T05:44:47Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes never advertises a capability it cannot serve: every endpoint, model and role in the machine-readable contract is proven reachable, and a fleet fault degrades to a retryable 503 instead of a terminal 404"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "On the live rig, for EVERY role in the contract, the advertised endpoint+path answers a real request with a non-404 status; and no model listed by GET /v1/models returns a 404 'does not exist' from POST /v1/chat/completions on the same origin."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Programmatic consumers of the lobes contract \u2014 Colleague's resolve_role_base_url dialing GET /capabilities, and any long-running agent loop driving /v1/chat/completions through the gateway \u2014 plus the lobes operator who runs the fleet on the DGX Spark."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "Colleague's resolve_role_base_url, given ONLY GET /capabilities and no COLLEAGUE_*_BASE_URL override, reaches cortex and senses and gets an answer \u2014 the scenario that failed on 2026-07-06 and again on 2026-07-09."
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "lobes advertises CONFIGURATION and calls it REACHABILITY, and nothing ever dials what it advertises. GET /capabilities returns endpoint=http://localhost:8000 with ready=true for every role while the gateway is published on :8001 and :8000 is an unrelated uvicorn service (reachy-mini-dae) answering {\"detail\":\"Not Found\"}. GET /v1/models lists 6 models while only 4 vLLM containers run. RoleInfo.ready is a config fact (==loaded), not a probe \u2014 its own docstring says so. And the deployed gateway silently runs lobes 0.36.0 while main is 0.39.0, so the #87 fix that shipped in 0.38.0 is not even in the running image."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A test asserts that the origin the gateway advertises never equals its own internal listen port when a published port differs, and that GET /capabilities and 'lobes capabilities --json' return byte-identical endpoint values for the same deployment."
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "A fleet fault is laundered into a terminal client error. handle_post rewrites the model id ONCE before the failover loop; order_backends offers every same-task generate backend as a failover candidate ([primary, multimodal, multimodal-coder, middle] for cortex). When the cortex vLLM returns >=500 (EngineDeadError, observed 2026-07-09 04:08:34) the gateway retries the same body \u2014 still naming the Qwen model \u2014 against the Gemma backend, which correctly 404s, and '4xx -> commit to this backend, no failover' relays that terminal 404 to the client. The primary container's logs show the symmetric case at 04:34:01 and 04:39:01: 'The model coolthor/gemma-4-12B-it-NVFP4A16 does not exist.' logged BY the Qwen container."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "With the cortex backend forced to 5xx or made unreachable, a request naming the cortex model NEVER reaches the Gemma backend, and the client receives 503 + Retry-After \u2014 reproducible in a unit test with a fake fleet, not just observed in production logs."
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "A single unlucky turn kills a whole agent loop. A terminal 404 tells a well-behaved client the model will NEVER exist, so colleague work items abort after N steps with status=error and no output \u2014 while the model is listed in /v1/models before and after. And a lobes-discovered senses endpoint degrades instantly (~0.002s per call) because the advertised origin is dead. This has now regressed three times across #87 -> #90 -> #92: the shape keeps breaking because no test ever dials the deployed artifact."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A multi-step client loop survives an owner-backend fault: the turn that would previously have died on a terminal 404 instead receives a retryable status, and a client with ordinary backoff completes the run."
+    },
+    {
+      "id": "c6",
+      "kind": "after_state",
+      "text": "Every advertised capability is proven reachable before it is advertised, and every fleet fault surfaces as a retryable status. /capabilities advertises an origin derived from configured truth (never the gateway's internal listen port) and a ready flag backed by a live backend probe. /v1/models lists only backends that actually answer. A request naming a model that /v1/models lists never receives a 404 'does not exist' from the same origin \u2014 an owner that is dead yields 503 + Retry-After. The CLI and the gateway agree on the endpoint byte-for-byte. And an executable verb dials every advertised role endpoint+path so 'advertised implies reachable' is a test, not a promise."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Every claim in the after_state is asserted by an executable check, and each of those checks FAILS when run against today's HEAD + today's deployed rig."
+    },
+    {
+      "id": "c7",
+      "kind": "before_state",
+      "text": "The same disease reaches the roles themselves. 'senses' advertises responsibilities=[intake, normalize_input, ...] and the catalog claims image+text and audio+text, but every probe lobes owns is text-only: roles_measure.py:183 sends 'Write a short paragraph.' to senses, and assess.py builds no multimodal content parts at all. The image/audio probes exist only in tests/test_smoke_duo.py:287-347, skipped unless LOBES_SMOKE_BASE_URL is set, with no recorded run. The image+text/audio+text evidence in catalog.py:282 belongs to the sakamakismile coder checkpoint; docs/gemma-4-12b-nvfp4.md:279 states outright that those checks were 'not independently re-run against the base [coolthor] checkpoint specifically'. coolthor became the default in 0.35.0 on MTP decode throughput \u2014 orthogonal to the image+audio precondition #74 set."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "lobes' own tooling sends a real image and a real audio clip to the senses role and verifies the answer against known ground truth (not merely that the response was 200 with non-empty content), and the recorded evidence names the coolthor checkpoint."
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "NOT a service mesh, a load balancer, or a health-check-per-request proxy: the gateway stays a stdlib reverse proxy with a bounded, cached readiness signal \u2014 no per-request upstream probe on the hot path. NOT a claim about answer quality: lobes keeps emitting runtime metrics only, never task-quality claims (the #81 h15 honesty condition still holds). NOT a rewrite of the role vocabulary, the tier aliases, or the compose topology. NOT an attempt to keep cortex alive through EngineDeadError \u2014 recovering the vLLM engine is out of scope; only the gateway's HONESTY about a dead engine is in scope."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The gateway's POST hot path opens no additional upstream probe connection per request: the readiness signal is read from a cache, exactly as pressure already is."
+    },
+    {
+      "id": "c10",
+      "kind": "success_signal",
+      "text": "Five falsifiable checks, each runnable: (1) curl GET :8001/capabilities | jq '.[].endpoint' returns the SAME origin as 'lobes capabilities --json' for the same deployment, and that origin answers 200 on its advertised path. (2) With the cortex container stopped, POST /v1/chat/completions model=<cortex id> returns 503 + Retry-After \u2014 never 404, never a Gemma answer. (3) GET /v1/models lists exactly the models whose backends answer. (4) 'lobes doctor' (or the new verify verb) exits non-zero when the deployed gateway's lobes version differs from the CLI's. (5) The live smoke layer posts a real image and a real audio clip at coolthor and records the pass in docs, closing #74 and #69's criterion 7 with evidence rather than assertion."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Each of the five success checks is a command a reviewer can paste and watch fail on main, then pass on the branch."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The gateway advertises an origin from CONFIGURED TRUTH, never inference: the fleet compose injects GATEWAY_PUBLIC_URL (derived from the published VLLM_PORT) into the gateway container, and reachable_origin prefers it over the request Host header. When neither configured truth nor a Host header is available the gateway MUST NOT fabricate an absolute URL from its internal listen port."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "With GATEWAY_PUBLIC_URL unset AND the request carrying no Host header, the gateway emits an endpoint that is either absent/empty or explicitly relative \u2014 never an absolute URL built from GATEWAY_PORT."
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "A model id returned by GET /v1/models never receives a 404 'model does not exist' from POST /v1/chat/completions on the same origin. This is the single invariant issue #91 asks for, stated as a test."
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The listed-never-404 invariant is tested at the RACE, not at rest: a fake fleet lists model M, the owner is then killed, and a completion naming M returns 503 + Retry-After \u2014 never 404. A second test asserts the converse: an id that was NEVER in /v1/models does not silently get served by the default backend under a different model's weights."
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "When the owner backend of a requested model is dead, unreachable, or warming, and no legal failover exists, the gateway returns 503 + Retry-After with a distinguishable error type (e.g. type=backend_unavailable), never 404 and never 502-as-terminal."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "A dead owner yields status 503 with a Retry-After header and an error type distinguishable from both 'model unknown' and 'all backends down', asserted in a unit test."
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "GET /v1/models and GET /capabilities reflect a bounded, cached LIVE readiness signal, not a config fact. RoleInfo.ready stops being an alias of loaded for the four gateway-fronted roles, exactly as it already stopped being one for stt/tts in #89. Phantom backends (wired by *_SERVED_NAME with no running container) never appear as ready."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "A backend wired in config but with no listening container reports ready=false and is absent from GET /v1/models, without the gateway probing on the request hot path."
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "The multimodal role is proven multimodal by lobes' own tooling: the live smoke layer (tests/test_smoke_duo.py) is executed against coolthor on the DGX Spark and its image+text and audio+text results are recorded in docs/gemma-4-12b-nvfp4.md, replacing the standing admission at line 279 that those checks were never re-run against the base checkpoint. This closes #74's unchecked box and #69's criterion 7 with evidence instead of assertion."
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "docs/gemma-4-12b-nvfp4.md no longer contains the admission that the content-correctness checks 'were not independently re-run against the base checkpoint specifically', because they were re-run and recorded."
+    },
+    {
+      "id": "c18",
+      "kind": "before_state",
+      "text": "NEITHER surface is authoritative, and they are wrong in OPPOSITE directions. For the generate roles the gateway JSON is wrong (endpoint = its internal :8000) and the CLI is right (:8001 from .env VLLM_PORT). For the audio roles the CLI is wrong (ready=true, loaded=true, endpoint=:8001/v1/audio/speech \u2014 read from .env AUDIO_URL) and the gateway is right (ready=false, loaded=false, endpoint=''). Dialing the CLI-advertised tts path returns 404 'audio endpoints are not configured on this deployment'. Root cause: AUDIO_URL reaches the gateway ONLY via docker-compose.audio.yml:144, so whether stt/tts work depends on whether the operator remembered the overlay -f flag \u2014 while the CLI reads the merged .env and assumes wired. This is #92's exact shape (ready=true on a 404 path) for the audio roles, it is present in main and in the packaged template, and no issue tracks it."
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "A test asserts that 'lobes capabilities' and GET /capabilities agree on ready/loaded/endpoint for ALL SIX roles \u2014 including stt/tts on a deployment where the audio overlay is not composed in \u2014 and that the audio roles never report ready=true while their advertised path returns 404."
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "GET /v1/models advertises phantom backends. _optional_backend wires a backend when *_BASE_URL OR *_SERVED_NAME is set, and falls back to a default_url naming a container that need not exist. On the live rig that yields 6 advertised models against 4 running vLLM containers: 'multimodal-coder' (http://vllm-multimodal-coder:8000) and 'middle' (http://vllm-middle:8000) have no container at all, yet they are listed to clients AND sit in the generate failover chain, which for the cortex model is [primary, multimodal, multimodal-coder, middle]."
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "With MULTIMODAL_CODER_SERVED_NAME and MIDDLE_SERVED_NAME set but no BASE_URL and no container, build_config wires NEITHER backend, GET /v1/models returns exactly the four running ids, and resolve_model('nvidia/Qwen3-14B-NVFP4') does not resolve to the primary's weights."
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "A LOCAL live-test of the capabilities contract runs before every PR. It is not a CI job (CI has no GPU and no fleet); it is a local gate the developer runs against the running deployment, in the same live-gated seam tests/test_smoke_duo.py already uses (LOBES_SMOKE_BASE_URL). It must fail loudly rather than skip silently when the operator intended to run it, so that 'advertised implies reachable' is checked against the DEPLOYED artifact before a PR claims to have fixed it \u2014 the exact step whose absence let #87 regress into #92."
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The local pre-PR live test, pointed at a deployment whose gateway is stale or whose audio overlay is unwired, FAILS \u2014 it does not skip, and it does not pass."
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The gate is ONE trigger and then unattended: a single local command runs the whole capabilities live-test to a pass/fail verdict with no prompts, no manual steps, and no per-role babysitting \u2014 the developer types it, walks away, and reads the exit code."
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "NO cross-backend failover. Every request resolves to exactly ONE backend and is attempted only there. An explicit model id goes to its owner; a capability tier alias resolves once, up front, via the existing static tier_aliases upward fallback (a tier whose gear is not WIRED still maps to a higher rung at table-build time). There is no runtime retry against a second backend, so a caller who asked for cortex can never silently receive a Gemma answer. A dead/unreachable/warming owner yields 503 + Retry-After. order_backends collapses to a single-element list and rewrite_model stays outside any loop."
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "A unit test with a fake fleet proves that a request naming the cortex model, with the primary backend dead, NEVER opens a connection to the multimodal backend, and returns 503 + Retry-After. order_backends(table, served) returns exactly one backend for every input."
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The pre-PR gate detects DEPLOYED-ARTIFACT skew, not just source correctness: it compares the running gateway container's lobes.__version__ against the CLI's and fails on mismatch, and it dials every advertised role endpoint+path. This is the check whose absence let #87's fix ship in 0.38.0 while the rig kept running 0.36.0 \u2014 making #92 look like a code regression when the code was already correct and merely undeployed."
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Run against the rig as it stands right now (gateway 0.36.0, CLI 0.39.0, endpoint :8000, /v1/audio/speech 404ing), the gate exits non-zero and names all three faults; after redeploy it exits zero."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Backend wiring gate: _optional_backend wires a backend ONLY when its *_BASE_URL is set (drop the 'or *_SERVED_NAME' clause), so no phantom backend is ever invented from a default_url",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With MULTIMODAL_CODER_SERVED_NAME and MIDDLE_SERVED_NAME set but their *_BASE_URL empty and no container, build_config wires NEITHER backend",
+        "resolve_model('nvidia/Qwen3-14B-NVFP4') on such a deployment does not resolve to the primary's weights",
+        "The packaged fleet env.example (which sets both vars when a profile is on) is unaffected: enabling COMPOSE_PROFILES=middle still wires the middle backend",
+        "Files touched: lobes/gateway/_config.py, tests/test_gateway_config_wiring.py (new)"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h24"
+      ]
+    },
+    {
+      "id": "t2",
+      "summary": "No cross-backend failover: order_backends returns exactly ONE backend for every input, and the test that currently asserts cross-model failover is inverted",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "order_backends(table, served) returns a list of length <= 1 for every input, including tier-alias-resolved names",
+        "tests/test_gateway_routing.py::test_order_backends_generate_still_failovers_between_generate_backends is INVERTED to assert the new contract, not deleted",
+        "The static tier_aliases upward fallback (an unwired tier maps to a higher rung at table-build time) is preserved and still tested",
+        "Files touched: lobes/gateway/_routing.py, tests/test_gateway_routing.py"
+      ],
+      "deps": [],
+      "covers": [
+        "c23",
+        "h21"
+      ]
+    },
+    {
+      "id": "t3",
+      "summary": "Backend readiness cache: a bounded BACKGROUND probe of each backend's /health, mirroring PressureCache, exposing a cached tri-state per backend and never probing on the request hot path",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A new lobes/gateway/_readiness.py exposes a cache with .current() returning per-backend readiness, refreshed off the request path on an interval",
+        "A unit test proves .current() opens no socket (injected probe callable, call count asserted zero across N reads)",
+        "The probe degrades to 'unknown' (never raises) on OSError, http.client.HTTPException and ValueError \u2014 the malformed-URL lesson from PR #90",
+        "The background thread is a daemon and stops cleanly on server shutdown",
+        "Files touched: lobes/gateway/_readiness.py (new), tests/test_gateway_readiness.py (new)"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h8"
+      ]
+    },
+    {
+      "id": "t4",
+      "summary": "Fleet template truth: inject GATEWAY_PUBLIC_URL (derived from the published VLLM_PORT) and AUDIO_URL into the gateway container from the BASE fleet compose, so the advertised origin is configured truth and stt/tts stop advertising a 404 path (issue #96)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/templates/fleet/docker-compose.yml gateway service passes GATEWAY_PUBLIC_URL defaulted from VLLM_PORT, and AUDIO_URL, without requiring the -f docker-compose.audio.yml overlay",
+        "A test parses the packaged fleet compose and asserts the gateway environment contains both keys",
+        "env.example documents GATEWAY_PUBLIC_URL as the tunnel/proxy override and notes it defaults to the published port",
+        "An audio-less deployment still yields audio_url unset in the gateway (AUDIO_URL empty), so stt/tts report loaded=false rather than a 404ing ready=true",
+        "Files touched: lobes/templates/fleet/docker-compose.yml, lobes/templates/fleet/env.example, tests/test_fleet_template_gateway_env.py (new)"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "c18"
+      ]
+    },
+    {
+      "id": "t5",
+      "summary": "roles.py: RoleInfo.ready stops being an alias of loaded for the four gateway-fronted roles, and the endpoint is never built from the gateway's internal listen port",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "build_role_registry accepts a per-backend readiness signal; ready reflects it while loaded stays the config fact \u2014 the stt/tts separation from #89, generalised to cortex/senses/embedder/reranker",
+        "_gateway_base_url no longer returns an absolute URL when only an internal listen port is known: with no gateway_url and no public_url the endpoint is empty, never http://localhost:<GATEWAY_PORT>",
+        "An unconfigured/unready role is still returned (never omitted, never raises), matching the existing six-roles-always-present contract",
+        "Files touched: lobes/roles.py, tests/test_roles.py"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c15",
+        "c3"
+      ]
+    },
+    {
+      "id": "t6",
+      "summary": "Gateway core: dead owner yields a retryable 503, the readiness cache feeds /v1/models + /capabilities.ready, and reachable_origin prefers configured truth over Host-header inference",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "handle_post: an owner that refuses, times out, or returns >=500 yields HTTP 503 with a Retry-After header and an OpenAI-shaped error whose type (e.g. backend_unavailable) is distinguishable from both 'model unknown' and the all-backends-down 502",
+        "A fake-fleet test proves a request naming the cortex model with the primary dead NEVER opens a connection to the multimodal backend (upstream-opener call sites asserted)",
+        "Race test: a fake fleet lists model M, the owner is then killed, and a completion naming M returns 503 + Retry-After \u2014 never 404",
+        "Converse test: an id that was never in /v1/models is not silently served by the default backend under a different model's weights",
+        "GET /v1/models is filtered by the cached readiness signal; GET /capabilities .ready reflects it for all six roles",
+        "reachable_origin(None, None) never fabricates an absolute URL from GATEWAY_PORT; GATEWAY_PUBLIC_URL > Host header > empty",
+        "The POST hot path opens no probe connection (asserted by call count against an injected opener)",
+        "Files touched: lobes/gateway/server.py, tests/test_gateway_server.py, tests/test_gateway_capabilities.py"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t5"
+      ],
+      "covers": [
+        "c4",
+        "h4",
+        "c5",
+        "h5",
+        "c12",
+        "h23",
+        "c14",
+        "h13",
+        "h10",
+        "h14",
+        "h19"
+      ]
+    },
+    {
+      "id": "t7",
+      "summary": "CLI truth: lobes capabilities agrees with GET /capabilities byte-for-byte, and lobes doctor detects deployed-gateway version skew",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A test asserts GET /capabilities and 'lobes capabilities --json' return identical endpoint/ready/loaded for all six roles on the same deployment config",
+        "The CLI never reports stt/tts ready=true purely because AUDIO_URL is a string in .env",
+        "lobes doctor gains a check comparing the running gateway container's lobes.__version__ against the CLI wheel's, failing with severity=error on mismatch and remediation naming the rebuild command",
+        "Run against the rig as it stands (gateway 0.36.0, CLI 0.39.0) the version-skew check FAILS; after a rebuild it passes",
+        "Files touched: lobes/cli/_commands/capabilities.py, lobes/cli/_commands/doctor.py, tests/test_cli_capabilities.py, tests/test_doctor.py"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "h3",
+        "c27",
+        "h22"
+      ]
+    },
+    {
+      "id": "t8",
+      "summary": "The senses perception probe: prove coolthor actually PERCEIVES, not merely that the wire accepts content-parts \u2014 ground-truth image and ground-truth audio",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The image probe generates a solid-colour PNG in-process and asserts the model NAMES that colour (red -> 'red', blue -> 'blue'), not merely that content is non-empty",
+        "The audio probe synthesizes a known word via the rig's own /v1/audio/speech and asserts the transcription contains it \u2014 this only passes once t4 wires AUDIO_URL (issue #96)",
+        "The existing 1x1-placeholder assertions are replaced or explicitly relabelled as wire-liveness checks, so 'image+text confirmed' never again means 'HTTP 200 with non-empty content'",
+        "Files touched: tests/test_smoke_duo.py"
+      ],
+      "deps": [
+        "t4",
+        "t6"
+      ],
+      "covers": [
+        "c7",
+        "h7",
+        "c17"
+      ]
+    },
+    {
+      "id": "t9",
+      "summary": "The pre-PR live gate: ONE local command, unattended, that dials every advertised role endpoint+path and the deployed gateway's version, and FAILS rather than skips",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A single command runs the whole capabilities live-test to a pass/fail exit code with no prompts and no manual steps",
+        "When the operator asked for the live gate (the env var / flag is set) an unreachable deployment FAILS the run; it never degrades to pytest-skip",
+        "For every role in GET /capabilities the gate dials endpoint+path and asserts a non-404 status; for every id in GET /v1/models it asserts a completion never returns 404",
+        "It reproduces Colleague's discovery path: given ONLY the gateway origin and no COLLEAGUE_*_BASE_URL override, resolve cortex and senses from the contract and get an answer",
+        "It fails on deployed-gateway version skew",
+        "Run against today's rig it exits non-zero naming the :8000 endpoint, the 404ing audio path, and the 0.36.0-vs-0.39.0 skew; after redeploy it exits zero",
+        "The repo's pre-PR convention (CLAUDE.md / the run-tests skill) names this command so it is not silently never run",
+        "Files touched: tests/test_live_capabilities.py (new), scripts or Makefile target for the single trigger, CLAUDE.md"
+      ],
+      "deps": [
+        "t4",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c2",
+        "h2",
+        "c6",
+        "h6",
+        "c10",
+        "h9",
+        "c22",
+        "h17",
+        "h18"
+      ]
+    },
+    {
+      "id": "t10",
+      "summary": "Documentary repairs: record the perception evidence, retire the DSpark route, and stop README claiming lobes init is single-model",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gemma-4-12b-nvfp4.md no longer contains the line-279 admission that content-correctness checks were 'not independently re-run against the base checkpoint specifically' \u2014 because they were, and the coolthor results are recorded there",
+        "docs/gemma4-mtp-draft.md carries a superseded banner: DSpark (deepseek-ai/dspark_gemma4_12b_block7) does NOT load on vLLM 0.23 (Gemma4DSparkModel unsupported), per #75 \u2014 it must no longer read as 'the ONE route task t3 should wire next'",
+        "README.md quickstart no longer documents 'lobes init' as scaffolding the single-model deployment on :8000; the duo is the default and --single opts out",
+        "Files touched: docs/gemma-4-12b-nvfp4.md, docs/gemma4-mtp-draft.md, README.md"
+      ],
+      "deps": [
+        "t9",
+        "t8"
+      ],
+      "covers": [
+        "h16"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Requiring *_BASE_URL to wire a backend could break a hand-edited .env that set only *_SERVED_NAME. The packaged fleet template always sets both when a profile is enabled, but an operator's local file may not \u2014 needs a release note and possibly a warning path.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1"
+    },
+    {
+      "id": "r2",
+      "text": "The background readiness thread lives inside a stdlib ThreadingHTTPServer. Daemon-thread lifecycle, clean shutdown, and behaviour under 'docker compose down' need care \u2014 a probe thread that outlives the server or blocks shutdown is a regression.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3"
+    },
+    {
+      "id": "r3",
+      "text": "The audio perception probe depends on Chatterbox TTS, which has a recorded history of a poisoned CUDA context (500s cleared only by restarting the container). The probe may need a readiness precondition or a retry, or it will flake for reasons unrelated to senses.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9"
+    },
+    {
+      "id": "r4",
+      "text": "The live gate cannot run in CI (no GPU, no fleet), so nothing structurally forces it to run. If it is only a convention it will be skipped exactly when it matters \u2014 which is precisely how #87's fix shipped in 0.38.0 while the rig ran 0.36.0. Consider a pre-push hook or a PR-template checkbox.",
+      "kind": "follow_up",
+      "task_id": "t8"
+    }
+  ]
+}
