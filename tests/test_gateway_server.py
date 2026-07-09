@@ -18,7 +18,12 @@ from lobes.gateway._config import build_config
 
 
 def _cfg(**over):
-    env = {"PRIMARY_SERVED_NAME": "P", "FALLBACK_SERVED_NAME": "F", "GATEWAY_DEFAULT_MODEL": "P"}
+    env = {
+        "PRIMARY_SERVED_NAME": "P",
+        "FALLBACK_URL": "http://vllm-fallback:8000",
+        "FALLBACK_SERVED_NAME": "F",
+        "GATEWAY_DEFAULT_MODEL": "P",
+    }
     env.update(over)
     return build_config(env)
 
