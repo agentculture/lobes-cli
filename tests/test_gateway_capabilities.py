@@ -333,6 +333,74 @@ def test_capabilities_public_url_wins_over_host_end_to_end() -> None:
         assert payload[role]["endpoint"] == "https://tunnel.example"
 
 
+# --- S5131: the Host header is attacker-controlled and must be validated
+# before it is reflected into /capabilities (SonarCloud BLOCKER, PR #102) ------
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost:8001",
+        "gw.example",
+        "10.0.0.5:8000",
+        "[::1]:8000",
+        "spark.local",
+    ],
+)
+def test_reachable_origin_accepts_well_formed_hosts(host: str) -> None:
+    # A well-formed authority (hostname or IPv4/IPv6 literal, optional port) is
+    # echoed unchanged, prefixed with the scheme.
+    assert S.reachable_origin(host, None) == f"http://{host}"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "evil.example/../<script>",
+        "127.0.0.1:8001@attacker.test",
+        "host with space",
+        "a\r\nInjected: x",
+        "foo/bar",
+        "foo?x=1",
+    ],
+)
+def test_reachable_origin_rejects_malicious_hosts(host: str) -> None:
+    # A Host header outside the strict host-authority allowlist must NEVER be
+    # reflected — reachable_origin degrades to None, exactly as if no Host
+    # header had been sent at all (issue #87's existing "nothing known" path).
+    assert S.reachable_origin(host, None) is None
+
+
+def test_reachable_origin_public_url_still_wins_over_malicious_host() -> None:
+    # GATEWAY_PUBLIC_URL (trusted operator config) is unaffected by Host
+    # validation and keeps winning first, unchanged (c29 precedence).
+    assert (
+        S.reachable_origin("evil.example/../<script>", "https://tunnel.example/")
+        == "https://tunnel.example"
+    )
+
+
+def test_integration_capabilities_endpoint_rejects_malicious_host(
+    capabilities_gateway,
+) -> None:
+    """S5131 end to end: a malicious Host header must never be reflected —
+    every role's endpoint must be empty, not the attacker-controlled value."""
+    import http.client
+
+    host_port = capabilities_gateway.removeprefix("http://")
+    conn = http.client.HTTPConnection(host_port, timeout=5)
+    conn.putrequest("GET", "/capabilities", skip_host=True)
+    conn.putheader("Host", "evil.example/../<script>")
+    conn.endheaders()
+    resp = conn.getresponse()
+    payload = json.load(resp)
+    conn.close()
+    for role in ROLES:
+        assert payload[role]["endpoint"] == ""
+        assert "evil.example" not in payload[role]["endpoint"]
+        assert "<script>" not in payload[role]["endpoint"]
+
+
 # --- #92 target c15/h14: ReadinessCache folded into /capabilities readiness ----
 
 

@@ -38,6 +38,7 @@ import dataclasses
 import http.client
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -685,6 +686,32 @@ def fleet_status_payload(
 # its config-derived defaults so the CLI/unit path is unchanged.
 
 
+# A legitimate HTTP ``Host`` header is a bare authority: a DNS hostname or IPv4
+# literal (dot-separated alphanumeric/hyphen labels — RFC 1123, which an IPv4
+# literal's digit-only labels already satisfy) or a bracketed IPv6 literal,
+# each optionally followed by ``:<port>`` (1-5 digits). Nothing in that grammar
+# permits ``/``, ``@``, whitespace, control characters, ``<``/``>``, ``?``,
+# ``#``, or backslashes, so a single allowlist regex both recognises a
+# well-formed host AND excludes every character class a path-traversal,
+# userinfo-credential-injection, header-injection (CRLF), XSS, or
+# query-string payload needs. See :func:`reachable_origin` for why this
+# exists (SonarCloud S5131).
+_HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_HOSTNAME = rf"{_HOST_LABEL}(?:\.{_HOST_LABEL})*"
+_IPV6_LITERAL = r"\[[0-9A-Fa-f:]+\]"
+_PORT = r"(?::[0-9]{1,5})?"
+_VALID_HOST_HEADER_RE = re.compile(rf"(?:{_HOSTNAME}|{_IPV6_LITERAL}){_PORT}")
+
+
+def _is_valid_host_header(host: str) -> bool:
+    """True when ``host`` is a well-formed ``hostname[:port]`` authority.
+
+    Used to gate :func:`reachable_origin`'s Host-header echo — see there for
+    the reflection risk this guards against.
+    """
+    return _VALID_HOST_HEADER_RE.fullmatch(host) is not None
+
+
 def reachable_origin(
     host_header: str | None, public_url: str | None, scheme: str = "http"
 ) -> str | None:
@@ -696,10 +723,33 @@ def reachable_origin(
     ``host:port`` in the right shape, IPv6 brackets included). Returns ``None``
     when neither is available, so the caller falls back to the config-derived
     origin (unchanged behaviour).
+
+    ``public_url`` is trusted operator config (set via the deployment's own
+    ``.env``, never attacker-reachable) so it is never validated and always
+    wins first, unchanged — that precedence is #92 target c29/h25 and is
+    covered by ``test_reachable_origin_public_url_wins_over_host`` /
+    ``test_capabilities_public_url_wins_over_host_end_to_end``.
+
+    ``host_header``, by contrast, is fully attacker-controlled: any client can
+    set an arbitrary ``Host:`` value, and this function's return value is
+    reflected verbatim into every role's ``endpoint`` in the JSON response
+    (:func:`capabilities_payload`). Echoing it unsanitised is exactly
+    SonarCloud rule ``pythonsecurity:S5131`` ("Change this code to not reflect
+    unsanitized user-controlled data") — a scraping client could be handed an
+    attacker's origin to dial, or a payload (path traversal, script markup, a
+    userinfo-style credential-injection host like
+    ``127.0.0.1:8001@attacker.test``) smuggled through an otherwise-trusted
+    contract. The remediation is the standard S5131 fix: constrain the tainted
+    value to a strict allowlist (:func:`_is_valid_host_header`, a bare
+    ``hostname[:port]``/``[ipv6][:port]`` authority) before it can reach the
+    response. A ``Host`` header that fails validation is treated exactly like
+    a missing one — it falls through to ``None``, and the caller advertises an
+    empty endpoint (never a fabricated or attacker-supplied one) rather than
+    guessing at a "sanitised" rewrite of untrusted input.
     """
     if public_url:
         return public_url.rstrip("/")
-    if host_header:
+    if host_header and _is_valid_host_header(host_header):
         return f"{scheme}://{host_header}"
     return None
 
