@@ -13,10 +13,17 @@ Layer A — Config/routing (always runs, no live model needed):
 Layer B — Live gateway (skipped unless LOBES_SMOKE_BASE_URL is set, i.e. on
 the DGX Spark where t7 validates the physical hardware):
   * model=main: a plain text prompt returns non-empty assistant content.
-  * model=multimodal (Gemma 4 12B): an image+text chat request using the
-    OpenAI content-parts shape (type=image_url) returns valid output.
-  * model=multimodal: an audio+text chat request using the OpenAI
-    content-parts shape (type=input_audio / format=wav) returns valid output.
+  * Perception (ground-truth) checks — these are the ones that can actually
+    fail if the model ignores the media, unlike the wire checks below:
+    - model=multimodal names the colour of an in-process-generated solid-
+      colour PNG (two colours, so a lucky guess/prior can't pass silently).
+    - model=multimodal transcribes a known word synthesized by the rig's own
+      TTS (Chatterbox, via POST /v1/audio/speech) and sent back as audio.
+  * Wire checks (transport only, NOT perception — see the docstring on each):
+    - model=multimodal accepts an image_url content-part built from a 1x1
+      placeholder PNG and returns non-empty text.
+    - model=multimodal accepts an input_audio content-part built from a tiny
+      silent WAV and returns non-empty text.
 
 All live calls use stdlib urllib only (mirroring lobes/assess.py).
 """
@@ -27,12 +34,16 @@ import base64
 import json
 import os
 import struct
+import time
+import urllib.error
 import urllib.request
+import zlib
 from pathlib import Path
 
 import pytest
 import yaml
 
+from lobes.assess import _trace_field
 from lobes.catalog import SUPPORTED_MODELS, resolve_tier
 from lobes.gateway._config import (
     _DEFAULT_MINOR,
@@ -58,11 +69,33 @@ _GEMMA_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _MINOR_ID = "Qwen/Qwen3.5-4B"
 _PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 
-# Tiny 1×1 RGB PNG (valid PNG, useful as a minimal image payload).
+# Tiny 1×1 RGB PNG (valid PNG, useful as a minimal image payload). Used only by
+# the *wire-check* tests below — it proves nothing about perception because a
+# 1×1 placeholder carries no verifiable content. See _solid_png() for the
+# ground-truth image used by the perception tests.
 _TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4"
     "z8AAAAACAAHiIbwzAAAAAElFTkSuQmCC"
 )
+
+
+def _solid_png(rgb: tuple[int, int, int], size: int = 96) -> bytes:
+    """Build a solid-colour PNG in-process, stdlib only (zlib + struct).
+
+    Used by the live image-perception test: a model that actually reads
+    pixels should be able to name this colour; a model that ignores the
+    image cannot (verified as a negative control — see the task report for
+    tests/test_smoke_duo.py's t8 commit).
+    """
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        c = tag + data
+        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c))
+
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)  # 8-bit truecolour
+    row = b"\x00" + bytes(rgb) * size  # filter byte 0 + RGB pixels
+    idat = zlib.compress(row * size)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
 # Tiny silent WAV: 8 kHz, 8-bit, mono, 1 sample.  Built with struct so the
@@ -267,26 +300,295 @@ def _post_chat(base_url: str, payload: dict, timeout: int = 120) -> dict:
         return json.load(r)
 
 
+# The word synthesized by TTS and expected back from the transcription. Common
+# enough vocabulary that a model which *can* hear will produce it verbatim.
+_AUDIO_WORD = "banana"
+
+# Chatterbox has a recorded poisoned-CUDA-context failure mode: once tripped it
+# returns 500 to every request until the container is restarted (issue #89,
+# docs/chatterbox-tts.md). A bounded retry rides out a transient blip; if every
+# attempt 500s we report "TTS backend unhealthy" rather than silently treating
+# it as "senses cannot hear" — those are different findings.
+_TTS_RETRIES = 3
+_TTS_RETRY_BACKOFF_SECONDS = 2.0
+
+
+def _synthesize_speech(base_url: str, text: str) -> bytes:
+    """POST /v1/audio/speech and return the raw WAV bytes.
+
+    A 404 means the audio facade isn't reachable through the gateway at all —
+    ``AUDIO_URL`` never reached the gateway container (issue #96), fixed in the
+    base fleet template by task t4 but not yet applied to a running deployment
+    that hasn't been re-scaffolded. That is a redeploy problem, not a flaky
+    call, so it fails immediately (no retry) with a message naming the issue.
+
+    A 500 (or a connection failure) is retried a bounded number of times before
+    failing with a message that says "TTS backend unhealthy" — distinct from a
+    senses-cannot-hear finding, which only the transcription assertion in
+    ``test_live_multimodal_audio_perception_transcribes_known_word`` can make.
+    """
+    url = base_url.rstrip("/") + "/v1/audio/speech"
+    payload = {
+        "model": "chatterbox",
+        "input": text,
+        "voice": "default",
+        "response_format": "wav",
+    }
+    data = json.dumps(payload).encode()
+    last_status: int | str = "no response"
+    last_body = b""
+    for attempt in range(1, _TTS_RETRIES + 1):
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:  # local endpoint only
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            if exc.code == 404:
+                pytest.fail(
+                    "POST /v1/audio/speech returned 404 -- the audio facade is not "
+                    "wired into this gateway deployment (AUDIO_URL never reached the "
+                    "gateway container, issue #96; fixed in the base fleet template "
+                    "by task t4). Re-scaffold this deployment (`lobes init --fleet "
+                    "--audio` against the current templates) before the audio "
+                    f"perception test can run. Response body: {body!r}"
+                )
+            last_status, last_body = exc.code, body
+        except urllib.error.URLError as exc:
+            last_status, last_body = "connection error", str(exc.reason).encode()
+        if attempt < _TTS_RETRIES:
+            time.sleep(_TTS_RETRY_BACKOFF_SECONDS)
+    pytest.fail(
+        f"TTS backend unhealthy: POST /v1/audio/speech failed on all "
+        f"{_TTS_RETRIES} attempts (last status={last_status}, body={last_body!r}). "
+        "This matches Chatterbox's known poisoned-CUDA-context failure mode "
+        "(docs/chatterbox-tts.md, issue #89) -- cleared only by restarting the "
+        "chatterbox container -- and is a TTS-backend finding, not evidence "
+        "that senses cannot hear."
+    )
+
+
 @_live
 def test_live_main_text_returns_nonempty_content() -> None:
-    """model=main (27B primary) responds with non-empty text to a plain prompt."""
+    """model=main (27B primary) responds with non-empty text to a plain prompt.
+
+    The cortex model (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) is a
+    *reasoning* model: on every turn it emits a ``reasoning``/``reasoning_content``
+    trace before ``content``, and with ``preserve_thinking`` (issue #93) that
+    trace is populated by default rather than trimmed. A tight ``max_tokens``
+    budget can be entirely consumed by the reasoning trace, leaving ``content``
+    empty with ``finish_reason: "length"`` -- e.g. ``{"content": None,
+    "reasoning": "Here's a thinking process:\\n\\n1. **Analyze User Input:**",
+    ...}``. That is budget exhaustion mid-thought, not a broken model, so this
+    test gives the model enough budget to finish thinking and answer (256
+    tokens) and falls back to the reasoning trace -- only accepting that
+    fallback when ``finish_reason`` explains it as budget exhaustion, so the
+    check can't be satisfied by a silently swallowed failure.
+    """
     base_url = os.environ["LOBES_SMOKE_BASE_URL"]
     resp = _post_chat(
         base_url,
         {
             "model": "main",
             "messages": [{"role": "user", "content": "Reply with the word hello."}],
+            "max_tokens": 256,
+            "temperature": 0,
+        },
+    )
+    choices = resp.get("choices") or []
+    assert choices, f"model=main returned no choices; full response: {resp}"
+    message = choices[0].get("message", {})
+    finish_reason = choices[0].get("finish_reason")
+    content = (message.get("content") or "").strip()
+    _, trace_len = _trace_field(message)
+
+    assert content or trace_len, (
+        "model=main returned neither content nor a reasoning trace -- nothing "
+        f"was generated at all (finish_reason={finish_reason!r}); full "
+        f"response: {resp}"
+    )
+    if not content:
+        # All 256 tokens went to reasoning with none left to answer. That is
+        # only an acceptable outcome when finish_reason says so -- otherwise
+        # this branch would silently paper over a genuine empty-content bug.
+        assert finish_reason == "length", (
+            "model=main returned only a reasoning trace with no content, but "
+            f"finish_reason was {finish_reason!r} (expected 'length' for a "
+            f"budget-exhausted reasoning trace); full response: {resp}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Layer B — Perception (ground-truth) checks.
+#
+# Unlike the wire checks below, these send content whose correct answer is
+# known in advance and assert the model reports THAT answer -- a model that
+# ignores the media (or a broken vision/audio path that returns fluent but
+# unrelated text) fails these, not just a request that never got a 200.
+# ---------------------------------------------------------------------------
+
+# Two colours, not one: a single colour could be a lucky guess or a language
+# prior ("things are often red"). Two independent correct answers is evidence
+# the model actually read the pixels.
+_COLOUR_CASES = [
+    ("red", (255, 0, 0)),
+    ("blue", (0, 0, 255)),
+]
+
+
+@_live
+@pytest.mark.parametrize("colour_name,rgb", _COLOUR_CASES)
+def test_live_multimodal_image_perception_names_colour(colour_name: str, rgb) -> None:
+    """model=multimodal (Gemma 4 12B) names the colour of a ground-truth image.
+
+    Proves perception, not just transport: the PNG is generated in-process
+    (stdlib zlib/struct, no external asset) as a solid fill of a known colour,
+    and the assertion requires that exact colour's name in the reply. A model
+    that ignores the image content cannot pass this by accident -- verified as
+    a negative control while writing this test (feeding a blue image while
+    asserting for "red" fails; see the t8 task report for the transcript).
+    Compare test_live_multimodal_accepts_image_content_part_wire_check below,
+    which only proves the wire and asserts nothing about correctness.
+    """
+    base_url = os.environ["LOBES_SMOKE_BASE_URL"]
+    png_b64 = base64.b64encode(_solid_png(rgb)).decode()
+    resp = _post_chat(
+        base_url,
+        {
+            "model": "multimodal",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What single colour fills this image? Answer with one word.",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{png_b64}"},
+                        },
+                    ],
+                }
+            ],
             "max_tokens": 16,
             "temperature": 0,
         },
     )
-    content = resp["choices"][0]["message"].get("content") or ""
-    assert content.strip(), f"model=main returned empty content; full response: {resp}"
+    choices = resp.get("choices") or []
+    assert (
+        choices
+    ), f"model=multimodal image perception ({colour_name}): empty choices; response: {resp}"
+    content = choices[0].get("message", {}).get("content") or ""
+    assert colour_name in content.lower(), (
+        f"model=multimodal did not name {colour_name!r} for a solid-{colour_name} "
+        f"ground-truth image; got {content!r}. This means the model is not reading "
+        f"image pixels (or the vision path is broken). Full response: {resp}"
+    )
 
 
 @_live
-def test_live_multimodal_image_text_returns_valid_output() -> None:
-    """model=multimodal (Gemma 4 12B) accepts an image+text content-parts request."""
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "issue #101: the deployed Gemma silently discards input_audio content "
+        "parts -- vLLM's gemma4_unified path wires the vision tower but drops "
+        "audio (prompt_tokens barely moves and the model claims it heard "
+        "nothing), even though the checkpoint config declares audio_config/"
+        "audio_token_id. Sample rate is irrelevant (24 kHz and 16 kHz both "
+        "fail). This is a vLLM gap, not a checkpoint gap. strict=True: the day "
+        "audio ingestion starts working this XPASSes and fails the suite, "
+        "forcing us to remove the xfail and record the fix."
+    ),
+)
+def test_live_multimodal_audio_perception_transcribes_known_word() -> None:
+    """model=multimodal (Gemma 4 12B) transcribes a ground-truth spoken word.
+
+    Proves perception, not just transport: the word is synthesized fresh by
+    the rig's own TTS (Chatterbox, via POST /v1/audio/speech on this same
+    gateway) so the "correct answer" is known in advance, then sent back to
+    model=multimodal as an input_audio content-part. A model that ignores the
+    audio (or fabricates fluent-but-wrong text) fails the containment check.
+    Compare test_live_multimodal_accepts_audio_content_part_wire_check below,
+    which only proves the wire and asserts nothing about correctness.
+
+    This currently fails loudly on deployments where AUDIO_URL hasn't reached
+    the gateway container (issue #96, /v1/audio/speech -> 404) -- that is a
+    redeploy problem, not a perception failure, and is reported as such by
+    _synthesize_speech() rather than silently skipped.
+
+    Known-failing today for a different, tracked reason (issue #101): the
+    deployed Gemma silently discards input_audio content parts (a vLLM
+    gemma4_unified gap, not a checkpoint gap -- see the xfail reason above for
+    the evidence). Marked xfail(strict=True) so this stays a tracked, visible
+    regret rather than a silent failure, and so a future fix flips it to an
+    XPASS that fails the suite until the xfail is removed. The test body is
+    left exactly as it is -- it is the probe that will prove the fix.
+    """
+    base_url = os.environ["LOBES_SMOKE_BASE_URL"]
+    wav_bytes = _synthesize_speech(base_url, _AUDIO_WORD)
+    wav_b64 = base64.b64encode(wav_bytes).decode()
+
+    resp = _post_chat(
+        base_url,
+        {
+            "model": "multimodal",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Transcribe the speech in this audio. "
+                                "Reply with only the words spoken."
+                            ),
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": wav_b64, "format": "wav"},
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": 32,
+            "temperature": 0,
+        },
+    )
+    choices = resp.get("choices") or []
+    assert choices, f"model=multimodal audio perception: empty choices; response: {resp}"
+    content = choices[0].get("message", {}).get("content") or ""
+    assert _AUDIO_WORD in content.lower(), (
+        f"model=multimodal did not transcribe the known word {_AUDIO_WORD!r} "
+        f"synthesized by Chatterbox; got {content!r}. This means senses cannot "
+        f"hear (or the audio path is broken) -- not a TTS-backend problem, "
+        f"which _synthesize_speech() would have reported separately. "
+        f"Full response: {resp}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer B — Wire checks (transport only, NOT perception).
+#
+# These assert only that the gateway accepts an image_url / input_audio
+# content-part and returns a 200 with non-empty text. The payloads are a 1x1
+# placeholder PNG and a near-silent WAV with no verifiable content, so a model
+# that completely ignores the media still passes. See the perception tests
+# above for assertions the model would actually fail if it weren't looking/
+# listening.
+# ---------------------------------------------------------------------------
+
+
+@_live
+def test_live_multimodal_accepts_image_content_part_wire_check() -> None:
+    """model=multimodal (Gemma 4 12B) accepts an image_url content-part (transport only).
+
+    This asserts the request is well-formed and answered, NOT that the model
+    perceived the image -- the payload is a 1x1 placeholder PNG with no
+    verifiable content, so a model that ignores the image entirely still
+    passes. See test_live_multimodal_image_perception_names_colour for the
+    ground-truth perception assertion.
+    """
     base_url = os.environ["LOBES_SMOKE_BASE_URL"]
     resp = _post_chat(
         base_url,
@@ -315,8 +617,15 @@ def test_live_multimodal_image_text_returns_valid_output() -> None:
 
 
 @_live
-def test_live_multimodal_audio_text_returns_valid_output() -> None:
-    """model=multimodal (Gemma 4 12B) accepts an audio+text content-parts request."""
+def test_live_multimodal_accepts_audio_content_part_wire_check() -> None:
+    """model=multimodal (Gemma 4 12B) accepts an input_audio content-part (transport only).
+
+    This asserts the request is well-formed and answered, NOT that the model
+    perceived the audio -- the payload is a near-silent single-sample WAV with
+    no verifiable content, so a model that ignores the audio entirely still
+    passes. See test_live_multimodal_audio_perception_transcribes_known_word
+    for the ground-truth perception assertion.
+    """
     base_url = os.environ["LOBES_SMOKE_BASE_URL"]
     resp = _post_chat(
         base_url,

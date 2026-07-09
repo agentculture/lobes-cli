@@ -1,9 +1,11 @@
 """``lobes doctor`` — diagnose the local model deployment.
 
 Real checks (no longer a stub): is docker available, is a deployment scaffolded,
-is the ``.env`` coherent with ``culture.yaml``, and is ``/health`` reachable. A
-down model is *not* an error (bringing it up is the tool's job) — only missing
-docker or an un-scaffolded deployment fail the run.
+is the ``.env`` coherent with ``culture.yaml``, is ``/health`` reachable, and
+does the deployed gateway's own ``lobes-cli`` release match this CLI's (issue
+#99). A down model is *not* an error (bringing it up is the tool's job) — only
+missing docker, an un-scaffolded deployment, or a deployed-artifact version
+mismatch fail the run.
 
 JSON contract: ``{healthy, checks:[{id, passed, severity, message, remediation}]}``.
 """
@@ -13,6 +15,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from lobes import __version__
 from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import ModelGearError
 from lobes.cli._output import emit_result
@@ -92,6 +95,90 @@ def _health_check(port: int) -> dict:
     )
 
 
+def _version_skew_remediation(deploy_dir: Path | None) -> str:
+    """The exact fix for a version mismatch — names both the file and the pin
+    to change, plus the follow-up rebuild, so this is copy-pasteable."""
+    env_path = f"{deploy_dir}/.env" if deploy_dir is not None else "<deployment>/.env"
+    return (
+        f"set MODEL_GEAR_VERSION={__version__} in {env_path}, "
+        "then docker compose up -d --build gateway"
+    )
+
+
+def _version_skew_check(port: int, deploy_dir: Path | None) -> dict:
+    """Detect deployed-artifact version skew between the gateway and this CLI.
+
+    This is the structural fix for issue #99, the root cause behind issue #92:
+    ``Dockerfile.gateway`` runs ``pip install "lobes-cli==${MODEL_GEAR_VERSION}"``
+    with ``MODEL_GEAR_VERSION`` written ONCE, by ``lobes init``, at scaffold
+    time — no verb ever re-pins it afterwards. A gateway container can
+    therefore silently keep running a stale ``lobes-cli`` release for as long
+    as the deployment stays up, even after the host's own ``lobes`` binary
+    (and PyPI) have moved on. On the reference rig this went undetected for
+    five days: the gateway ran ``0.36.0`` and the realtime bridge ``0.34.1``
+    against a host CLI at ``0.39.0``, and issue #92 was filed and
+    investigated as a fresh code regression when the fix behind it was
+    already published and simply undeployed.
+
+    This check is docker-free: the gateway now reports its own deployed
+    ``lobes-cli`` version over ``GET /health`` (issue #99, additive —
+    :mod:`lobes.gateway.server`), so this only needs
+    :func:`lobes.runtime._health.fetch_health` (a bounded HTTP GET) to compare
+    that against this process's own :data:`lobes.__version__`.
+
+    The three outcomes are NOT symmetric, deliberately:
+
+    * **match** — ``passed=True``. Nothing to report.
+    * **mismatch** — ``passed=False``, ``severity="error"`` (this DOES fail
+      the overall run): a real, actionable defect — the deployed gateway is
+      running code the operator's own CLI no longer believes is current, and
+      that gap is exactly what let issue #92 masquerade as a live bug.
+    * **gateway unreachable** — ``passed=False``, ``severity="info"`` (this
+      does NOT fail the run): a down gateway is ordinary here (per this
+      module's own docstring, "bringing it up is the tool's job", same as
+      ``health_reachable``), so it must not be conflated with a real skew
+      defect. Critically this is ALSO not a silent pass: reporting
+      ``passed=True`` ("versions match") when nothing was actually verified
+      would be exactly the #96/#92 mistake this whole plan exists to close —
+      an unverified claim standing in for a live observation. The message
+      says plainly that verification did not happen.
+    """
+    payload = _health.fetch_health(port)
+    if payload is None:
+        return _check(
+            "gateway_version_match",
+            False,
+            "info",
+            f"gateway not reachable on :{port} — cannot verify deployed version",
+            "start the server ('lobes serve --apply' or 'lobes fleet up --apply'), "
+            "then re-run doctor",
+        )
+    gateway_version = payload.get("version")
+    if not gateway_version:
+        return _check(
+            "gateway_version_match",
+            False,
+            "info",
+            f"gateway on :{port} did not report a version — cannot verify (pre-#99 gateway build)",
+            "rebuild the deployed gateway image to pick up /health's version field",
+        )
+    if gateway_version != __version__:
+        return _check(
+            "gateway_version_match",
+            False,
+            "error",
+            f"deployed gateway reports lobes-cli {gateway_version}, this CLI is "
+            f"{__version__} — deployed-artifact version skew (issue #99)",
+            _version_skew_remediation(deploy_dir),
+        )
+    return _check(
+        "gateway_version_match",
+        True,
+        "error",
+        f"gateway and CLI both report lobes-cli {__version__}",
+    )
+
+
 def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks: list[dict] = [_docker_check()]
 
@@ -111,6 +198,7 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
         port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
 
     checks.append(_health_check(port))
+    checks.append(_version_skew_check(port, deploy_dir))
 
     # Only error-severity failures make the run unhealthy.
     healthy_overall = all(c["passed"] for c in checks if c["severity"] == "error")

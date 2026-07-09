@@ -27,11 +27,22 @@ below.
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
 | `cortex` | `primary` (generate) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
-| `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image+audio) and speaking back to the user. Does **not** decide or act. |
+| `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
 | `tts` | Chatterbox (audio overlay, opt-in) | `POST /v1/audio/speech` | Text-to-speech. |
+
+> **`senses` is vision-only intake — audio is not currently served (issue
+> #101).** The `coolthor/gemma-4-12B-it-NVFP4A16` checkpoint behind `senses`
+> declares an `audio_config` in its own model config, but on this vLLM serving
+> path (`gemma4_unified`) an `input_audio` content part is silently **dropped**
+> rather than rejected: a caller gets `200 OK` and a fluent answer that ignored
+> the audio. Live evidence and the tracking issue are in
+> [`docs/gemma-4-12b-nvfp4.md`](gemma-4-12b-nvfp4.md#live-validation-status-71).
+> For speech, use the purpose-built **`stt`** role (Parakeet, `POST
+> /v1/audio/transcriptions`) instead — it remains first-class and is
+> unaffected by this gap.
 
 `cortex`, `senses`, `embedder`, and `reranker` are always enumerated (present
 with `loaded=false` if their gear isn't wired in this deployment); `stt`/`tts`
@@ -313,7 +324,7 @@ scaffold did solo, in exchange for co-residency:
 | **Fleet duo, pre-rebalance** | 64K, util 0.30 | 128K (`MULTIMODAL_MAX_MODEL_LEN=131072`, util 0.22) |
 | **Fleet duo, current (this doc)** | **128K** (`PRIMARY_MAX_MODEL_LEN=131072`, util 0.30 — util-bound, not context-bound) | **32K** (`MULTIMODAL_MAX_MODEL_LEN=32768`, util 0.14) |
 
-The pre-rebalance duo gave the vision/audio gear its full native 128K at the
+The pre-rebalance duo gave the vision gear its full native 128K at the
 cost of trimming `cortex` to 64K; the current default flips that trade-off —
 `cortex` (the final-authority reasoning role) now gets its full native 128K,
 and `senses` (intake/perception) is trimmed to 32K, which is ample for the

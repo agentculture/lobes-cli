@@ -230,6 +230,16 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # no-spec floor). "Less coder, more MTP" — see §7 for the full comparison
         # table. Tool calls use the Python-style "pythonic" parser (matches
         # runtime._parser.infer_parser, which returns "pythonic" for gemma-4* ids).
+        #
+        # Content-correctness, live on THIS checkpoint via model=multimodal: image+text
+        # VERIFIED against ground truth with a negative control (replies "Red"/"Blue"
+        # for red/blue test images; a blue image correctly fails a "red" assertion).
+        # audio+text is NOT served — vLLM's gemma4_unified drops the input_audio
+        # content part (adds ~19 placeholder tokens, no content) instead of rejecting
+        # it, so a caller gets 200 OK and a fluent answer that ignored the audio. This
+        # is a vLLM gap, not a checkpoint gap (config.json declares audio_config /
+        # audio_token_id). Tracked as #101. See docs/gemma-4-12b-nvfp4.md
+        # #live-validation-status-71 for the full evidence table.
         role_hint="multimodal",
         shape="unified multimodal (text+image+audio)",
         # Same base-model family as the coder entry — text_config.max_position_
@@ -279,7 +289,12 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # heterogeneous per-layer head sizes (40 sliding@256 + 8 full@512) that broke
         # released vLLM <=0.22.1 (transformers-backend fallback → o_proj marlin_gemm
         # 4096≠8192; a backend flag does NOT fix it — the native class does). Validated
-        # live: text ✓, image+text ✓, audio+text ✓ (transcribed a TTS clip verbatim);
+        # live: text ✓, image+text ✓. The original "audio+text ✓ (transcribed a TTS
+        # clip verbatim)" note was never actually verified against ground truth — the
+        # check behind it asserted only HTTP 200 + non-empty content against a
+        # placeholder clip. When tested properly against the base checkpoint (see the
+        # coolthor entry below), audio+text did NOT hold: vLLM's gemma4_unified drops
+        # the input_audio content part rather than serving it. Tracked as #101.
         # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
         role_hint="candidate",
         shape="unified multimodal (text+image+audio)",
@@ -293,7 +308,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # nvidia modelopt. vLLM must be told --quantization=compressed-tensors;
         # passing modelopt_fp4 fails with a quant-method-mismatch (verified #71).
         quantization="compressed-tensors",
-        status="load-tested",  # GB10 2026-07-01: text+image+audio ✓ on vLLM nightly (#71/#73)
+        status="load-tested",  # GB10 2026-07-01: text+image ✓; audio+text NOT served (#101)
         doc="gemma-4-12b-nvfp4.md",
         task="generate",
         # No speculative_config: native MTP was measured on this checkpoint (§6/§7)

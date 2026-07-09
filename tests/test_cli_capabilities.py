@@ -1,20 +1,33 @@
-"""Tests for ``lobes capabilities`` / ``lobes endpoint`` (issue #81, task t5).
+"""Tests for ``lobes capabilities`` / ``lobes endpoint`` (issue #81, tasks t5/t7).
 
 These verbs are the CLI-side view of the six first-class Colleague-facing
-roles (``cortex``/``senses``/``embedder``/``reranker``/``stt``/``tts``), built
-by the ONE canonical registry builder in :mod:`lobes.roles`. Both are strictly
-read-only — no compose/docker call, no ``--apply``.
+roles (``cortex``/``senses``/``embedder``/``reranker``/``stt``/``tts``). Since
+issue #96 (plan "advertised implies reachable", task t7) they are CLIENTS of
+the gateway's own ``GET /capabilities`` rather than a second, independent
+derivation from the deployment's ``.env`` — see the module docstring in
+``lobes.cli._commands.capabilities`` for why re-deriving the same contract
+twice from two different config sources is exactly what let issue #92 and
+issue #96 drift in opposite directions. The tests below that don't care about
+the live-vs-offline distinction hit the *offline* fallback (the autouse
+``offline_runtime`` fixture in ``tests/conftest.py`` neutralises the gateway
+probe, matching how it already neutralises ``/health``); the fake-gateway
+tests near the bottom of this file explicitly restore the real probe against
+a real loopback server. Both verbs are strictly read-only — no compose/docker
+call, no ``--apply``.
 """
 
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from lobes.cli import main
+from lobes.cli._commands import capabilities as capabilities_module
 from lobes.roles import ROLES
-from lobes.runtime import _compose
+from lobes.runtime import _compose, _env
 
 _ROLE_INFO_FIELDS = {
     "role",
@@ -30,6 +43,15 @@ _ROLE_INFO_FIELDS = {
     "ready",
     "loaded",
 }
+
+# Captured at import time — BEFORE tests/conftest.py's autouse ``offline_runtime``
+# fixture (correctly) neutralises ``capabilities_module._fetch_gateway_capabilities``
+# for every other test in this file. The fake-gateway tests near the bottom
+# restore this real implementation via ``monkeypatch`` (which shares one instance
+# across a test's whole fixture graph, including the autouse fixture — the same
+# pattern ``tests/test_cli_tunnel.py`` uses to re-enable ``_health.is_healthy``
+# for its own tests) so they exercise the actual HTTP round trip, not a stub.
+_REAL_FETCH_GATEWAY_CAPABILITIES = capabilities_module._fetch_gateway_capabilities
 
 
 def _scaffold_fleet(path):
@@ -50,8 +72,16 @@ def test_capabilities_json_returns_all_six_roles_with_full_metadata(tmp_path, ca
     _scaffold_fleet(tmp_path)
     rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    # The JSON payload is the bare six-role dict — no "source"/mode key is
+    # ever mixed in, in ANY mode (Qodo action-required finding on PR #102:
+    # the gateway's own GET /capabilities returns exactly these six keys, so
+    # a strict `set(payload) == ROLES` check must hold here too). No gateway
+    # is listening on the resolved port in this offline fixture, so the CLI
+    # degrades to the .env-derived fallback and says so on stderr instead.
     assert set(payload) == set(ROLES)
+    assert "offline" in err
     for role in ROLES:
         info = payload[role]
         assert _ROLE_INFO_FIELDS <= set(info)
@@ -106,8 +136,10 @@ def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
     erroring — mirrors 'lobes overview --live' on an empty deployment."""
     rc = main(["capabilities", "--json"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
     assert set(payload) == set(ROLES)
+    assert "offline" in err
     assert payload["cortex"]["loaded"] is True  # primary is always wired
     assert payload["senses"]["loaded"] is False
     assert payload["embedder"]["loaded"] is False
@@ -119,6 +151,48 @@ def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
         m.native_max_model_len for m in SUPPORTED_MODELS if m.id == payload["cortex"]["model"]
     )
     assert payload["cortex"]["context"] == primary_native
+
+
+def test_capabilities_offline_fallback_never_reports_ready_true(tmp_path, capsys) -> None:
+    """Job 3 / issue #96: a config file is not evidence of health.
+
+    ``AUDIO_URL`` present in the deployment's ``.env`` makes ``stt``/``tts``
+    ``loaded`` (a config fact — the overlay is configured), but the gateway is
+    unreachable in this test (the autouse ``offline_runtime`` fixture stubs
+    the probe, matching a real down-gateway), so nothing was ever probed. The
+    offline fallback must therefore report ``ready=false`` for EVERY role —
+    not just stt/tts — no matter what ``loaded``/config truth it can compute.
+    This is the literal issue #96 scenario: ``AUDIO_URL`` was in ``.env`` but
+    never reached the gateway container's own environment, and the CLI's old
+    ``.env``-derived registry advertised ``ready=true`` on a path that
+    actually 404s/503s.
+    """
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "AUDIO_URL", "http://realtime:8080")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert set(payload) == set(ROLES)
+    assert "offline" in err
+    # AUDIO_URL is configured, so stt/tts ARE "loaded" (a config fact) ...
+    assert payload["stt"]["loaded"] is True
+    assert payload["tts"]["loaded"] is True
+    # cortex/senses/embedder/reranker are also loaded in the scaffolded fleet.
+    assert payload["cortex"]["loaded"] is True
+    # ... but NOTHING was probed, so every single role's `ready` is False.
+    for role in ROLES:
+        assert payload[role]["ready"] is False, role
+
+
+def test_capabilities_non_json_table_marks_offline_source(capsys) -> None:
+    """The human-readable table must also say this is a configured-defaults
+    view, not a live one — not just the JSON ``source`` key (Job 1)."""
+    rc = main(["capabilities"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "offline" in out
+    assert "gateway unreachable" in out
 
 
 def test_capabilities_never_touches_docker(tmp_path, monkeypatch, capsys) -> None:
@@ -213,6 +287,153 @@ def test_endpoint_never_touches_docker(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(_compose, "_run", boom)
     monkeypatch.setattr(_compose, "_probe", boom)
     rc = main(["endpoint", "cortex", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Gateway-client mode (issue #96, task t7): a real loopback fake gateway
+# ---------------------------------------------------------------------------
+#
+# Every test above exercises the OFFLINE fallback (the autouse
+# ``offline_runtime`` fixture neutralises the live probe). The tests below
+# restore the real ``_fetch_gateway_capabilities`` and point it at an actual
+# ``ThreadingHTTPServer`` on an ephemeral port, proving the CLI performs a
+# genuine HTTP round trip and renders exactly what the gateway said — not a
+# re-derivation, not a re-shaped version of it.
+
+
+class _FakeGatewayHandler(BaseHTTPRequestHandler):
+    """Serves a fixed JSON body on GET /capabilities; 404s everything else."""
+
+    payload: dict = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path == "/capabilities":
+            body = json.dumps(self.payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *_a) -> None:  # silence test noise
+        pass
+
+
+def _known_capabilities_payload() -> dict:
+    """A hand-built payload that deliberately does NOT match anything the
+    offline `.env`-derived fallback would ever compute (fake models, fake
+    ports, fake context sizes) — so an exact match against it proves the CLI
+    rendered the gateway's own answer, not its own guess."""
+    payload: dict[str, dict] = {}
+    for i, role in enumerate(ROLES):
+        payload[role] = {
+            "role": role,
+            "model": f"fake/{role}-model",
+            "runtime": "vllm",
+            "endpoint": "http://localhost:9999",
+            "path": "/v1/fake",
+            "context": 1000 + i,
+            "quant": "fake-quant",
+            "mtp": bool(i % 2),
+            "responsibilities": [f"{role}-thing"],
+            "forbidden_responsibilities": [],
+            "ready": bool(i % 2 == 0),
+            "loaded": True,
+        }
+    return payload
+
+
+@pytest.fixture
+def fake_gateway(monkeypatch):
+    """A real gateway stand-in on an ephemeral port, with the real gateway
+    probe restored (the autouse fixture stubs it to `None` by default)."""
+    payload = _known_capabilities_payload()
+    handler = type("_BoundFakeGatewayHandler", (_FakeGatewayHandler,), {"payload": payload})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    # Restores the REAL implementation (captured at module-import time, before
+    # tests/conftest.py's autouse fixture stubbed it) for this test only —
+    # mirrors how tests/test_cli_tunnel.py re-enables `_health.is_healthy`.
+    monkeypatch.setattr(
+        capabilities_module, "_fetch_gateway_capabilities", _REAL_FETCH_GATEWAY_CAPABILITIES
+    )
+    try:
+        yield httpd.server_address[1], payload
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_capabilities_json_reproduces_live_gateway_payload_exactly(fake_gateway, capsys) -> None:
+    """Job 1's core assertion: against a fake gateway serving a known
+    /capabilities payload, `lobes capabilities --json` reproduces it exactly
+    byte-for-byte (key-for-key) — no added/removed keys, no reshaping. This
+    is also the fix for the Qodo action-required finding on PR #102: a prior
+    revision added a top-level ``source`` sibling here, which broke exact
+    reproduction of the gateway's own contract."""
+    port, known_payload = fake_gateway
+    rc = main(["capabilities", "--port", str(port), "--json"])
+    assert rc == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload == known_payload
+    # Gateway mode is a live, authoritative answer — nothing to caveat, so no
+    # offline notice (or anything else) is written to stderr.
+    assert err == ""
+
+
+def test_capabilities_json_gateway_mode_keys_exactly_match_roles(fake_gateway, capsys) -> None:
+    """Regression guard for the Qodo action-required finding on PR #102: a
+    strict consumer doing ``set(payload.keys()) == ROLES`` — precisely the
+    kind of contract check this CLI-as-gateway-client rewrite (issue #96,
+    t7) promotes — must pass in gateway mode. The gateway's own
+    ``GET /capabilities`` returns exactly ``{cortex, senses, embedder,
+    reranker, stt, tts}`` and nothing else; the CLI's ``--json`` rendering of
+    a live gateway response must match byte-for-byte, with no extra
+    top-level key (e.g. no ``source``) ever mixed in."""
+    port, _known_payload = fake_gateway
+    rc = main(["capabilities", "--port", str(port), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload.keys()) == set(ROLES)
+
+
+def test_capabilities_non_json_table_marks_gateway_source(fake_gateway, capsys) -> None:
+    port, known_payload = fake_gateway
+    rc = main(["capabilities", "--port", str(port)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "gateway" in out
+    assert "live GET /capabilities" in out
+    # A fake model id from the known payload shows up verbatim in the table.
+    assert known_payload["cortex"]["model"] in out
+
+
+def test_endpoint_gateway_mode_uses_live_payload_not_offline_guess(fake_gateway, capsys) -> None:
+    """`lobes endpoint` also asks the gateway first (Job 1: both verbs)."""
+    port, known_payload = fake_gateway
+    rc = main(["endpoint", "cortex", "--port", str(port), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"role": "cortex", "endpoint": known_payload["cortex"]["endpoint"]}
+
+
+def test_capabilities_gateway_mode_never_touches_docker(fake_gateway, monkeypatch, capsys) -> None:
+    port, _known_payload = fake_gateway
+
+    def boom(*a, **k):
+        raise AssertionError("capabilities must never invoke docker/compose")
+
+    monkeypatch.setattr(_compose, "compose_up_build", boom)
+    monkeypatch.setattr(_compose, "compose_down", boom)
+    monkeypatch.setattr(_compose, "_run", boom)
+    monkeypatch.setattr(_compose, "_probe", boom)
+    rc = main(["capabilities", "--port", str(port), "--json"])
     assert rc == 0
 
 

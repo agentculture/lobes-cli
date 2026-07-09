@@ -1,16 +1,35 @@
 """The gateway HTTP server: a stdlib reverse proxy fronting the fleet backends.
 
 ``ThreadingHTTPServer`` + ``BaseHTTPRequestHandler``; the only module that opens
-sockets. Routing/failover *decisions* live in :func:`handle_post` (a seam that
-takes an ``open_upstream`` callable, so it's unit-testable without sockets) and in
+sockets. Routing *decisions* live in :func:`handle_post` (a seam that takes an
+``open_upstream`` callable, so it's unit-testable without sockets) and in
 :mod:`lobes.gateway._routing` (pure). The handler just reads the request,
 calls :func:`handle_post`, and relays the chosen upstream response — buffered for
 normal JSON, re-chunked for SSE streams.
 
-Failover is intentionally narrow: a backend is retried only when it refuses the
-connection or returns a 5xx **before any response body reaches the client**. A
-4xx is a client error (returned verbatim, no failover); once a 2xx body starts
-streaming, there is no retry (the client already has bytes).
+**No cross-backend failover** (issue #91, "advertised implies reachable").
+:func:`lobes.gateway._routing.order_backends` resolves a requested model to its
+ONE owning backend; a model is never retried against a different backend serving
+a different model (that would either 404 on an unknown id or, worse, silently
+answer as the wrong model — a role-contract violation). Because the owner is the
+only backend that can serve the model, its verdict is authoritative:
+
+* a **2xx / 4xx** commits and is relayed verbatim — a 4xx (e.g. the owner's own
+  404 "model does not exist") is a genuine *client* error now, not a trigger to
+  fail over;
+* a **refusal / timeout / >=500** means the owner is transiently down → a
+  RETRYABLE **503** ``backend_unavailable`` + ``Retry-After`` (issue #14), NOT a
+  terminal 404/502, so a client retries the same model instead of concluding it
+  is gone;
+* a **429** ``server_busy`` is the separate pressure-shed path (#85), and a
+  **502** ``upstream_unavailable`` survives only for the degenerate malformed
+  routing table (``order_backends`` returned an empty list) — see
+  :func:`handle_post`.
+
+Readiness governs *advertisement*, not routing: ``GET /v1/models`` and
+``GET /capabilities`` fold in the background :class:`~lobes.gateway._readiness.
+ReadinessCache` so a wired-but-dead backend is not advertised (issue #92); the
+POST hot path never probes (it reads the socket-free cache, if at all).
 """
 
 from __future__ import annotations
@@ -19,6 +38,7 @@ import dataclasses
 import http.client
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -27,14 +47,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
-from lobes import _metrics
+from lobes import __version__, _metrics
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._config import ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
+from lobes.gateway._readiness import ReadinessCache
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
     is_audio_path,
+    is_unknown_model,
     list_models_payload,
     order_backends,
     resolve_model,
@@ -257,9 +279,54 @@ class GatewayResponse:
     attempts: list[str] = field(default_factory=list)
 
 
-def _error_body(message: str, attempts: list[str]) -> bytes:
+# Retry-After (seconds) on the 503 a transiently-down owner yields. The owner is
+# the ONLY backend that can serve the requested model (#91: no failover), so its
+# refusal / timeout / 5xx is a "come back shortly", not a terminal "no such model"
+# — a caller should retry. Mirrors BUSY_RETRY_AFTER_SECONDS (the 429 shed) and the
+# audio 503 (both 5s).
+BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS: int = 5
+
+
+def _error_body(
+    message: str, attempts: list[str], *, error_type: str = "upstream_unavailable"
+) -> bytes:
+    """OpenAI-shaped gateway error body. ``error_type`` names the failure class a
+    client must react to differently — the four are deliberately distinct:
+
+    * ``upstream_unavailable`` — the degenerate **502**: ``order_backends``
+      returned no owner (a malformed routing table). A config/deploy bug, not
+      retryable.
+    * ``backend_unavailable``  — the **503**: the one backend that owns this model
+      refused / timed out / 5xx'd (#14/#91). Retryable (carries ``Retry-After``).
+    * ``server_busy``          — the **429** pressure shed (#85), built separately
+      by :func:`_busy_body`.
+    * a relayed upstream ``404`` "model does not exist" — the owner's own verdict,
+      never generated here.
+    """
     return json.dumps(
-        {"error": {"message": message, "type": "upstream_unavailable", "attempts": attempts}}
+        {"error": {"message": message, "type": error_type, "attempts": attempts}}
+    ).encode("utf-8")
+
+
+def _model_not_found_body(model: str) -> bytes:
+    """OpenAI/vLLM-shaped 404 body for an id that was NEVER advertised (honesty h23).
+
+    Mirrors the ``model_not_found`` error an OpenAI/vLLM backend emits for an
+    unknown model, so a client sees a consistent 404 shape whether it hit the
+    gateway or a backend directly. This is NOT a contradiction of "advertised
+    implies reachable" (issue #92): the invariant is that a model *listed in
+    ``/v1/models``* never 404s — an id that was never listed *should* 404. It is
+    the deliberate converse of the never-404 race guarantee (see
+    :func:`handle_post`).
+    """
+    return json.dumps(
+        {
+            "error": {
+                "message": f"The model `{model}` does not exist.",
+                "type": "model_not_found",
+                "code": "model_not_found",
+            }
+        }
     ).encode("utf-8")
 
 
@@ -289,11 +356,39 @@ def handle_post(
     pressure: dict[str, float] | None = None,
     override: bool = False,
 ) -> GatewayResponse:
-    """Resolve the model, then try backends in failover order.
+    """Resolve the model to its ONE owning backend and try it exactly once.
 
-    Returns the first backend that produces a response **before the body** (2xx
-    or 4xx — committed), or a 502 if every backend refused / 5xx'd. ``open_upstream``
-    is injected so this is unit-testable without sockets.
+    There is **no cross-backend failover** (issue #91):
+    :func:`lobes.gateway._routing.order_backends` returns at most one backend —
+    the owner of the resolved model — so this attempts that owner and nothing
+    else. ``open_upstream`` is injected so this is unit-testable without sockets.
+
+    The owner's verdict is authoritative, and the status mapping reflects that a
+    request naming a model has exactly one honest place to go:
+
+    * **unknown model id** → a **404** ``model_not_found`` generated HERE, before
+      any routing (honesty h23). A non-empty ``model`` that is neither an alias
+      nor any WIRED backend's served name (:func:`is_unknown_model`) was never
+      advertised, so it must not be silently served under the default backend's
+      weights. This is the deliberate converse of "advertised implies reachable"
+      (issue #92): a model *listed in ``/v1/models``* never 404s, but one never
+      listed *should*. Unknown-ness is decided against the ROUTING TABLE, never
+      the readiness-filtered ``/v1/models`` list — a wired-but-dead backend
+      (dropped from ``/v1/models`` but still in the table) is KNOWN and takes the
+      retryable-503 path below, NOT this 404 (that is what keeps issue #91 fixed).
+      A missing/blank ``model`` is *unspecified*, not unknown → it routes to
+      ``default_model`` and is served.
+    * **2xx / 4xx** → commit to the owner and relay verbatim. A 4xx is a genuine
+      *client* error (the owner is the only backend that could serve this model,
+      so e.g. its 404 "model does not exist" is authoritative — never a reason to
+      try someone else).
+    * **refusal / timeout / >=500** (the loop exhausts its single attempt) → the
+      owner is transiently down, so return a RETRYABLE **503** ``backend_unavailable``
+      + ``Retry-After`` (issue #14). It is deliberately NOT a 404 (which would be
+      indistinguishable from "this model id was never valid") and NOT a 502.
+    * **empty ``order_backends``** (no owner at all) → the only remaining **502**
+      ``upstream_unavailable``: a malformed routing table, a config bug, not
+      retryable.
 
     Pressure-aware busy shedding (#85): when ``pressure`` is supplied *and* the
     requested model is a capability tier (``main``/``minor``/``multimodal``, or the
@@ -329,13 +424,43 @@ def handle_post(
             ("X-Lobes-Tier-Reason", decision["reason"]),
         ]
     else:
+        # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
+        # backend's served name) must NOT be silently served under the default
+        # backend's weights — reject it with a 404 model_not_found BEFORE routing,
+        # matching what a real OpenAI/vLLM backend emits. Unknown-ness is decided
+        # against the ROUTING TABLE (is_unknown_model), never the readiness-filtered
+        # /v1/models list — so a wired-but-dead backend (dropped from /v1/models but
+        # still in the table) is KNOWN and routes on to the retryable 503 below, not
+        # a 404 (that distinction is what keeps issue #91 fixed). An UNSPECIFIED
+        # (missing/blank) model is not unknown — it routes to default_model.
+        if is_unknown_model(table, requested):
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_model_not_found_body(requested),
+            )
         served = resolve_model(table, requested)
     streaming = is_streaming(body)
     fwd_body = rewrite_model(body, served)
     fwd_headers = filter_headers(req_headers)
     attempts: list[str] = []
 
-    for backend in order_backends(table, served):
+    ordered = order_backends(table, served)
+    if not ordered:
+        # DEGENERATE case ONLY: no backend owns `served` AND none owns
+        # default_model — order_backends can return an empty list solely for a
+        # malformed routing table (in practice, one with no primary). That is a
+        # config/deploy bug, not a transient outage, so it is a TERMINAL 502
+        # upstream_unavailable with NO Retry-After — never the retryable 503 a
+        # present-but-dead owner gets below.
+        return GatewayResponse(
+            status=502,
+            headers=tier_headers + [("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_error_body("no backend owns the requested model", attempts),
+            attempts=attempts,
+        )
+
+    for backend in ordered:  # exactly one backend — no failover chain (#91)
         try:
             up = open_upstream(
                 backend,
@@ -352,7 +477,8 @@ def handle_post(
             attempts.append(f"{backend.name}: HTTP {up.status}")
             up.close()
             continue
-        # 2xx or 4xx → commit to this backend (4xx is a client error; no failover).
+        # 2xx or 4xx → commit to the owner and relay verbatim. A 4xx is a genuine
+        # CLIENT error: the owner is the only backend that could serve this model.
         return GatewayResponse(
             status=up.status,
             headers=tier_headers + up.headers,
@@ -361,10 +487,24 @@ def handle_post(
             attempts=attempts,
         )
 
+    # The single owner refused / timed out / 5xx'd. With no failover (#91) it is
+    # the ONLY backend that could serve `served`, so this is a TRANSIENT owner-down
+    # state — not "model unknown". Return a retryable 503 + Retry-After whose type
+    # (backend_unavailable) is distinguishable from both the 429 server_busy shed
+    # and the degenerate 502 upstream_unavailable above, so a client retries the
+    # same model instead of treating the failure as terminal (issues #14, #91).
     return GatewayResponse(
-        status=502,
-        headers=tier_headers + [("Content-Type", _CONTENT_TYPE_JSON)],
-        body=_error_body("all fleet backends are unavailable", attempts),
+        status=503,
+        headers=tier_headers
+        + [
+            ("Retry-After", str(BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)),
+            ("Content-Type", _CONTENT_TYPE_JSON),
+        ],
+        body=_error_body(
+            "the backend serving this model is unavailable — retry shortly",
+            attempts,
+            error_type="backend_unavailable",
+        ),
         attempts=attempts,
     )
 
@@ -546,6 +686,32 @@ def fleet_status_payload(
 # its config-derived defaults so the CLI/unit path is unchanged.
 
 
+# A legitimate HTTP ``Host`` header is a bare authority: a DNS hostname or IPv4
+# literal (dot-separated alphanumeric/hyphen labels — RFC 1123, which an IPv4
+# literal's digit-only labels already satisfy) or a bracketed IPv6 literal,
+# each optionally followed by ``:<port>`` (1-5 digits). Nothing in that grammar
+# permits ``/``, ``@``, whitespace, control characters, ``<``/``>``, ``?``,
+# ``#``, or backslashes, so a single allowlist regex both recognises a
+# well-formed host AND excludes every character class a path-traversal,
+# userinfo-credential-injection, header-injection (CRLF), XSS, or
+# query-string payload needs. See :func:`reachable_origin` for why this
+# exists (SonarCloud S5131).
+_HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_HOSTNAME = rf"{_HOST_LABEL}(?:\.{_HOST_LABEL})*"
+_IPV6_LITERAL = r"\[[0-9A-Fa-f:]+\]"
+_PORT = r"(?::[0-9]{1,5})?"
+_VALID_HOST_HEADER_RE = re.compile(rf"(?:{_HOSTNAME}|{_IPV6_LITERAL}){_PORT}")
+
+
+def _is_valid_host_header(host: str) -> bool:
+    """True when ``host`` is a well-formed ``hostname[:port]`` authority.
+
+    Used to gate :func:`reachable_origin`'s Host-header echo — see there for
+    the reflection risk this guards against.
+    """
+    return _VALID_HOST_HEADER_RE.fullmatch(host) is not None
+
+
 def reachable_origin(
     host_header: str | None, public_url: str | None, scheme: str = "http"
 ) -> str | None:
@@ -557,10 +723,33 @@ def reachable_origin(
     ``host:port`` in the right shape, IPv6 brackets included). Returns ``None``
     when neither is available, so the caller falls back to the config-derived
     origin (unchanged behaviour).
+
+    ``public_url`` is trusted operator config (set via the deployment's own
+    ``.env``, never attacker-reachable) so it is never validated and always
+    wins first, unchanged — that precedence is #92 target c29/h25 and is
+    covered by ``test_reachable_origin_public_url_wins_over_host`` /
+    ``test_capabilities_public_url_wins_over_host_end_to_end``.
+
+    ``host_header``, by contrast, is fully attacker-controlled: any client can
+    set an arbitrary ``Host:`` value, and this function's return value is
+    reflected verbatim into every role's ``endpoint`` in the JSON response
+    (:func:`capabilities_payload`). Echoing it unsanitised is exactly
+    SonarCloud rule ``pythonsecurity:S5131`` ("Change this code to not reflect
+    unsanitized user-controlled data") — a scraping client could be handed an
+    attacker's origin to dial, or a payload (path traversal, script markup, a
+    userinfo-style credential-injection host like
+    ``127.0.0.1:8001@attacker.test``) smuggled through an otherwise-trusted
+    contract. The remediation is the standard S5131 fix: constrain the tainted
+    value to a strict allowlist (:func:`_is_valid_host_header`, a bare
+    ``hostname[:port]``/``[ipv6][:port]`` authority) before it can reach the
+    response. A ``Host`` header that fails validation is treated exactly like
+    a missing one — it falls through to ``None``, and the caller advertises an
+    empty endpoint (never a fabricated or attacker-supplied one) rather than
+    guessing at a "sanitised" rewrite of untrusted input.
     """
     if public_url:
         return public_url.rstrip("/")
-    if host_header:
+    if host_header and _is_valid_host_header(host_header):
         return f"{scheme}://{host_header}"
     return None
 
@@ -614,6 +803,7 @@ def capabilities_payload(
     *,
     gateway_url: str | None = None,
     audio_ready: bool | None = None,
+    backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict:
     """The six first-class roles (issue #81), resolved via the shared registry.
 
@@ -631,14 +821,24 @@ def capabilities_payload(
     the builder derives it from ``cfg.host``/``cfg.port`` (the CLI/unit path,
     unchanged). ``audio_ready`` is the live stt/tts readiness signal (issue #89)
     from :func:`probe_audio_ready`; when ``None`` the builder falls back to the
-    configured ``bool(audio_url)`` (again the CLI/unit path). Both default to
+    configured ``bool(audio_url)`` (again the CLI/unit path). ``backend_ready`` is
+    the live readiness snapshot for the four gateway-fronted roles (issue #92),
+    keyed by internal ``Backend`` name — exactly what
+    :meth:`lobes.gateway._readiness.ReadinessCache.current` returns, so the HTTP
+    route passes it straight through; when ``None`` each role's ``ready`` falls
+    back to ``loaded`` (the CLI/unit path). All three signal kwargs default to
     ``None`` so this pure function's shape is unchanged for its non-HTTP callers.
     """
     from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
 
     resolved_env = os.environ if env is None else env
     registry = build_role_registry(
-        table, cfg, env=resolved_env, gateway_url=gateway_url, audio_ready=audio_ready
+        table,
+        cfg,
+        env=resolved_env,
+        gateway_url=gateway_url,
+        audio_ready=audio_ready,
+        backend_ready=backend_ready,
     )
     return {role: dataclasses.asdict(registry[role]) for role in ROLES}
 
@@ -655,6 +855,11 @@ class _Handler(BaseHTTPRequestHandler):
     # Non-blocking host-pressure provider (t6). None → the tier-downgrade layer
     # is skipped and tier aliases resolve via the static table (the t5 path).
     pressure_cache: PressureCache | None = None
+    # Non-blocking background readiness provider (issue #92). None → /v1/models
+    # lists every wired backend and /capabilities readiness falls back to the
+    # coarse `loaded` proxy (the offline/unit path). Read only via .current()
+    # (socket-free); the POST hot path never touches it.
+    readiness_cache: ReadinessCache | None = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -662,7 +867,19 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
         if route == "/health":
-            self._send_json(200, {"status": "ok", "service": "model-gear-gateway"})
+            # `version` is the deployed lobes-cli release THIS gateway process was
+            # built from (`__version__`, read off installed package metadata inside
+            # the container) — additive, issue #99. It is what lets a remote client
+            # (or `lobes doctor`, via lobes.runtime._health.fetch_health) detect
+            # deployed-artifact skew docker-free: Dockerfile.gateway pins
+            # `pip install "lobes-cli==${MODEL_GEAR_VERSION}"` once, at `lobes init`
+            # time, and nothing re-pins it afterwards, so a gateway container can
+            # silently run a stale release for days after the host CLI (and PyPI)
+            # moved on — exactly what made issue #92 look like a code regression
+            # when the fix was already published and simply undeployed.
+            self._send_json(
+                200, {"status": "ok", "service": "model-gear-gateway", "version": __version__}
+            )
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.
@@ -670,7 +887,13 @@ class _Handler(BaseHTTPRequestHandler):
             pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
             self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
-            self._send_json(200, list_models_payload(self.table))
+            # Advertise only backends the live readiness snapshot marks ready
+            # (issue #92): a wired-but-dead backend must NOT appear here, so a
+            # client can trust that a listed model id reaches a live engine. The
+            # snapshot is socket-free (.current() never probes); with no cache
+            # wired, every backend is listed (the offline/unit path).
+            ready = self.readiness_cache.current() if self.readiness_cache is not None else None
+            self._send_json(200, list_models_payload(self.table, ready))
         elif route == "/v1/models/supported":
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
@@ -678,14 +901,32 @@ class _Handler(BaseHTTPRequestHandler):
         elif route == "/capabilities":
             # The #81 role→endpoint contract: SIX first-class roles resolved to
             # live metadata via the shared lobes.roles registry. The endpoint is
-            # the client-reachable origin this request actually dialed (#87) and
-            # stt/tts readiness is a live probe of the audio backend (#89).
+            # the client-reachable origin this request actually dialed (#87),
+            # stt/tts readiness is a live probe of the audio backend (#89), and the
+            # four gateway-fronted roles' readiness comes from the background
+            # ReadinessCache snapshot (#92) — read socket-free, no probe here.
             cfg = self.server_config
             origin = reachable_origin(self.headers.get("Host"), cfg.public_url)
             audio_ready = probe_audio_ready(cfg.audio_url) is True if cfg.audio_url else None
+            # Pass the cache's tri-state snapshot STRAIGHT THROUGH — no boundary
+            # coercion here. build_role_registry treats a SUPPLIED backend_ready
+            # as authoritative and collapses the cache's None (dead/unreachable)
+            # to ready=False itself (issue #92 / honesty h14): coercing the
+            # tri-state is the builder's job, not this call site's, so a dead
+            # backend can never be advertised ready=True no matter who calls the
+            # builder. (This deletes t6's _ready_iff_true bridge — see roles.py.)
+            backend_ready = (
+                self.readiness_cache.current() if self.readiness_cache is not None else None
+            )
             self._send_json(
                 200,
-                capabilities_payload(self.table, cfg, gateway_url=origin, audio_ready=audio_ready),
+                capabilities_payload(
+                    self.table,
+                    cfg,
+                    gateway_url=origin,
+                    audio_ready=audio_ready,
+                    backend_ready=backend_ready,
+                ),
             )
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
@@ -788,12 +1029,20 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _make_handler(
-    table: RoutingTable, cfg: ServerConfig, pressure_cache: PressureCache | None = None
+    table: RoutingTable,
+    cfg: ServerConfig,
+    pressure_cache: PressureCache | None = None,
+    readiness_cache: ReadinessCache | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
         (_Handler,),
-        {"table": table, "server_config": cfg, "pressure_cache": pressure_cache},
+        {
+            "table": table,
+            "server_config": cfg,
+            "pressure_cache": pressure_cache,
+            "readiness_cache": readiness_cache,
+        },
     )
     return bound
 
@@ -803,6 +1052,19 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # One pressure cache per process: a background daemon thread refreshes it so
     # the 150 ms sample never lands on the request path.
     pressure_cache = PressureCache()
-    httpd = ThreadingHTTPServer((cfg.host, cfg.port), _make_handler(table, cfg, pressure_cache))
+    # One readiness cache per process (issue #92). Construction seeds every backend
+    # to None (unknown) WITHOUT probing, so we do ONE bounded synchronous refresh
+    # BEFORE binding — otherwise /v1/models would advertise nothing until the
+    # daemon's first background pass lands (up to one interval), reporting a false
+    # "fleet is empty" on the very first request. After the seed, start() hands
+    # refreshes to a background daemon thread so no probe ever lands on the request
+    # path. Read verbs consult it via .current() (socket-free); the POST hot path
+    # never touches it.
+    readiness_cache = ReadinessCache.from_backends(table.backends, start=False)
+    readiness_cache.refresh()
+    readiness_cache.start()
+    httpd = ThreadingHTTPServer(
+        (cfg.host, cfg.port), _make_handler(table, cfg, pressure_cache, readiness_cache)
+    )
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
     httpd.serve_forever()

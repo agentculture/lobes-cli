@@ -268,15 +268,50 @@ resume from the resolved route against a now-serving gear.
 ## Live-validation status (#71/#73) {#live-validation-status-71}
 
 > **RESOLVED on the DGX Spark (GB10, sm_121, 2026-07-01, #71/#73): the gear
-> SERVES and answers text + image + audio requests.** `status` = `load-tested`.
+> SERVES and answers text + image requests.** `status` = `load-tested`.
 >
 > This #71/#73 validation ran against the **coder** checkpoint (the default
 > gear at the time). The **base** checkpoint (`coolthor/gemma-4-12B-it-NVFP4A16`,
 > promoted to default in §7, 2026-07-02) shares the identical
 > `Gemma4UnifiedForConditionalGeneration` architecture and serve story — the
 > §7 measurement independently re-confirmed it *serves* and *decodes* correctly
-> (28.6 tok/s + MTP) — but the text+image+audio content-correctness checks below
-> were not independently re-run against the base checkpoint specifically.
+> (28.6 tok/s + MTP). The gap this admission used to flag — whether the
+> text+image+audio content-correctness checks further down this section hold
+> against the base checkpoint specifically — is now resolved, and the answer
+> **splits**: image + text does, audio + text doesn't. See the next
+> subsection for the live evidence, and the correction to the coder's
+> original "audio + text ✓" line further down.
+
+### Base checkpoint (coolthor): image + text verified, audio + text not served (#101)
+
+Live evidence gathered against `coolthor/gemma-4-12B-it-NVFP4A16` on the DGX
+Spark (vLLM `0.23.1rc1.dev672+g93d8f834d`), via `model=multimodal`:
+
+| request | `prompt_tokens` | result |
+|---|---|---|
+| text only | 15 | — |
+| text + image (96×96 solid PNG, stdlib-generated) | **273** (+258) | replies `"Red"` for a red image, `"Blue"` for a blue one |
+| text + audio (0.68 s WAV, 24 kHz, from the rig's own Chatterbox TTS) | 34 (+19) | `""` (immediate EOS) |
+| text + audio (same clip resampled to 16 kHz) | 48 | *"I cannot hear any audio because you haven't provided a file or a link…"* |
+
+**Image + text: VERIFIED**, against known ground truth, with a negative
+control (a blue image correctly fails a `"red"` assertion). This replaces
+the earlier hedge — the base checkpoint's image intake is confirmed, not
+merely inherited by architectural similarity to the coder checkpoint.
+
+**Audio + text: NOT SUPPORTED on this vLLM path.** The image expands the
+prompt by 258 tokens — real content injected into the sequence. The audio
+adds only ~19 placeholder tokens and no content: the model receives no
+signal that audio was attached, so it either emits an immediate EOS (24 kHz)
+or, resampled to 16 kHz, a fluent claim that no audio was provided. The
+checkpoint's own `config.json` declares `audio_config` and `audio_token_id`
+— so this is a **vLLM `gemma4_unified` gap, not a checkpoint gap**. vLLM
+**drops** the `input_audio` content part rather than rejecting it: a caller
+gets `200 OK` and a fluent answer that silently ignored the audio, which is
+the worst failure mode for a caller relying on the advertised capability.
+Tracked as **issue #101**. Until #101 lands, treat `senses`/`multimodal` as
+vision-only intake — for speech, use the purpose-built `stt` role (Parakeet,
+`POST /v1/audio/transcriptions`; see [`docs/colleague-stack.md`](colleague-stack.md)).
 
 **The fix: vLLM nightly's native class.** `gemma4_unified` is **early-fusion**
 multimodal (no separate vision/audio towers — a `vision_embedder` and audio
@@ -306,14 +341,23 @@ Runtime matrix tested:
 |---|---|---|---|
 | `nvcr.io/nvidia/vllm:26.04-py3` | 0.19.0 | ❌ | ❌ |
 | `…:26.06-py3` + Transformers `181beb3` | 0.22.1 | ❌ (transformers-backend fallback) | ❌ (o_proj 4096≠8192) |
-| **`vllm/vllm-openai:nightly` (shipped)** | **0.23.1rc1.dev** | **✅** | **✅ text+image+audio** |
+| **`vllm/vllm-openai:nightly` (shipped)** | **0.23.1rc1.dev** | **✅** | **✅ text+image** (audio accepted, silently dropped — #101) |
 
 **Live validation results (util 0.25, `--max-model-len 4096`, GB10):**
 
 - ✅ **Serves** — `/health` 200, native class resolved, TRITON auto-forced.
 - ✅ **Text** — arithmetic + factual answered correctly.
 - ✅ **Image + text** — described a test image (red circle + text) correctly.
-- ✅ **Audio + text** — transcribed a 24 kHz TTS clip **verbatim** (needed `av`).
+- ⚠️ **Audio + text** — recorded at the time as "transcribed a 24 kHz TTS clip
+  **verbatim** (needed `av`)," but the check behind that line asserted only
+  `HTTP 200` + non-empty response content against a placeholder clip — it never
+  diffed the transcription against the clip's actual words, so it was **never
+  verified against ground truth**. When audio + text was later tested properly
+  against the base checkpoint (the evidence table in
+  ["Live-validation status"](#live-validation-status-71) above), the claim did
+  **not** hold: vLLM drops the `input_audio` content part on this serving path
+  and the model answers as if no audio was attached. Do not rely on this line;
+  see **#101**.
 - ✅ **GPU util** — ~**15.7 GiB** actual (weights 8.1 + cudagraph 0.46 + KV 7.2) ≈
   **0.12** of the then-**0.69** default-fleet budget. **Superseded 2026-07-02**
   by the always-on duo retune — see the note below and
@@ -337,7 +381,12 @@ Runtime matrix tested:
 Resolved:
 
 - ✅ **Serve-enablement** — native `gemma4_unified` class on vLLM nightly + `TRITON_ATTN`.
-- ✅ **Image + audio** — functional (audio needs the `vllm[audio]` extra / PyAV).
+- ✅ **Image** — functional, verified against ground truth (see the base-checkpoint
+  table in ["Live-validation status"](#live-validation-status-71) above).
+- ⚠️ **Audio** — NOT served on this vLLM path (#101): the `vllm[audio]` extra
+  installs cleanly, but `gemma4_unified` silently drops the `input_audio`
+  content part instead of feeding it to the model. Use the purpose-built `stt`
+  role (Parakeet, `POST /v1/audio/transcriptions`) for speech instead.
 - ✅ **Quantization** — `compressed-tensors` (not `modelopt_fp4`).
 - ✅ **GPU util** — ~15.7 GiB ≈ 0.12 budget.
 - ✅ **Native MTP (base gear, default-on)** — the public `google/gemma-4-12B-it-assistant`

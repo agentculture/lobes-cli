@@ -112,13 +112,21 @@ def _optional_backend(
     default_name: str,
     task: str = "generate",
 ) -> Backend | None:
-    """A fleet backend wired only when its env (``url_key`` or ``name_key``) is set.
+    """A fleet backend wired only when its ``url_key`` env var is non-empty.
 
-    Returns ``None`` when neither is present — so the default gateway serves the
-    primary alone, and each extra backend (fallback / embed / rerank) opts in
-    independently via its own env pair.
+    ``name_key`` alone is NOT enough — a served name with no URL describes a
+    model, not a reachable backend, and wiring one anyway invents a "phantom"
+    backend whose ``base_url`` falls back to a hardcoded ``default_url``
+    naming a compose service that need not exist (advertised on
+    ``GET /v1/models`` yet unreachable: every request to it fails to
+    connect). This mirrors the contract the fleet already documents for
+    ``MINOR_BASE_URL`` — empty ⇒ silently unwired.
+
+    Returns ``None`` when ``url_key`` is absent/empty — so the default
+    gateway serves the primary alone, and each extra backend (fallback /
+    embed / rerank / …) opts in independently via its own ``*_BASE_URL``.
     """
-    if not (env.get(url_key) or env.get(name_key)):
+    if not env.get(url_key):
         return None
     return Backend(
         name=name,

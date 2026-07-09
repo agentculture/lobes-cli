@@ -50,9 +50,16 @@ CLIs in loops, so safe-by-default is mandatory.
 ## Running the model locally (vLLM)
 
 `lobes init` scaffolds a deployment directory (default `$HOME/.lobes`) from the
-packaged templates: a `docker-compose.yml` that stands up the vLLM model as an
-OpenAI-compatible server on `:8000`, plus a `.env`. Tuned for DGX Spark (GB10
-Grace Blackwell, 128 GB unified memory) per
+packaged templates. **Since issue #69, bare `lobes init` (no flags) scaffolds
+the fleet duo by default** — see ["Running the model behind a gateway
+(fleet)"](#running-the-model-behind-a-gateway-fleet) below; that is almost
+certainly what you want. This section instead walks through the **legacy
+single-model** scaffold: one vLLM server, no gateway, opted into with
+`--single` (alias `--legacy`) — a `docker-compose.yml` that stands up the
+vLLM model directly as an OpenAI-compatible server on `:8000` (the
+*container's own* port; there is no gateway in front of it in this mode —
+see the port note in the fleet section below), plus a `.env`. Tuned for DGX
+Spark (GB10 Grace Blackwell, 128 GB unified memory) per
 [build.nvidia.com/spark/vllm](https://build.nvidia.com/spark/vllm).
 
 Prerequisites: the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
@@ -60,7 +67,7 @@ and `docker login nvcr.io` with an [NGC API key](https://org.ngc.nvidia.com/setu
 to pull the `nvcr.io/nvidia/vllm` image.
 
 ```bash
-lobes init --apply          # writes $HOME/.lobes/{docker-compose.yml,.env}
+lobes init --single --apply # writes $HOME/.lobes/{docker-compose.yml,.env} (legacy single-model)
 # edit $HOME/.lobes/.env to set HF_TOKEN if the model repo is gated
 lobes serve --apply         # first run downloads ~28 GB of weights (the 27B primary)
 lobes status                # waits/reports until /health is up
@@ -178,19 +185,37 @@ tunnel` for the full flow.
 
 ## Running the model behind a gateway (fleet)
 
-`lobes init --fleet` scaffolds a **multi-container** deployment instead of one: the
-always-warm Qwen generate primary, two tiny co-resident **embedding** and
-**reranker** gears, and a single stdlib **gateway** that fronts them on the host
-port the acp `vllm-local` provider already expects. The gateway routes each
-request by its `model` field — to the primary, the embedder, or the reranker by
-task family (generate / embed / score / rerank) — and defaults an unknown/missing
-name to the primary, so existing single-model clients keep working unchanged. The
-same front fans `/v1/audio/*` out to the `--audio` overlay, and a warm *generate*
-fallback can be wired in later (the gateway adds it, with failover, only when one
-is configured).
+**This is the default scaffold since issue #69** — plain `lobes init --apply`
+(no flags) already gives you this; `--fleet` is a back-compat no-op kept only
+so old scripts that passed it keep working, and `--single` (alias `--legacy`)
+is what opts you *out*, back to the one-container deployment the previous
+section describes. `lobes init` scaffolds a **multi-container** deployment:
+the always-warm Qwen generate primary, the Gemma 4 12B multimodal gear, two
+tiny co-resident **embedding** and **reranker** gears, and a single stdlib
+**gateway** that fronts them all on the host port the acp `vllm-local`
+provider already expects — `VLLM_PORT` (packaged default `:8000`; `:8001` on
+the reference DGX Spark deployment, deliberately set apart from the
+single-model story's default). The gateway routes each request by its
+`model` field — to the primary, the multimodal gear, the embedder, or the
+reranker by task family (generate / embed / score / rerank) — and defaults
+an unknown/missing name to the primary, so existing single-model clients
+keep working unchanged. The same front fans `/v1/audio/*` out to the
+`--audio` overlay, and a warm *generate* fallback can be wired in later (the
+gateway adds it, with failover, only when one is configured).
+
+> **`:8000` means two different things depending on scaffold — this
+> ambiguity is what issue #92 was about.** In the legacy single-model
+> section above, `:8000` is the vLLM **container's own** port, published
+> straight to the host with no gateway in front of it. Here, `:8000` (or
+> whatever `VLLM_PORT` is set to) is the **gateway's** published port,
+> fronting several backends by `model` field. They happen to share the same
+> default number, but a client must dial whichever origin its deployment
+> actually publishes — never assume a bare port number implies a particular
+> topology. `lobes doctor` and `GET /capabilities` are the source of truth
+> for what a given deployment actually serves and where.
 
 ```bash
-lobes init --fleet --apply        # $HOME/.lobes/{docker-compose.yml,.env,Dockerfile.gateway}
+lobes init --apply                # $HOME/.lobes/{docker-compose.yml,.env,Dockerfile.gateway} — the default
 docker login nvcr.io              # NGC API key for the vLLM image
 lobes fleet up --apply            # builds the gateway image + starts the backend
 lobes fleet status                # container states + gateway /health + /v1/models
@@ -204,7 +229,7 @@ curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qw
 
 The fleet runs a **default-on `cortex` + `senses` duo** (the `main` + `multimodal`
 backends) — the 27B Qwen text generate primary served at **128K** (`cortex`, util
-`0.30`) and the Gemma 4 12B vision+audio gear served at **32K** (`senses`, util
+`0.30`) and the Gemma 4 12B vision gear served at **32K** (`senses`, util
 `0.14` — provisional pending live validation; `coolthor/gemma-4-12B-it-NVFP4A16`,
 native MTP default-on — the coder fine-tune, `sakamakismile/gemma-4-12B-coder-…`,
 is kept as an opt-in `multimodal-coder` gear; see

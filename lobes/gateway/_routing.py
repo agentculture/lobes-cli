@@ -102,6 +102,16 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
 
     An alias resolves to its target; a name some backend already serves resolves
     to itself; anything else (``None`` or unknown) resolves to ``default_model``.
+
+    This never distinguishes *unspecified* from *unknown* — it always returns a
+    concrete served name so :func:`order_backends` always has an owner to try.
+    That UNSPECIFIED-vs-UNKNOWN policy lives one level up, in
+    :func:`is_unknown_model` + :func:`lobes.gateway.server.handle_post`: an
+    unknown non-empty id is rejected (404) *before* ``handle_post`` ever calls
+    this, so ``resolve_model``'s unknown→default fall-back is now a pure-routing
+    safety net (e.g. for an internal caller passing a stale name), not the path a
+    client's unknown model id takes. Kept unchanged so its many callers (the tier
+    tests, ``order_backends``) are unaffected.
     """
     if requested:
         if requested in table.aliases:
@@ -112,6 +122,50 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
     return table.default_model
 
 
+def is_unknown_model(table: RoutingTable, requested: str | None) -> bool:
+    """True when ``requested`` is a NON-EMPTY id that was NEVER advertised —
+    neither an alias nor any wired backend's ``served_name`` — so it must not be
+    silently served under the default backend's weights (honesty h23, issue #91).
+
+    Distinguishes UNKNOWN from UNSPECIFIED — the distinction :func:`resolve_model`
+    deliberately does not make:
+
+    * **Unspecified** — ``requested`` is ``None`` or ``""`` (a missing/blank
+      ``model`` field). This is NOT unknown: it intentionally routes to
+      ``default_model`` (see :func:`resolve_model`) and is served. Returns
+      ``False``.
+    * **Known** — ``requested`` is an alias or a wired backend's served name.
+      Returns ``False``.
+    * **Unknown** — a non-empty id that is neither. Returns ``True``; the caller
+      (:func:`lobes.gateway.server.handle_post`) turns this into a 404
+      ``model_not_found`` rather than routing it to the default owner.
+
+    **Decided against the ROUTING TABLE, never the readiness-filtered
+    ``/v1/models`` list.** A backend that is wired but dead/warming is dropped
+    from ``/v1/models`` (see :func:`list_models_payload`) yet its ``served_name``
+    is still in ``table.backends`` — so it is *known*, and a request naming it
+    routes to its owner and yields a retryable **503** (owner down), NOT a 404.
+    Deciding unknown-ness against the readiness list instead would 404 a merely
+    warming/transiently-dead backend and reintroduce issue #91. Unknown-ness is a
+    question about *wiring* ("is this id in the table at all"), not *liveness*.
+
+    ``default_model`` is always treated as KNOWN, even in the degenerate case of a
+    malformed table where no backend actually serves it: naming the deployment's
+    declared default identity explicitly is equivalent to leaving ``model``
+    unspecified — both route to ``default_model`` — so that path stays a terminal
+    **502** ``upstream_unavailable`` (the malformed-table signal), not a 404. In a
+    well-formed table ``default_model`` is some wired backend's served name, so
+    this clause is redundant there; it only matters for the pathological table.
+    """
+    if not requested:
+        return False  # unspecified (missing/blank) → routes to default, not unknown
+    if requested == table.default_model:
+        return False  # the declared default identity is known (see docstring)
+    if requested in table.aliases:
+        return False
+    return not any(backend.served_name == requested for backend in table.backends)
+
+
 def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
     for backend in table.backends:
         if backend.served_name == served_name:
@@ -120,33 +174,73 @@ def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
 
 
 def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
-    """Attempt order for ``served_name``: its owner first, then same-task failovers.
+    """Resolve ``served_name`` to its single owning backend — never a failover chain.
 
-    The owner is tried first; failover candidates are restricted to backends
-    with the same ``task`` as the owner. This prevents an embed request from
-    falling over to a generate backend (which would return a confusing 400 for
-    ``/v1/embeddings``). An unmatched ``served_name`` falls back to the default
-    model's owner (a generate backend) with same-task (generate) failovers.
+    Returns a list of length 0 or 1. **No cross-backend failover, ever** (issue
+    #91, "advertised implies reachable"): a request that resolves to one model
+    is attempted at that model's owner only, never retried against a different
+    backend serving a different model.
+
+    This used to walk every other backend that shared the owner's ``task`` as a
+    failover chain — e.g. cortex (primary) falling over to the multimodal
+    (Gemma) backend when the vLLM engine died. That is unsound: the retry still
+    carries the *original* body, which still names the original model (cortex's
+    Qwen id). A backend that does not serve that model has exactly one honest
+    answer — an OpenAI-shaped 404 ``model does not exist`` — and that 404 is
+    **indistinguishable to the caller** from "this model id was never valid".
+    ``handle_post``'s own rule ("2xx or 4xx → commit to this backend; 4xx is a
+    client error, no failover") then relays that 404 as terminal, silently
+    killing the request instead of surfacing the real problem (the owner's
+    engine crashed). Worse, if the other backend's model *did* happen to exist,
+    the caller would get a real answer from the wrong model — a `final_authority`
+    role-contract violation (issue #81): a caller who asked for cortex must never
+    silently receive a Gemma answer.
+    So: one served name resolves to exactly one backend, tried once. If that
+    backend is unreachable or errors, the caller gets an honest failure instead
+    of an answer from a model they did not ask for. (The *static* tier-alias
+    upward fallback in :func:`tier_aliases` is unrelated and unaffected — that
+    resolves an unwired capability tier to a different served name at
+    table-build time, before ``order_backends`` ever runs; it is config-time
+    resolution, not a runtime retry against a mismatched body.)
+
+    An unmatched ``served_name`` still falls back to the ``default_model``'s
+    owner (preserves the existing "unknown model routes to default" behaviour)
+    — that remains a single backend, not a chain.
     """
     owner = _backend_for(table, served_name) or _backend_for(table, table.default_model)
-    ordered: list[Backend] = []
     # Invariant: a built table always has a primary backend and default_model
     # resolves to it, so owner is non-None in practice. We degrade gracefully (an
     # empty list → handle_post returns a 502) rather than assert, so a malformed
     # table can never crash the long-lived gateway process.
-    if owner is not None:
-        ordered.append(owner)
-        ordered.extend(b for b in table.backends if b is not owner and b.task == owner.task)
-    return ordered
+    return [owner] if owner is not None else []
 
 
-def list_models_payload(table: RoutingTable) -> dict:
-    """OpenAI ``/v1/models`` shape listing every backend's served model."""
+def list_models_payload(
+    table: RoutingTable, ready: Mapping[str, "bool | None"] | None = None
+) -> dict:
+    """OpenAI ``/v1/models`` shape listing the fleet's served models.
+
+    When ``ready`` is supplied — the gateway's live readiness snapshot, keyed by
+    backend **name** (exactly what
+    :meth:`lobes.gateway._readiness.ReadinessCache.current` returns) — only
+    backends whose signal ``is True`` are listed. This is the core of "advertised
+    implies reachable" (issue #92): a backend that is wired but dead/missing
+    (``None``) or reached-but-unhealthy (``False``) must NOT be advertised, so a
+    client can trust that a model id appearing here will reach a live engine.
+    ``None`` (*unknown*) and ``False`` are BOTH treated as not-ready — only an
+    affirmative ``True`` advertises; treating ``None`` as "list it anyway" is the
+    exact defect #92 fixes (a wired-but-dead backend probes ``None``, not
+    ``False``). ``ready=None`` (the default) lists every wired backend unchanged —
+    the offline/CLI path and any caller without a live signal.
+    """
+    backends = table.backends
+    if ready is not None:
+        backends = tuple(b for b in backends if ready.get(b.name) is True)
     return {
         "object": "list",
         "data": [
             {"id": backend.served_name, "object": "model", "owned_by": "lobes"}
-            for backend in table.backends
+            for backend in backends
         ],
     }
 

@@ -7,6 +7,7 @@ from lobes.gateway._config import _parse_aliases, build_config
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
+    is_unknown_model,
     list_models_payload,
     order_backends,
     resolve_model,
@@ -35,19 +36,119 @@ def test_resolve_model_exact_alias_default() -> None:
     assert resolve_model(t, "fast") == "F"  # alias
     assert resolve_model(t, "big") == "P"  # alias
     assert resolve_model(t, None) == "P"  # missing → default
-    assert resolve_model(t, "who-knows") == "P"  # unknown → default
+    # UNSPECIFIED-vs-UNKNOWN is a caller policy (is_unknown_model / handle_post),
+    # NOT resolve_model's: resolve_model still maps an unknown non-empty id to
+    # default_model so order_backends always has an owner. handle_post 404s the
+    # unknown id BEFORE it ever calls resolve_model (honesty h23), so this
+    # fall-back is now a pure-routing safety net, not the serving path.
+    assert resolve_model(t, "who-knows") == "P"  # unknown → default (routing net)
     assert resolve_model(t, "") == "P"  # empty → default
+
+
+# --- is_unknown_model: UNKNOWN vs UNSPECIFIED (honesty h23) ----------------
+
+
+def test_is_unknown_model_distinguishes_unspecified_from_unknown() -> None:
+    # UNSPECIFIED (missing/empty) is NOT unknown — it deliberately routes to
+    # default_model and must be served, so is_unknown_model is False for it.
+    t = _table()
+    assert is_unknown_model(t, None) is False  # missing → unspecified, not unknown
+    assert is_unknown_model(t, "") is False  # empty → unspecified, not unknown
+    # A known alias or any wired backend's served name is KNOWN → not unknown.
+    assert is_unknown_model(t, "P") is False  # served name
+    assert is_unknown_model(t, "F") is False  # served name
+    assert is_unknown_model(t, "fast") is False  # alias → F
+    assert is_unknown_model(t, "big") is False  # alias → P
+    # A non-empty id that is neither an alias nor any wired served name is UNKNOWN.
+    assert is_unknown_model(t, "who-knows") is True
+    assert is_unknown_model(t, "never-advertised") is True
+
+
+def test_is_unknown_model_decided_against_routing_table_not_readiness() -> None:
+    # CRITICAL (issue #91): unknown-ness is decided against the ROUTING TABLE
+    # (wired backends + aliases), NEVER the readiness-filtered /v1/models list. A
+    # backend that is WIRED is KNOWN even if it is dead/warming and thus absent
+    # from /v1/models — its served name is still in table.backends. So "F" is
+    # known regardless of any readiness verdict; a request for a dead-but-wired F
+    # must route (→ 503 owner-down), never 404 as if it were never advertised.
+    t = _table()  # F is wired
+    assert is_unknown_model(t, "F") is False  # wired → known, dead or not
+
+
+def test_is_unknown_model_default_model_is_known_even_in_degenerate_table() -> None:
+    # The deployment's declared default identity is always KNOWN — naming it
+    # explicitly equals leaving `model` unspecified (both route to default). Even
+    # a malformed zero-backend table (which nothing serves) must NOT 404 its own
+    # default_model: that request stays the terminal 502 malformed-table signal,
+    # not a 404. In a well-formed table this is redundant (default_model is a
+    # wired served name) — it only guards the pathological case.
+    degenerate = RoutingTable(backends=(), default_model="P", aliases={})
+    assert is_unknown_model(degenerate, "P") is False  # default → known
+    assert is_unknown_model(degenerate, "Q") is True  # anything else → unknown
 
 
 # --- order_backends -------------------------------------------------------
 
 
-def test_order_backends_owner_first_then_failover() -> None:
+def test_order_backends_owner_only_no_failover() -> None:
+    # No cross-backend failover (issue #91): each served name resolves to
+    # exactly its own owner, never to another backend serving a different model.
     t = _table()
-    assert [b.name for b in order_backends(t, "P")] == ["primary", "fallback"]
-    assert [b.name for b in order_backends(t, "F")] == ["fallback", "primary"]
-    # an unmatched served name falls back to the default model's owner first
-    assert [b.name for b in order_backends(t, "nope")] == ["primary", "fallback"]
+    assert [b.name for b in order_backends(t, "P")] == ["primary"]
+    assert [b.name for b in order_backends(t, "F")] == ["fallback"]
+    # an unmatched served name falls back to the default model's owner — still
+    # a single backend, not a chain.
+    assert [b.name for b in order_backends(t, "nope")] == ["primary"]
+
+
+def test_order_backends_always_returns_at_most_one_backend() -> None:
+    # The blanket contract (issue #91): order_backends(table, served) has
+    # length <= 1 for EVERY input — a known served name, an unknown one, an
+    # embed name, a rerank name, or a tier-alias-resolved name. No caller of
+    # order_backends should ever have to reason about a failover chain again.
+    embed_name = "Qwen/Qwen3-Embedding-0.6B"
+    rerank_name = "Qwen/Qwen3-Reranker-0.6B"
+    full = RoutingTable(
+        backends=(
+            Backend("primary", "http://vllm-primary:8000", "P"),
+            Backend("fallback", "http://vllm-fallback:8000", "F"),
+            Backend("embed", "http://vllm-embed:8000", embed_name, task="embed"),
+            Backend("rerank", "http://vllm-rerank:8000", rerank_name, task="score"),
+        ),
+        default_model="P",
+        aliases={"fast": "F", "main": "P"},  # a tier-style alias resolving to "P"
+    )
+    for requested in ("P", "F", embed_name, rerank_name, "unknown-model", "", None):
+        served = resolve_model(full, requested)
+        result = order_backends(full, served)
+        assert len(result) <= 1, f"{requested!r} -> {served!r} produced {result!r}"
+    # A tier alias resolved first through resolve_model must also land on
+    # exactly one backend.
+    tier_served = resolve_model(full, "main")
+    assert len(order_backends(full, tier_served)) <= 1
+    # Sanity: known names still resolve to a non-empty (length-1) result — the
+    # <= 1 bound above isn't vacuously satisfied by empty lists for real models.
+    assert len(order_backends(full, "P")) == 1
+    assert len(order_backends(full, embed_name)) == 1
+    assert len(order_backends(full, rerank_name)) == 1
+
+
+def test_order_backends_known_served_returns_its_own_owner() -> None:
+    # Acceptance criterion #2: for a known served name, order_backends returns
+    # exactly that model's owning backend (not some other backend).
+    t = _table()
+    assert [b.name for b in order_backends(t, "P")] == ["primary"]
+    assert [b.name for b in order_backends(t, "F")] == ["fallback"]
+
+
+def test_order_backends_unknown_served_returns_default_owner() -> None:
+    # Acceptance criterion #3: an unknown served name routes to the
+    # default_model's owner (preserving today's "unknown model -> default"
+    # behaviour), still a single element.
+    t = _table()
+    result = order_backends(t, "totally-unknown-model-id")
+    assert [b.name for b in result] == ["primary"]
+    assert len(result) == 1
 
 
 def test_list_models_payload_shape() -> None:
@@ -96,8 +197,16 @@ def test_build_config_defaults_single_backend() -> None:
 def test_build_config_adds_fallback_only_when_configured() -> None:
     # No optional-backend env → just the generate primary.
     assert len(build_config({})[0].backends) == 1
-    # FALLBACK_SERVED_NAME alone is enough to wire a second backend.
+    # FALLBACK_SERVED_NAME alone is NOT enough to wire a second backend — a
+    # served name with no URL describes a model, not a reachable backend
+    # (see _optional_backend's "advertised implies reachable" contract).
     table, _ = build_config({"FALLBACK_SERVED_NAME": "beta"})
+    assert [b.name for b in table.backends] == ["primary"]
+    # FALLBACK_URL is what actually wires the backend; FALLBACK_SERVED_NAME
+    # alongside it only customises the served name.
+    table, _ = build_config(
+        {"FALLBACK_URL": "http://vllm-fallback:8000", "FALLBACK_SERVED_NAME": "beta"}
+    )
     assert [b.name for b in table.backends] == ["primary", "fallback"]
     assert table.backends[1].served_name == "beta"
 
@@ -235,12 +344,17 @@ def test_build_config_embed_url_alone_triggers_embed_backend() -> None:
     assert embed_backend.served_name == "Qwen/Qwen3-Embedding-0.6B"
 
 
-def test_build_config_rerank_served_name_alone_triggers_rerank_backend() -> None:
-    # RERANK_SERVED_NAME alone → rerank backend added with default URL.
+def test_build_config_rerank_served_name_alone_does_not_wire_rerank_backend() -> None:
+    # RERANK_SERVED_NAME alone → no rerank backend (no URL ⇒ nothing reachable).
     table, _ = build_config({"RERANK_SERVED_NAME": "custom/reranker"})
-    assert any(b.name == "rerank" for b in table.backends)
+    assert not any(b.name == "rerank" for b in table.backends)
+    # RERANK_URL is what wires it; RERANK_SERVED_NAME alongside it customises
+    # the served name.
+    table, _ = build_config(
+        {"RERANK_URL": "http://vllm-rerank:9999", "RERANK_SERVED_NAME": "custom/reranker"}
+    )
     rerank_backend = next(b for b in table.backends if b.name == "rerank")
-    assert rerank_backend.base_url == "http://vllm-rerank:8000"
+    assert rerank_backend.base_url == "http://vllm-rerank:9999"
     assert rerank_backend.served_name == "custom/reranker"
 
 
@@ -292,14 +406,19 @@ def test_order_backends_rerank_returns_only_rerank_backend() -> None:
     assert all(b.task == "score" for b in result)
 
 
-def test_order_backends_generate_still_failovers_between_generate_backends() -> None:
-    # The generate failover contract must not regress: primary owns "P", then
-    # falls over to fallback (also generate), but NOT to embed or rerank.
+def test_order_backends_generate_never_failovers_across_models() -> None:
+    # INVERTED for issue #91 ("advertised implies reachable"): order_backends
+    # used to fail a generate request over to every other same-task backend
+    # (e.g. cortex -> multimodal), which meant a dead cortex engine got silently
+    # retried against the Gemma backend with a body still naming the Qwen model
+    # id -> a terminal, confusing 404 (or worse, a real answer from the wrong
+    # model). Now: "P" resolves to primary and ONLY primary, full stop. Fallback
+    # and embed/rerank are never attempted for a "P" request.
     t = _full_table()
     result = order_backends(t, "P")
     names = [b.name for b in result]
-    assert names == ["primary", "fallback"]
-    # Embed and rerank must be absent from the generate failover chain.
+    assert names == ["primary"]
+    assert "fallback" not in names
     assert "embed" not in names
     assert "rerank" not in names
 

@@ -347,6 +347,17 @@ is required (pinning keeps the image reproducible); from-source/dev boxes that r
 ahead of a PyPI release point `MODEL_GEAR_VERSION` at a published TestPyPI `.devN`
 build.
 
+**That pin is written once and nothing re-pins it (issue #99).** `lobes init`
+sets `MODEL_GEAR_VERSION` at scaffold time; no other verb touches it
+afterwards, so a long-lived deployment can silently keep running an old
+gateway image long after the host's own `lobes` binary — and PyPI — have
+moved on. `GET /health` reports the deployed gateway's own `lobes-cli`
+`version` (additive field, issue #99) precisely so this is detectable without
+docker: `lobes doctor`'s `gateway_version_match` check compares it against the
+CLI's own version and fails the run on a real mismatch (remediation: bump
+`MODEL_GEAR_VERSION` in `.env` and `docker compose up -d --build gateway`) —
+see [Verbs](#verbs) below.
+
 ### Auth (known limitation)
 
 The gateway is a **pass-through** and is **not auth-aware** — it does not inspect

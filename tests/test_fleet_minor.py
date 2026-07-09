@@ -45,13 +45,26 @@ def test_minor_backend_added_when_minor_url_set() -> None:
     assert minor.task == "generate"
 
 
-def test_minor_backend_added_when_minor_served_name_set() -> None:
-    """MINOR_SERVED_NAME alone triggers the minor backend with the default URL."""
+def test_minor_backend_not_added_when_only_minor_served_name_set() -> None:
+    """MINOR_SERVED_NAME alone does NOT wire the minor backend — a served name
+    with no URL describes a model, not a reachable backend."""
     table, _ = build_config({"MINOR_SERVED_NAME": _MINOR_SERVED})
+    names = [b.name for b in table.backends]
+    assert "minor" not in names
+    assert names == ["primary"]
+
+
+def test_minor_backend_added_when_both_minor_url_and_served_name_set() -> None:
+    """MINOR_BASE_URL wires the backend; MINOR_SERVED_NAME alongside it just
+    customises the served name (mirrors the default-name case above)."""
+    table, _ = build_config(
+        {"MINOR_BASE_URL": "http://vllm-minor:8000", "MINOR_SERVED_NAME": _MINOR_SERVED}
+    )
     names = [b.name for b in table.backends]
     assert "minor" in names
     minor = next(b for b in table.backends if b.name == "minor")
-    assert minor.base_url == "http://vllm-minor:8000"  # falls back to default
+    assert minor.base_url == "http://vllm-minor:8000"
+    assert minor.served_name == _MINOR_SERVED
 
 
 def test_minor_backend_url_stripped() -> None:
@@ -73,24 +86,27 @@ def test_resolve_model_primary_unaffected_when_minor_present() -> None:
     assert resolve_model(table, _PRIMARY_SERVED) == _PRIMARY_SERVED
 
 
-def test_order_backends_minor_is_owner_with_primary_failover() -> None:
-    """order_backends: minor is tried first; primary is the generate failover."""
+def test_order_backends_minor_is_owner_with_no_failover() -> None:
+    """order_backends: minor is the sole entry for its own served name — INVERTED
+    for issue #91 ("advertised implies reachable"): minor no longer fails over
+    to primary (or anywhere else). A request naming the minor served name is
+    attempted at minor, once, full stop."""
     table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
     result = order_backends(table, _MINOR_SERVED)
     names = [b.name for b in result]
-    assert names[0] == "minor"
-    assert "primary" in names  # same-task (generate) failover
-    # All failover backends must be generate tasks.
-    assert all(b.task == "generate" for b in result)
+    assert names == ["minor"]
+    assert "primary" not in names  # no cross-backend failover, ever
 
 
-def test_primary_failover_includes_minor_when_minor_present() -> None:
-    """If minor is configured, order_backends for primary includes minor as failover."""
+def test_primary_never_failovers_to_minor_when_minor_present() -> None:
+    """INVERTED for issue #91: even with minor wired, order_backends for the
+    primary served name returns primary alone — minor is never a failover
+    candidate for a request that named the primary model."""
     table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
     result = order_backends(table, _PRIMARY_SERVED)
     names = [b.name for b in result]
-    assert names[0] == "primary"
-    assert "minor" in names  # minor is also generate → in the failover pool
+    assert names == ["primary"]
+    assert "minor" not in names
 
 
 def test_minor_does_not_pollute_embed_failover_chain() -> None:
