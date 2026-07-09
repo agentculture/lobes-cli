@@ -7,6 +7,7 @@ from lobes.gateway._config import _parse_aliases, build_config
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
+    is_unknown_model,
     list_models_payload,
     order_backends,
     resolve_model,
@@ -35,8 +36,55 @@ def test_resolve_model_exact_alias_default() -> None:
     assert resolve_model(t, "fast") == "F"  # alias
     assert resolve_model(t, "big") == "P"  # alias
     assert resolve_model(t, None) == "P"  # missing → default
-    assert resolve_model(t, "who-knows") == "P"  # unknown → default
+    # UNSPECIFIED-vs-UNKNOWN is a caller policy (is_unknown_model / handle_post),
+    # NOT resolve_model's: resolve_model still maps an unknown non-empty id to
+    # default_model so order_backends always has an owner. handle_post 404s the
+    # unknown id BEFORE it ever calls resolve_model (honesty h23), so this
+    # fall-back is now a pure-routing safety net, not the serving path.
+    assert resolve_model(t, "who-knows") == "P"  # unknown → default (routing net)
     assert resolve_model(t, "") == "P"  # empty → default
+
+
+# --- is_unknown_model: UNKNOWN vs UNSPECIFIED (honesty h23) ----------------
+
+
+def test_is_unknown_model_distinguishes_unspecified_from_unknown() -> None:
+    # UNSPECIFIED (missing/empty) is NOT unknown — it deliberately routes to
+    # default_model and must be served, so is_unknown_model is False for it.
+    t = _table()
+    assert is_unknown_model(t, None) is False  # missing → unspecified, not unknown
+    assert is_unknown_model(t, "") is False  # empty → unspecified, not unknown
+    # A known alias or any wired backend's served name is KNOWN → not unknown.
+    assert is_unknown_model(t, "P") is False  # served name
+    assert is_unknown_model(t, "F") is False  # served name
+    assert is_unknown_model(t, "fast") is False  # alias → F
+    assert is_unknown_model(t, "big") is False  # alias → P
+    # A non-empty id that is neither an alias nor any wired served name is UNKNOWN.
+    assert is_unknown_model(t, "who-knows") is True
+    assert is_unknown_model(t, "never-advertised") is True
+
+
+def test_is_unknown_model_decided_against_routing_table_not_readiness() -> None:
+    # CRITICAL (issue #91): unknown-ness is decided against the ROUTING TABLE
+    # (wired backends + aliases), NEVER the readiness-filtered /v1/models list. A
+    # backend that is WIRED is KNOWN even if it is dead/warming and thus absent
+    # from /v1/models — its served name is still in table.backends. So "F" is
+    # known regardless of any readiness verdict; a request for a dead-but-wired F
+    # must route (→ 503 owner-down), never 404 as if it were never advertised.
+    t = _table()  # F is wired
+    assert is_unknown_model(t, "F") is False  # wired → known, dead or not
+
+
+def test_is_unknown_model_default_model_is_known_even_in_degenerate_table() -> None:
+    # The deployment's declared default identity is always KNOWN — naming it
+    # explicitly equals leaving `model` unspecified (both route to default). Even
+    # a malformed zero-backend table (which nothing serves) must NOT 404 its own
+    # default_model: that request stays the terminal 502 malformed-table signal,
+    # not a 404. In a well-formed table this is redundant (default_model is a
+    # wired served name) — it only guards the pathological case.
+    degenerate = RoutingTable(backends=(), default_model="P", aliases={})
+    assert is_unknown_model(degenerate, "P") is False  # default → known
+    assert is_unknown_model(degenerate, "Q") is True  # anything else → unknown
 
 
 # --- order_backends -------------------------------------------------------

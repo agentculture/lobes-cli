@@ -528,21 +528,49 @@ def test_backend_ready_sets_ready_independent_of_loaded() -> None:
     assert registry["reranker"].ready is True
 
 
-def test_backend_ready_missing_entry_falls_back_to_loaded() -> None:
-    """A backend_ready mapping that simply has no entry for a role's backend
-    (e.g. a readiness cache that hasn't probed it yet) degrades to the coarse
-    `loaded` proxy for THAT role only — never raises, never guesses."""
+def test_backend_ready_missing_entry_is_not_ready() -> None:
+    """INVERTED (issue #92 / honesty h14): a SUPPLIED backend_ready mapping is
+    AUTHORITATIVE, so a role whose backend has no entry is NOT ready — never a
+    fall-back to the coarse `loaded` proxy. "No live signal" is not evidence of
+    health: a missing key is treated exactly like a present None/False. (This
+    used to assert `ready == loaded` for the missing-entry roles; that let a
+    caller who omitted a backend advertise it ready, the caller-discipline trap
+    build_role_registry now self-enforces against.)"""
     registry = _registry(_full_env(), backend_ready={"primary": True})
-    assert registry["cortex"].ready is True  # has a live entry
+    assert registry["cortex"].ready is True  # has a live True entry → ready
     for role in ("senses", "embedder", "reranker"):
         info = registry[role]
-        assert info.ready == info.loaded  # no entry → falls back, same as backend_ready=None
+        assert info.loaded is True  # still wired...
+        assert info.ready is False  # ...but a missing key ⇒ NOT ready (authoritative)
+
+
+def test_backend_ready_present_none_is_not_ready() -> None:
+    """INVERTED (issue #92 / honesty h14 — the core trap): a present per-backend
+    `None` means NOT ready, NOT "fall back to loaded". `ReadinessCache.current()`
+    reports a dead/unreachable backend as `None`; passing that straight in (as
+    build_role_registry's own contract invites) must yield `ready=False` for
+    that backend — never the resurrected #92 `ready=True` a wired-but-dead
+    backend would get if `None` fell back to the `loaded` proxy. `loaded` stays
+    the config fact."""
+    registry = _registry(
+        _full_env(),
+        backend_ready={"primary": None, "multimodal": True, "embed": None, "rerank": True},
+    )
+    assert registry["cortex"].loaded is True  # wired...
+    assert registry["cortex"].ready is False  # ...but the cache said UNREACHABLE
+    assert registry["embedder"].loaded is True
+    assert registry["embedder"].ready is False
+    assert registry["senses"].ready is True  # a present True is still ready
+    assert registry["reranker"].ready is True
 
 
 def test_backend_ready_none_preserves_t4_behaviour() -> None:
-    """backend_ready omitted entirely (the default) → ready == loaded for every
-    gateway-fronted role, exactly the pre-t5 behaviour — every existing
-    non-HTTP caller is unaffected."""
+    """backend_ready OMITTED entirely (the whole mapping is None, the default)
+    → ready == loaded for every gateway-fronted role, exactly the pre-t5
+    behaviour — every existing non-HTTP caller is unaffected. Contrast a
+    per-backend None WITHIN a supplied mapping, which is authoritatively "not
+    ready" (test_backend_ready_present_none_is_not_ready) — the two Nones mean
+    opposite things (issue #92 / honesty h14)."""
     registry = _registry(_full_env())
     for role in ("cortex", "senses", "embedder", "reranker"):
         assert registry[role].ready == registry[role].loaded
