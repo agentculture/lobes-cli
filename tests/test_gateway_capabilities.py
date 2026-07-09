@@ -33,6 +33,16 @@ _MULTIMODAL_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 
+# capabilities_payload/build_role_registry NEVER fabricate an endpoint from
+# GATEWAY_HOST/GATEWAY_PORT (issue #81 t5, criterion 3 — see
+# lobes.roles._gateway_base_url): those are the gateway's own INTERNAL listen
+# config, not necessarily a client-reachable address. Every real caller (the
+# HTTP route via reachable_origin, the CLI) always supplies an explicit,
+# known-dialable gateway_url — this constant mirrors that for the tests below
+# that exercise capabilities_payload directly (bypassing the HTTP route) and
+# aren't themselves testing the "no gateway_url known" path.
+_GATEWAY_URL = "http://localhost:8000"
+
 
 def _full_env(**over) -> dict[str, str]:
     """A fully-wired six-role generate+pooling fleet (audio deliberately unset)."""
@@ -61,9 +71,9 @@ def test_capabilities_payload_matches_cli_shape() -> None:
     # (the CLI leaves it None too; the gateway fills it from `loaded`).
     env = _full_env()
     table, cfg = build_config(env)
-    payload = S.capabilities_payload(table, cfg, env=env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     assert set(payload) == set(ROLES)
-    registry = build_role_registry(table, cfg, env=env)
+    registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     for role in ROLES:
         expected = dataclasses.asdict(registry[role])
         expected["ready"] = registry[role].loaded
@@ -106,7 +116,7 @@ def test_capabilities_payload_unwired_roles_present_not_omitted() -> None:
     # A primary-only fleet: no multimodal/embed/rerank/audio wired.
     env = {"PRIMARY_URL": "http://vllm-primary:8000", "PRIMARY_SERVED_NAME": _PRIMARY_ID}
     table, cfg = build_config(env)
-    payload = S.capabilities_payload(table, cfg, env=env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     assert set(payload) == set(ROLES)  # all six present, never a 500, never omitted
     for role in ("senses", "embedder", "reranker", "stt", "tts"):
         assert payload[role]["loaded"] is False
@@ -118,9 +128,24 @@ def test_capabilities_payload_unwired_roles_present_not_omitted() -> None:
 def test_capabilities_payload_ready_mirrors_loaded() -> None:
     env = _full_env()
     table, cfg = build_config(env)
-    payload = S.capabilities_payload(table, cfg, env=env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     for role in ROLES:
         assert payload[role]["ready"] == payload[role]["loaded"]
+
+
+def test_capabilities_payload_no_gateway_url_and_no_public_url_never_ready() -> None:
+    """issue #81 t5, criterion 3: absent gateway_url/GATEWAY_PUBLIC_URL, the
+    gateway-fronted roles get an EMPTY endpoint — never a URL fabricated from
+    GATEWAY_HOST/GATEWAY_PORT — and are never advertised ready, even though
+    `loaded` (the config fact) is still True. This is the exact bug class the
+    issue reports: 'ready: true for roles whose endpoint returns 404'."""
+    env = _full_env()
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env=env)  # no gateway_url
+    for role in ("cortex", "senses", "embedder", "reranker"):
+        assert payload[role]["endpoint"] == ""
+        assert payload[role]["loaded"] is True
+        assert payload[role]["ready"] is False
 
 
 def test_capabilities_payload_defaults_env_to_os_environ(monkeypatch) -> None:
@@ -224,11 +249,13 @@ def test_capabilities_payload_threads_audio_ready() -> None:
     env = _full_env(AUDIO_URL="http://realtime:8080")
     table, cfg = build_config(env)
     # audio_ready=False → stt/tts advertise ready:false even though AUDIO_URL is set.
-    warming = S.capabilities_payload(table, cfg, env=env, audio_ready=False)
+    warming = S.capabilities_payload(
+        table, cfg, env=env, gateway_url=_GATEWAY_URL, audio_ready=False
+    )
     for role in ("stt", "tts"):
         assert warming[role]["ready"] is False
     # audio_ready=True → ready.
-    live = S.capabilities_payload(table, cfg, env=env, audio_ready=True)
+    live = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL, audio_ready=True)
     for role in ("stt", "tts"):
         assert live[role]["ready"] is True
 

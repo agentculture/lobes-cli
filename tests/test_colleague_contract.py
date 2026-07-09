@@ -131,8 +131,17 @@ class _FakeFleetHandler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route == "/capabilities":
             # THE REAL production builder — the contract under test is the
-            # actual shipped one, not a hand-rolled fixture.
-            self._send_json(200, S.capabilities_payload(self.table, self.cfg, env=self.env))
+            # actual shipped one, not a hand-rolled fixture. capabilities_payload
+            # never fabricates an endpoint from GATEWAY_HOST/GATEWAY_PORT
+            # (issue #81 t5, criterion 3), so — exactly like the real gateway's
+            # do_GET route derives `origin` via `reachable_origin` and passes it
+            # explicitly — this fake fleet passes its own real, dialable
+            # loopback origin (the address this httpd is actually bound to).
+            gateway_url = f"http://{self.cfg.host}:{self.cfg.port}"
+            self._send_json(
+                200,
+                S.capabilities_payload(self.table, self.cfg, env=self.env, gateway_url=gateway_url),
+            )
         elif route == "/health":
             self._send_json(200, {"status": "ok"})
         elif route == "/metrics":
@@ -366,7 +375,11 @@ def test_capabilities_contract_is_runtime_descriptor_only(fake_fleet) -> None:
 
 def test_measure_registry_emits_only_allowed_runtime_metric_keys(fake_fleet) -> None:
     base_url, table, cfg, env = fake_fleet
-    registry = build_role_registry(table, cfg, env=env)
+    # gateway_url=base_url: the fake fleet's own real, dialable loopback origin
+    # — the honest fix for issue #81 t5 criterion 3 (build_role_registry never
+    # fabricates an endpoint from GATEWAY_HOST/GATEWAY_PORT), mirroring what the
+    # production HTTP route passes via reachable_origin(...).
+    registry = build_role_registry(table, cfg, env=env, gateway_url=base_url)
     measured = measure_registry(registry, timeout=3.0)
     assert set(measured) == set(ROLES)
     for role, result in measured.items():

@@ -164,11 +164,21 @@ class RoleInfo:
     mtp: bool  # speculative decoding (MTP draft head) active for this model
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
-    # Coarse "configured/wired" readiness — always == `loaded` today. This is
-    # the same proxy the gateway's GET /capabilities uses (issue #81), so the
-    # CLI and gateway agree on one boolean. It is NOT a live health probe;
-    # true liveness (did the backend answer a request just now) is
-    # `lobes measure`'s job (t8), not this dataclass.
+    # Runtime readiness — a caller-supplied LIVE signal, folded in by
+    # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
+    # for the four gateway-fronted roles, `audio_ready` for stt/tts (issue
+    # #89). Generalised from the stt/tts-only split (issue #89/#90) to all six
+    # roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
+    # When a caller supplies no signal (the parameter is `None`, the default),
+    # `ready` falls back to the coarse `loaded` "configured/wired" proxy — the
+    # original t4 behaviour, still exercised by every non-HTTP caller (the
+    # CLI's non-live paths, most of this module's own test suite).
+    # Structurally CLAMPED either way: a role whose backend is not wired
+    # (`loaded is False`) or whose `endpoint` is empty can never report
+    # `ready=True`, no matter what signal a caller passes in. This mirrors —
+    # and is enforced by the same code path as — the stt/tts clamp on
+    # `audio_configured` (issue #89/#90 review finding), now applied to all
+    # six roles by build_role_registry itself, not left to caller discipline.
     ready: bool = False
     # Is this role's backend/service wired/present in THIS deployment? An
     # unconfigured/opt-in role is still returned, with loaded=False.
@@ -186,25 +196,33 @@ def _catalog_by_role_hint(role_hint: str) -> SupportedModel | None:
 
 
 def _gateway_base_url(server: ServerConfig) -> str:
-    """The gateway's caller-facing base URL derived from its listen config.
+    """The gateway's caller-facing base URL — NEVER fabricated from host:port.
 
-    ``ServerConfig.host`` defaults to the wildcard bind ``0.0.0.0`` (usable for
-    binding, not as a client target), so it is normalized to ``localhost``.
-    Callers that know the real reachable address (a published host port, a tunnel
-    URL) should pass an explicit ``gateway_url`` to :func:`build_role_registry`.
+    ``ServerConfig.host``/``.port`` (``GATEWAY_HOST``/``GATEWAY_PORT``) are the
+    gateway process's own INTERNAL listen config — where it binds inside its
+    container — not necessarily where a caller can reach it from outside. On
+    the reference rig the gateway listens on internal container port 8000 but
+    is PUBLISHED on host port 8001, and host port 8000 belongs to a wholly
+    unrelated daemon (a stray uvicorn service). A URL built from
+    ``host:port`` would therefore silently advertise that foreign daemon as
+    if it were the gateway — a caller dialing it gets whatever happens to be
+    listening there, not a 404 from the gateway, which is worse than an
+    honest "unknown". This function must never do that.
 
-    An IPv6 literal host (e.g. ``GATEWAY_HOST=::1``) is bracketed per RFC 3986
-    (``http://[::1]:8000``) — an unbracketed IPv6 literal ahead of ``:<port>``
-    is not a valid URL authority (the address's own colons collide with the
-    port separator). IPv4 literals and hostnames carry no colon and pass
-    through unchanged.
+    Returns ``server.public_url`` (the operator-declared, caller-reachable
+    origin — ``GATEWAY_PUBLIC_URL``), rstripped of a trailing slash, when it
+    is set; otherwise ``""``. An empty return here is not a degraded case to
+    special-case downstream — :func:`build_role_registry` already treats an
+    empty ``endpoint`` as a hard "never advertise ready=True" signal, so a
+    caller either gets a real, dialable endpoint or an honest absence of one.
+
+    Callers that know the real reachable address from elsewhere (a published
+    host port, a tunnel URL, or — as the gateway's own HTTP route does,
+    issue #87 — the request's own ``Host`` header) must pass it explicitly as
+    ``gateway_url`` to :func:`build_role_registry`; that explicit value always
+    wins over this fallback.
     """
-    host = server.host
-    if host in ("0.0.0.0", "::", ""):  # nosec B104 — a comparison, not a bind
-        host = "localhost"
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    return f"http://{host}:{server.port}"
+    return (server.public_url or "").rstrip("/")
 
 
 def _served_context(role: str, env: Mapping[str, str], native: int) -> int:
@@ -234,8 +252,27 @@ def _gateway_role(
     table: RoutingTable,
     gateway: str,
     env: Mapping[str, str],
+    ready_signal: bool | None,
 ) -> RoleInfo:
-    """Resolve a gateway-fronted role (cortex/senses/embedder/reranker)."""
+    """Resolve a gateway-fronted role (cortex/senses/embedder/reranker).
+
+    ``ready_signal`` is the caller's live-readiness tri-state for THIS role's
+    backend (the value :func:`build_role_registry` looked up in its
+    ``backend_ready`` mapping by :data:`ROLE_BACKEND` name) — ``True``/
+    ``False`` reflect an actual probe result; ``None`` means no live signal is
+    available (no ``backend_ready`` mapping was supplied, or it had no entry
+    for this backend), in which case ``ready`` falls back to the coarse
+    ``loaded`` proxy, matching the original t4 behaviour.
+
+    Either way, ``ready`` is CLAMPED to ``False`` whenever the backend is not
+    wired (``loaded is False``) or the resolved ``endpoint`` is empty (see
+    :func:`_gateway_base_url`) — enforced HERE, structurally, so a caller
+    passing a stale/wrong ``ready_signal`` for an unwired or undialable role
+    can never fabricate ``ready=True``. This generalises, to all four
+    gateway-fronted roles, the same clamp issue #89/#90 established for
+    stt/tts (a caller-supplied signal can never override "nothing is wired"
+    or "nothing to dial").
+    """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
     if backend is not None:
@@ -248,18 +285,23 @@ def _gateway_role(
     # canonical entry when the operator serves a non-catalog name.
     entry = _catalog_by_id(model_id) or _catalog_by_role_hint(ROLE_ROLE_HINT[role])
     native_context = entry.native_max_model_len if entry else 0
+    endpoint = gateway
+    if loaded and endpoint:
+        ready = ready_signal if ready_signal is not None else loaded
+    else:
+        ready = False
     return RoleInfo(
         role=role,
         model=model_id,
         runtime=_VLLM_RUNTIME,
-        endpoint=gateway,
+        endpoint=endpoint,
         path=ROLE_PATH[role],
         context=_served_context(role, env, native_context),
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
-        ready=loaded,
+        ready=ready,
         loaded=loaded,
     )
 
@@ -299,6 +341,7 @@ def build_role_registry(
     env: Mapping[str, str] | None = None,
     gateway_url: str | None = None,
     audio_ready: bool | None = None,
+    backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the six first-class roles to live metadata — the #81 contract.
 
@@ -310,8 +353,9 @@ def build_role_registry(
     :param table: the gateway routing table — its wired :class:`Backend` objects
         tell us which roles are ``loaded`` and each role's served model id.
     :param server: the gateway server config — supplies the audio overlay URL
-        (``audio_url``) for stt/tts and, absent ``gateway_url``, the derived
-        gateway base URL for the four gateway-fronted roles.
+        (``audio_url``) for stt/tts and, absent ``gateway_url``, the (very
+        narrow) ``public_url`` fallback for the four gateway-fronted roles —
+        see :func:`_gateway_base_url`.
     :param env: the deployment's environment mapping, consulted ONLY for the
         served ``--max-model-len`` overlay (:data:`ROLE_MAX_MODEL_LEN_ENV`) —
         so ``RoleInfo.context`` reports what the deployment actually SERVES
@@ -321,33 +365,63 @@ def build_role_registry(
         Kept separate from ``table``/``server`` (typically built from the SAME
         env) so a caller assembling those by hand isn't forced to also pass it.
     :param gateway_url: the caller-facing gateway base URL for cortex / senses /
-        embedder / reranker. When ``None`` it is derived from ``server`` (host
-        ``0.0.0.0`` → ``localhost``). Audio roles also use this origin as their
-        endpoint (issue #87).
-    :param audio_ready: optional live-readiness override for stt/tts (issue #89).
+        embedder / reranker. When ``None``, it falls back to
+        ``server.public_url`` (an operator-declared ``GATEWAY_PUBLIC_URL``) and,
+        failing that, to ``""`` — it is NEVER fabricated from
+        ``server.host``/``server.port`` (issue #81 t5; those are the gateway's
+        INTERNAL listen config, not a client-reachable address — see
+        :func:`_gateway_base_url`). Audio roles also use this origin as their
+        endpoint when the overlay is wired (issue #87).
+    :param audio_ready: optional live-readiness signal for stt/tts (issue #89).
         When not ``None`` it sets the audio roles' ``ready`` (the runtime signal)
         — ``loaded`` stays the config fact ``bool(audio_url)``. When ``None``,
         ``ready`` falls back to ``bool(audio_url)`` (the CLI/back-compat path).
+    :param backend_ready: optional live-readiness signal for the four
+        gateway-fronted roles (issue #81 t5), keyed by the internal
+        :class:`~lobes.gateway._routing.Backend` name (:data:`ROLE_BACKEND`'s
+        values — ``"primary"``/``"multimodal"``/``"embed"``/``"rerank"``), one
+        tri-state value (``True``/``False``/``None``) per backend — exactly
+        the shape :meth:`lobes.gateway._readiness.ReadinessCache.current`
+        returns. Mirrors ``audio_ready``'s shape and defaulting: when a role's
+        backend has an entry, that entry sets ``ready`` (the runtime signal);
+        ``loaded`` stays the config fact "is this backend wired". When
+        ``backend_ready`` is ``None`` (the default) — OR a role's backend has
+        no entry in it — ``ready`` falls back to ``loaded``, the original t4
+        behaviour, so every existing non-HTTP caller (the CLI, this module's
+        own offline test suite) is unchanged. ``roles.py`` itself never probes
+        anything to produce this signal — it is computed elsewhere (t3's
+        :class:`~lobes.gateway._readiness.ReadinessCache`, socket-free to read)
+        and handed in, exactly like ``audio_ready``.
     :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
 
-    Readiness (``RoleInfo.ready``) is set to the same coarse "configured/wired"
-    proxy as ``loaded`` — the CLI (t5) and the gateway's ``GET /capabilities``
-    (t6) must agree on one boolean, so it is computed here, once, for both.
-    This is NOT a live health probe (it opens no socket); true liveness is a
-    later task's concern (``lobes measure``, t8).
+    Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
+    (issue #81 t5 — generalising the stt/tts split from issue #89/#90 to all
+    six roles): it reflects ``backend_ready``/``audio_ready`` when the caller
+    supplies a live signal, else it falls back to the coarse "configured/wired"
+    ``loaded`` proxy. Either way it is CLAMPED, here, to ``False`` whenever a
+    role's backend is not wired OR its resolved ``endpoint`` is empty — a
+    caller can never fabricate ``ready=True`` for a role with nothing to dial,
+    regardless of what signal it passes in. ``roles.py`` stays pure/offline
+    either way — it opens no socket to produce or consume this signal; true
+    liveness is probed elsewhere (t3's ``ReadinessCache`` /
+    ``probe_audio_ready``, issue #89) and handed in as a plain value.
     """
     resolved_env: Mapping[str, str] = env if env is not None else {}
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
     registry: dict[str, RoleInfo] = {}
 
     for role in ("cortex", "senses", "embedder", "reranker"):
-        registry[role] = _gateway_role(role, table, gateway, resolved_env)
+        signal = backend_ready.get(ROLE_BACKEND[role]) if backend_ready is not None else None
+        registry[role] = _gateway_role(role, table, gateway, resolved_env, signal)
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
+    # Audio roles use the gateway origin when the overlay is wired (issue #87),
+    # but fall back to empty endpoint when it is not wired.
+    audio_endpoint = gateway if audio_configured else ""
     # `loaded` is a config fact — is the audio overlay wired in THIS deployment —
     # kept SEPARATE from `ready`, the runtime signal. `ready` is the gateway's
     # live probe (`audio_ready`) when it supplied one, else it falls back to the
@@ -356,14 +430,18 @@ def build_role_registry(
     # masquerading as not-deployed, and an unconfigured overlay never reports a
     # ready role with an empty endpoint.
     #
-    # Clamp on `audio_configured` so that last invariant holds STRUCTURALLY, not
-    # merely by caller discipline: an unconfigured overlay is never ready, no
-    # matter what `audio_ready` a caller passes. When configured, use the live
-    # probe signal if one was supplied, else fall back to the configured fact.
-    audio_ready_signal = audio_configured and (audio_ready if audio_ready is not None else True)
-    # Audio roles use the gateway origin when the overlay is wired (issue #87),
-    # but fall back to empty endpoint when it is not wired.
-    audio_endpoint = gateway if audio_configured else ""
+    # Clamp on `audio_configured` AND `audio_endpoint` so that last invariant
+    # holds STRUCTURALLY, not merely by caller discipline: an unconfigured
+    # overlay, or one whose endpoint came back empty because no gateway_url/
+    # public_url was known (issue #81 t5, criterion 3), is never ready, no
+    # matter what `audio_ready` a caller passes. When configured AND dialable,
+    # use the live probe signal if one was supplied, else fall back to the
+    # configured fact.
+    audio_ready_signal = (
+        audio_configured
+        and bool(audio_endpoint)
+        and (audio_ready if audio_ready is not None else True)
+    )
     registry["stt"] = _audio_role(
         "stt", _STT_MODEL, _STT_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
     )
@@ -378,6 +456,7 @@ def role_registry_from_env(
     *,
     gateway_url: str | None = None,
     audio_ready: bool | None = None,
+    backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
     """Build the role registry straight from an env mapping.
 
@@ -389,9 +468,18 @@ def role_registry_from_env(
     build the registry from a deployment's ``.env`` without assembling a
     ``RoutingTable``/``ServerConfig`` pair by hand. ``env`` defaults to
     ``os.environ`` when omitted (matching :func:`build_config`'s default).
+    ``audio_ready``/``backend_ready`` pass straight through to
+    :func:`build_role_registry` (both default ``None`` — this offline
+    convenience never probes anything itself; a caller with a live signal in
+    hand supplies it here exactly as it would to the canonical builder).
     """
     resolved_env = os.environ if env is None else env
     table, server = build_config(resolved_env)
     return build_role_registry(
-        table, server, env=resolved_env, gateway_url=gateway_url, audio_ready=audio_ready
+        table,
+        server,
+        env=resolved_env,
+        gateway_url=gateway_url,
+        audio_ready=audio_ready,
+        backend_ready=backend_ready,
     )
