@@ -120,24 +120,45 @@ def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
 
 
 def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
-    """Attempt order for ``served_name``: its owner first, then same-task failovers.
+    """Resolve ``served_name`` to its single owning backend — never a failover chain.
 
-    The owner is tried first; failover candidates are restricted to backends
-    with the same ``task`` as the owner. This prevents an embed request from
-    falling over to a generate backend (which would return a confusing 400 for
-    ``/v1/embeddings``). An unmatched ``served_name`` falls back to the default
-    model's owner (a generate backend) with same-task (generate) failovers.
+    Returns a list of length 0 or 1. **No cross-backend failover, ever** (issue
+    #91, "advertised implies reachable"): a request that resolves to one model
+    is attempted at that model's owner only, never retried against a different
+    backend serving a different model.
+
+    This used to walk every other backend that shared the owner's ``task`` as a
+    failover chain — e.g. cortex (primary) falling over to the multimodal
+    (Gemma) backend when the vLLM engine died. That is unsound: the retry still
+    carries the *original* body, which still names the original model (cortex's
+    Qwen id). A backend that does not serve that model has exactly one honest
+    answer — an OpenAI-shaped 404 ``model does not exist`` — and that 404 is
+    **indistinguishable to the caller** from "this model id was never valid".
+    ``handle_post``'s own rule ("2xx or 4xx → commit to this backend; 4xx is a
+    client error, no failover") then relays that 404 as terminal, silently
+    killing the request instead of surfacing the real problem (the owner's
+    engine crashed). Worse, if the other backend's model *did* happen to exist,
+    the caller would get a real answer from the wrong model — a `final_authority`
+    role-contract violation (issue #81): a caller who asked for cortex must never
+    silently receive a Gemma answer.
+    So: one served name resolves to exactly one backend, tried once. If that
+    backend is unreachable or errors, the caller gets an honest failure instead
+    of an answer from a model they did not ask for. (The *static* tier-alias
+    upward fallback in :func:`tier_aliases` is unrelated and unaffected — that
+    resolves an unwired capability tier to a different served name at
+    table-build time, before ``order_backends`` ever runs; it is config-time
+    resolution, not a runtime retry against a mismatched body.)
+
+    An unmatched ``served_name`` still falls back to the ``default_model``'s
+    owner (preserves the existing "unknown model routes to default" behaviour)
+    — that remains a single backend, not a chain.
     """
     owner = _backend_for(table, served_name) or _backend_for(table, table.default_model)
-    ordered: list[Backend] = []
     # Invariant: a built table always has a primary backend and default_model
     # resolves to it, so owner is non-None in practice. We degrade gracefully (an
     # empty list → handle_post returns a 502) rather than assert, so a malformed
     # table can never crash the long-lived gateway process.
-    if owner is not None:
-        ordered.append(owner)
-        ordered.extend(b for b in table.backends if b is not owner and b.task == owner.task)
-    return ordered
+    return [owner] if owner is not None else []
 
 
 def list_models_payload(table: RoutingTable) -> dict:
