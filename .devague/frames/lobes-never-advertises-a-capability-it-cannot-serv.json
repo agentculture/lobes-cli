@@ -4,7 +4,7 @@
   "schema_version": 1,
   "status": "exported",
   "created": "2026-07-09T05:14:35Z",
-  "updated": "2026-07-09T05:33:40Z",
+  "updated": "2026-07-09T07:02:42Z",
   "claims": [
     {
       "id": "c1",
@@ -165,12 +165,12 @@
       "kind": "requirement",
       "text": "The gateway advertises an origin from CONFIGURED TRUTH, never inference: the fleet compose injects GATEWAY_PUBLIC_URL (derived from the published VLLM_PORT) into the gateway container, and reachable_origin prefers it over the request Host header. When neither configured truth nor a Host header is available the gateway MUST NOT fabricate an absolute URL from its internal listen port.",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h10",
           "text": "With GATEWAY_PUBLIC_URL unset AND the request carrying no Host header, the gateway emits an endpoint that is either absent/empty or explicitly relative \u2014 never an absolute URL built from GATEWAY_PORT.",
-          "status": "confirmed"
+          "status": "rejected"
         }
       ],
       "hard_questions": [],
@@ -424,6 +424,22 @@
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
+      "hard_questions": [],
+      "links": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The gateway resolves its advertised origin as: an explicit operator override (GATEWAY_PUBLIC_URL \u2014 for a tunnel or a Host-rewriting reverse proxy) FIRST; else the origin the client actually dialed, echoed from the request Host header; else NOTHING \u2014 an empty endpoint. It must never fabricate an absolute URL from its internal listen port (GATEWAY_PORT), and it must never default GATEWAY_PUBLIC_URL to a localhost URL, because a defaulted public_url outranks the Host header and would tell every LAN/tunnel client to dial its own loopback \u2014 reintroducing the #92 defect in a new place. Each caller therefore receives an origin correct for itself. The base fleet compose still passes AUDIO_URL (empty by default; the audio overlay supplies the real value), which is the #96 half of this change.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "With GATEWAY_PUBLIC_URL unset and no Host header, the gateway emits an empty endpoint \u2014 never an absolute URL built from GATEWAY_PORT. With GATEWAY_PUBLIC_URL unset and Host='spark.local:8001', it advertises http://spark.local:8001, not http://localhost:8001. With GATEWAY_PUBLIC_URL set, it wins over any Host header.",
+          "status": "confirmed"
+        }
+      ],
       "hard_questions": [],
       "links": []
     }

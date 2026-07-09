@@ -36,7 +36,7 @@ slug: `lobes-never-advertises-a-capability-it-cannot-serv` · status: `exported`
 
 ### t4 — Fleet template truth: inject GATEWAY_PUBLIC_URL (derived from the published VLLM_PORT) and AUDIO_URL into the gateway container from the BASE fleet compose, so the advertised origin is configured truth and stt/tts stop advertising a 404 path (issue #96)
 
-- covers: c11, c18
+- covers: c11, c18, c29
 - acceptance:
   - lobes/templates/fleet/docker-compose.yml gateway service passes GATEWAY_PUBLIC_URL defaulted from VLLM_PORT, and AUDIO_URL, without requiring the -f docker-compose.audio.yml overlay
   - A test parses the packaged fleet compose and asserts the gateway environment contains both keys
@@ -57,7 +57,7 @@ slug: `lobes-never-advertises-a-capability-it-cannot-serv` · status: `exported`
 ### t6 — Gateway core: dead owner yields a retryable 503, the readiness cache feeds /v1/models + /capabilities.ready, and reachable_origin prefers configured truth over Host-header inference
 
 - depends on: t1, t2, t3, t5
-- covers: c4, h4, c5, h5, c12, h23, c14, h13, h10, h14, h19
+- covers: c4, h4, c5, h5, c12, h23, c14, h13, h10, h14, h19, c29, h25
 - acceptance:
   - handle_post: an owner that refuses, times out, or returns >=500 yields HTTP 503 with a Retry-After header and an OpenAI-shaped error whose type (e.g. backend_unavailable) is distinguishable from both 'model unknown' and the all-backends-down 502
   - A fake-fleet test proves a request naming the cortex model with the primary dead NEVER opens a connection to the multimodal backend (upstream-opener call sites asserted)

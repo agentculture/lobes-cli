@@ -21,8 +21,6 @@
 
 ## Requirements
 
-- The gateway advertises an origin from CONFIGURED TRUTH, never inference: the fleet compose injects GATEWAY_PUBLIC_URL (derived from the published VLLM_PORT) into the gateway container, and reachable_origin prefers it over the request Host header. When neither configured truth nor a Host header is available the gateway MUST NOT fabricate an absolute URL from its internal listen port.
-  - honesty: With GATEWAY_PUBLIC_URL unset AND the request carrying no Host header, the gateway emits an endpoint that is either absent/empty or explicitly relative — never an absolute URL built from GATEWAY_PORT.
 - A model id returned by GET /v1/models never receives a 404 'model does not exist' from POST /v1/chat/completions on the same origin. This is the single invariant issue #91 asks for, stated as a test.
   - honesty: The listed-never-404 invariant is tested at the RACE, not at rest: a fake fleet lists model M, the owner is then killed, and a completion naming M returns 503 + Retry-After — never 404. A second test asserts the converse: an id that was NEVER in /v1/models does not silently get served by the default backend under a different model's weights.
 - When the owner backend of a requested model is dead, unreachable, or warming, and no legal failover exists, the gateway returns 503 + Retry-After with a distinguishable error type (e.g. type=backend_unavailable), never 404 and never 502-as-terminal.
@@ -38,6 +36,8 @@
   - honesty: A unit test with a fake fleet proves that a request naming the cortex model, with the primary backend dead, NEVER opens a connection to the multimodal backend, and returns 503 + Retry-After. order_backends(table, served) returns exactly one backend for every input.
 - The pre-PR gate detects DEPLOYED-ARTIFACT skew, not just source correctness: it compares the running gateway container's lobes.__version__ against the CLI's and fails on mismatch, and it dials every advertised role endpoint+path. This is the check whose absence let #87's fix ship in 0.38.0 while the rig kept running 0.36.0 — making #92 look like a code regression when the code was already correct and merely undeployed.
   - honesty: Run against the rig as it stands right now (gateway 0.36.0, CLI 0.39.0, endpoint :8000, /v1/audio/speech 404ing), the gate exits non-zero and names all three faults; after redeploy it exits zero.
+- The gateway resolves its advertised origin as: an explicit operator override (GATEWAY_PUBLIC_URL — for a tunnel or a Host-rewriting reverse proxy) FIRST; else the origin the client actually dialed, echoed from the request Host header; else NOTHING — an empty endpoint. It must never fabricate an absolute URL from its internal listen port (GATEWAY_PORT), and it must never default GATEWAY_PUBLIC_URL to a localhost URL, because a defaulted public_url outranks the Host header and would tell every LAN/tunnel client to dial its own loopback — reintroducing the #92 defect in a new place. Each caller therefore receives an origin correct for itself. The base fleet compose still passes AUDIO_URL (empty by default; the audio overlay supplies the real value), which is the #96 half of this change.
+  - honesty: With GATEWAY_PUBLIC_URL unset and no Host header, the gateway emits an empty endpoint — never an absolute URL built from GATEWAY_PORT. With GATEWAY_PUBLIC_URL unset and Host='spark.local:8001', it advertises http://spark.local:8001, not http://localhost:8001. With GATEWAY_PUBLIC_URL set, it wins over any Host header.
 
 ## Honesty conditions
 
