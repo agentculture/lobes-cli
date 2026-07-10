@@ -1,0 +1,223 @@
+{
+  "slug": "lobes-gateway-relays-sse-streams-frame-by-frame-th",
+  "title": "lobes gateway relays SSE streams frame-by-frame: the first token through the gateway arrives at backend speed, not at turn end",
+  "frame_slug": "lobes-gateway-relays-sse-streams-frame-by-frame-th",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-10T23:39:17Z",
+  "updated": "2026-07-10T23:43:32Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes gateway relays SSE streams frame-by-frame: the first token through the gateway arrives at backend speed, not at turn end"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "with the fix deployed, the exact curl probe from issue #103 run against the gateway shows the first data: frame arriving near backend time-to-first-token and well before the last frame \u2014 no client-side change involved"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "streaming OpenAI clients behind the gateway: colleague's token-streaming lane (agentculture/colleague#318 vLLM SSE consumption + live cockpit generation tail), and any OpenAI SDK caller with stream=True"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the fix is client-agnostic: a plain curl SSE probe (no SDK, no colleague machinery) through the gateway observes incremental frame arrival, so ANY OpenAI-compatible streaming client benefits with zero client change"
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "the gateway's _Upstream.read(n) delegates to http.client.HTTPResponse.read(n), which blocks until n bytes (64 KiB, _CHUNK) accumulate or EOF; a whole SSE turn is a few KB, so every data: frame is released in one terminal burst at EOF \u2014 issue #103 probe: frames=21 first=3.06s last=3.06s through the gateway"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "a local reproduction (stdlib dribble server, 10 SSE frames at 100 ms intervals) shows HTTPResponse.read(65536) returning ONCE at EOF (first=last=1.0s \u2014 the exact issue signature) while read1(65536) returns each frame as it arrives (first=0.0s)"
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "the relay loop itself (_relay_streaming, server.py) is already frame-correct \u2014 per-read chunked framing plus flush; only the upstream read blocks. The issue's suggested fix (FastAPI/httpx StreamingResponse) does not apply: the gateway is a stdlib ThreadingHTTPServer + http.client proxy"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the write side is proven non-buffering: the local repro's dribble server uses the same BaseHTTPRequestHandler + per-frame flush machinery the gateway relay uses, and its frames arrived on schedule at a read1 client \u2014 so fixing the upstream READ is sufficient, no relay-loop change needed"
+    },
+    {
+      "id": "c5",
+      "kind": "before_state",
+      "text": "test gap: tests/test_gateway_server.py _FakeUpstream.read() returns one chunk per call \u2014 read1 semantics \u2014 so the suite green-lights the relay loop while the real HTTPResponse.read blocks until buffer-full/EOF; the fake models the fix, not the bug"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "reverting _Upstream.read to self._resp.read(n) keeps the ENTIRE existing suite green \u2014 demonstrating the fake-upstream tests cannot catch this bug class and the new real-socket timing test is the only guard"
+    },
+    {
+      "id": "c6",
+      "kind": "why_it_matters",
+      "text": "time-to-first-token is the entire point of streaming; through the gateway it silently degrades to full-turn latency, colleague's feels-alive lane renders as one terminal burst, and its livecheck grades the rig SKIP (an intermediary buffers SSE)"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the impact is externally attested: issue #103 quotes colleague's livecheck verdict ('stream delivered as one terminal burst \u2014 an intermediary (gateway proxy) buffers SSE; rig-side, not a colleague regression') and the 220-delta/32-34s probe signature"
+    },
+    {
+      "id": "c7",
+      "kind": "after_state",
+      "text": "with stream:true through the gateway, the first data: frame reaches the client at backend time-to-first-token; the issue #103 curl probe shows first well below last, and no client changes anything"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "shown twice: the in-repo regression test proves first-frame relay while the upstream is mid-stream (CI-durable), and the deployed-rig curl probe (h5) shows the same first-well-below-last signature live"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "the streaming relay reads the upstream with read1 semantics \u2014 HTTPResponse.read1(n), which returns as soon as any bytes are available \u2014 instead of the buffer-filling read(n); loop termination on empty bytes is unchanged"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "HTTPResponse.read1(n) returns empty bytes only at EOF on a blocking socket \u2014 never mid-stream \u2014 so the existing 'if not chunk: break' termination is unchanged; the one behavioral delta is a TRUNCATED upstream: read() raises IncompleteRead where read1 ends the relay at the chunked terminator cleanly, which is acceptable (the client sees a terminated stream either way)"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "an in-repo regression test that FAILS on read-until-full semantics: a real-socket upstream that dribbles SSE frames with delays, asserting the client receives the first relayed frame while the upstream is still mid-stream (arrival timing, not just chunked framing)"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "the regression test uses a REAL http.client upstream (not _FakeUpstream, whose read() already has read1 semantics and cannot catch this bug) and FAILS when _Upstream.read is reverted to self._resp.read(n)"
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "no client-side changes; the gateway stays a stdlib proxy (no FastAPI/httpx/asyncio rewrite); the buffered JSON path (read_all) is untouched; the audio relay keeps its contract (it shares _relay_streaming and simply inherits the earlier-arrival behavior)"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the diff surface confirms the boundary: only _Upstream.read's delegate changes plus new tests; no new dependencies in pyproject.toml; _relay_buffered/read_all byte-identical; the audio relay inherits earlier arrival but its contract (whole-file relay, chunked) is unchanged"
+    },
+    {
+      "id": "c11",
+      "kind": "success_signal",
+      "text": "the issue #103 curl probe through the gateway shows the first data: frame well before the last (healthy stream signature), and colleague's gated live proof tests/test_vllm_live_streaming.py flips SKIP to PASS with no client change"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "verified on the rig by re-running the exact issue #103 curl probe after deploy (frames=N first<<last), then confirmed by colleague's offered re-probe of tests/test_vllm_live_streaming.py"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Fix: _Upstream.read delegates to HTTPResponse.read1 (frame-by-frame upstream reads)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/server.py _Upstream.read returns self._resp.read1(n) instead of self._resp.read(n); the duck-type method name read() is unchanged",
+        "_relay_streaming (per-chunk frame_chunk + flush) and _relay_buffered/read_all are byte-identical to before \u2014 the diff inside lobes/ is confined to _Upstream.read",
+        "the entire existing test suite passes unmodified (uv run pytest -n auto)"
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "c4",
+        "h7",
+        "c8",
+        "h2"
+      ],
+      "instruction": "Edit lobes/gateway/server.py _Upstream.read (line ~205): return self._resp.read1(n). Do not touch _relay_streaming, _relay_buffered, open_upstream, or the audio path. Run uv run pytest -n auto to prove the old suite green."
+    },
+    {
+      "id": "t2",
+      "summary": "Regression test: real-socket dribble upstream proves frame-by-frame relay timing",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "new test in tests/test_gateway_server.py: a REAL ThreadingHTTPServer upstream dribbles ~5 chunked SSE frames at ~100 ms gaps, wired through the real open_upstream and the real handler relay (no _FakeUpstream)",
+        "the test asserts the client receives the first relayed frame while the upstream is still mid-stream (first-arrival < half the dribble span), not just chunked framing",
+        "verified during development: the new test FAILS with _Upstream.read reverted to self._resp.read(n) while the rest of the suite stays green (proving the fake-upstream tests cannot catch this bug class)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h1",
+        "c5",
+        "h8",
+        "c9",
+        "h3",
+        "c7"
+      ],
+      "instruction": "Add test to tests/test_gateway_server.py: fixture starts a real ThreadingHTTPServer whose do_POST dribbles ~5 chunked SSE frames at ~100 ms gaps (write chunked framing + flush + sleep); point the gateway fixture's backend base_url at it (real open_upstream, no monkeypatched fake); raw-socket client records arrival time of each relayed chunk; assert first-arrival < half the dribble span. Dev-verify it fails with read1 reverted to read."
+    },
+    {
+      "id": "t3",
+      "summary": "Release hygiene: version bump, CHANGELOG + PR citing #103 and colleague#318, boundary audit",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "patch version bump via .claude/skills/version-bump/scripts/bump.py; CHANGELOG entry cites issue #103 and agentculture/colleague#318 and quotes the buffered-burst signature (frames=21 first=last)",
+        "PR diff audited against the boundary: only lobes/gateway/server.py (_Upstream.read) + tests + docs/CHANGELOG/pyproject; no new dependencies in pyproject.toml; no FastAPI/httpx/asyncio; audio relay contract untouched"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c6",
+        "h9",
+        "c10",
+        "h11"
+      ],
+      "instruction": "python3 .claude/skills/version-bump/scripts/bump.py patch (pipe changelog JSON on stdin per memory note; commit the uv.lock re-pin). CHANGELOG cites #103 + agentculture/colleague#318 and the frames=21 first=last=3.06s signature. Audit git diff main: only server.py one-liner + tests + docs/specs + docs/plans + CHANGELOG + pyproject/uv.lock."
+    },
+    {
+      "id": "t4",
+      "summary": "Deploy + live acceptance: rig curl probe first<<last, comment on #103 for colleague re-probe",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "after merge + PyPI release, the rig gateway container is re-pinned/re-scaffolded to the fixed lobes-cli (the container does NOT auto-update \u2014 issue #99 skew) and restarted",
+        "the exact issue #103 curl probe re-run against localhost:8001 shows the first data: frame well below the last (the user-decided acceptance gate; client-agnostic \u2014 no SDK involved)",
+        "a comment is posted on #103 reporting the probe numbers and asking colleague to re-probe tests/test_vllm_live_streaming.py (expected SKIP to PASS), signed per convention"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "h5",
+        "c2",
+        "h6",
+        "c11",
+        "h4",
+        "h10"
+      ],
+      "instruction": "On the rig: re-scaffold/re-pin the gateway container to the released lobes-cli (container pins at lobes init time, does not auto-update \u2014 #99), docker compose up -d --build gateway; re-run the issue #103 curl probe verbatim against localhost:8001; post probe numbers to #103 asking colleague to re-probe, signed '- lobes (Claude)'."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "cloudflared tunnel in front of gateway 8001 may add its own SSE buffering for remote clients \u2014 re-probe the tunnel origin after deploy; local curl probe is the acceptance gate (frame q1 resolution)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r2",
+      "text": "colleague livecheck flip depends on colleague re-running its probe after deploy \u2014 external follow-up, not gating this repo's merge",
+      "kind": "follow_up",
+      "task_id": "t4"
+    }
+  ]
+}
