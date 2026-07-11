@@ -332,11 +332,6 @@ def test_integration_streaming_post_is_chunked(gateway) -> None:
 
 _DRIBBLE_FRAME_COUNT = 5
 _DRIBBLE_FRAME_DELAY = 0.1  # seconds between frames -> ~0.5s total dribble span
-# Acceptance criterion (devague plan, #103 t2): the first relayed frame must
-# arrive well before the upstream finishes dribbling — under HALF the total
-# span. The buffered bug delivers everything only near the end (~0.5s), so a
-# 0.25s threshold keeps a 2x margin either way and stays CI-robust.
-_DRIBBLE_ARRIVAL_THRESHOLD = (_DRIBBLE_FRAME_COUNT * _DRIBBLE_FRAME_DELAY) / 2
 
 
 class _DribbleBackend(BaseHTTPRequestHandler):
@@ -359,6 +354,12 @@ class _DribbleBackend(BaseHTTPRequestHandler):
             frame = ('data: {"delta": "tok%d"}\n\n' % i).encode()
             self.wfile.write(b"%X\r\n" % len(frame) + frame + b"\r\n")
             self.wfile.flush()
+            # Timestamp each frame as it leaves the upstream. The test asserts
+            # RELATIVE ordering (client saw frame 0 before this loop wrote the
+            # last frame) instead of a wall-clock cutoff, so contended-CI
+            # slowness shifts both clocks together and cannot flake the test
+            # (Qodo review, PR #104).
+            self.server.write_times.append(time.monotonic())
             time.sleep(_DRIBBLE_FRAME_DELAY)
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
@@ -369,12 +370,18 @@ class _DribbleBackend(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def dribble_backend():
-    """A real ThreadingHTTPServer on an ephemeral port that dribbles SSE frames."""
+    """A real ThreadingHTTPServer on an ephemeral port that dribbles SSE frames.
+
+    Yields ``(base_url, write_times)``: the handler appends one monotonic
+    timestamp per frame written, so the test can order client-side arrivals
+    against upstream-side writes.
+    """
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), _DribbleBackend)
+    httpd.write_times = []
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     host, port = httpd.server_address
     try:
-        yield f"http://{host}:{port}"
+        yield f"http://{host}:{port}", httpd.write_times
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -385,14 +392,16 @@ def dribble_gateway(dribble_backend):
     """A real gateway whose primary backend IS the dribble server, wired through
     the REAL `open_upstream` (no monkeypatch) — the only combination that can
     reproduce #103. Mirrors `_cfg()`, overriding just the primary's base_url.
+    Yields ``(gateway_url, upstream_write_times)``.
     """
-    table, cfg = _cfg(PRIMARY_URL=dribble_backend)
+    backend_url, write_times = dribble_backend
+    table, cfg = _cfg(PRIMARY_URL=backend_url)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     host, port = httpd.server_address
     try:
-        yield f"http://{host}:{port}"
+        yield f"http://{host}:{port}", write_times
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -407,7 +416,8 @@ def test_streaming_relay_delivers_first_frame_while_upstream_mid_stream(
     # test_integration_streaming_post_is_chunked, but against the REAL
     # open_upstream + a REAL dribbling backend (see the fixtures above) — the
     # FakeUpstream used elsewhere in this file cannot exercise the bug.
-    host, port = dribble_gateway.removeprefix("http://").split(":")
+    gateway_url, upstream_write_times = dribble_gateway
+    host, port = gateway_url.removeprefix("http://").split(":")
     body = b'{"model":"P","stream":true}'
     request = (
         b"POST /v1/chat/completions HTTP/1.1\r\n"
@@ -416,7 +426,6 @@ def test_streaming_relay_delivers_first_frame_while_upstream_mid_stream(
         b"Content-Length: %d\r\n\r\n" % len(body)
     ) + body
     with socket.create_connection((host, int(port)), timeout=5) as sock:
-        start = time.monotonic()
         sock.sendall(request)
         buf = b""
         # Read past the response headers first — only BODY frame arrivals are
@@ -438,11 +447,22 @@ def test_streaming_relay_delivers_first_frame_while_upstream_mid_stream(
             if first_data_frame_at is None and b"data:" in body_buf:
                 first_data_frame_at = arrival
     assert first_data_frame_at is not None, "no data: frame ever arrived"
-    elapsed_to_first_frame = first_data_frame_at - start
-    assert elapsed_to_first_frame < _DRIBBLE_ARRIVAL_THRESHOLD, (
-        f"first SSE frame arrived after {elapsed_to_first_frame:.3f}s "
-        f"(threshold {_DRIBBLE_ARRIVAL_THRESHOLD:.3f}s) — looks buffered "
-        "(the whole dribble span), not relayed frame-by-frame"
+    # RELATIVE-ordering acceptance (devague plan, #103 t2: "the first relayed
+    # frame arrives while the upstream is still mid-stream"): the client must
+    # see frame 0 BEFORE the upstream wrote its last frame. A buffered relay
+    # (HTTPResponse.read-until-full) cannot deliver anything until upstream
+    # EOF, which is strictly after the last write — while a frame-by-frame
+    # relay delivers frame 0 ~a whole dribble span earlier. No wall-clock
+    # threshold, so contended-CI slowness cannot flake it. Reading
+    # write_times here is race-free: the client saw the chunked terminator,
+    # which the upstream only writes after its last frame (happens-before
+    # through the relay).
+    last_upstream_write_at = upstream_write_times[-1]
+    assert first_data_frame_at < last_upstream_write_at, (
+        f"first SSE frame reached the client "
+        f"{first_data_frame_at - last_upstream_write_at:.3f}s AFTER the "
+        "upstream wrote its last frame — looks buffered (one terminal "
+        "burst), not relayed frame-by-frame"
     )
     # All 5 frames + the chunked terminator eventually arrive intact.
     for i in range(_DRIBBLE_FRAME_COUNT):
