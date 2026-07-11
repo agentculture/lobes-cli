@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.1] - 2026-07-11
+
+### Added
+
+- Real-socket streaming regression test: a dribbling chunked-SSE upstream through the real `open_upstream` asserts the first relayed frame arrives while the upstream is still mid-stream — the fake-upstream tests (whose `read()` already had read1 semantics) could never catch this bug class.
+- Spec + plan for the fix under `docs/specs/` and `docs/plans/` (devague frame `lobes-gateway-relays-sse-streams-frame-by-frame-th`).
+
+### Fixed
+
+- Gateway SSE streaming: `_Upstream.read` now uses `HTTPResponse.read1`, so `data:` frames relay to the client as the backend generates them. Previously `HTTPResponse.read(65536)` blocked until 64 KiB or EOF, releasing a whole streamed turn in one terminal burst (frames=21 first=last=3.06s through the gateway) — full-turn latency before the first visible token for any `stream: true` client (issue #103; reported by colleague, agentculture/colleague#318).
+
 ## [0.40.0] - 2026-07-09
 
 ### Security
