@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -316,6 +317,137 @@ def test_integration_streaming_post_is_chunked(gateway) -> None:
     assert b"Transfer-Encoding: chunked" in buf
     assert b"data: a\n\n" in buf and b"data: b\n\n" in buf
     assert buf.rstrip().endswith(b"0")  # final zero-length chunk terminates the body
+
+
+# --- regression (#103): SSE frames must relay one-by-one, not buffered -------
+#
+# The FakeUpstream used by `gateway` above hands back one queued chunk per
+# `read()` call — it cannot reproduce the bug, because the bug lives INSIDE
+# `http.client.HTTPResponse.read(n)`: for a chunked response it loops
+# (`_read_chunked`) until it collects `n` bytes or hits EOF, so a real upstream
+# that dribbles small SSE frames gets coalesced into one late burst. Only a
+# REAL socket upstream, relayed through the REAL `open_upstream` (not
+# monkeypatched), can observe that. See `_Upstream.read` in
+# lobes/gateway/server.py.
+
+_DRIBBLE_FRAME_COUNT = 5
+_DRIBBLE_FRAME_DELAY = 0.1  # seconds between frames -> ~0.5s total dribble span
+# Acceptance criterion (devague plan, #103 t2): the first relayed frame must
+# arrive well before the upstream finishes dribbling — under HALF the total
+# span. The buffered bug delivers everything only near the end (~0.5s), so a
+# 0.25s threshold keeps a 2x margin either way and stays CI-robust.
+_DRIBBLE_ARRIVAL_THRESHOLD = (_DRIBBLE_FRAME_COUNT * _DRIBBLE_FRAME_DELAY) / 2
+
+
+class _DribbleBackend(BaseHTTPRequestHandler):
+    """A real upstream that trickles a chunked SSE response one small frame at
+    a time, mirroring how a vLLM backend streams tokens. Each frame is written
+    with its own chunked-transfer framing and flushed, with a real sleep in
+    between — so a relay that blocks until 64 KiB or EOF (the #103 bug) is
+    forced to show up as a single late burst instead of five prompt arrivals.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self) -> None:  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for i in range(_DRIBBLE_FRAME_COUNT):
+            frame = ('data: {"delta": "tok%d"}\n\n' % i).encode()
+            self.wfile.write(b"%X\r\n" % len(frame) + frame + b"\r\n")
+            self.wfile.flush()
+            time.sleep(_DRIBBLE_FRAME_DELAY)
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
+    def log_message(self, *a):  # silence
+        pass
+
+
+@pytest.fixture
+def dribble_backend():
+    """A real ThreadingHTTPServer on an ephemeral port that dribbles SSE frames."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _DribbleBackend)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.fixture
+def dribble_gateway(dribble_backend):
+    """A real gateway whose primary backend IS the dribble server, wired through
+    the REAL `open_upstream` (no monkeypatch) — the only combination that can
+    reproduce #103. Mirrors `_cfg()`, overriding just the primary's base_url.
+    """
+    table, cfg = _cfg(PRIMARY_URL=dribble_backend)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_streaming_relay_delivers_first_frame_while_upstream_mid_stream(
+    dribble_gateway,
+) -> None:
+    # Regression for #103: the gateway must relay each SSE frame to the client
+    # as it arrives from upstream, not coalesce them into one burst once 64 KiB
+    # is buffered or the upstream hits EOF. Raw socket, mirroring
+    # test_integration_streaming_post_is_chunked, but against the REAL
+    # open_upstream + a REAL dribbling backend (see the fixtures above) — the
+    # FakeUpstream used elsewhere in this file cannot exercise the bug.
+    host, port = dribble_gateway.removeprefix("http://").split(":")
+    body = b'{"model":"P","stream":true}'
+    request = (
+        b"POST /v1/chat/completions HTTP/1.1\r\n"
+        b"Host: x\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: %d\r\n\r\n" % len(body)
+    ) + body
+    with socket.create_connection((host, int(port)), timeout=5) as sock:
+        start = time.monotonic()
+        sock.sendall(request)
+        buf = b""
+        # Read past the response headers first — only BODY frame arrivals are
+        # timed (the task separates header latency from streaming latency).
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        head, _, body_buf = buf.partition(b"\r\n\r\n")
+        assert b"Transfer-Encoding: chunked" in head
+        first_data_frame_at = time.monotonic() if b"data:" in body_buf else None
+        while b"0\r\n\r\n" not in body_buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            arrival = time.monotonic()
+            body_buf += chunk
+            if first_data_frame_at is None and b"data:" in body_buf:
+                first_data_frame_at = arrival
+    assert first_data_frame_at is not None, "no data: frame ever arrived"
+    elapsed_to_first_frame = first_data_frame_at - start
+    assert elapsed_to_first_frame < _DRIBBLE_ARRIVAL_THRESHOLD, (
+        f"first SSE frame arrived after {elapsed_to_first_frame:.3f}s "
+        f"(threshold {_DRIBBLE_ARRIVAL_THRESHOLD:.3f}s) — looks buffered "
+        "(the whole dribble span), not relayed frame-by-frame"
+    )
+    # All 5 frames + the chunked terminator eventually arrive intact.
+    for i in range(_DRIBBLE_FRAME_COUNT):
+        assert ('"delta": "tok%d"' % i).encode() in body_buf
+    assert body_buf.rstrip().endswith(b"0")  # final zero-length chunk terminates the body
 
 
 # --- open_upstream over a real loopback backend ---------------------------
