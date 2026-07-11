@@ -203,7 +203,11 @@ class _Upstream:
     _conn: object  # http.client.HTTPConnection
 
     def read(self, n: int) -> bytes:
-        return self._resp.read(n)
+        # read1, not read: read(n) blocks until n bytes or EOF, so a whole
+        # SSE turn (a few KB) only returns at EOF. read1 returns as soon as
+        # any bytes are available (b"" only at EOF), letting the relay loop
+        # forward frames as they arrive instead of in one terminal burst.
+        return self._resp.read1(n)
 
     def read_all(self) -> bytes:
         return self._resp.read()
