@@ -94,6 +94,7 @@ and returns `404 role_infeasible` on POST requests. If `true` (the default),
 no `<PREFIX>_FEASIBLE` key is emitted — "feasible" is the assumed default.
 
 **When set:**
+
 - `spark` profile (GB10): all four roles `feasible=true` (all roles load-tested
   here).
 - `thor` profile (Jetson AGX Thor): all four roles `feasible=true`
@@ -112,6 +113,7 @@ separately from the model id it downloads; the two must agree for the gateway
 to route correctly.
 
 **When set:**
+
 - `spark` cortex: `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` (the 256K-native
   MTP primary, re-exported with its draft head restored; load-tested 2026-05-31
   on GB10, ~2.4x single-stream decode over the archived 27B baseline).
@@ -136,6 +138,7 @@ size) and prefill throughput so OOM never happens. On unified-memory boards
 pool; on dedicated-VRAM boards (RTX PRO 6000) it is true discrete VRAM.
 
 **When set and why:**
+
 - `spark` cortex: `0.30` — the primary serves at this utilization budget
   (`0.30 + 0.14 + 0.06 + 0.06 = 0.56` total across all four roles on 128 GB),
   chosen to leave headroom for other mesh services on the shared GB10
@@ -155,6 +158,7 @@ this role. Determines GPU memory overhead; longer sequences = larger KV cache.
 Tuned per card to balance headroom and capability.
 
 **When set and why:**
+
 - `spark` cortex: `131072` (128K) — the primary's load-tested context on the
   GB10 (the checkpoint has 256K native, but at util 0.30 on a shared board,
   128K is the validated cap; issue #107 tracks broader context migration).
@@ -174,6 +178,7 @@ flag. Per-model semantics (defined in `lobes/catalog.py`); some models have
 multiple quantization options.
 
 **When set and why:**
+
 - `spark` cortex: `"modelopt"` — the MTP primary is an nvidia/ ModelOpt FP4
   export; requires this quantization.
 - `spark` senses: `"compressed-tensors"` — the Gemma 4 checkpoint uses
@@ -192,6 +197,7 @@ multiple quantization options.
 accuracy for memory savings. Passed to vLLM's `--kv-cache-dtype` flag.
 
 **When set and why:**
+
 - `spark` cortex: `"fp8"` — FP8 KV cache saves memory and is validated on this
   checkpoint/board pairing (load-tested 2026-05-31).
 - `spark` senses: omitted (the compose template's default, typically `"float16"`
@@ -218,6 +224,7 @@ based on the attention shape and the backend's capabilities; the flag provides
 an override or force. Affects both speed and stability.
 
 **When set and why:**
+
 - `spark` cortex: omitted (vLLM auto-selects; FlashInfer on the GB10).
 - `spark` **and** `thor` senses: `"TRITON_ATTN"` — **not a Thor divergence.**
   This mirrors the fleet template's cross-machine default for the Gemma gear:
@@ -248,6 +255,7 @@ holds the **token**, not a bare boolean (see `lobes/profiles/render.py` for
 the translation).
 
 **When set and why:**
+
 - `spark` cortex/senses/embedder: omitted (CUDA graphs are stable on GB10).
 - **`spark` reranker: omitted** (template default; CUDA graphs work here).
 - **`thor` reranker: `true`** — validated live on Thor 2026-07-13. With Triton
@@ -269,6 +277,7 @@ schedule concurrently in a single forward pass. Tuned per workload
 latency (higher tail latency per request).
 
 **When set and why:**
+
 - `spark` cortex: `2` — the fleet's cortex defaults to small batches for low
   latency (appropriate for the agentic workload — agents mostly read one
   response at a time, not many concurrent requests).

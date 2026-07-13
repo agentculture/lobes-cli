@@ -6,7 +6,27 @@ import json
 import stat
 
 from lobes.cli import main
-from lobes.runtime import _compose
+from lobes.runtime import _compose, _detect
+
+
+def _inject_spark_detection(monkeypatch) -> None:
+    """Pin detection to the GB10 so fleet-scaffold assertions are host-independent.
+
+    Bare fleet init now resolves a machine profile; on an unrecognized host
+    (e.g. a GPU-less CI runner) that is the conservative ``base`` profile,
+    which swaps the 27B for a 4B and disables senses — not what these
+    scaffold-mechanics tests are about.
+    """
+    card = _detect.DetectedCard(
+        resolved="spark",
+        device_name="NVIDIA GB10",
+        compute_capability="sm_121",
+        total_memory_gb=119.7,
+        hostname="test-host",
+        device_tree_model=None,
+        sources={},
+    )
+    monkeypatch.setattr(_detect, "detect_card", lambda: card)
 
 
 def test_init_dry_run_writes_nothing(tmp_path, capsys) -> None:
@@ -144,9 +164,10 @@ def test_init_local_folder(tmp_path, monkeypatch) -> None:
 # --- fleet scaffold -------------------------------------------------------
 
 
-def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
+def test_init_fleet_apply_writes_three_files(tmp_path, monkeypatch) -> None:
     from lobes import __version__
 
+    _inject_spark_detection(monkeypatch)
     target = tmp_path / "fleet"
     rc = main(["init", "--fleet", str(target), "--apply"])
     assert rc == 0
@@ -222,7 +243,8 @@ def test_init_audio_incompatible_with_single(capsys) -> None:
     assert "--audio" in err and "--single" in err
 
 
-def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None:
+def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path, monkeypatch) -> None:
+    _inject_spark_detection(monkeypatch)
     target = tmp_path / "fa"
     rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
     assert rc == 0
