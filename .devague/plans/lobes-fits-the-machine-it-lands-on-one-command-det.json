@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T16:09:59Z",
-  "updated": "2026-07-13T17:15:49Z",
+  "updated": "2026-07-13T18:00:22Z",
   "targets": [
     {
       "id": "c1",
@@ -136,6 +136,36 @@
       "id": "h15",
       "kind": "honesty",
       "text": "The claim is checkable in the code as it stands: lobes/profiles.py really does define MachineProfile/MACHINE_PROFILES/detect_machine (grep it), the fleet compose really does hardcode the Spark values rather than read them, the thor row really is status='configured' with attention_backend='flashinfer', and detect_machine really does fall back to 'generic'. If any of those five is false, this before_state is wrong and the spec must be re-cut."
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Cross-machine no-breakage is ENFORCED, not asserted: every shipped profile checks a golden rendered artifact (docker-compose.yml + .env) into the test suite, and CI fails any change that alters a DIFFERENT machine's rendering than the one the PR claims to touch \u2014 so the Thor box and the Spark box can both change lobes without regressing each other. A deliberate cross-machine change must update the other machine's golden explicitly, in the same PR, where the diff is the review surface."
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Proven by test: editing the thor bundle or an sm_110 trait leaves the spark golden byte-identical (and vice versa); rendering every shipped profile is a pure function of (profile, template) with no host state, so the goldens are runnable on any dev box, not just the hardware."
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "On an UNRECOGNISED card lobes warns and serves a conservative small base \u2014 a small generate model plus the two 0.6B pooling gears, tuned by the traits it could read (compute capability, total memory) \u2014 instead of refusing into nothing or silently applying Spark. The broader change (a bare default install assumes a small box on EVERY card) stays deferred to #107; this spec only replaces refuse-or-warn with warn-and-serve-small for the unknown-card case."
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "A rendered compose on an unknown card never contains the 27B; the warning names the detected facts (device name, compute capability, total memory) and the assumption made; a recognised spark/thor box is entirely unaffected by this path."
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Updating the lobes-cli version must not break an existing setup on Spark or default: a deployment scaffolded by an earlier version keeps working with the new CLI \u2014 the upgrade itself changes zero bytes in the deployment dir, every verb keeps operating the old scaffold, and adopting a new template/profile is an explicit, diffed, --apply'd re-init, never a side effect of upgrading."
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Proven by test: the new CLI operates a deployment dir scaffolded by the previous version without re-init (status/serve/stop against the old .env + compose succeed, old env var names stay honoured), and 'lobes init' over an existing dir shows a diff and requires --apply \u2014 pip install -U alone changes zero bytes in ~/.lobes."
     }
   ],
   "tasks": [
@@ -383,6 +413,68 @@
         "h15"
       ],
       "instruction": "OWNS: lobes/machines/ (new), and the registry-derivation edits to lobes/profiles.py + lobes/runtime/_detect.py. Foundational: land this BEFORE t1/t2/t4 build per-chip tables that would then have to be unpicked. Do NOT delete the legacy API (MachineProfile / MACHINE_PROFILES / detect_machine / resolve_serve_config) \u2014 derive it from the registry. stdlib only (dependencies = []); an explicit registry with imports in machines/__init__.py, no plugin/entry-point machinery."
+    },
+    {
+      "id": "t13",
+      "summary": "Golden rendered artifacts per shipped profile: tests hold the rendered docker-compose.yml + .env for EVERY shipped profile (spark, thor, base) and diff byte-for-byte; rendering is a pure function of (profile, template) with no host state, so the goldens run on any dev box. A change for one machine that alters another machine's rendering fails CI unless that other golden is deliberately updated in the same PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Editing the thor bundle or an sm_110 trait leaves the spark golden byte-identical (and vice versa), proven by a test that renders both",
+        "CI fails when a change alters any profile's rendered compose/.env without updating that profile's checked-in golden",
+        "Goldens render with no GPU or host state \u2014 the suite passes on a GPU-less CI runner"
+      ],
+      "deps": [
+        "t1",
+        "t3"
+      ],
+      "covers": [
+        "c23",
+        "h19"
+      ],
+      "instruction": "OWNS: tests/test_profile_goldens.py + tests/goldens/<profile>/ (new). Touch NO source. Goldens are committed artifacts regenerated by a documented one-liner; the test re-renders every shipped profile via t1/t3's render API and byte-diffs. Rendering must be a pure function of (profile, template) \u2014 no GPU, no host reads \u2014 so the suite passes on GPU-less CI. This is the enforcement for 'a change for one chip cannot break another'."
+    },
+    {
+      "id": "t14",
+      "summary": "Unknown-card path: detection returns UNKNOWN -> 'lobes init' WARNS (naming device name, compute capability, total memory, and the assumption made) and renders the conservative small base \u2014 a small generate model plus the two 0.6B pooling gears, NO 27B \u2014 tuned by the traits it could read. Replaces t4's refuse-or-warn branch; the broader default-install change stays deferred to #107",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A rendered compose on an unknown card never contains the 27B, proven by a rendering test with a synthetic unknown card",
+        "The warning names the detected facts (device name, compute capability, total memory) and the assumption made",
+        "A recognised spark/thor box is entirely unaffected \u2014 its golden rendering is byte-identical before/after this change"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c25",
+        "h20"
+      ],
+      "instruction": "OWNS: the unknown-card branch in lobes/cli/_commands/init.py + lobes/profiles/builtin/base.yaml (new). Extends t4's resolution glue \u2014 do NOT re-implement detection. The base profile serves a small generate model from the catalog plus the two 0.6B pooling gears, never the 27B; knobs still come from readable traits (compute capability, total memory). Scope guard: the default on RECOGNISED cards is unchanged \u2014 the broader small-default-everywhere change stays in #107."
+    },
+    {
+      "id": "t15",
+      "summary": "Upgrade never breaks an existing scaffold: 'pip install -U lobes-cli' changes zero bytes in the deployment dir; every verb keeps operating a deployment scaffolded by the PREVIOUS version (old env var names stay honoured); adopting a new template/profile is an explicit, diffed, --apply'd re-init, never a side effect of upgrading \u2014 protects the live Spark box and any default ~/.lobes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A test scaffolds a deployment dir from the pre-profile template (current main), then runs the new CLI's status/serve/stop dry-run paths against it without re-init \u2014 all succeed",
+        "Every env var name the current template reads stays honoured by the new compose/CLI (or a compat shim maps it), proven by test",
+        "'lobes init' over an existing dir shows a diff and requires --apply; it never silently rewrites the operator's files"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c26",
+        "h21"
+      ],
+      "instruction": "OWNS: tests/test_upgrade_compat.py (new) + any env-name compat shim in lobes/runtime/_env.py. Fixture: a deployment dir scaffolded from current main's template, vendored into tests. Assert the new CLI's status/serve/stop dry-run paths operate it without re-init, every env var name main's template reads stays honoured, and init-over-existing shows a diff and requires --apply. Prefer keeping env names stable over shimming."
     }
   ],
   "risks": [
@@ -409,6 +501,18 @@
       "text": "DECISION (supersedes the framing of r1): on Thor the reranker stays SERVED and advertised \u2014 it runs, it is just not yet correct. Correctness is fixed in lobes-cli#105/#106, not by hiding the role. The correctness probe records it as a known failure until then.",
       "kind": "follow_up",
       "task_id": "t10"
+    },
+    {
+      "id": "r5",
+      "text": "fp8-KV attribution UNVERIFIED: the Thor hand-edit blames the checkpoint (kv_cache_quant_algo: null -> assert k_scale > 0.0), not sm_110 \u2014 yet the GB10 template default is fp8 on the same checkpoint. Verify on the GB10 whether the pinned nightly still boots with --kv-cache-dtype=fp8; if it crashes there too, kv-cache-dtype=auto is the SHARED template default, not a thor trait. Sibling of #106; needs its own tracked issue",
+      "kind": "follow_up",
+      "task_id": "t3"
+    },
+    {
+      "id": "r6",
+      "text": "Deleting MULTIMODAL_ATTENTION_BACKEND / VLLM_ATTENTION_BACKEND (t3) is grounded only in Thor observation \u2014 confirm on the GB10's pinned image that the env is truly ignored there BEFORE deleting, else t3 silently regresses spark: exactly the cross-machine breakage t13's goldens exist to catch",
+      "kind": "follow_up",
+      "task_id": "t3"
     }
   ]
 }

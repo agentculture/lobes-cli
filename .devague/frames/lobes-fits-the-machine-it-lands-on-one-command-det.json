@@ -4,7 +4,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T15:33:49Z",
-  "updated": "2026-07-13T17:45:51Z",
+  "updated": "2026-07-13T17:54:47Z",
   "claims": [
     {
       "id": "c1",
@@ -283,7 +283,7 @@
         {
           "id": "h13",
           "text": "The baseline is real and reproducible: pointing the current (Spark) template at Thor reproduces the 0/4-on-first-boot result, so the 4/4-with-0-edits target is a measured improvement rather than a claim.",
-          "status": "proposed",
+          "status": "rejected",
           "instruction": ""
         }
       ],
@@ -350,12 +350,12 @@
       "kind": "decision",
       "text": "Per-machine knowledge is keyed by causal capability TRAIT, not board name: each knob divergence names the fact that causes it \u2014 the sm_110 FLASH_ATTN pooling hang -> TRITON_ATTN for embed+rerank; the sm_110 CUDA-graph classify fault -> enforce-eager for rerank; the unscaled-fp8-KV assert (checkpoint x vLLM nightly, per the hand-edit comment \u2014 NOT the board) -> kv-cache-dtype=auto. A machine profile is then a named validated BUNDLE: detection signature + memory budget + model-per-role + the traits that apply. Evidence: 3 of the 4 Thor divergences trace to sm_110 and 1 to the checkpoint; NONE traces to 'Jetson AGX Thor' as a board.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h17",
           "text": "Every knob in thor.yaml carries a trait provenance naming its cause, and detection resolves compute capability + total memory as first-class facts even when the board name is unknown \u2014 so an unrecognised sm_110 board still renders the TRITON_ATTN pooling fix without anyone writing it a profile.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -368,12 +368,12 @@
       "kind": "requirement",
       "text": "Issue #107 folds in: the default/base profile is conservative and actually runnable \u2014 a small generate model plus the two 0.6B pooling gears, no 27B. Detection UPGRADES a recognised big box (spark, thor) to the 27B cortex; an unrecognised card gets a loud warning plus the small base tuned by whatever traits detection could read (compute capability, total memory) \u2014 never a refusal into nothing, never a silent Spark.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h18",
           "text": "A rendered compose contains the 27B only when a validated big-box profile or an explicit --profile put it there; a clean install on an unknown card boots a generate model that answers its known-answer probe, with a warning naming the detected facts and the assumption made.",
-          "status": "proposed",
+          "status": "rejected",
           "instruction": ""
         }
       ],
@@ -386,12 +386,12 @@
       "kind": "requirement",
       "text": "Cross-machine no-breakage is ENFORCED, not asserted: every shipped profile checks a golden rendered artifact (docker-compose.yml + .env) into the test suite, and CI fails any change that alters a DIFFERENT machine's rendering than the one the PR claims to touch \u2014 so the Thor box and the Spark box can both change lobes without regressing each other. A deliberate cross-machine change must update the other machine's golden explicitly, in the same PR, where the diff is the review surface.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h19",
           "text": "Proven by test: editing the thor bundle or an sm_110 trait leaves the spark golden byte-identical (and vice versa); rendering every shipped profile is a pure function of (profile, template) with no host state, so the goldens are runnable on any dev box, not just the hardware.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -404,8 +404,44 @@
       "kind": "decision",
       "text": "Packaging (#107): all profiles always ship in the wheel \u2014 pip extras (lobes-cli[thor]) are REJECTED as the mechanism: profiles are pure data with zero dependencies, and card selection is a runtime concern, not an install-time one. Extras return only if a card ever needs a genuine extra dependency (vendor SDK), and then the dependency, not the profile data, is what goes behind the extra.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "On an UNRECOGNISED card lobes warns and serves a conservative small base \u2014 a small generate model plus the two 0.6B pooling gears, tuned by the traits it could read (compute capability, total memory) \u2014 instead of refusing into nothing or silently applying Spark. The broader change (a bare default install assumes a small box on EVERY card) stays deferred to #107; this spec only replaces refuse-or-warn with warn-and-serve-small for the unknown-card case.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "A rendered compose on an unknown card never contains the 27B; the warning names the detected facts (device name, compute capability, total memory) and the assumption made; a recognised spark/thor box is entirely unaffected by this path.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Updating the lobes-cli version must not break an existing setup on Spark or default: a deployment scaffolded by an earlier version keeps working with the new CLI \u2014 the upgrade itself changes zero bytes in the deployment dir, every verb keeps operating the old scaffold, and adopting a new template/profile is an explicit, diffed, --apply'd re-init, never a side effect of upgrading.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "Proven by test: the new CLI operates a deployment dir scaffolded by the previous version without re-init (status/serve/stop against the old .env + compose succeed, old env var names stay honoured), and 'lobes init' over an existing dir shows a diff and requires --apply \u2014 pip install -U alone changes zero bytes in ~/.lobes.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": ""

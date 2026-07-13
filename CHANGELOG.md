@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Plan (`/spec-to-plan`, converged): **per-machine hardware profiles** —
   `docs/plans/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
-  Ten tasks over four file-disjoint dependency waves (twelve drafted, two
+  Thirteen tasks over four file-disjoint dependency waves (fifteen drafted, two
   rejected during convergence): the **per-chip strategy
   pattern** + profile schema + spark/thor profiles, card detection, template
   parameterisation and per-role correctness probes (wave 1); `init` applies the
@@ -29,6 +29,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   On Thor the reranker stays **served and advertised** — it runs, it is simply
   not yet correct; its ordering probe is recorded as a known failure pointing at
   #105 / #106, rather than the role being hidden.
+
+- Spec + plan rework (same frame, re-converged): per-machine knowledge is keyed
+  by **causal capability trait**, not board name — of the four Thor hand-edits,
+  three trace to `sm_110` (the FLASH_ATTN pooling hang, the CUDA-graph classify
+  fault) and one to the checkpoint's missing KV scales; none traces to "Thor the
+  board". A machine profile becomes a named validated *bundle* (detection
+  signature + memory budget + model-per-role + applicable traits), so an
+  unrecognised board sharing a trait inherits its fix. Three new plan tasks:
+  **golden rendered compose/.env per shipped profile** byte-diffed in CI, so a
+  change for one machine cannot silently alter another's rendering (t13); an
+  **unknown card warns and serves a conservative small base** — no 27B — instead
+  of refusing, folding the unknown-card slice of #107 in (t14); and **upgrading
+  lobes-cli never breaks an existing scaffold** — zero bytes changed in the
+  deployment dir, old env names honoured, re-init always diffed + `--apply`
+  (t15). Two GB10 verifications are parked as tracked risks: whether the fp8-KV
+  crash is checkpoint-driven (shared fix) rather than Thor-specific, and whether
+  the `VLLM_ATTENTION_BACKEND` env is truly dead on the GB10's pinned image
+  before t3 deletes it. Packaging per #107: profiles ship in the wheel, no pip
+  extras.
 
 ### Changed
 
