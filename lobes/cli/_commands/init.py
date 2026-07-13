@@ -21,7 +21,9 @@ from pathlib import Path
 
 from lobes import __version__
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
-from lobes.cli._output import emit_result
+from lobes.cli._output import emit_diagnostic, emit_result
+from lobes.cli._runtime_ops import resolve_init_profile
+from lobes.profiles.render import profile_env
 from lobes.runtime import _compose, _env
 
 
@@ -34,20 +36,105 @@ def _templates(fleet: bool, audio: bool) -> dict[str, str]:
     return templates
 
 
-def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> None:
+def _resolve_fleet_profile(target: Path, profile_name: str | None):
+    """Resolve the per-machine profile for a fleet init; emits a stderr warning
+    when ``--profile`` forces a name onto a card it wasn't validated for (or an
+    undetected one). Propagates the UNKNOWN-card-with-no-override refusal."""
+    profile, card, warning = resolve_init_profile(profile_name, target)
+    if warning:
+        emit_diagnostic(f"warning: {warning}")
+    return profile, card
+
+
+def _profile_plan_lines(profile, card, profile_name: str | None) -> list[str]:
+    facts = (
+        f"device_name={card.device_name!r}, compute_capability={card.compute_capability!r}, "
+        f"total_memory_gb={card.total_memory_gb!r}"
+    )
+    if profile_name:
+        why = f"forced via --profile; detected card={card.resolved!r}, {facts}"
+    else:
+        why = f"auto-detected: {facts}"
+    lines = [f"Profile: {profile.name} ({why})"]
+    env = profile_env(profile)
+    lines.append(f"  would set {len(env)} profile env var(s) in {_compose.ENV_FILE}")
+    return lines
+
+
+def _values_equal(current: str, new: str) -> bool:
+    """True when two env-var strings represent the same value.
+
+    A straight string match covers everything but numbers; a profile-resolved
+    float (``str(0.3) == "0.3"``) and the template's own literal (``"0.30"``,
+    written for human readability — see ``env.example``) are the SAME value
+    with different spellings, so a numeric-aware fallback avoids rewriting a
+    key whose resolved value merely restates the shipped default in fewer
+    digits. A non-numeric mismatch (e.g. an actually different model id or
+    flag token) still compares unequal and gets written.
+    """
+    if current == new:
+        return True
+    try:
+        return float(current) == float(new)
+    except ValueError:
+        return False
+
+
+def _apply_profile_env(env_path: Path, env: dict[str, str]) -> None:
+    """Write a profile's rendered env vars into ``.env``, skipping no-op writes.
+
+    ``write_scaffold`` has already copied the template's own ``env.example``
+    defaults into ``.env`` by the time this runs. When the resolved profile's
+    value for a key is the SAME as what's already there (see
+    :func:`_values_equal`), the original line is left untouched instead of
+    being rewritten in a different (but equal) format — this keeps a
+    zero-divergence profile (e.g. ``spark`` on a freshly scaffolded fleet
+    ``.env``, which already ships spark's own defaults) byte-identical to
+    today's plain scaffold.
+    """
+    current = _env.read_env_file(env_path)
+    for key, value in env.items():
+        existing = current.get(key)
+        if existing is not None and _values_equal(existing, value):
+            continue
+        _env.set_env(env_path, key, value)
+
+
+def _profile_plan_dict(profile, card, profile_name: str | None) -> dict:
+    return {
+        "profile": profile.name,
+        "profile_forced": bool(profile_name),
+        "detected_card": card.resolved,
+        "detected_facts": {
+            "device_name": card.device_name,
+            "compute_capability": card.compute_capability,
+            "total_memory_gb": card.total_memory_gb,
+        },
+        "profile_env": profile_env(profile),
+    }
+
+
+def _emit_dry_run(
+    target: Path, fleet: bool, audio: bool, json_mode: bool, profile_name: str | None
+) -> None:
     plan = _compose.scaffold_plan(target, _templates(fleet, audio))
+    profile = card = None
+    if fleet:
+        # Detection/refusal happens on a dry run too — the plan must be honest
+        # about what --apply would do, including refusing on an UNKNOWN card.
+        profile, card = _resolve_fleet_profile(target, profile_name)
     if json_mode:
-        emit_result(
-            {
-                "dry_run": True,
-                "fleet": fleet,
-                "single": not fleet,
-                "audio": audio,
-                "target": str(target),
-                "files": [{"name": name, "exists": exists} for name, exists in plan],
-            },
-            json_mode=True,
-        )
+        payload = {
+            "dry_run": True,
+            "fleet": fleet,
+            "single": not fleet,
+            "audio": audio,
+            "target": str(target),
+            "files": [{"name": name, "exists": exists} for name, exists in plan],
+        }
+        if fleet:
+            payload.update(_profile_plan_dict(profile, card, profile_name))
+        emit_result(payload, json_mode=True)
         return
     if fleet and audio:
         scope = "the fleet duo + audio overlay "
@@ -61,43 +148,60 @@ def _emit_dry_run(target: Path, fleet: bool, audio: bool, json_mode: bool) -> No
         lines.append(f"  {name}{note}")
     if audio:
         lines.append("  .env (+ audio keys appended)")
+    if fleet:
+        lines.extend(_profile_plan_lines(profile, card, profile_name))
     lines.append("Re-run with --apply to write.")
     emit_result("\n".join(lines), json_mode=False)
 
 
-def _emit_apply(target: Path, fleet: bool, audio: bool, force: bool, json_mode: bool) -> None:
+def _emit_apply(
+    target: Path, fleet: bool, audio: bool, force: bool, json_mode: bool, profile_name: str | None
+) -> None:
+    profile = card = None
+    if fleet:
+        # Resolve (and possibly refuse) BEFORE writing anything, so an UNKNOWN
+        # card with no --profile never leaves a half-scaffolded deployment dir.
+        profile, card = _resolve_fleet_profile(target, profile_name)
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
     # root-owned. The mg-logwrap entrypoint writes per-boot logs here (issue #50).
     _compose.ensure_log_dir(target)
     if fleet:
+        # Render the resolved profile's knobs into .env, the same way any other
+        # env value gets written here (lobes.runtime._env.set_env) — skipping
+        # keys the profile merely restates from the template default.
+        _apply_profile_env(target / _compose.ENV_FILE, profile_env(profile))
         # Pin the gateway image to the lobes-cli release that scaffolded this.
         _env.set_env(target / _compose.ENV_FILE, "MODEL_GEAR_VERSION", __version__)
     if audio:
         # Extend the fleet .env with the audio keys (NGC_API_KEY, ports, AUDIO_URL …).
         _compose.append_audio_env(target)
     if json_mode:
-        emit_result(
-            {
-                "scaffolded": str(target),
-                "fleet": fleet,
-                "single": not fleet,
-                "audio": audio,
-                "files": [p.name for p in written],
-            },
-            json_mode=True,
-        )
+        payload = {
+            "scaffolded": str(target),
+            "fleet": fleet,
+            "single": not fleet,
+            "audio": audio,
+            "files": [p.name for p in written],
+        }
+        if fleet:
+            payload["profile"] = profile.name
+            payload["profile_forced"] = bool(profile_name)
+            payload["detected_card"] = card.resolved
+        emit_result(payload, json_mode=True)
         return
     next_step = (
         "docker login nvcr.io && lobes fleet up --apply"
         if fleet
         else "docker login nvcr.io && lobes serve --apply"
     )
+    profile_note = f"\n>> profile: {profile.name}" if fleet else ""
     emit_result(
         f">> scaffolded {target}:\n"
         + "\n".join(f"  {p.name}" for p in written)
         + (f"\n  {_compose.ENV_FILE} (+ audio keys)" if audio else "")
+        + profile_note
         + f"\n>> next: {next_step}",
         json_mode=False,
     )
@@ -118,10 +222,11 @@ def cmd_init(args: argparse.Namespace) -> int:
             "drop --single, e.g. 'lobes init --audio'",
         )
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
+    profile_name = getattr(args, "profile", None)
     if args.apply:
-        _emit_apply(target, fleet, audio, args.force, json_mode)
+        _emit_apply(target, fleet, audio, args.force, json_mode, profile_name)
     else:
-        _emit_dry_run(target, fleet, audio, json_mode)
+        _emit_dry_run(target, fleet, audio, json_mode, profile_name)
     return 0
 
 
@@ -160,6 +265,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Also scaffold the audio overlay (STT + TTS + realtime bridge). "
         "Layers on the fleet (the default); incompatible with --single.",
+    )
+    p.add_argument(
+        "--profile",
+        help="Per-machine profile to render into .env (default: auto-detect the "
+        "host card — spark, thor, ... — via lobes.runtime._detect). Overrides "
+        "detection, including forcing a profile onto a card it was not "
+        "validated for (warns, but proceeds). Fleet topology only. On an "
+        "UNKNOWN card with no --profile, init refuses rather than guessing.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")
