@@ -119,8 +119,8 @@ template substitutes at startup.
 
 | card | profile | status | validation |
 |---|---|---|---|
-| **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | load-tested | 2026-06-03 — fleet duo (cortex 128K + senses 32K) serves at ~7.8–8.0 tok/s decode (27B primary, util 0.30) with FlashInfer attention. All correctness probes pass. See `docs/tuning-profiles.md`. |
-| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | load-tested | 2026-07-13 — all three correctness probes pass (cortex known-answer, embed ranking, rerank ordering) with four validated divergences: `cortex kv_cache_dtype=auto` (not `fp8`), `senses/embedder/reranker attention_backend=TRITON_ATTN` (not FlashInfer; pooling hangs on sm_110), `reranker enforce_eager=true` (CUDA graphs unstable on sm_110). See `docs/machine-profiles.md#thor-caveats`. |
+| **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | load-tested | 2026-06-03 — fleet duo (cortex 128K + senses 32K) serves at ~7.8–8.0 tok/s decode (27B primary, util 0.30) with FlashInfer attention. The correctness probes postdate that run and are unverified on the GB10 (rerank ordering: issue #106). See `docs/tuning-profiles.md`. |
+| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | load-tested | 2026-07-13 — the three correctness probes pass (cortex known-answer, embed ranking, rerank ordering) with four validated divergences: `cortex kv_cache_dtype=auto` (uncalibrated-fp8 exposure, #109), `embedder`/`reranker attention_backend=TRITON_ATTN` (FLASH_ATTN pooling broken on sm_110, #105), `reranker enforce_eager=true` (CUDA graphs unstable on sm_110). Concurrent first boot can fail on a memory race — see the boot-ordering caveat in `docs/machine-profiles.md`. |
 | unknown card | `base` | conservative fallback | — small 4B model, no 27B, no multimodal (senses disabled) to avoid OOM on first boot. Resolved when card detection returns UNKNOWN. See issue #107 (broader tuned-small-model work, future). |
 
 **Custom profiles:** operator-defined TOML files in `<deploy-dir>/profiles/<name>.toml`

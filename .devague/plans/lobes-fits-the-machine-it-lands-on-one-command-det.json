@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T16:09:59Z",
-  "updated": "2026-07-13T18:17:52Z",
+  "updated": "2026-07-13T19:40:47Z",
   "targets": [
     {
       "id": "c1",
@@ -514,6 +514,12 @@
       "text": "Deleting MULTIMODAL_ATTENTION_BACKEND / VLLM_ATTENTION_BACKEND (t3) is grounded only in Thor observation \u2014 confirm on the GB10's pinned image that the env is truly ignored there BEFORE deleting, else t3 silently regresses spark: exactly the cross-machine breakage t13's goldens exist to catch",
       "kind": "follow_up",
       "task_id": "t3"
+    },
+    {
+      "id": "r7",
+      "text": "t10 LIVE FINDING (2026-07-13, this Thor box): the fp8 k_scale assert did NOT reproduce on the pinned nightly \u2014 fp8-KV now boots to scale-1.0 WARNINGS (accuracy risk, not crash). The reproducible first-boot failure on Thor is a MEMORY RACE: vLLM's per-gear memory profiling runs while co-resident gears load weights through page cache (Jetson unified memory counts it as occupied), so cortex fails 'free memory' or 'no cache blocks' gates regardless of KV dtype \u2014 spark AND thor profiles both fail concurrent first boot (3/3 and 1/1 attempts). Post-teardown, memory stays 'used' until 'sync; echo 3 > drop_caches'. This is a divergence class the per-gear knob-set cannot express (bring-up ordering/serialization) \u2014 h2 knob-sufficiency is contradicted for boots; steady-state values remain correct (the live stack ran 5h healthy).",
+      "kind": "follow_up",
+      "task_id": "t10"
     }
   ]
 }

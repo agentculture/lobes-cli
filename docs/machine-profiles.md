@@ -197,13 +197,17 @@ accuracy for memory savings. Passed to vLLM's `--kv-cache-dtype` flag.
 - `spark` senses: omitted (the compose template's default, typically `"float16"`
   or None, applies).
 - `spark` embedder/reranker: omitted.
-- **`thor` cortex: `"auto"`** — validated live on Thor 2026-07-13. The fp8
-  default asserts `k_scale > 0.0` on this checkpoint/board pairing, and that
-  assertion fails with uncalibrated fp8 on Thor (issue #109). The `"auto"` mode
-  falls back to float16 when the assertion would fail, avoiding the crash.
-  **Provenance:** live correctness probe (cortex known-answer test) passed with
-  `kv_cache_dtype=auto` but failed with `fp8`; see issue #109 comment for the
-  scale warning.
+- **`thor` cortex: `"auto"`** — the hand-validated value the live Thor fleet
+  runs with. The checkpoint ships no calibrated KV scales
+  (`kv_cache_quant_algo: null`); an earlier session recorded an
+  `assert layer.k_scale > 0.0` crash under `fp8` on Thor, but on the currently
+  pinned nightly that assert did **not** reproduce (2026-07-13): `fp8` now
+  boots with "Using KV cache scaling factor 1.0" / "uncalibrated q_scale"
+  warnings — an **accuracy risk**, not a crash. `auto` serves the KV cache in
+  the model dtype and avoids the uncalibrated-fp8 question entirely.
+  **Provenance:** the hand-edited deployment that ran this box for weeks, plus
+  the 2026-07-13 boot logs recorded in issue #109 (which also tracks the GB10
+  side of the question).
 - `thor` senses/embedder/reranker: omitted (same as spark).
 - `base` cortex/senses/embedder/reranker: omitted.
 
@@ -214,26 +218,24 @@ based on the attention shape and the backend's capabilities; the flag provides
 an override or force. Affects both speed and stability.
 
 **When set and why:**
-- `spark` cortex: omitted (the template default `"flashinfer"` is used; the GB10
-  is Blackwell-class and runs FlashInfer stably).
-- `spark` senses: `"TRITON_ATTN"` — the multimodal/pooling lanes use Triton
-  instead of FlashInfer. This was validated for the fleet's pooling path and
-  keeps the attention layer consistent across roles.
-- `spark` embedder/reranker: omitted (template default applies, but in practice
-  vLLM's scheduler may choose Triton for pooling-shaped requests anyway).
-- **`thor` cortex: omitted** (the template default applies; generate-lane
-  attention works stably on Thor).
-- **`thor` senses: `"TRITON_ATTN"`** — validated live on Thor 2026-07-13. The
-  FlashInfer/FLASH_ATTN pooling path **hangs on sm_110** (Jetson Thor's compute
-  capability). Force Triton instead. **Provenance:** live test observed hang
-  with FlashInfer; switch to Triton fixed it (no hang, correct embeddings);
-  explicitly declared in `lobes/profiles/builtin/thor.toml` (line 35) and
-  referenced in issue #105.
-- **`thor` embedder: `"TRITON_ATTN"`** — same reason as senses (SM_110 pooling
-  issue). Inherited from the shared `SM_110` trait in
-  `lobes/machines/_traits.py` and overlaid by `lobes/profiles/loader.py`.
-- **`thor` reranker: `"TRITON_ATTN"`** — same reason. Inherited from SM_110
-  trait and overlaid by loader.
+- `spark` cortex: omitted (vLLM auto-selects; FlashInfer on the GB10).
+- `spark` **and** `thor` senses: `"TRITON_ATTN"` — **not a Thor divergence.**
+  This mirrors the fleet template's cross-machine default for the Gemma gear:
+  Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
+  the Triton backend. Same value on every machine; its env plumbing
+  (`MULTIMODAL_ATTENTION_BACKEND`) is unchanged pending the GB10 check in
+  issue #109.
+- `spark` embedder/reranker: omitted (vLLM auto-selects on the GB10).
+- **`thor` cortex: omitted** (the generate lane runs stably with the
+  auto-selected backend on Thor).
+- **`thor` embedder: `"TRITON_ATTN"`** — a real sm_110 divergence: the
+  auto-picked FLASH_ATTN pooling path **hangs the forward pass** on sm_110
+  (requests accepted, never answered — `/health` stays green, which is why the
+  correctness probes exist). Inherited from the shared `SM_110` trait in
+  `lobes/machines/_traits.py`, overlaid by `lobes/profiles/loader.py`.
+- **`thor` reranker: `"TRITON_ATTN"`** — the same sm_110 pooling bug, surfaced
+  as NaN relevance scores (wrong orderings, issue #105) rather than a hang.
+  Inherited from the SM_110 trait.
 - `base` cortex/senses/embedder/reranker: omitted (template defaults apply; the
   conservative small model on unknown hardware avoids tuning for any backend).
 
@@ -386,8 +388,8 @@ marked clearly as **unvalidated**.
 
 | card | machine | profile | status | validation |
 |---|---|---|---|---|
-| **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | `spark.toml` | load-tested | 2026-06-03 — `lobes benchmark` ran at ~7.8–8.0 tok/s decode (27B primary, util 0.30, single-stream) on the fleet duo (cortex 128K, senses 32K) with FlashInfer attention. Correctness probes (cortex known-answer, embed paraphrase-ranking, rerank ordering) all pass. See `docs/tuning-profiles.md` and the Spark run on `docs/qwen3.6-27b-text-nvfp4-mtp.md`. |
-| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | `thor.toml` | load-tested | 2026-07-13 — all three correctness probes pass with the profile's four divergences (`cortex kv_cache_dtype=auto`, `senses/embedder/reranker TRITON_ATTN`, `reranker enforce_eager=true`). See the Thor caveats section below for the measured issues these divergences fix. |
+| **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | `spark.toml` | load-tested | 2026-06-03 — `lobes benchmark` ran at ~7.8–8.0 tok/s decode (27B primary, util 0.30, single-stream) on the fleet duo (cortex 128K, senses 32K) with FlashInfer attention. **The correctness probes postdate that run and have not been executed on the GB10** — rerank ordering there is explicitly unverified (issue #106). See `docs/tuning-profiles.md` and the Spark run on `docs/qwen3.6-27b-text-nvfp4-mtp.md`. |
+| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | `thor.toml` | load-tested | 2026-07-13 — the three correctness probes (cortex known-answer, embed paraphrase-ranking, rerank ordering) all pass with the profile's four divergences (`cortex kv_cache_dtype=auto`, `embedder TRITON_ATTN`, `reranker TRITON_ATTN + enforce_eager=true`); senses' health was not confirmed in that run (it boots last and the concurrent-boot race, caveat 4 below, can catch it). |
 | **unknown card** (UNKNOWN) | `generic` | `base.toml` | conservative fallback | — — no hardware beyond Spark/Thor is load-tested; UNKNOWN cards are served a small 4B model, no 27B, and no multimodal (`senses` disabled). Avoids OOM crashes on first boot. See issue #107 for broader "small default on every card" work. |
 | Jetson AGX Orin / Orin Nano Super | `(not yet)` | (not yet) | **unvalidated** | Not deployed or tested. Named in the mesh topology for future integration but no profile yet. Do not claim Orin support. |
 
@@ -399,44 +401,51 @@ these specific knob values; they exist because of real hardware constraints.
 
 ### 1. `cortex kv_cache_dtype=auto` (not `fp8`)
 
-**The problem:** The Spark profile's default `kv_cache_dtype=fp8` works on
-GB10 but crashes on Thor with an uncalibrated-checkpoint scale assertion at
-startup (see issue #109).
+**The problem:** The checkpoint ships no calibrated KV scales
+(`kv_cache_quant_algo: null`). An earlier session on this box recorded an
+`assert layer.k_scale > 0.0` crash under the Spark default `fp8`; on the
+currently pinned nightly that assert did **not** reproduce (2026-07-13) —
+`fp8` boots with `Using KV cache scaling factor 1.0 for fp8_e4m3` /
+`uncalibrated q_scale` warnings instead, i.e. an **accuracy risk** rather
+than a crash. Whether the GB10 has the same exposure is the open half of
+issue #109.
 
-**The fix:** Set `cortex kv_cache_dtype=auto`. In `auto` mode, vLLM checks the
-scale at startup and falls back to float16 if the assertion would fail,
-avoiding the crash.
+**The fix:** Set `cortex kv_cache_dtype=auto` — the KV cache is kept in the
+model dtype, sidestepping uncalibrated-fp8 entirely.
 
-**Validation:** Live correctness probe (cortex known-answer test: `17 * 23 =
-391`) passed with `kv_cache_dtype=auto` on Thor 2026-07-13 (see issue #109
-comment for the exact log). The `auto` fallback is conservative (slower than
-fp8) but correct.
+**Validation:** the hand-tuned deployment that has served this box runs
+`auto`; on the clean-boot validation (2026-07-13) the cortex known-answer
+probe passed under `auto`. No probe was run under `fp8` — the `fp8` evidence
+is boot-log warnings, not a measured accuracy delta.
 
 **Provenance:** Measured on Thor (sm_110, 128 GB unified, Jetson AGX).
-Referenced in `lobes/machines/thor.py:role_overrides` and overlaid by
+Carried by `lobes/machines/thor.py` and overlaid by
 `lobes/profiles/loader.py` from the live registry (not hardcoded in TOML).
 
-### 2. `senses` / `embedder` / `reranker` use `TRITON_ATTN` (not FlashInfer)
+### 2. `embedder` / `reranker` use `TRITON_ATTN` (an sm_110 divergence)
 
-**The problem:** On sm_110 (Thor), the FlashInfer/FLASH_ATTN attention backend
-**hangs indefinitely** when the request shape matches the pooling pattern
-(small batch, many tokens — e.g., embedding many documents). This affects the
-`senses` (multimodal), `embedder`, and `reranker` roles.
+**The problem:** On sm_110 (Thor), the auto-picked FLASH_ATTN pooling path is
+broken: on the **embedder** it hangs the forward pass (requests accepted,
+never answered — `/health` stays green, which is exactly why the correctness
+probes exist); on the **reranker** the same bug surfaces as NaN relevance
+scores, i.e. wrong orderings (issue #105).
 
-**The fix:** Force `attention_backend=TRITON_ATTN` for all three roles.
+**The fix:** Force `attention_backend=TRITON_ATTN` for the two pooling roles.
+(`senses` also runs `TRITON_ATTN`, but that is the cross-machine template
+default for Gemma 4's heterogeneous head sizes — identical on Spark, not a
+Thor divergence.)
 
-**Validation:** Live correctness probes passed:
-- `senses` (embed paraphrase-ranking test): compared two documents, ranked
-  them, and verified the rank was correct. No hang, correct embeddings.
-- `reranker` (ordering test): re-ranked items and verified the order. No hang,
-  correct ranking (see caveat 3, below).
-- Both ran without `cudaErrorLaunchFailure`.
+**Validation:** Live correctness probes on the clean-boot validation
+(2026-07-13): the embed paraphrase probe passed (cos(paraphrase) 0.89 >
+cos(unrelated) 0.23, no hang) and the rerank ordering probe ranked the
+relevant document first, with no `cudaErrorLaunchFailure` (see caveat 3).
 
-**Provenance:** The SM_110 trait (shared hardware characteristic, not Thor-only)
-in `lobes/machines/_traits.py` defines the knobs for both pooling roles.
-Referenced in `lobes/machines/thor.py` (composes the trait). Issue #105
-documents the hang symptom; issue #106 tracks GB10 re-verification (still open
-pending Spark testing).
+**Provenance:** The SM_110 trait (a compute-capability characteristic, not
+Thor-only — a future sm_110 board inherits it) in
+`lobes/machines/_traits.py` defines the knobs for both pooling roles;
+`lobes/machines/thor.py` composes the trait. Issue #105 documents the
+symptoms; issue #106 tracks checking rerank ordering on the GB10 (still
+open).
 
 ### 3. `reranker enforce_eager=true` (CUDA graph capture disabled)
 
@@ -447,21 +456,43 @@ requests fail with `cudaErrorLaunchFailure`.
 **The fix:** Set `reranker enforce_eager=true`. This disables CUDA graph
 capture and runs every request in eager mode, avoiding the error.
 
-**Validation:** Live correctness probe (reranker ordering test) crashed with
-`cudaErrorLaunchFailure` when graphs were enabled, but passed all ranking
-assertions with `enforce_eager=true` on Thor 2026-07-13 (see issue #105 comment
-for the crash log).
+**Validation:** The `cudaErrorLaunchFailure` under CUDA graphs was recorded in
+issue #105 (earlier session on this box). On the clean-boot validation
+(2026-07-13) with `enforce_eager=true` the rerank ordering probe passed with
+no engine crash.
 
 **Provenance:** Measured on Thor. The SM_110 trait in `lobes/machines/_traits.py`
 defines `reranker enforce_eager=true` as a sm_110 characteristic. It is
 inherited by the Thor `CardStrategy` (composes the trait).
 
-### 4. `senses` multimodal gear is fully operational
+### 4. Concurrent first boot can fail on a memory race (any profile)
 
-The Spark profile's `senses` (the Gemma 4 12B multimodal gear) is served on
-Thor at the same context (32K) and util (0.14) as on Spark. Live validation
-(2026-07-13) confirmed the gear loads, answers requests, and compares vision
-embeddings correctly.
+**The problem (measured 2026-07-13, 4/4 concurrent-boot attempts failed):**
+when all gears start at once, each vLLM engine's memory-profiling window sees
+the *other* gears' weight loads — on Jetson unified memory, weight files read
+through the page cache count as occupied — so the cortex fails either the
+free-memory gate (`Free memory on device … is less than desired GPU memory
+utilization`) or KV allocation (`No available memory for the cache blocks`),
+**regardless of KV dtype or profile**. The same values boot cleanly when the
+primary starts alone: this is a bring-up race, not a steady-state
+misconfiguration. Bring-up ordering is not expressible as a per-gear env knob
+— tracked as follow-up work (plan risk r7).
+
+**Workaround (validated):**
+
+```sh
+# after any teardown, reclaim page cache before rebooting the fleet:
+sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+# bring the primary up first, then the rest:
+docker compose up -d vllm-primary   # wait until healthy
+docker compose up -d
+```
+
+With that sequence the thor profile boots clean and all three correctness
+probes pass. `senses` (the Gemma 12B) boots **last** and is the gear most
+often caught by the race — its health was not confirmed in the 2026-07-13
+clean-boot run; the steady-state values (32K / util 0.14) are the ones the
+long-running hand-tuned deployment serves with.
 
 ### Note on future verification
 
@@ -469,9 +500,11 @@ embeddings correctly.
   confirm they do not cause regressions there. They are expected to work (Spark
   can run FlashInfer fine, so Triton is not needed, but forcing it anyway
   should not break correctness).
-- **Issue #109** tracks the FP8 KV cache issue on Thor (uncalibrated scale
-  warnings). It remains open pending checkpoint re-calibration or a vLLM fix.
-  The `auto` workaround is stable and correct but not ideal long-term.
+- **Issue #109** tracks two GB10 verifications: whether uncalibrated-fp8 KV is
+  an accuracy risk there too (the Thor crash originally attributed to it did
+  not reproduce on the pinned nightly — fp8 now warns instead of asserting),
+  and whether the legacy `VLLM_ATTENTION_BACKEND` env is truly dead on the
+  GB10's pinned image before the template drops it.
 - **Issue #107** tracks broader work to tuned-small-model defaults for every
   card, not just UNKNOWN. Spark and Thor are mature; this is future work.
 
@@ -490,5 +523,5 @@ embeddings correctly.
   enforce_eager + TRITON_ATTN)
 - Issue #106 — GB10 re-verification of TRITON_ATTN knobs (pending)
 - Issue #107 — broader tuned-small-model defaults for every card (future work)
-- Issue #109 — uncalibrated FP8 KV cache scale warnings on Thor (workaround:
-  `auto`)
+- Issue #109 — GB10 verifications: uncalibrated-fp8 KV accuracy exposure, and
+  whether `VLLM_ATTENTION_BACKEND` is dead on the pinned image

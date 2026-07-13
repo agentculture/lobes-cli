@@ -116,8 +116,8 @@ for the full table and Thor's validated knob divergences.
 
 | card | profile | status | validation |
 |---|---|---|---|
-| **DGX Spark** (Grace Blackwell, 128 GB) | `spark` | load-tested | 2026-06-03 — fleet duo (cortex 128K, senses 32K) at ~7.8–8.0 tok/s decode with FlashInfer. Correctness probes pass. |
-| **Jetson AGX Thor** (sm_110, 128 GB) | `thor` | load-tested | 2026-07-13 — all correctness probes pass with four validated divergences (kv_cache_dtype/attention_backend/enforce_eager knobs). See the Thor section in [`docs/machine-profiles.md`](docs/machine-profiles.md). |
+| **DGX Spark** (Grace Blackwell, 128 GB) | `spark` | load-tested | 2026-06-03 — fleet duo (cortex 128K, senses 32K) at ~7.8–8.0 tok/s decode with FlashInfer. Correctness probes postdate that run; unverified on the GB10 (#106). |
+| **Jetson AGX Thor** (sm_110, 128 GB) | `thor` | load-tested | 2026-07-13 — cortex/embed/rerank correctness probes pass with four validated divergences (kv_cache_dtype/attention_backend/enforce_eager knobs); concurrent first boot needs the boot-ordering caveat. See the Thor section in [`docs/machine-profiles.md`](docs/machine-profiles.md). |
 | unknown card | `base` | conservative fallback | — small 4B model, no multimodal, to avoid OOM on first boot. |
 
 The compose `command` intentionally omits `--trust-remote-code`: Qwen3-32B-NVFP4
