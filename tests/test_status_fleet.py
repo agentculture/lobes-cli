@@ -156,7 +156,7 @@ def test_status_single_model_json_unchanged(capsys, tmp_path, monkeypatch) -> No
     out = capsys.readouterr().out
     payload = json.loads(out)
 
-    # Exact keys the current code emits — no new keys
+    # Exact keys the current code emits — no new keys (profile added for task t5)
     expected_keys = {
         "model",
         "served_name",
@@ -166,6 +166,7 @@ def test_status_single_model_json_unchanged(capsys, tmp_path, monkeypatch) -> No
         "container",
         "state",
         "health",
+        "profile",
     }
     assert (
         set(payload.keys()) == expected_keys

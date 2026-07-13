@@ -172,6 +172,8 @@ def _emit_apply(
         # env value gets written here (lobes.runtime._env.set_env) — skipping
         # keys the profile merely restates from the template default.
         _apply_profile_env(target / _compose.ENV_FILE, profile_env(profile))
+        # Persist the profile choice itself for doctor/status to report
+        _env.set_env(target / _compose.ENV_FILE, "LOBES_PROFILE", profile.name)
         # Pin the gateway image to the lobes-cli release that scaffolded this.
         _env.set_env(target / _compose.ENV_FILE, "MODEL_GEAR_VERSION", __version__)
     if audio:
