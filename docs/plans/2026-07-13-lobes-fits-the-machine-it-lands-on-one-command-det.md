@@ -90,6 +90,7 @@ slug: `lobes-fits-the-machine-it-lands-on-one-command-det` · status: `exported`
   - The support table states plainly which cards are validated and which are aspirational; no doc claims Orin support
   - Every knob in the reference traces to a human-validated observation on a real card (boot log, probe result, measured budget)
   - Thor's known-incorrect reranker is documented with a pointer to #105/#106 rather than being hidden
+  - VALIDATION step: after the docs land, a tightening pass verifies every claim in docs/machine-profiles.md, README.md and CLAUDE.md against the shipped code and tests (doc-test-alignment), markdownlint-cli2 passes on the changed files, and the rubric gate (uv run afi cli doctor . --strict) passes
 
 ### t12 — Per-chip STRATEGY PATTERN (foundational — do this before the other tasks build on top of the current shape): one module per chip under lobes/machines/ (CardStrategy: its own detection signature + per-role knobs + provenance) plus a small shared registry. profiles.py / _detect.py / init.py stop carrying per-chip tables and derive from the registry instead. Nothing is deleted: MachineProfile, MACHINE_PROFILES, detect_machine() and their switch/benchmark callers keep working, rebuilt FROM the registry. Also re-cuts the false premise the spec originally carried (that lobes had no machine-profile axis at all — it does)
 

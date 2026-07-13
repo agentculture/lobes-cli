@@ -1,0 +1,42 @@
+# The default machine profile — DGX Spark (GB10 Grace Blackwell, 128 GB
+# unified memory). Reproduces the fleet compose template's shipped defaults
+# (lobes/templates/fleet/docker-compose.yml) EXACTLY, so resolving this
+# profile changes nothing for an existing GB10 deployment: gpu_mem_util
+# 0.30 / 0.14 / 0.06 / 0.06 and cortex max_model_len 131072 / senses 32768 /
+# embedder+reranker 8192 are the "always-on duo" budget documented in
+# CLAUDE.md ("Colleague roles") and docs/vllm-nightly-migration.md §8.
+#
+# A knob left out of a role table below means the profile takes no position
+# on it (the compose template's own ${VAR:-default} applies) — see
+# RoleProfile in lobes/profiles/schema.py.
+name = "spark"
+summary = "DGX Spark (GB10 Grace Blackwell, 128 GB unified) — the default, load-tested fleet profile"
+
+[roles.cortex]
+feasible = true
+model = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+gpu_mem_util = 0.30
+max_model_len = 131072
+quantization = "modelopt"
+kv_cache_dtype = "fp8"
+max_num_seqs = 2
+
+[roles.senses]
+feasible = true
+model = "coolthor/gemma-4-12B-it-NVFP4A16"
+gpu_mem_util = 0.14
+max_model_len = 32768
+quantization = "compressed-tensors"
+attention_backend = "TRITON_ATTN"
+
+[roles.embedder]
+feasible = true
+model = "Qwen/Qwen3-Embedding-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+
+[roles.reranker]
+feasible = true
+model = "Qwen/Qwen3-Reranker-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192

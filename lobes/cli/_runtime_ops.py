@@ -7,11 +7,21 @@ modules (each with a ``register``); these are plain helpers.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 
 from lobes import assess
 from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
-from lobes.runtime import _compose, _env
+from lobes.profiles.loader import resolve_profile
+from lobes.profiles.schema import Profile
+from lobes.runtime import _compose, _detect, _env
+
+# The built-in profile `lobes init` resolves for an UNKNOWN card (t14): a
+# conservative small generate model + the two 0.6B pooling gears, no 27B —
+# see lobes/profiles/builtin/base.toml. Never returned/selected silently;
+# resolve_init_profile always pairs it with a warning naming the detected
+# facts and the assumption made.
+UNKNOWN_CARD_PROFILE = "base"
 
 
 def deployment_dir(args: argparse.Namespace):
@@ -81,6 +91,80 @@ def format_tool_probe(tc: dict) -> str:
         return f"tool calling: PASS — called {', '.join(tc.get('tool_calls') or [])}"
     reason = tc.get("error") or f"no finish call (tool_calls={tc.get('tool_calls')})"
     return f"tool calling: FAIL — {reason}"
+
+
+def resolve_init_profile(
+    explicit_profile: str | None,
+    deploy_dir: os.PathLike | str,
+    *,
+    detect_fn=None,
+) -> tuple[Profile, _detect.DetectedCard, str | None]:
+    """Resolve the per-machine :class:`Profile` ``lobes init`` should render.
+
+    Detection ALWAYS runs (even when ``explicit_profile`` is given) — the
+    caller needs the detected card facts either way: to name a profile when
+    none is given, or to compare against a forced ``--profile`` and warn on a
+    mismatch. ``detect_fn`` is injectable (tests pass a lambda); ``None`` (the
+    default) resolves ``lobes.runtime._detect.detect_card`` at CALL time (not
+    bound at import time), so a test can also just
+    ``monkeypatch.setattr(_detect, "detect_card", ...)`` the module attribute,
+    matching this repo's usual probe-neutralisation idiom (see
+    ``tests/conftest.py``).
+
+    * ``explicit_profile`` given: it always wins. A warning string (for the
+      caller to print to stderr) is returned when the detected card is
+      UNKNOWN, or known but different from the forced name — "forcing a
+      profile onto a card it wasn't validated for" per the plan. Never
+      raises for this branch: an explicit choice is always honored.
+    * ``explicit_profile`` is ``None``: the detected card name is used. A
+      known card resolves silently (no warning). An UNKNOWN card (t14) no
+      longer raises — it resolves the built-in :data:`UNKNOWN_CARD_PROFILE`
+      ("base": a small generate model + the two 0.6B pooling gears, no 27B —
+      see ``lobes/profiles/builtin/base.toml``) and returns a warning string
+      naming every detected fact and the assumption made, so ``init``
+      proceeds instead of refusing. This never falls back SILENTLY to any
+      built-in — the caller always gets (and is expected to print) the
+      warning.
+
+    Returns ``(profile, card, warning)``; ``warning`` is ``None`` on the
+    ordinary "detected a known card, no override" path.
+    """
+    card = (detect_fn or _detect.detect_card)()
+    facts = (
+        f"device_name={card.device_name!r}, "
+        f"compute_capability={card.compute_capability!r}, "
+        f"total_memory_gb={card.total_memory_gb!r}"
+    )
+    warning: str | None = None
+    if explicit_profile:
+        name = explicit_profile
+        if not card.is_known:
+            warning = (
+                f"--profile {name!r} used on an undetected card ({facts}) — "
+                "proceeding, but this profile was not validated for this box."
+            )
+        elif card.resolved != name.strip().lower():
+            # Compare NORMALISED forms: card.resolved is always the registry's
+            # lowercase canonical name, but `name` is the raw --profile value
+            # as typed — `--profile Spark` on a detected "spark" card must not
+            # warn on casing alone (resolve_profile() normalises the same way).
+            warning = (
+                f"--profile {name!r} overrides the detected card "
+                f"{card.resolved!r} ({facts}) — proceeding, but this profile "
+                "was not validated for this box."
+            )
+    else:
+        if card.is_known:
+            name = card.resolved
+        else:
+            name = UNKNOWN_CARD_PROFILE
+            warning = (
+                f"unrecognised card ({facts}) — serving the conservative "
+                f"{UNKNOWN_CARD_PROFILE!r} profile (a small generate model + the "
+                "embed/rerank pooling gears, no 27B); pass --profile to override."
+            )
+    profile = resolve_profile(name, deploy_dir=deploy_dir)
+    return profile, card, warning
 
 
 def compose_check(completed: subprocess.CompletedProcess, label: str) -> None:

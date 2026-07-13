@@ -645,6 +645,95 @@ the numbers track the serve config. Override with `--purpose` / `--input-len` /
 benchmark — see `docs/tuning-profiles.md`.
 """
 
+_PROFILES = """\
+# lobes profiles — machine detection and per-role tuning
+
+A **machine profile** is a per-card tuning declaration: which models serve each
+role (`cortex` / `senses` / `embedder` / `reranker`), their GPU memory budget,
+context length, attention backend, and vLLM knobs the compose template
+substitutes.
+
+## Detection
+
+When `lobes init` or `lobes serve` runs, card detection gathers facts from the
+host (device name via `nvidia-smi`, compute capability, total memory from
+`/proc/meminfo`, hostname, Jetson device-tree model) and resolves them via the
+live `lobes.machines` registry (one `CardStrategy` per supported chip). An
+`UNKNOWN` result is honest and first-class — no guessing or silent fallback.
+
+## Profile resolution
+
+Once detection (or an explicit `--machine` / `--profile` flag) resolves the card
+name, a profile is looked up: explicit `--profile` wins, then operator-defined
+files in `<deploy-dir>/profiles/<name>.toml`, then packaged built-ins.
+
+Built-in profiles:
+- `spark` — DGX Spark (GB10 Grace Blackwell, 128 GB unified), load-tested.
+- `thor` — Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified), load-tested
+  with four validated divergences from Spark (kv_cache_dtype, attention backend,
+  enforce_eager for reranker).
+- `base` — conservative fallback for UNKNOWN cards (small 4B model, no
+  multimodal).
+
+## Knobs per role
+
+Each of the four roles (cortex, senses, embedder, reranker) carries seven tunable
+knobs (each optional — "no opinion" = template default applies):
+`feasible`, `model`, `gpu_mem_util`, `max_model_len`, `quantization`,
+`kv_cache_dtype`, `attention_backend`, `enforce_eager`, `max_num_seqs`.
+
+Render to env vars via role→prefix (e.g., `cortex` → `PRIMARY_`), so
+`cortex.gpu_mem_util=0.30` → `PRIMARY_GPU_MEM_UTIL=0.30`.
+
+## Thor's validated divergences (2026-07-13)
+
+All four Thor correctness probes pass with these measured knobs:
+- `cortex kv_cache_dtype=auto` — not `fp8` (uncalibrated scale on this
+  checkpoint/board pairing; issue #109).
+- `senses/embedder/reranker attention_backend=TRITON_ATTN` — not FlashInfer
+  (pooling path hangs on sm_110; issue #105).
+- `reranker enforce_eager=true` — CUDA-graph capture is unstable on sm_110
+  (crashes with `cudaErrorLaunchFailure` without it; issue #105).
+
+## Custom profiles
+
+Operator-defined profiles go in `<deploy-dir>/profiles/<name>.toml`. They are
+fully self-contained (not merged with built-ins); any knob/role omitted means
+"no opinion" (template default applies).
+
+```toml
+name = "my-box"
+summary = "Custom RTX 6000"
+
+[roles.cortex]
+feasible = true
+model = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+gpu_mem_util = 0.75
+max_model_len = 180000
+```
+
+Auto-detection only works if the detected machine name matches the profile name.
+For new hardware, add a `CardStrategy` module to `lobes/machines/` (follow the
+`spark.py` / `thor.py` pattern).
+
+## Goldens contract
+
+CI guards cross-machine safety via golden `.env` files (one per built-in
+profile). Editing a machine strategy or profile code requires:
+`uv run python tests/goldens/regen.py` (committed, diff'd by CI).
+
+The invariant: editing the `thor` profile must not change the spark golden.
+
+## See also
+
+- `docs/machine-profiles.md` — the deep reference (detection, knobs, Thor
+  caveats, custom profiles, goldens).
+- `docs/tuning-profiles.md` — workload (`purpose`) profiles.
+- `lobes/machines/` — CardStrategy modules (detection signatures, machine knobs).
+- `lobes/profiles/` — schema, loader, renderer, built-in TOML.
+- `lobes explain tuning` — the brief tuning reference (machine × purpose × model).
+"""
+
 _REALTIME = """\
 # lobes realtime audio
 
@@ -888,6 +977,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("tuning",): _TUNING,
     ("purpose",): _TUNING,
     ("machine",): _TUNING,
+    ("profiles",): _PROFILES,
+    ("profile",): _PROFILES,
     ("serve",): _SERVE,
     ("stop",): _SERVE,
     ("fleet",): _FLEET,

@@ -19,7 +19,7 @@ from lobes import __version__
 from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import ModelGearError
 from lobes.cli._output import emit_result
-from lobes.runtime import _compose, _env, _health
+from lobes.runtime import _compose, _detect, _env, _health
 
 
 def _culture_model_tail() -> str | None:
@@ -103,6 +103,52 @@ def _version_skew_remediation(deploy_dir: Path | None) -> str:
         f"set MODEL_GEAR_VERSION={__version__} in {env_path}, "
         "then docker compose up -d --build gateway"
     )
+
+
+def _machine_profile_section(deploy_dir: Path | None) -> dict | None:
+    """Report the detected card and active profile, warning if mismatched.
+
+    Returns a dict with detected_card, device info, profile, and validated flag,
+    or None if deployment not scaffolded (no profile to report).
+    """
+    if deploy_dir is None:
+        return None
+
+    # Detect the card on the host
+    card = _detect.detect_card()
+
+    # Read the persisted profile choice from .env (if any)
+    env_path = deploy_dir / _compose.ENV_FILE
+    profile_name = _env.read_env(env_path, "LOBES_PROFILE")
+
+    # Determine if profile is validated for this card
+    validated = card.is_known and profile_name == card.resolved
+
+    # Build the warning message if there's a mismatch or unknown card
+    warning = None
+    if not card.is_known:
+        warning = (
+            f"unrecognized card (device_name={card.device_name!r}, "
+            f"compute_capability={card.compute_capability!r}, "
+            f"total_memory_gb={card.total_memory_gb!r}) — "
+            "profile not validated for this machine; "
+            "pass --profile <name> to init to force a known profile"
+        )
+    elif profile_name and profile_name != card.resolved:
+        warning = (
+            f"profile {profile_name!r} does not match detected card {card.resolved!r} — "
+            "this profile was not validated for this machine"
+        )
+
+    return {
+        "detected_card": card.resolved,
+        "device_name": card.device_name,
+        "compute_capability": card.compute_capability,
+        "total_memory_gb": card.total_memory_gb,
+        "profile": profile_name,
+        "validated": validated,
+        "warning": warning,
+    }
 
 
 def _version_skew_check(port: int, deploy_dir: Path | None) -> dict:
@@ -200,9 +246,15 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks.append(_health_check(port))
     checks.append(_version_skew_check(port, deploy_dir))
 
+    # Gather machine profile info (if scaffolded)
+    machine_profile = _machine_profile_section(deploy_dir)
+
     # Only error-severity failures make the run unhealthy.
     healthy_overall = all(c["passed"] for c in checks if c["severity"] == "error")
-    return {"healthy": healthy_overall, "checks": checks}
+    result: dict[str, object] = {"healthy": healthy_overall, "checks": checks}
+    if machine_profile is not None:
+        result["machine_profile"] = machine_profile
+    return result
 
 
 def _mark(check: dict) -> str:
@@ -211,13 +263,42 @@ def _mark(check: dict) -> str:
     return "FAIL" if check["severity"] == "error" else check["severity"]
 
 
-def _render_text(report: dict) -> str:
-    status = "healthy" if report["healthy"] else "unhealthy"
-    lines = [f"lobes doctor: {status}", ""]
-    for check in report["checks"]:
+def _render_check_lines(checks: list[dict]) -> list[str]:
+    """Render one ``[mark] id: message`` line per check, plus a remediation
+    hint line for any that failed with one."""
+    lines: list[str] = []
+    for check in checks:
         lines.append(f"[{_mark(check)}] {check['id']}: {check['message']}")
         if not check["passed"] and check["remediation"]:
             lines.append(f"  hint: {check['remediation']}")
+    return lines
+
+
+def _render_machine_profile_lines(mp: dict) -> list[str]:
+    """Render the ``machine profile:`` section (detected card, active
+    profile, and any mismatch/unknown-card warning)."""
+    lines = ["", "machine profile:", f"  detected card: {mp['detected_card']}"]
+    if mp["device_name"]:
+        lines.append(f"  device:       {mp['device_name']}")
+    if mp["compute_capability"]:
+        lines.append(f"  compute:      {mp['compute_capability']}")
+    if mp["total_memory_gb"]:
+        lines.append(f"  memory:       {mp['total_memory_gb']} GB")
+    if mp["profile"]:
+        lines.append(f"  profile:      {mp['profile']}")
+        if not mp["validated"]:
+            lines.append("  status:       NOT VALIDATED FOR THIS CARD (forced/unvalidated)")
+    if mp.get("warning"):
+        lines.append(f"  warning:      {mp['warning']}")
+    return lines
+
+
+def _render_text(report: dict) -> str:
+    status = "healthy" if report["healthy"] else "unhealthy"
+    lines = [f"lobes doctor: {status}", ""]
+    lines.extend(_render_check_lines(report["checks"]))
+    if "machine_profile" in report:
+        lines.extend(_render_machine_profile_lines(report["machine_profile"]))
     return "\n".join(lines)
 
 
