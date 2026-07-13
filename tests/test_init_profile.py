@@ -1,4 +1,6 @@
-"""Tests for ``lobes init``'s per-machine-profile resolution (t4).
+"""Tests for ``lobes init``'s per-machine-profile resolution (t4; the UNKNOWN
+branch is replaced by t14 — warn + serve the conservative 'base' profile
+instead of refusing).
 
 Detection is injected via ``monkeypatch.setattr(_detect, "detect_card", ...)``
 (the offline-probe idiom this repo already uses, see ``tests/conftest.py``) so
@@ -10,10 +12,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from lobes.cli import _runtime_ops, main
-from lobes.runtime import _detect
+from lobes.runtime import _detect, _env
 
 
 def _fake_card(
@@ -147,10 +147,11 @@ def test_explicit_unknown_profile_name_still_raises_unknown_profile_error(
     assert "unknown profile" in err
 
 
-# --- acceptance 3: UNKNOWN card + no --profile refuses ----------------------
+# --- acceptance 3 (t14): UNKNOWN card + no --profile WARNS and serves the
+# conservative 'base' profile, instead of refusing (replaces t4's refusal). ---
 
 
-def test_unknown_card_with_no_profile_refuses(tmp_path, monkeypatch, capsys) -> None:
+def test_unknown_card_with_no_profile_warns_and_serves_base(tmp_path, monkeypatch, capsys) -> None:
     _patch_detect(
         monkeypatch,
         _fake_card(
@@ -162,30 +163,67 @@ def test_unknown_card_with_no_profile_refuses(tmp_path, monkeypatch, capsys) -> 
     )
     target = tmp_path / "deploy"
     rc = main(["init", str(target), "--apply"])
-    assert rc == 1
-    assert not target.exists()  # never half-scaffolded, never falls back to spark
-    err = capsys.readouterr().err
+    assert rc == 0
+    assert target.is_dir()  # proceeds — no longer half-scaffolded-and-refused
+    captured = capsys.readouterr()
+    err = captured.err
     assert "device_name='NVIDIA H100'" in err
     assert "compute_capability='sm_90'" in err
     assert "total_memory_gb=80.0" in err
     assert "--profile" in err
+    assert "base" in err  # names the assumption made (the profile it fell back to)
+    env = _env.read_env_file(target / ".env")
+    assert env["PRIMARY_MODEL"] == "Qwen/Qwen3.5-4B"  # the small generate model, not the 27B
+    assert "Qwen3.6-27B" not in env["PRIMARY_MODEL"]
+    assert "Qwen3.6-27B" not in env["PRIMARY_SERVED_NAME"]
+    assert ">> profile: base" in captured.out
 
 
-def test_unknown_card_dry_run_also_refuses(tmp_path, monkeypatch, capsys) -> None:
+def test_unknown_card_dry_run_also_warns_and_proceeds(tmp_path, monkeypatch, capsys) -> None:
     # The dry-run plan must be honest about what --apply would do.
     _patch_detect(monkeypatch, _fake_card(_detect.UNKNOWN))
     target = tmp_path / "deploy"
     rc = main(["init", str(target)])
-    assert rc == 1
-    assert not target.exists()
+    assert rc == 0
+    assert not target.exists()  # dry run still writes nothing
+    captured = capsys.readouterr()
+    assert "--profile" in captured.err
+    assert "Profile: base (auto-detected:" in captured.out
 
 
-def test_unknown_card_never_silently_falls_back_to_spark(tmp_path, monkeypatch) -> None:
+def test_unknown_card_never_silently_falls_back_to_spark(tmp_path, monkeypatch, capsys) -> None:
     _patch_detect(monkeypatch, _fake_card(_detect.UNKNOWN))
     target = tmp_path / "deploy"
     rc = main(["init", str(target), "--apply"])
-    assert rc == 1
-    assert not (target / ".env").exists()
+    assert rc == 0
+    env = _env.read_env_file(target / ".env")
+    # base's own model, not spark's 27B primary.
+    assert env["PRIMARY_MODEL"] == "Qwen/Qwen3.5-4B"
+    assert "Qwen3.6-27B" not in env["PRIMARY_MODEL"]
+    out = capsys.readouterr().out
+    assert ">> profile: base" in out
+    assert ">> profile: spark" not in out
+
+
+def test_unknown_card_base_profile_has_no_27b_anywhere(tmp_path) -> None:
+    """Acceptance 1: the base profile's rendered env never names the 27B —
+    checked directly against profile_env, independent of the CLI plumbing."""
+    from lobes.profiles.loader import resolve_profile
+    from lobes.profiles.render import profile_env
+
+    env = profile_env(resolve_profile("base"))
+    for value in env.values():
+        assert "Qwen3.6-27B" not in value
+
+
+def test_unknown_card_base_profile_marks_senses_infeasible(tmp_path, monkeypatch) -> None:
+    """The 12B multimodal gear is NOT assumed on an unrecognised card."""
+    _patch_detect(monkeypatch, _fake_card(_detect.UNKNOWN))
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--apply"])
+    assert rc == 0
+    env = (target / ".env").read_text()
+    assert "MULTIMODAL_FEASIBLE=false" in env
 
 
 # --- acceptance 4: dry-run-by-default preserved ------------------------------
@@ -216,15 +254,28 @@ def test_single_topology_never_calls_detection(tmp_path, monkeypatch) -> None:
 # --- resolve_init_profile (the _runtime_ops glue) directly -----------------
 
 
-def test_resolve_init_profile_raises_user_error_on_unknown(tmp_path, monkeypatch) -> None:
-    from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
-
-    with pytest.raises(ModelGearError) as exc_info:
-        _runtime_ops.resolve_init_profile(
-            None, tmp_path, detect_fn=lambda: _fake_card(_detect.UNKNOWN)
-        )
-    assert exc_info.value.code == EXIT_USER_ERROR
-    assert "--profile" in exc_info.value.remediation
+def test_resolve_init_profile_resolves_base_and_warns_on_unknown(tmp_path) -> None:
+    # t14: the UNKNOWN branch no longer raises — it resolves the conservative
+    # 'base' built-in and returns a warning naming the detected facts and the
+    # assumption made, so 'lobes init' can proceed instead of refusing.
+    profile, card, warning = _runtime_ops.resolve_init_profile(
+        None,
+        tmp_path,
+        detect_fn=lambda: _fake_card(
+            _detect.UNKNOWN,
+            device_name="NVIDIA H100",
+            compute_capability="sm_90",
+            total_memory_gb=80.0,
+        ),
+    )
+    assert profile.name == "base"
+    assert card.resolved == _detect.UNKNOWN
+    assert warning is not None
+    assert "device_name='NVIDIA H100'" in warning
+    assert "compute_capability='sm_90'" in warning
+    assert "total_memory_gb=80.0" in warning
+    assert "base" in warning
+    assert "--profile" in warning
 
 
 def test_resolve_init_profile_returns_no_warning_on_clean_match(tmp_path) -> None:
