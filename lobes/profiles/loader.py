@@ -79,7 +79,13 @@ def _apply_machine_registry(profile: Profile) -> Profile:
             continue
         overrides = {knob_name: knob.value for knob_name, knob in knobs.items()}
         updated_roles[role] = replace(updated_roles[role], **overrides)
-    return replace(profile, roles=MappingProxyType(updated_roles))
+    # Construct the Profile directly (rather than dataclasses.replace(profile,
+    # ...)) so the declared return type matches what a static checker infers —
+    # replace()'s generic signature resolves to the base DataclassInstance
+    # protocol for some checkers, not the concrete Profile subtype.
+    return Profile(
+        name=profile.name, summary=profile.summary, roles=MappingProxyType(updated_roles)
+    )
 
 
 def builtin_names() -> tuple[str, ...]:
