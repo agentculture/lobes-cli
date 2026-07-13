@@ -31,6 +31,44 @@ _DEFAULT_MULTIMODAL = "coolthor/gemma-4-12B-it-NVFP4A16"
 _DEFAULT_MULTIMODAL_CODER = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 
+# Per-backend "this machine's per-machine profile declares it CANNOT be served
+# AT ALL" signal (issue #92's "advertised implies reachable" extended to the
+# HARDWARE dimension — plan "per-machine profiles", task t6). The ONE channel
+# a rendered Profile's ``RoleProfile.feasible=False`` composes down to: an
+# operator (or ``lobes init``, rendering a per-machine Profile) sets
+# ``<PREFIX>_FEASIBLE=false`` in the deployment's ``.env``. Named after the
+# SAME backend-name prefixes the served-context overlay already uses
+# (``PRIMARY_MAX_MODEL_LEN`` etc., see ``lobes.roles.ROLE_MAX_MODEL_LEN_ENV``)
+# so there is exactly one "<PREFIX>_<KNOB>" env convention to learn. Scoped to
+# the four backends the per-machine Profile schema covers
+# (:data:`lobes.profiles.schema.ROLES`) — the opt-in fallback/minor/middle/
+# multimodal-coder backends are out of that schema's scope and have no entry
+# here (never infeasible via this channel).
+FEASIBLE_ENV: dict[str, str] = {
+    "primary": "PRIMARY_FEASIBLE",
+    "multimodal": "MULTIMODAL_FEASIBLE",
+    "embed": "EMBED_FEASIBLE",
+    "rerank": "RERANK_FEASIBLE",
+}
+
+_FALSY_FEASIBLE = frozenset({"false", "0", "no"})
+
+
+def _is_feasible(env: Mapping[str, str], backend_name: str) -> bool:
+    """True unless ``backend_name``'s ``<PREFIX>_FEASIBLE`` env var (see
+    :data:`FEASIBLE_ENV`) holds an explicit falsy token.
+
+    Absent/blank/anything-but-a-recognised-falsy-token → feasible — an
+    untouched deployment (no FEASIBLE var set anywhere) is completely
+    unaffected, matching every other knob's ``${VAR:-default}`` convention.
+    A backend with no entry in :data:`FEASIBLE_ENV` is always feasible here
+    (out of the per-machine Profile schema's four-role scope).
+    """
+    key = FEASIBLE_ENV.get(backend_name)
+    if key is None:
+        return True
+    return (env.get(key) or "").strip().lower() not in _FALSY_FEASIBLE
+
 
 @dataclass(frozen=True)
 class ServerConfig:
@@ -257,10 +295,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     if coder_backend is not None:
         aliases["multimodal-coder"] = coder_backend.served_name
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
+    # Hardware feasibility (task t6): computed over the FOUR canonical backend
+    # names FEASIBLE_ENV knows about — independent of whether each is actually
+    # WIRED in this table, so a role declared infeasible with no *_BASE_URL set
+    # at all still lands in `infeasible` (a config/display fact, not contingent
+    # on wiring). See RoutingTable.infeasible / infeasible_owner.
+    infeasible = frozenset(name for name in FEASIBLE_ENV if not _is_feasible(env, name))
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
         aliases=aliases,
+        infeasible=infeasible,
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container

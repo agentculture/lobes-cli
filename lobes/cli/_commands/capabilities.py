@@ -228,6 +228,14 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
             f"{info['role']:<9} {model:<48} {info['context']:>8}  "
             f"{'yes' if info['loaded'] else 'no ':<6} {info['endpoint'] or '(none)'}"
         )
+        # Hardware feasibility (task t6): a role this machine's per-machine
+        # profile declared it can never serve — surfaced even though the row
+        # above still shows loaded=yes (the backend can be structurally wired,
+        # e.g. the always-present primary, yet infeasible on this box).
+        # `.get` defaults True so an older/foreign payload missing this key
+        # (pre-t6 gateway, or a hand-built fixture) never raises.
+        if info.get("feasible", True) is False:
+            lines.append("          ** infeasible on this machine — never served here **")
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
     return "\n".join(lines)
 

@@ -164,6 +164,17 @@ class RoleInfo:
     mtp: bool  # speculative decoding (MTP draft head) active for this model
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
+    # Is this role even SERVABLE on this machine at all — the HARDWARE
+    # dimension of issue #92's "advertised implies reachable" (plan
+    # "per-machine profiles", task t6)? `True` unless this deployment's
+    # RoutingTable named this role's backend in `table.infeasible` (from
+    # `<PREFIX>_FEASIBLE=false`, see lobes.gateway._config.FEASIBLE_ENV) — a
+    # fact about the MACHINE, independent of `loaded` (is a backend wired) and
+    # `ready` (is it live right now). Always `True` for stt/tts: audio-overlay
+    # feasibility is out of the per-machine Profile schema's scope
+    # (lobes.profiles.schema.ROLES covers only cortex/senses/embedder/
+    # reranker), so it never varies for those two.
+    feasible: bool = True
     # Runtime readiness — a caller-supplied LIVE signal, folded in by
     # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
     # for the four gateway-fronted roles, `audio_ready` for stt/tts (issue
@@ -188,11 +199,15 @@ class RoleInfo:
     # Because the SUPPLIED branch is authoritative, it does.
     #
     # Structurally CLAMPED regardless: a role whose backend is not wired
-    # (`loaded is False`) or whose `endpoint` is empty can never report
-    # `ready=True`, no matter what signal a caller passes in. This mirrors —
-    # and is enforced by the same code path as — the stt/tts clamp on
-    # `audio_configured` (issue #89/#90 review finding), now applied to all
-    # six roles by build_role_registry itself, not left to caller discipline.
+    # (`loaded is False`), whose `endpoint` is empty, OR whose `feasible` is
+    # `False` (task t6) can never report `ready=True`, no matter what signal a
+    # caller passes in. This mirrors — and is enforced by the same code path
+    # as — the stt/tts clamp on `audio_configured` (issue #89/#90 review
+    # finding), now applied to all six roles by build_role_registry itself,
+    # not left to caller discipline. The `feasible` clamp is what makes an
+    # infeasible-but-HEALTHY role (a live `backend_ready=True` signal) still
+    # report `ready=False` — a healthy PROCESS is not evidence this MACHINE
+    # can actually carry the role.
     ready: bool = False
     # Is this role's backend/service wired/present in THIS deployment? An
     # unconfigured/opt-in role is still returned, with loaded=False.
@@ -289,16 +304,20 @@ def _gateway_role(
     a concrete ``False`` on the supplied path so this function can never see it.
 
     Either way, ``ready`` is CLAMPED to ``False`` whenever the backend is not
-    wired (``loaded is False``) or the resolved ``endpoint`` is empty (see
-    :func:`_gateway_base_url`) — enforced HERE, structurally, so a caller
-    passing a stale/wrong ``ready_signal`` for an unwired or undialable role
-    can never fabricate ``ready=True``. This generalises, to all four
-    gateway-fronted roles, the same clamp issue #89/#90 established for
-    stt/tts (a caller-supplied signal can never override "nothing is wired"
-    or "nothing to dial").
+    wired (``loaded is False``), the resolved ``endpoint`` is empty (see
+    :func:`_gateway_base_url`), OR this machine's ``table.infeasible`` names
+    this role's backend (``feasible is False`` — task t6, the HARDWARE
+    dimension of the same invariant) — enforced HERE, structurally, so a
+    caller passing a stale/wrong ``ready_signal`` for an unwired, undialable,
+    OR hardware-infeasible role can never fabricate ``ready=True``. This
+    generalises, to all four gateway-fronted roles, the same clamp issue
+    #89/#90 established for stt/tts (a caller-supplied signal can never
+    override "nothing is wired" or "nothing to dial") — and now also "this
+    machine can't run it at all", independent of wiring or a live health probe.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
+    feasible = ROLE_BACKEND[role] not in table.infeasible
     if backend is not None:
         model_id = backend.served_name
     else:
@@ -310,7 +329,7 @@ def _gateway_role(
     entry = _catalog_by_id(model_id) or _catalog_by_role_hint(ROLE_ROLE_HINT[role])
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
-    if loaded and endpoint:
+    if loaded and feasible and endpoint:
         ready = ready_signal if ready_signal is not None else loaded
     else:
         ready = False
@@ -325,6 +344,7 @@ def _gateway_role(
         mtp=bool(entry.speculative_config) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
+        feasible=feasible,
         ready=ready,
         loaded=loaded,
     )

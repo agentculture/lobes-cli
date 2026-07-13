@@ -55,6 +55,7 @@ from lobes.gateway._readiness import ReadinessCache
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
+    infeasible_owner,
     is_audio_path,
     is_unknown_model,
     list_models_payload,
@@ -334,6 +335,34 @@ def _model_not_found_body(model: str) -> bytes:
     ).encode("utf-8")
 
 
+def _role_infeasible_body(requested: str | None, backend_name: str) -> bytes:
+    """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
+
+    Distinct ``type``/``code`` from :func:`_model_not_found_body`: the
+    requested id/role IS part of the six-role contract (it may even be
+    wired — the primary is unconditionally wired regardless of feasibility)
+    but this machine's per-machine profile declared its owning backend
+    (``backend_name``) unable to serve it at all. Never a reason to
+    silently substitute a different, feasible gear — see
+    :func:`lobes.gateway._routing.infeasible_owner`.
+    """
+    label = requested or "(unspecified)"
+    return json.dumps(
+        {
+            "error": {
+                "message": (
+                    f"The model `{label}` is not feasible on this machine — its "
+                    f"backend (`{backend_name}`) is declared hardware-infeasible "
+                    "by this deployment's per-machine profile and will never be "
+                    "served here."
+                ),
+                "type": "role_infeasible",
+                "code": "role_infeasible",
+            }
+        }
+    ).encode("utf-8")
+
+
 def _busy_body(requested_tier: str) -> bytes:
     """Return the JSON body for a 429 busy (shed) response."""
     _LANE_LABELS = {"main": "cortex", "multimodal": "senses"}
@@ -411,6 +440,21 @@ def handle_post(
     requested = extract_model(body)
     tier_headers: list[tuple[str, str]] = []
     if pressure is not None and is_tier_alias(requested):
+        # Hardware feasibility gate (issue #92 extended to the HARDWARE
+        # dimension, task t6) runs BEFORE pressure-shedding/upward-fallback: an
+        # infeasible role is an absolute hardware fact, not a load condition, so
+        # it takes priority over — and is never bypassed by — X-Lobes-Override.
+        # Checked on the LITERAL requested tier so an explicitly-named
+        # infeasible role (e.g. "cortex") is rejected outright, never silently
+        # re-routed to a different, feasible gear via the tier system's normal
+        # upward-fallback substitution.
+        infeasible_name = infeasible_owner(table, requested)
+        if infeasible_name is not None:
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_role_infeasible_body(requested, infeasible_name),
+            )
         decision = resolve_tier_request(requested, pressure, override, table)
         if decision["busy"]:
             return GatewayResponse(
@@ -442,6 +486,20 @@ def handle_post(
                 status=404,
                 headers=[("Content-Type", _CONTENT_TYPE_JSON)],
                 body=_model_not_found_body(requested),
+            )
+        # Hardware feasibility gate (task t6), mirroring the tier branch above:
+        # AFTER the unknown-model check (a genuinely never-advertised id still
+        # gets model_not_found, not this), but BEFORE resolving/dialing a
+        # backend — so a known id/alias pinned to an infeasible backend (a
+        # concrete served model id, a custom operator alias, or a tier alias
+        # resolved via the static table when no PressureCache is wired) is
+        # rejected outright, never silently served by a different gear.
+        infeasible_name = infeasible_owner(table, requested)
+        if infeasible_name is not None:
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_role_infeasible_body(requested, infeasible_name),
             )
         served = resolve_model(table, requested)
     streaming = is_streaming(body)
