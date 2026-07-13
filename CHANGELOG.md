@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.3] - 2026-07-13
+
+### Added
+
+- Plan (`/spec-to-plan`, converged): **per-machine hardware profiles** —
+  `docs/plans/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
+  Ten tasks over four dependency waves, each wave file-disjoint so it can be
+  built in parallel: profile schema + spark/thor profiles, card detection,
+  template parameterisation, and per-role correctness probes (wave 1); `init`
+  applies the profile and role-feasibility reaches capabilities/gateway (wave 2);
+  `doctor`/`status` report the profile, and the Thor profile is validated on the
+  physical board (wave 3); docs + an honest support table (wave 4).
+
+  On Thor the reranker stays **served and advertised** — it runs, it is simply
+  not yet correct; its ordering probe is recorded as a known failure pointing at
+  #105 / #106, rather than the role being hidden.
+
+### Changed
+
+### Fixed
+
 ## [0.40.2] - 2026-07-13
 
 ### Added

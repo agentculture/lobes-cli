@@ -1,0 +1,397 @@
+{
+  "slug": "lobes-fits-the-machine-it-lands-on-one-command-det",
+  "title": "lobes fits the machine it lands on: one command detects the card (GB10, Thor, Orin, Orin Nano Super) and serves a profile tuned for THAT box \u2014 not a lowest-common-denominator config that fits none",
+  "frame_slug": "lobes-fits-the-machine-it-lands-on-one-command-det",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-13T16:09:59Z",
+  "updated": "2026-07-13T16:24:28Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes fits the machine it lands on: one command detects the card (GB10, Thor, Orin, Orin Nano Super) and serves a profile tuned for THAT box \u2014 not a lowest-common-denominator config that fits none"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "One command does it: on a supported card, 'lobes init' picks the right profile with no flags, and 'lobes doctor' names which profile it picked and why (detected card + capability + memory)."
+    },
+    {
+      "id": "c2",
+      "kind": "before_state",
+      "text": "The packaged templates hardcode one tuning for the DGX Spark GB10 (sm_121). It does not transfer: on Jetson AGX Thor (sm_110) cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings. Every one of these was found by crashing into it."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The three Thor divergences found by hand this session (kv-cache dtype auto, attention backend TRITON_ATTN on the pooling gears, enforce-eager on rerank) are exactly what a Thor profile encodes \u2014 the profile reproduces the working fleet without hand-editing."
+    },
+    {
+      "id": "c3",
+      "kind": "why_it_matters",
+      "text": "A single 'best for all machines' config fits none of them: it either wastes a big box's headroom or fails to boot on a small one."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The 'fits none' cost is real and measurable: a single shared config either leaves a big box's headroom unused or fails to boot a small one \u2014 demonstrable by pointing the GB10 profile at Thor (it crashes) and a Thor-safe config at the GB10 (it under-uses it)."
+    },
+    {
+      "id": "c4",
+      "kind": "audience",
+      "text": "Operators running lobes on a specific NVIDIA box \u2014 today DGX Spark GB10 and Jetson AGX Thor; next Jetson AGX Orin and Orin Nano Super \u2014 plus the lobes agent deployed on it."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The operator never has to know the card's compute capability to get a correct boot \u2014 the tool knows it; the operator only overrides when they WANT to."
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "lobes detects the host card and applies a per-machine profile (memory budget, quantization, attention backend, KV dtype, context, eager-vs-cudagraph, which roles are even feasible), so a supported box boots correct-and-tuned on first try."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "'Correct on first try' is checked, not asserted: every role the profile claims passes its correctness probe on a clean boot, and a role the card cannot serve is absent from capabilities rather than broken-but-advertised."
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Not a universal autotuner and not a benchmark-search: a profile is a hand-validated, checked-in config for a named card, not something lobes discovers at runtime by trying settings."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Every knob in a profile traces to a human-validated observation on a real card (a boot log, a probe result, a measured budget) \u2014 no value is there because a search loop landed on it, and lobes never mutates a profile at runtime."
+    },
+    {
+      "id": "c7",
+      "kind": "success_signal",
+      "text": "On a supported box, a clean 'lobes init && lobes serve' brings every role it claims up correct on the FIRST try \u2014 no hand-editing of docker-compose.yml. On an unsupported box lobes says so instead of silently mis-serving."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A profile can be proven on a real box: booting a supported profile from a clean ~/.lobes needs zero hand-edits to the generated compose file."
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "lobes detects the host card (compute capability + total memory + device name) and resolves a named profile; the operator can override the choice explicitly (--profile) and see what was chosen (lobes doctor / lobes status)."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Detection is unambiguous on every target: GB10, Thor, AGX Orin and Orin Nano Super are each distinguishable from inside the container/host without guessing. (Note: nvidia-smi reports memory.used=[N/A] on Thor's integrated GPU, so detection cannot rely on nvidia-smi memory fields.)"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "A profile owns the machine-dependent knobs, not just memory: GPU mem util per role, max-model-len, quantization, KV-cache dtype, attention backend, enforce-eager, and max-num-seqs."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The knob set is sufficient: every divergence found on Thor so far (kv-cache dtype, attention backend, enforce-eager) is expressible as a profile value \u2014 no code fork per card."
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "A profile also declares which ROLES are feasible on that card and which model serves each. On Orin Nano Super the 27B NVFP4 cortex is not runnable at all, so the profile must select a smaller cortex model or declare cortex unavailable \u2014 capabilities must never advertise a role the box cannot serve."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A role can be declared unavailable end-to-end: lobes capabilities / GET /capabilities omit it (or mark it unserved), and the gateway 4xx's a request for it rather than silently routing to a different model."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Every role ships a CORRECTNESS probe, not just a /health check: embed must rank a paraphrase above an unrelated string, rerank must put the relevant document first, cortex must answer a known-answer question. A role that is 'healthy' but semantically wrong must fail the probe."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The rerank probe FAILS today on this Thor box (relevant doc does not rank first) \u2014 i.e. the probe catches the bug we actually hit, rather than being a test that only passes."
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "Only cards we have ACTUALLY BOOTED ship as supported profiles: DGX Spark GB10 (the default) and Jetson AGX Thor (validated this session). Jetson AGX Orin and Orin Nano Super are named future targets \u2014 the design must accommodate them, but lobes does not promise them until someone boots one."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "lobes is honest about coverage: it ships Spark (default) + Thor as supported, names Orin/Orin Nano Super as unvalidated, and on an unrecognised card it refuses-or-warns rather than silently applying the Spark profile."
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "Measurable: on each supported card, a clean 'lobes init && lobes serve' from an empty deployment dir brings up 100% of the roles the profile claims, each passing its correctness probe, with ZERO hand-edits to the generated compose. Measured baseline (Thor, this session, stock Spark-tuned template): 1 of 4 roles correct on first boot \u2014 senses came up clean; cortex crash-looped on an fp8-KV assert; embedder accepted requests and never answered; reranker killed its own engine with cudaErrorLaunchFailure. Reaching 3 of 4 took 4 hand-edits to docker-compose.yml. Target for the Thor profile: 4/4 with 0 edits (the 4th, rerank, is gated on #105/#106)."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The baseline is reproducible: a clean 'lobes init' + 'lobes serve' on Thor with the stock template reproduces 1/4-correct-on-first-boot, so 4/4-with-0-edits is a measured improvement, not a claim."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Profile schema + built-in profiles (lobes/profiles/): a Profile declares, per role, whether it is feasible, which model serves it, and every machine knob (gpu util, max-model-len, quantization, kv-cache dtype, attention backend, enforce-eager, max-num-seqs). Ships spark.yaml (default, from today's template values) and thor.yaml (from the 4 edits validated this session). Loader resolves built-ins + operator-defined profiles and an explicit --profile override.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A Profile round-trips: load -> serialise -> identical; an unknown role or unknown knob is a load error, not a silent drop",
+        "thor.yaml encodes exactly the 4 validated Thor divergences (cortex kv_cache_dtype=auto; embedder+reranker attention_backend=TRITON_ATTN; reranker enforce_eager=true) and spark.yaml reproduces today's shipped template values byte-for-byte",
+        "An operator-defined profile in the deployment dir is discovered and can override a built-in of the same name; nothing in the loader mutates a profile at runtime"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h11",
+        "c9",
+        "c10"
+      ],
+      "instruction": "OWNS: lobes/profiles/ (new package: schema.py, loader, builtin/spark.yaml, builtin/thor.yaml) + tests/test_profiles.py. Touch NOTHING else. thor.yaml must encode the 4 divergences validated live this session: cortex kv_cache_dtype=auto; embedder attention_backend=TRITON_ATTN; reranker attention_backend=TRITON_ATTN + enforce_eager=true. spark.yaml must reproduce the CURRENT template values exactly (util 0.30/0.14/0.06/0.06, cortex 131072, senses 32768) so GB10 behaviour is unchanged."
+    },
+    {
+      "id": "t2",
+      "summary": "Card detection (lobes/runtime/_detect.py): identify the host card by compute capability + device name + total memory, returning a named card id (gb10-spark, jetson-agx-thor, ...) or UNKNOWN. Must NOT read nvidia-smi memory fields \u2014 they report [N/A] on Thor's integrated GPU.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Detection distinguishes GB10 (sm_121) from Thor (sm_110) on real hardware, and returns UNKNOWN rather than guessing for a card it does not know",
+        "Detection never consults nvidia-smi memory.used/memory.total; a test asserts the code path does not depend on those fields (they are [N/A] on Thor)",
+        "Detection works without importing torch (the CLI has no torch dependency)"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h1",
+        "h9",
+        "c4"
+      ],
+      "instruction": "OWNS: lobes/runtime/_detect.py (new) + tests. Touch NOTHING else. Detect via device name + compute capability + total memory. HARD CONSTRAINT: nvidia-smi reports memory.used=[N/A] on Thor's integrated GPU \u2014 do not read nvidia-smi memory fields. /proc/device-tree/model yields 'NVIDIA Jetson AGX Thor Developer Kit' on this box; 'nvidia-smi --query-gpu=name,compute_cap' yields 'NVIDIA Thor'. No torch import (the CLI has no torch dep). UNKNOWN is a first-class result, never a silent Spark fallback."
+    },
+    {
+      "id": "t3",
+      "summary": "Parameterise the compose templates so every machine-dependent knob flows from the profile via .env: per-gear kv-cache-dtype, attention-config, enforce-eager, gpu util, max-model-len, quantization, max-num-seqs, and the model per role. Includes deleting the dead MULTIMODAL_ATTENTION_BACKEND env (VLLM_ATTENTION_BACKEND no longer exists in the pinned nightly; --attention-config is the only honoured knob).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every one of the 4 Thor divergences is expressible as a profile value with NO code fork per card \u2014 proven by rendering thor.yaml and diffing against the hand-edited ~/.lobes/docker-compose.yml that works today",
+        "Rendering spark.yaml produces the current shipped compose (no behaviour change for existing GB10 deployments)",
+        "The dead VLLM_ATTENTION_BACKEND/MULTIMODAL_ATTENTION_BACKEND env is gone; the attention backend is set via --attention-config only"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h2",
+        "c2",
+        "h7"
+      ],
+      "instruction": "OWNS: lobes/templates/ (fleet/docker-compose.yml, fleet/env.example, docker-compose.yml, env.example). Touch NO python. Ground truth for the Thor knobs is the working hand-edited /home/thor/.lobes/docker-compose.yml on this box \u2014 diff against it. Note --attention-config takes JSON and MUST be single-quoted in YAML ('--attention-config={\"backend\": \"TRITON_ATTN\"}') or compose fails to parse. Delete the dead MULTIMODAL_ATTENTION_BACKEND env: VLLM_ATTENTION_BACKEND no longer exists in the pinned nightly (0.23.1rc1.dev672)."
+    },
+    {
+      "id": "t4",
+      "summary": "lobes init applies the resolved profile: detect card -> pick profile -> render .env + compose. Adds --profile to override, and REFUSES-OR-WARNS on an unrecognised card rather than silently applying the Spark profile.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "On a supported card, a bare 'lobes init' picks the right profile with no flags and needs zero hand-edits to the generated compose",
+        "'lobes init --profile <name>' overrides detection, including forcing a profile onto a card it was not validated for (with a warning)",
+        "On an UNKNOWN card, init refuses (or warns loudly and requires an explicit --profile) \u2014 it never silently falls back to Spark"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h6",
+        "c5",
+        "c15",
+        "h12"
+      ],
+      "instruction": "OWNS: lobes/cli/_commands/init.py + the profile-resolution glue in lobes/cli/_runtime_ops.py. Coordinate with t6 if it also needs _runtime_ops. Keep the existing dry-run-by-default mutation-safety contract: init still requires --apply."
+    },
+    {
+      "id": "t5",
+      "summary": "lobes doctor / lobes status report the profile: which profile was chosen, which card was detected (name + compute capability + memory), and whether the profile is validated-on-this-card or forced.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "'lobes doctor' names the detected card and the chosen profile, and flags a forced/unvalidated combination as a warning",
+        "The operator never needs to know the card's compute capability to get a correct boot \u2014 it is reported to them, not required from them"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c8",
+        "h9"
+      ],
+      "instruction": "OWNS: lobes/cli/_commands/doctor.py + status.py. Depends on t4's resolution glue \u2014 do not re-implement detection, call it."
+    },
+    {
+      "id": "t6",
+      "summary": "Role feasibility is honoured end-to-end: a role the profile declares unavailable is omitted (or marked unserved) in 'lobes capabilities' and GET /capabilities, and the gateway 4xx's a request for it instead of silently routing it to a different model.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A profile with cortex unavailable produces capabilities that do NOT advertise cortex, and a POST with model=cortex returns 4xx rather than being served by another gear",
+        "No role is ever advertised that the card cannot serve (extends the #92 'never advertise what you cannot serve' invariant to the hardware dimension)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c10",
+        "h3"
+      ],
+      "instruction": "OWNS: lobes/gateway/ + the capabilities command. This extends the existing #92 invariant ('lobes never advertises a capability it cannot serve') to the HARDWARE dimension \u2014 reuse that machinery rather than inventing a parallel path."
+    },
+    {
+      "id": "t7",
+      "summary": "Per-role CORRECTNESS probes (not just /health): cortex answers a known-answer question; embedder ranks a paraphrase above an unrelated string; reranker puts the relevant document first. A role that is healthy but semantically wrong must FAIL.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The rerank ordering probe FAILS on this Thor box today (the relevant doc does not rank first) \u2014 the probe catches the real bug rather than being a test that only passes",
+        "The embed probe passes on Thor today (cos(paraphrase) > cos(unrelated)) and would have caught the FLASH_ATTN hang, which /health did not",
+        "Probes are wired into a read-only verb and never mutate the deployment"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h4",
+        "h10"
+      ],
+      "instruction": "OWNS: lobes/assess.py (or a new lobes/probes.py) + lobes/cli/_commands/assess.py. Read-only verb; must not mutate the deployment. The three probes are known-answer generate, embed paraphrase-beats-unrelated, and rerank relevant-doc-ranks-first. On this Thor box today the rerank probe MUST FAIL and the embed probe MUST PASS \u2014 that is the acceptance test for the probes themselves."
+    },
+    {
+      "id": "t8",
+      "summary": "Validate the Thor profile on the physical Thor: from an EMPTY deployment dir, 'lobes init && lobes serve' with zero hand-edits, then run every correctness probe and record the score.",
+      "origin": "llm",
+      "status": "rejected",
+      "acceptance_criteria": [
+        "Clean init+serve on Thor brings up 100% of the roles the thor profile CLAIMS, with zero hand-edits to the generated compose (rerank is either fixed per #105 or declared unavailable in the profile \u2014 it is never advertised-but-broken)",
+        "The 1-of-4-on-first-boot baseline is reproduced with the stock Spark template on Thor, so the improvement is measured rather than asserted",
+        "Pointing the Spark profile at Thor still crashes (demonstrating the 'fits none' cost is real), and the Thor profile does not under-use the GB10 by being applied to it"
+      ],
+      "deps": [
+        "t4",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c7",
+        "h5",
+        "c18",
+        "h14",
+        "c3",
+        "h8"
+      ],
+      "instruction": "Validation, run ON the Thor box. Move the current hand-edited ~/.lobes aside first (it carries 4 edits that would mask a template regression), then init from empty. Record the score as evidence. Blocked on #106 for whether rerank can be claimed at all."
+    },
+    {
+      "id": "t9",
+      "summary": "Document the profile surface: docs/machine-profiles.md (how detection resolves, how to write a profile, the knob reference), plus 'lobes explain profiles', and an honest support table \u2014 Spark (default, validated) + Thor (validated); Orin / Orin Nano Super named but UNVALIDATED.",
+      "origin": "llm",
+      "status": "rejected",
+      "acceptance_criteria": [
+        "The support table states plainly which cards are validated and which are aspirational; no doc claims Orin support",
+        "Every knob in the reference traces to a human-validated observation on a real card (boot log, probe result, measured budget)"
+      ],
+      "deps": [
+        "t8",
+        "t10"
+      ],
+      "covers": [
+        "c15",
+        "h12",
+        "c6",
+        "h11"
+      ],
+      "instruction": "OWNS: docs/machine-profiles.md (new), lobes/explain/, README/CLAUDE.md support table. Docs only, no source. Do not claim Orin support."
+    },
+    {
+      "id": "t10",
+      "summary": "Validate the Thor profile on the physical Thor: from an EMPTY deployment dir, 'lobes init && lobes serve' with zero hand-edits, then run every correctness probe and record the score. The reranker RUNS (serves requests without killing its engine) but is KNOWN-INCORRECT \u2014 its ordering probe is an expected failure tracked in #105/#106, which is where the fix lands. The profile neither hides that nor blocks on it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Clean init+serve on Thor brings up 100% of the roles the thor profile claims \u2014 including reranker, which must SERVE (respond, no cudaErrorLaunchFailure) \u2014 with zero hand-edits to the generated compose",
+        "The rerank ordering probe is recorded as a KNOWN/EXPECTED failure referencing #105/#106: it neither passes silently nor blocks the profile work, and it flips to a hard failure once those issues close",
+        "The 1-of-4-on-first-boot baseline is reproduced with the stock Spark template on Thor, so the improvement is measured rather than asserted",
+        "Pointing the Spark profile at Thor still crashes (the 'fits none' cost is real), and the Thor profile is not applied to the GB10 where it would under-use it"
+      ],
+      "deps": [
+        "t4",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c7",
+        "h5",
+        "c18",
+        "h14",
+        "c3",
+        "h8"
+      ],
+      "instruction": "Validation, run ON the Thor box. Move the current hand-edited ~/.lobes aside first (its 4 edits would mask a template regression), then init from empty. rerank STAYS SERVED: eager mode stops the engine-killing cudaErrorLaunchFailure, so it responds \u2014 it is simply not yet correct. Record the probe scores as evidence."
+    },
+    {
+      "id": "t11",
+      "summary": "Document the profile surface: docs/machine-profiles.md (how detection resolves, how to write a profile, the knob reference), plus 'lobes explain profiles', and an honest support table \u2014 Spark (default, validated) + Thor (validated); Orin / Orin Nano Super named but UNVALIDATED. Thor's reranker is documented as served-but-known-incorrect (#105/#106), not quietly omitted.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The support table states plainly which cards are validated and which are aspirational; no doc claims Orin support",
+        "Every knob in the reference traces to a human-validated observation on a real card (boot log, probe result, measured budget)",
+        "Thor's known-incorrect reranker is documented with a pointer to #105/#106 rather than being hidden"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c15",
+        "h12",
+        "c6",
+        "h11"
+      ],
+      "instruction": "OWNS: docs/machine-profiles.md (new), lobes/explain/, README/CLAUDE.md support table. Docs only, no source. Do not claim Orin support. Be explicit that Thor's rerank runs but is not yet correct."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Reranker returns deterministically wrong orderings on Thor and MAY be wrong on the GB10 too (nothing checks ordering today). Tracked in lobes-cli#105 / #106. Until #106 answers, t8 cannot claim 4/4 on Thor \u2014 the thor profile must either fix rerank or declare it unavailable rather than advertise it broken.",
+      "kind": "follow_up",
+      "task_id": "t8"
+    },
+    {
+      "id": "r2",
+      "text": "Jetson AGX Orin (sm_87, no NVFP4) and Orin Nano Super are UNVALIDATED \u2014 no physical board in hand. The schema must accommodate them (smaller cortex model, roles disabled) but no profile ships as supported until someone boots one.",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r3",
+      "text": "Detection runs on the HOST (the lobes CLI), while the kernels that actually differ run INSIDE the container. If the two ever disagree about the card, the profile is resolved against the wrong truth.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r4",
+      "text": "DECISION (supersedes the framing of r1): on Thor the reranker stays SERVED and advertised \u2014 it runs, it is just not yet correct. Correctness is fixed in lobes-cli#105/#106, not by hiding the role. The correctness probe records it as a known failure until then.",
+      "kind": "follow_up",
+      "task_id": "t10"
+    }
+  ]
+}
