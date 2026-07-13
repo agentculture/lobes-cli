@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T16:09:59Z",
-  "updated": "2026-07-13T18:00:22Z",
+  "updated": "2026-07-13T18:17:52Z",
   "targets": [
     {
       "id": "c1",
@@ -384,7 +384,8 @@
       "acceptance_criteria": [
         "The support table states plainly which cards are validated and which are aspirational; no doc claims Orin support",
         "Every knob in the reference traces to a human-validated observation on a real card (boot log, probe result, measured budget)",
-        "Thor's known-incorrect reranker is documented with a pointer to #105/#106 rather than being hidden"
+        "Thor's known-incorrect reranker is documented with a pointer to #105/#106 rather than being hidden",
+        "VALIDATION step: after the docs land, a tightening pass verifies every claim in docs/machine-profiles.md, README.md and CLAUDE.md against the shipped code and tests (doc-test-alignment), markdownlint-cli2 passes on the changed files, and the rubric gate (uv run afi cli doctor . --strict) passes"
       ],
       "deps": [
         "t10"
