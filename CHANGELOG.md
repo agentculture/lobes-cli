@@ -29,6 +29,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not yet correct; its ordering probe is recorded as a known failure pointing at
   #105 / #106, rather than the role being hidden.
 
+### Changed
+
 ### Fixed
 
 - Spec correction: the first cut of this spec claimed lobes had no machine-profile
@@ -42,10 +44,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is an unvalidated guess (`status="configured"`: flashinfer / 32768 / util 0.6)
   that live Thor testing **contradicts**; and `detect_machine()` silently falls
   back to `generic` instead of admitting it does not know the card.
-
-### Changed
-
-### Fixed
 
 ## [0.40.2] - 2026-07-13
 
