@@ -4,7 +4,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T15:33:49Z",
-  "updated": "2026-07-13T17:15:13Z",
+  "updated": "2026-07-13T17:45:51Z",
   "claims": [
     {
       "id": "c1",
@@ -344,6 +344,71 @@
       "hard_questions": [],
       "links": [],
       "instruction": ""
+    },
+    {
+      "id": "c21",
+      "kind": "decision",
+      "text": "Per-machine knowledge is keyed by causal capability TRAIT, not board name: each knob divergence names the fact that causes it \u2014 the sm_110 FLASH_ATTN pooling hang -> TRITON_ATTN for embed+rerank; the sm_110 CUDA-graph classify fault -> enforce-eager for rerank; the unscaled-fp8-KV assert (checkpoint x vLLM nightly, per the hand-edit comment \u2014 NOT the board) -> kv-cache-dtype=auto. A machine profile is then a named validated BUNDLE: detection signature + memory budget + model-per-role + the traits that apply. Evidence: 3 of the 4 Thor divergences trace to sm_110 and 1 to the checkpoint; NONE traces to 'Jetson AGX Thor' as a board.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Every knob in thor.yaml carries a trait provenance naming its cause, and detection resolves compute capability + total memory as first-class facts even when the board name is unknown \u2014 so an unrecognised sm_110 board still renders the TRITON_ATTN pooling fix without anyone writing it a profile.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Issue #107 folds in: the default/base profile is conservative and actually runnable \u2014 a small generate model plus the two 0.6B pooling gears, no 27B. Detection UPGRADES a recognised big box (spark, thor) to the 27B cortex; an unrecognised card gets a loud warning plus the small base tuned by whatever traits detection could read (compute capability, total memory) \u2014 never a refusal into nothing, never a silent Spark.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "A rendered compose contains the 27B only when a validated big-box profile or an explicit --profile put it there; a clean install on an unknown card boots a generate model that answers its known-answer probe, with a warning naming the detected facts and the assumption made.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Cross-machine no-breakage is ENFORCED, not asserted: every shipped profile checks a golden rendered artifact (docker-compose.yml + .env) into the test suite, and CI fails any change that alters a DIFFERENT machine's rendering than the one the PR claims to touch \u2014 so the Thor box and the Spark box can both change lobes without regressing each other. A deliberate cross-machine change must update the other machine's golden explicitly, in the same PR, where the diff is the review surface.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "Proven by test: editing the thor bundle or an sm_110 trait leaves the spark golden byte-identical (and vice versa); rendering every shipped profile is a pure function of (profile, template) with no host state, so the goldens are runnable on any dev box, not just the hardware.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "Packaging (#107): all profiles always ship in the wheel \u2014 pip extras (lobes-cli[thor]) are REJECTED as the mechanism: profiles are pure data with zero dependencies, and card selection is a runtime concern, not an install-time one. Extras return only if a card ever needs a genuine extra dependency (vendor SDK), and then the dependency, not the profile data, is what goes behind the extra.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
     }
   ],
   "open_vagueness": [
@@ -363,6 +428,18 @@
       "id": "v3",
       "text": "Whether profiles are resolved at 'lobes init' (baked into .env once) or re-resolved at every 'lobes serve' (so moving a deployment dir between boxes re-tunes).",
       "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "fp8-KV attribution is UNVERIFIED: the Thor hand-edit comment blames the checkpoint (kv_cache_quant_algo: null -> assert k_scale > 0.0 on the pinned nightly), not sm_110 \u2014 yet the GB10 template default is fp8 on the same checkpoint. Verify on the GB10 whether the pinned nightly still boots with --kv-cache-dtype=fp8: if it crashes there too, the fix is the SHARED template default (auto), not a thor trait. Sibling of #106; needs its own tracked issue.",
+      "kind": "follow_up",
+      "claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Deleting the MULTIMODAL_ATTENTION_BACKEND / VLLM_ATTENTION_BACKEND env (plan t3) is grounded only in Thor observation; confirm on the GB10's pinned image that the env is truly ignored there before deleting it, else t3 could silently regress spark \u2014 exactly the cross-machine breakage this spec exists to prevent.",
+      "kind": "follow_up",
       "claim_id": null
     }
   ],

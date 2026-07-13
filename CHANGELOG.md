@@ -10,7 +10,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Plan (`/spec-to-plan`, converged): **per-machine hardware profiles** —
   `docs/plans/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
-  Eleven tasks over four file-disjoint dependency waves: the **per-chip strategy
+  Ten tasks over four file-disjoint dependency waves (twelve drafted, two
+  rejected during convergence): the **per-chip strategy
   pattern** + profile schema + spark/thor profiles, card detection, template
   parameterisation and per-role correctness probes (wave 1); `init` applies the
   profile and role-feasibility reaches capabilities/gateway (wave 2);
