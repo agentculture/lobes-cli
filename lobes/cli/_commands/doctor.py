@@ -263,33 +263,42 @@ def _mark(check: dict) -> str:
     return "FAIL" if check["severity"] == "error" else check["severity"]
 
 
-def _render_text(report: dict) -> str:
-    status = "healthy" if report["healthy"] else "unhealthy"
-    lines = [f"lobes doctor: {status}", ""]
-    for check in report["checks"]:
+def _render_check_lines(checks: list[dict]) -> list[str]:
+    """Render one ``[mark] id: message`` line per check, plus a remediation
+    hint line for any that failed with one."""
+    lines: list[str] = []
+    for check in checks:
         lines.append(f"[{_mark(check)}] {check['id']}: {check['message']}")
         if not check["passed"] and check["remediation"]:
             lines.append(f"  hint: {check['remediation']}")
+    return lines
 
-    # Add machine profile section if present
+
+def _render_machine_profile_lines(mp: dict) -> list[str]:
+    """Render the ``machine profile:`` section (detected card, active
+    profile, and any mismatch/unknown-card warning)."""
+    lines = ["", "machine profile:", f"  detected card: {mp['detected_card']}"]
+    if mp["device_name"]:
+        lines.append(f"  device:       {mp['device_name']}")
+    if mp["compute_capability"]:
+        lines.append(f"  compute:      {mp['compute_capability']}")
+    if mp["total_memory_gb"]:
+        lines.append(f"  memory:       {mp['total_memory_gb']} GB")
+    if mp["profile"]:
+        lines.append(f"  profile:      {mp['profile']}")
+        if not mp["validated"]:
+            lines.append("  status:       NOT VALIDATED FOR THIS CARD (forced/unvalidated)")
+    if mp.get("warning"):
+        lines.append(f"  warning:      {mp['warning']}")
+    return lines
+
+
+def _render_text(report: dict) -> str:
+    status = "healthy" if report["healthy"] else "unhealthy"
+    lines = [f"lobes doctor: {status}", ""]
+    lines.extend(_render_check_lines(report["checks"]))
     if "machine_profile" in report:
-        mp = report["machine_profile"]
-        lines.append("")
-        lines.append("machine profile:")
-        lines.append(f"  detected card: {mp['detected_card']}")
-        if mp["device_name"]:
-            lines.append(f"  device:       {mp['device_name']}")
-        if mp["compute_capability"]:
-            lines.append(f"  compute:      {mp['compute_capability']}")
-        if mp["total_memory_gb"]:
-            lines.append(f"  memory:       {mp['total_memory_gb']} GB")
-        if mp["profile"]:
-            lines.append(f"  profile:      {mp['profile']}")
-            if not mp["validated"]:
-                lines.append("  status:       NOT VALIDATED FOR THIS CARD (forced/unvalidated)")
-        if mp.get("warning"):
-            lines.append(f"  warning:      {mp['warning']}")
-
+        lines.extend(_render_machine_profile_lines(report["machine_profile"]))
     return "\n".join(lines)
 
 
