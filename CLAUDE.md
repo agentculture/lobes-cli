@@ -106,6 +106,31 @@ switchable catalog (`lobes/catalog.py`). See `docs/realtime-pipeline.md`,
 OpenAI-compatible endpoint surface). `lobes explain realtime` / `api` are the
 in-CLI versions.
 
+## Machine profiles and supported hardware
+
+lobes runs the fleet with knob values tuned to the hardware it lands on.
+**Machine profiles** — built-in TOML declarations in `lobes/profiles/builtin/` —
+declare per-role models, context lengths, GPU memory budgets, attention
+backends, and vLLM knobs. `lobes init` auto-detects the card via `nvidia-smi` +
+hostname, resolves a profile by name, and renders it to env vars the compose
+template substitutes at startup.
+
+**Validated support:**
+
+| card | profile | status | validation |
+|---|---|---|---|
+| **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | load-tested | 2026-06-03 — fleet duo (cortex 128K + senses 32K) serves at ~7.8–8.0 tok/s decode (27B primary, util 0.30) with FlashInfer attention. All correctness probes pass. See `docs/tuning-profiles.md`. |
+| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | load-tested | 2026-07-13 — all three correctness probes pass (cortex known-answer, embed ranking, rerank ordering) with four validated divergences: `cortex kv_cache_dtype=auto` (not `fp8`), `senses/embedder/reranker attention_backend=TRITON_ATTN` (not FlashInfer; pooling hangs on sm_110), `reranker enforce_eager=true` (CUDA graphs unstable on sm_110). See `docs/machine-profiles.md#thor-caveats`. |
+| unknown card | `base` | conservative fallback | — small 4B model, no 27B, no multimodal (senses disabled) to avoid OOM on first boot. Resolved when card detection returns UNKNOWN. See issue #107 (broader tuned-small-model work, future). |
+
+**Custom profiles:** operator-defined TOML files in `<deploy-dir>/profiles/<name>.toml`
+override built-ins by name. See `docs/machine-profiles.md#writing-your-own-profile` for
+the format, and `lobes explain profiles` for the brief reference.
+
+**See also:** `docs/machine-profiles.md` (the deep reference: detection flow, knob
+meanings, Thor's validated divergences, custom profiles, goldens contract);
+`lobes explain profiles` / `lobes explain tuning` (in-CLI).
+
 ## Deployment model
 
 lobes is **scaffold-based, not checkout-based.** The canonical
