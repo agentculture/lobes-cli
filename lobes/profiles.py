@@ -11,6 +11,14 @@ friendly "unknown profile" messages). Where :mod:`lobes.catalog` answers
   the memory/arch defaults (``gpu_memory_utilization``, ``max_model_len``,
   ``attention_backend``).
 
+The machine layer is no longer a table in this module: it is *derived* from the
+per-chip strategy registry in :mod:`lobes.machines` (one :class:`CardStrategy`
+per card, owning its own detection signature + per-role knobs + provenance).
+``MachineProfile`` / ``MACHINE_PROFILES`` / :func:`detect_machine` /
+:func:`resolve_serve_config` remain the stable surface legacy callers use, rebuilt
+from the registry on each access — so registering a new chip (``lobes.machines``)
+lights it up here with no edit to this file.
+
 The workload knobs and machine defaults are *configured heuristics* (a sensible
 starting point), not load-tested numbers — confirm them with ``lobes benchmark``.
 The one set of values taken straight from a measured source is the per-purpose
@@ -27,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from lobes import machines
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 
 DEFAULT_PURPOSE = "balanced"
@@ -82,7 +91,13 @@ WORKLOAD_PROFILES: tuple[WorkloadProfile, ...] = (
 
 @dataclass(frozen=True)
 class MachineProfile:
-    """One hardware target — the memory/arch defaults lobes tunes to."""
+    """One hardware target — the memory/arch defaults lobes tunes to.
+
+    The stable legacy view of a :class:`lobes.machines.CardStrategy`: the strategy
+    owns the detection signature, per-role knobs and provenance; this flat row is
+    what single-model callers (``switch``/``benchmark``) still read. Built from a
+    strategy by :func:`_machine_profile_from_strategy` — never hand-authored.
+    """
 
     name: str  # canonical name (== VLLM_MACHINE)
     summary: str  # one-line description
@@ -93,52 +108,32 @@ class MachineProfile:
     status: str  # "load-tested" (measured here) | "configured" (declared estimate)
 
 
-# Ordered for detect_machine(): the GB10 (spark) is itself a Grace *Blackwell*
-# part, so spark must be matched before blackwell and via the specific "gb10"
-# marker (never a bare "blackwell", which would also match the GB10's GPU string).
-MACHINE_PROFILES: tuple[MachineProfile, ...] = (
-    MachineProfile(
-        name="spark",
-        summary="DGX Spark (GB10 Grace Blackwell, 128 GB unified, usually shared)",
-        gpu_markers=("gb10", "dgx spark", "spark"),
-        gpu_mem_util=0.6,  # conservative: the GB10 is shared with other mesh agents
-        max_model_len=262144,  # 256K-native primary served at full 256K (load-tested 2026-06-03)
-        attention_backend="flashinfer",
-        status="load-tested",
-    ),
-    MachineProfile(
-        name="thor",
-        summary="Jetson Thor (Blackwell, unified memory) — not yet measured here",
-        gpu_markers=("thor",),
-        gpu_mem_util=0.6,
-        max_model_len=32768,
-        attention_backend="flashinfer",
-        status="configured",
-    ),
-    MachineProfile(
-        name="blackwell",
-        summary="Blackwell 6000 Pro (RTX PRO 6000, dedicated VRAM)",
-        # Specific to the RTX PRO 6000 Blackwell — NOT a bare "rtx 6000" (which
-        # would false-match the older RTX 6000 Ada / Quadro RTX 6000, non-Blackwell).
-        # "rtx pro 6000" = the nvidia-smi name; "6000 pro" = shahizat's marketing name.
-        gpu_markers=("rtx pro 6000", "6000 pro"),
-        gpu_mem_util=0.85,  # dedicated discrete GPU — can reserve aggressively
-        max_model_len=65536,  # dedicated VRAM allows the report's longer context
-        attention_backend="flashinfer",
-        status="configured",
-    ),
-    MachineProfile(
-        name="generic",
-        summary="unknown Blackwell-class box — conservative fallback",
-        gpu_markers=(),  # never auto-matched; the explicit/last-resort default
-        gpu_mem_util=0.6,
-        max_model_len=32768,
-        attention_backend="flashinfer",
-        status="configured",
-    ),
-)
-
 _GENERIC = "generic"
+
+
+def _machine_profile_from_strategy(strategy: machines.CardStrategy) -> MachineProfile:
+    """Project a per-chip strategy onto the legacy flat ``MachineProfile`` row."""
+    d = strategy.defaults
+    return MachineProfile(
+        name=strategy.name,
+        summary=strategy.summary,
+        gpu_markers=strategy.signature.name_markers,
+        gpu_mem_util=d.gpu_mem_util.value,
+        max_model_len=d.max_model_len.value,
+        attention_backend=d.attention_backend.value,
+        status=strategy.status,
+    )
+
+
+def __getattr__(name: str) -> object:
+    """Serve ``MACHINE_PROFILES`` from the live registry (PEP 562).
+
+    Kept as a module attribute (not a static tuple) so a chip registered after
+    import — a plugin or a test — is reflected without editing this module.
+    """
+    if name == "MACHINE_PROFILES":
+        return machine_profiles()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def workload_profiles() -> tuple[WorkloadProfile, ...]:
@@ -147,8 +142,8 @@ def workload_profiles() -> tuple[WorkloadProfile, ...]:
 
 
 def machine_profiles() -> tuple[MachineProfile, ...]:
-    """The full set of machine profiles."""
-    return MACHINE_PROFILES
+    """The full set of machine profiles, derived live from the chip registry."""
+    return tuple(_machine_profile_from_strategy(s) for s in machines.strategies())
 
 
 def workload_profile(name: str) -> WorkloadProfile:
@@ -167,11 +162,10 @@ def workload_profile(name: str) -> WorkloadProfile:
 
 def machine_profile(name: str) -> MachineProfile:
     """Resolve a machine by canonical name; raise on an unknown value."""
-    key = (name or "").strip().lower()
-    for profile in MACHINE_PROFILES:
-        if key == profile.name:
-            return profile
-    known = ", ".join(p.name for p in MACHINE_PROFILES)
+    strategy = machines.get(name)
+    if strategy is not None:
+        return _machine_profile_from_strategy(strategy)
+    known = ", ".join(machines.names())
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=f"unknown machine {name!r}",
@@ -182,18 +176,14 @@ def machine_profile(name: str) -> MachineProfile:
 def detect_machine(gpu_name: str | None = None, hostname: str | None = None) -> str:
     """Best-effort machine name from the GPU string + hostname; ``generic`` if unsure.
 
-    Matches each profile's ``gpu_markers`` (lowercase substrings) against the GPU
-    name first, then the hostname, in table order — so the GB10 (``spark``) is
-    matched before the discrete Blackwell. Never raises.
+    Delegates to the chip registry's honest resolver
+    (:func:`lobes.machines.detect`, which returns ``None`` when nothing matches)
+    and keeps the legacy silent ``generic`` fallback for its callers. Registry
+    order is detection precedence, so the GB10 (``spark``) is still matched before
+    the discrete Blackwell. Never raises.
     """
-    haystacks = [(gpu_name or "").lower(), (hostname or "").lower()]
-    for profile in MACHINE_PROFILES:
-        if not profile.gpu_markers:
-            continue
-        for hay in haystacks:
-            if hay and any(marker in hay for marker in profile.gpu_markers):
-                return profile.name
-    return _GENERIC
+    strategy = machines.detect(gpu_name, hostname)
+    return strategy.name if strategy is not None else _GENERIC
 
 
 def resolve_machine(name: str, *, gpu_name: str | None = None, hostname: str | None = None) -> str:
@@ -238,4 +228,4 @@ def workloads_as_dicts() -> list[dict[str, object]]:
 
 def machines_as_dicts() -> list[dict[str, object]]:
     """The machine profiles as plain dicts (for JSON / overview without the dataclass)."""
-    return [asdict(p) for p in MACHINE_PROFILES]
+    return [asdict(p) for p in machine_profiles()]
