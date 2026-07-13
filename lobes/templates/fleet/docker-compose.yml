@@ -83,7 +83,12 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
-      - --kv-cache-dtype=fp8
+      # fp8 KV needs calibrated k_scale/v_scale in the checkpoint. The shipped
+      # default STAYS fp8 (GB10 behavior unchanged) — per-machine override goes
+      # in .env. On boxes serving an NVFP4 re-export with no KV scales
+      # (kv_cache_quant_algo: null), fp8 trips `assert layer.k_scale > 0.0`; set
+      # PRIMARY_KV_CACHE_DTYPE=auto there instead (Thor's working value — see #109).
+      - --kv-cache-dtype=${PRIMARY_KV_CACHE_DTYPE:-fp8}
       # Serves its full 128K native context (up from a 64K trim): the 27B KV
       # cache is util-bound, not context-bound, so 64K->128K trades concurrency
       # at the same memory footprint. The always-on Gemma multimodal gear frees
@@ -187,6 +192,15 @@ services:
       # 2026-06-19 on the GB10). --task embed is rejected ("unrecognized arguments").
       - --runner=pooling
       - --convert=embed
+      # "auto" (the shipped default) is byte-equivalent to omitting this flag
+      # entirely — vLLM's AttentionConfig.backend treats the string "auto" as
+      # None, which is its own automatic-selection sentinel (verified against
+      # vllm/config/attention.py) — so the default render's EFFECTIVE behavior
+      # is unchanged. Per-machine override goes in .env: sm_110 (Thor) forces
+      # TRITON_ATTN because the auto-picked FLASH_ATTN pooling path hangs the
+      # forward pass there (VLLM_ATTENTION_BACKEND is gone on this nightly —
+      # AttentionConfig is the only honoured knob). See #109/#105.
+      - '--attention-config={"backend": "${EMBED_ATTENTION_BACKEND:-auto}"}'
       - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
       - --max-model-len=${EMBED_MAX_MODEL_LEN:-8192}
       # util 0.06 (~7 GiB budget): 0.025 fails with "No available memory for the cache
@@ -247,6 +261,23 @@ services:
       # for a *ForSequenceClassification arch, but pass it explicitly). Load-tested.
       - --runner=pooling
       - --convert=classify
+      # "auto" (the shipped default) is byte-equivalent to omitting this flag
+      # entirely — see the vllm-embed comment above for why. Per-machine
+      # override goes in .env: sm_110 (Thor) forces TRITON_ATTN because the
+      # same FLASH_ATTN pooling bug as vllm-embed surfaces here as NaN
+      # relevance scores instead of a hang. See #109/#105.
+      - '--attention-config={"backend": "${RERANK_ATTENTION_BACKEND:-auto}"}'
+      # vLLM's `enforce_eager: bool` field gets argparse.BooleanOptionalAction
+      # (--enforce-eager / --no-enforce-eager), so this is always an explicit,
+      # always-valid token — never a conditionally-omitted flag. The shipped
+      # default --no-enforce-eager is an explicit no-op (ModelConfig.
+      # enforce_eager already defaults to False, i.e. CUDA graphs on) —
+      # byte-equivalent effective behavior to today's flagless render.
+      # Per-machine override goes in .env: sm_110 (Thor) sets
+      # RERANK_ENFORCE_EAGER=--enforce-eager because the classify path faults
+      # under CUDA graphs (cudaErrorLaunchFailure kills the engine
+      # mid-request). See #109/#106.
+      - ${RERANK_ENFORCE_EAGER:---no-enforce-eager}
       - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
       - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
@@ -465,6 +496,8 @@ services:
       # Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
       # TRITON_ATTN. The native gemma4_unified class auto-forces it, but we set it
       # explicitly too (belt-and-suspenders; matches the vLLM recipe).
+      # DELIBERATELY LEFT AS-IS (not removed as dead env): its removal is gated
+      # on a GB10 live-verification tracked in agentculture/lobes-cli#109 (risk r6).
       - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
       # vLLM 0.23 reserves an ESTIMATED cudagraph-memory headroom inside the util
       # budget, and for this gear it wildly overshoots — 12.74 GiB estimated vs
