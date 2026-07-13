@@ -675,7 +675,10 @@ def probe_cortex_correctness(
             (time.monotonic() - t0) * 1000,
             error=f"transport failed (timeout or connection error): {exc}",
         )
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+    except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        # AttributeError: a 200-but-malformed body (e.g. "message" is a string,
+        # not a dict) makes `.get("content")` raise instead of KeyError/TypeError
+        # — must FAIL the probe, never abort `lobes assess --probes` (Qodo finding).
         return _probe_result(
             "cortex",
             PROBE_NAMES["cortex"],
@@ -734,7 +737,10 @@ def probe_embed_correctness(
             (time.monotonic() - t0) * 1000,
             error=f"transport failed (timeout or connection error): {exc}",
         )
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
+        # AttributeError: a 200-but-malformed body (e.g. `data` items are plain
+        # strings, not dicts) makes `item.get("index", 0)` raise instead of
+        # KeyError/TypeError — must FAIL the probe, never abort the command.
         return _probe_result(
             "embedder",
             PROBE_NAMES["embedder"],
@@ -787,7 +793,12 @@ def probe_rerank_correctness(
             (time.monotonic() - t0) * 1000,
             error=f"transport failed (timeout or connection error): {exc}",
         )
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+    except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        # AttributeError: no current field in this probe calls `.get()` on a
+        # value that could be non-dict, but the sibling cortex/embedder probes
+        # do (Qodo finding) — caught here too so a future refactor that adds
+        # one can't silently regress this probe from a structured FAIL to an
+        # uncaught exception that aborts `lobes assess --probes`.
         return _probe_result(
             "reranker",
             PROBE_NAMES["reranker"],
