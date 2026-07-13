@@ -121,15 +121,45 @@ def discover_operator_profiles(deploy_dir: Path | str) -> dict[str, Profile]:
 
     Absent/empty directory -> ``{}`` (never raises just for "no operator
     profiles here" — that is the common case, not an error).
+
+    Keyed by the filename stem NORMALISED (``.strip().lower()``), matching how
+    :func:`resolve_profile` normalises the requested name — an operator file
+    named e.g. ``Thor.toml`` must still be found when a caller asks for
+    ``thor`` (or ``THOR``, or `` thor ``). Two files that collide after
+    normalisation (``Thor.toml`` and ``thor.toml`` both present) is an
+    unresolvable ambiguity — which one wins is a coin flip an operator would
+    never want silently made for them — so it is a LOAD ERROR rather than a
+    silently-picked winner.
     """
     operator_dir = _operator_dir(deploy_dir)
     if not operator_dir.is_dir():
         return {}
     found: dict[str, Profile] = {}
+    raw_names_by_key: dict[str, str] = {}
     for path in sorted(operator_dir.glob(f"*{PROFILE_SUFFIX}")):
-        name = path.stem
+        raw_name = path.stem
+        key = raw_name.strip().lower()
+        if key in found:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"operator profile name collision in {operator_dir}: "
+                    f"{raw_names_by_key[key]!r} and {raw_name!r} both normalise "
+                    f"to {key!r}"
+                ),
+                remediation=(
+                    "rename one of the files so their names differ after "
+                    "case-folding (profile names are matched case-insensitively)"
+                ),
+            )
         data = _parse(path.read_text(encoding="utf-8"), source=str(path))
-        found[name] = Profile.from_dict(name, data)
+        # Pass the RAW stem (not the normalised key) as the profile's declared
+        # identity — the file's own casing is what an embedded `name = "..."`
+        # field (if present) must match, per Profile.from_dict's mismatch
+        # check; only the DICT KEY used for lookup is normalised, matching how
+        # resolve_profile() normalises the requested name.
+        found[key] = Profile.from_dict(raw_name, data)
+        raw_names_by_key[key] = raw_name
     return found
 
 
