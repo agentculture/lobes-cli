@@ -39,7 +39,9 @@ def _templates(fleet: bool, audio: bool) -> dict[str, str]:
 def _resolve_fleet_profile(target: Path, profile_name: str | None):
     """Resolve the per-machine profile for a fleet init; emits a stderr warning
     when ``--profile`` forces a name onto a card it wasn't validated for (or an
-    undetected one). Propagates the UNKNOWN-card-with-no-override refusal."""
+    undetected one), and likewise when detection itself comes back UNKNOWN with
+    no ``--profile`` override — that case now resolves the conservative 'base'
+    built-in (t14) rather than refusing; see ``resolve_init_profile``."""
     profile, card, warning = resolve_init_profile(profile_name, target)
     if warning:
         emit_diagnostic(f"warning: {warning}")
@@ -120,8 +122,9 @@ def _emit_dry_run(
     plan = _compose.scaffold_plan(target, _templates(fleet, audio))
     profile = card = None
     if fleet:
-        # Detection/refusal happens on a dry run too — the plan must be honest
-        # about what --apply would do, including refusing on an UNKNOWN card.
+        # Detection/warning happens on a dry run too — the plan must be honest
+        # about what --apply would do, including the fallback profile it would
+        # serve on an UNKNOWN card.
         profile, card = _resolve_fleet_profile(target, profile_name)
     if json_mode:
         payload = {
@@ -159,8 +162,9 @@ def _emit_apply(
 ) -> None:
     profile = card = None
     if fleet:
-        # Resolve (and possibly refuse) BEFORE writing anything, so an UNKNOWN
-        # card with no --profile never leaves a half-scaffolded deployment dir.
+        # Resolve BEFORE writing anything — an explicit --profile mismatch or an
+        # UNKNOWN card (falling back to the conservative 'base' profile, t14)
+        # both warn here, before any file is written.
         profile, card = _resolve_fleet_profile(target, profile_name)
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
@@ -272,7 +276,9 @@ def register(sub: argparse._SubParsersAction) -> None:
         "host card — spark, thor, ... — via lobes.runtime._detect). Overrides "
         "detection, including forcing a profile onto a card it was not "
         "validated for (warns, but proceeds). Fleet topology only. On an "
-        "UNKNOWN card with no --profile, init refuses rather than guessing.",
+        "UNKNOWN card with no --profile, init warns and serves the conservative "
+        "'base' profile (small generate model + pooling gears, no 27B) instead "
+        "of guessing or refusing.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")

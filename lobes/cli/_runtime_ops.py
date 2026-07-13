@@ -11,10 +11,17 @@ import os
 import subprocess
 
 from lobes import assess
-from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
+from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.schema import Profile
 from lobes.runtime import _compose, _detect, _env
+
+# The built-in profile `lobes init` resolves for an UNKNOWN card (t14): a
+# conservative small generate model + the two 0.6B pooling gears, no 27B —
+# see lobes/profiles/builtin/base.toml. Never returned/selected silently;
+# resolve_init_profile always pairs it with a warning naming the detected
+# facts and the assumption made.
+UNKNOWN_CARD_PROFILE = "base"
 
 
 def deployment_dir(args: argparse.Namespace):
@@ -110,10 +117,14 @@ def resolve_init_profile(
       profile onto a card it wasn't validated for" per the plan. Never
       raises for this branch: an explicit choice is always honored.
     * ``explicit_profile`` is ``None``: the detected card name is used. A
-      known card resolves silently (no warning). An UNKNOWN card RAISES
-      :class:`ModelGearError` (``EXIT_USER_ERROR``) naming every detected
-      fact and requiring ``--profile`` — never silently falls back to any
-      built-in (e.g. ``spark``).
+      known card resolves silently (no warning). An UNKNOWN card (t14) no
+      longer raises — it resolves the built-in :data:`UNKNOWN_CARD_PROFILE`
+      ("base": a small generate model + the two 0.6B pooling gears, no 27B —
+      see ``lobes/profiles/builtin/base.toml``) and returns a warning string
+      naming every detected fact and the assumption made, so ``init``
+      proceeds instead of refusing. This never falls back SILENTLY to any
+      built-in — the caller always gets (and is expected to print) the
+      warning.
 
     Returns ``(profile, card, warning)``; ``warning`` is ``None`` on the
     ordinary "detected a known card, no override" path.
@@ -139,13 +150,15 @@ def resolve_init_profile(
                 "was not validated for this box."
             )
     else:
-        if not card.is_known:
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=f"could not detect a supported machine profile ({facts})",
-                remediation="pass --profile <name> (e.g. spark, thor) to select one explicitly",
+        if card.is_known:
+            name = card.resolved
+        else:
+            name = UNKNOWN_CARD_PROFILE
+            warning = (
+                f"unrecognised card ({facts}) — serving the conservative "
+                f"{UNKNOWN_CARD_PROFILE!r} profile (a small generate model + the "
+                "embed/rerank pooling gears, no 27B); pass --profile to override."
             )
-        name = card.resolved
     profile = resolve_profile(name, deploy_dir=deploy_dir)
     return profile, card, warning
 
