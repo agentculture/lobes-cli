@@ -378,6 +378,132 @@ def _busy_body(requested_tier: str) -> bytes:
     ).encode("utf-8")
 
 
+def _feasibility_response(table: RoutingTable, requested: str | None) -> GatewayResponse | None:
+    """404 ``role_infeasible`` iff ``requested``'s owning backend is declared
+    hardware-infeasible by this deployment's per-machine profile (task t6);
+    ``None`` when there is no such gate to apply. Shared by both the
+    tier-alias and plain-id resolution paths in :func:`handle_post` so the
+    feasibility gate — which outranks pressure-shedding and is never bypassed
+    by ``X-Lobes-Override`` — is checked identically in both.
+    """
+    infeasible_name = infeasible_owner(table, requested)
+    if infeasible_name is None:
+        return None
+    return GatewayResponse(
+        status=404,
+        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+        body=_role_infeasible_body(requested, infeasible_name),
+    )
+
+
+def _resolve_tier(
+    table: RoutingTable,
+    requested: str | None,
+    pressure: dict[str, float],
+    override: bool,
+) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]]]:
+    """The tier-alias branch of :func:`handle_post`: hardware feasibility gate,
+    then pressure-aware busy shedding (#85), then the resolved served name.
+
+    Returns ``(early_response, served, tier_headers)``. When ``early_response``
+    is not ``None`` the caller must return it immediately without dialing any
+    backend; ``served``/``tier_headers`` are only meaningful otherwise.
+    """
+    early = _feasibility_response(table, requested)
+    if early is not None:
+        return early, None, []
+    decision = resolve_tier_request(requested, pressure, override, table)
+    if decision["busy"]:
+        busy_response = GatewayResponse(
+            status=429,
+            headers=[
+                ("Retry-After", str(BUSY_RETRY_AFTER_SECONDS)),
+                ("X-Lobes-Tier-Reason", "busy"),
+                ("Content-Type", _CONTENT_TYPE_JSON),
+            ],
+            body=_busy_body(decision["requested_tier"]),
+        )
+        return busy_response, None, []
+    served = decision["served_name"]
+    tier_headers = [
+        ("X-Lobes-Tier", decision["served_tier"]),
+        ("X-Lobes-Tier-Reason", decision["reason"]),
+    ]
+    return None, served, tier_headers
+
+
+def _resolve_plain_model(
+    table: RoutingTable, requested: str | None
+) -> tuple[GatewayResponse | None, str | None]:
+    """The non-tier branch of :func:`handle_post`: unknown-id 404 (h23), then
+    the hardware feasibility gate, then the resolved served name.
+
+    Returns ``(early_response, served)``; when ``early_response`` is not
+    ``None`` the caller must return it immediately.
+    """
+    if is_unknown_model(table, requested):
+        response = GatewayResponse(
+            status=404,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_model_not_found_body(requested),
+        )
+        return response, None
+    early = _feasibility_response(table, requested)
+    if early is not None:
+        return early, None
+    return None, resolve_model(table, requested)
+
+
+def _try_backends(
+    ordered: list[Backend],
+    cfg: ServerConfig,
+    path: str,
+    fwd_body: bytes,
+    fwd_headers: list[tuple[str, str]],
+    open_upstream: OpenUpstream,
+    streaming: bool,
+    tier_headers: list[tuple[str, str]],
+) -> tuple[GatewayResponse | None, list[str]]:
+    """Attempt each backend in ``ordered`` (in practice exactly one — no
+    cross-backend failover, #91) and relay the first 2xx/4xx verbatim.
+
+    Returns ``(response, attempts)``: ``response`` is ``None`` iff every
+    backend refused / timed out / 5xx'd, in which case the caller maps
+    ``attempts`` to the retryable 503.
+    """
+    attempts: list[str] = []
+    for backend in ordered:
+        try:
+            up = open_upstream(
+                backend,
+                path,
+                fwd_body,
+                fwd_headers,
+                connect_timeout=cfg.connect_timeout,
+                read_timeout=cfg.read_timeout,
+            )
+        except UpstreamError as exc:
+            attempts.append(str(exc))
+            continue
+        if up.status >= 500:
+            attempts.append(f"{backend.name}: HTTP {up.status}")
+            up.close()
+            continue
+        # 2xx or 4xx → commit to the owner and relay verbatim. A 4xx is a genuine
+        # CLIENT error: the owner is the only backend that could serve this model.
+        return (
+            GatewayResponse(
+                status=up.status,
+                headers=tier_headers + up.headers,
+                upstream=up,
+                streaming=streaming,
+                attempts=attempts,
+            ),
+            attempts,
+        )
+    return None, attempts
+
+
 def handle_post(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -448,29 +574,9 @@ def handle_post(
         # infeasible role (e.g. "cortex") is rejected outright, never silently
         # re-routed to a different, feasible gear via the tier system's normal
         # upward-fallback substitution.
-        infeasible_name = infeasible_owner(table, requested)
-        if infeasible_name is not None:
-            return GatewayResponse(
-                status=404,
-                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-                body=_role_infeasible_body(requested, infeasible_name),
-            )
-        decision = resolve_tier_request(requested, pressure, override, table)
-        if decision["busy"]:
-            return GatewayResponse(
-                status=429,
-                headers=[
-                    ("Retry-After", str(BUSY_RETRY_AFTER_SECONDS)),
-                    ("X-Lobes-Tier-Reason", "busy"),
-                    ("Content-Type", _CONTENT_TYPE_JSON),
-                ],
-                body=_busy_body(decision["requested_tier"]),
-            )
-        served = decision["served_name"]
-        tier_headers = [
-            ("X-Lobes-Tier", decision["served_tier"]),
-            ("X-Lobes-Tier-Reason", decision["reason"]),
-        ]
+        early, served, tier_headers = _resolve_tier(table, requested, pressure, override)
+        if early is not None:
+            return early
     else:
         # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
         # backend's served name) must NOT be silently served under the default
@@ -480,32 +586,17 @@ def handle_post(
         # /v1/models list — so a wired-but-dead backend (dropped from /v1/models but
         # still in the table) is KNOWN and routes on to the retryable 503 below, not
         # a 404 (that distinction is what keeps issue #91 fixed). An UNSPECIFIED
-        # (missing/blank) model is not unknown — it routes to default_model.
-        if is_unknown_model(table, requested):
-            return GatewayResponse(
-                status=404,
-                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-                body=_model_not_found_body(requested),
-            )
-        # Hardware feasibility gate (task t6), mirroring the tier branch above:
-        # AFTER the unknown-model check (a genuinely never-advertised id still
-        # gets model_not_found, not this), but BEFORE resolving/dialing a
-        # backend — so a known id/alias pinned to an infeasible backend (a
-        # concrete served model id, a custom operator alias, or a tier alias
-        # resolved via the static table when no PressureCache is wired) is
-        # rejected outright, never silently served by a different gear.
-        infeasible_name = infeasible_owner(table, requested)
-        if infeasible_name is not None:
-            return GatewayResponse(
-                status=404,
-                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-                body=_role_infeasible_body(requested, infeasible_name),
-            )
-        served = resolve_model(table, requested)
+        # (missing/blank) model is not unknown — it routes to default_model. The
+        # hardware feasibility gate (task t6) mirrors the tier branch above: it
+        # runs AFTER the unknown-model check (a genuinely never-advertised id
+        # still gets model_not_found, not role_infeasible) but BEFORE
+        # resolving/dialing a backend.
+        early, served = _resolve_plain_model(table, requested)
+        if early is not None:
+            return early
     streaming = is_streaming(body)
     fwd_body = rewrite_model(body, served)
     fwd_headers = filter_headers(req_headers)
-    attempts: list[str] = []
 
     ordered = order_backends(table, served)
     if not ordered:
@@ -518,36 +609,22 @@ def handle_post(
         return GatewayResponse(
             status=502,
             headers=tier_headers + [("Content-Type", _CONTENT_TYPE_JSON)],
-            body=_error_body("no backend owns the requested model", attempts),
-            attempts=attempts,
+            body=_error_body("no backend owns the requested model", []),
+            attempts=[],
         )
 
-    for backend in ordered:  # exactly one backend — no failover chain (#91)
-        try:
-            up = open_upstream(
-                backend,
-                path,
-                fwd_body,
-                fwd_headers,
-                connect_timeout=cfg.connect_timeout,
-                read_timeout=cfg.read_timeout,
-            )
-        except UpstreamError as exc:
-            attempts.append(str(exc))
-            continue
-        if up.status >= 500:
-            attempts.append(f"{backend.name}: HTTP {up.status}")
-            up.close()
-            continue
-        # 2xx or 4xx → commit to the owner and relay verbatim. A 4xx is a genuine
-        # CLIENT error: the owner is the only backend that could serve this model.
-        return GatewayResponse(
-            status=up.status,
-            headers=tier_headers + up.headers,
-            upstream=up,
-            streaming=streaming,
-            attempts=attempts,
-        )
+    response, attempts = _try_backends(
+        ordered,
+        cfg,
+        path,
+        fwd_body,
+        fwd_headers,
+        open_upstream,
+        streaming,
+        tier_headers,
+    )
+    if response is not None:
+        return response
 
     # The single owner refused / timed out / 5xx'd. With no failover (#91) it is
     # the ONLY backend that could serve `served`, so this is a TRANSIENT owner-down
