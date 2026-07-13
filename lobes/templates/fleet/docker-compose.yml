@@ -694,7 +694,10 @@ services:
       # "multimodal-coder" alias once wired — see lobes/gateway/_config.py.
       - MULTIMODAL_CODER_BASE_URL=${MULTIMODAL_CODER_BASE_URL:-}
       - MULTIMODAL_CODER_SERVED_NAME=${MULTIMODAL_CODER_SERVED_NAME:-}
-      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      # Empty default = follow the primary gear's served name (see _config.py's
+      # `or primary.served_name` fallback) — stays correct when a profile swaps
+      # the cortex model instead of routing no-model requests to an unserved id.
+      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-}
       # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
       # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
       - EMBED_URL=${EMBED_URL:-http://vllm-embed:8000}
