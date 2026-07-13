@@ -25,6 +25,7 @@ import pytest
 
 import lobes.assess as A
 from lobes.cli import main
+from lobes.cli._commands import assess as cli_assess
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS
 from lobes.runtime import _compose
 
@@ -100,6 +101,38 @@ def _fake_post_malformed(url, payload, timeout=300, path="/v1/chat/completions")
     return {"unexpected": "shape"}
 
 
+# 200-but-wrong-shape payloads (Qodo Finding 2): the JSON parses fine and the
+# top-level keys are present, but a nested field the probe expects to be a
+# dict is a bare string/list instead — `.get()` on it raises AttributeError,
+# which the except tuples did NOT originally catch (an uncaught exception
+# would abort `lobes assess --probes` instead of reporting a structured FAIL).
+
+
+def _fake_post_cortex_message_is_string(url, payload, timeout=300, path="/v1/chat/completions"):
+    assert path == "/v1/chat/completions"
+    # "message" should be a dict ({"content": ...}); a 200 with it as a bare
+    # string makes `d["choices"][0]["message"].get("content")` raise
+    # AttributeError instead of KeyError/TypeError.
+    return {"choices": [{"message": "not-a-dict", "finish_reason": "stop"}]}
+
+
+def _fake_post_embed_items_are_strings(url, payload, timeout=300, path="/v1/chat/completions"):
+    assert path == "/v1/embeddings"
+    # Each "data" item should be a dict ({"index": ..., "embedding": ...}); a
+    # 200 with bare strings makes `item.get("index", 0)` raise AttributeError
+    # instead of KeyError/TypeError.
+    return {"data": ["not-a-dict-0", "not-a-dict-1", "not-a-dict-2"]}
+
+
+def _fake_post_rerank_items_are_strings(url, payload, timeout=300, path="/v1/chat/completions"):
+    assert path == "/v1/rerank"
+    # Each "results" item should be a dict ({"index": ..., "relevance_score":
+    # ...}); a 200 with bare strings raises inside the sort key too (TypeError
+    # here, since this probe never calls `.get()` — see the audit note on its
+    # except tuple), and must still FAIL the probe, not raise.
+    return {"results": ["not-a-dict-0", "not-a-dict-1"]}
+
+
 # ---------------------------------------------------------------------------
 # _cosine_similarity — pure math, no transport at all
 # ---------------------------------------------------------------------------
@@ -162,6 +195,19 @@ def test_probe_cortex_correctness_malformed_response_fails_not_raises(
     assert "unexpected response shape" in r["error"]
 
 
+def test_probe_cortex_correctness_message_is_string_fails_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Qodo Finding 2: a 200 whose "message" is a bare string (not a dict) must
+    # yield a structured FAIL, not an uncaught AttributeError from `.get()`.
+    monkeypatch.setattr(A, "_post", _fake_post_cortex_message_is_string)
+    r = A.probe_cortex_correctness("http://x", "model")
+    assert r["ok"] is False
+    assert r["role"] == "cortex"
+    assert "unexpected response shape" in r["error"]
+    assert "AttributeError" in r["error"]
+
+
 # ---------------------------------------------------------------------------
 # probe_embed_correctness — paraphrase-vs-unrelated cosine similarity probe
 # ---------------------------------------------------------------------------
@@ -209,6 +255,20 @@ def test_probe_embed_correctness_malformed_response_fails_not_raises(
     assert "unexpected response shape" in r["error"]
 
 
+def test_probe_embed_correctness_items_are_strings_fails_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Qodo Finding 2: a 200 whose "data" items are bare strings (not dicts)
+    # must yield a structured FAIL, not an uncaught AttributeError from the
+    # `item.get("index", 0)` sort key.
+    monkeypatch.setattr(A, "_post", _fake_post_embed_items_are_strings)
+    r = A.probe_embed_correctness("http://x", "model")
+    assert r["ok"] is False
+    assert r["role"] == "embedder"
+    assert "unexpected response shape" in r["error"]
+    assert "AttributeError" in r["error"]
+
+
 # ---------------------------------------------------------------------------
 # probe_rerank_correctness — relevant-doc-ranks-first probe
 # ---------------------------------------------------------------------------
@@ -250,6 +310,20 @@ def test_probe_rerank_correctness_malformed_response_fails_not_raises(
     monkeypatch.setattr(A, "_post", _fake_post_malformed)
     r = A.probe_rerank_correctness("http://x", "model")
     assert r["ok"] is False
+    assert "unexpected response shape" in r["error"]
+
+
+def test_probe_rerank_correctness_items_are_strings_fails_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Qodo Finding 2 audit: this probe never calls `.get()` (see the except
+    # tuple's audit comment), so this malformed shape currently raises
+    # TypeError, already caught — but it must still yield a structured FAIL,
+    # never an uncaught exception, exactly like its cortex/embedder siblings.
+    monkeypatch.setattr(A, "_post", _fake_post_rerank_items_are_strings)
+    r = A.probe_rerank_correctness("http://x", "model")
+    assert r["ok"] is False
+    assert r["role"] == "reranker"
     assert "unexpected response shape" in r["error"]
 
 
@@ -479,3 +553,48 @@ def test_cli_assess_probes_has_no_apply_flag() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["assess", "--apply"])
     assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Qodo Finding 1 — --probes must send the stable role/capability alias
+# ("cortex") to the gateway, not the concrete served model id, because every
+# probe request travels THROUGH THE GATEWAY (RoleInfo.endpoint is always the
+# gateway's own URL for the four gateway-fronted roles — see
+# lobes.roles._gateway_role, `endpoint = gateway`). embedder/reranker have no
+# such gateway alias (lobes.catalog.TIER_ROLE only covers the generate lane),
+# so sending "embedder"/"reranker" literally would 404 as an unknown model
+# (lobes.gateway._routing.is_unknown_model) — those two must keep sending the
+# concrete served name.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_model_sends_role_alias_for_cortex_only() -> None:
+    from types import SimpleNamespace
+
+    cortex_info = SimpleNamespace(model="sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP")
+    embed_info = SimpleNamespace(model="Qwen/Qwen3-Embedding-0.6B")
+    rerank_info = SimpleNamespace(model="Qwen/Qwen3-Reranker-0.6B")
+
+    assert cli_assess._probe_model("cortex", cortex_info) == "cortex"
+    assert cli_assess._probe_model("embedder", embed_info) == "Qwen/Qwen3-Embedding-0.6B"
+    assert cli_assess._probe_model("reranker", rerank_info) == "Qwen/Qwen3-Reranker-0.6B"
+
+
+def test_cli_assess_probes_cortex_uses_gateway_alias_embed_rerank_use_served_name(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    seen_models: dict[str, object] = {}
+
+    def _capture(url, payload, timeout=300, path="/v1/chat/completions"):
+        seen_models[path] = payload.get("model")
+        return _fake_post_all_correct(url, payload, timeout=timeout, path=path)
+
+    _scaffold_fleet(tmp_path)
+    monkeypatch.setattr(A, "_post", _capture)
+    rc = main(["assess", "--probes", "--compose-dir", str(tmp_path), "--port", "8000", "--json"])
+    assert rc == EXIT_SUCCESS
+    # cortex: the stable gateway alias, resolved through the tier-alias table.
+    assert seen_models["/v1/chat/completions"] == "cortex"
+    # embedder/reranker: the concrete served id — the fleet scaffold default.
+    assert seen_models["/v1/embeddings"] == "Qwen/Qwen3-Embedding-0.6B"
+    assert seen_models["/v1/rerank"] == "Qwen/Qwen3-Reranker-0.6B"

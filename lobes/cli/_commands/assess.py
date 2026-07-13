@@ -33,6 +33,31 @@ from lobes.cli._output import emit_result
 from lobes.roles import role_registry_from_env
 from lobes.runtime import _compose, _env
 
+# Roles whose `model` field the gateway resolves through its tier-alias table
+# (`lobes.catalog.TIER_ROLE`, consumed by `lobes.gateway._routing.tier_aliases`
+# — "cortex"/"senses"/"main"/... , issue #81/#92) rather than requiring the
+# concrete served id. Every probe endpoint here IS the gateway (`RoleInfo.endpoint`
+# is always `gateway_url`/`server.public_url` for the four gateway-fronted roles
+# — see `lobes.roles._gateway_role`, `endpoint = gateway`), so sending the role
+# alias exercises the SAME alias-resolution lane a real caller uses, including
+# the hardware-infeasibility 404 (issue #92 t6) a concrete served name would
+# never trigger. `embedder`/`reranker` have NO such gateway alias — TIER_ROLE
+# only covers the generate lane — so sending those role names literally as
+# `model` would 404 as `model_not_found` (see
+# `lobes.gateway._routing.is_unknown_model`); those two probes must keep using
+# the concrete served name (`info.model`).
+_GATEWAY_ALIASED_PROBE_ROLES = frozenset({"cortex"})
+
+
+def _probe_model(role: str, info) -> str:
+    """The `model` field to send for `role`'s probe request.
+
+    The stable gateway alias (the role name itself) when the gateway resolves
+    one for this role, else the concrete served name — see
+    `_GATEWAY_ALIASED_PROBE_ROLES`.
+    """
+    return role if role in _GATEWAY_ALIASED_PROBE_ROLES else info.model
+
 
 def _cmd_assess_probes(args: argparse.Namespace, url: str, json_mode: bool) -> int:
     """``--probes``: per-role CORRECTNESS probes (issue #81, t7).
@@ -42,13 +67,19 @@ def _cmd_assess_probes(args: argparse.Namespace, url: str, json_mode: bool) -> i
     use) rather than the single gateway `url`. Exits EXIT_SUCCESS when every
     probed role passes, EXIT_ENV_ERROR when any fails — the payload shape is
     identical either way.
+
+    The `model` field sent with each request is `_probe_model`'s choice, not
+    always `info.model`: the cortex probe sends the stable role alias
+    ("cortex") so it exercises the gateway's alias-resolution lane the way a
+    real caller does; embedder/reranker send the concrete served name because
+    the gateway has no alias for them (see `_GATEWAY_ALIASED_PROBE_ROLES`).
     """
     env = _runtime_ops.deployment_env_soft(args)
     registry = role_registry_from_env(env, gateway_url=url)
     roles = (args.role,) if getattr(args, "role", None) else _assess.PROBE_ROLES
     timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
     endpoints = {
-        role: (info.endpoint, info.model) if info.loaded and info.endpoint else None
+        role: (info.endpoint, _probe_model(role, info)) if info.loaded and info.endpoint else None
         for role, info in registry.items()
     }
     results = _assess.run_role_probes(endpoints, roles=roles, timeout=timeout)
