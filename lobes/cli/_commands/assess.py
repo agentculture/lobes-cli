@@ -13,6 +13,13 @@ the same role registry ``lobes capabilities``/``lobes measure`` use) for a
 SEMANTIC answer, not just ``/health`` — a role that is healthy but wrong FAILS
 its probe. Throughput lives in ``lobes benchmark``; RUNTIME-only metrics
 (latency/throughput/RTF, never correctness) live in ``lobes measure``.
+
+Exit code: plain ``lobes assess`` / ``--preserve-thinking`` always exit
+``EXIT_SUCCESS`` — they only emit a report. ``--probes`` is scriptable: it
+exits ``EXIT_SUCCESS`` when every probed role passes and ``EXIT_ENV_ERROR``
+when any role fails (mirrors ``lobes tunnel``'s status-driven exit code) —
+the ``--json``/text payload is unchanged either way, only the exit code
+differentiates pass from fail.
 """
 
 from __future__ import annotations
@@ -21,9 +28,64 @@ import argparse
 
 from lobes import assess as _assess
 from lobes.cli import _runtime_ops
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS
 from lobes.cli._output import emit_result
 from lobes.roles import role_registry_from_env
 from lobes.runtime import _compose, _env
+
+
+def _cmd_assess_probes(args: argparse.Namespace, url: str, json_mode: bool) -> int:
+    """``--probes``: per-role CORRECTNESS probes (issue #81, t7).
+
+    Each of cortex/embedder/reranker is resolved to its own endpoint via the
+    shared role registry (same builder `lobes capabilities`/`lobes measure`
+    use) rather than the single gateway `url`. Exits EXIT_SUCCESS when every
+    probed role passes, EXIT_ENV_ERROR when any fails — the payload shape is
+    identical either way.
+    """
+    env = _runtime_ops.deployment_env_soft(args)
+    registry = role_registry_from_env(env, gateway_url=url)
+    roles = (args.role,) if getattr(args, "role", None) else _assess.PROBE_ROLES
+    timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
+    endpoints = {
+        role: (info.endpoint, info.model) if info.loaded and info.endpoint else None
+        for role, info in registry.items()
+    }
+    results = _assess.run_role_probes(endpoints, roles=roles, timeout=timeout)
+    passed = all(r["ok"] for r in results.values())
+    if json_mode:
+        emit_result({"passed": passed, "probes": results}, json_mode=True)
+    else:
+        emit_result(_assess.render_role_probes(results), json_mode=False)
+    return EXIT_SUCCESS if passed else EXIT_ENV_ERROR
+
+
+def _cmd_assess_preserve_thinking(url: str, model: str | None, json_mode: bool) -> int:
+    """``--preserve-thinking``: the two-turn token-delta diagnostic (issue #93).
+
+    Reports both prompt-token counts and the delta; no host facts / correctness
+    probes are needed.
+    """
+    pt = _assess.run_preserve_thinking_probe(url, model)
+    emit_result(pt if json_mode else _assess.render_preserve_thinking(pt), json_mode=json_mode)
+    return EXIT_SUCCESS
+
+
+def _cmd_assess_correctness(
+    args: argparse.Namespace, url: str, model: str | None, json_mode: bool
+) -> int:
+    """Default path: the two fixed correctness probes plus host-side facts."""
+    result = _assess.run_correctness(url, model, check_tools=bool(getattr(args, "tools", False)))
+    host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+    if json_mode:
+        emit_result({**result, "host": host}, json_mode=True)
+    else:
+        header = (
+            "### Host-side\n"
+            f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+        )
+        emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
+    return EXIT_SUCCESS
 
 
 def cmd_assess(args: argparse.Namespace) -> int:
@@ -35,48 +97,11 @@ def cmd_assess(args: argparse.Namespace) -> int:
 
     url = f"http://localhost:{port}"
 
-    # --probes is a standalone read-only diagnostic (issue #81, t7): per-role
-    # CORRECTNESS probes for cortex/embedder/reranker, each resolved to its own
-    # endpoint via the shared role registry (same builder `lobes capabilities`/
-    # `lobes measure` use) rather than the single `url` above. No host facts /
-    # single-model correctness probes are needed.
     if bool(getattr(args, "probes", False)):
-        env = _runtime_ops.deployment_env_soft(args)
-        registry = role_registry_from_env(env, gateway_url=url)
-        roles = (args.role,) if getattr(args, "role", None) else _assess.PROBE_ROLES
-        timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
-        endpoints = {
-            role: (info.endpoint, info.model) if info.loaded and info.endpoint else None
-            for role, info in registry.items()
-        }
-        results = _assess.run_role_probes(endpoints, roles=roles, timeout=timeout)
-        passed = all(r["ok"] for r in results.values())
-        if json_mode:
-            emit_result({"passed": passed, "probes": results}, json_mode=True)
-        else:
-            emit_result(_assess.render_role_probes(results), json_mode=False)
-        return 0
-
-    # --preserve-thinking is a standalone read-only diagnostic (issue #93): it
-    # runs the two-turn token-delta probe and reports both prompt-token counts +
-    # the delta. No host facts / correctness probes are needed.
+        return _cmd_assess_probes(args, url, json_mode)
     if bool(getattr(args, "preserve_thinking", False)):
-        pt = _assess.run_preserve_thinking_probe(url, model)
-        emit_result(pt if json_mode else _assess.render_preserve_thinking(pt), json_mode=json_mode)
-    else:
-        result = _assess.run_correctness(
-            url, model, check_tools=bool(getattr(args, "tools", False))
-        )
-        host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
-        if json_mode:
-            emit_result({**result, "host": host}, json_mode=True)
-        else:
-            header = (
-                "### Host-side\n"
-                f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
-            )
-            emit_result(header + "\n" + _assess.render_correctness(result), json_mode=False)
-    return 0
+        return _cmd_assess_preserve_thinking(url, model, json_mode)
+    return _cmd_assess_correctness(args, url, model, json_mode)
 
 
 def register(sub: argparse._SubParsersAction) -> None:
