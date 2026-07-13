@@ -143,7 +143,11 @@ def resolve_init_profile(
                 f"--profile {name!r} used on an undetected card ({facts}) — "
                 "proceeding, but this profile was not validated for this box."
             )
-        elif card.resolved != name:
+        elif card.resolved != name.strip().lower():
+            # Compare NORMALISED forms: card.resolved is always the registry's
+            # lowercase canonical name, but `name` is the raw --profile value
+            # as typed — `--profile Spark` on a detected "spark" card must not
+            # warn on casing alone (resolve_profile() normalises the same way).
             warning = (
                 f"--profile {name!r} overrides the detected card "
                 f"{card.resolved!r} ({facts}) — proceeding, but this profile "

@@ -53,6 +53,51 @@ def _profile_error(message: str, remediation: str) -> ModelGearError:
     return ModelGearError(code=EXIT_USER_ERROR, message=message, remediation=remediation)
 
 
+def _is_strict_bool(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def _is_optional_bool(value: Any) -> bool:
+    return value is None or isinstance(value, bool)
+
+
+def _is_optional_str(value: Any) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _is_optional_number(value: Any) -> bool:
+    # bool is a subclass of int in Python — reject it explicitly BEFORE the
+    # isinstance(value, (int, float)) check, or `feasible = "false"`-style
+    # TOML mistakes (here, a stray `true`/`false` on a numeric knob) would
+    # silently pass as a number.
+    if isinstance(value, bool):
+        return False
+    return value is None or isinstance(value, (int, float))
+
+
+def _is_optional_int(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    return value is None or isinstance(value, int)
+
+
+# Per-field type validator + human-readable "expected" description, used by
+# RoleProfile.from_dict to reject a value of the wrong TYPE (not just an
+# unknown key) — e.g. `feasible = "false"` (a truthy STRING) must fail loudly
+# rather than silently flip a role to feasible via Python truthiness.
+_FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
+    "feasible": (_is_strict_bool, "bool"),
+    "model": (_is_optional_str, "str or None"),
+    "gpu_mem_util": (_is_optional_number, "int/float or None"),
+    "max_model_len": (_is_optional_int, "int or None"),
+    "quantization": (_is_optional_str, "str or None"),
+    "kv_cache_dtype": (_is_optional_str, "str or None"),
+    "attention_backend": (_is_optional_str, "str or None"),
+    "enforce_eager": (_is_optional_bool, "bool or None"),
+    "max_num_seqs": (_is_optional_int, "int or None"),
+}
+
+
 @dataclass(frozen=True)
 class RoleProfile:
     """One role's serving declaration within a :class:`Profile`.
@@ -99,6 +144,19 @@ class RoleProfile:
                 message=f"unknown knob(s) {sorted(unknown)!r} for role {role!r}",
                 remediation=f"known knobs: feasible, model, {', '.join(KNOB_NAMES)}",
             )
+        for key, value in data.items():
+            validator, expected = _FIELD_VALIDATORS[key]
+            if not validator(value):
+                got = type(value).__name__
+                raise _profile_error(
+                    message=(
+                        f"role {role!r}: knob {key!r} must be {expected}, " f"got {got} ({value!r})"
+                    ),
+                    remediation=(
+                        f"fix the value's type for {key!r} in role {role!r} "
+                        f"(expected {expected})"
+                    ),
+                )
         return RoleProfile(**dict(data))
 
 

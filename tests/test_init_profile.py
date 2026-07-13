@@ -285,3 +285,30 @@ def test_resolve_init_profile_returns_no_warning_on_clean_match(tmp_path) -> Non
     assert profile.name == "spark"
     assert card.resolved == "spark"
     assert warning is None
+
+
+def test_resolve_init_profile_explicit_profile_casing_only_difference_warns_not(
+    tmp_path,
+) -> None:
+    # The bug this guards: card.resolved is always the registry's lowercase
+    # canonical name, but an explicit --profile is compared RAW — so
+    # `--profile Spark` on a detected "spark" card used to warn on casing
+    # alone. Compare normalised forms instead.
+    profile, card, warning = _runtime_ops.resolve_init_profile(
+        "Spark", tmp_path, detect_fn=lambda: _fake_card("spark")
+    )
+    assert profile.name == "spark"
+    assert card.resolved == "spark"
+    assert warning is None
+
+
+def test_resolve_init_profile_explicit_profile_genuine_mismatch_still_warns(
+    tmp_path,
+) -> None:
+    profile, card, warning = _runtime_ops.resolve_init_profile(
+        "Spark", tmp_path, detect_fn=lambda: _fake_card("thor")
+    )
+    assert profile.name == "spark"
+    assert card.resolved == "thor"
+    assert warning is not None
+    assert "detected card 'thor'" in warning

@@ -77,6 +77,86 @@ def test_profile_from_dict_rejects_unknown_knob() -> None:
     assert "not_a_knob" in exc.value.message
 
 
+def test_role_profile_from_dict_rejects_string_false_for_feasible() -> None:
+    # The bug this guards: `feasible = "false"` is a non-empty STRING, which
+    # is truthy in Python — the renderer's `if not rp.feasible` must never
+    # see a value like this pass validation and silently flip a role to
+    # feasible.
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("cortex", {"feasible": "false"})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "cortex" in exc.value.message
+    assert "feasible" in exc.value.message
+    assert "bool" in exc.value.message
+    assert "str" in exc.value.message
+
+
+def test_role_profile_from_dict_rejects_string_false_for_enforce_eager() -> None:
+    # Same bug for enforce_eager: a truthy string would render `--enforce-eager`
+    # from a TOML value the operator intended as "off".
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("reranker", {"enforce_eager": "false"})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "reranker" in exc.value.message
+    assert "enforce_eager" in exc.value.message
+
+
+def test_role_profile_from_dict_accepts_none_for_enforce_eager() -> None:
+    rp = RoleProfile.from_dict("cortex", {"enforce_eager": None})
+    assert rp.enforce_eager is None
+
+
+def test_role_profile_from_dict_rejects_none_for_feasible() -> None:
+    # feasible has no Optional in the schema (default True, never None).
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("cortex", {"feasible": None})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "feasible" in exc.value.message
+
+
+def test_role_profile_from_dict_rejects_bool_for_gpu_mem_util() -> None:
+    # bool is a subclass of int in Python — must be rejected explicitly for a
+    # numeric knob, not silently accepted as 0.0/1.0.
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("cortex", {"gpu_mem_util": True})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "gpu_mem_util" in exc.value.message
+    assert "cortex" in exc.value.message
+
+
+def test_role_profile_from_dict_accepts_int_and_float_for_gpu_mem_util() -> None:
+    assert RoleProfile.from_dict("cortex", {"gpu_mem_util": 1}).gpu_mem_util == 1
+    assert RoleProfile.from_dict("cortex", {"gpu_mem_util": 0.3}).gpu_mem_util == 0.3
+
+
+def test_role_profile_from_dict_rejects_bool_for_max_model_len() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("cortex", {"max_model_len": False})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "max_model_len" in exc.value.message
+
+
+def test_role_profile_from_dict_rejects_bool_for_max_num_seqs() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        RoleProfile.from_dict("cortex", {"max_num_seqs": True})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "max_num_seqs" in exc.value.message
+
+
+def test_role_profile_from_dict_rejects_wrong_type_for_string_knobs() -> None:
+    for knob in ("model", "quantization", "kv_cache_dtype", "attention_backend"):
+        with pytest.raises(ModelGearError) as exc:
+            RoleProfile.from_dict("cortex", {knob: 123})
+        assert exc.value.code == EXIT_USER_ERROR
+        assert knob in exc.value.message
+
+
+def test_role_profile_from_dict_accepts_none_for_string_knobs() -> None:
+    for knob in ("model", "quantization", "kv_cache_dtype", "attention_backend"):
+        rp = RoleProfile.from_dict("cortex", {knob: None})
+        assert getattr(rp, knob) is None
+
+
 def test_profile_from_dict_rejects_unknown_top_level_key() -> None:
     with pytest.raises(ModelGearError):
         Profile.from_dict("bogus", {"nope": True})
@@ -266,6 +346,39 @@ def test_operator_profile_overrides_a_builtin_of_the_same_name(tmp_path) -> None
     # The built-in itself is never touched by the override.
     builtin_spark = loader.load_builtin("spark")
     assert builtin_spark.role("cortex").model == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+
+
+def test_mixed_case_operator_file_overrides_the_builtin(tmp_path) -> None:
+    # The bug this guards: discover_operator_profiles() used to key profiles
+    # by the RAW filename stem, so `profiles/Thor.toml` never matched a
+    # resolve_profile("thor") lookup (which normalises with .strip().lower())
+    # and silently failed to override the builtin.
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "Thor.toml").write_text(
+        '[roles.cortex]\nmodel = "operator/mixed-case-override"\n',
+        encoding="utf-8",
+    )
+    found = loader.discover_operator_profiles(tmp_path)
+    assert set(found.keys()) == {"thor"}
+    assert found["thor"].role("cortex").model == "operator/mixed-case-override"
+
+    resolved = loader.resolve_profile("thor", deploy_dir=tmp_path)
+    assert resolved.role("cortex").model == "operator/mixed-case-override"
+
+    resolved_upper = loader.resolve_profile("THOR", deploy_dir=tmp_path)
+    assert resolved_upper.role("cortex").model == "operator/mixed-case-override"
+
+
+def test_operator_profile_case_collision_raises_user_error(tmp_path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "Thor.toml").write_text('[roles.cortex]\nmodel = "a"\n', encoding="utf-8")
+    (profiles_dir / "thor.toml").write_text('[roles.cortex]\nmodel = "b"\n', encoding="utf-8")
+    with pytest.raises(ModelGearError) as exc:
+        loader.discover_operator_profiles(tmp_path)
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "thor" in exc.value.message.lower()
 
 
 def test_discover_operator_profiles_missing_dir_returns_empty(tmp_path) -> None:
