@@ -9,7 +9,7 @@ Source commit: `main` @ `7fa624d1c891c2bc1c5934947d0d9379462605e0`
 
 Vendored verbatim via:
 
-```
+```sh
 git show main:lobes/templates/docker-compose.yml       > single/docker-compose.yml
 git show main:lobes/templates/env.example               > single/env.example
 git show main:lobes/templates/fleet/docker-compose.yml  > fleet/docker-compose.yml

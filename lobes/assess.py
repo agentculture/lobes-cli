@@ -608,7 +608,9 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0.0 or norm_b == 0.0:
+    # Norms are non-negative; below this epsilon the vector is degenerate and
+    # the similarity is meaningless (and the division would explode).
+    if norm_a < 1e-12 or norm_b < 1e-12:
         return 0.0
     return dot / (norm_a * norm_b)
 

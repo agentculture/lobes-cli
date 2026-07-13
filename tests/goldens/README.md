@@ -18,7 +18,7 @@ This directory holds the **byte-for-byte** golden files
 
 Regenerate all three with:
 
-```
+```sh
 uv run python tests/goldens/regen.py
 ```
 
