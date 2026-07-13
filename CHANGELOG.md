@@ -4,6 +4,93 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.3] - 2026-07-13
+
+### Added
+
+- Plan (`/spec-to-plan`, converged): **per-machine hardware profiles** —
+  `docs/plans/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
+  Thirteen tasks over four file-disjoint dependency waves (fifteen drafted, two
+  rejected during convergence): the **per-chip strategy
+  pattern** + profile schema + spark/thor profiles, card detection, template
+  parameterisation and per-role correctness probes (wave 1); `init` applies the
+  profile and role-feasibility reaches capabilities/gateway (wave 2);
+  `doctor`/`status` report the profile, and the Thor profile is validated on the
+  physical board (wave 3); docs + an honest support table (wave 4).
+
+  Per-chip knowledge goes behind a **strategy pattern** — one module per chip
+  (`lobes/machines/<chip>.py`) owning its own detection signature, per-role knobs
+  and provenance, plus a small shared registry. Adding a chip is one new file and
+  one registration line; it must not mean editing shared tables, and a change for
+  one chip must not be able to break another. No existing code is deleted:
+  `MachineProfile`, `MACHINE_PROFILES` and `detect_machine()` keep working,
+  rebuilt *from* the registry rather than duplicated.
+
+  On Thor the reranker stays **served and advertised** — it runs, it is simply
+  not yet correct; its ordering probe is recorded as a known failure pointing at
+  #105 / #106, rather than the role being hidden.
+
+- Spec + plan rework (same frame, re-converged): per-machine knowledge is keyed
+  by **causal capability trait**, not board name — of the four Thor hand-edits,
+  three trace to `sm_110` (the FLASH_ATTN pooling hang, the CUDA-graph classify
+  fault) and one to the checkpoint's missing KV scales; none traces to "Thor the
+  board". A machine profile becomes a named validated *bundle* (detection
+  signature + memory budget + model-per-role + applicable traits), so an
+  unrecognised board sharing a trait inherits its fix. Three new plan tasks:
+  **golden rendered compose/.env per shipped profile** byte-diffed in CI, so a
+  change for one machine cannot silently alter another's rendering (t13); an
+  **unknown card warns and serves a conservative small base** — no 27B — instead
+  of refusing, folding the unknown-card slice of #107 in (t14); and **upgrading
+  lobes-cli never breaks an existing scaffold** — zero bytes changed in the
+  deployment dir, old env names honoured, re-init always diffed + `--apply`
+  (t15). Two GB10 verifications are parked as tracked risks: whether the fp8-KV
+  crash is checkpoint-driven (shared fix) rather than Thor-specific, and whether
+  the `VLLM_ATTENTION_BACKEND` env is truly dead on the GB10's pinned image
+  before t3 deletes it. Packaging per #107: profiles ship in the wheel, no pip
+  extras.
+
+### Changed
+
+### Fixed
+
+- Spec correction: the first cut of this spec claimed lobes had no machine-profile
+  concept at all. It does — `lobes/profiles.py` already ships `MachineProfile` /
+  `MACHINE_PROFILES` (spark/thor/blackwell/generic) and `detect_machine()`, wired
+  to `VLLM_MACHINE` and used by `switch`/`benchmark`. The real gaps, now stated
+  honestly in the spec's before-state: it is one knob-set **per machine, not per
+  role**; it lacks the knobs that actually mattered on Thor (KV-cache dtype,
+  enforce-eager, model-per-role, role feasibility); the **fleet** compose (the
+  default path) ignores it entirely and hardcodes the Spark values; its `thor` row
+  is an unvalidated guess (`status="configured"`: flashinfer / 32768 / util 0.6)
+  that live Thor testing **contradicts**; and `detect_machine()` silently falls
+  back to `generic` instead of admitting it does not know the card.
+
+## [0.40.2] - 2026-07-13
+
+### Added
+
+- Spec (`/think`, converged): **per-machine hardware profiles** —
+  `docs/specs/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
+  lobes detects the host card and applies a profile tuned for *that* box
+  (feasible roles + model per role + util / context / quantization / KV dtype /
+  attention backend / enforce-eager), instead of the fleet compose's hardcoded
+  GB10 values. Ships Spark (default) + Thor as supported;
+  Orin / Orin Nano Super are named but unvalidated; an unrecognised card
+  refuses-or-warns rather than silently applying the Spark profile.
+  Every role gains a **correctness** probe, not just `/health` — a role that is
+  healthy but semantically wrong must fail.
+
+  Motivated by bringing the fleet up on a Jetson AGX Thor (sm_110): the
+  Spark-tuned template scored **1 of 4 roles correct on first boot** (senses
+  clean; cortex crash-looped on an fp8-KV assert; embedder accepted requests and
+  never answered; reranker killed its engine with `cudaErrorLaunchFailure`), and
+  reaching 3 of 4 took four hand-edits to the generated compose. Rerank is still
+  wrong there — tracked in #105 / #106.
+
+### Changed
+
+### Fixed
+
 ## [0.40.1] - 2026-07-11
 
 ### Added
