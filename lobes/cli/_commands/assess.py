@@ -7,7 +7,12 @@ calling. ``--preserve-thinking`` swaps in the two-turn ``preserve_thinking``
 token-delta diagnostic (issue #93) instead of the correctness probes: it re-sends
 the assistant reasoning trace in history and reports how many extra
 ``prompt_tokens`` that costs — a positive delta proves the trace survives across
-turns. Throughput lives in ``lobes benchmark``.
+turns. ``--probes`` swaps in the per-role CORRECTNESS probes (issue #81, t7):
+cortex/embedder/reranker are each probed on their OWN endpoint (resolved via
+the same role registry ``lobes capabilities``/``lobes measure`` use) for a
+SEMANTIC answer, not just ``/health`` — a role that is healthy but wrong FAILS
+its probe. Throughput lives in ``lobes benchmark``; RUNTIME-only metrics
+(latency/throughput/RTF, never correctness) live in ``lobes measure``.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import argparse
 from lobes import assess as _assess
 from lobes.cli import _runtime_ops
 from lobes.cli._output import emit_result
+from lobes.roles import role_registry_from_env
 from lobes.runtime import _compose, _env
 
 
@@ -28,6 +34,28 @@ def cmd_assess(args: argparse.Namespace) -> int:
         model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
     url = f"http://localhost:{port}"
+
+    # --probes is a standalone read-only diagnostic (issue #81, t7): per-role
+    # CORRECTNESS probes for cortex/embedder/reranker, each resolved to its own
+    # endpoint via the shared role registry (same builder `lobes capabilities`/
+    # `lobes measure` use) rather than the single `url` above. No host facts /
+    # single-model correctness probes are needed.
+    if bool(getattr(args, "probes", False)):
+        env = _runtime_ops.deployment_env_soft(args)
+        registry = role_registry_from_env(env, gateway_url=url)
+        roles = (args.role,) if getattr(args, "role", None) else _assess.PROBE_ROLES
+        timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
+        endpoints = {
+            role: (info.endpoint, info.model) if info.loaded and info.endpoint else None
+            for role, info in registry.items()
+        }
+        results = _assess.run_role_probes(endpoints, roles=roles, timeout=timeout)
+        passed = all(r["ok"] for r in results.values())
+        if json_mode:
+            emit_result({"passed": passed, "probes": results}, json_mode=True)
+        else:
+            emit_result(_assess.render_role_probes(results), json_mode=False)
+        return 0
 
     # --preserve-thinking is a standalone read-only diagnostic (issue #93): it
     # runs the two-turn token-delta probe and reports both prompt-token counts +
@@ -72,6 +100,29 @@ def register(sub: argparse._SubParsersAction) -> None:
             "Run the two-turn preserve_thinking token-delta diagnostic instead: "
             "re-send the assistant reasoning trace in history and report the "
             "prompt-token cost (a positive delta proves the trace survives)."
+        ),
+    )
+    p.add_argument(
+        "--probes",
+        action="store_true",
+        help=(
+            "Run per-role CORRECTNESS probes (cortex/embedder/reranker) instead: "
+            "each role is probed on its own endpoint for a semantic answer, not "
+            "just /health — a role that is healthy but wrong FAILS its probe."
+        ),
+    )
+    p.add_argument(
+        "--role",
+        choices=_assess.PROBE_ROLES,
+        help="With --probes, run only one role's probe (default: all three).",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=(
+            "With --probes, per-probe hard timeout in seconds "
+            f"(default {_assess.DEFAULT_PROBE_TIMEOUT})."
         ),
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
