@@ -645,6 +645,12 @@ def probe_cortex_correctness(
                 "messages": [{"role": "user", "content": _CORTEX_PROBE_PROMPT}],
                 "max_tokens": 16,
                 "temperature": 0,
+                # The cortex gear serves a thinking model: without this a
+                # 16-token budget is consumed inside the <think> trace and
+                # `content` comes back empty (probe fails on a correct model).
+                # Same override `lobes route` uses; per-request kwargs beat the
+                # server's preserve_thinking default (#93).
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             timeout=timeout,
         )
