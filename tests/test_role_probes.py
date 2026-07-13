@@ -25,6 +25,7 @@ import pytest
 
 import lobes.assess as A
 from lobes.cli import main
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS
 from lobes.runtime import _compose
 
 # ---------------------------------------------------------------------------
@@ -333,7 +334,7 @@ def test_cli_assess_probes_json_all_pass(tmp_path, monkeypatch: pytest.MonkeyPat
     _scaffold_fleet(tmp_path)
     monkeypatch.setattr(A, "_post", _fake_post_all_correct)
     rc = main(["assess", "--probes", "--compose-dir", str(tmp_path), "--port", "8000", "--json"])
-    assert rc == 0
+    assert rc == EXIT_SUCCESS
     payload = json.loads(capsys.readouterr().out)
     assert payload["passed"] is True
     assert set(payload["probes"]) == set(A.PROBE_ROLES)
@@ -359,11 +360,36 @@ def test_cli_assess_probes_json_reports_fail_for_wrong_role(
             "--json",
         ]
     )
-    assert rc == 0
+    # A failing probe now differentiates the exit code (S3516) — EXIT_ENV_ERROR,
+    # mirroring `lobes tunnel`'s status-driven exit code — while the --json
+    # payload contract is unchanged (passed: false, same shape as a pass).
+    assert rc == EXIT_ENV_ERROR
     payload = json.loads(capsys.readouterr().out)
     assert payload["passed"] is False
     assert set(payload["probes"]) == {"reranker"}
     assert payload["probes"]["reranker"]["ok"] is False
+
+
+def test_cli_assess_probes_text_mode_exit_code_reflects_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    _scaffold_fleet(tmp_path)
+    monkeypatch.setattr(A, "_post", _fake_post_rerank_wrong)
+    rc = main(
+        [
+            "assess",
+            "--probes",
+            "--role",
+            "reranker",
+            "--compose-dir",
+            str(tmp_path),
+            "--port",
+            "8000",
+        ]
+    )
+    assert rc == EXIT_ENV_ERROR
+    out = capsys.readouterr().out
+    assert "FAIL" in out
 
 
 def test_cli_assess_probes_role_filter(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:

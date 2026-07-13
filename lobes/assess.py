@@ -734,7 +734,7 @@ def probe_embed_correctness(
             (time.monotonic() - t0) * 1000,
             error=f"transport failed (timeout or connection error): {exc}",
         )
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
         return _probe_result(
             "embedder",
             PROBE_NAMES["embedder"],
