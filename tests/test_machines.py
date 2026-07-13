@@ -157,8 +157,9 @@ def test_render_is_json_friendly_with_provenance() -> None:
 
 
 def test_duplicate_registration_rejected_without_replace() -> None:
+    spark = machines.get("spark")
     with pytest.raises(ValueError):
-        machines.register(machines.get("spark"))
+        machines.register(spark)
 
 
 # --- criterion 1: one file + one line, zero edits elsewhere ---------------
