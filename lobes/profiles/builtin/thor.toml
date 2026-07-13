@@ -1,0 +1,51 @@
+# Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified memory) — the
+# validated-on-this-box profile. The baseline below (models, gpu_mem_util,
+# max_model_len, quantization) is IDENTICAL to spark.toml on purpose: Thor is
+# also a 128 GB unified-memory Blackwell-class board, and only 4 knobs were
+# found to diverge when this profile was validated live (see
+# lobes/machines/thor.py + lobes/machines/_traits.py:SM_110).
+#
+# Those 4 divergent knobs are deliberately ABSENT here (cortex.kv_cache_dtype,
+# embedder.attention_backend, reranker.attention_backend,
+# reranker.enforce_eager): lobes/profiles/loader.py overlays them from the
+# live lobes.machines chip-strategy registry rather than re-typing the
+# literal values in this file, so the SM_110 trait / thor CardStrategy stays
+# the single source of truth for WHY each one holds (see each Knob's
+# provenance string there). Editing the trait or the thor strategy changes
+# what this profile resolves to with no edit needed here.
+name = "thor"
+summary = "Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified) — load-tested divergences from spark"
+
+[roles.cortex]
+feasible = true
+model = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+gpu_mem_util = 0.30
+max_model_len = 131072
+quantization = "modelopt"
+max_num_seqs = 2
+# kv_cache_dtype: overlaid from lobes.machines.get("thor") — measured "auto"
+# (the fp8 default asserts k_scale > 0.0 on this checkpoint/board pairing).
+
+[roles.senses]
+feasible = true
+model = "coolthor/gemma-4-12B-it-NVFP4A16"
+gpu_mem_util = 0.14
+max_model_len = 32768
+quantization = "compressed-tensors"
+attention_backend = "TRITON_ATTN"
+
+[roles.embedder]
+feasible = true
+model = "Qwen/Qwen3-Embedding-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend: overlaid from the shared SM_110 trait — TRITON_ATTN
+# (the FlashInfer/FLASH_ATTN pooling path hangs on sm_110).
+
+[roles.reranker]
+feasible = true
+model = "Qwen/Qwen3-Reranker-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend + enforce_eager: overlaid from the shared SM_110 trait —
+# TRITON_ATTN + enforce_eager=true (CUDA-graph capture is unstable here).

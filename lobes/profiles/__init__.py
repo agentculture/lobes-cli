@@ -1,23 +1,36 @@
-"""Workload (`purpose`) and machine tuning profiles — the second axis of a "gear".
+"""Workload (`purpose`) and machine tuning profiles — the profiling axes of a "gear".
 
-A pure, near-dependency-free data module (it only imports the CLI error type for
-friendly "unknown profile" messages). Where :mod:`lobes.catalog` answers
-*which model* to serve, this answers *how* to serve it:
+A pure, near-dependency-free package (it only imports the CLI error type for
+friendly "unknown profile" messages, plus stdlib). Where :mod:`lobes.catalog`
+answers *which model* to serve, this answers *how* to serve it — across THREE
+axes:
 
 * a **workload profile** (the ``purpose``: ``balanced`` / ``prompt-heavy`` /
   ``decode-heavy``) sets the throughput/batching knobs and the shape
-  (``input_len``/``output_len``) ``lobes benchmark`` exercises, and
-* a **machine profile** (``spark`` / ``thor`` / ``blackwell`` / ``generic``) sets
-  the memory/arch defaults (``gpu_memory_utilization``, ``max_model_len``,
-  ``attention_backend``).
+  (``input_len``/``output_len``) ``lobes benchmark`` exercises;
+* a **legacy machine profile** (``spark`` / ``thor`` / ``blackwell`` /
+  ``generic``) sets the single-model memory/arch defaults
+  (``gpu_memory_utilization``, ``max_model_len``, ``attention_backend``); and
+* a **fleet :class:`~lobes.profiles.schema.Profile`** (this package's newer
+  surface — :mod:`lobes.profiles.schema` + :mod:`lobes.profiles.loader`) is
+  the per-ROLE declaration a machine-aware ``lobes init`` resolves: whether
+  ``cortex``/``senses``/``embedder``/``reranker`` is even feasible on the
+  target box, which model serves it, and every compose-template knob
+  (``gpu_mem_util``, ``max_model_len``, ``quantization``, ``kv_cache_dtype``,
+  ``attention_backend``, ``enforce_eager``, ``max_num_seqs``) — see
+  :func:`resolve_profile`.
 
-The machine layer is no longer a table in this module: it is *derived* from the
-per-chip strategy registry in :mod:`lobes.machines` (one :class:`CardStrategy`
-per card, owning its own detection signature + per-role knobs + provenance).
-``MachineProfile`` / ``MACHINE_PROFILES`` / :func:`detect_machine` /
-:func:`resolve_serve_config` remain the stable surface legacy callers use, rebuilt
-from the registry on each access — so registering a new chip (``lobes.machines``)
-lights it up here with no edit to this file.
+The legacy machine layer is no longer a table in this module: it is *derived*
+from the per-chip strategy registry in :mod:`lobes.machines` (one
+:class:`~lobes.machines.CardStrategy` per card, owning its own detection
+signature + per-role knobs + provenance). ``MachineProfile`` /
+``MACHINE_PROFILES`` / :func:`detect_machine` / :func:`resolve_serve_config`
+remain the stable surface legacy callers use, rebuilt from the registry on
+each access — so registering a new chip (``lobes.machines``) lights it up
+here with no edit to this file. The newer per-role :class:`Profile` schema
+reads the SAME registry for its machine-validated divergences (e.g. Thor's
+sm_110 knobs) rather than duplicating them — see
+:mod:`lobes.profiles.loader`.
 
 The workload knobs and machine defaults are *configured heuristics* (a sensible
 starting point), not load-tested numbers — confirm them with ``lobes benchmark``.
@@ -37,6 +50,44 @@ from dataclasses import asdict, dataclass
 
 from lobes import machines
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.profiles.loader import (
+    available_profiles,
+    builtin_names,
+    discover_operator_profiles,
+    load_builtin,
+    resolve_profile,
+)
+from lobes.profiles.schema import KNOB_NAMES, ROLES, Profile, RoleProfile
+
+__all__ = [
+    # workload profiles
+    "DEFAULT_PURPOSE",
+    "DEFAULT_MACHINE",
+    "WorkloadProfile",
+    "WORKLOAD_PROFILES",
+    "workload_profiles",
+    "workload_profile",
+    "workloads_as_dicts",
+    # legacy machine profiles (derived from lobes.machines)
+    "MachineProfile",
+    "MACHINE_PROFILES",
+    "machine_profiles",
+    "machine_profile",
+    "detect_machine",
+    "resolve_machine",
+    "resolve_serve_config",
+    "machines_as_dicts",
+    # fleet per-role Profile schema + loader (lobes.profiles.schema/.loader)
+    "ROLES",
+    "KNOB_NAMES",
+    "Profile",
+    "RoleProfile",
+    "builtin_names",
+    "load_builtin",
+    "discover_operator_profiles",
+    "available_profiles",
+    "resolve_profile",
+]
 
 DEFAULT_PURPOSE = "balanced"
 # CLI default; resolved to a concrete machine by detect_machine() when "auto".
