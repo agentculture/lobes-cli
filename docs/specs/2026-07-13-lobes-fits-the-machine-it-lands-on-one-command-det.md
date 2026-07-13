@@ -8,7 +8,7 @@
 
 ## Before → After
 
-- Before: The packaged templates hardcode one tuning for the DGX Spark GB10 (sm_121). It does not transfer: on Jetson AGX Thor (sm_110) cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings. Every one of these was found by crashing into it.
+- Before: lobes ALREADY has a machine-profile axis — lobes/profiles.py ships MachineProfile + MACHINE_PROFILES (spark/thor/blackwell/generic) and detect_machine(), wired to VLLM_MACHINE and used by switch/benchmark. But it is (a) ONE knob-set per machine, not per role; (b) missing the knobs that actually matter — kv-cache dtype, enforce-eager, model-per-role, role feasibility; (c) IGNORED by the fleet compose (the default path), which hardcodes DGX Spark GB10 values; (d) its thor row is an unvalidated GUESS (status 'configured': flashinfer / 32768 / util 0.6) that live testing on a physical Thor CONTRADICTS; and (e) detect_machine() silently falls back to 'generic' instead of admitting it does not know the card. On Thor (sm_110) the shipped fleet scored 1 of 4 roles correct on first boot; cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings.
 - After: lobes detects the host card and applies a per-machine profile (memory budget, quantization, attention backend, KV dtype, context, eager-vs-cudagraph, which roles are even feasible), so a supported box boots correct-and-tuned on first try.
 
 ## Why it matters
@@ -29,7 +29,6 @@
 ## Honesty conditions
 
 - One command does it: on a supported card, 'lobes init' picks the right profile with no flags, and 'lobes doctor' names which profile it picked and why (detected card + capability + memory).
-- The three Thor divergences found by hand this session (kv-cache dtype auto, attention backend TRITON_ATTN on the pooling gears, enforce-eager on rerank) are exactly what a Thor profile encodes — the profile reproduces the working fleet without hand-editing.
 - The 'fits none' cost is real and measurable: a single shared config either leaves a big box's headroom unused or fails to boot a small one — demonstrable by pointing the GB10 profile at Thor (it crashes) and a Thor-safe config at the GB10 (it under-uses it).
 - The operator never has to know the card's compute capability to get a correct boot — the tool knows it; the operator only overrides when they WANT to.
 - 'Correct on first try' is checked, not asserted: every role the profile claims passes its correctness probe on a clean boot, and a role the card cannot serve is absent from capabilities rather than broken-but-advertised.
@@ -37,6 +36,8 @@
 - A profile can be proven on a real box: booting a supported profile from a clean ~/.lobes needs zero hand-edits to the generated compose file.
 - lobes is honest about coverage: it ships Spark (default) + Thor as supported, names Orin/Orin Nano Super as unvalidated, and on an unrecognised card it refuses-or-warns rather than silently applying the Spark profile.
 - The baseline is reproducible: a clean 'lobes init' + 'lobes serve' on Thor with the stock template reproduces 1/4-correct-on-first-boot, so 4/4-with-0-edits is a measured improvement, not a claim.
+- The claim is checkable in the code as it stands: lobes/profiles.py really does define MachineProfile/MACHINE_PROFILES/detect_machine (grep it), the fleet compose really does hardcode the Spark values rather than read them, the thor row really is status='configured' with attention_backend='flashinfer', and detect_machine really does fall back to 'generic'. If any of those five is false, this before_state is wrong and the spec must be re-cut.
+- Extensibility is PROVEN, not asserted: a test registers a synthetic new chip strategy and shows detection, profile resolution and knob rendering all pick it up with ZERO edits to profiles.py / _detect.py / init.py — and every pre-existing test still passes UNMODIFIED (if an existing test's expectations must change, legacy behaviour was broken and the refactor has failed).
 
 ## Success signals
 
@@ -60,6 +61,7 @@
 
 - A machine profile pins the MODEL for each role, not just tuning knobs: the profile is the full machine contract (feasible roles + model per role + knobs), and the catalog is the menu it selects from. This is what lets Orin Nano Super downshift cortex to a small model instead of only disabling it.
 - Profiles are default + overridable, and an operator may keep SEVERAL: lobes ships built-in profiles (Spark default, Thor), auto-detection picks one, --profile overrides it, and an operator can define their own profile rather than being limited to the shipped set.
+- ARCHITECTURE: per-chip knowledge lives behind a STRATEGY PATTERN — one module per chip (lobes/machines/<chip>.py) owning its own detection signature, per-role knobs and provenance, plus a small shared registry. Adding a chip = one new file + one registration line; it must NOT mean editing shared tables in profiles.py / _detect.py / init.py, and a change for one chip must not be able to break another. Old code is NOT deleted: MachineProfile, MACHINE_PROFILES, detect_machine() and their switch/benchmark callers keep working, rebuilt FROM the registry rather than duplicated.
 
 ## Hard questions
 

@@ -4,7 +4,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T15:33:49Z",
-  "updated": "2026-07-13T16:01:29Z",
+  "updated": "2026-07-13T17:15:13Z",
   "claims": [
     {
       "id": "c1",
@@ -29,7 +29,7 @@
       "kind": "before_state",
       "text": "The packaged templates hardcode one tuning for the DGX Spark GB10 (sm_121). It does not transfer: on Jetson AGX Thor (sm_110) cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings. Every one of these was found by crashing into it.",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h7",
@@ -301,6 +301,42 @@
         {
           "id": "h14",
           "text": "The baseline is reproducible: a clean 'lobes init' + 'lobes serve' on Thor with the stock template reproduces 1/4-correct-on-first-boot, so 4/4-with-0-edits is a measured improvement, not a claim.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "lobes ALREADY has a machine-profile axis \u2014 lobes/profiles.py ships MachineProfile + MACHINE_PROFILES (spark/thor/blackwell/generic) and detect_machine(), wired to VLLM_MACHINE and used by switch/benchmark. But it is (a) ONE knob-set per machine, not per role; (b) missing the knobs that actually matter \u2014 kv-cache dtype, enforce-eager, model-per-role, role feasibility; (c) IGNORED by the fleet compose (the default path), which hardcodes DGX Spark GB10 values; (d) its thor row is an unvalidated GUESS (status 'configured': flashinfer / 32768 / util 0.6) that live testing on a physical Thor CONTRADICTS; and (e) detect_machine() silently falls back to 'generic' instead of admitting it does not know the card. On Thor (sm_110) the shipped fleet scored 1 of 4 roles correct on first boot; cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "The claim is checkable in the code as it stands: lobes/profiles.py really does define MachineProfile/MACHINE_PROFILES/detect_machine (grep it), the fleet compose really does hardcode the Spark values rather than read them, the thor row really is status='configured' with attention_backend='flashinfer', and detect_machine really does fall back to 'generic'. If any of those five is false, this before_state is wrong and the spec must be re-cut.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c20",
+      "kind": "decision",
+      "text": "ARCHITECTURE: per-chip knowledge lives behind a STRATEGY PATTERN \u2014 one module per chip (lobes/machines/<chip>.py) owning its own detection signature, per-role knobs and provenance, plus a small shared registry. Adding a chip = one new file + one registration line; it must NOT mean editing shared tables in profiles.py / _detect.py / init.py, and a change for one chip must not be able to break another. Old code is NOT deleted: MachineProfile, MACHINE_PROFILES, detect_machine() and their switch/benchmark callers keep working, rebuilt FROM the registry rather than duplicated.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "Extensibility is PROVEN, not asserted: a test registers a synthetic new chip strategy and shows detection, profile resolution and knob rendering all pick it up with ZERO edits to profiles.py / _detect.py / init.py \u2014 and every pre-existing test still passes UNMODIFIED (if an existing test's expectations must change, legacy behaviour was broken and the refactor has failed).",
           "status": "confirmed",
           "instruction": ""
         }

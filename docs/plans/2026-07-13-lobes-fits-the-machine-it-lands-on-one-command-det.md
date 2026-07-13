@@ -91,6 +91,15 @@ slug: `lobes-fits-the-machine-it-lands-on-one-command-det` · status: `exported`
   - Every knob in the reference traces to a human-validated observation on a real card (boot log, probe result, measured budget)
   - Thor's known-incorrect reranker is documented with a pointer to #105/#106 rather than being hidden
 
+### t12 — Per-chip STRATEGY PATTERN (foundational — do this before the other tasks build on top of the current shape): one module per chip under lobes/machines/ (CardStrategy: its own detection signature + per-role knobs + provenance) plus a small shared registry. profiles.py / _detect.py / init.py stop carrying per-chip tables and derive from the registry instead. Nothing is deleted: MachineProfile, MACHINE_PROFILES, detect_machine() and their switch/benchmark callers keep working, rebuilt FROM the registry. Also re-cuts the false premise the spec originally carried (that lobes had no machine-profile axis at all — it does)
+
+- instruction: OWNS: lobes/machines/ (new), and the registry-derivation edits to lobes/profiles.py + lobes/runtime/_detect.py. Foundational: land this BEFORE t1/t2/t4 build per-chip tables that would then have to be unpicked. Do NOT delete the legacy API (MachineProfile / MACHINE_PROFILES / detect_machine / resolve_serve_config) — derive it from the registry. stdlib only (dependencies = []); an explicit registry with imports in machines/__init__.py, no plugin/entry-point machinery.
+- covers: c19, h15
+- acceptance:
+  - Adding a new chip = ONE new file + ONE registration line, proven by a test that registers a synthetic chip strategy and shows detection, profile resolution and knob rendering all pick it up with ZERO edits to profiles.py / _detect.py / init.py
+  - Every pre-existing test passes UNMODIFIED — if an existing test's expectations must change, legacy behaviour was broken and the refactor has failed
+  - The existing thor row (status='configured': flashinfer / 32768 / util 0.6 — an unvalidated guess that live Thor testing contradicts) is replaced with the measured values and marked load-tested; detect_machine()'s silent 'generic' fallback is preserved for its legacy callers but is NOT the source of truth for init
+
 ## Risks
 
 - [follow_up] Reranker returns deterministically wrong orderings on Thor and MAY be wrong on the GB10 too (nothing checks ordering today). Tracked in lobes-cli#105 / #106. Until #106 answers, t8 cannot claim 4/4 on Thor — the thor profile must either fix rerank or declare it unavailable rather than advertise it broken. (task t8)

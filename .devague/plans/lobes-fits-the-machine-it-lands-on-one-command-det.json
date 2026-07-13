@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-13T16:09:59Z",
-  "updated": "2026-07-13T16:24:28Z",
+  "updated": "2026-07-13T17:15:49Z",
   "targets": [
     {
       "id": "c1",
@@ -16,16 +16,6 @@
       "id": "h6",
       "kind": "honesty",
       "text": "One command does it: on a supported card, 'lobes init' picks the right profile with no flags, and 'lobes doctor' names which profile it picked and why (detected card + capability + memory)."
-    },
-    {
-      "id": "c2",
-      "kind": "before_state",
-      "text": "The packaged templates hardcode one tuning for the DGX Spark GB10 (sm_121). It does not transfer: on Jetson AGX Thor (sm_110) cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings. Every one of these was found by crashing into it."
-    },
-    {
-      "id": "h7",
-      "kind": "honesty",
-      "text": "The three Thor divergences found by hand this session (kv-cache dtype auto, attention backend TRITON_ATTN on the pooling gears, enforce-eager on rerank) are exactly what a Thor profile encodes \u2014 the profile reproduces the working fleet without hand-editing."
     },
     {
       "id": "c3",
@@ -136,6 +126,16 @@
       "id": "h14",
       "kind": "honesty",
       "text": "The baseline is reproducible: a clean 'lobes init' + 'lobes serve' on Thor with the stock template reproduces 1/4-correct-on-first-boot, so 4/4-with-0-edits is a measured improvement, not a claim."
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "lobes ALREADY has a machine-profile axis \u2014 lobes/profiles.py ships MachineProfile + MACHINE_PROFILES (spark/thor/blackwell/generic) and detect_machine(), wired to VLLM_MACHINE and used by switch/benchmark. But it is (a) ONE knob-set per machine, not per role; (b) missing the knobs that actually matter \u2014 kv-cache dtype, enforce-eager, model-per-role, role feasibility; (c) IGNORED by the fleet compose (the default path), which hardcodes DGX Spark GB10 values; (d) its thor row is an unvalidated GUESS (status 'configured': flashinfer / 32768 / util 0.6) that live testing on a physical Thor CONTRADICTS; and (e) detect_machine() silently falls back to 'generic' instead of admitting it does not know the card. On Thor (sm_110) the shipped fleet scored 1 of 4 roles correct on first boot; cortex needed --kv-cache-dtype=auto, embedder needed --attention-config TRITON_ATTN, reranker needed --enforce-eager and STILL returns wrong rankings."
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The claim is checkable in the code as it stands: lobes/profiles.py really does define MachineProfile/MACHINE_PROFILES/detect_machine (grep it), the fleet compose really does hardcode the Spark values rather than read them, the thor row really is status='configured' with attention_backend='flashinfer', and detect_machine really does fall back to 'generic'. If any of those five is false, this before_state is wrong and the spec must be re-cut."
     }
   ],
   "tasks": [
@@ -366,6 +366,23 @@
         "h11"
       ],
       "instruction": "OWNS: docs/machine-profiles.md (new), lobes/explain/, README/CLAUDE.md support table. Docs only, no source. Do not claim Orin support. Be explicit that Thor's rerank runs but is not yet correct."
+    },
+    {
+      "id": "t12",
+      "summary": "Per-chip STRATEGY PATTERN (foundational \u2014 do this before the other tasks build on top of the current shape): one module per chip under lobes/machines/ (CardStrategy: its own detection signature + per-role knobs + provenance) plus a small shared registry. profiles.py / _detect.py / init.py stop carrying per-chip tables and derive from the registry instead. Nothing is deleted: MachineProfile, MACHINE_PROFILES, detect_machine() and their switch/benchmark callers keep working, rebuilt FROM the registry. Also re-cuts the false premise the spec originally carried (that lobes had no machine-profile axis at all \u2014 it does).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Adding a new chip = ONE new file + ONE registration line, proven by a test that registers a synthetic chip strategy and shows detection, profile resolution and knob rendering all pick it up with ZERO edits to profiles.py / _detect.py / init.py",
+        "Every pre-existing test passes UNMODIFIED \u2014 if an existing test's expectations must change, legacy behaviour was broken and the refactor has failed",
+        "The existing thor row (status='configured': flashinfer / 32768 / util 0.6 \u2014 an unvalidated guess that live Thor testing contradicts) is replaced with the measured values and marked load-tested; detect_machine()'s silent 'generic' fallback is preserved for its legacy callers but is NOT the source of truth for init"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h15"
+      ],
+      "instruction": "OWNS: lobes/machines/ (new), and the registry-derivation edits to lobes/profiles.py + lobes/runtime/_detect.py. Foundational: land this BEFORE t1/t2/t4 build per-chip tables that would then have to be unpicked. Do NOT delete the legacy API (MachineProfile / MACHINE_PROFILES / detect_machine / resolve_serve_config) \u2014 derive it from the registry. stdlib only (dependencies = []); an explicit registry with imports in machines/__init__.py, no plugin/entry-point machinery."
     }
   ],
   "risks": [

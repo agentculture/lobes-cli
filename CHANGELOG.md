@@ -10,16 +10,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Plan (`/spec-to-plan`, converged): **per-machine hardware profiles** —
   `docs/plans/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
-  Ten tasks over four dependency waves, each wave file-disjoint so it can be
-  built in parallel: profile schema + spark/thor profiles, card detection,
-  template parameterisation, and per-role correctness probes (wave 1); `init`
-  applies the profile and role-feasibility reaches capabilities/gateway (wave 2);
+  Eleven tasks over four file-disjoint dependency waves: the **per-chip strategy
+  pattern** + profile schema + spark/thor profiles, card detection, template
+  parameterisation and per-role correctness probes (wave 1); `init` applies the
+  profile and role-feasibility reaches capabilities/gateway (wave 2);
   `doctor`/`status` report the profile, and the Thor profile is validated on the
   physical board (wave 3); docs + an honest support table (wave 4).
+
+  Per-chip knowledge goes behind a **strategy pattern** — one module per chip
+  (`lobes/machines/<chip>.py`) owning its own detection signature, per-role knobs
+  and provenance, plus a small shared registry. Adding a chip is one new file and
+  one registration line; it must not mean editing shared tables, and a change for
+  one chip must not be able to break another. No existing code is deleted:
+  `MachineProfile`, `MACHINE_PROFILES` and `detect_machine()` keep working,
+  rebuilt *from* the registry rather than duplicated.
 
   On Thor the reranker stays **served and advertised** — it runs, it is simply
   not yet correct; its ordering probe is recorded as a known failure pointing at
   #105 / #106, rather than the role being hidden.
+
+### Fixed
+
+- Spec correction: the first cut of this spec claimed lobes had no machine-profile
+  concept at all. It does — `lobes/profiles.py` already ships `MachineProfile` /
+  `MACHINE_PROFILES` (spark/thor/blackwell/generic) and `detect_machine()`, wired
+  to `VLLM_MACHINE` and used by `switch`/`benchmark`. The real gaps, now stated
+  honestly in the spec's before-state: it is one knob-set **per machine, not per
+  role**; it lacks the knobs that actually mattered on Thor (KV-cache dtype,
+  enforce-eager, model-per-role, role feasibility); the **fleet** compose (the
+  default path) ignores it entirely and hardcodes the Spark values; its `thor` row
+  is an unvalidated guess (`status="configured"`: flashinfer / 32768 / util 0.6)
+  that live Thor testing **contradicts**; and `detect_machine()` silently falls
+  back to `generic` instead of admitting it does not know the card.
 
 ### Changed
 
@@ -33,8 +55,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/specs/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
   lobes detects the host card and applies a profile tuned for *that* box
   (feasible roles + model per role + util / context / quantization / KV dtype /
-  attention backend / enforce-eager), instead of the single GB10-tuned config
-  the templates hardcode today. Ships Spark (default) + Thor as supported;
+  attention backend / enforce-eager), instead of the fleet compose's hardcoded
+  GB10 values. Ships Spark (default) + Thor as supported;
   Orin / Orin Nano Super are named but unvalidated; an unrecognised card
   refuses-or-warns rather than silently applying the Spark profile.
   Every role gains a **correctness** probe, not just `/health` — a role that is
