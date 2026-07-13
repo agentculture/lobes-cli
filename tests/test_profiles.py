@@ -152,3 +152,19 @@ def test_as_dicts_round_trip() -> None:
     assert {d["name"] for d in profiles.machines_as_dicts()} == {
         mp.name for mp in profiles.MACHINE_PROFILES
     }
+
+
+# --- lobes.profiles is now a package (lobes/profiles/) --------------------
+# The module -> package conversion must be invisible to every pre-existing
+# caller: `import lobes.profiles` / `from lobes import profiles` keep working
+# exactly as before, and the new schema/loader surface lives alongside the
+# legacy API without shadowing or breaking it. See tests/test_profile_schema.py
+# for the new lobes.profiles.schema / lobes.profiles.loader coverage.
+
+
+def test_profiles_is_a_package_with_the_new_schema_and_loader_submodules() -> None:
+    import lobes.profiles as pkg
+
+    assert hasattr(pkg, "__path__")  # a package, not a plain module
+    assert pkg.Profile.__module__ == "lobes.profiles.schema"
+    assert pkg.resolve_profile.__module__ == "lobes.profiles.loader"
