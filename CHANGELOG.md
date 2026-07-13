@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.2] - 2026-07-13
+
+### Added
+
+- Spec (`/think`, converged): **per-machine hardware profiles** —
+  `docs/specs/2026-07-13-lobes-fits-the-machine-it-lands-on-one-command-det.md`.
+  lobes detects the host card and applies a profile tuned for *that* box
+  (feasible roles + model per role + util / context / quantization / KV dtype /
+  attention backend / enforce-eager), instead of the single GB10-tuned config
+  the templates hardcode today. Ships Spark (default) + Thor as supported;
+  Orin / Orin Nano Super are named but unvalidated; an unrecognised card
+  refuses-or-warns rather than silently applying the Spark profile.
+  Every role gains a **correctness** probe, not just `/health` — a role that is
+  healthy but semantically wrong must fail.
+
+  Motivated by bringing the fleet up on a Jetson AGX Thor (sm_110): the
+  Spark-tuned template scored **1 of 4 roles correct on first boot** (senses
+  clean; cortex crash-looped on an fp8-KV assert; embedder accepted requests and
+  never answered; reranker killed its engine with `cudaErrorLaunchFailure`), and
+  reaching 3 of 4 took four hand-edits to the generated compose. Rerank is still
+  wrong there — tracked in #105 / #106.
+
+### Changed
+
+### Fixed
+
 ## [0.40.1] - 2026-07-11
 
 ### Added
