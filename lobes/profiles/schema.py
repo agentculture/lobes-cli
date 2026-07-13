@@ -81,18 +81,22 @@ def _is_optional_int(value: Any) -> bool:
     return value is None or isinstance(value, int)
 
 
+# Shared "expected" description for every Optional[str] knob below — defined
+# once so the literal isn't duplicated across the validator table (S1192).
+_STR_OR_NONE = "str or None"
+
 # Per-field type validator + human-readable "expected" description, used by
 # RoleProfile.from_dict to reject a value of the wrong TYPE (not just an
 # unknown key) — e.g. `feasible = "false"` (a truthy STRING) must fail loudly
 # rather than silently flip a role to feasible via Python truthiness.
 _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "feasible": (_is_strict_bool, "bool"),
-    "model": (_is_optional_str, "str or None"),
+    "model": (_is_optional_str, _STR_OR_NONE),
     "gpu_mem_util": (_is_optional_number, "int/float or None"),
     "max_model_len": (_is_optional_int, "int or None"),
-    "quantization": (_is_optional_str, "str or None"),
-    "kv_cache_dtype": (_is_optional_str, "str or None"),
-    "attention_backend": (_is_optional_str, "str or None"),
+    "quantization": (_is_optional_str, _STR_OR_NONE),
+    "kv_cache_dtype": (_is_optional_str, _STR_OR_NONE),
+    "attention_backend": (_is_optional_str, _STR_OR_NONE),
     "enforce_eager": (_is_optional_bool, "bool or None"),
     "max_num_seqs": (_is_optional_int, "int or None"),
 }
@@ -150,7 +154,7 @@ class RoleProfile:
                 got = type(value).__name__
                 raise _profile_error(
                     message=(
-                        f"role {role!r}: knob {key!r} must be {expected}, " f"got {got} ({value!r})"
+                        f"role {role!r}: knob {key!r} must be {expected}, got {got} ({value!r})"
                     ),
                     remediation=(
                         f"fix the value's type for {key!r} in role {role!r} "
