@@ -1,0 +1,73 @@
+=== lobes mesh-brain end-state acceptance — honest referral, live on the physical Jetson AGX Thor ===
+  utc          : 2026-07-14T14:38:28Z
+  host         : thor (Jetson AGX Thor 128GB, sm_110)
+  repo rev     : 1d96311 (branch feat/112-mesh-brain-end-state)
+  scope        : issue #112 t5 — referral surface live; full thor-lobe boot/probes/restore
+                 already validated 2026-07-14 in docs/evidence/2026-07-14-accept-thor-lobe-thor.txt (#113);
+                 spark-lobe likewise in docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt (operator decision:
+                 Spark part reused, not re-run).
+  method       : the serving machine-as-brain fleet stays up; this branch's gateway runs from source
+                 on :8100 with the thor-lobe feasibility env (PRIMARY_FEASIBLE=false) against the SAME
+                 live vLLM lanes (senses/embedder/reranker container IPs), peer origin operator-declared:
+                 PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 (the real peer that hosts cortex).
+
+=== check 1: GET /capabilities — dropped cortex is flagged, not hidden, and carries the referral ===
+  cortex    feasible=False ready=False hosted_by=http://spark.tail0be7e0.ts.net:8001
+  senses    feasible=True ready=True hosted_by=-
+  embedder  feasible=True ready=True hosted_by=-
+  reranker  feasible=True ready=True hosted_by=-
+  PASS  cortex feasible:false + hosted_by names the declared peer; hosted roles ready
+
+=== check 2: GET /v1/models omits every dropped-cortex alias ===
+  served ids: ['Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Reranker-0.6B', 'coolthor/gemma-4-12B-it-NVFP4A16']
+  PASS  no cortex alias advertised
+
+=== check 3: POST for each dropped alias -> 404 role_infeasible carrying the referral (never rerouted) ===
+  PASS  model=main -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
+        message: The model `main` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+  PASS  model=hard -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
+        message: The model `hard` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+  PASS  model=cortex -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
+        message: The model `cortex` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+
+=== check 4: hosted roles serve LIVE through the same gateway (advertised implies reachable) ===
+  senses (model=multimodal, coolthor/gemma-4-12B-it-NVFP4A16): 'Blue'
+  PASS  senses known-answer
+  embedder (Qwen/Qwen3-Embedding-0.6B): 1024-dim vector
+  PASS  embeddings live
+  reranker: FINDING (pre-existing, unrelated to this branch) — the rerank lane of the long-running
+    machine-as-brain deployment on this box hangs on /v1/rerank (90s+, direct to the lane AND via the
+    production gateway :8000; /health stays 200). The deployment predates per-machine profiles (#110):
+    its .env carries MULTIMODAL_ATTENTION_BACKEND=TRITON_ATTN but NOT the reranker's validated sm_110
+    divergences (RERANK_ENFORCE_EAGER=true, RERANK_ATTENTION_BACKEND=TRITON_ATTN — CUDA graphs unstable
+    on sm_110). Fix: re-scaffold with the current release (lobes init renders the thor profile).
+    Rerank-on-Thor liveness+ordering under the correct knobs is already live-evidenced in
+    docs/evidence/2026-07-14-accept-thor-lobe-thor.txt (#113 acceptance, PROBES included reranker).
+
+=== check 5: the brain stays whole — a consumer follows the referral and reaches cortex on the peer ===
+  (dialing the referral origin DIRECTLY, as the 404 message instructs — this gateway did not proxy)
+  cortex via http://spark.tail0be7e0.ts.net:8001 (model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP): 'cortex-on-spark-alive'
+  PASS  every role of the brain reachable across the two boxes (direct + referral)
+
+=== check 6: shape moves are byte-for-byte restorable (scratch deployment dir, no containers) ===
+  (moving between shapes in-place uses --force to overwrite the existing scaffold)
+  1) lobes init --shape machine-as-brain --apply          -> tree hash 965708cc23da1ea5…
+  2) lobes init --shape thor-lobe --apply --force         -> tree hash 0c8e921fd3b27689…  shape override active:
+       MULTIMODAL_MAX_MODEL_LEN=131072
+       MULTIMODAL_GPU_MEM_UTIL=0.3
+       docker-compose.shape.yml present (cortex lobe dropped)
+  3) lobes init --shape machine-as-brain --apply --force  -> tree hash 965708cc23da1ea5…
+  PASS  re-running init with the previous shape restores the rendering byte-for-byte (h1==h3, h1!=h2)
+
+=== verdict ===
+  PASS — the #112 t5 Thor-side surface is live-validated on the physical Jetson AGX Thor:
+    - referral: capabilities hosted_by + 404 role_infeasible referral for every dropped-cortex alias,
+      origin operator-declared (http://spark.tail0be7e0.ts.net:8001), gateway never proxies
+    - hosted lanes live through the same gateway: senses known-answer, embedder 1024-dim vector
+    - whole brain across boxes: cortex answered a direct consumer request on the referral origin
+    - shape moves byte-for-byte restorable (machine-as-brain -> thor-lobe -> machine-as-brain)
+  Reused evidence (operator decision, 2026-07-14): full-shape boots + 5/5 probes + measured budgets on
+  both boxes are in docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt and
+  docs/evidence/2026-07-14-accept-thor-lobe-thor.txt (#113 acceptance runs).
+  Open finding: this box's long-running deployment predates #110 profiles; its rerank lane hangs
+  (see check 4) — re-scaffold to pick up the thor profile's RERANK_ENFORCE_EAGER/TRITON_ATTN.
