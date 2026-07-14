@@ -126,6 +126,64 @@ _INIT_REMEDIATION = (
 # Back-compat alias: the single set was the only one before the fleet existed.
 _TEMPLATES = SINGLE_TEMPLATES
 
+# Think-aware tool-parser plugin (t2, devague plan: fleet template + init wiring
+# for the qwen3_coder_thinking tool-parser plugin). Materialised from the
+# PACKAGED PYTHON MODULE lobes.vllm_plugins.qwen3_thinking_tool_parser — a
+# DIFFERENT mechanism than SINGLE_TEMPLATES/FLEET_TEMPLATES/AUDIO_TEMPLATES
+# above, deliberately: those all read from the `lobes.templates` resource tree
+# (data files with no other job), while the plugin file is real Python package
+# code (`lobes/vllm_plugins/`) — single source of truth, read fresh via
+# importlib.resources rather than duplicated as a second copy under
+# `lobes/templates/fleet/` (contrast the audio overlay's `_readiness.py`
+# "vendored twin", which IS a manually-synced duplicate because that file must
+# import cleanly with zero `lobes` package on the Parakeet container's
+# PYTHONPATH — the tool-parser plugin has no such constraint: vLLM loads it by
+# file PATH via --tool-parser-plugin, never by Python import name, so one copy
+# read fresh at scaffold time is strictly simpler and can't drift).
+# Fleet-topology only (mounted into vllm-primary/cortex only, see the fleet
+# compose) — the legacy single-model scaffold never materialises this file.
+PLUGIN_PACKAGE = "lobes.vllm_plugins"
+PLUGIN_MODULE_FILE = "qwen3_thinking_tool_parser.py"
+PLUGIN_DEST_NAME = "qwen3_thinking_tool_parser.py"
+
+
+def plugin_source() -> str:
+    """The packaged tool-parser plugin's current source text.
+
+    Read fresh via ``importlib.resources`` on every call — never cached, never
+    duplicated under ``lobes/templates/`` — so the deployment dir always gets
+    whatever ships in ``lobes.vllm_plugins.qwen3_thinking_tool_parser`` for the
+    installed ``lobes-cli`` version.
+    """
+    return files(PLUGIN_PACKAGE).joinpath(PLUGIN_MODULE_FILE).read_text(encoding="utf-8")
+
+
+def plugin_plan(target: os.PathLike | str) -> tuple[str, bool]:
+    """``(dest_name, already_exists)`` for the plugin file — same shape as one
+    entry of :func:`scaffold_plan`, so ``lobes init``'s dry-run listing can
+    just append it to that function's return value."""
+    return (PLUGIN_DEST_NAME, (Path(target) / PLUGIN_DEST_NAME).exists())
+
+
+def write_plugin_file(target: os.PathLike | str, *, force: bool) -> Path:
+    """Write the tool-parser plugin file into the deployment dir. Returns the path.
+
+    Mirrors :func:`write_scaffold`'s per-file exists/force contract: refuses to
+    overwrite an existing file unless ``force`` is set. Fleet-only — the caller
+    (``lobes init``) never invokes this for the legacy single-model scaffold.
+    """
+    dest_dir = Path(target).expanduser()
+    dest = dest_dir / PLUGIN_DEST_NAME
+    if dest.exists() and not force:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{dest} already exists",
+            remediation="re-run with --force to overwrite",
+        )
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest.write_text(plugin_source(), encoding="utf-8")
+    return dest
+
 
 def default_deployment_dir() -> Path:
     """The global deployment home: ``~/.lobes``."""
