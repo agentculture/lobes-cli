@@ -12,6 +12,14 @@ Rewrites every golden this directory owns:
   ``profile_env(resolve_profile(<name>))``.
 * ``tests/goldens/template-defaults.env`` — the ``${VAR:-default}`` surface of
   ``lobes/templates/fleet/docker-compose.yml``.
+* ``tests/goldens/shapes/<shape>__<card>.env`` — one per (deployment-shape,
+  card) pair that is NOT the whole-brain identity shape (brain-shapes t3), the
+  sorted ``KEY=VALUE`` projection of
+  ``render_shape(resolve_shape(<shape>), resolve_profile(<card>)).env``. The
+  identity shape ``machine-as-brain`` (hosts every role, no overrides) renders
+  byte-identically to the bare ``<card>.env`` above, so it is validated against
+  that existing golden by ``tests/test_shape_goldens.py`` rather than copied
+  into a drifting duplicate here.
 
 These are the byte-for-byte comparison targets in
 ``tests/test_profile_goldens.py``. Regenerating is a deliberate act, not a
@@ -34,8 +42,15 @@ if str(_REPO_ROOT) not in sys.path:
 
 from lobes.profiles.loader import builtin_names, resolve_profile  # noqa: E402
 from lobes.profiles.render import profile_env  # noqa: E402
+from lobes.profiles.shape_render import render_shape  # noqa: E402
+from lobes.profiles.shapes import (  # noqa: E402
+    SHAPE_ROLES,
+    builtin_shape_names,
+    resolve_shape,
+)
 
 FLEET_COMPOSE = _REPO_ROOT / "lobes" / "templates" / "fleet" / "docker-compose.yml"
+_SHAPES_DIR = _GOLDENS_DIR / "shapes"
 
 _VAR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -115,6 +130,63 @@ def template_defaults_text() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _shape_needs_goldens(shape) -> bool:
+    """Whether a shape gets its own ``shapes/`` goldens.
+
+    The whole-brain identity shape (hosts every :data:`SHAPE_ROLES` role, no
+    overrides) renders identically to the bare card profile, so it is validated
+    against the existing ``tests/goldens/<card>.env`` (see
+    ``tests/test_shape_goldens.py``) rather than copied into a drifting
+    duplicate. Every shape that DROPS a role or carries an override diverges
+    from the bare profile and gets per-card goldens of its own. General by
+    construction: a future identity shape is auto-excluded, a future mesh-lobe
+    auto-included.
+    """
+    return set(shape.hosts) != set(SHAPE_ROLES) or bool(shape.overrides)
+
+
+def shape_golden_pairs() -> list[tuple[str, str]]:
+    """Every ``(shape, card)`` pair that gets a ``shapes/`` golden — sorted, deterministic.
+
+    The cross product of the non-identity built-in shapes with every built-in
+    card profile. Enumerated (not hardcoded) so a new shape or card is picked up
+    automatically the next time this command runs.
+    """
+    pairs: list[tuple[str, str]] = []
+    for shape_name in builtin_shape_names():
+        if not _shape_needs_goldens(resolve_shape(shape_name)):
+            continue
+        for card_name in builtin_names():
+            pairs.append((shape_name, card_name))
+    return pairs
+
+
+def shape_golden_path(shape_name: str, card_name: str) -> Path:
+    """The on-disk golden path for a ``(shape, card)`` pair."""
+    return _SHAPES_DIR / f"{shape_name}__{card_name}.env"
+
+
+def shape_env_text(shape_name: str, card_name: str) -> str:
+    """The sorted ``KEY=VALUE\\n`` projection of a (shape, card) rendering.
+
+    Pure passthrough of ``render_shape(resolve_shape(shape), resolve_profile(card))``
+    -- this module never reimplements the shape x card mapping, it only formats
+    what ``lobes.profiles.shape_render`` already produced.
+    """
+    return render_shape(resolve_shape(shape_name), resolve_profile(card_name)).env_text()
+
+
+def write_shape_goldens() -> list[Path]:
+    """Rewrite every ``shapes/<shape>__<card>.env`` golden; returns the paths written."""
+    _SHAPES_DIR.mkdir(exist_ok=True)
+    written: list[Path] = []
+    for shape_name, card_name in shape_golden_pairs():
+        path = shape_golden_path(shape_name, card_name)
+        path.write_text(shape_env_text(shape_name, card_name), encoding="utf-8")
+        written.append(path)
+    return written
+
+
 def write_goldens() -> list[Path]:
     written: list[Path] = []
     for name in builtin_names():
@@ -124,6 +196,7 @@ def write_goldens() -> list[Path]:
     template_path = _GOLDENS_DIR / "template-defaults.env"
     template_path.write_text(template_defaults_text(), encoding="utf-8")
     written.append(template_path)
+    written.extend(write_shape_goldens())
     return written
 
 
