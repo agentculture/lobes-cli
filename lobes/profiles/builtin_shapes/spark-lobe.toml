@@ -1,0 +1,36 @@
+# The DGX Spark half of a mesh-brain deployment (brain-shapes t1, issue #113):
+# keeps the Qwen `cortex` primary + the two pooling gears + the audio overlay
+# on this box, and drops the Gemma `senses` lobe to a peer box (today, the
+# Jetson AGX Thor running thor-lobe.toml) instead of co-residing it here.
+#
+# Differs from machine-as-brain.toml in `hosts` (senses dropped) and, as of
+# brain-shapes t2/t2b, `overrides` -- cortex gets its FULL NATIVE budget now
+# that it no longer shares the box with senses. Co-residency previously capped
+# cortex at util 0.30 / 131072 tokens (see CLAUDE.md's "Colleague roles"); as
+# of t2b (issue #113, user decision on the PR), that trim's reason is gone --
+# senses is dropped from this shape entirely, not just downsized -- so cortex
+# rises to its full native budget in THIS task, not deferred to #112.
+name = "spark-lobe"
+summary = "DGX Spark mesh-lobe -- Qwen cortex + embedder + reranker + audio, no Gemma senses"
+
+hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
+
+[overrides.cortex]
+# gpu_mem_util = 0.44 -- the co-resident reclaim-sum: 0.30 (cortex, spark
+# co-resident) + 0.14 (senses, spark co-resident), reclaimed because senses is
+# dropped from this shape. NOT the historical 0.60 solo value: the GB10's
+# 121.69 GiB is UNIFIED memory shared with the host OS and its services, and
+# the 2026-07-14 live boot measured only 59.35 GiB free at primary startup --
+# vLLM refuses util 0.60 (73.01 GiB) outright on a box that also runs the
+# pooling gears, the audio sidecars, and ordinary host workloads. 0.44
+# (53.5 GiB) fits that measured reality with margin. (Live transcript:
+# lobes-accept-spark-lobe-20260714; issue #113.)
+#
+# max_model_len = 262144 -- the checkpoint's own native context
+# (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP, 256K -- see CLAUDE.md's model
+# section), previously trimmed to 131072 only so cortex could co-reside with
+# senses on the single-box shape. Senses is dropped in THIS shape, so the
+# trim's reason is gone -- reclaimed here (issue #113, user decision on the
+# PR), not deferred to #112.
+gpu_mem_util = 0.44
+max_model_len = 262144

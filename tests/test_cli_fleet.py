@@ -6,7 +6,7 @@ import json
 import types
 
 from lobes.cli import main
-from lobes.runtime import _compose, _health
+from lobes.runtime import _compose, _detect, _health
 
 
 def _ok() -> types.SimpleNamespace:
@@ -21,6 +21,20 @@ def _scaffold_fleet(path):
 def _scaffold_fleet_audio(path):
     templates = {**_compose.FLEET_TEMPLATES, **_compose.AUDIO_TEMPLATES}
     _compose.write_scaffold(path, force=True, templates=templates)
+    return path
+
+
+def _write_shape_override(path, dropped_services):
+    """Write a minimal shape override that parks ``dropped_services`` in the inert
+    profile — mirrors the exact format ``lobes init`` generates (see
+    tests/test_init_shape.py for the round-trip against the real generator)."""
+    lines = ["services:"]
+    for svc in dropped_services:
+        lines.append(f"  {svc}:")
+        lines.append('    profiles: ["shape-dropped"]')
+    lines.append("  gateway:")
+    lines.append("    depends_on: !reset null")
+    (path / _compose.SHAPE_OVERLAY).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -229,6 +243,136 @@ def test_fleet_up_reports_audio_containers_with_overlay(tmp_path, monkeypatch, c
     payload = json.loads(capsys.readouterr().out)
     assert payload["containers"] == (
         list(_compose.FLEET_CONTAINERS) + list(_compose.FLEET_AUDIO_CONTAINERS)
+    )
+
+
+# --- shape overlay awareness (brain-shapes t4b) ------------------------------
+
+
+def test_shape_overlay_present_detects_the_file(tmp_path) -> None:
+    _scaffold_fleet(tmp_path)
+    assert _compose.shape_overlay_present(tmp_path) is False
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    assert _compose.shape_overlay_present(tmp_path) is True
+
+
+def test_compose_files_includes_shape_overlay_after_base(tmp_path) -> None:
+    """Acceptance 4: the -f chain gains the shape overlay (after the base) when present."""
+    _scaffold_fleet(tmp_path)  # no overlays
+    assert _compose._compose_files(tmp_path) == []
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    assert _compose._compose_files(tmp_path) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.SHAPE_OVERLAY,
+    ]
+
+
+def test_compose_files_orders_shape_after_audio(tmp_path) -> None:
+    """Both overlays present → base, then audio, then shape LAST (so the shape's
+    !reset on gateway.depends_on is applied after everything else)."""
+    _scaffold_fleet_audio(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-primary"])
+    assert _compose._compose_files(tmp_path) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+        "-f",
+        _compose.SHAPE_OVERLAY,
+    ]
+
+
+def test_compose_up_build_includes_shape_overlay_argv(tmp_path, monkeypatch) -> None:
+    _scaffold_fleet(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    captured: dict = {}
+    monkeypatch.setattr(
+        _compose, "_run", lambda argv, **kw: captured.setdefault("argv", argv) or _ok()
+    )
+    _compose.compose_up_build(tmp_path)
+    assert captured["argv"] == [
+        "docker",
+        "compose",
+        "-f",
+        "docker-compose.yml",
+        "-f",
+        "docker-compose.shape.yml",
+        "up",
+        "-d",
+        "--build",
+    ]
+
+
+def test_compose_down_includes_shape_overlay_argv(tmp_path, monkeypatch) -> None:
+    _scaffold_fleet(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-primary"])
+    captured: dict = {}
+    monkeypatch.setattr(
+        _compose, "_run", lambda argv, **kw: captured.setdefault("argv", argv) or _ok()
+    )
+    _compose.compose_down(tmp_path)
+    assert captured["argv"] == [
+        "docker",
+        "compose",
+        "-f",
+        "docker-compose.yml",
+        "-f",
+        "docker-compose.shape.yml",
+        "down",
+    ]
+
+
+def test_shape_dropped_containers_reads_the_override(tmp_path) -> None:
+    _scaffold_fleet(tmp_path)
+    assert _compose.shape_dropped_containers(tmp_path) == ()
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    assert _compose.shape_dropped_containers(tmp_path) == (_compose.FLEET_MULTIMODAL,)
+
+
+def test_fleet_containers_excludes_shape_dropped_service(tmp_path) -> None:
+    """Acceptance 5: the expected container list drops the shape-disabled gear."""
+    _scaffold_fleet(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    containers = _compose.fleet_containers(tmp_path)
+    assert _compose.FLEET_MULTIMODAL not in containers
+    assert _compose.FLEET_PRIMARY in containers
+    assert _compose.FLEET_EMBED in containers
+    assert _compose.FLEET_RERANK in containers
+    assert _compose.FLEET_GATEWAY in containers
+
+
+def test_fleet_status_excludes_dropped_container(tmp_path, capsys) -> None:
+    """Acceptance 5 end-to-end: `lobes fleet status` omits the dropped gear."""
+    _scaffold_fleet(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-primary"])
+    rc = main(["fleet", "status", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    names = [c["name"] for c in json.loads(capsys.readouterr().out)["containers"]]
+    assert _compose.FLEET_PRIMARY not in names
+    assert _compose.FLEET_MULTIMODAL in names
+
+
+def test_fleet_containers_matches_real_init_generated_override(tmp_path, monkeypatch) -> None:
+    """Ties the reader to the real generator: an init-scaffolded spark-lobe override
+    excludes exactly model-gear-vllm-multimodal from the fleet set."""
+    monkeypatch.setattr(_detect, "detect_card", lambda: _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    assert _compose.shape_dropped_containers(target) == (_compose.FLEET_MULTIMODAL,)
+    assert _compose.FLEET_MULTIMODAL not in _compose.fleet_containers(target)
+
+
+def _fake_card(resolved: str) -> _detect.DetectedCard:
+    return _detect.DetectedCard(
+        resolved=resolved,
+        device_name="NVIDIA GB10",
+        compute_capability="sm_121",
+        total_memory_gb=119.7,
+        hostname="test-host",
+        device_tree_model=None,
+        sources={},
     )
 
 

@@ -54,6 +54,26 @@ FLEET_TTS = "model-gear-chatterbox"
 FLEET_REALTIME = "model-gear-realtime"
 FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 
+# Deployment-SHAPE override (lobes init --shape <mesh-shape>): brain-shapes t4b,
+# issue #113. GENERATED (not a packaged template) by `lobes init` when the chosen
+# shape DROPS a core role — it parks the dropped core service in an inert compose
+# profile so `docker compose up` skips it, mirroring how AUDIO_OVERLAY layers on the
+# base fleet. Without it, the base compose boots every core service unconditionally,
+# so a dropped lobe RUNS and eats the GPU budget the shape reclaimed (proven live on
+# the GB10: spark-lobe still booted model-gear-vllm-multimodal). machine-as-brain /
+# bare init drop nothing, so no such file is written.
+SHAPE_OVERLAY = "docker-compose.shape.yml"
+# Core compose SERVICE name -> its container. A shape-dropped core service is read
+# back out of the override file (see `shape_dropped_containers`) to exclude its
+# container from the expected fleet set. Mirrors the base fleet's four core gears;
+# the gateway is never a dropped role, so it is not here.
+_CORE_SERVICE_CONTAINER: dict[str, str] = {
+    "vllm-primary": FLEET_PRIMARY,
+    "vllm-multimodal": FLEET_MULTIMODAL,
+    "vllm-embed": FLEET_EMBED,
+    "vllm-rerank": FLEET_RERANK,
+}
+
 # Template filename -> destination filename written by the scaffold. The library
 # helpers below keep SINGLE_TEMPLATES as their function-level default (every
 # existing caller stays unchanged); the FLEET set scaffolds the gateway
@@ -284,27 +304,90 @@ def audio_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / AUDIO_OVERLAY).is_file()
 
 
+def shape_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the deployment-shape override (``docker-compose.shape.yml``) is scaffolded.
+
+    Present only for a mesh-brain shape that drops a core role (``spark-lobe`` /
+    ``thor-lobe``); machine-as-brain / bare init never write it. Mirrors
+    :func:`audio_overlay_present`.
+    """
+    return (Path(deploy_dir) / SHAPE_OVERLAY).is_file()
+
+
+def _override_service_keys(text: str) -> set[str]:
+    """The top-level ``services:`` keys declared in an override file's YAML text.
+
+    A stdlib line scan (the runtime carries no YAML parser — see the module
+    docstring): a service key is exactly two-space-indented, non-blank, ends in
+    ``:``. The 4-space ``profiles:`` / ``depends_on:`` lines inside a block are
+    deeper-indented (or lack the trailing colon) and so are skipped.
+    """
+    keys: set[str] = set()
+    for line in text.splitlines():
+        if line.startswith("  ") and line[2:3] not in ("", " "):
+            stripped = line.strip()
+            if stripped.endswith(":"):
+                keys.add(stripped[:-1])
+    return keys
+
+
+def shape_dropped_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
+    """Container names the shape override disables, read from ``docker-compose.shape.yml``.
+
+    The override file itself is the single source of truth: ``lobes init`` GENERATES
+    it listing exactly the core services it parks in the inert ``shape-dropped``
+    compose profile (plus the ``gateway`` whose ``depends_on`` it resets — not a
+    core gear, so never returned here). Empty tuple when no override is scaffolded.
+    """
+    path = Path(deploy_dir) / SHAPE_OVERLAY
+    if not path.is_file():
+        return ()
+    keys = _override_service_keys(path.read_text(encoding="utf-8"))
+    return tuple(
+        container for service, container in _CORE_SERVICE_CONTAINER.items() if service in keys
+    )
+
+
 def is_fleet(deploy_dir: os.PathLike | str) -> bool:
     """True when the deploy dir is a fleet deployment (``Dockerfile.gateway`` present)."""
     return (Path(deploy_dir) / DOCKERFILE_GATEWAY).is_file()
 
 
 def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
-    """Fleet container names, including the audio trio when the overlay is present."""
+    """Fleet container names.
+
+    Excludes any core gear a deployment-shape override drops (its service is parked
+    in an inert profile, so ``docker compose up`` never starts it — see
+    :func:`shape_dropped_containers`), and includes the audio trio when the audio
+    overlay is present.
+    """
+    dropped = shape_dropped_containers(deploy_dir)
+    containers = tuple(c for c in FLEET_CONTAINERS if c not in dropped)
     if audio_overlay_present(deploy_dir):
-        return FLEET_CONTAINERS + FLEET_AUDIO_CONTAINERS
-    return FLEET_CONTAINERS
+        return containers + FLEET_AUDIO_CONTAINERS
+    return containers
 
 
 def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
-    """``-f`` args: just the base file, or base + audio overlay when present.
+    """``-f`` args: the base file plus whichever overlays are present.
 
-    Returns ``[]`` when no overlay (``docker compose`` finds docker-compose.yml on
-    its own), so a plain fleet keeps its current argv unchanged.
+    Returns ``[]`` when NO overlay (``docker compose`` finds docker-compose.yml on
+    its own), so a plain fleet keeps its current argv unchanged. The shape override
+    is placed LAST — its compose ``!reset`` on the gateway ``depends_on`` clears the
+    dangling edge to a profile-disabled dropped service, and applying it after the
+    audio overlay (which never touches ``depends_on``, only ``environment``)
+    guarantees no later file re-introduces that edge.
     """
-    if audio_overlay_present(deploy_dir):
-        return ["-f", COMPOSE_FILE, "-f", AUDIO_OVERLAY]
-    return []
+    audio = audio_overlay_present(deploy_dir)
+    shape = shape_overlay_present(deploy_dir)
+    if not audio and not shape:
+        return []
+    files = ["-f", COMPOSE_FILE]
+    if audio:
+        files += ["-f", AUDIO_OVERLAY]
+    if shape:
+        files += ["-f", SHAPE_OVERLAY]
+    return files
 
 
 def _run(argv: list[str], *, cwd: str | None = None, timeout: int | None = None):

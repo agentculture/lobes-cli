@@ -640,8 +640,19 @@ services:
       dockerfile: Dockerfile.gateway
       args:
         MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+        # Dev lane only (see Dockerfile.gateway): empty on release deployments.
+        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
     container_name: model-gear-gateway
     restart: unless-stopped
+    # The gateway reads the SAME .env truth the CLI reads (one builder, one
+    # config — the #92 lesson), but ONLY the scoped, non-secret keys it
+    # consumes (below) — never the whole file via env_file. compose
+    # interpolates each ${VAR} from .env at render time, so shape-rendered
+    # flags like MULTIMODAL_FEASIBLE=false still reach the container and
+    # GET /capabilities stays honest with `lobes capabilities` — without
+    # inheriting HF_TOKEN or any other .env secret into the gateway (the
+    # vllm-* services legitimately keep env_file since they need HF_TOKEN
+    # to pull gated checkpoints; Qodo finding on PR #117).
     # Start order only — the gateway tolerates a backend still loading (it routes
     # and fails over per request), so it must not block on backend health.
     depends_on:
@@ -726,6 +737,14 @@ services:
       # never receives the vars, so the knobs are un-tunable.
       - LOBES_SWAP_DEGRADED_THRESHOLD=${LOBES_SWAP_DEGRADED_THRESHOLD:-75}
       - LOBES_IOWAIT_DEGRADED_THRESHOLD=${LOBES_IOWAIT_DEGRADED_THRESHOLD:-50}
+      # Shape/feasibility flags (issue #110's FEASIBLE_ENV contract,
+      # lobes/gateway/_config.py) — the ONLY .env keys the gateway needs from
+      # a shape render. Passed explicitly (rather than via env_file) so the
+      # gateway container never inherits HF_TOKEN or any other .env secret.
+      - PRIMARY_FEASIBLE=${PRIMARY_FEASIBLE:-}
+      - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
+      - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
+      - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

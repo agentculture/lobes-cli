@@ -1,0 +1,35 @@
+# The Jetson AGX Thor half of a mesh-brain deployment (brain-shapes t1, issue
+# #113): keeps the Gemma `senses` lobe + the two pooling gears + the audio
+# overlay on this box, and drops the Qwen `cortex` primary to a peer box
+# (today, the DGX Spark running spark-lobe.toml) instead of co-residing it
+# here.
+#
+# Differs from machine-as-brain.toml in `hosts` (cortex dropped) and, as of
+# brain-shapes t2/t2b, `overrides` -- senses reclaims dropped cortex's share of
+# the co-resident gpu_mem_util budget now that it no longer shares the box
+# with cortex, AND (as of t2b, issue #113, user decision on the PR) rises to
+# its own full native max_model_len -- cortex, the co-resident lobe this
+# context trim existed for, is dropped from this shape entirely, so that
+# trim's reason is gone too, in THIS task rather than deferred to #112.
+name = "thor-lobe"
+summary = "Jetson AGX Thor mesh-lobe -- Gemma senses + embedder + reranker + audio, no Qwen cortex"
+
+hosts = ["senses", "embedder", "reranker", "stt", "tts"]
+
+[overrides.senses]
+# gpu_mem_util = 0.30 -- exactly the dropped cortex's freed share (thor
+# co-resident cortex value, see lobes/profiles/builtin/thor.toml). NOT the
+# reclaim-SUM 0.14 + 0.30 = 0.44: the 2026-07-14 live boot on the physical
+# Thor measured only 38.44/122.82 GiB free at senses startup (its unified
+# memory carries heavier host workloads than the Spark's) and vLLM refuses
+# util 0.44 (54.04 GiB) outright; 0.30 (36.85 GiB) fits the measured reality.
+# (Live transcript: lobes-accept-thor-lobe-20260714; issue #113.)
+#
+# max_model_len = 131072 -- the Gemma checkpoint's own native context
+# (coolthor/gemma-4-12B-it-NVFP4A16, 128K -- see CLAUDE.md's model section),
+# previously trimmed to 32768 only so senses could co-reside with cortex on
+# the single-box shape. Cortex is dropped in THIS shape, so the trim's reason
+# is gone -- reclaimed here (issue #113, user decision on the PR), not
+# deferred to #112.
+gpu_mem_util = 0.30
+max_model_len = 131072

@@ -10,10 +10,22 @@
 # run ahead of a PyPI release set it to a published TestPyPI `.devN` build.
 FROM python:3.12-slim
 ARG MODEL_GEAR_VERSION
+# Dev lane for those from-source boxes: GATEWAY_PIP_EXTRA_INDEX_URL in .env
+# (compose passes it through as this build arg) names the index — e.g.
+# https://test.pypi.org/simple/ — holding a published .devN of
+# MODEL_GEAR_VERSION. The .devN wheel is fetched --no-deps from THAT index only,
+# then the normal install sees it satisfied — never letting TestPyPI name-squats
+# outrank real PyPI packages. Empty (the default) is a no-op — release builds
+# stay byte-identical.
+ARG LOBES_DEV_INDEX_URL=
 # One layer: install lobes-cli (system-wide, as root) and create the unprivileged
 # runtime user. The gateway only binds :8000 and makes outbound HTTP calls to the
 # backends on the compose network, so it needs no elevated privileges.
-RUN pip install --no-cache-dir "lobes-cli==${MODEL_GEAR_VERSION}" \
+RUN if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        pip install --no-cache-dir --no-deps --index-url "${LOBES_DEV_INDEX_URL}" \
+            "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && pip install --no-cache-dir "lobes-cli==${MODEL_GEAR_VERSION}" \
     && useradd --create-home --uid 10001 gateway
 USER gateway
 EXPOSE 8000

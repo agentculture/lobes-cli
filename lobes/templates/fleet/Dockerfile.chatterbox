@@ -105,7 +105,14 @@ RUN python3.12 -m pip install --no-cache-dir "resemble-perth==1.0.1" --no-deps
 # Install the lobes-cli server module (provides chatterbox_server entrypoint).
 # The [chatterbox] extra adds fastapi + uvicorn.
 # ---------------------------------------------------------------------------
-RUN python3.12 -m pip install --no-cache-dir "lobes-cli[chatterbox]==${MODEL_GEAR_VERSION}"
+# Dev lane — same two-step contract as Dockerfile.gateway/.realtime: a .devN
+# wheel installs --no-deps from LOBES_DEV_INDEX_URL alone; deps from real PyPI.
+ARG LOBES_DEV_INDEX_URL=
+RUN if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        python3.12 -m pip install --no-cache-dir --no-deps \
+            --index-url "${LOBES_DEV_INDEX_URL}" "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && python3.12 -m pip install --no-cache-dir "lobes-cli[chatterbox]==${MODEL_GEAR_VERSION}"
 
 EXPOSE 9000
 ENTRYPOINT ["python3.12", "-m", "lobes.realtime.chatterbox_server"]

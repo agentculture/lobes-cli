@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.0] - 2026-07-14
+
+### Added
+
+- Deployment shapes (#113 implementation): Shape schema + three built-in shapes as TOML data (machine-as-brain, spark-lobe, thor-lobe) over the #110 Profile machinery; shape-aware budget re-derivation as declared overrides with provenance (measured live: spark-lobe cortex 0.44/262144, thor-lobe senses 0.30/131072); pure shape×card render composition with per-(shape,card) goldens; lobes init --shape behind the dry-run/--apply contract (bare init byte-identical, --single conflict); gateway dev lane: PIP_EXTRA_INDEX_URL build-arg passthrough so from-source boxes can deploy a TestPyPI .devN build without hand-edits
+
+### Fixed
+
+- Dropped-lobe honesty: a request for an unwired dropped role (e.g. model=senses on a spark-lobe box) now returns 404 role_infeasible on every alias instead of silently rerouting to the primary model (#92 invariant, caught by the t5 contract tests)
+
 ## [0.41.2] - 2026-07-14
 
 ### Added

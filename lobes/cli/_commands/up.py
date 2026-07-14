@@ -43,6 +43,7 @@ compose stop`` (never a project-wide ``down``, which would remove every containe
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from lobes import roles
 from lobes.cli import _runtime_ops
@@ -92,6 +93,50 @@ def _resolve(target: str) -> tuple[list[str], bool]:
     )
 
 
+def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) -> bool:
+    """Raise USER_ERROR if the deployment shape drops any of ``services`` for ``target``;
+    otherwise return whether a shape overlay is present at all (for the ``-f`` chain).
+
+    A role the deployment shape drops must not start here — name the shape
+    instead of letting compose fail with "no such service" (t4b overlay).
+    """
+    shape_present = _compose.shape_overlay_present(deploy_dir)
+    if not shape_present:
+        return False
+    overlay_text = (Path(deploy_dir) / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
+    dropped = _compose._override_service_keys(overlay_text) - {"gateway"}
+    blocked = sorted(set(services) & dropped)
+    if blocked:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"target '{target}' needs service(s) {', '.join(blocked)}, which this "
+                f"deployment's shape drops ({_compose.SHAPE_OVERLAY})"
+            ),
+            remediation=(
+                "pick a role this shape hosts, or re-scaffold with a shape that "
+                "hosts it ('lobes init --shape machine-as-brain --apply')"
+            ),
+        )
+    return True
+
+
+def _compose_file_args(needs_audio: bool, shape_present: bool) -> list[str]:
+    """The ``-f`` chain for the compose invocation.
+
+    Shape overlay goes LAST (same rationale as _compose_files: its !reset on
+    gateway.depends_on must be applied after every other file).
+    """
+    if not (needs_audio or shape_present):
+        return []
+    compose_files = ["-f", _compose.COMPOSE_FILE]
+    if needs_audio:
+        compose_files += ["-f", _compose.AUDIO_OVERLAY]
+    if shape_present:
+        compose_files += ["-f", _compose.SHAPE_OVERLAY]
+    return compose_files
+
+
 def cmd_up(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     target = args.role
@@ -118,9 +163,11 @@ def cmd_up(args: argparse.Namespace) -> int:
             ),
         )
 
-    compose_files = (
-        ["-f", _compose.COMPOSE_FILE, "-f", _compose.AUDIO_OVERLAY] if needs_audio else []
-    )
+    # A role the deployment shape drops must not start here — name the shape
+    # instead of letting compose fail with "no such service" (t4b overlay).
+    shape_present = _shape_blocked_services(deploy_dir, services, target)
+
+    compose_files = _compose_file_args(needs_audio, shape_present)
     argv = _compose.compose_service_argv(action, compose_files, services)
     command = " ".join(argv)
 

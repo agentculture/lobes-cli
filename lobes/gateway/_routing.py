@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from lobes.catalog import TIER_ROLE
+
 
 @dataclass(frozen=True)
 class Backend:
@@ -213,9 +215,38 @@ def infeasible_owner(table: RoutingTable, requested: str | None) -> str | None:
     not a load condition — but after the ``is_unknown_model`` 404 for a plain
     id, so a genuinely never-advertised id still gets ``model_not_found``,
     not ``role_infeasible``).
+
+    **Two lookups, because a DROPPED role's backend may be UNWIRED**
+    (brain-shapes t5, issue #113). A mesh-brain deployment shape that drops a
+    role (spark-lobe drops ``senses``, thor-lobe drops ``cortex``) renders the
+    drop as ``<PREFIX>_FEASIBLE=false`` AND, realistically, simply does not run
+    that role's container — so no ``*_BASE_URL`` is set and the backend is
+    absent from ``table.backends``. In that shape :func:`resolve_model` is a
+    TRAP: the dropped role's capability-tier aliases (``senses`` / ``multimodal``
+    / ``normal`` → the ``multimodal`` role) upward-fall-back in
+    :func:`tier_aliases` to the always-present primary's served name, so a
+    ``resolve_model``-only check would see the OWNER as the (feasible) primary
+    and wave the request through — silently answering a dropped ``senses``
+    request with ``cortex``, the exact "never silently rerouted" violation this
+    gate exists to prevent. So we FIRST map the *literal* requested alias to its
+    role's backend NAME via :data:`lobes.catalog.TIER_ROLE` — the same
+    alias→backend map the routing layer keys its alias table by — and reject it
+    if that backend is infeasible, WITHOUT resolving through the wiring-dependent
+    upward-fallback. Only a request that is not a tier/role alias (a concrete
+    served id, or an unspecified/unknown id) falls through to the
+    ``resolve_model`` owner check below, which still catches a wired-but-
+    infeasible backend (thor-lobe's cortex is unconditionally wired) and the
+    unspecified→``default_model`` case.
     """
     if not table.infeasible:
         return None
+    # A capability-tier / role-identity alias (main/hard/cortex, multimodal/
+    # normal/senses, minor/cheap) resolves to a backend NAME independent of
+    # whether that backend is wired — so a dropped-but-unwired role is caught
+    # here before the upward-fallback in resolve_model could mask it.
+    role = TIER_ROLE.get(requested) if isinstance(requested, str) else None
+    if role is not None and role in table.infeasible:
+        return role
     owner = _backend_for(table, resolve_model(table, requested))
     return owner.name if owner is not None and owner.name in table.infeasible else None
 
