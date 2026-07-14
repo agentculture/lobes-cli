@@ -102,6 +102,21 @@ def _cmd_assess_preserve_thinking(url: str, model: str | None, json_mode: bool) 
     return EXIT_SUCCESS
 
 
+def _cmd_assess_strict_tools(url: str, model: str | None, json_mode: bool) -> int:
+    """``--strict-tools``: the three-leg strict tool-calling matrix (colleague#320).
+
+    Scriptable like ``--probes``: EXIT_SUCCESS when every leg passes,
+    EXIT_ENV_ERROR when any fails — the payload shape is identical either way.
+    The ``model`` sent is the cortex gateway alias when none is given, so the
+    matrix exercises the same lane a real tools caller uses.
+    """
+    result = _assess.run_strict_tool_matrix(url, model or "cortex")
+    emit_result(
+        result if json_mode else _assess.render_strict_tool_matrix(result), json_mode=json_mode
+    )
+    return EXIT_SUCCESS if result["passed"] else EXIT_ENV_ERROR
+
+
 def _cmd_assess_correctness(
     args: argparse.Namespace, url: str, model: str | None, json_mode: bool
 ) -> int:
@@ -132,6 +147,8 @@ def cmd_assess(args: argparse.Namespace) -> int:
         return _cmd_assess_probes(args, url, json_mode)
     if bool(getattr(args, "preserve_thinking", False)):
         return _cmd_assess_preserve_thinking(url, model, json_mode)
+    if bool(getattr(args, "strict_tools", False)):
+        return _cmd_assess_strict_tools(url, model, json_mode)
     return _cmd_assess_correctness(args, url, model, json_mode)
 
 
@@ -148,6 +165,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--tools",
         action="store_true",
         help="Also probe OpenAI tool calling (tool_choice:auto must return a tool_calls array).",
+    )
+    p.add_argument(
+        "--strict-tools",
+        action="store_true",
+        help=(
+            "Run the three-leg strict tool-calling matrix instead (colleague#320): "
+            "baseline non-strict must answer; strict + thinking and strict + "
+            "enable_thinking=false must both return a clean structured call "
+            "(valid tool names, JSON-object arguments). Scriptable exit code."
+        ),
     )
     p.add_argument(
         "--preserve-thinking",

@@ -1,11 +1,14 @@
 """Think-aware Qwen3 tool-call parser plugin, loaded by vLLM itself.
 
 vLLM's plugin loader ``exec``s this file directly (per
-``--tool-parser-plugin lobes/vllm_plugins/qwen3_thinking_tool_parser.py``); it
-is never imported by the ``lobes`` CLI/gateway package. That makes this the
-one module in :mod:`lobes.vllm_plugins` allowed to import ``vllm`` at module
-scope — everything reusable and testable offline lives in the sibling
-:mod:`lobes.vllm_plugins._thinking`.
+``--tool-parser-plugin /opt/lobes/qwen3_thinking_tool_parser.py``); it is
+never imported by the ``lobes`` CLI/gateway package. HARD CONSTRAINT: inside
+the vllm-primary container this is the ONLY file that exists — the upstream
+``vllm/vllm-openai`` image has no ``lobes`` package installed and the compose
+template mounts nothing else — so this module must stay fully
+self-contained: it may import ``vllm`` and the stdlib, and nothing under
+``lobes.*`` (``tests/test_vllm_plugin_thinking.py`` pins this with an AST
+check over the materialised source).
 
 Why this override exists: the served vLLM build (0.23.1rc1.dev672) hardcodes
 ``reasoning=False`` when building the structural-tag grammar for strict tool
@@ -21,11 +24,42 @@ actually has thinking enabled, not just be flipped on unconditionally.
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 from vllm.tool_parsers import ToolParserManager
 from vllm.tool_parsers import qwen3_engine_tool_parser as _qwen3_engine_tool_parser_module
 
-from lobes.vllm_plugins._thinking import effective_reasoning
+#: The server default is thinking ON — a request only turns it off by
+#: explicitly setting ``chat_template_kwargs={"enable_thinking": False}``.
+_DEFAULT_REASONING = True
+
+
+def effective_reasoning(request: Any) -> bool:
+    """Return whether ``request`` has thinking mode effectively enabled.
+
+    ``request`` may be an attribute-style object (vLLM's
+    ``ChatCompletionRequest``) or a plain ``dict`` — either way it is expected
+    to carry a ``chat_template_kwargs`` field (``dict | None``).
+
+    - ``chat_template_kwargs`` absent or ``None`` -> ``True`` (server default:
+      thinking on, nothing overrides it).
+    - ``chat_template_kwargs`` present but without an ``enable_thinking`` key
+      -> ``True`` (same reasoning: no override present).
+    - ``enable_thinking`` present -> its boolean value, verbatim.
+    """
+    if isinstance(request, dict):
+        chat_template_kwargs = request.get("chat_template_kwargs")
+    else:
+        chat_template_kwargs = getattr(request, "chat_template_kwargs", None)
+
+    if not chat_template_kwargs:
+        return _DEFAULT_REASONING
+
+    if "enable_thinking" not in chat_template_kwargs:
+        return _DEFAULT_REASONING
+
+    return bool(chat_template_kwargs["enable_thinking"])
+
 
 # --- Loud import-surface assert --------------------------------------------
 # Pinned to the served image, vLLM 0.23.1rc1.dev672's

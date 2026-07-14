@@ -2,18 +2,19 @@
 calling 500s on the Qwen3.6 thinking model — see
 ``lobes/vllm_plugins/qwen3_thinking_tool_parser.py`` for the full story).
 
-Two modules under test:
-
-- :mod:`lobes.vllm_plugins._thinking` — pure stdlib helper, no vllm
-  dependency, imported and tested directly.
-- :mod:`lobes.vllm_plugins.qwen3_thinking_tool_parser` — imports ``vllm`` at
-  module scope. The real package is never installed in this offline CI
-  environment, so it is exercised here by injecting fake ``vllm`` modules
-  into ``sys.modules`` before import, then removing them afterwards (fixture).
+The plugin module is fully SELF-CONTAINED by contract: inside the vLLM
+container the mounted plugin file is the only lobes-authored file that exists,
+so it may import ``vllm`` and the stdlib and nothing under ``lobes.*`` (the
+AST test below pins that). It imports ``vllm`` at module scope, and the real
+package is never installed in this offline CI environment — so everything here
+(including the pure ``effective_reasoning`` helper it defines) is exercised by
+injecting fake ``vllm`` modules into ``sys.modules`` before import, then
+removing them afterwards (fixture).
 """
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import sys
@@ -21,7 +22,7 @@ import types
 
 import pytest
 
-from lobes.vllm_plugins._thinking import effective_reasoning
+from lobes.runtime._compose import plugin_source
 
 PLUGIN_MODULE_NAME = "lobes.vllm_plugins.qwen3_thinking_tool_parser"
 _STUB_MODULE_NAMES = (
@@ -32,7 +33,7 @@ _STUB_MODULE_NAMES = (
 
 
 # ---------------------------------------------------------------------------
-# effective_reasoning — pure helper, no vllm involved
+# Test scaffolding: request stand-in, stub fixture, stub installer
 # ---------------------------------------------------------------------------
 
 
@@ -41,61 +42,6 @@ class _AttrRequest:
 
     def __init__(self, chat_template_kwargs=None) -> None:
         self.chat_template_kwargs = chat_template_kwargs
-
-
-def test_effective_reasoning_defaults_true_when_kwargs_absent_attr() -> None:
-    request = object()  # no chat_template_kwargs attribute at all
-    assert effective_reasoning(request) is True
-
-
-def test_effective_reasoning_defaults_true_when_kwargs_none_attr() -> None:
-    assert effective_reasoning(_AttrRequest(chat_template_kwargs=None)) is True
-
-
-def test_effective_reasoning_defaults_true_when_key_absent_attr() -> None:
-    # Non-empty dict (truthy) but no `enable_thinking` key -> still defaults True.
-    assert effective_reasoning(_AttrRequest(chat_template_kwargs={"temperature": 0.7})) is True
-
-
-def test_effective_reasoning_false_when_enable_thinking_false_attr() -> None:
-    request = _AttrRequest(chat_template_kwargs={"enable_thinking": False})
-    assert effective_reasoning(request) is False
-
-
-def test_effective_reasoning_true_when_enable_thinking_true_attr() -> None:
-    request = _AttrRequest(chat_template_kwargs={"enable_thinking": True})
-    assert effective_reasoning(request) is True
-
-
-def test_effective_reasoning_defaults_true_when_kwargs_absent_dict() -> None:
-    assert effective_reasoning({}) is True
-
-
-def test_effective_reasoning_defaults_true_when_kwargs_none_dict() -> None:
-    assert effective_reasoning({"chat_template_kwargs": None}) is True
-
-
-def test_effective_reasoning_false_when_enable_thinking_false_dict() -> None:
-    request = {"chat_template_kwargs": {"enable_thinking": False}}
-    assert effective_reasoning(request) is False
-
-
-def test_effective_reasoning_true_when_enable_thinking_true_dict() -> None:
-    request = {"chat_template_kwargs": {"enable_thinking": True}}
-    assert effective_reasoning(request) is True
-
-
-def test_thinking_module_imports_without_vllm_installed() -> None:
-    # Re-import from scratch to prove no lingering vllm dependency crept in.
-    mod = importlib.import_module("lobes.vllm_plugins._thinking")
-    assert callable(mod.effective_reasoning)
-    # No vllm module should have been pulled in as a side effect.
-    assert "vllm" not in sys.modules
-
-
-# ---------------------------------------------------------------------------
-# qwen3_thinking_tool_parser — exercised via injected vllm stubs
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -110,6 +56,96 @@ def clean_vllm_stubs():
     _purge()
     yield
     _purge()
+
+
+# ---------------------------------------------------------------------------
+# Self-containment — the exact bug class the container would hit at boot
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_source_imports_only_vllm_and_stdlib() -> None:
+    """The materialised plugin file is the ONLY file mounted into the vLLM
+    container — an `import lobes.*` (or any other non-vllm, non-stdlib
+    import) raises ModuleNotFoundError at boot and the parser never loads.
+    Walk the module AST and pin the import surface to vllm + stdlib.
+    """
+    tree = ast.parse(plugin_source())
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, "relative imports cannot resolve in a lone mounted file"
+            assert node.module is not None
+            imported.add(node.module.split(".")[0])
+    assert "lobes" not in imported, "plugin must not import lobes.* — it is mounted alone"
+    non_stdlib = imported - set(sys.stdlib_module_names)
+    assert non_stdlib <= {"vllm"}, f"unexpected non-stdlib imports: {sorted(non_stdlib)}"
+
+
+# ---------------------------------------------------------------------------
+# effective_reasoning — the plugin's own pure helper, via stubbed import
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def effective_reasoning(clean_vllm_stubs):
+    """The plugin module's own ``effective_reasoning``, imported under good
+    vllm stubs (the plugin is self-contained, so the helper lives inside it).
+    """
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+        return reasoning
+
+    _install_stub_vllm(fake_get_structural_tag)
+    return importlib.import_module(PLUGIN_MODULE_NAME).effective_reasoning
+
+
+def test_effective_reasoning_defaults_true_when_kwargs_absent_attr(effective_reasoning) -> None:
+    request = object()  # no chat_template_kwargs attribute at all
+    assert effective_reasoning(request) is True
+
+
+def test_effective_reasoning_defaults_true_when_kwargs_none_attr(effective_reasoning) -> None:
+    assert effective_reasoning(_AttrRequest(chat_template_kwargs=None)) is True
+
+
+def test_effective_reasoning_defaults_true_when_key_absent_attr(effective_reasoning) -> None:
+    # Non-empty dict (truthy) but no `enable_thinking` key -> still defaults True.
+    assert effective_reasoning(_AttrRequest(chat_template_kwargs={"temperature": 0.7})) is True
+
+
+def test_effective_reasoning_false_when_enable_thinking_false_attr(effective_reasoning) -> None:
+    request = _AttrRequest(chat_template_kwargs={"enable_thinking": False})
+    assert effective_reasoning(request) is False
+
+
+def test_effective_reasoning_true_when_enable_thinking_true_attr(effective_reasoning) -> None:
+    request = _AttrRequest(chat_template_kwargs={"enable_thinking": True})
+    assert effective_reasoning(request) is True
+
+
+def test_effective_reasoning_defaults_true_when_kwargs_absent_dict(effective_reasoning) -> None:
+    assert effective_reasoning({}) is True
+
+
+def test_effective_reasoning_defaults_true_when_kwargs_none_dict(effective_reasoning) -> None:
+    assert effective_reasoning({"chat_template_kwargs": None}) is True
+
+
+def test_effective_reasoning_false_when_enable_thinking_false_dict(effective_reasoning) -> None:
+    request = {"chat_template_kwargs": {"enable_thinking": False}}
+    assert effective_reasoning(request) is False
+
+
+def test_effective_reasoning_true_when_enable_thinking_true_dict(effective_reasoning) -> None:
+    request = {"chat_template_kwargs": {"enable_thinking": True}}
+    assert effective_reasoning(request) is True
+
+
+# ---------------------------------------------------------------------------
+# qwen3_thinking_tool_parser — exercised via injected vllm stubs
+# ---------------------------------------------------------------------------
 
 
 class _FakeToolParserManager:

@@ -634,17 +634,18 @@ def _try_primary_with_strict_retry(
     """The force-strict-tools dial (GATEWAY_FORCE_STRICT_TOOLS, opt-in): try
     ``backend`` once with ``injected_body``; on an HTTP 4xx/5xx whose body
     matches :data:`_STRICT_FAILURE_SIGNATURES`, retry EXACTLY ONCE with
-    ``original_body`` (the un-injected request) and relay that retry's
-    response VERBATIM — whatever its status, success or failure, never a
-    second retry.
+    ``original_body`` (the un-injected request) — never a second retry.
 
-    Deliberately bypasses :func:`_try_backends`: that function never reads a
-    ``>=500`` body (it treats any 5xx as owner-down and swallows it into the
-    generic retryable 503 below), but a compile-failure signature can only be
-    read by inspecting the body — so this function reads a 4xx/5xx body
-    itself, checks the signature, and either retries or relays it as-is
-    (bypassing the 500->503 remap on purpose: a failure caused by OUR OWN
-    strict injection is not an "owner is down" condition).
+    Deliberately bypasses :func:`_try_backends` only far enough to read the
+    failure body: that function never reads a ``>=500`` body (it treats any
+    5xx as owner-down and swallows it into the generic retryable 503 below),
+    but a compile-failure signature can only be read by inspecting the body.
+    The gateway's documented error contract is otherwise preserved on BOTH
+    hops: a non-signature ``>=500`` (and a ``>=500`` on the retry) is still
+    owner-down — attempt recorded, ``response=None``, caller maps it to the
+    retryable 503 — while a non-signature 4xx is a genuine client error and
+    relays verbatim. Only a signature-matching failure is treated as our own
+    injection's fault and retried un-injected.
 
     A connect failure at either hop (initial or retry) degrades exactly like
     ``_try_backends`` — an attempt string appended, ``response=None`` — so
@@ -680,9 +681,13 @@ def _try_primary_with_strict_retry(
     body_bytes = up.read_all()
     up.close()
     if not _matches_strict_failure_signature(body_bytes):
-        # Not our injection's fault — relay verbatim, no retry (caller's
-        # own error, or an unrelated owner problem this path already
-        # committed to by reading the body).
+        if up.status >= 500:
+            # Not our injection's fault and the owner is erroring: same
+            # owner-down contract as _try_backends — record the attempt and
+            # let the caller map it to the retryable 503.
+            attempts.append(f"{backend.name}: HTTP {up.status}")
+            return None, attempts
+        # A non-signature 4xx is a genuine client error — relay verbatim.
         return (
             GatewayResponse(
                 status=up.status,
@@ -705,6 +710,12 @@ def _try_primary_with_strict_retry(
         )
     except UpstreamError as exc:
         attempts.append(str(exc))
+        return None, attempts
+    if retry_up.status >= 500:
+        # The un-injected retry also 5xx'd: that IS an owner-down condition —
+        # same contract as _try_backends, mapped to the retryable 503.
+        attempts.append(f"{backend.name}: HTTP {retry_up.status}")
+        retry_up.close()
         return None, attempts
     return (
         GatewayResponse(

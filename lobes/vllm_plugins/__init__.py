@@ -12,24 +12,22 @@ See ``lobes.runtime._compose`` (``PLUGIN_PACKAGE`` / ``write_plugin_file``) for
 the materialisation mechanism, and ``lobes/templates/fleet/docker-compose.yml``
 (the ``vllm-primary`` service) for the mount + ``--tool-parser-plugin`` wiring.
 
-Keep plugin modules syntactically self-contained: they must be valid standalone
-Python files vLLM can load by path inside ITS OWN container image (which has
-vllm/torch installed), not necessarily importable from the base lobes wheel's
-(vllm-free) environment. The package split exists so the pure logic lives in an
-independently testable, vllm-free sibling module.
+HARD CONSTRAINT — plugin modules must be fully self-contained: inside the vLLM
+container the mounted plugin file is the ONLY lobes-authored file that exists
+(the upstream ``vllm/vllm-openai`` image has no ``lobes`` package installed),
+so a plugin may import ``vllm`` and the stdlib and NOTHING under ``lobes.*``.
+``tests/test_vllm_plugin_thinking.py`` pins this with an AST check over the
+materialised source. It follows that plugins are only *exercised* offline via
+injected ``sys.modules`` stubs; they genuinely load only inside the served
+vLLM container.
 
 Public modules:
 
-- :mod:`lobes.vllm_plugins._thinking` — pure helper (zero vllm imports,
-  unit-tested offline). Computes the effective ``reasoning`` state for a
-  chat-completion request from its ``chat_template_kwargs``.
-- :mod:`lobes.vllm_plugins.qwen3_thinking_tool_parser` — the vLLM plugin
-  itself: registers the ``qwen3_coder_thinking`` tool-call parser (a
-  reasoning-aware variant of the upstream ``qwen3_coder`` parser) for the
-  cortex/main generate lane. Imports vllm at module scope, so it can only be
-  *exercised* offline via injected ``sys.modules`` stubs (see
-  ``tests/test_vllm_plugin_thinking.py``); it is genuinely loaded only inside
-  the served vLLM container.
+- :mod:`lobes.vllm_plugins.qwen3_thinking_tool_parser` — registers the
+  ``qwen3_coder_thinking`` tool-call parser (a reasoning-aware variant of the
+  upstream ``qwen3_coder`` parser) for the cortex/main generate lane, deriving
+  the structural-tag grammar's ``reasoning`` flag from the request's own
+  effective ``enable_thinking`` state.
 
 See ``docs/`` for the full story on why the served vLLM build's hardcoded
 ``reasoning=False`` breaks strict tool calling for a thinking model.

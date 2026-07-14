@@ -372,6 +372,36 @@ def test_caller_sent_strict_no_injection_never_retries() -> None:
     assert json.loads(calls[0][1])["tools"][0]["function"]["strict"] is True
 
 
+def test_retry_fallback_non_matching_5xx_maps_to_owner_down_503() -> None:
+    # A 5xx whose body does NOT match the strict-compile signature is not our
+    # injection's fault — it must follow the gateway's documented owner-down
+    # contract (retryable 503 backend_unavailable), not leak upstream 5xx
+    # verbatim, and must NOT trigger the without-strict retry.
+    table, cfg = _cfg(GATEWAY_FORCE_STRICT_TOOLS="1")
+    opener, calls = _sequenced_opener([(502, _NO_SIGNATURE_BODY)])
+    body = _tools_body()
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], body, opener)
+    assert len(calls) == 1
+    assert resp.status == 503
+    payload = json.loads(resp.body)
+    assert payload["error"]["type"] == "backend_unavailable"
+    assert "primary: HTTP 502" in payload["error"]["attempts"]
+
+
+def test_retry_fallback_retry_5xx_maps_to_owner_down_503() -> None:
+    # Signature match → one retry without strict; the retry itself 5xx-ing IS
+    # an owner-down condition — mapped to the retryable 503, never relayed.
+    table, cfg = _cfg(GATEWAY_FORCE_STRICT_TOOLS="1")
+    opener, calls = _sequenced_opener([(400, _SIGNATURE_BODY), (500, b"boom")])
+    body = _tools_body()
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], body, opener)
+    assert len(calls) == 2
+    assert resp.status == 503
+    payload = json.loads(resp.body)
+    assert payload["error"]["type"] == "backend_unavailable"
+    assert "primary: HTTP 500" in payload["error"]["attempts"]
+
+
 def test_retry_fallback_connect_refused_on_first_attempt_yields_503() -> None:
     # A connection-level failure (no HTTP response at all) is not a "4xx/5xx
     # body matched the signature" case — it degrades exactly like the
