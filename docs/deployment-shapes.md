@@ -118,6 +118,52 @@ half-served, never silently rerouted:
    service, and errors with the override file and a remediation pointing at
    re-scaffolding with a shape that hosts it.
 
+## Honest referral to the peer that hosts a dropped role (opt-in)
+
+A box that dropped a role can additionally *tell callers who does host it* —
+the confirmed cross-box decision for the mesh-brain end-state (issue #112):
+**direct + referral**. Consumers address boxes directly, exactly as the
+Culture mesh does today; a box that doesn't host a role answers honestly with
+who does.
+
+**The peer-config surface** is one env var per core role's backend in the
+deployment's `.env`, mirroring the `*_FEASIBLE` flags (`PEER_ORIGIN_ENV` in
+`lobes/gateway/_config.py`):
+
+```bash
+# thor-lobe dropped cortex; the Spark hosts it:
+PRIMARY_PEER_ORIGIN=http://spark.local:8001
+# spark-lobe dropped senses; the Thor hosts it:
+MULTIMODAL_PEER_ORIGIN=http://thor.local:8001
+# (EMBED_PEER_ORIGIN / RERANK_PEER_ORIGIN exist too; stt/tts are outside the
+# channel, exactly as they are outside *_FEASIBLE.)
+```
+
+The origin is a full, **operator-declared** URL. It is never derived from
+hostnames, interfaces, or anything the box could guess — the #92 lesson:
+never fabricate an absolute URL. Declaring an origin for a role the box
+*does* host annotates nothing (a referral names who hosts what this box does
+not).
+
+**What it changes** — the two honesty surfaces only:
+
+- `lobes capabilities` / `GET /capabilities`: the unhosted role's entry gains
+  `"hosted_by": "<peer origin>"` next to its `feasible: false`.
+- The `404 role_infeasible` body: the error object gains the same
+  `"hosted_by"` key and the message names the peer origin.
+
+`/v1/models` is untouched (it still simply omits the unhosted role), and with
+**zero peer config — the default — every response is byte-identical to the
+pre-referral contract** (regression-pinned in `tests/test_peer_referral.py`).
+
+**The boundary: no data-plane proxying.** The referral is an annotation for
+the *caller* to act on — the gateway never forwards a generate/embed/rerank/
+audio request to a peer, never probes the declared origin on the request hot
+path, and a request for an unhosted role terminates locally at the 404 with
+zero outbound connections (test-enforced). A box that *follows* its own
+referral on the caller's behalf — a proxy-lobe, advertised as proxied — is a
+deliberate non-goal here, deferred to issue #115.
+
 ## The co-residency tax and its measured repayment
 
 **Before** (machine-as-brain, the default, on the GB10): every role
@@ -209,10 +255,10 @@ This feature ships shape selection plus the two near-term mesh-lobe shapes
 only. Explicitly out of scope, routed elsewhere:
 
 - **One-lobe-per-box end-state** (a Qwen-only Spark, a Gemma-only Thor, small
-  models on an Orin) and the **cross-box referral** story (a box's gateway
-  proxying a request to the peer that actually hosts the dropped role,
-  rather than today's per-box-honesty-only contract) — tracked as issue
-  #112, with its own spec + plan opened in PR #116.
+  models on an Orin) — tracked as issue #112, with its own spec + plan opened
+  in PR #116. Its confirmed cross-box decision — direct addressing + the
+  opt-in **honest referral** above — is implemented here; actually
+  *forwarding* a request to the peer is not (see next item).
 - **Proxy-lobes** (serving a "sleeping" lobe via a followed referral to
   whichever peer box hosts it) — parked as its own follow-up, issue #115.
 - **Jetson AGX Orin** — named in the mesh topology as a future target but

@@ -53,6 +53,48 @@ FEASIBLE_ENV: dict[str, str] = {
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 
+# Per-backend "the peer box at THIS origin hosts the role I dropped" channel
+# (mesh-brain t3, issue #112's confirmed cross-box decision: direct + honest
+# referral). DESIGN DECISION, made within the #92 lesson: the referral origin
+# is a full, OPERATOR-DECLARED origin (e.g. ``http://spark.local:8001``) set
+# per peer in the deployment's ``.env`` — NEVER fabricated or inferred from
+# hostnames/interfaces (deriving a URL from the local box's own view of the
+# network is exactly what #92 forbade). It uses the SAME
+# ``<PREFIX>_<KNOB>`` backend-name prefixes as :data:`FEASIBLE_ENV` /
+# ``ROLE_MAX_MODEL_LEN_ENV`` so there is still exactly one env convention to
+# learn, and it is scoped to the same four Profile-schema backends —
+# referral, like feasibility, is a core-role fact (the audio overlay is
+# outside the Profile schema and carries no referral channel).
+#
+# A declared origin is CONTROL-PLANE metadata only: it annotates
+# ``/capabilities`` and the 404 ``role_infeasible`` body for a role this box
+# does not host. The gateway NEVER dials it — no data-plane proxying exists
+# (proxy-lobes is deferred to issue #115). Unset everywhere (the default) ⇒
+# every response is byte-identical to the pre-referral contract.
+PEER_ORIGIN_ENV: dict[str, str] = {
+    "primary": "PRIMARY_PEER_ORIGIN",
+    "multimodal": "MULTIMODAL_PEER_ORIGIN",
+    "embed": "EMBED_PEER_ORIGIN",
+    "rerank": "RERANK_PEER_ORIGIN",
+}
+
+
+def _peer_origins(env: Mapping[str, str]) -> dict[str, str]:
+    """The declared peer origins, keyed by backend name; blank/unset omitted.
+
+    Values are taken VERBATIM from the operator's env (trailing slash
+    trimmed, matching every other URL knob here) — nothing is derived,
+    validated against DNS, or probed. An empty mapping (no ``*_PEER_ORIGIN``
+    set anywhere) is the default and leaves every response surface
+    byte-identical to the pre-referral contract.
+    """
+    out: dict[str, str] = {}
+    for name, key in PEER_ORIGIN_ENV.items():
+        origin = (env.get(key) or "").strip().rstrip("/")
+        if origin:
+            out[name] = origin
+    return out
+
 
 def _is_feasible(env: Mapping[str, str], backend_name: str) -> bool:
     """True unless ``backend_name``'s ``<PREFIX>_FEASIBLE`` env var (see
@@ -306,6 +348,9 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
         aliases=aliases,
         infeasible=infeasible,
+        # Opt-in honest referral (mesh-brain t3): the operator-declared peer
+        # origins, empty by default — see PEER_ORIGIN_ENV above.
+        peer_origins=_peer_origins(env),
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container

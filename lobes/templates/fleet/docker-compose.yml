@@ -745,6 +745,17 @@ services:
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
+      # Opt-in honest referral (mesh-brain t3, issue #112; PEER_ORIGIN_ENV in
+      # lobes/gateway/_config.py): the OPERATOR-DECLARED origin of the peer box
+      # hosting a role this box dropped (e.g. http://spark.local:8001). Only
+      # ANNOTATES GET /capabilities + the 404 role_infeasible body — the
+      # gateway never proxies a request to a peer (proxy-lobes is issue #115).
+      # Unset (the default) keeps every response byte-identical to the
+      # pre-referral contract.
+      - PRIMARY_PEER_ORIGIN=${PRIMARY_PEER_ORIGIN:-}
+      - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
+      - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
+      - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

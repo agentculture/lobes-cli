@@ -791,11 +791,25 @@ A mesh shape's dropped core role never half-serves: the generated
 `role_infeasible`; and `lobes up <dropped-role>` is a user error naming the
 shape rather than an opaque compose failure.
 
+## Honest referral (opt-in)
+
+Declare, per dropped role, the peer box that hosts it — one operator-set env
+var per core role in the deployment's `.env`, mirroring the `*_FEASIBLE`
+flags (e.g. `MULTIMODAL_PEER_ORIGIN=http://thor.local:8001` on `spark-lobe`,
+`PRIMARY_PEER_ORIGIN=http://spark.local:8001` on `thor-lobe`) — and the two
+honesty surfaces name it: capabilities gains `hosted_by` on the unhosted
+role, and the 404 `role_infeasible` body carries the same referral. The
+origin is always operator-declared, never derived (#92). Annotation only:
+the gateway NEVER forwards a request to a peer (no data-plane proxying),
+and with no peer config every response is byte-identical to the
+pre-referral contract. See `docs/deployment-shapes.md`.
+
 ## Scope
 
-One-lobe-per-box end-states, cross-box referral, and an Orin profile are
-out of scope here — tracked as issue #112 (spec + plan in PR #116);
-proxy-lobes are issue #115.
+One-lobe-per-box end-states and an Orin profile are out of scope here —
+tracked as issue #112 (spec + plan in PR #116); its cross-box decision
+(direct + honest referral, above) is implemented; proxy-lobes (following
+the referral on the caller's behalf) are issue #115.
 
 ## See also
 

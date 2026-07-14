@@ -102,7 +102,8 @@ import urllib.request
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
-from lobes.roles import ROLES, RoleInfo, role_registry_from_env
+from lobes.gateway._config import build_config
+from lobes.roles import ROLES, RoleInfo, annotate_peer_referrals, role_registry_from_env
 
 _JSON_HELP = "Emit structured JSON."
 _COMPOSE_DIR_HELP = "Deployment dir (default: $LOBES_DIR or ~/.lobes)."
@@ -171,11 +172,24 @@ def _fetch_gateway_capabilities(
     return data
 
 
-def _offline_registry(args: argparse.Namespace) -> dict[str, RoleInfo]:
+def _offline_payload(args: argparse.Namespace) -> dict[str, dict]:
+    """The ``.env``-derived fallback payload, shaped like a gateway response.
+
+    Built from the SAME pure pieces the gateway itself uses
+    (:func:`lobes.roles.role_registry_from_env` +
+    :func:`lobes.roles.annotate_peer_referrals` over the deployment env), so
+    the opt-in honest referral (mesh-brain t3 — ``hosted_by`` on an unhosted
+    role with a declared ``*_PEER_ORIGIN``) shows up on the offline path too.
+    With no peer config the annotation is a no-op and the payload carries
+    exactly the ``RoleInfo`` field set per role, unchanged.
+    """
     env = _runtime_ops.deployment_env_soft(args)
     port, _ = _runtime_ops.resolve_port_soft(args)
     gateway_url = f"http://localhost:{port}"
-    return role_registry_from_env(env, gateway_url=gateway_url)
+    registry = role_registry_from_env(env, gateway_url=gateway_url)
+    payload = {role: _role_payload(registry[role]) for role in ROLES}
+    table, _server = build_config(env)
+    return annotate_peer_referrals(payload, table)
 
 
 def _role_payload(info: RoleInfo) -> dict[str, object]:
@@ -205,8 +219,7 @@ def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
     live = _fetch_gateway_capabilities(port)
     if live is not None:
         return live, "gateway"
-    registry = _offline_registry(args)
-    offline = {role: _role_payload(registry[role]) for role in ROLES}
+    offline = _offline_payload(args)
     for role in ROLES:
         offline[role]["ready"] = False
     return offline, "offline"
@@ -236,6 +249,11 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         # (pre-t6 gateway, or a hand-built fixture) never raises.
         if info.get("feasible", True) is False:
             lines.append("          ** infeasible on this machine — never served here **")
+            # Opt-in honest referral (mesh-brain t3): the operator-declared
+            # peer origin that hosts this unhosted role, when one is set. An
+            # address to dial DIRECTLY — this box never proxies to it.
+            if info.get("hosted_by"):
+                lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
     return "\n".join(lines)
 
