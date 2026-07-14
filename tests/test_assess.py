@@ -184,6 +184,135 @@ def test_probe_tool_calls_degrades_on_bad_json(monkeypatch) -> None:
     assert r["tool_calls"] == []
 
 
+# ---------------------------------------------------------------------------
+# strict tool-calling matrix (colleague#320, `lobes assess --strict-tools`)
+# ---------------------------------------------------------------------------
+
+
+def _matrix_post(responses):
+    """A `_post` stub keyed on the leg: (strict?, enable_thinking) -> response."""
+    seen = []
+
+    def _post(url, payload, timeout=300):
+        strict = any(t["function"].get("strict") for t in payload.get("tools", []))
+        thinking = payload.get("chat_template_kwargs", {}).get("enable_thinking")
+        seen.append((strict, thinking))
+        resp = responses[(strict, thinking)]
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
+
+    return _post, seen
+
+
+def _clean_call_response():
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {"type": "function", "function": {"name": "finish", "arguments": "{}"}}
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+
+
+def _mangled_call_response():
+    # The colleague#320 salvage shape: trailing-quote name + empty-string args.
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {"type": "function", "function": {"name": 'finish"', "arguments": "{}"}}
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+
+
+def test_strict_matrix_passes_even_when_baseline_drifts(monkeypatch) -> None:
+    # Baseline (non-strict) is allowed to return a mangled call — it only has
+    # to ANSWER. Both strict legs must be clean.
+    post, seen = _matrix_post(
+        {
+            (False, None): _mangled_call_response(),
+            (True, None): _clean_call_response(),
+            (True, False): _clean_call_response(),
+        }
+    )
+    monkeypatch.setattr(A, "_post", post)
+    r = A.run_strict_tool_matrix("http://localhost:8001", "cortex")
+    assert r["passed"] is True
+    assert r["legs"]["baseline"]["ok"] is True
+    assert r["legs"]["baseline"]["clean"] is False  # drift tolerated, recorded
+    assert r["legs"]["strict_thinking"]["clean"] is True
+    assert seen == [(False, None), (True, None), (True, False)]
+
+
+def test_strict_matrix_fails_when_strict_thinking_500s(monkeypatch) -> None:
+    # The pre-plugin failure mode: strict + thinking 500s ("grammar rejected
+    # tokens" on </think>) while strict + no-think stays clean.
+    err = urllib.error.HTTPError(
+        "http://localhost:8001",
+        500,
+        "Internal Server Error",
+        {},
+        io.BytesIO(b"grammar rejected tokens"),
+    )
+    post, _ = _matrix_post(
+        {
+            (False, None): _clean_call_response(),
+            (True, None): err,
+            (True, False): _clean_call_response(),
+        }
+    )
+    monkeypatch.setattr(A, "_post", post)
+    r = A.run_strict_tool_matrix("http://localhost:8001", "cortex")
+    assert r["passed"] is False
+    assert r["legs"]["strict_thinking"]["ok"] is False
+    assert "HTTP 500" in r["legs"]["strict_thinking"]["error"]
+
+
+def test_strict_matrix_fails_on_mangled_strict_call(monkeypatch) -> None:
+    # A strict leg returning the salvage mangle (name='finish"') must FAIL —
+    # that is the exact defect the matrix exists to catch.
+    post, _ = _matrix_post(
+        {
+            (False, None): _clean_call_response(),
+            (True, None): _mangled_call_response(),
+            (True, False): _clean_call_response(),
+        }
+    )
+    monkeypatch.setattr(A, "_post", post)
+    r = A.run_strict_tool_matrix("http://localhost:8001", "cortex")
+    assert r["passed"] is False
+    assert r["legs"]["strict_thinking"]["clean"] is False
+
+
+def test_strict_matrix_cli_exit_codes(monkeypatch, capsys) -> None:
+    post, _ = _matrix_post(
+        {
+            (False, None): _clean_call_response(),
+            (True, None): _clean_call_response(),
+            (True, False): _clean_call_response(),
+        }
+    )
+    monkeypatch.setattr(A, "_post", post)
+    rc = main(["assess", "--strict-tools", "--json", "--port", "8001", "--model", "cortex"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["passed"] is True
+    assert set(payload["legs"]) == {"baseline", "strict_thinking", "strict_nothink"}
+
+
 def test_run_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(A, "_get", _fake_get)
     monkeypatch.setattr(A, "_post", _fake_chat())

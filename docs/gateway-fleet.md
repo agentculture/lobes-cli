@@ -323,6 +323,21 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   Once a 2xx body starts streaming there is no retry — the client already has bytes.
 - **Streaming** — `"stream": true` (SSE) is relayed chunk-by-chunk with per-chunk
   flushing; normal JSON is buffered with `Content-Length`.
+- **Force-strict tool calling (opt-in, colleague#320)** — `GATEWAY_FORCE_STRICT_TOOLS`
+  (unset by default) injects `"strict": true` into every tool schema on a
+  `/v1/chat/completions` request that both routes to the **cortex/primary**
+  lane and carries a non-empty `tools` array; every other lane/endpoint
+  (`multimodal`/`senses`, embed, rerank, audio, `/v1/completions`) is
+  untouched. A caller-supplied `strict` (either value) always wins over the
+  injection. On an upstream schema/grammar-compile failure the gateway
+  retries the SAME request exactly once with `strict` stripped back out and
+  relays whatever that retry returns. Pairs with, but is independent of, the
+  `qwen3_coder_thinking` tool-parser plugin (see
+  [`docs/qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md)) —
+  strict schema enforcement vs. reasoning-aware parsing solve different
+  halves of the same colleague#320 failure mode. See
+  [`docs/openai-api.md`](openai-api.md#force-strict-tool-calling-opt-in-colleague320)
+  for the full opt-in/injection/retry contract.
 - **Endpoints** — `/v1/chat/completions`, `/v1/completions` (generate primary),
   `/v1/embeddings` (the embedding gear), `/v1/rerank` + `/v1/score` (the reranker
   gear), `/v1/audio/transcriptions` + `/v1/audio/speech` (the `--audio` overlay

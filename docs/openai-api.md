@@ -78,6 +78,49 @@ shed (the manual escape hatch). See
 [`docs/gateway-fleet.md`](gateway-fleet.md#pressure-policy-and-busy-backpressure)
 for the full policy and thresholds.
 
+### Force-strict tool calling (opt-in, colleague#320)
+
+Set `GATEWAY_FORCE_STRICT_TOOLS=1` in the deployment `.env` (unset/false by
+default) to have the gateway inject `"strict": true` into every
+`tools[i].function` on a `/v1/chat/completions` request that both (a) routes
+to the **cortex/primary** lane and (b) carries a non-empty `tools` array —
+before forwarding it on. `strict: true` arms vLLM's xgrammar structural-tag
+constrained decoding, so a tool call's arguments are grammar-constrained
+against the tool's own JSON schema instead of merely parsed after the model
+emits them — see
+[`docs/qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md) for why
+this matters for a thinking model (colleague#320: unconstrained generation
+can drift off the tool-call template and get "salvaged" into a mangled call;
+the served build's structural-tag call site also needed a request-aware
+`reasoning` flag to stay compatible with thinking mode — the paired
+`qwen3_coder_thinking` tool-parser plugin, not this knob, supplies that).
+
+- **Caller wins.** A tool that already carries any `strict` key (`true` OR
+  `false`) is left untouched — the gateway fills in only an absent key.
+  Nothing else about the request changes.
+- **Scope.** Only `/v1/chat/completions`, and only when the resolved backend
+  is the primary (cortex) lane. `/v1/completions`, embeddings, rerank, and
+  audio are never touched; a `multimodal`/`senses` request is unaffected.
+- **Retry-without-strict fallback.** If the injected request comes back with
+  a 4xx/5xx whose body matches a schema/grammar-compile-failure signature
+  (a heuristic substring list — `structural_tag`, `xgrammar`, `grammar`,
+  `json_schema` — pending live discovery of the real error text), the
+  gateway retries **exactly once** with the original, un-injected body and
+  relays that retry's response verbatim (success or failure) — never a
+  second retry. The offending tool schema name(s) and an upstream error
+  snippet are logged server-side. A failure that does *not* match the
+  signature (the caller's own error, or an unrelated owner problem) is
+  relayed as-is, with no retry.
+- **Default off is byte-identical passthrough.** With the knob unset (or on
+  any non-eligible request — no tools, non-primary lane, every tool already
+  declaring its own `strict`), none of this logic runs: the request takes
+  the exact code path it took before the knob existed.
+
+See [`docs/gateway-fleet.md`](gateway-fleet.md) for where this sits in the
+gateway's fleet-fronting behavior, and
+[`docs/qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md) for the
+tool-parser plugin this pairs with.
+
 ### SSE streaming
 
 `"stream": true` requests are relayed chunk-by-chunk with per-chunk flushing.

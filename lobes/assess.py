@@ -259,6 +259,126 @@ def probe_tool_calls(url: str, model: str) -> dict:
         return {"ok": False, "tool_calls": [], "finish": None, "error": f"probe failed: {exc}"}
 
 
+# Strict tool-calling matrix (colleague#320, ``lobes assess --strict-tools``):
+# three legs of the SAME canonical tools request. Leg 2 is the one that 500s
+# ("grammar rejected tokens" on ``</think>``) when the serving stack builds a
+# strict structural-tag grammar that is not think-aware — the failure the
+# ``qwen3_coder_thinking`` plugin exists to fix; legs 1 and 3 pin the
+# no-regression edges (unconstrained requests still answer; explicitly
+# thinking-free strict requests stay clean).
+_STRICT_MATRIX_LEGS: tuple[tuple[str, bool, bool | None], ...] = (
+    # (leg name, strict, enable_thinking — None means "leave server default")
+    ("baseline", False, None),
+    ("strict_thinking", True, None),
+    ("strict_nothink", True, False),
+)
+
+
+def _strict_tools_payload(model: str, *, strict: bool, enable_thinking: bool | None) -> dict:
+    tools = json.loads(json.dumps(_TOOL_PROBE_TOOLS))  # deep copy — never mutate the fixture
+    if strict:
+        for tool in tools:
+            tool["function"]["strict"] = True
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": _TOOL_PROBE_PROMPT}],
+        "tools": tools,
+        "tool_choice": "auto",
+        "max_tokens": 2048,
+        "temperature": 0,
+    }
+    if enable_thinking is not None:
+        payload["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+    return payload
+
+
+def _parse_leg_tool_calls(msg: dict) -> tuple[list, bool]:
+    """Extract ``(names, args_ok)`` from a chat message's ``tool_calls``.
+
+    ``args_ok`` is True only when EVERY call's ``arguments`` string parses as
+    a JSON object — a parser-salvage mangle leaves ``{}``-defaulted or
+    unparseable arguments behind.
+    """
+    raw = msg.get("tool_calls")
+    calls = raw if isinstance(raw, list) else []
+    names = []
+    args_ok = True
+    for c in calls:
+        fn = (c.get("function") if isinstance(c, dict) else None) or {}
+        names.append(fn.get("name"))
+        try:
+            args_ok = args_ok and isinstance(json.loads(fn.get("arguments") or ""), dict)
+        except (TypeError, json.JSONDecodeError):
+            args_ok = False
+    return names, args_ok
+
+
+def _leg_error(message: str) -> dict:
+    return {"ok": False, "clean": False, "tool_calls": [], "error": message}
+
+
+def _strict_matrix_leg(url: str, model: str, *, strict: bool, enable_thinking: bool | None) -> dict:
+    """One leg of the strict matrix; never raises (mirrors ``_tool_probe``).
+
+    A CLEAN call means: at least one ``tool_calls`` entry, every name one of
+    the offered tools (a parser-salvage mangle shows up as e.g.
+    ``'finish"'``), and every ``arguments`` string parsing as a JSON object.
+    The baseline (non-strict) leg only requires an answer — unconstrained
+    decoding is allowed to drift; that is exactly why the strict legs exist.
+    """
+    offered = {t["function"]["name"] for t in _TOOL_PROBE_TOOLS}
+    try:
+        d = _post(url, _strict_tools_payload(model, strict=strict, enable_thinking=enable_thinking))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace").strip()
+        return _leg_error(f"HTTP {exc.code}: {body[:200]}")
+    except (OSError, json.JSONDecodeError) as exc:
+        return _leg_error(f"probe failed: {exc}")
+    try:
+        choice = (d.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        names, args_ok = _parse_leg_tool_calls(msg)
+        clean = bool(names) and args_ok and all(n in offered for n in names)
+        answered = bool(names) or bool(msg.get("content"))
+        return {
+            "ok": clean if strict else answered,
+            "clean": clean,
+            "tool_calls": names,
+            "finish": choice.get("finish_reason"),
+            "error": None,
+        }
+    except (KeyError, IndexError, TypeError, AttributeError) as exc:
+        return _leg_error(f"unexpected response shape ({exc.__class__.__name__}: {exc})")
+
+
+def run_strict_tool_matrix(url: str, model: str) -> dict:
+    """Run the three-leg strict tool-calling matrix; return a structured result."""
+    url = url.rstrip("/")
+    legs = {
+        name: _strict_matrix_leg(url, model, strict=strict, enable_thinking=thinking)
+        for name, strict, thinking in _STRICT_MATRIX_LEGS
+    }
+    return {"passed": all(leg["ok"] for leg in legs.values()), "legs": legs}
+
+
+def render_strict_tool_matrix(result: dict) -> str:
+    """Markdown table for ``run_strict_tool_matrix`` (text-mode output)."""
+    lines = [
+        "### Strict tool-calling matrix (colleague#320)",
+        "",
+        "| leg | ok | clean call | tool_calls | error |",
+        "|---|---|---|---|---|",
+    ]
+    for name, leg in result["legs"].items():
+        lines.append(
+            f"| {name} | {'PASS' if leg['ok'] else 'FAIL'} | {leg.get('clean')} "
+            f"| {leg.get('tool_calls')} | {leg.get('error') or '—'} |"
+        )
+    lines.append("")
+    lines.append(f"**matrix: {'PASS' if result['passed'] else 'FAIL'}**")
+    return "\n".join(lines)
+
+
 def _decode_throughput(url: str, model: str, n_tokens: int, runs: int = 2) -> list[float]:
     rates = []
     for _ in range(runs):

@@ -28,3 +28,14 @@
 {"ts":"2026-07-14T15:01:44.353002+00:00","type":"readiness_arrived","pr":121,"waited_secs":60}
 {"ts":"2026-07-14T15:01:49.360136+00:00","type":"pr_read","pr":121,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
 {"ts":"2026-07-14T16:03:49.298219+00:00","type":"pr_read","pr":121,"comment_count":7,"threads_unresolved":1,"ci_state":"ok"}
+{"ts":"2026-07-14T18:03:14.906342+00:00","type":"pr_opened","pr":122,"title":"spec: strict grammar-constrained tool calls with thinking (colleague#320) (0.43.1)"}
+{"ts":"2026-07-14T18:03:16.035438+00:00","type":"pr_review_triggered","pr":122,"command":"/agentic_review"}
+{"ts":"2026-07-14T18:03:16.848797+00:00","type":"pr_webhook_posted","pr":122,"event":"pr_opened"}
+{"ts":"2026-07-14T18:04:20.242092+00:00","type":"readiness_arrived","pr":122,"waited_secs":60}
+{"ts":"2026-07-14T18:04:24.739987+00:00","type":"pr_read","pr":122,"comment_count":4,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-14T18:29:12.209485+00:00","type":"pr_opened","pr":123,"title":"Strict grammar-constrained tool calls with thinking \u2014 qwen3_coder_thinking plugin + gateway force-strict knob (colleague#320) (0.44.0)"}
+{"ts":"2026-07-14T18:29:13.382442+00:00","type":"pr_review_triggered","pr":123,"command":"/agentic_review"}
+{"ts":"2026-07-14T18:29:14.023856+00:00","type":"pr_webhook_posted","pr":123,"event":"pr_opened"}
+{"ts":"2026-07-14T18:30:16.882691+00:00","type":"readiness_arrived","pr":123,"waited_secs":60}
+{"ts":"2026-07-14T18:30:21.502737+00:00","type":"pr_read","pr":123,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-14T18:42:04.294614+00:00","type":"pr_read","pr":123,"comment_count":7,"threads_unresolved":2,"ci_state":"ok"}
