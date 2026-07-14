@@ -179,11 +179,16 @@ def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:
     assert "cortex" not in thor_lobe.hosts
 
 
-def test_spark_lobe_and_thor_lobe_carry_no_overrides_yet() -> None:
-    # t2 (sequenced after this task, same files) fills these in as re-derived
-    # budget overrides; t1 leaves every shape's overrides empty.
-    assert dict(load_builtin_shape("spark-lobe").overrides) == {}
-    assert dict(load_builtin_shape("thor-lobe").overrides) == {}
+def test_spark_lobe_and_thor_lobe_carry_reclaimed_budget_overrides() -> None:
+    # t2 (brain-shapes, landed after this file) fills these in as re-derived
+    # budget overrides for the lobe that gains the dropped role's freed
+    # budget: spark-lobe's cortex reclaims dropped senses' util; thor-lobe's
+    # senses reclaims dropped cortex's util. machine-as-brain (nothing
+    # dropped) stays empty -- see test_machine_as_brain_carries_no_overrides
+    # above. The re-derived VALUES + their provenance are exercised in
+    # tests/test_shape_budgets.py, not repeated here.
+    assert set(load_builtin_shape("spark-lobe").overrides.keys()) == {"cortex"}
+    assert set(load_builtin_shape("thor-lobe").overrides.keys()) == {"senses"}
 
 
 def test_spark_lobe_and_thor_lobe_differ_from_machine_as_brain_only_by_hosts_and_overrides() -> (
@@ -201,10 +206,13 @@ def test_spark_lobe_and_thor_lobe_differ_from_machine_as_brain_only_by_hosts_and
     assert set(mab.hosts) - set(thor_lobe.hosts) == {"cortex"}
     assert set(thor_lobe.hosts) - set(mab.hosts) == set()
 
-    # No shape carries a budget override yet (t2's job) -- the ONLY structural
-    # divergence in t1 is the hosts subset.
-    for shape in (mab, spark_lobe, thor_lobe):
-        assert dict(shape.overrides) == {}
+    # machine-as-brain (nothing dropped) carries no override; spark-lobe/
+    # thor-lobe (brain-shapes t2) each carry exactly one -- the lobe that
+    # reclaims the dropped role's freed budget. The full re-derived VALUES
+    # (with provenance) are exercised in tests/test_shape_budgets.py.
+    assert dict(mab.overrides) == {}
+    assert set(spark_lobe.overrides.keys()) == {"cortex"}
+    assert set(thor_lobe.overrides.keys()) == {"senses"}
 
 
 def test_builtin_shapes_round_trip() -> None:

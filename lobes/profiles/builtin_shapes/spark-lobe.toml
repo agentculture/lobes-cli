@@ -3,14 +3,24 @@
 # on this box, and drops the Gemma `senses` lobe to a peer box (today, the
 # Jetson AGX Thor running thor-lobe.toml) instead of co-residing it here.
 #
-# Differs from machine-as-brain.toml ONLY in `hosts` (senses dropped) and, from
-# a later task (t2) onward, `overrides` (t2 re-derives cortex's budget upward
-# now that it no longer shares the box with senses -- co-residency today caps
-# cortex at util 0.30 / 131072 tokens instead of its 256K solo-native context,
-# see CLAUDE.md's "Colleague roles"). This task (t1) leaves `overrides` empty
-# -- the budget-override FIELDS exist in the schema (RoleProfile, reused
-# verbatim), but no re-derived value is filled in yet.
+# Differs from machine-as-brain.toml in `hosts` (senses dropped) and, as of
+# brain-shapes t2, `overrides` -- cortex reclaims dropped senses' share of the
+# co-resident gpu_mem_util budget now that it no longer shares the box with
+# senses. Co-residency today caps cortex at util 0.30 / 131072 tokens instead
+# of its 256K solo-native context (see CLAUDE.md's "Colleague roles");
+# max_model_len is deliberately left at that co-resident 131072 here -- the
+# rise to full native 262144 is explicitly issue #112 scope, not this task.
 name = "spark-lobe"
 summary = "DGX Spark mesh-lobe -- Qwen cortex + embedder + reranker + audio, no Gemma senses"
 
 hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
+
+[overrides.cortex]
+# 0.30 (cortex, spark co-resident) + 0.14 (senses, spark co-resident)
+# reclaimed from dropped senses -- see lobes/profiles/builtin/spark.toml's
+# [roles.cortex]/[roles.senses] gpu_mem_util for the two co-resident values
+# this sums. max_model_len is intentionally NOT declared here (stays at the
+# co-resident 131072 via the resolved Profile -- no override = no opinion,
+# per RoleProfile/Shape.override's convention); raising it to full native
+# 262144 is issue #112 scope, not this task.
+gpu_mem_util = 0.44
