@@ -279,6 +279,9 @@ def _emit_dry_run(
         # about what --apply would do, including the fallback profile it would
         # serve on an UNKNOWN card.
         profile, card = _resolve_fleet_profile(target, profile_name)
+        # The tool-parser plugin file (t2) is fleet-only — mounted into
+        # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
+        plan = plan + [_compose.plugin_plan(target)]
     if json_mode:
         payload = {
             "dry_run": True,
@@ -335,6 +338,11 @@ def _emit_apply(
     # root-owned. The mg-logwrap entrypoint writes per-boot logs here (issue #50).
     _compose.ensure_log_dir(target)
     if fleet:
+        # The tool-parser plugin file (t2) is fleet-only — mounted into
+        # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
+        # Single source of truth: written fresh from the packaged
+        # lobes.vllm_plugins module, not a lobes/templates/ copy.
+        written = written + [_compose.write_plugin_file(target, force=force)]
         # Render the resolved (shape, profile) pair's knobs into .env, the same
         # way any other env value gets written here (lobes.runtime._env.set_env)
         # — skipping keys the composition merely restates from the template

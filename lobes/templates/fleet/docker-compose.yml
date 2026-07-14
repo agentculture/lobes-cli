@@ -69,6 +69,13 @@ services:
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # Think-aware tool-parser plugin (t2, cortex/main lane only): `lobes init`
+      # materialises this file from the packaged lobes.vllm_plugins module
+      # (importlib.resources — single source of truth, not a templates copy);
+      # mounted read-only and loaded below via --tool-parser-plugin. NOT mounted
+      # into vllm-multimodal/-embed/-rerank/-minor/-middle — those never parse
+      # tool calls in the reasoning-aware qwen3_coder_thinking format.
+      - ./qwen3_thinking_tool_parser.py:/opt/lobes/qwen3_thinking_tool_parser.py:ro
     # No host port — reachable only as http://vllm-primary:8000 on the compose net.
     expose:
       - "8000"
@@ -100,7 +107,15 @@ services:
       - --default-chat-template-kwargs
       - '{"preserve_thinking": true}'   # preserve historical <think> across turns; request-level chat_template_kwargs override this default
       - --enable-auto-tool-choice
-      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder}
+      # qwen3_coder_thinking (t2): a CUSTOM plugin parser, not an upstream vLLM
+      # name. Upstream's stock qwen3_coder parser hardcodes reasoning=False on
+      # every emitted tool call — strict structural tags then break for a
+      # thinking model, which needs to stay reasoning-aware across a tool turn.
+      # --tool-parser-plugin (below) registers this name from the mounted file.
+      # Falls back to plain upstream qwen3_coder if an operator overrides
+      # PRIMARY_TOOL_CALL_PARSER in .env (e.g. to run a non-thinking primary here).
+      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder_thinking}
+      - --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
       # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
       - --enable-prefix-caching
       # MTP default primary: speculative decoding (~2.4x decode) + the text-only /

@@ -73,8 +73,14 @@ def test_init_default_apply_json_lists_fleet_files(tmp_path, capsys) -> None:
     assert payload["scaffolded"] == str(target)
     assert payload["fleet"] is True
     assert payload["single"] is False
-    assert set(payload["files"]) == set(_compose.FLEET_TEMPLATES.values())
+    # The tool-parser plugin file (t2) is a fleet-only extra materialised from
+    # lobes.vllm_plugins, NOT a lobes.templates resource — so it is not itself
+    # in FLEET_TEMPLATES.values() and must be asserted on top of that set.
+    assert set(payload["files"]) == set(_compose.FLEET_TEMPLATES.values()) | {
+        _compose.PLUGIN_DEST_NAME
+    }
     assert "Dockerfile.gateway" in payload["files"]
+    assert _compose.PLUGIN_DEST_NAME in payload["files"]
 
 
 def test_init_single_scaffolds_legacy(tmp_path, capsys) -> None:
@@ -216,8 +222,74 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
         "Dockerfile.vllm-gemma4",  # custom vLLM image for vllm-multimodal (issue #71)
         "mg-logwrap.sh",
         "cf-tunnel.env.example",
+        "qwen3_thinking_tool_parser.py",  # tool-parser plugin (t2), fleet-only
     }
     assert not target.exists()
+
+
+# --- tool-parser plugin materialisation (t2) -------------------------------
+#
+# `lobes init` writes lobes/vllm_plugins/qwen3_thinking_tool_parser.py's
+# packaged SOURCE into the deployment dir as qwen3_thinking_tool_parser.py —
+# fleet only (mounted read-only into vllm-primary/cortex; see
+# lobes/templates/fleet/docker-compose.yml). The legacy single-model scaffold
+# has no such mount, so it must never materialise this file.
+
+
+def test_init_fleet_dry_run_lists_plugin_file(tmp_path, capsys) -> None:
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"  {_compose.PLUGIN_DEST_NAME}" in out
+    assert not target.exists()
+
+
+def test_init_fleet_apply_writes_plugin_file(tmp_path, monkeypatch) -> None:
+    _inject_spark_detection(monkeypatch)
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    plugin_path = target / _compose.PLUGIN_DEST_NAME
+    assert plugin_path.is_file()
+    # Byte-identical to what the package ships (single source of truth — no
+    # lobes/templates/ copy to drift out of sync).
+    assert plugin_path.read_text(encoding="utf-8") == _compose.plugin_source()
+
+
+def test_init_default_apply_writes_plugin_file(tmp_path, monkeypatch) -> None:
+    # The default topology is the fleet duo (issue #69); a bare `lobes init
+    # --apply` (no --fleet needed) must materialise the plugin file too.
+    _inject_spark_detection(monkeypatch)
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--apply"])
+    assert rc == 0
+    assert (target / _compose.PLUGIN_DEST_NAME).is_file()
+
+
+def test_init_single_dry_run_does_not_list_plugin_file(tmp_path, capsys) -> None:
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--single"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert _compose.PLUGIN_DEST_NAME not in out
+
+
+def test_init_single_apply_does_not_write_plugin_file(tmp_path) -> None:
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--single", "--apply"])
+    assert rc == 0
+    assert not (target / _compose.PLUGIN_DEST_NAME).exists()
+
+
+def test_init_fleet_audio_apply_writes_plugin_file_too(tmp_path, monkeypatch) -> None:
+    # "for the fleet scaffold (and audio variant)" — the audio overlay layers
+    # on top of the fleet, so the plugin file must still land.
+    _inject_spark_detection(monkeypatch)
+    target = tmp_path / "fa"
+    rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
+    assert rc == 0
+    assert (target / _compose.PLUGIN_DEST_NAME).is_file()
 
 
 # --- audio overlay (--fleet --audio) --------------------------------------
