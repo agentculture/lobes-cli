@@ -28,6 +28,19 @@ class RoutingTable:
     backends: tuple[Backend, ...]
     default_model: str  # served_name used for a missing/unknown request model
     aliases: dict[str, str]  # alias -> served_name
+    # Backend NAMES this machine's per-machine profile declared it CANNOT serve
+    # AT ALL (issue #92's "advertised implies reachable" extended to the
+    # HARDWARE dimension — plan "per-machine profiles", task t6). Populated by
+    # :func:`lobes.gateway._config.build_config` from ``<PREFIX>_FEASIBLE=false``
+    # env vars (:data:`lobes.gateway._config.FEASIBLE_ENV`) — the SAME
+    # per-backend-name env convention the served-context overlay already uses.
+    # Independent of wiring: a backend can be BOTH present in ``backends`` (the
+    # primary is unconditionally wired) AND infeasible — this field is what
+    # lets :func:`infeasible_owner` / :func:`list_models_payload` /
+    # :mod:`lobes.roles` reject/hide it anyway. Defaults to empty so every
+    # existing caller/table construction (this module's own tests included) is
+    # completely unaffected.
+    infeasible: frozenset[str] = frozenset()
 
 
 def is_audio_path(path: str) -> bool:
@@ -173,6 +186,40 @@ def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
     return None
 
 
+def infeasible_owner(table: RoutingTable, requested: str | None) -> str | None:
+    """The infeasible backend NAME ``requested`` resolves to, else ``None``.
+
+    Resolves ``requested`` EXACTLY the way :func:`resolve_model` would — a
+    capability-tier or role-identity alias (``cortex``/``main``/``hard``/
+    ``senses``/``multimodal``/…), a custom operator alias, a concrete served
+    model id, or an unspecified/unknown id (both of which fall back to
+    ``table.default_model`` — see :func:`resolve_model`) — then checks whether
+    the OWNING backend's name is in :attr:`RoutingTable.infeasible`.
+
+    This deliberately reuses ``resolve_model`` rather than re-deriving tier
+    semantics: ``table.aliases`` already carries every tier/role alias
+    (``tier_aliases`` computed it in :func:`~lobes.gateway._config.build_config`,
+    independent of feasibility), so a role-identity request like ``cortex``
+    resolves to the SAME served name a pressure-aware
+    :func:`~lobes.gateway._tier_request.resolve_tier_request` would use for a
+    WIRED backend (it only diverges via the upward-fallback substitution when a
+    tier's own backend is unwired — a case this function does not need to
+    special-case, because an infeasible-but-unwired backend never owns
+    anything a request could resolve to in the first place).
+
+    Callers decide WHEN to consult this relative to their own precedence
+    rules (e.g. :func:`~lobes.gateway.server.handle_post` runs it before
+    pressure-shedding for a tier request — feasibility is a hardware fact,
+    not a load condition — but after the ``is_unknown_model`` 404 for a plain
+    id, so a genuinely never-advertised id still gets ``model_not_found``,
+    not ``role_infeasible``).
+    """
+    if not table.infeasible:
+        return None
+    owner = _backend_for(table, resolve_model(table, requested))
+    return owner.name if owner is not None and owner.name in table.infeasible else None
+
+
 def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
     """Resolve ``served_name`` to its single owning backend — never a failover chain.
 
@@ -232,10 +279,18 @@ def list_models_payload(
     exact defect #92 fixes (a wired-but-dead backend probes ``None``, not
     ``False``). ``ready=None`` (the default) lists every wired backend unchanged —
     the offline/CLI path and any caller without a live signal.
+
+    ``table.infeasible`` (task t6, the HARDWARE dimension of the same
+    invariant) is applied UNCONDITIONALLY, regardless of whether ``ready`` was
+    supplied — a backend this machine's profile declared infeasible is never
+    listed, even when a live readiness probe reports it healthy (``ready=True``
+    is not evidence of hardware capability, only of "the process answered").
     """
     backends = table.backends
     if ready is not None:
         backends = tuple(b for b in backends if ready.get(b.name) is True)
+    if table.infeasible:
+        backends = tuple(b for b in backends if b.name not in table.infeasible)
     return {
         "object": "list",
         "data": [

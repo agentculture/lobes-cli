@@ -1,0 +1,52 @@
+# The conservative fallback profile for an UNRECOGNISED card (t14). Resolved
+# by `lobes init` when `lobes.runtime._detect.detect_card()` returns UNKNOWN
+# and no `--profile` was given — the alternative to refusing outright.
+#
+# The bet this profile makes: an unrecognised box gets a SMALL generate model
+# plus the two 0.6B pooling gears, never the 27B `cortex` primary
+# (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) — that checkpoint's util 0.30 /
+# 128K footprint is only load-tested on the DGX Spark (GB10) and Jetson AGX
+# Thor (both 128 GB unified-memory, Blackwell-class boards); serving it
+# unconditionally on an unknown card risks an OOM crash-loop on first boot.
+# `senses` (the 12B multimodal gear) is marked infeasible for the same
+# reason — see lobes/profiles/render.py's <PREFIX>_FEASIBLE=false marker,
+# honoured end-to-end by the gateway/capabilities surface (t6).
+#
+# `cortex` here is rendered onto the fleet template's PRIMARY_* env vars
+# (see lobes/profiles/render.py:ROLE_ENV_PREFIX) using the same small
+# "minor" gear lobes/catalog.py already knows (role_hint="minor",
+# Qwen/Qwen3.5-4B, bf16/unquantized, 256K native — see catalog.py and
+# docs/qwen3.5-4b-minor.md) at a modest context/util so a first boot on
+# unknown hardware has the best chance of fitting in memory. This profile
+# takes no position on `quantization`/`enforce_eager`/`max_num_seqs` for
+# cortex (left absent -> the compose template's own ${VAR:-default}
+# applies, same convention as spark.toml/thor.toml for every knob they
+# don't diverge on).
+#
+# This is NOT the broader "small default on every card" change (issue #107)
+# — recognised cards (spark, thor, or a future one added the same way) are
+# completely unaffected: they still resolve their own profile and never see
+# this file at all.
+name = "base"
+summary = "Unrecognised card — conservative fallback: small generate model + pooling gears, no 27B"
+
+[roles.cortex]
+feasible = true
+model = "Qwen/Qwen3.5-4B"
+gpu_mem_util = 0.30
+max_model_len = 32768
+
+[roles.senses]
+feasible = false
+
+[roles.embedder]
+feasible = true
+model = "Qwen/Qwen3-Embedding-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+
+[roles.reranker]
+feasible = true
+model = "Qwen/Qwen3-Reranker-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192

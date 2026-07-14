@@ -17,6 +17,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import json
+import math
 import statistics
 import time
 import urllib.error
@@ -546,6 +547,320 @@ def render_correctness(result: dict) -> str:
                 tc.get("error") or f"no finish call (tool_calls={tc['tool_calls']})"
             )
         lines.append(f"| tool calling (`tool_choice:auto`) | {detail} |")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Per-role CORRECTNESS probes (issue #81, t7) — cortex / embedder / reranker
+# ---------------------------------------------------------------------------
+#
+# Unlike :mod:`lobes.roles_measure` (RUNTIME-ONLY: latency/throughput/RTF —
+# never a correctness claim, boundary c7/h14), the probes below exist
+# SPECIFICALLY to catch a service that is "healthy" (``/health`` 200, accepts
+# requests) but semantically WRONG — e.g. the sm_110 FLASH_ATTN hang (a
+# request accepted and never answered) or a reranker that returns results in
+# the wrong order (tracked separately, #105/#106). A probe here reports
+# PASS/FAIL faithfully; expected-failure bookkeeping for a known-broken
+# deployment happens elsewhere, not in this module.
+#
+# Every probe is a pure function of ``(url, model)`` using the SAME module-level
+# ``_post`` transport the existing correctness probes use — monkeypatchable by
+# tests exactly like :func:`run_correctness`. Every probe enforces its own hard
+# ``timeout`` and folds a timeout/connection failure into ``ok=False`` (never a
+# skip, never a raise) — this is what would have caught the sm_110 hang.
+
+DEFAULT_PROBE_TIMEOUT = 30.0
+
+# generate/cortex — a deterministic (temperature 0), forced-short-completion
+# known-answer question. Exact-match on a lowercased expected substring.
+_CORTEX_PROBE_PROMPT = "What is the capital city of France? Reply with only the city name."
+_CORTEX_PROBE_EXPECT = "paris"
+
+# embed — a sentence, a paraphrase of it, and an unrelated sentence. PASS iff
+# the paraphrase scores a higher cosine similarity than the unrelated string.
+_EMBED_PROBE_SENTENCE = "The cat sat on the warm windowsill."
+_EMBED_PROBE_PARAPHRASE = "A cat was resting on the sunny windowsill."
+_EMBED_PROBE_UNRELATED = "Quarterly revenue exceeded analyst expectations."
+
+# rerank — a query and documents where exactly one is relevant. PASS iff the
+# relevant document ranks first by relevance_score.
+_RERANK_PROBE_QUERY = "What is the capital of France?"
+_RERANK_PROBE_DOCS = [
+    "Paris is the capital and most populous city of France.",
+    "The Amazon rainforest spans several South American countries.",
+    "Bananas are a good source of potassium.",
+]
+_RERANK_PROBE_RELEVANT_INDEX = 0
+
+# role -> probe name, part of every structured probe result.
+PROBE_NAMES: dict[str, str] = {
+    "cortex": "known_answer",
+    "embedder": "embed_similarity",
+    "reranker": "rerank_relevance",
+}
+
+# The three roles this module carries a correctness probe for, in a stable order.
+PROBE_ROLES: tuple[str, ...] = ("cortex", "embedder", "reranker")
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two equal-length vectors; ``0.0`` for a degenerate (zero) vector."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    # Norms are non-negative; below this epsilon the vector is degenerate and
+    # the similarity is meaningless (and the division would explode).
+    if norm_a < 1e-12 or norm_b < 1e-12:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _probe_result(
+    role: str, probe: str, ok: bool, evidence: dict, latency_ms: float, error: str | None = None
+) -> dict:
+    return {
+        "role": role,
+        "probe": probe,
+        "ok": ok,
+        "evidence": evidence,
+        "latency_ms": round(latency_ms, 1),
+        "error": error,
+    }
+
+
+def probe_cortex_correctness(
+    url: str, model: str, *, timeout: float = DEFAULT_PROBE_TIMEOUT
+) -> dict:
+    """Known-answer probe for the generate/cortex role.
+
+    A deterministic (``temperature=0``), forced-short-completion question with
+    an exact-match expected substring. FAILS on a wrong answer, a timeout, or a
+    connection failure — never raises.
+    """
+    url = url.rstrip("/")
+    t0 = time.monotonic()
+    try:
+        d = _post(
+            url,
+            {
+                "model": model,
+                "messages": [{"role": "user", "content": _CORTEX_PROBE_PROMPT}],
+                "max_tokens": 16,
+                "temperature": 0,
+                # The cortex gear serves a thinking model: without this a
+                # 16-token budget is consumed inside the <think> trace and
+                # `content` comes back empty (probe fails on a correct model).
+                # Same override `lobes route` uses; per-request kwargs beat the
+                # server's preserve_thinking default (#93).
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+            timeout=timeout,
+        )
+        latency_ms = (time.monotonic() - t0) * 1000
+        content = (d["choices"][0]["message"].get("content") or "").strip().lower()
+        ok = _CORTEX_PROBE_EXPECT in content
+        return _probe_result(
+            "cortex",
+            PROBE_NAMES["cortex"],
+            ok,
+            {"expected": _CORTEX_PROBE_EXPECT, "content": content},
+            latency_ms,
+        )
+    except OSError as exc:
+        return _probe_result(
+            "cortex",
+            PROBE_NAMES["cortex"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"transport failed (timeout or connection error): {exc}",
+        )
+    except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        # AttributeError: a 200-but-malformed body (e.g. "message" is a string,
+        # not a dict) makes `.get("content")` raise instead of KeyError/TypeError
+        # — must FAIL the probe, never abort `lobes assess --probes` (Qodo finding).
+        return _probe_result(
+            "cortex",
+            PROBE_NAMES["cortex"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"unexpected response shape ({exc.__class__.__name__}: {exc})",
+        )
+
+
+def probe_embed_correctness(
+    url: str, model: str, *, timeout: float = DEFAULT_PROBE_TIMEOUT
+) -> dict:
+    """Correctness probe for the embed/embedder role.
+
+    Embeds a sentence, its paraphrase, and an unrelated sentence in one batch;
+    PASS iff ``cos(sentence, paraphrase) > cos(sentence, unrelated)``. A hard
+    ``timeout`` applies to the whole request — a hang (e.g. the sm_110
+    FLASH_ATTN hang: request accepted, never answered) FAILS the probe, it is
+    never skipped.
+    """
+    url = url.rstrip("/")
+    t0 = time.monotonic()
+    try:
+        d = _post(
+            url,
+            {
+                "model": model,
+                "input": [_EMBED_PROBE_SENTENCE, _EMBED_PROBE_PARAPHRASE, _EMBED_PROBE_UNRELATED],
+            },
+            timeout=timeout,
+            path="/v1/embeddings",
+        )
+        latency_ms = (time.monotonic() - t0) * 1000
+        items = sorted(d["data"], key=lambda item: item.get("index", 0))
+        sentence, paraphrase, unrelated = (item["embedding"] for item in items[:3])
+        sim_paraphrase = _cosine_similarity(sentence, paraphrase)
+        sim_unrelated = _cosine_similarity(sentence, unrelated)
+        ok = sim_paraphrase > sim_unrelated
+        return _probe_result(
+            "embedder",
+            PROBE_NAMES["embedder"],
+            ok,
+            {
+                "sim_paraphrase": round(sim_paraphrase, 4),
+                "sim_unrelated": round(sim_unrelated, 4),
+            },
+            latency_ms,
+        )
+    except OSError as exc:
+        return _probe_result(
+            "embedder",
+            PROBE_NAMES["embedder"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"transport failed (timeout or connection error): {exc}",
+        )
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
+        # AttributeError: a 200-but-malformed body (e.g. `data` items are plain
+        # strings, not dicts) makes `item.get("index", 0)` raise instead of
+        # KeyError/TypeError — must FAIL the probe, never abort the command.
+        return _probe_result(
+            "embedder",
+            PROBE_NAMES["embedder"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"unexpected response shape ({exc.__class__.__name__}: {exc})",
+        )
+
+
+def probe_rerank_correctness(
+    url: str, model: str, *, timeout: float = DEFAULT_PROBE_TIMEOUT
+) -> dict:
+    """Correctness probe for the score/reranker role.
+
+    Reranks a query against documents where exactly one is relevant; PASS iff
+    the relevant document ranks first by ``relevance_score``. FAILS (never
+    skips) on a timeout, a connection failure, or a malformed response.
+    """
+    url = url.rstrip("/")
+    t0 = time.monotonic()
+    try:
+        d = _post(
+            url,
+            {"model": model, "query": _RERANK_PROBE_QUERY, "documents": list(_RERANK_PROBE_DOCS)},
+            timeout=timeout,
+            path="/v1/rerank",
+        )
+        latency_ms = (time.monotonic() - t0) * 1000
+        ranked = sorted(d["results"], key=lambda r: r["relevance_score"], reverse=True)
+        top_index = ranked[0]["index"]
+        ok = top_index == _RERANK_PROBE_RELEVANT_INDEX
+        return _probe_result(
+            "reranker",
+            PROBE_NAMES["reranker"],
+            ok,
+            {
+                "top_index": top_index,
+                "expected_index": _RERANK_PROBE_RELEVANT_INDEX,
+                "ranking": [r["index"] for r in ranked],
+            },
+            latency_ms,
+        )
+    except OSError as exc:
+        return _probe_result(
+            "reranker",
+            PROBE_NAMES["reranker"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"transport failed (timeout or connection error): {exc}",
+        )
+    except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        # AttributeError: no current field in this probe calls `.get()` on a
+        # value that could be non-dict, but the sibling cortex/embedder probes
+        # do (Qodo finding) — caught here too so a future refactor that adds
+        # one can't silently regress this probe from a structured FAIL to an
+        # uncaught exception that aborts `lobes assess --probes`.
+        return _probe_result(
+            "reranker",
+            PROBE_NAMES["reranker"],
+            False,
+            {},
+            (time.monotonic() - t0) * 1000,
+            error=f"unexpected response shape ({exc.__class__.__name__}: {exc})",
+        )
+
+
+_ROLE_PROBE_FN = {
+    "cortex": probe_cortex_correctness,
+    "embedder": probe_embed_correctness,
+    "reranker": probe_rerank_correctness,
+}
+
+
+def run_role_probes(
+    endpoints: dict[str, tuple[str, str] | None],
+    *,
+    roles: tuple[str, ...] | None = None,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
+) -> dict[str, dict]:
+    """Run the per-role correctness probes; never raises.
+
+    ``endpoints`` maps role -> ``(url, model)`` for a wired/loaded role, or
+    ``None``/absent for a role with nothing to dial. A role with no endpoint
+    FAILS its probe without a network call — a role that isn't even reachable
+    can't be judged "semantically correct".
+    """
+    wanted = roles if roles is not None else PROBE_ROLES
+    out: dict[str, dict] = {}
+    for role in wanted:
+        fn = _ROLE_PROBE_FN.get(role)
+        if fn is None:
+            continue
+        target = endpoints.get(role)
+        if not target:
+            out[role] = _probe_result(
+                role, PROBE_NAMES[role], False, {}, 0.0, error="role not loaded / no endpoint"
+            )
+            continue
+        url, model = target
+        out[role] = fn(url, model, timeout=timeout)
+    return out
+
+
+def render_role_probes(results: dict[str, dict]) -> str:
+    """Render :func:`run_role_probes` output as a markdown block."""
+    lines = [
+        "## Per-role correctness probes",
+        "",
+        "| Role | Probe | Result | Evidence | Latency |",
+        "|---|---|---|---|---|",
+    ]
+    for role, r in results.items():
+        mark = "PASS" if r["ok"] else "FAIL"
+        detail = r["error"] or json.dumps(r["evidence"], sort_keys=True)
+        lines.append(f"| {role} | {r['probe']} | {mark} | {detail} | {r['latency_ms']} ms |")
+    passed = all(r["ok"] for r in results.values())
+    lines.append("")
+    lines.append(f"**Overall: {'PASS' if passed else 'FAIL'}**")
     return "\n".join(lines)
 
 

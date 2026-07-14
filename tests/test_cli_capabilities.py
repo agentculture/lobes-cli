@@ -38,6 +38,7 @@ _ROLE_INFO_FIELDS = {
     "context",
     "quant",
     "mtp",
+    "feasible",
     "responsibilities",
     "forbidden_responsibilities",
     "ready",
@@ -128,6 +129,35 @@ def test_capabilities_non_json_renders_readable_table_with_all_six_roles(tmp_pat
         assert role in out
     assert "responsibilities:" in out
     assert "131072" in out  # served cortex context visible in the table
+
+
+def test_capabilities_json_marks_hardware_infeasible_role_unserved(tmp_path, capsys) -> None:
+    """End to end (profile → env → CLI), task t6: a role this machine's
+    per-machine profile declared infeasible (``PRIMARY_FEASIBLE=false`` in
+    the deployment's ``.env`` — the same channel ``lobes.gateway._config.
+    FEASIBLE_ENV`` reads) is never advertised ready by the offline registry
+    either — present (not omitted, per the #92 convention), but marked
+    unserved."""
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_FEASIBLE", "false")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == set(ROLES)  # still present, not omitted
+    assert payload["cortex"]["feasible"] is False
+    assert payload["cortex"]["ready"] is False
+    # Every sibling role is unaffected.
+    for role in ("senses", "embedder", "reranker"):
+        assert payload[role]["feasible"] is True
+
+
+def test_capabilities_non_json_table_flags_hardware_infeasible_role(tmp_path, capsys) -> None:
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_FEASIBLE", "false")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "infeasible on this machine" in out
 
 
 def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
@@ -339,6 +369,7 @@ def _known_capabilities_payload() -> dict:
             "context": 1000 + i,
             "quant": "fake-quant",
             "mtp": bool(i % 2),
+            "feasible": True,
             "responsibilities": [f"{role}-thing"],
             "forbidden_responsibilities": [],
             "ready": bool(i % 2 == 0),

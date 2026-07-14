@@ -78,7 +78,7 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --quantization=${VLLM_QUANTIZATION:-modelopt}   # MTP primary is ModelOpt NVFP4 (`modelopt` → modelopt_fp4); mmangkad/nvidia are modelopt_fp4, RedHatAI (Mistral) is compressed-tensors (`lobes switch` sets this from the catalog)
-      - --kv-cache-dtype=fp8
+      - --kv-cache-dtype=${VLLM_KV_CACHE_DTYPE:-fp8}   # fp8 needs calibrated k_scale/v_scale in the checkpoint; set to `auto` for a checkpoint that ships none (kv_cache_quant_algo: null trips `assert layer.k_scale > 0.0`)
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-262144}   # 256K native, served at the full 256K (load-tested 2026-06-03 on the shared GB10 — ~70 GiB at util 0.6, same as 32K/128K; 5.3x KV concurrency headroom at full context); lower only for heavier co-residence
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
       - --attention-backend=${VLLM_ATTENTION_BACKEND:-flashinfer}   # Blackwell-class kernel (ships in the nv26.04 image); `lobes switch --machine` sets this

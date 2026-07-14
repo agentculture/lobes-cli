@@ -4,11 +4,78 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.40.4] - 2026-07-14
+## [0.41.0] - 2026-07-13
 
 ### Added
 
-- Spec + plan: deployment shapes — machine-as-brain (default) vs per-box mesh-brain lobe profiles (spark-lobe drops Gemma senses, thor-lobe drops the Qwen cortex), flag-first selection on lobes init, per-box honesty; end-state tracked as #112 (devague frame + 8-task plan)
+- **Per-machine hardware profiles** (spec + plan shipped in 0.40.2/0.40.3; this
+  is the implementation — 13 tasks, 4 waves):
+  - `lobes/machines/` — per-chip **strategy registry** (one `CardStrategy`
+    module per chip: spark, thor, blackwell, generic) with a shared `SM_110`
+    trait; the legacy `MachineProfile`/`MACHINE_PROFILES`/`detect_machine()`
+    API is derived from the registry, every pre-existing test unchanged.
+    Adding a chip = one file + one registration line.
+  - `lobes/profiles/` — profile schema (per-role `feasible`/`model` + seven
+    machine knobs), TOML built-ins (`spark`, `thor`, `base`), loader (operator
+    profile in `<deploy-dir>/profiles/<name>.toml` overrides built-ins), and
+    the profile→env renderer. Thor's four divergent knobs stay single-sourced
+    in the machines registry and overlay at load time.
+  - `lobes/runtime/_detect.py` — host card detection (device name + compute
+    capability + total memory from `/proc/meminfo`; never nvidia-smi memory
+    fields — they are `[N/A]` on Thor; UNKNOWN is first-class).
+  - `lobes init` detects the card and applies the resolved profile
+    (`--profile` overrides with a warning); an UNKNOWN card **warns and serves
+    the conservative `base` profile** (4B generate model + the two 0.6B
+    pooling gears, senses disabled, no 27B) instead of refusing (#107's
+    unknown-card slice).
+  - `lobes doctor`/`status` report the detected card (device, compute
+    capability, memory) and the chosen profile, warning on forced/unvalidated
+    combinations; init persists the choice as `LOBES_PROFILE`.
+  - Hardware **feasibility honoured end-to-end**: `<PREFIX>_FEASIBLE=false`
+    removes the role from `lobes capabilities` / `GET /capabilities` and the
+    gateway answers 404 `role_infeasible` instead of silently rerouting
+    (extends the #92 invariant).
+  - Per-role **correctness probes** (`lobes assess --probes [--role r]
+    [--timeout s]`): cortex known-answer, embed paraphrase-beats-unrelated,
+    rerank relevant-doc-first; timeout counts as FAIL (catches the sm_110
+    FLASH_ATTN hang that `/health` misses).
+  - **Golden rendered artifacts** per shipped profile + the template-default
+    surface (`tests/goldens/`, byte-diffed, GPU-less) — a change for one
+    machine cannot silently alter another's rendering (the cross-machine
+    no-breakage guard).
+  - **Upgrade-compat proof**: a main-scaffolded deployment keeps working with
+    the new CLI (zero bytes changed by upgrade, env-name tripwire, re-init is
+    diffed and `--force --apply`-gated).
+  - `docs/machine-profiles.md` + `lobes explain profiles` + honest support
+    tables in README/CLAUDE.md. Thor validated live 2026-07-13: 3/3
+    correctness probes pass on a clean boot (rerank **correct and stable**
+    under TRITON_ATTN + eager); senses unconfirmed in that run. Orin / Orin
+    Nano Super named but unvalidated.
+  - Fleet compose knobs are env-parameterised (per-gear kv-cache dtype,
+    `--attention-config`, enforce-eager, models per role); defaults reproduce
+    the shipped GB10 behavior byte-for-byte. `MULTIMODAL_ATTENTION_BACKEND`
+    deliberately kept pending the GB10 check (#109).
+  - Live-validation findings, recorded as plan risk r7 and in the #109 thread:
+    the fp8 `k_scale` assert did **not** reproduce on the pinned nightly —
+    uncalibrated fp8-KV now boots with scale-1.0 warnings (an accuracy risk,
+    not a crash) — and concurrent fleet first-boot on Thor fails a **memory
+    race** (each engine's profiling window sees co-resident weight loads via
+    page cache) regardless of profile; sequential bring-up (primary first)
+    plus `drop_caches` after teardown boots clean. Boot ordering is not
+    expressible as a per-gear env knob — follow-up work.
+
+### Changed
+
+- `GATEWAY_DEFAULT_MODEL` default is now **empty** = follow the primary gear's
+  served name (was: hardcoded 27B id). Identical behavior on spark/thor;
+  correct on the `base` profile where the primary serves a 4B.
+
+### Fixed
+
+- The cortex correctness probe disables thinking per-request
+  (`chat_template_kwargs: {"enable_thinking": false}`, the `lobes route`
+  idiom) — on the thinking-mode cortex the 16-token budget was consumed
+  inside the `<think>` trace and a correct model failed the probe.
 
 ## [0.40.3] - 2026-07-13
 
