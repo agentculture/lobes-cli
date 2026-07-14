@@ -1,0 +1,142 @@
+=== lobes brain-shapes acceptance: spark-lobe ===
+  utc          : 2026-07-14T09:00:17Z
+  host         : spark-f8a9
+  repo rev     : b234800
+  cli version  : 0.42.0
+  deploy dir   : /home/spark/.lobes
+  dev lane     : 0.42.0.dev219
+  transcript   : /home/spark/lobes-accept-spark-lobe-20260714T090017Z.log
+
+=== phase 1: backup current deployment ===
+no existing deployment at /home/spark/.lobes — clean start
+
+=== phase 2: lobes init --shape spark-lobe (dry-run, then --apply) ===
+DRY RUN — would scaffold the fleet duo + audio overlay into /home/spark/.lobes:
+  docker-compose.yml
+  .env
+  Dockerfile.gateway
+  Dockerfile.vllm-gemma4
+  mg-logwrap.sh
+  cf-tunnel.env.example
+  docker-compose.audio.yml
+  Dockerfile.realtime
+  Dockerfile.parakeet
+  Dockerfile.chatterbox
+  listen_server.py
+  _readiness.py
+  .env (+ audio keys appended)
+Profile: spark (auto-detected: device_name='NVIDIA GB10', compute_capability='sm_121', total_memory_gb=121.7)
+Shape: spark-lobe (hosts=['cortex', 'embedder', 'reranker', 'stt', 'tts'])
+  would set 16 env var(s) in .env
+  docker-compose.shape.yml (parks vllm-multimodal in the inert 'shape-dropped' profile; !resets gateway depends_on)
+Re-run with --apply to write.
+>> scaffolded /home/spark/.lobes:
+  docker-compose.yml
+  .env
+  Dockerfile.gateway
+  Dockerfile.vllm-gemma4
+  mg-logwrap.sh
+  cf-tunnel.env.example
+  docker-compose.audio.yml
+  Dockerfile.realtime
+  Dockerfile.parakeet
+  Dockerfile.chatterbox
+  listen_server.py
+  _readiness.py
+  .env (+ audio keys)
+  docker-compose.shape.yml (drops vllm-multimodal: parked in the inert 'shape-dropped' profile)
+>> profile: spark
+>> shape: spark-lobe
+>> next: docker login nvcr.io && lobes fleet up --apply
+
+=== phase 2a: host port override — VLLM_PORT=8001 ===
+
+=== phase 2a2: operator env overrides ===
+  LOBES_SWAP_DEGRADED_THRESHOLD=100
+  LOBES_IOWAIT_DEGRADED_THRESHOLD=100
+
+=== phase 2b: dev lane — MODEL_GEAR_VERSION=0.42.0.dev219 via https://test.pypi.org/simple/ ===
+pinned (documented operator vars — see Dockerfile.gateway)
+
+=== phase 3: lobes fleet up --apply ===
+>> building + starting the fleet in /home/spark/.lobes
+>> waiting for /health on :8001 (first run downloads weights; up to 2 min)
+>> healthy on :8001
+>> gateway up on :8001. Backends load in the background — check: lobes fleet status --compose-dir /home/spark/.lobes
+waiting for gateway /health + all hosted roles ready (budget 1500s)...
+fleet healthy after 352s
+
+=== phase 3b: audio warm-up (TTS + STT first-call load) ===
+  tts warm (HTTP 200, 15s)
+  stt warm (HTTP 200, 16s)
+
+=== phase 4: dropped-lobe honesty ===
+  PASS  CLI capabilities: senses feasible:false (flagged, not hidden)
+  PASS  gateway /capabilities agrees: senses feasible:false
+  PASS  /v1/models omits the dropped role's aliases
+  PASS  POST model=senses -> 404 role_infeasible (never rerouted)
+  PASS  POST model=multimodal -> 404 role_infeasible (never rerouted)
+  PASS  POST model=normal -> 404 role_infeasible (never rerouted)
+
+=== phase 5: correctness probes ===
+## Per-role correctness probes
+
+| Role | Probe | Result | Evidence | Latency |
+|---|---|---|---|---|
+| cortex | known_answer | PASS | {"content": "paris", "expected": "paris"} | 2775.0 ms |
+
+**Overall: PASS**
+  PASS  probe: cortex
+## Per-role correctness probes
+
+| Role | Probe | Result | Evidence | Latency |
+|---|---|---|---|---|
+| embedder | embed_similarity | PASS | {"sim_paraphrase": 0.894, "sim_unrelated": 0.23} | 18757.2 ms |
+
+**Overall: PASS**
+  PASS  probe: embedder
+## Per-role correctness probes
+
+| Role | Probe | Result | Evidence | Latency |
+|---|---|---|---|---|
+| reranker | rerank_relevance | PASS | {"expected_index": 0, "ranking": [0, 2, 1], "top_index": 0} | 18661.9 ms |
+
+**Overall: PASS**
+  PASS  probe: reranker
+
+=== phase 6: scripts/live-check.sh ===
+=== lobes live capabilities gate ===
+  deployment dir : /home/spark/.lobes
+  gateway origin : http://localhost:8001
+  cli version    : 0.42.0
+  invariant      : advertised implies reachable (404/unreachable/skew fail; 429/503+Retry-After pass)
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /home/spark/git/lobes-cli/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/spark/git/lobes-cli
+configfile: pyproject.toml
+plugins: cov-7.1.0, xdist-3.8.0
+collecting ... collected 5 items
+
+tests/test_live_capabilities.py::test_advertised_ready_roles_are_reachable PASSED [ 20%]
+tests/test_live_capabilities.py::test_advertised_models_are_reachable PASSED [ 40%]
+tests/test_live_capabilities.py::test_cli_and_gateway_capabilities_agree PASSED [ 60%]
+tests/test_live_capabilities.py::test_deployed_gateway_version_matches_cli PASSED [ 80%]
+tests/test_live_capabilities.py::test_colleague_discovers_and_dials_generate_roles PASSED [100%]
+
+============================== 5 passed in 1.85s ===============================
+
+=== result ===
+  PASS — everything the deployment advertises is reachable, and http://localhost:8001 matches.
+  PASS  advertised-implies-reachable gate
+
+=== phase 7: measured heavy-lobe budget ===
+  PRIMARY_GPU_MEM_UTIL   = 0.44
+  PRIMARY_MAX_MODEL_LEN  = 262144
+  gpu memory     = [N/A], [N/A]
+  decode sample  : HTTP 200 in 2.771476s  (64 completion tokens)
+
+=== verdict ===
+  PASS — shape spark-lobe validated live on spark-f8a9. Transcript: /home/spark/lobes-accept-spark-lobe-20260714T090017Z.log
+  restore the previous deployment with: ./scripts/accept-shape.sh --restore
