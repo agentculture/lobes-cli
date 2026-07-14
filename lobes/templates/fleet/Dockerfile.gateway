@@ -19,7 +19,7 @@ ARG PIP_EXTRA_INDEX_URL=
 # One layer: install lobes-cli (system-wide, as root) and create the unprivileged
 # runtime user. The gateway only binds :8000 and makes outbound HTTP calls to the
 # backends on the compose network, so it needs no elevated privileges.
-RUN ${PIP_EXTRA_INDEX_URL:+PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}} \
+RUN env ${PIP_EXTRA_INDEX_URL:+PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}} \
     pip install --no-cache-dir "lobes-cli==${MODEL_GEAR_VERSION}" \
     && useradd --create-home --uid 10001 gateway
 USER gateway
