@@ -153,15 +153,27 @@ Thor — drops `cortex`, `senses` reclaims to `gpu_mem_util=0.30` /
 `max_model_len=131072`, measured KV pool 1,418,554 tokens / 10.82×
 concurrency at 131072). Both reclaim values are *measured*, not computed —
 the naive reclaim-sum/solo-default was refused by vLLM on the live,
-unified-memory box in each case. Select with `lobes init --shape
-<machine-as-brain|spark-lobe|thor-lobe>` (dry-run by default, `--apply` to
-commit, byte-for-byte restorable by re-running with the previous shape). A
-dropped role is flagged `feasible:false` on both `lobes capabilities` and
-`GET /capabilities`, omitted from `/v1/models`, and 404s `role_infeasible`
-on every alias — never half-served. One-lobe-per-box end-states, cross-box
-referral, and an Orin profile are out of scope here (issue #112, spec+plan
-in PR #116; proxy-lobes are issue #115). See `docs/deployment-shapes.md`
-(the deep reference) and `lobes explain shapes` (in-CLI).
+unified-memory box in each case. A fourth built-in shape, **`orin-small`**
+(mesh-brain end-state, issue #112, t2), drops BOTH heavy lobes and hosts the
+opt-in `minor` gear (`vllm-minor`) instead, alongside the pooling gears and
+audio overlay — it ships as **declared, UNVALIDATED data only** (the #108
+rule: no physical Jetson AGX Orin has booted it, so no doc, support table,
+or `lobes capabilities` output may claim it validated). Select with `lobes
+init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small>` (dry-run by
+default, `--apply` to commit, byte-for-byte restorable by re-running with
+the previous shape). A dropped role is flagged `feasible:false` on both
+`lobes capabilities` and `GET /capabilities`, omitted from `/v1/models`, and
+404s `role_infeasible` on every alias — never half-served. Opt-in **honest
+referral** (issue #112, t3): declaring a peer origin per dropped role
+(`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `EMBED_PEER_ORIGIN` /
+`RERANK_PEER_ORIGIN` — always operator-typed, never derived, per #92) makes
+both capabilities surfaces and the `role_infeasible` 404 body name the
+hosting peer (`hosted_by`); annotation only — the gateway never forwards a
+request to a peer, and with no peer config every response is byte-identical
+to the pre-referral contract. The rest of the one-lobe-per-box end-state is
+issue #112 (spec+plan in PR #116); proxy-lobes are issue #115. See
+`docs/deployment-shapes.md` (the deep reference) and `lobes explain shapes`
+(in-CLI).
 
 ## Deployment model
 

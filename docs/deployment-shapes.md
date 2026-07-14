@@ -25,7 +25,7 @@ marker and nothing else. This is a **pure function of (shape, profile,
 template)**: no GPU probe, no host read, no subprocess, so it runs
 identically on a GPU-less CI runner.
 
-Two families exist:
+Three families exist:
 
 - **machine-as-brain** (the default) — one box hosts every role its card can
   serve. This is today's behaviour, made explicit as data: a bare `lobes
@@ -37,6 +37,11 @@ Two families exist:
   generate lobe to a peer box in the mesh and reclaims that lobe's freed
   GPU-memory budget for the lobe(s) it keeps. Opt-in, per box, via `lobes
   init --shape <name>`.
+- **small-model reference shape** (`orin-small`) — a box with NEITHER heavy
+  generate lobe at all, hosting the opt-in `minor` gear (`vllm-minor`)
+  instead, plus the two pooling gears and the audio overlay. Declared as
+  data only — **not validated on a physical Jetson AGX Orin** (the #108
+  rule; see the support table below).
 
 ## The support table
 
@@ -45,19 +50,31 @@ Two families exist:
 | **machine-as-brain** (default) | `cortex`, `senses`, `embedder`, `reranker`, `stt`, `tts` — every role the card can serve | goldens | Zero overrides; composing it onto any card profile is a byte-identical no-op (pinned by `tests/goldens/shapes/` and `tests/test_shape_goldens.py`). This is the shape a bare `lobes init` has always rendered. |
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
+| **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
 
 Both mesh-lobe shapes are pure data over the shipped `#108` `Profile` schema
 — no per-shape Python branch exists anywhere in `lobes/profiles/shapes.py` or
-`shape_render.py`; the three built-in TOML files
-(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe}.toml`)
+`shape_render.py`; the four built-in TOML files
+(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-small}.toml`)
 differ from each other only in their `hosts` role subset and (for the two
-mesh shapes) their `overrides` budget re-derivation.
+mesh shapes) their `overrides` budget re-derivation. `orin-small` adds one
+new hostable role beyond the six first-class Colleague roles: the opt-in
+`minor` gear (`lobes/profiles/shapes.py`'s `OPT_IN_ROLES`), which carries no
+Profile knobs of its own — re-using the `cortex` role slot for a 4B model
+instead would mean the box advertises the 27B Colleague role while actually
+serving something else, which is exactly the half-honest posture #92
+forbids.
 
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe> [TARGET]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small> [TARGET]
 ```
+
+`orin-small` resolves and renders exactly like the other three (it is pure
+data, proven by the same goldens/tests) — but as of this writing it is
+**declared, not validated**: nothing here or in `lobes capabilities` claims a
+physical Orin has run it.
 
 - **Dry-run by default** — prints the resolved profile, the shape and its
   `hosts` list, how many env vars would be set, and (for a mesh shape)
@@ -252,17 +269,22 @@ both validation transcripts in `docs/evidence/`:
 ## Scope boundary
 
 This feature ships shape selection plus the two near-term mesh-lobe shapes
-only. Explicitly out of scope, routed elsewhere:
+(both validated live). Explicitly out of scope, routed elsewhere:
 
-- **One-lobe-per-box end-state** (a Qwen-only Spark, a Gemma-only Thor, small
-  models on an Orin) — tracked as issue #112, with its own spec + plan opened
+- **The rest of the one-lobe-per-box end-state** (a Qwen-only Spark, a
+  Gemma-only Thor) — tracked as issue #112, with its own spec + plan opened
   in PR #116. Its confirmed cross-box decision — direct addressing + the
   opt-in **honest referral** above — is implemented here; actually
   *forwarding* a request to the peer is not (see next item).
 - **Proxy-lobes** (serving a "sleeping" lobe via a followed referral to
   whichever peer box hosts it) — parked as its own follow-up, issue #115.
-- **Jetson AGX Orin** — named in the mesh topology as a future target but
-  unvalidated; no profile or shape ships for it here.
+- **Jetson AGX Orin physical validation** — the `orin-small` shape (above)
+  ships as **declared, unvalidated data** (issue #112, mesh-brain end-state
+  t2), exactly like `lobes/profiles/builtin/base.toml`'s existing
+  conservative fallback for an unrecognised card: pure TOML + goldens, no
+  live boot. Physical Jetson AGX Orin 64GB validation is its own follow-up
+  with its own evidence — until it lands, no doc, support table, or `lobes
+  capabilities` output may claim Orin is validated.
 
 ## See also
 
@@ -271,10 +293,12 @@ only. Explicitly out of scope, routed elsewhere:
   composes with
 - `docs/colleague-stack.md` — the six-role Colleague contract
 - `lobes/profiles/shapes.py` — the `Shape` schema + built-in loader
+  (`COLLEAGUE_ROLES` / `OPT_IN_ROLES` / `SHAPE_ROLES`)
 - `lobes/profiles/shape_render.py` — the pure `(shape, profile) → compose/.env`
   renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the three shipped shapes, with
-  provenance comments on every override
+- `lobes/profiles/builtin_shapes/*.toml` — the four shipped shapes, with
+  provenance comments on every override (and, for `orin-small`, on why its
+  generate lane is `minor` rather than `cortex`)
 - `lobes/cli/_commands/init.py` — the `--shape` flag + generated
   `docker-compose.shape.yml` override
 - `scripts/accept-shape.sh` — the acceptance script

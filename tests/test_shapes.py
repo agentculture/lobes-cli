@@ -7,14 +7,17 @@ the deployment-shape axis, orthogonal to the #108 per-machine :class:`Profile`
 (1) a Shape round-trips load -> serialise -> identical; an unknown role
     anywhere in a shape (``hosts`` or ``overrides``) is a LOAD ERROR, never a
     silently dropped key;
-(2) the three built-in shapes (``machine-as-brain``, ``spark-lobe``,
-    ``thor-lobe``) are expressible as data files with ZERO per-shape Python
-    forks — ``spark-lobe``/``thor-lobe`` differ from ``machine-as-brain``
-    only by role subset (``hosts``) and budget overrides (``overrides``,
-    left empty here — t2 fills them in);
+(2) the four built-in shapes (``machine-as-brain``, ``spark-lobe``,
+    ``thor-lobe``, ``orin-small``) are expressible as data files with ZERO
+    per-shape Python forks — ``spark-lobe``/``thor-lobe`` differ from
+    ``machine-as-brain`` only by role subset (``hosts``) and budget
+    overrides (``overrides``); ``orin-small`` (mesh-brain end-state t2,
+    issue #112) hosts the opt-in ``minor`` gear instead of either heavy
+    lobe, declared-but-UNVALIDATED per the #108 rule;
 (3) stt/tts are first-class shape members (the audio-overlay pair) alongside
-    the four Profile-machinery core roles — an unknown role is still a load
-    error either way.
+    the four Profile-machinery core roles, and ``minor`` is a hostable-but-
+    opt-in fourth kind of role — an unknown role is still a load error
+    either way.
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from lobes.profiles.schema import ROLES as PROFILE_ROLES
 from lobes.profiles.schema import RoleProfile
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
+    COLLEAGUE_ROLES,
+    OPT_IN_ROLES,
     SHAPE_ROLES,
     Shape,
     builtin_shape_names,
@@ -44,12 +49,40 @@ def test_audio_roles_are_stt_and_tts() -> None:
     assert AUDIO_ROLES == ("stt", "tts")
 
 
-def test_shape_roles_is_profile_roles_plus_audio_roles() -> None:
+def test_opt_in_roles_is_minor() -> None:
+    # `minor` (mesh-brain end-state t2, issue #112): the opt-in vllm-minor
+    # generate gear, added to the Shape schema's hostable vocabulary WITHOUT
+    # joining the six first-class Colleague roles — see CLAUDE.md's
+    # "Colleague roles" section ("the 4B minor ... are opt-in gears and not
+    # first-class Colleague roles").
+    assert OPT_IN_ROLES == ("minor",)
+
+
+def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
     # The six first-class Colleague roles (issue #81): the four Profile-
     # machinery core roles plus the two audio-overlay sidecars. No role
-    # vocabulary is re-typed here — it is composed from schema.ROLES.
-    assert SHAPE_ROLES == PROFILE_ROLES + AUDIO_ROLES
-    assert SHAPE_ROLES == ("cortex", "senses", "embedder", "reranker", "stt", "tts")
+    # vocabulary is re-typed here — it is composed from schema.ROLES. This is
+    # exactly the set machine-as-brain hosts (see
+    # test_machine_as_brain_hosts_every_colleague_role below).
+    assert COLLEAGUE_ROLES == PROFILE_ROLES + AUDIO_ROLES
+    assert COLLEAGUE_ROLES == ("cortex", "senses", "embedder", "reranker", "stt", "tts")
+
+
+def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
+    # SHAPE_ROLES (everything a shape may declare hosted) is a strict
+    # superset of COLLEAGUE_ROLES (everything machine-as-brain hosts): the
+    # opt-in `minor` gear is hostable by a shape (e.g. orin-small) but is
+    # never part of "every role this card can serve".
+    assert SHAPE_ROLES == COLLEAGUE_ROLES + OPT_IN_ROLES
+    assert SHAPE_ROLES == (
+        "cortex",
+        "senses",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+        "minor",
+    )
 
 
 # --- Shape: round-trip + validation ------------------------------------------
@@ -96,6 +129,16 @@ def test_shape_from_dict_rejects_audio_role_in_overrides() -> None:
         Shape.from_dict("bogus", {"overrides": {"stt": {"gpu_mem_util": 0.5}}})
     assert exc.value.code == EXIT_USER_ERROR
     assert "stt" in exc.value.message
+
+
+def test_shape_from_dict_rejects_minor_role_in_overrides() -> None:
+    # `minor` likewise carries no Profile/RoleProfile knobs of its own (its
+    # budget is the compose template's own fixed defaults) -- an override
+    # entry for it is a load error, exactly like stt/tts above.
+    with pytest.raises(ModelGearError) as exc:
+        Shape.from_dict("bogus", {"overrides": {"minor": {"gpu_mem_util": 0.5}}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "minor" in exc.value.message
 
 
 def test_shape_from_dict_rejects_unknown_top_level_key() -> None:
@@ -145,19 +188,23 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
     assert "senses" not in s.overrides
 
 
-# --- built-ins: the three shapes are expressible as pure data ----------------
+# --- built-ins: the four shapes are expressible as pure data -----------------
 
 
-def test_builtin_shape_names_lists_all_three() -> None:
+def test_builtin_shape_names_lists_all_four() -> None:
     names = builtin_shape_names()
-    assert set(names) == {"machine-as-brain", "spark-lobe", "thor-lobe"}
+    assert set(names) == {"machine-as-brain", "spark-lobe", "thor-lobe", "orin-small"}
 
 
-def test_machine_as_brain_hosts_every_role() -> None:
+def test_machine_as_brain_hosts_every_colleague_role() -> None:
     mab = load_builtin_shape("machine-as-brain")
     assert mab is not None
     assert mab.name == "machine-as-brain"
-    assert set(mab.hosts) == set(SHAPE_ROLES)
+    # machine-as-brain hosts the six first-class Colleague roles -- NOT the
+    # opt-in `minor` gear, which is deliberately excluded from "every role
+    # this card can serve" (see COLLEAGUE_ROLES vs SHAPE_ROLES above).
+    assert set(mab.hosts) == set(COLLEAGUE_ROLES)
+    assert "minor" not in mab.hosts
 
 
 def test_machine_as_brain_carries_no_overrides() -> None:
@@ -177,6 +224,26 @@ def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:
     assert thor_lobe is not None
     assert set(thor_lobe.hosts) == {"senses", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in thor_lobe.hosts
+
+
+def test_orin_small_hosts_minor_embedder_reranker_and_audio_no_heavy_lobe() -> None:
+    # mesh-brain end-state t2 (issue #112): the Jetson AGX Orin 64GB
+    # reference shape hosts NEITHER heavy generate lobe -- cortex and senses
+    # are both absent -- and hosts the opt-in `minor` gear instead.
+    orin_small = load_builtin_shape("orin-small")
+    assert orin_small is not None
+    assert set(orin_small.hosts) == {"minor", "embedder", "reranker", "stt", "tts"}
+    assert "cortex" not in orin_small.hosts
+    assert "senses" not in orin_small.hosts
+
+
+def test_orin_small_carries_no_overrides() -> None:
+    # `minor` carries no Profile knobs to re-derive, and embedder/reranker
+    # are not reclaiming anything a dropped role freed (nothing co-resided
+    # with them before) -- orin-small declares zero overrides, like
+    # machine-as-brain.
+    orin_small = load_builtin_shape("orin-small")
+    assert dict(orin_small.overrides) == {}
 
 
 def test_spark_lobe_and_thor_lobe_carry_reclaimed_budget_overrides() -> None:
@@ -216,7 +283,7 @@ def test_spark_lobe_and_thor_lobe_differ_from_machine_as_brain_only_by_hosts_and
 
 
 def test_builtin_shapes_round_trip() -> None:
-    for name in ("machine-as-brain", "spark-lobe", "thor-lobe"):
+    for name in ("machine-as-brain", "spark-lobe", "thor-lobe", "orin-small"):
         shape = load_builtin_shape(name)
         again = Shape.from_dict(name, shape.to_dict())
         assert again == shape
@@ -276,5 +343,8 @@ def test_profiles_package_reexports_shape_schema_and_loader() -> None:
     assert profiles.Shape is Shape
     assert profiles.SHAPE_ROLES == SHAPE_ROLES
     assert profiles.AUDIO_ROLES == AUDIO_ROLES
+    assert profiles.COLLEAGUE_ROLES == COLLEAGUE_ROLES
+    assert profiles.OPT_IN_ROLES == OPT_IN_ROLES
     assert profiles.resolve_shape("spark-lobe").name == "spark-lobe"
     assert "machine-as-brain" in profiles.builtin_shape_names()
+    assert "orin-small" in profiles.builtin_shape_names()

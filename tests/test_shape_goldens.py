@@ -62,7 +62,8 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
-    SHAPE_ROLES,
+    COLLEAGUE_ROLES,
+    OPT_IN_ROLES,
     Shape,
     builtin_shape_names,
     resolve_shape,
@@ -116,9 +117,17 @@ def test_machine_as_brain_env_equals_profile_env(card: str) -> None:
 
 
 def test_machine_as_brain_carries_no_overrides_and_hosts_everything() -> None:
-    """Guards the invariant the no-op property rests on (matches the t1 shape data)."""
+    """Guards the invariant the no-op property rests on (matches the t1 shape data).
+
+    "Everything" means the six first-class Colleague roles
+    (:data:`COLLEAGUE_ROLES`) -- NOT the broader
+    :data:`~lobes.profiles.shapes.SHAPE_ROLES`, which also admits the opt-in
+    `minor` gear (t2, issue #112) that machine-as-brain deliberately never
+    hosts.
+    """
     shape = resolve_shape(_IDENTITY_SHAPE)
-    assert set(shape.hosts) == set(SHAPE_ROLES)
+    assert set(shape.hosts) == set(COLLEAGUE_ROLES)
+    assert "minor" not in shape.hosts
     assert dict(shape.overrides) == {}
 
 
@@ -199,6 +208,47 @@ def test_thor_lobe_renders_no_cortex_service() -> None:
     golden = shape_golden_path("thor-lobe", "thor").read_text(encoding="utf-8")
     assert f"{prefix}_MODEL" not in golden
     assert f"{prefix}_FEASIBLE=false" in golden
+
+
+def test_orin_small_renders_no_cortex_or_senses_service() -> None:
+    """orin-small (t2, issue #112) drops BOTH heavy generate lobes.
+
+    Rendered against `spark` -- a card where cortex AND senses are BOTH
+    feasible -- to prove this is the SHAPE's drop decision, not a side
+    effect of the card marking them infeasible (the same pattern
+    test_spark_lobe_renders_no_senses_service / test_thor_lobe_renders_no_cortex_service
+    use above).
+    """
+    shape = resolve_shape("orin-small")
+    profile = resolve_profile("spark")
+    rendered = render_shape(shape, profile)
+    for role in ("cortex", "senses"):
+        prefix = ROLE_ENV_PREFIX[role]
+        assert rendered.env.get(f"{prefix}_FEASIBLE") == "false"
+        assert f"{prefix}_MODEL" not in rendered.env
+        leaked = [
+            k for k in rendered.env if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE"
+        ]
+        assert leaked == [], f"dropped {role} leaked knob env: {leaked}"
+        assert ROLE_SERVICE[role] not in rendered.services
+    golden = shape_golden_path("orin-small", "spark").read_text(encoding="utf-8")
+    assert "PRIMARY_MODEL" not in golden
+    assert "MULTIMODAL_MODEL" not in golden
+    assert "PRIMARY_FEASIBLE=false" in golden
+    assert "MULTIMODAL_FEASIBLE=false" in golden
+
+
+def test_orin_small_hosts_minor_service_on_every_card() -> None:
+    """orin-small's generate lane is the opt-in `minor` gear (vllm-minor), always."""
+    shape = resolve_shape("orin-small")
+    assert set(OPT_IN_ROLES) == {"minor"}
+    for card in builtin_names():
+        services = shape_services(shape, resolve_profile(card))
+        assert ROLE_SERVICE["minor"] in services
+        assert ROLE_SERVICE["cortex"] not in services
+        assert ROLE_SERVICE["senses"] not in services
+        assert ROLE_SERVICE["embedder"] in services
+        assert ROLE_SERVICE["reranker"] in services
 
 
 def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:

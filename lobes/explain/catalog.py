@@ -745,7 +745,7 @@ profiles`) but "which of the six Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
-## The three built-in shapes
+## The four built-in shapes
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
   serve, today's behaviour made explicit. Carries zero overrides, so a bare
@@ -761,6 +761,13 @@ render time — `shape × card` — never a per-shape code fork.
   `gpu_mem_util=0.30` / `max_model_len=131072` (its full native 128K).
   Validated live on the Jetson AGX Thor (2026-07-14): measured KV pool
   1,418,554 tokens, 10.82× concurrency at 131072.
+- **`orin-small`** — drops BOTH `cortex` and `senses`, keeps the opt-in
+  `minor` gear (`vllm-minor`) + `embedder` + `reranker` + `stt`/`tts`. The
+  Jetson AGX Orin 64GB reference shape (mesh-brain end-state, issue #112,
+  t2). **Declared, UNVALIDATED** — pure TOML + goldens only, no physical
+  Orin has booted this shape (mirrors `base.toml`'s own conservative
+  unrecognised-card fallback). No overrides (`minor` carries no Profile
+  knobs to re-derive).
 
 Both mesh-lobe shapes' reclaim values are **measured**, not computed: a
 naive reclaim-sum or the model's own solo default was refused by vLLM on
@@ -770,7 +777,7 @@ carries the value that fit, with a provenance comment.
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe> [--apply]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,
@@ -806,10 +813,12 @@ pre-referral contract. See `docs/deployment-shapes.md`.
 
 ## Scope
 
-One-lobe-per-box end-states and an Orin profile are out of scope here —
-tracked as issue #112 (spec + plan in PR #116); its cross-box decision
-(direct + honest referral, above) is implemented; proxy-lobes (following
-the referral on the caller's behalf) are issue #115.
+One-lobe-per-box end-states are out of scope here — tracked as issue #112
+(spec + plan in PR #116); its cross-box decision (direct + honest referral,
+above) is implemented; proxy-lobes (following the referral on the caller's
+behalf) are issue #115. `orin-small` (above) ships as
+declared-but-unvalidated data only — physical Jetson AGX Orin validation is
+its own follow-up.
 
 ## See also
 
