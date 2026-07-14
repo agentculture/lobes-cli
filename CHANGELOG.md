@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.1] - 2026-07-14
+
+### Added
+
+- t5 live-verification evidence (colleague#320, spark-lobe go-live): docs/evidence/2026-07-14-strict-tools-spark-lobe-spark.txt — acceptance gates PASS at util 0.44/262144, lobes assess --strict-tools 3/3 legs PASS (strict+thinking was HTTP 500), colleague captured-bytes replay returns clean read_file with thinking intact via the armed gateway knob, MTP 100% draft acceptance under the constrained grammar, and the end-to-end colleague work repro delivers changed files in 4 clean steps (was 13 steps / 0 files)
+
 ## [0.44.0] - 2026-07-14
 
 ### Added

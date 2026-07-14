@@ -1,0 +1,70 @@
+Strict tool calls with thinking (colleague#320) — live verification on the DGX Spark GB10
+==========================================================================================
+Date: 2026-07-14 (UTC)  ·  Box: spark-f8a9  ·  lobes-cli: 0.44.0 (PR #123, squash e0bd175)
+Shape: spark-lobe (no audio overlay — operator decision)  ·  Full acceptance transcript:
+~/lobes-accept-spark-lobe-20260714T190941Z.log (on-box)
+
+Deployment under test
+---------------------
+- cortex   : sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP, util 0.44, max_model_len 262144
+             PRIMARY_TOOL_CALL_PARSER=qwen3_coder_thinking (the think-aware plugin,
+             mounted at /opt/lobes/qwen3_thinking_tool_parser.py, --tool-parser-plugin)
+- gateway  : lobes-cli 0.44.0, GATEWAY_FORCE_STRICT_TOOLS=1 (opt-in knob armed)
+- senses   : DROPPED (spark-lobe), honest referral MULTIMODAL_PEER_ORIGIN=
+             http://thor.tail0be7e0.ts.net:8000 — capabilities: feasible=false,
+             hosted_by=<thor>; per-alias 404 role_infeasible names the peer
+- stt/tts  : declared, sleeping (feasible=true, ready=false, loaded=false)
+- embedder/reranker: co-resident, probes PASS (embed sim 0.894/0.23; rerank top_index 0)
+
+Acceptance gates (scripts/accept-shape.sh spark-lobe --port 8001): PASS
+-----------------------------------------------------------------------
+- per-role correctness probes: cortex known_answer PASS, embedder PASS, reranker PASS
+- live-check advertised-implies-reachable gate: 5/5 PASS (incl. colleague-discovers-
+  and-dials-generate-roles), gateway version matches CLI (0.44.0)
+- measured budget: util 0.44 / 262144 boots healthy; decode sample HTTP 200 in 2.59 s
+
+lobes assess --strict-tools (the three-leg CLI matrix): PASS
+------------------------------------------------------------
+  baseline        ok=true  clean=true  tool_calls=['finish']  finish=tool_calls
+  strict_thinking ok=true  clean=true  tool_calls=['finish']  finish=tool_calls   <- was HTTP 500
+  strict_nothink  ok=true  clean=true  tool_calls=['finish']  finish=tool_calls
+
+Captured-bytes replays (colleague#320's real request, temp 0.0, 14 tools, via gateway)
+--------------------------------------------------------------------------------------
+Before the fix (2026-07-14, same box, machine-as-brain, parser=qwen3_coder, no knob):
+  raw upstream response: tool name 'read_file"' + arguments {} (deterministic; captured
+  via a two-way logging proxy during a real `colleague work` run — hypothesis (a) of
+  #320 confirmed server-side). With client strict:true: HTTP 500, EngineCore
+  "grammar rejected tokens [248069(</think>), 271(\n\n), 248058(<tool_call>), 198(\n)]"
+  — the build hardcodes reasoning=False at _apply_structural_tag, so the strict grammar
+  cannot accept the </think> special token.
+
+After the fix (this deployment):
+  replay-base (colleague's EXACT bytes, no client strict; knob injects it):
+    finish=tool_calls  reasoning len=49   tool 'read_file' args {"path": "calc.py"}
+  replay-strict (client strict:true, thinking on):
+    finish=tool_calls  reasoning len=112  tool 'read_file' args {"path": "calc.py"}
+  replay-strict-nothink (client strict + enable_thinking=false):
+    finish=tool_calls  reasoning len=0    tool 'list_dir' args {"path": "."}
+  MTP spec-decode active under the constrained grammar:
+    "SpecDecoding metrics: Mean acceptance length: 4.00 ... Avg Draft acceptance rate: 100.0%"
+
+End-to-end consumer proof (the #320 repro, unmodified colleague client)
+-----------------------------------------------------------------------
+  colleague work "Add a multiply(a, b) function to calc.py that returns a * b."
+    --repo <throwaway> --engine vllm-openai --no-pr
+  BEFORE: status incomplete, 13 steps / 17 model turns, tool_counts
+          {'read_file"': 10, 'list_dir': 1, 'read_file': 1, 'run_command"': 1},
+          files_changed 0 (write-no-changes)
+  AFTER : status ok, 4 steps, tool_counts
+          {'list_dir': 1, 'read_file': 1, 'edit_file': 1, 'finish': 1} — 4/4 ok,
+          zero mangled names, changed files: calc.py (multiply landed on the work branch)
+
+Conclusion
+----------
+The #320 failure class (parser-salvage mangles of off-template thinking-mode emissions)
+is eliminated by construction on this deployment: the qwen3_coder_thinking plugin makes
+the strict structural-tag grammar reasoning-aware, and the gateway knob arms strict for
+existing callers with zero client change. Multi-turn </think> grammar satisfiability is
+proven by the full work-item loop. Boundary held: vLLM image digest unchanged, zero
+colleague-repo changes.

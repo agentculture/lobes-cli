@@ -1,6 +1,6 @@
 [project]
 name = "lobes-cli"
-version = "0.44.0"
+version = "0.44.1"
 description = "lobes — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "Apache-2.0"
