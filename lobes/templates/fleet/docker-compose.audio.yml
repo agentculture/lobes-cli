@@ -106,7 +106,7 @@ services:
       args:
         MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
         # Dev lane only (see Dockerfile.realtime): empty on release deployments.
-        PIP_EXTRA_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
+        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
     container_name: model-gear-realtime
     restart: unless-stopped
     # Start order only — the facade tolerates a backend still loading (it returns
