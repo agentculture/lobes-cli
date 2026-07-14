@@ -1,0 +1,264 @@
+{
+  "slug": "lobes-serves-strict-grammar-constrained-tool-calls",
+  "title": "lobes serves strict, grammar-constrained tool calls with thinking enabled: the cortex ships a think-aware tool-parser plugin so structural-tag decoding survives </think>, and every OpenAI tools caller gets well-formed tool calls instead of parser-salvage mangles \u2014 Colleague #320's read_file\" + empty-arguments failure is impossible by construction",
+  "frame_slug": "lobes-serves-strict-grammar-constrained-tool-calls",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-14T18:05:28Z",
+  "updated": "2026-07-14T18:08:14Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves strict, grammar-constrained tool calls with thinking enabled: the cortex ships a think-aware tool-parser plugin so structural-tag decoding survives </think>, and every OpenAI tools caller gets well-formed tool calls instead of parser-salvage mangles \u2014 Colleague #320's read_file\" + empty-arguments failure is impossible by construction"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Post-deploy, a strict+thinking request to the live cortex returns a well-formed tool call (valid name, schema-valid JSON args) \u2014 the captured #320 replay passes against the deployed fleet, not just in theory"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "OpenAI-tools callers of the cortex generate lane \u2014 Colleague's work/drive loop first (issue #320), plus any mesh agent sending tools with tool_choice=auto through the lobes gateway"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The fix covers Colleague's unmodified request shape exactly as captured (14 tools, tool_choice=auto, non-streaming, temperature 0.0) \u2014 the replay uses the captured bytes, not a synthetic approximation"
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Unconstrained thinking-mode generation drifts off the qwen3_coder XML template (hallucinated '<tool_call>\\n\\n[tool_id]{json}' emissions); vLLM parser salvage returns name='read_file\"' with empty arguments; every Colleague work item ends incomplete with zero changed files. strict:true (the OpenAI knob that should fix it) returns HTTP 500 because the served vLLM build hardcodes reasoning=False when building the structural-tag grammar, so the FSM cannot accept the </think> token"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The before-state is reproducible on demand: replaying the captured request against the unfixed fleet deterministically returns name='read_file\"' args={} (proven live 2026-07-14, eidetic record colleague-320-tool-call-mangle-root-cause)"
+    },
+    {
+      "id": "c4",
+      "kind": "after_state",
+      "text": "With thinking ON and strict armed, the cortex returns well-formed tool calls (valid name, schema-valid JSON arguments) \u2014 proven by replaying the captured Colleague #320 request: it yields a clean read_file {\"path\": \"calc.py\"} instead of a mangle or a 500; a real 'colleague work' item lands its change"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Multi-turn holds, not just turn one: in a real tool loop (assistant\u2192tool\u2192assistant), every thinking-on generation emits </think> before any tool call, so the reasoning=True grammar is satisfiable on every turn \u2014 proven by the colleague work item completing its full loop"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "Cortex-driven agentic work is the fleet's reason to exist: a cortex that cannot deliver a single tool call reliably makes every downstream consumer (Colleague work/drive, mesh agents) a no-deliverable loop. Constrained decoding makes malformed tool calls impossible by construction rather than merely less likely"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The same 'colleague work' repro that today reports write-no-changes/incomplete delivers changed files after the fix \u2014 the value claim is measured by the consumer's own outcome, not by lobes-side metrics alone"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "lobes ships a tool-parser plugin (a small Python file in the lobes package, mounted into the vllm-primary container and loaded via vLLM's --tool-parser-plugin flag) that registers a think-aware parser: it subclasses the image's Qwen3EngineToolParser and overrides get_structural_tag to pass reasoning=True when the request has thinking enabled, so the structural-tag grammar accepts 'any_text </think> \\n\\n <tool_call>\u2026' \u2014 strict + thinking stops 500ing"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The plugin loads in the pinned image and registers under a distinct name (e.g. qwen3_coder_thinking): 'vllm serve --tool-parser-plugin /path/plugin.py --tool-call-parser qwen3_coder_thinking' boots healthy, and a strict+thinking replay of the captured #320 request returns a clean structured call instead of HTTP 500"
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The plugin is thinking-aware per request, not hardcoded: when a request disables thinking (e.g. lobes route's enable_thinking=false, or any caller passing chat_template_kwargs), the plugin passes reasoning=False \u2014 a reasoning=True grammar REQUIRES a closing </think>, so forcing it on a no-think request would break generation. The decision input is the request's effective enable_thinking, with the server default (thinking on) as the fallback"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "get_structural_tag receives the full ChatCompletionRequest, and the request's effective thinking state (chat_template_kwargs.enable_thinking, defaulting to on) is readable there \u2014 verified by a no-think strict request still returning a clean call through the plugin (a reasoning=True grammar would hang/never satisfy on a no-think generation)"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The fix applies to the cortex/main generate lane only (vllm-primary command args + a mounted plugin file); the senses/embed/rerank/minor lanes are untouched, mirroring the preserve_thinking (#93) scoping precedent"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "senses/embed/rerank/minor service definitions in the rendered compose are byte-identical before/after the change (template diff), and their lanes' probes still pass"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Who arms strict is config-gated in the lobes gateway: an opt-in env knob (e.g. GATEWAY_FORCE_STRICT_TOOLS=1) that injects strict:true into every function tool on cortex-lane chat requests that carry tools, so existing callers (Colleague today) get constrained tool calls without a client change; with the knob off, behavior is byte-identical to today and callers may still send strict:true themselves"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "With the knob unset, gateway request bytes to the primary are identical to today (goldens/diff test); with the knob set, only chat-completions requests carrying tools on the cortex lane gain function.strict=true, and the #320 replay through the gateway returns the clean call"
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "Not an upstream vLLM patch or image rebuild: the pinned vllm/vllm-openai image stays byte-identical; the fix rides the image's own extension surface (--tool-parser-plugin + ToolParserManager). Filing the reasoning=False hardcode upstream is a follow-up courtesy, not this fix. Not a Colleague code change either: colleague#320 gets a reply with findings, but lobes does not edit the colleague repo. Not a fix for the model's template drift itself (that's the checkpoint's behavior; we constrain around it)"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The shipped diff touches only the lobes repo: vLLM image digest unchanged, zero colleague-repo commits; the entire surface is the plugin file, the vllm-primary compose args, and the gateway knob"
+    },
+    {
+      "id": "c11",
+      "kind": "success_signal",
+      "text": "The captured #320 replay matrix passes against the live fleet: (1) baseline non-strict request still answers (no regression), (2) strict + thinking-on returns a clean structured read_file call with valid JSON args (today: HTTP 500), (3) strict + enable_thinking=false still returns a clean call, (4) 'lobes assess' correctness probes and a real 'colleague work' item on a throwaway repo deliver changed files. MTP spec-decode stays active throughout (SpecDecoding metrics present in the primary log)"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The four-way matrix runs against the live re-deployed fleet and every leg passes, including a real 'colleague work' item that lands changed files on a throwaway repo \u2014 the same repro that today reports write-no-changes"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Think-aware vLLM tool-parser plugin module in the lobes package: lobes/vllm_plugins/{__init__,_thinking,qwen3_thinking_tool_parser}.py + tests/test_vllm_plugin_thinking.py. Pure helper effective_reasoning(request) decides thinking from chat_template_kwargs.enable_thinking (absent\u2192True); plugin subclasses the image's Qwen3EngineToolParser, overrides get_structural_tag to pass that decision, registers as qwen3_coder_thinking, and asserts its import surface loudly at load. vllm imports are guarded so the module is importable (and the helper fully testable) in CI where vllm is absent. CONTRACT PIN: parser name 'qwen3_coder_thinking', plugin path lobes/vllm_plugins/qwen3_thinking_tool_parser.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "effective_reasoning: absent chat_template_kwargs\u2192True, enable_thinking=false\u2192False, =true\u2192True \u2014 unit-tested in CI with no vllm installed",
+        "with a stubbed vllm surface, the plugin registers under 'qwen3_coder_thinking' and passes reasoning=<helper result> to the structural-tag registry call (test asserts the forwarded kwarg)",
+        "with a mismatched/missing Qwen3EngineToolParser or changed get_structural_tag signature, plugin load raises a loud, named error (test via stub); module import without vllm does not raise"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "c7",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Fleet template + init wiring: lobes/templates/fleet/docker-compose.yml mounts the scaffolded plugin file into vllm-primary and adds --tool-parser-plugin=<mounted path>; PRIMARY_TOOL_CALL_PARSER default flips qwen3_coder\u2192qwen3_coder_thinking; lobes init materialises the plugin file into the deployment dir (like _readiness.py/listen_server.py); env.example documents PRIMARY_TOOL_CALL_PARSER's new default AND the GATEWAY_FORCE_STRICT_TOOLS knob line (all env.example edits live in THIS task for file-disjointness); tests/goldens regenerated. Cortex/main generate lane only",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "rendered fleet compose: vllm-primary gains the volume mount + --tool-parser-plugin arg + qwen3_coder_thinking default; goldens updated and passing",
+        "senses/embed/rerank/minor service definitions are byte-identical before/after (template diff test)",
+        "lobes init (dry-run + apply in a temp dir) lists and writes the plugin file next to the compose; legacy single-model template untouched"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "c8",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Gateway force-strict knob: lobes/gateway/ injects function.strict=true on cortex-lane (main/hard/cortex alias) chat-completions requests that carry tools when GATEWAY_FORCE_STRICT_TOOLS is truthy; on an upstream schema-compile failure it retries ONCE without strict and logs the offending schema; knob-off is byte-identical passthrough. Tests in tests/test_gateway_* with a stubbed upstream. CONTRACT PIN: env knob name GATEWAY_FORCE_STRICT_TOOLS; no env.example edits here (owned by the template task)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "knob unset/0: forwarded request bytes identical to today for tools and tool-less requests alike (byte-compare test)",
+        "knob on: only cortex-lane chat requests WITH tools gain strict:true on every function tool; senses/minor/embed/rerank lanes and tool-less requests unchanged (tests)",
+        "stubbed upstream returning a grammar/schema-compile error triggers exactly one retry without strict, returns the retry's response, and logs the offending schema; a non-compile error does NOT trigger the retry (tests)"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Docs: CLAUDE.md model/tool-calling note, docs/qwen3.6-27b-text-nvfp4-mtp.md strict-tool-calling section (root cause, the reasoning=False upstream gap, the plugin), docs/openai-api.md + docs/gateway-fleet.md gateway-knob + retry-fallback documentation, and the boundary (no image rebuild, no colleague edits, upstream issue as follow-up)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs state the plugin mechanism, the knob (default off), the retry-without-strict fallback, and the pinned-image boundary; doc-test alignment check passes",
+        "markdownlint-cli2 clean on every touched doc"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Live verification on the Spark GB10 (main-agent, on-box): re-deploy the fleet with the plugin + knob and run the four-way #320 replay matrix from the captured request bytes \u2014 (1) baseline non-strict still answers, (2) strict+thinking returns clean structured read_file with schema-valid args (today 500), (3) strict+enable_thinking=false stays clean, (4) real 'colleague work' item on a throwaway repo delivers changed files (today write-no-changes); plus lobes assess probes, MTP SpecDecoding metrics present, and a PR-diff surface check (lobes repo only, image digest unchanged)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "all four matrix legs pass against the live re-deployed fleet using the captured request bytes (replay-base/replay-strict payloads), transcript archived under docs/evidence/",
+        "lobes assess correctness probes pass; SpecDecoding metrics present in the primary log during the strict legs (MTP active)",
+        "the colleague work item completes a multi-turn tool loop with changed files (multi-turn </think> grammar satisfiability proven end-to-end)",
+        "PR diff touches only the lobes repo; vLLM image digest unchanged"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h8",
+        "c2",
+        "h9",
+        "c3",
+        "h10",
+        "c4",
+        "h7",
+        "c5",
+        "h11",
+        "c11",
+        "h5",
+        "h1",
+        "h12"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Comms (main-agent): reply on colleague#320 with the proven root cause + fix, recommending Colleague also send strict:true client-side (user decision c14); file the reasoning=False hardcode upstream on vllm-project/vllm with the minimal repro",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "colleague#320 reply posted, signed per convention, linking the lobes spec/PR and the evidence transcript",
+        "upstream vLLM issue filed with the grammar-rejected-token repro and the _apply_structural_tag(reasoning=False) call-site reference; link recorded in the frame's parked follow-up"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Exact detection signature of an xgrammar schema-compile failure at the gateway (status code + body shape) is unverified \u2014 discover it live during the gateway task / verification; the retry heuristic must not swallow unrelated 4xx/5xx",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3"
+    },
+    {
+      "id": "r2",
+      "text": "ToolParserManager.import_tool_parser file-path semantics in the pinned image (module path vs file path, import timing before serving) verified only by reading source \u2014 first live boot in the acceptance run is the proof",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r3",
+      "text": "Knob default-on policy and upstream vLLM fix tracking are parked follow-ups (frame v1/v2) \u2014 not blocking this plan",
+      "kind": "follow_up",
+      "task_id": null
+    }
+  ]
+}
