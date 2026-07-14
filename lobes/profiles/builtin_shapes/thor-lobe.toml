@@ -5,24 +5,31 @@
 # here.
 #
 # Differs from machine-as-brain.toml in `hosts` (cortex dropped) and, as of
-# brain-shapes t2, `overrides` -- senses reclaims dropped cortex's share of
+# brain-shapes t2/t2b, `overrides` -- senses reclaims dropped cortex's share of
 # the co-resident gpu_mem_util budget now that it no longer shares the box
-# with cortex. max_model_len is deliberately left at the co-resident value
-# (senses stays capped at 32768 tokens here) -- any rise to a larger context
-# is out of scope for this task, mirroring spark-lobe's cortex (issue #112).
+# with cortex, AND (as of t2b, issue #113, user decision on the PR) rises to
+# its own full native max_model_len -- cortex, the co-resident lobe this
+# context trim existed for, is dropped from this shape entirely, so that
+# trim's reason is gone too, in THIS task rather than deferred to #112.
 name = "thor-lobe"
 summary = "Jetson AGX Thor mesh-lobe -- Gemma senses + embedder + reranker + audio, no Qwen cortex"
 
 hosts = ["senses", "embedder", "reranker", "stt", "tts"]
 
 [overrides.senses]
-# 0.14 (senses, thor co-resident) + 0.30 (cortex, thor co-resident) reclaimed
-# from dropped cortex -- see lobes/profiles/builtin/thor.toml's
-# [roles.senses]/[roles.cortex] gpu_mem_util for the two co-resident values
-# this sums (thor's baseline is identical to spark's per thor.toml's own
-# header comment; the machine-registry overlay only touches cortex's
-# kv_cache_dtype, never gpu_mem_util -- see lobes/machines/thor.py).
-# max_model_len is intentionally NOT declared here (stays at the co-resident
-# 32768 via the resolved Profile -- no override = no opinion, per
-# RoleProfile/Shape.override's convention).
+# gpu_mem_util = 0.44 -- 0.14 (senses, thor co-resident) + 0.30 (cortex, thor
+# co-resident) reclaimed from dropped cortex -- see
+# lobes/profiles/builtin/thor.toml's [roles.senses]/[roles.cortex]
+# gpu_mem_util for the two co-resident values this sums (thor's baseline is
+# identical to spark's per thor.toml's own header comment; the
+# machine-registry overlay only touches cortex's kv_cache_dtype, never
+# gpu_mem_util -- see lobes/machines/thor.py). Unchanged since t2.
+#
+# max_model_len = 131072 -- the Gemma checkpoint's own native context
+# (coolthor/gemma-4-12B-it-NVFP4A16, 128K -- see CLAUDE.md's model section),
+# previously trimmed to 32768 only so senses could co-reside with cortex on
+# the single-box shape. Cortex is dropped in THIS shape, so the trim's reason
+# is gone -- reclaimed here (issue #113, user decision on the PR), not
+# deferred to #112.
 gpu_mem_util = 0.44
+max_model_len = 131072

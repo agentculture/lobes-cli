@@ -4,23 +4,32 @@
 # Jetson AGX Thor running thor-lobe.toml) instead of co-residing it here.
 #
 # Differs from machine-as-brain.toml in `hosts` (senses dropped) and, as of
-# brain-shapes t2, `overrides` -- cortex reclaims dropped senses' share of the
-# co-resident gpu_mem_util budget now that it no longer shares the box with
-# senses. Co-residency today caps cortex at util 0.30 / 131072 tokens instead
-# of its 256K solo-native context (see CLAUDE.md's "Colleague roles");
-# max_model_len is deliberately left at that co-resident 131072 here -- the
-# rise to full native 262144 is explicitly issue #112 scope, not this task.
+# brain-shapes t2/t2b, `overrides` -- cortex gets its FULL NATIVE budget now
+# that it no longer shares the box with senses. Co-residency previously capped
+# cortex at util 0.30 / 131072 tokens (see CLAUDE.md's "Colleague roles"); as
+# of t2b (issue #113, user decision on the PR), that trim's reason is gone --
+# senses is dropped from this shape entirely, not just downsized -- so cortex
+# rises to its full native budget in THIS task, not deferred to #112.
 name = "spark-lobe"
 summary = "DGX Spark mesh-lobe -- Qwen cortex + embedder + reranker + audio, no Gemma senses"
 
 hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
 
 [overrides.cortex]
-# 0.30 (cortex, spark co-resident) + 0.14 (senses, spark co-resident)
-# reclaimed from dropped senses -- see lobes/profiles/builtin/spark.toml's
-# [roles.cortex]/[roles.senses] gpu_mem_util for the two co-resident values
-# this sums. max_model_len is intentionally NOT declared here (stays at the
-# co-resident 131072 via the resolved Profile -- no override = no opinion,
-# per RoleProfile/Shape.override's convention); raising it to full native
-# 262144 is issue #112 scope, not this task.
-gpu_mem_util = 0.44
+# gpu_mem_util = 0.60 -- NOT the co-resident reclaim-sum (0.30 cortex + 0.14
+# senses = 0.44, what t2 used before the co-resident senses lobe was fully
+# dropped from this shape). 0.60 is the proven GB10 primary value: the
+# pre-#68 fleet baseline and the legacy single-model scaffold both ran the
+# 27B `cortex` at 0.60 alongside the two 0.06 + 0.06 pooling gears (embedder +
+# reranker) -- see CLAUDE.md's "Colleague roles" migration table
+# (docs/colleague-stack.md#migration-before--after). With senses dropped from
+# this shape, that same headroom is available again.
+#
+# max_model_len = 262144 -- the checkpoint's own native context
+# (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP, 256K -- see CLAUDE.md's model
+# section), previously trimmed to 131072 only so cortex could co-reside with
+# senses on the single-box shape. Senses is dropped in THIS shape, so the
+# trim's reason is gone -- reclaimed here (issue #113, user decision on the
+# PR), not deferred to #112.
+gpu_mem_util = 0.60
+max_model_len = 262144
