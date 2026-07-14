@@ -732,6 +732,80 @@ The invariant: editing the `thor` profile must not change the spark golden.
 - `lobes/machines/` — CardStrategy modules (detection signatures, machine knobs).
 - `lobes/profiles/` — schema, loader, renderer, built-in TOML.
 - `lobes explain tuning` — the brief tuning reference (machine × purpose × model).
+- `lobes explain shapes` — the orthogonal deployment-shape axis (which roles a
+  box hosts at all, composed over this per-machine tuning).
+"""
+
+_SHAPES = """\
+# lobes shapes — which lobes a box hosts
+
+A **deployment shape** is the axis orthogonal to the machine profile: not
+"how is each role tuned on this card?" (that's the profile, `lobes explain
+profiles`) but "which of the six Colleague roles does this box host at
+all?" A shape composes as pure data over the resolved card profile at
+render time — `shape × card` — never a per-shape code fork.
+
+## The three built-in shapes
+
+- **`machine-as-brain`** (the default) — hosts every role the card can
+  serve, today's behaviour made explicit. Carries zero overrides, so a bare
+  `lobes init` (no `--shape`) renders byte-identically to before this flag
+  existed.
+- **`spark-lobe`** — drops `senses` (Gemma), keeps `cortex` + `embedder` +
+  `reranker` + `stt`/`tts`. Reclaims the dropped budget: `cortex` rises to
+  `gpu_mem_util=0.44` / `max_model_len=262144` (its full native 256K).
+  Validated live on the DGX Spark GB10 (2026-07-14): measured KV pool
+  888,946 tokens, 3.39× concurrency at the full 256K request.
+- **`thor-lobe`** — drops `cortex` (Qwen), keeps `senses` + `embedder` +
+  `reranker` + `stt`/`tts`. Reclaims the dropped budget: `senses` rises to
+  `gpu_mem_util=0.30` / `max_model_len=131072` (its full native 128K).
+  Validated live on the Jetson AGX Thor (2026-07-14): measured KV pool
+  1,418,554 tokens, 10.82× concurrency at 131072.
+
+Both mesh-lobe shapes' reclaim values are **measured**, not computed: a
+naive reclaim-sum or the model's own solo default was refused by vLLM on
+the live box (unified memory is shared with the host), so the shipped TOML
+carries the value that fit, with a provenance comment.
+
+## Selecting a shape
+
+```bash
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe> [--apply]
+```
+
+Dry-run by default (prints the resolved profile, the shape's `hosts` list,
+and the env/override plan); `--apply` commits. Re-running with the previous
+shape restores the previous rendering byte-for-byte. `--shape` is
+incompatible with `--single` (the legacy topology has no profile/shape
+resolution at all); it composes freely with `--audio` (every built-in shape
+hosts `stt`/`tts` identically).
+
+## Dropped-lobe honesty, end-to-end
+
+A mesh shape's dropped core role never half-serves: the generated
+`docker-compose.shape.yml` override parks its service in the inert
+`shape-dropped` compose profile (requires Docker Compose v2.24+ for the
+`!reset` merge tag on the gateway's `depends_on`) so it never runs;
+`lobes capabilities` and the gateway's `GET /capabilities` both flag it
+`feasible: false`; `/v1/models` omits it; every alias 404s
+`role_infeasible`; and `lobes up <dropped-role>` is a user error naming the
+shape rather than an opaque compose failure.
+
+## Scope
+
+One-lobe-per-box end-states, cross-box referral, and an Orin profile are
+out of scope here — tracked as issue #112 (spec + plan in PR #116);
+proxy-lobes are issue #115.
+
+## See also
+
+- `docs/deployment-shapes.md` — the deep reference (support table, the
+  co-residency tax numbers, the acceptance script, the dev lane)
+- `lobes explain profiles` — the per-machine tuning axis this composes with
+- `lobes explain roles` — the six-role Colleague contract
+- `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
+- `lobes/profiles/builtin_shapes/*.toml` — the three shipped shapes
+- `scripts/accept-shape.sh` — the live acceptance script
 """
 
 _REALTIME = """\
@@ -979,6 +1053,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("machine",): _TUNING,
     ("profiles",): _PROFILES,
     ("profile",): _PROFILES,
+    ("shapes",): _SHAPES,
+    ("shape",): _SHAPES,
     ("serve",): _SERVE,
     ("stop",): _SERVE,
     ("fleet",): _FLEET,
