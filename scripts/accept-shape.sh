@@ -9,7 +9,7 @@
 # deployment back.
 #
 # Usage:
-#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe> [OPTIONS]
+#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-small> [OPTIONS]
 #   ./scripts/accept-shape.sh --restore [--deploy-dir DIR]
 #
 # Options:
@@ -38,6 +38,14 @@
 
 set -euo pipefail
 
+# Every phase leans on these non-core tools (curl for the live endpoints,
+# python3 for JSON assertions, docker + uv for the fleet itself) — validate
+# up front so a fresh host fails with one clear line, not mid-run noise.
+for dep in curl python3 docker uv; do
+  command -v "${dep}" >/dev/null 2>&1 \
+    || { printf 'error: required tool not found: %s\n' "${dep}" >&2; exit 2; }
+done
+
 SHAPE=""
 DEPLOY_DIR=""
 AUDIO=0
@@ -55,7 +63,7 @@ _usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    machine-as-brain|spark-lobe|thor-lobe) SHAPE="$1"; shift ;;
+    machine-as-brain|spark-lobe|thor-lobe|orin-small) SHAPE="$1"; shift ;;
     --deploy-dir)  DEPLOY_DIR="$2"; shift 2 ;;
     --audio)       AUDIO=1; shift ;;
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
@@ -153,7 +161,7 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   exit 0
 fi
 
-[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe)\n' >&2; exit 2; }
+[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|orin-small)\n' >&2; exit 2; }
 if [[ -n "${DEV_VERSION}" && -z "${DEV_INDEX}" ]]; then DEV_INDEX="https://test.pypi.org/simple/"; fi
 
 TRANSCRIPT="${HOME}/lobes-accept-${SHAPE}-${STAMP}.log"
@@ -168,16 +176,30 @@ printf '  deploy dir   : %s\n' "${DEPLOY_DIR}"
 printf '  dev lane     : %s\n' "${DEV_VERSION:-<off — released version>}"
 printf '  transcript   : %s\n\n' "${TRANSCRIPT}"
 
-# Shape-specific expectations
+# Shape-specific expectations. DROPPED_ROLES are role names for the
+# capabilities feasible:false checks; DROPPED_ALIASES are every generate alias
+# that must 404. orin-small (mesh-brain end-state t2, issue #112) drops BOTH
+# heavies and serves the opt-in 4B minor instead — running it on a non-Orin
+# card exercises the shape contract only and validates nothing about Orin
+# (the #108 rule stands until a physical Orin boots it).
+MINOR_CURL=0
 case "${SHAPE}" in
   spark-lobe)
-    DROPPED_ALIASES=(senses multimodal normal); HEAVY_PREFIX="PRIMARY"; HEAVY_ALIAS="main"
+    DROPPED_ROLES=(senses); DROPPED_ALIASES=(senses multimodal normal)
+    HEAVY_PREFIX="PRIMARY"; HEAVY_ALIAS="main"
     PROBES=(cortex embedder reranker); SENSES_CURL=0 ;;
   thor-lobe)
-    DROPPED_ALIASES=(cortex main hard); HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
+    DROPPED_ROLES=(cortex); DROPPED_ALIASES=(cortex main hard)
+    HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
     PROBES=(embedder reranker); SENSES_CURL=1 ;;
+  orin-small)
+    DROPPED_ROLES=(cortex senses)
+    DROPPED_ALIASES=(cortex main hard senses multimodal normal)
+    HEAVY_PREFIX="VLLM_MINOR"; HEAVY_ALIAS="minor"
+    PROBES=(embedder reranker); SENSES_CURL=0; MINOR_CURL=1 ;;
   machine-as-brain)
-    DROPPED_ALIASES=(); HEAVY_PREFIX="PRIMARY"; HEAVY_ALIAS="main"
+    DROPPED_ROLES=(); DROPPED_ALIASES=()
+    HEAVY_PREFIX="PRIMARY"; HEAVY_ALIAS="main"
     PROBES=(cortex embedder reranker); SENSES_CURL=1 ;;
 esac
 
@@ -304,11 +326,12 @@ PY
 }
 
 if [[ "${#DROPPED_ALIASES[@]}" -gt 0 ]]; then
-  DROPPED_ROLE="${DROPPED_ALIASES[0]}"
-  _check "CLI capabilities: ${DROPPED_ROLE} feasible:false (flagged, not hidden)" \
-    _role_infeasible "${WORK}/caps-cli.json" "${DROPPED_ROLE}"
-  _check "gateway /capabilities agrees: ${DROPPED_ROLE} feasible:false" \
-    _role_infeasible "${WORK}/caps-gw.json" "${DROPPED_ROLE}"
+  for DROPPED_ROLE in "${DROPPED_ROLES[@]}"; do
+    _check "CLI capabilities: ${DROPPED_ROLE} feasible:false (flagged, not hidden)" \
+      _role_infeasible "${WORK}/caps-cli.json" "${DROPPED_ROLE}"
+    _check "gateway /capabilities agrees: ${DROPPED_ROLE} feasible:false" \
+      _role_infeasible "${WORK}/caps-gw.json" "${DROPPED_ROLE}"
+  done
   _check "/v1/models omits the dropped role's aliases" \
     python3 - "${WORK}/models.json" "${DROPPED_ALIASES[@]}" <<'PY'
 import json, sys
@@ -326,6 +349,53 @@ PY
   done
 else
   printf '  (machine-as-brain: no dropped roles — honesty phase is the shape contract itself)\n'
+fi
+printf '\n'
+
+# ---------------------------------------------------------------------------
+# Phase 4b — honest referral (mesh-brain t3, issue #112). Opt-in: only checked
+# for a dropped role whose <PREFIX>_PEER_ORIGIN is declared in the deployed
+# .env (pass it with --env). Annotation only — the origin is named on the two
+# honesty surfaces; the gateway never dials it (so a dead peer cannot fail
+# this phase, by design).
+# ---------------------------------------------------------------------------
+printf '=== phase 4b: honest referral (opt-in peer origins) ===\n'
+_role_prefix() { # role name -> env prefix
+  case "$1" in
+    cortex) echo PRIMARY ;; senses) echo MULTIMODAL ;;
+    embedder) echo EMBED ;; reranker) echo RERANK ;; *) echo "" ;;
+  esac
+}
+_hosted_by() { # _hosted_by <caps-file> <role> <origin> — hosted_by matches
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+caps = json.load(open(sys.argv[1]))
+roles = caps.get("roles", caps)
+r = roles.get(sys.argv[2])
+sys.exit(0 if isinstance(r, dict) and r.get("hosted_by") == sys.argv[3] else 1)
+PY
+}
+REFERRALS=0
+for role in "${DROPPED_ROLES[@]:-}"; do
+  [[ -n "${role}" ]] || continue
+  prefix="$(_role_prefix "${role}")"
+  [[ -n "${prefix}" ]] || continue
+  origin="$(_env_val "${DEPLOY_DIR}/.env" "${prefix}_PEER_ORIGIN")"
+  [[ -n "${origin}" ]] || continue
+  REFERRALS=$((REFERRALS + 1))
+  _check "gateway /capabilities: ${role} hosted_by ${origin}" \
+    _hosted_by "${WORK}/caps-gw.json" "${role}" "${origin}"
+  _check "CLI capabilities: ${role} hosted_by ${origin}" \
+    _hosted_by "${WORK}/caps-cli.json" "${role}" "${origin}"
+  alias_for_role="${role}"
+  _check "POST model=${alias_for_role} -> 404 body carries the referral" bash -c "
+    curl -s '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+      -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
+      | python3 -c 'import json,sys; b=json.load(sys.stdin); e=b[\"error\"]; sys.exit(0 if e.get(\"code\")==\"role_infeasible\" and e.get(\"hosted_by\")==\"${origin}\" else 1)'
+  "
+done
+if [[ "${REFERRALS}" -eq 0 ]]; then
+  printf '  (no <PREFIX>_PEER_ORIGIN declared for a dropped role — referral is opt-in, skipped)\n'
 fi
 printf '\n'
 

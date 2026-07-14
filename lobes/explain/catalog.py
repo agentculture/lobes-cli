@@ -745,7 +745,7 @@ profiles`) but "which of the six Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
-## The three built-in shapes
+## The four built-in shapes
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
   serve, today's behaviour made explicit. Carries zero overrides, so a bare
@@ -761,6 +761,13 @@ render time — `shape × card` — never a per-shape code fork.
   `gpu_mem_util=0.30` / `max_model_len=131072` (its full native 128K).
   Validated live on the Jetson AGX Thor (2026-07-14): measured KV pool
   1,418,554 tokens, 10.82× concurrency at 131072.
+- **`orin-small`** — drops BOTH `cortex` and `senses`, keeps the opt-in
+  `minor` gear (`vllm-minor`) + `embedder` + `reranker` + `stt`/`tts`. The
+  Jetson AGX Orin 64GB reference shape (mesh-brain end-state, issue #112,
+  t2). **Declared, UNVALIDATED** — pure TOML + goldens only, no physical
+  Orin has booted this shape (mirrors `base.toml`'s own conservative
+  unrecognised-card fallback). No overrides (`minor` carries no Profile
+  knobs to re-derive).
 
 Both mesh-lobe shapes' reclaim values are **measured**, not computed: a
 naive reclaim-sum or the model's own solo default was refused by vLLM on
@@ -770,7 +777,7 @@ carries the value that fit, with a provenance comment.
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe> [--apply]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,
@@ -791,20 +798,42 @@ A mesh shape's dropped core role never half-serves: the generated
 `role_infeasible`; and `lobes up <dropped-role>` is a user error naming the
 shape rather than an opaque compose failure.
 
-## Scope
+## Honest referral (opt-in)
 
-One-lobe-per-box end-states, cross-box referral, and an Orin profile are
-out of scope here — tracked as issue #112 (spec + plan in PR #116);
-proxy-lobes are issue #115.
+Declare, per dropped role, the peer box that hosts it — one operator-set env
+var per core role in the deployment's `.env`, mirroring the `*_FEASIBLE`
+flags (e.g. `MULTIMODAL_PEER_ORIGIN=http://thor.local:8001` on `spark-lobe`,
+`PRIMARY_PEER_ORIGIN=http://spark.local:8001` on `thor-lobe`) — and the two
+honesty surfaces name it: capabilities gains `hosted_by` on the unhosted
+role, and the 404 `role_infeasible` body carries the same referral. The
+origin is always operator-declared, never derived (#92). Annotation only:
+the gateway NEVER forwards a request to a peer (no data-plane proxying),
+and with no peer config every response is byte-identical to the
+pre-referral contract. See `docs/deployment-shapes.md`.
+
+## The mesh-brain end-state (issue #112)
+
+One heavy lobe per box, cheap gears co-reside, the brain stays whole across
+the mesh — four decisions, all shipped: (1) cross-box reachability is
+**direct + opt-in honest referral**, never proxying (proxy-lobes are their
+own follow-up, issue #115); (2) cheap gears (`embedder`/`reranker`/`stt`/
+`tts`) **co-reside** on every box that wants them; (3) the reference shape
+assignment is Spark GB10 = `cortex` via `spark-lobe`, Thor = `senses` via
+`thor-lobe`, Orin 64GB = small-model lobes via `orin-small`; (4) the shape
+axis is **mixable** — specialized, multi-role, and mixed boxes compose into
+one brain, and `machine-as-brain` stays the default. `orin-small` ships as
+declared-but-unvalidated data only — physical Jetson AGX Orin validation is
+its own follow-up.
 
 ## See also
 
 - `docs/deployment-shapes.md` — the deep reference (support table, the
-  co-residency tax numbers, the acceptance script, the dev lane)
+  co-residency tax numbers, the mesh-brain end-state decisions, the
+  acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
 - `lobes explain roles` — the six-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the three shipped shapes
+- `lobes/profiles/builtin_shapes/*.toml` — the four shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
 """
 

@@ -525,6 +525,39 @@ def build_role_registry(
     return registry
 
 
+def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> dict[str, dict]:
+    """Add the honest referral — ``hosted_by: <peer origin>`` — to each unhosted role.
+
+    The ONE shared annotator both honesty surfaces call (the gateway's
+    ``GET /capabilities`` via :func:`lobes.gateway.server.capabilities_payload`,
+    and the CLI's offline fallback in ``lobes capabilities``), so the referral
+    contract has exactly one implementation. Mutates ``payload`` in place (and
+    returns it for convenience): for each gateway-fronted role whose entry says
+    ``feasible: false`` (this box does not host it — the #113 dropped-lobe
+    channel) AND whose backend has an OPERATOR-DECLARED peer origin in
+    ``table.peer_origins`` (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`,
+    mesh-brain t3), a ``hosted_by`` key naming that origin is added.
+
+    Everything else is untouched — a hosted role is never annotated (even if
+    an origin is declared for it: a referral says who hosts what THIS box does
+    not), an unhosted role with no declared peer stays exactly as it was, and
+    with ``table.peer_origins`` empty (the default) the payload is
+    byte-identical to the pre-referral contract. The origin is metadata for
+    the CALLER to dial directly; nothing here (or anywhere in the gateway)
+    ever forwards a request to it — no data-plane proxying (issue #115 is the
+    deferred proxy-lobes follow-up). Audio roles (stt/tts) are outside the
+    referral channel's scope, exactly as they are outside ``FEASIBLE_ENV``'s.
+    """
+    for role, backend in ROLE_BACKEND.items():
+        entry = payload.get(role)
+        if not isinstance(entry, dict) or entry.get("feasible") is not False:
+            continue
+        origin = table.peer_origins.get(backend)
+        if origin:
+            entry["hosted_by"] = origin
+    return payload
+
+
 def role_registry_from_env(
     env: Mapping[str, str] | None = None,
     *,

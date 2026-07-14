@@ -8,7 +8,7 @@ module that touches ``http.client`` / sockets.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lobes.catalog import TIER_ROLE
 
@@ -43,6 +43,20 @@ class RoutingTable:
     # existing caller/table construction (this module's own tests included) is
     # completely unaffected.
     infeasible: frozenset[str] = frozenset()
+    # Backend NAME -> the OPERATOR-DECLARED origin of the peer box that hosts
+    # that backend's role (mesh-brain t3, issue #112's "direct + honest
+    # referral" decision). Populated by :func:`lobes.gateway._config.
+    # build_config` from ``<PREFIX>_PEER_ORIGIN`` env vars
+    # (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`) — the SAME
+    # per-backend-name env convention ``infeasible`` above already uses.
+    # Consulted ONLY to ANNOTATE honesty surfaces (/capabilities and the 404
+    # ``role_infeasible`` body) for a role in ``infeasible``; it is NEVER
+    # dialed — the gateway does no data-plane proxying to peers (proxy-lobes
+    # is deferred, issue #115). Per the #92 lesson an origin here is always
+    # operator-declared, never derived from hostnames/interfaces. Defaults to
+    # empty so a deployment with no peer config is byte-identical to the
+    # pre-referral contract on every surface.
+    peer_origins: Mapping[str, str] = field(default_factory=dict)
 
 
 def is_audio_path(path: str) -> bool:

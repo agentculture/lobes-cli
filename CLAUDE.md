@@ -153,15 +153,41 @@ Thor — drops `cortex`, `senses` reclaims to `gpu_mem_util=0.30` /
 `max_model_len=131072`, measured KV pool 1,418,554 tokens / 10.82×
 concurrency at 131072). Both reclaim values are *measured*, not computed —
 the naive reclaim-sum/solo-default was refused by vLLM on the live,
-unified-memory box in each case. Select with `lobes init --shape
-<machine-as-brain|spark-lobe|thor-lobe>` (dry-run by default, `--apply` to
-commit, byte-for-byte restorable by re-running with the previous shape). A
-dropped role is flagged `feasible:false` on both `lobes capabilities` and
-`GET /capabilities`, omitted from `/v1/models`, and 404s `role_infeasible`
-on every alias — never half-served. One-lobe-per-box end-states, cross-box
-referral, and an Orin profile are out of scope here (issue #112, spec+plan
-in PR #116; proxy-lobes are issue #115). See `docs/deployment-shapes.md`
-(the deep reference) and `lobes explain shapes` (in-CLI).
+unified-memory box in each case. A fourth built-in shape, **`orin-small`**
+(mesh-brain end-state, issue #112, t2), drops BOTH heavy lobes and hosts the
+opt-in `minor` gear (`vllm-minor`) instead, alongside the pooling gears and
+audio overlay — it ships as **declared, UNVALIDATED data only** (the #108
+rule: no physical Jetson AGX Orin has booted it, so no doc, support table,
+or `lobes capabilities` output may claim it validated). Select with `lobes
+init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small>` (dry-run by
+default, `--apply` to commit, byte-for-byte restorable by re-running with
+the previous shape). A dropped role is flagged `feasible:false` on both
+`lobes capabilities` and `GET /capabilities`, omitted from `/v1/models`, and
+404s `role_infeasible` on every alias — never half-served. Opt-in **honest
+referral** (issue #112, t3): declaring a peer origin per dropped role
+(`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `EMBED_PEER_ORIGIN` /
+`RERANK_PEER_ORIGIN` — always operator-typed, never derived, per #92) makes
+both capabilities surfaces and the `role_infeasible` 404 body name the
+hosting peer (`hosted_by`); annotation only — the gateway never forwards a
+request to a peer, and with no peer config every response is byte-identical
+to the pre-referral contract.
+
+**The mesh-brain end-state (issue #112)** — one heavy lobe per box, cheap
+gears co-reside, the brain stays whole across the mesh — has landed on top of
+the near-term work above, recording four decisions: (1) cross-box
+reachability is **direct addressing + opt-in honest referral**, never
+proxying (proxy-lobes are their own follow-up, issue #115); (2) the cheap
+gears (`embedder`/`reranker`/`stt`/`tts`) **co-reside** on every box that
+wants them — no gear is forced to move; (3) the reference shape assignment is
+**Spark GB10 = `cortex` via `spark-lobe`, Thor 128GB = `senses` via
+`thor-lobe`, Orin 64GB = small-model lobes via `orin-small`**; and (4) the
+shape axis is **mixable** — specialized, multi-role, and mixed boxes (local
+or cloud) compose into one brain, with `machine-as-brain` staying the default
+and one-box users unaffected. The referral surface is live-validated
+cross-box on the physical Thor
+(`docs/evidence/2026-07-14-accept-referral-thor.txt`); physical Orin
+validation remains open. See `docs/deployment-shapes.md` (the deep
+reference) and `lobes explain shapes` (in-CLI).
 
 ## Deployment model
 

@@ -237,7 +237,7 @@ comparison across a fleet *profile* — built on the same per-role probes
 | Profile | What it compares |
 |---|---|
 | `cortex-only` | The `cortex` generate lane alone. |
-| `cortex+senses` | `cortex` and `senses` side by side (the always-on duo). |
+| `cortex+senses` | `cortex` and `senses` side by side (the `machine-as-brain` default duo — a mesh-brain deployment shape can drop one of the two; see `docs/deployment-shapes.md`). |
 | `senses-direct` | `senses` addressed directly (cheap/front-door tasks). |
 | `qwen-nvfp4-vs-bf16` | The current `cortex` endpoint probed as both a quantized and an unquantized catalog variant — reported `available: false` with a `reason` when the catalog doesn't carry both sides (never fabricated). |
 | `all` | Every profile above. |
@@ -343,6 +343,9 @@ and live-validation history behind this rebalance.
   validation history.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
+- [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
+  deployment-shape axis: which of these six roles a given box hosts at all,
+  and the cross-box honest-referral surface for a role it doesn't.
 - `lobes explain roles` — the in-CLI version of this doc.
 - `lobes explain fleet` / `lobes explain gateway` — routing semantics.
 - `tests/test_colleague_contract.py` — the end-to-end proof of the client flow

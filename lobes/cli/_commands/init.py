@@ -13,20 +13,24 @@ gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
-``--shape <machine-as-brain|spark-lobe|thor-lobe>`` (brain-shapes t4, issue
-#113) selects the DEPLOYMENT-SHAPE axis — which of the six Colleague roles
-THIS box hosts at all — composed on top of whichever per-machine
+``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-small>`` (brain-shapes
+t4, issue #113; ``orin-small`` added by the mesh-brain end-state's t2, issue
+#112) selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
+— composed on top of whichever per-machine
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
 per-machine TUNING axis, issue #110). Fleet topology only (a fleet-scaffold
 axis — incompatible with ``--single``). The default, ``machine-as-brain``,
-hosts every role this card can serve — today's behaviour, unchanged — and t3's
+hosts every one of the six first-class Colleague roles this card can serve —
+today's behaviour, unchanged — and t3's
 :func:`~lobes.profiles.shape_render.render_shape` composes it as a strict
 no-op over the profile, so a bare ``lobes init`` (no ``--shape`` at all) makes
 zero new decisions and renders byte-identically to before this flag existed.
 The mesh-brain alternatives drop one generate lobe to a peer box and reclaim
 its GPU-memory budget: ``spark-lobe`` (drops ``senses``), ``thor-lobe`` (drops
-``cortex``). An unknown ``--shape`` value is a user error naming the valid
-(sorted) shapes.
+``cortex``). ``orin-small`` drops BOTH heavy lobes and hosts the opt-in
+``minor`` gear instead — it is **declared, UNVALIDATED** data only (no
+physical Jetson AGX Orin has booted it; the #108 rule). An unknown
+``--shape`` value is a user error naming the valid (sorted) shapes.
 """
 
 from __future__ import annotations
@@ -484,16 +488,20 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--shape",
-        metavar="{machine-as-brain,spark-lobe,thor-lobe}",
-        help="Deployment shape to render (brain-shapes, issue #113): which of "
-        "the six Colleague roles this box hosts, composed on top of whichever "
-        "--profile/detection resolves. Default 'machine-as-brain' (host every "
-        "role this card can serve — today's behaviour; a bare 'lobes init' "
-        "makes zero new decisions and renders byte-identically). Mesh-brain "
-        "alternatives drop one generate lobe to a peer box and reclaim its "
-        "GPU-memory budget: 'spark-lobe' (drops senses), 'thor-lobe' (drops "
-        "cortex). Fleet topology only — incompatible with --single. An "
-        "unknown value is a user error naming the valid shapes.",
+        metavar="{machine-as-brain,spark-lobe,thor-lobe,orin-small}",
+        help="Deployment shape to render (brain-shapes, issue #113): which "
+        "roles this box hosts, composed on top of whichever --profile/"
+        "detection resolves. Default 'machine-as-brain' (host every "
+        "first-class Colleague role this card can serve — today's behaviour; "
+        "a bare 'lobes init' makes zero new decisions and renders "
+        "byte-identically). Mesh-brain alternatives drop one generate lobe "
+        "to a peer box and reclaim its GPU-memory budget: 'spark-lobe' "
+        "(drops senses), 'thor-lobe' (drops cortex). 'orin-small' (issue "
+        "#112, DECLARED/UNVALIDATED — no physical Jetson AGX Orin has "
+        "booted it) drops BOTH heavy lobes and hosts the opt-in 'minor' "
+        "generate gear instead. Fleet topology only — incompatible with "
+        "--single. An unknown value is a user error naming the valid "
+        "shapes.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")

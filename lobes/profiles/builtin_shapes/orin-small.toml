@@ -1,0 +1,59 @@
+# The Jetson AGX Orin 64GB reference shape for the mesh-brain end-state's
+# small-model corner (issue #112, brain-shapes end-state t2): keeps the
+# opt-in `minor` 4B generate gear + the two 0.6B pooling gears + the audio
+# overlay on this box, and hosts NEITHER heavy generate lobe -- no Qwen
+# `cortex` (27B), no Gemma `senses` (12B). Those two live on their own
+# reference boxes in a mesh-brain deployment (spark-lobe.toml drops senses,
+# thor-lobe.toml drops cortex; this shape drops BOTH).
+#
+# DECLARED-BUT-UNVALIDATED (the #108 rule, mirrored exactly): no physical
+# Jetson AGX Orin has booted this shape. No doc, support table, or `lobes
+# capabilities` output may claim Orin is validated until one does -- see
+# docs/deployment-shapes.md's support table and
+# lobes/profiles/builtin/base.toml's own "conservative fallback for an
+# UNRECOGNISED card" comment, whose discipline this mirrors exactly. Unlike
+# spark-lobe/thor-lobe (both validated live, 2026-07-14), this shape ships
+# as pure declared data only -- see docs/plans/2026-07-14-lobes-serves-the-
+# mesh-brain-end-state-one-lobe-per.md's t2 acceptance and its risk
+# "Physical Jetson AGX Orin 64GB boot + probe validation is its own
+# follow-up".
+#
+# There is deliberately no dedicated "orin" Profile (the #108 per-machine
+# tuning axis) alongside this shape -- an unbooted card gets no invented
+# knob values. This shape renders against the EXISTING base/spark/thor card
+# profiles (mirroring spark-lobe.toml/thor-lobe.toml's own goldens, e.g.
+# spark-lobe__base.env), and in particular against `base` -- the
+# already-shipped conservative fallback for an unrecognised card -- which is
+# the honest stand-in until a physical Orin boots and earns its own Profile
+# (#108's own rule: a card gets a tuned Profile only once validated on real
+# hardware).
+#
+# WHY `minor`, NOT `cortex`, hosts the generate lane here: the Shape schema's
+# `hosts` vocabulary (SHAPE_ROLES) is normally exactly the six first-class
+# Colleague roles (issue #81) -- cortex/senses/embedder/reranker/stt/tts.
+# `minor` is deliberately NOT one of those six (see CLAUDE.md's "Colleague
+# roles" section: "the 4B minor ... are opt-in gears and not first-class
+# Colleague roles") -- it is the ALREADY-SHIPPED opt-in `vllm-minor` compose
+# service (COMPOSE_PROFILES=minor in the fleet template), fixed at
+# Qwen/Qwen3.5-4B bf16, util 0.10, 32768 context (see env.example /
+# docker-compose.yml). Hosting this shape's generate lane as `cortex` would
+# mean the box advertises the 27B Colleague role while actually serving a 4B
+# model behind it -- exactly the half-honest posture #92 exists to forbid.
+# Instead, `minor` was added to the Shape schema's role vocabulary
+# (lobes/profiles/shapes.py's OPT_IN_ROLES) as a THIRD kind of hostable
+# entry, alongside the four Profile-machinery core roles and the two
+# audio-overlay sidecars -- mirroring, on the Shape axis, the exact
+# "no heavy lobe, small generate model instead" posture
+# lobes/profiles/builtin/base.toml already establishes on the Profile axis
+# for an unrecognised card. Like stt/tts, `minor` carries no Profile knobs
+# of its own (its budget is the compose template's own fixed defaults) so it
+# can only appear in `hosts`, never in `overrides` -- this shape declares
+# none. Hosting `minor` DOES render activation env, though (PR #121 Qodo
+# fix): COMPOSE_PROFILES=minor un-gates the profile-gated vllm-minor
+# service, and MINOR_BASE_URL + MINOR_SERVED_NAME wire the gateway backend
+# (shape_render.OPT_IN_ACTIVATION_ENV) -- without them `docker compose up`
+# starts no generate lane at all on this shape.
+name = "orin-small"
+summary = "Jetson AGX Orin 64GB reference (DECLARED, UNVALIDATED) -- minor + embedder + reranker + audio, no cortex/senses"
+
+hosts = ["minor", "embedder", "reranker", "stt", "tts"]

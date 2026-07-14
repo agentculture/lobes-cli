@@ -52,6 +52,7 @@ from lobes.profiles.shape_render import (
     AUDIO_OVERLAY_FILE,
     FLEET_COMPOSE_FILE,
     GATEWAY_SERVICE,
+    OPT_IN_ACTIVATION_ENV,
     REALTIME_SERVICE,
     ROLE_SERVICE,
     compose_profile,
@@ -62,7 +63,8 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
-    SHAPE_ROLES,
+    COLLEAGUE_ROLES,
+    OPT_IN_ROLES,
     Shape,
     builtin_shape_names,
     resolve_shape,
@@ -116,9 +118,17 @@ def test_machine_as_brain_env_equals_profile_env(card: str) -> None:
 
 
 def test_machine_as_brain_carries_no_overrides_and_hosts_everything() -> None:
-    """Guards the invariant the no-op property rests on (matches the t1 shape data)."""
+    """Guards the invariant the no-op property rests on (matches the t1 shape data).
+
+    "Everything" means the six first-class Colleague roles
+    (:data:`COLLEAGUE_ROLES`) -- NOT the broader
+    :data:`~lobes.profiles.shapes.SHAPE_ROLES`, which also admits the opt-in
+    `minor` gear (t2, issue #112) that machine-as-brain deliberately never
+    hosts.
+    """
     shape = resolve_shape(_IDENTITY_SHAPE)
-    assert set(shape.hosts) == set(SHAPE_ROLES)
+    assert set(shape.hosts) == set(COLLEAGUE_ROLES)
+    assert "minor" not in shape.hosts
     assert dict(shape.overrides) == {}
 
 
@@ -199,6 +209,91 @@ def test_thor_lobe_renders_no_cortex_service() -> None:
     golden = shape_golden_path("thor-lobe", "thor").read_text(encoding="utf-8")
     assert f"{prefix}_MODEL" not in golden
     assert f"{prefix}_FEASIBLE=false" in golden
+
+
+def test_orin_small_renders_no_cortex_or_senses_service() -> None:
+    """orin-small (t2, issue #112) drops BOTH heavy generate lobes.
+
+    Rendered against `spark` -- a card where cortex AND senses are BOTH
+    feasible -- to prove this is the SHAPE's drop decision, not a side
+    effect of the card marking them infeasible (the same pattern
+    test_spark_lobe_renders_no_senses_service / test_thor_lobe_renders_no_cortex_service
+    use above).
+    """
+    shape = resolve_shape("orin-small")
+    profile = resolve_profile("spark")
+    rendered = render_shape(shape, profile)
+    for role in ("cortex", "senses"):
+        prefix = ROLE_ENV_PREFIX[role]
+        assert rendered.env.get(f"{prefix}_FEASIBLE") == "false"
+        assert f"{prefix}_MODEL" not in rendered.env
+        leaked = [
+            k for k in rendered.env if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE"
+        ]
+        assert leaked == [], f"dropped {role} leaked knob env: {leaked}"
+        assert ROLE_SERVICE[role] not in rendered.services
+    golden = shape_golden_path("orin-small", "spark").read_text(encoding="utf-8")
+    assert "PRIMARY_MODEL" not in golden
+    assert "MULTIMODAL_MODEL" not in golden
+    assert "PRIMARY_FEASIBLE=false" in golden
+    assert "MULTIMODAL_FEASIBLE=false" in golden
+
+
+def test_orin_small_hosts_minor_service_on_every_card() -> None:
+    """orin-small's generate lane is the opt-in `minor` gear (vllm-minor), always."""
+    shape = resolve_shape("orin-small")
+    assert set(OPT_IN_ROLES) == {"minor"}
+    for card in builtin_names():
+        services = shape_services(shape, resolve_profile(card))
+        assert ROLE_SERVICE["minor"] in services
+        assert ROLE_SERVICE["cortex"] not in services
+        assert ROLE_SERVICE["senses"] not in services
+        assert ROLE_SERVICE["embedder"] in services
+        assert ROLE_SERVICE["reranker"] in services
+
+
+def test_hosted_opt_in_role_renders_its_activation_env_on_every_card() -> None:
+    """Hosting `minor` must ACTIVATE it, not just list its service (PR #121 Qodo find).
+
+    vllm-minor is gated behind the `minor` Docker Compose profile and the
+    gateway wires the backend only when MINOR_BASE_URL is non-empty — so a
+    shape hosting the opt-in gear must render COMPOSE_PROFILES plus the
+    wiring pair, or `docker compose up` starts nothing and `model=minor`
+    404s on the very shape whose generate lane it is.
+    """
+    shape = resolve_shape("orin-small")
+    for card in builtin_names():
+        env = shape_env(shape, resolve_profile(card))
+        assert env.get("COMPOSE_PROFILES") == "minor", f"minor profile not activated on {card}"
+        assert env.get("MINOR_BASE_URL") == "http://vllm-minor:8000"
+        assert env.get("MINOR_SERVED_NAME") == "Qwen/Qwen3.5-4B"
+
+
+def test_shapes_without_opt_in_roles_render_no_activation_env() -> None:
+    """No opt-in gear hosted -> no activation keys (machine-as-brain stays byte-identical)."""
+    for shape_name in ("machine-as-brain", "spark-lobe", "thor-lobe"):
+        shape = resolve_shape(shape_name)
+        for card in builtin_names():
+            env = shape_env(shape, resolve_profile(card))
+            for key in ("COMPOSE_PROFILES", "MINOR_BASE_URL", "MINOR_SERVED_NAME"):
+                assert key not in env, f"{shape_name}/{card} leaked {key}"
+
+
+def test_opt_in_activation_env_mirrors_the_compose_template() -> None:
+    """OPT_IN_ACTIVATION_ENV mirrors the SHIPPED fleet template (kept honest here).
+
+    Same design as test_role_service_constants_exist_in_compose_templates: the
+    constant mirrors the template's own defaults, so read the template and
+    prove the mirror still lines up — the served-name default, the profile
+    gate, and the gateway's opt-in wiring key.
+    """
+    text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    served = OPT_IN_ACTIVATION_ENV["minor"]["MINOR_SERVED_NAME"]
+    assert f"${{MINOR_SERVED_NAME:-{served}}}" in text
+    assert OPT_IN_ACTIVATION_ENV["minor"]["MINOR_BASE_URL"] == "http://vllm-minor:8000"
+    assert "- MINOR_BASE_URL=${MINOR_BASE_URL:-}" in text
+    minor_block = text.split("  vllm-minor:", 1)[1].split("\n  vllm-", 1)[0]
+    assert re.search(r"profiles:\s*\n\s*- minor", minor_block), "vllm-minor lost its profile gate"
 
 
 def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:

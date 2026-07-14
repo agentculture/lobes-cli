@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.0] - 2026-07-14
+
+### Added
+
+- Mesh-brain end-state implementation (#112, t2–t6): `orin-small` built-in shape — the small-model reference shape for the Jetson AGX Orin 64GB (minor + pooling gears, BOTH heavies dropped), shipped as declared-but-UNVALIDATED data per the #108 rule, with the `minor` opt-in role added to the shape `hosts` vocabulary (`OPT_IN_ROLES`) rather than dishonestly reusing the cortex slot
+- Honest cross-box referral (#112 t3, the confirmed direct+referral decision): opt-in `PRIMARY/MULTIMODAL/EMBED/RERANK_PEER_ORIGIN` env vars (operator-declared full origins, never derived — #92); with a peer declared, `lobes capabilities`, gateway `GET /capabilities`, and the 404 `role_infeasible` body name the hosting peer (`hosted_by`); annotation only — the gateway never forwards a request to a peer, and zero peer config renders byte-identical pre-referral responses (pinned byte-for-byte in tests)
+- Contract-test matrix (#112 t4): data-driven per-(built-in shape, dropped role) honesty tests — capabilities flag/omit, /v1/models omission, per-alias 404 with referral, no-outbound-connection tripwire — plus pinned t1 budget regressions (spark-lobe 262144 / thor-lobe 131072 cannot be silently lowered by a golden regen)
+- Acceptance evidence (#112 t5): `scripts/accept-shape.sh` gains the orin-small arm and an opt-in referral phase; live Thor transcript `docs/evidence/2026-07-14-accept-referral-thor.txt` (referral 404s with a real declared Spark origin, cross-box cortex reachability, byte-for-byte shape restore)
+- Mesh-brain end-state docs (#112 t6): the four recorded decisions, the measured co-residency tax table (cortex 131072→262144, senses 32768→131072), and evidence citations in `docs/deployment-shapes.md`, `lobes explain shapes`, and CLAUDE.md
+
 ## [0.42.0] - 2026-07-14
 
 ### Added

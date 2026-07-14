@@ -335,7 +335,9 @@ def _model_not_found_body(model: str) -> bytes:
     ).encode("utf-8")
 
 
-def _role_infeasible_body(requested: str | None, backend_name: str) -> bytes:
+def _role_infeasible_body(
+    requested: str | None, backend_name: str, peer_origin: str | None = None
+) -> bytes:
     """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
 
     Distinct ``type``/``code`` from :func:`_model_not_found_body`: the
@@ -345,22 +347,35 @@ def _role_infeasible_body(requested: str | None, backend_name: str) -> bytes:
     (``backend_name``) unable to serve it at all. Never a reason to
     silently substitute a different, feasible gear — see
     :func:`lobes.gateway._routing.infeasible_owner`.
+
+    ``peer_origin`` is the opt-in honest referral (mesh-brain t3, issue
+    #112): the OPERATOR-DECLARED origin of the peer box that hosts this role
+    (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`). When set, the message
+    names it and a machine-readable ``hosted_by`` key is added — a referral
+    for the CALLER to dial directly; this gateway never forwards the request
+    there (no data-plane proxying; proxy-lobes is issue #115). When ``None``
+    (no peer config — the default) the body is BYTE-IDENTICAL to the
+    pre-referral contract.
     """
     label = requested or "(unspecified)"
-    return json.dumps(
-        {
-            "error": {
-                "message": (
-                    f"The model `{label}` is not feasible on this machine — its "
-                    f"backend (`{backend_name}`) is declared hardware-infeasible "
-                    "by this deployment's per-machine profile and will never be "
-                    "served here."
-                ),
-                "type": "role_infeasible",
-                "code": "role_infeasible",
-            }
-        }
-    ).encode("utf-8")
+    message = (
+        f"The model `{label}` is not feasible on this machine — its "
+        f"backend (`{backend_name}`) is declared hardware-infeasible "
+        "by this deployment's per-machine profile and will never be "
+        "served here."
+    )
+    error: dict[str, str] = {}
+    if peer_origin:
+        message += (
+            f" It is hosted by the peer at `{peer_origin}` — address that box "
+            "directly; this gateway never proxies requests to peers."
+        )
+    error["message"] = message
+    error["type"] = "role_infeasible"
+    error["code"] = "role_infeasible"
+    if peer_origin:
+        error["hosted_by"] = peer_origin
+    return json.dumps({"error": error}).encode("utf-8")
 
 
 def _busy_body(requested_tier: str) -> bytes:
@@ -389,10 +404,18 @@ def _feasibility_response(table: RoutingTable, requested: str | None) -> Gateway
     infeasible_name = infeasible_owner(table, requested)
     if infeasible_name is None:
         return None
+    # Opt-in honest referral (mesh-brain t3): when the operator declared the
+    # peer that hosts this role (table.peer_origins), the 404 names it — as an
+    # ANNOTATION only. The request is still answered HERE, terminally; it is
+    # never forwarded to the peer (no data-plane proxying — issue #115 is the
+    # deferred proxy-lobes follow-up). No declaration → the pre-referral body,
+    # byte for byte.
     return GatewayResponse(
         status=404,
         headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-        body=_role_infeasible_body(requested, infeasible_name),
+        body=_role_infeasible_body(
+            requested, infeasible_name, table.peer_origins.get(infeasible_name)
+        ),
     )
 
 
@@ -968,7 +991,8 @@ def capabilities_payload(
     back to ``loaded`` (the CLI/unit path). All three signal kwargs default to
     ``None`` so this pure function's shape is unchanged for its non-HTTP callers.
     """
-    from lobes.roles import ROLES, build_role_registry  # deferred — see the module-level NOTE
+    # deferred imports — see the module-level NOTE
+    from lobes.roles import ROLES, annotate_peer_referrals, build_role_registry
 
     resolved_env = os.environ if env is None else env
     registry = build_role_registry(
@@ -979,7 +1003,12 @@ def capabilities_payload(
         audio_ready=audio_ready,
         backend_ready=backend_ready,
     )
-    return {role: dataclasses.asdict(registry[role]) for role in ROLES}
+    payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
+    # Opt-in honest referral (mesh-brain t3): annotate each unhosted
+    # (feasible=false) role with the OPERATOR-DECLARED peer origin that hosts
+    # it (table.peer_origins). With no peer config (the default) this is a
+    # no-op and the payload stays byte-identical to the pre-referral contract.
+    return annotate_peer_referrals(payload, table)
 
 
 # --- the HTTP handler ------------------------------------------------------

@@ -211,7 +211,7 @@ def test_unknown_shape_is_user_error_naming_valid_shapes(tmp_path, capsys) -> No
     assert rc == 1
     err = capsys.readouterr().err
     assert "unknown shape" in err
-    assert "machine-as-brain, spark-lobe, thor-lobe" in err
+    assert "machine-as-brain, orin-small, spark-lobe, thor-lobe" in err
     assert not target.exists()  # aborts before any scaffolding
 
 
@@ -224,7 +224,12 @@ def test_unknown_shape_dry_run_also_errors_before_writing(tmp_path, capsys) -> N
 
 def test_builtin_shape_names_are_sorted() -> None:
     assert list(builtin_shape_names()) == sorted(builtin_shape_names())
-    assert builtin_shape_names() == ("machine-as-brain", "spark-lobe", "thor-lobe")
+    assert builtin_shape_names() == (
+        "machine-as-brain",
+        "orin-small",
+        "spark-lobe",
+        "thor-lobe",
+    )
 
 
 # --- --shape x --single: user error (shapes are a fleet-scaffold axis) -----
