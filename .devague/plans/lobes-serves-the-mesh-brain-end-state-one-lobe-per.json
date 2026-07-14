@@ -1,0 +1,310 @@
+{
+  "slug": "lobes-serves-the-mesh-brain-end-state-one-lobe-per",
+  "title": "lobes serves the mesh-brain end-state: one lobe per box \u2014 the Spark GB10 gives its whole machine to the Qwen cortex, Thor 128GB to Gemma senses, the Orin 64GB hosts the small-model lobes \u2014 and the brain stays whole across the mesh",
+  "frame_slug": "lobes-serves-the-mesh-brain-end-state-one-lobe-per",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-14T05:59:44Z",
+  "updated": "2026-07-14T06:03:03Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves the mesh-brain end-state: one lobe per box \u2014 the Spark GB10 gives its whole machine to the Qwen cortex, Thor 128GB to Gemma senses, the Orin 64GB hosts the small-model lobes \u2014 and the brain stays whole across the mesh"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Each of the three named boxes can be moved to its one-lobe shape with one safe command and back; the heavy lobes serve at measured full budgets; every role of the brain remains reachable per the confirmed cross-box design"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Multi-box fleet operators running the Culture mesh brain across machines \u2014 DGX Spark GB10 and Jetson AGX Thor 128GB validated today, Jetson AGX Orin 64GB the named next box \u2014 plus the mesh agents consuming the roles across boxes"
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Every named audience leg is exercised: the multi-box operator path is validated on the physical Spark and Thor, the one-box/mixed path stays goldens-proven byte-identical, and a consuming mesh agent reaches every role it used before the shape change"
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "After the near-term shapes land (#113 spec, plan confirmed), boxes still co-host: spark-lobe keeps cortex+embedder+reranker+audio on the Spark, thor-lobe keeps senses+the pooling gears+audio on Thor; cortex sits below its 256K native, senses below its full context, and the cross-box story is per-box honesty only \u2014 proxying and a brain-level view were explicitly deferred to #112"
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The before-state is checkable in the shipped tree: the near-term spec+plan are merged (docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md, plan t1\u2013t8 confirmed) and that spec's Decisions section records per-box honesty only with proxying and the brain-level view explicitly deferred to #112"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "Co-residency taxes every lobe even after the near-term reclaim; a box that gives its whole machine to the one lobe it is best at repays the tax completely \u2014 and the fleet still has to present a whole brain, which is exactly the cross-box design this issue owns"
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The tax and its repayment are quoted with shipped numbers, not estimates: cortex 131072 co-resident vs 262144 native, senses 32768 trimmed vs 131072 full \u2014 and the post-specialization measured values recorded in docs"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "The cross-box question is answered as a first-class design decision: how a consumer reaches a lobe its local box no longer hosts \u2014 gateway proxying to the peer that hosts it vs direct per-box addressing \u2014 including whether a brain-level capabilities view exists across boxes"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The cross-box reachability decision (proxy vs direct addressing, and whether a brain-level capabilities view exists) is recorded in the spec as a confirmed decision and the shipped behaviour matches it, provable by a test or live transcript"
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The cheap gears (embedder, reranker, stt, tts) have a designed home in the end-state: they are cheap enough to co-reside almost anywhere, so their placement is an explicit, recorded decision \u2014 not an accident of which box they started on"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The recorded placement decision is co-residence: every shape may include the pooling and audio gears; the shipped reference shapes keep embedder/reranker/stt/tts on the Spark and Thor (consumers keep localhost endpoints) and the orin shape adds minor + pooling \u2014 no gear is forced to move boxes for the end-state to hold"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Per-box honesty (#92) holds in the end-state: a box that does not host a lobe never advertises it \u2014 capabilities flag or omit it and the gateway 4xxes requests for it, never silently rerouting to a different model"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "On each one-lobe box, live checks and contract tests show: capabilities flag/omit every unhosted role, GET /v1/models omits them, and generate/embed/rerank/audio requests for them return 4xx \u2014 mirroring the near-term t5 contract per dropped role"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Reclamation is real and measured on the physical boxes: Qwen-only Spark serves cortex at a strictly larger context/budget than spark-lobe (target: 256K native), senses-only Thor serves Gemma at full context vs the 32K trim \u2014 measured, not asserted"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Measured on the physical boxes: qwen-only Spark serves cortex above the spark-lobe budget (target 262144 context), gemma-only Thor serves senses at its full context (128K \u2014 the value senses had before the 32K co-resident trim) \u2014 numbers recorded in docs, not estimated"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "One-lobe shapes are pure data over the #108 Profile schema plus the near-term Shape schema \u2014 no per-shape code fork \u2014 proven by per-(shape,card) goldens like the near-term shapes"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The one-lobe shapes add zero new Python branches to the render path: they are shape TOML/data entries composed over existing #108+near-term machinery, proven by per-(shape,card) goldens byte-diffed in CI"
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "machine-as-brain stays the default and one-box users are unaffected: bare lobes init is byte-identical on recognised cards; every one-lobe shape is opt-in per box"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Bare lobes init on a recognised card renders byte-identical before and after this change (machine-as-brain goldens untouched); no new required decisions on the default path"
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "Orin 64GB ships nothing until someone boots one (the #108 rule): the orin shape may be declared as data but is not claimed supported until validated on a physical Orin"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "No doc, table, or capabilities output claims Orin support until a physical Orin boots the shape and its probes pass; the orin shape ships as declared-but-unvalidated data at most"
+    },
+    {
+      "id": "c14",
+      "kind": "success_signal",
+      "text": "On each box one safe command (dry-run diff, --apply) moves it to its one-lobe shape: the Spark serves only the Qwen cortex with measured larger context, Thor serves only Gemma senses at full context, every hosted role passes its correctness probe, per-box capabilities are honest, and a consumer can still reach every role of the brain per the answered cross-box design"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The success-signal command sequence exists, runs unattended on both physical boxes, and its transcript (probes, capabilities, measured budgets) is attached to the PR"
+    },
+    {
+      "id": "c19",
+      "kind": "after_state",
+      "text": "The deployment-shape axis reaches full specialization: a box can host as few as one heavy lobe. Reference instances: the Spark GB10 gives its whole machine to the Qwen cortex at 262144 native context, Thor 128GB to Gemma senses at its full 128K instead of the 32K trim, and the Orin 64GB hosts the small-model lobes (minor-class generate + pooling) \u2014 while the cheap gears co-reside on every box that wants them, and specialized, multi-role, and mixed boxes (local or cloud) compose into one brain"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The three reference one-heavy-lobe shapes exist as data (qwen-only spark, gemma-only thor, small-model orin), render to per-(shape,card) goldens, and the Spark and Thor shapes boot on their physical boxes with the heavy lobe at its measured full budget"
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "Measured on the physical boxes: the qwen-only Spark serves cortex at max_model_len=262144 (2.0x the co-resident 131072), the gemma-only Thor serves senses at 131072 (4.0x the 32768 trim), 5/5 hosted roles pass their correctness probes on each reference shape, and a request for an unhosted role returns 404 carrying the honest referral per the confirmed cross-box decision"
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The 262144 / 131072 / 5-of-5 / 404-referral numbers are read from the acceptance-script transcripts run on the physical Spark and Thor (deployed env values, /capabilities context fields, probe output) attached to the PR \u2014 not asserted in prose"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Full-native heavy-lobe budgets as shape data: spark-lobe cortex rises to 262144 context + reclaimed util (strictly above the co-resident 0.30), thor-lobe senses rises to 131072 + reclaimed util (strictly above 0.14) \u2014 declared shape overrides over the near-term Shape schema, cheap gears kept co-resident, zero new render-path code branches",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Rendered goldens show PRIMARY_MAX_MODEL_LEN=262144 for (spark-lobe, spark card) and MULTIMODAL_MAX_MODEL_LEN=131072 for (thor-lobe, thor card), each with util strictly above the co-resident value",
+        "Both shapes still include embedder+reranker+audio (co-residence) and drop exactly one heavy lobe; the diff is shape data + goldens only \u2014 no new Python branches in the render path"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h5",
+        "c19",
+        "h11",
+        "c7",
+        "h12",
+        "c10",
+        "c5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "orin-small reference shape: minor-class generate + the 0.6B pooling gears (audio opt-in like everywhere), declared-but-unvalidated per the #108 rule \u2014 renders against the base/unknown-card discipline until a physical Orin boots",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The orin-small shape renders to per-(shape,card) goldens; no doc, support table, or capabilities output claims Orin validated \u2014 marked exactly like the #108 base-fallback discipline",
+        "The shape hosts no heavy lobe (cortex and senses both absent) and includes minor + embedder + reranker"
+      ],
+      "deps": [],
+      "covers": [
+        "c12",
+        "h8",
+        "c19",
+        "h11",
+        "c7",
+        "h12"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Honest referral: opt-in peer config on the gateway \u2014 with peers configured, lobes capabilities / GET /capabilities annotate an unhosted role with the peer that hosts it and role_infeasible 404 bodies carry the referral; with no peer config, responses are byte-identical to the near-term contract; NO data-plane proxying exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With peer config set, capabilities and the 404 role_infeasible body name the hosting peer's origin for each unhosted role; with it unset, output is byte-identical to the pre-change contract (regression test)",
+        "No code path forwards a generate/embed/rerank/audio request to a peer \u2014 proven by a test asserting the gateway never opens an outbound connection on a role request for an unhosted role"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Contract-test matrix for the reference shapes: per-dropped-role honesty tests (spark-lobe drops senses; thor-lobe drops cortex; orin-small drops both heavies), referral-aware 404 assertions, and the machine-as-brain default-path regression goldens byte-identical before/after",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "One contract test per (reference shape, dropped role) asserts: capabilities flag/omit it, /v1/models omits it, requests for it 4xx with the referral when peers are configured",
+        "Bare-init machine-as-brain goldens are byte-identical before and after the change; all goldens byte-diffed in CI"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c8",
+        "h4",
+        "c11",
+        "h7",
+        "h6",
+        "c10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Acceptance script + physical validation on the GB10 and Thor: extend the near-term acceptance script to the full-native shapes; run unattended on both boxes \u2014 dry-run diff, --apply, 5/5 hosted-role probes, deployed env + /capabilities show 262144/131072, live referral 404, re-init with the previous shape restores byte-for-byte, and a Culture mesh consumer reaches every role; transcripts attached to the PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The script runs unattended on both physical boxes and its transcript records: 5/5 probes per shape, PRIMARY_MAX_MODEL_LEN=262144 (Spark) and MULTIMODAL_MAX_MODEL_LEN=131072 (Thor) in the deployed env and /capabilities, and a 404-with-referral for an unhosted role",
+        "Moving back: re-running init with the previous shape restores the prior rendering byte-for-byte, shown in the transcript",
+        "A mesh consumer (Culture agent) reaches every role of the brain across the two boxes per the direct+referral decision"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c1",
+        "h10",
+        "c2",
+        "h13",
+        "c14",
+        "h9",
+        "c20",
+        "h16",
+        "c9",
+        "h5",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Docs + evidence: end-state section in the deployment-shapes doc \u2014 the shape axis (specialized / multi-role / any mix, local or cloud; backward compatible), the four recorded decisions (direct+referral, co-residence, fleet shape, mixable axis), the tax table quoting 131072\u2192262144 and 32768\u2192131072, the before-state citation of the near-term spec's Decisions deferral to #112, Orin marked unvalidated; lobes explain shapes + CLAUDE.md updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The doc quotes the shipped co-resident vs full-native context values and the measured post-specialization numbers from the t5 transcripts \u2014 no estimated numbers",
+        "The doc cites the near-term spec's Decisions line deferring cross-box design to #112 and records all four #112 decisions; Orin appears as declared-but-unvalidated"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c3",
+        "h14",
+        "c5",
+        "h15",
+        "c12"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The near-term brain-shapes plan (#113, t1\u2013t8) is spec+plan merged but NOT yet implemented \u2014 this entire plan sequences after it lands; if its t2/t6 measurement already lands full-native budgets, t1 here reduces to asserting/goldening those values",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r2",
+      "text": "Exact reclaimed util values per box are measured during t5 physical validation, not declared up front (frame parked item v1)",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r3",
+      "text": "Physical Jetson AGX Orin 64GB boot + probe validation is its own follow-up with its own evidence (frame parked item v2); orin-small stays declared-but-unvalidated in this plan",
+      "kind": "follow_up",
+      "task_id": null
+    },
+    {
+      "id": "r4",
+      "text": "Peer-config surface (env var vs file, naming, origin format) is decided at t3 implementation within the #92 lesson: never fabricate an absolute URL; referral origins must be operator-declared per peer, not inferred",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3"
+    }
+  ]
+}
