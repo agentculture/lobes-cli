@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.1] - 2026-07-14
+
+### Added
+
+- spec: strict, grammar-constrained tool calls with thinking enabled (devague /think, colleague#320) — docs/specs/2026-07-14-lobes-serves-strict-grammar-constrained-tool-calls.md: a think-aware --tool-parser-plugin for the cortex lane (reasoning-aware structural tags, fixing the strict+thinking HTTP 500) plus an opt-in GATEWAY_FORCE_STRICT_TOOLS gateway knob with retry-without-strict fallback; root cause and live evidence recorded (server-side parser-salvage mangle of off-template emissions, deterministic at temp 0)
+
 ## [0.43.0] - 2026-07-14
 
 ### Added
