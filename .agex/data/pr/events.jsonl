@@ -1,6 +1,18 @@
 {"ts":"2026-05-27T08:41:25.891905+00:00","type":"pr_read","pr":10,"comment_count":4,"threads_unresolved":1,"ci_state":"failure"}
 {"ts":"2026-05-30T14:32:28.972525+00:00","type":"pr_read","pr":22,"comment_count":4,"threads_unresolved":1,"ci_state":"ok"}
 {"ts":"2026-06-19T11:32:50.641563+00:00","type":"pr_read","pr":47,"comment_count":5,"threads_unresolved":2,"ci_state":"failure"}
+{"ts":"2026-07-11T00:12:18.849844+00:00","type":"pr_opened","pr":104,"title":"Gateway relays SSE frame-by-frame \u2014 read1, not read (closes #103) (0.40.1)"}
+{"ts":"2026-07-11T00:12:19.892493+00:00","type":"pr_review_triggered","pr":104,"command":"/agentic_review"}
+{"ts":"2026-07-11T00:12:20.512140+00:00","type":"pr_webhook_posted","pr":104,"event":"pr_opened"}
+{"ts":"2026-07-11T00:13:23.220878+00:00","type":"readiness_arrived","pr":104,"waited_secs":60}
+{"ts":"2026-07-11T00:13:28.556366+00:00","type":"pr_read","pr":104,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-11T00:19:52.244635+00:00","type":"pr_read","pr":104,"comment_count":6,"threads_unresolved":1,"ci_state":"ok"}
 {"ts":"2026-07-13T17:47:12.701140+00:00","type":"pr_reply","pr":108,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-07-13T17:47:14.042076+00:00","type":"pr_reply","pr":108,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-07-13T17:47:14.043972+00:00","type":"pr_batch_replied","pr":108,"count":2,"resolved":0}
+{"ts":"2026-07-14T04:41:49.563111+00:00","type":"pr_opened","pr":113,"title":"Deployment shapes: machine-as-brain vs mesh-brain lobe profiles \u2014 spec + plan (0.40.4)"}
+{"ts":"2026-07-14T04:41:50.555140+00:00","type":"pr_review_triggered","pr":113,"command":"/agentic_review"}
+{"ts":"2026-07-14T04:41:51.310886+00:00","type":"pr_webhook_posted","pr":113,"event":"pr_opened"}
+{"ts":"2026-07-14T04:42:54.066241+00:00","type":"readiness_arrived","pr":113,"waited_secs":60}
+{"ts":"2026-07-14T04:42:58.249928+00:00","type":"pr_read","pr":113,"comment_count":4,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-14T04:51:25.382297+00:00","type":"pr_read","pr":113,"comment_count":4,"threads_unresolved":0,"ci_state":"ok"}
