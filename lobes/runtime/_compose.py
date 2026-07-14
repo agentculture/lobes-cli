@@ -324,7 +324,7 @@ def _override_service_keys(text: str) -> set[str]:
     """
     keys: set[str] = set()
     for line in text.splitlines():
-        if line[:2] == "  " and line[2:3] not in ("", " "):
+        if line.startswith("  ") and line[2:3] not in ("", " "):
             stripped = line.strip()
             if stripped.endswith(":"):
                 keys.add(stripped[:-1])

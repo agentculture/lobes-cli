@@ -157,7 +157,7 @@ def _shape_override_plan_line(plan: dict) -> str | None:
     return None
 
 
-def _shape_override_written(target: Path, shape: Shape) -> dict:
+def _shape_override_written(shape: Shape) -> dict:
     """Post-``--apply`` shape-override state, for the JSON payload.
 
     ``_sync_shape_override`` has just run, so ``written`` (True iff the shape drops
@@ -366,7 +366,7 @@ def _emit_apply(
             payload["profile_forced"] = bool(profile_name)
             payload["detected_card"] = card.resolved
             payload["shape"] = shape.name
-            payload["shape_override"] = _shape_override_written(target, shape)
+            payload["shape_override"] = _shape_override_written(shape)
         emit_result(payload, json_mode=True)
         return
     next_step = (

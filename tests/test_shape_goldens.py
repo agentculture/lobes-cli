@@ -334,8 +334,12 @@ def test_shape_rendering_is_pure_repeated_calls_are_identical() -> None:
         shape = resolve_shape(shape_name)
         for card in builtin_names():
             profile = resolve_profile(card)
-            assert render_shape(shape, profile).env == render_shape(shape, profile).env
-            assert shape_env_text(shape_name, card) == shape_env_text(shape_name, card)
+            first_env = render_shape(shape, profile).env
+            second_env = render_shape(shape, profile).env
+            assert first_env == second_env
+            first_text = shape_env_text(shape_name, card)
+            second_text = shape_env_text(shape_name, card)
+            assert first_text == second_text
 
 
 def test_shape_render_depends_only_on_its_own_shape_and_card() -> None:
