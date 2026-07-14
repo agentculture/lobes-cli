@@ -19,6 +19,8 @@
 #                      TestPyPI .devN build of THIS branch (see Dockerfile.gateway)
 #   --dev-index URL    Dev lane extra pip index (default with --dev-version:
 #                      https://test.pypi.org/simple/)
+#   --port N           Host port for the gateway (sed into VLLM_PORT after the
+#                      scaffold — for boxes where the default 8000 is taken)
 #   --timeout SECS     Health-wait budget for the fleet boot (default 1500)
 #   --restore          Restore the newest <deploy-dir>.pre-accept-* backup, boot
 #                      it, and exit
@@ -38,6 +40,7 @@ DEPLOY_DIR=""
 AUDIO=0
 DEV_VERSION=""
 DEV_INDEX=""
+PORT_OVERRIDE=""
 TIMEOUT=1500
 RESTORE=0
 
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --audio)       AUDIO=1; shift ;;
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
     --dev-index)   DEV_INDEX="$2"; shift 2 ;;
+    --port)        PORT_OVERRIDE="$2"; shift 2 ;;
     --timeout)     TIMEOUT="$2"; shift 2 ;;
     --restore)     RESTORE=1; shift ;;
     -h|--help)     _usage ;;
@@ -197,6 +201,11 @@ INIT_FLAGS=(--shape "${SHAPE}")
 uv run lobes init "${INIT_FLAGS[@]}" "${DEPLOY_DIR}"
 uv run lobes init "${INIT_FLAGS[@]}" --apply "${DEPLOY_DIR}"
 printf '\n'
+
+if [[ -n "${PORT_OVERRIDE}" ]]; then
+  printf '=== phase 2a: host port override — VLLM_PORT=%s ===\n\n' "${PORT_OVERRIDE}"
+  sed -i -E "s|^VLLM_PORT=.*$|VLLM_PORT=${PORT_OVERRIDE}|" "${DEPLOY_DIR}/.env"
+fi
 
 # Dev lane: pin the gateway image to the published .devN of this branch.
 if [[ -n "${DEV_VERSION}" ]]; then
