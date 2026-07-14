@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- t5 live-verification evidence (colleague#320, spark-lobe go-live): docs/evidence/2026-07-14-strict-tools-spark-lobe-spark.txt — acceptance gates PASS at util 0.44/262144, lobes assess --strict-tools 3/3 legs PASS (strict+thinking was HTTP 500), colleague captured-bytes replay returns clean read_file with thinking intact via the armed gateway knob, MTP 100% draft acceptance under the constrained grammar, and the end-to-end colleague work repro delivers changed files in 4 clean steps (was 13 steps / 0 files)
+- t5 live-verification evidence (colleague#320, spark-lobe go-live): docs/evidence/2026-07-14-strict-tools-spark-lobe-spark.txt — acceptance gates PASS at util 0.44/262144, lobes assess --strict-tools 3/3 legs PASS (strict+thinking was HTTP 500), colleague captured-bytes replay returns clean read_file with thinking intact via the armed gateway knob, MTP 100% draft acceptance under the constrained grammar, and the end-to-end colleague work repro delivers changed files in 4 clean steps (was 13 steps / 0 files). The deployment under test ran lobes-cli **0.44.0** (the release carrying the fix); 0.44.1 is docs-only — it records that verification, it is not itself what was verified
 
 ## [0.44.0] - 2026-07-14
 
