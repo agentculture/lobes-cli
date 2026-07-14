@@ -118,8 +118,12 @@ _wait_healthy() { # _wait_healthy <port> <timeout-secs>
 import json, sys
 caps = json.load(sys.stdin)
 roles = caps.get("roles", caps)
+# Core lanes only: the audio pair is owned by phase 3b (and only when the
+# --audio overlay is scaffolded) — a no-audio deployment honestly reports
+# stt/tts ready=false forever, which must not stall the core-fleet wait.
 bad = [n for n, r in roles.items()
-       if isinstance(r, dict) and r.get("feasible", True) and not r.get("ready", False)]
+       if n not in ("stt", "tts")
+       and isinstance(r, dict) and r.get("feasible", True) and not r.get("ready", False)]
 sys.exit(1 if bad else 0)
 ' 2>/dev/null; then
         printf 'fleet healthy after %ss\n' "$((now - start))"
