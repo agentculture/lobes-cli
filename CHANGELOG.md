@@ -8,11 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Deployment shapes (#113 implementation): Shape schema + three built-in shapes as TOML data (machine-as-brain, spark-lobe, thor-lobe) over the #110 Profile machinery; shape-aware budget re-derivation as declared overrides with provenance (spark-lobe cortex 0.44, thor-lobe senses 0.44); pure shape×card render composition with per-(shape,card) goldens; lobes init --shape behind the dry-run/--apply contract (bare init byte-identical, --single conflict); gateway dev lane: PIP_EXTRA_INDEX_URL build-arg passthrough so from-source boxes can deploy a TestPyPI .devN build without hand-edits
+- Deployment shapes (#113 implementation): Shape schema + three built-in shapes as TOML data (machine-as-brain, spark-lobe, thor-lobe) over the #110 Profile machinery; shape-aware budget re-derivation as declared overrides with provenance (measured live: spark-lobe cortex 0.44/262144, thor-lobe senses 0.30/131072); pure shape×card render composition with per-(shape,card) goldens; lobes init --shape behind the dry-run/--apply contract (bare init byte-identical, --single conflict); gateway dev lane: PIP_EXTRA_INDEX_URL build-arg passthrough so from-source boxes can deploy a TestPyPI .devN build without hand-edits
 
 ### Fixed
 
 - Dropped-lobe honesty: a request for an unwired dropped role (e.g. model=senses on a spark-lobe box) now returns 404 role_infeasible on every alias instead of silently rerouting to the primary model (#92 invariant, caught by the t5 contract tests)
+
+## [0.41.2] - 2026-07-14
+
+### Added
+
+- Spec + plan for the mesh-brain end-state (#112, devague /think + /spec-to-plan): one heavy lobe per box as the far end of a backward-compatible, mixable shape axis — full-native budgets (spark-lobe cortex 262144, thor-lobe senses 131072), a declared-but-unvalidated orin-small shape, and cross-box direct + honest referral (opt-in peer config; no data-plane proxying); cheap gears co-reside everywhere
 
 ## [0.41.1] - 2026-07-14
 

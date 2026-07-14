@@ -1,0 +1,389 @@
+{
+  "slug": "lobes-serves-the-mesh-brain-end-state-one-lobe-per",
+  "title": "lobes serves the mesh-brain end-state: one lobe per box \u2014 the Spark GB10 gives its whole machine to the Qwen cortex, Thor 128GB to Gemma senses, the Orin 64GB hosts the small-model lobes \u2014 and the brain stays whole across the mesh",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-14T05:37:43Z",
+  "updated": "2026-07-14T06:09:22Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves the mesh-brain end-state: one lobe per box \u2014 the Spark GB10 gives its whole machine to the Qwen cortex, Thor 128GB to Gemma senses, the Orin 64GB hosts the small-model lobes \u2014 and the brain stays whole across the mesh",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "Each of the three named boxes can be moved to its one-lobe shape with one safe command and back; the heavy lobes serve at measured full budgets; every role of the brain remains reachable per the confirmed cross-box design",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Ship the one-lobe end-state as data-only shapes over the near-term Shape schema, gated on the near-term plan landing; validate on the physical Spark and Thor; Orin stays declared-but-unvalidated until booted"
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Multi-box fleet operators running the Culture mesh brain across machines \u2014 DGX Spark GB10 and Jetson AGX Thor 128GB validated today, Jetson AGX Orin 64GB the named next box \u2014 plus the mesh agents consuming the roles across boxes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Every named audience leg is exercised: the multi-box operator path is validated on the physical Spark and Thor, the one-box/mixed path stays goldens-proven byte-identical, and a consuming mesh agent reaches every role it used before the shape change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Validate each audience leg like the near-term spec did: goldens for the default path, physical boots for the reference shapes, a consumer smoke check via the Culture mesh"
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "After the near-term shapes land (#113 spec, plan confirmed), boxes still co-host: spark-lobe keeps cortex+embedder+reranker+audio on the Spark, thor-lobe keeps senses+the pooling gears+audio on Thor; cortex sits below its 256K native, senses below its full context, and the cross-box story is per-box honesty only \u2014 proxying and a brain-level view were explicitly deferred to #112",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "The before-state is checkable in the shipped tree: the near-term spec+plan are merged (docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md, plan t1\u2013t8 confirmed) and that spec's Decisions section records per-box honesty only with proxying and the brain-level view explicitly deferred to #112",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Cite the near-term spec's Decisions line deferring cross-box design to #112; no code change needed for this claim"
+    },
+    {
+      "id": "c4",
+      "kind": "after_state",
+      "text": "One lobe per box: the Spark GB10 serves only the Qwen cortex (returning toward the 256K-native solo shape), Thor 128GB serves only Gemma senses at full context instead of the 32K co-resident trim, and the Orin 64GB hosts the small-model lobes (minor-class generate + the 0.6B pooling gears)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The end-state table is shipped as three one-lobe shapes over the Shape schema (qwen-only spark, gemma-only thor, small-model orin), each rendering to goldens; the Spark and Thor shapes boot on their physical boxes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does Qwen-only Spark stay a fleet shape (gateway + one vLLM behind it, keeping the capabilities/honesty surface) or revert to the legacy single-model scaffold that already serves 256K solo? The 'return to 256K-native solo' phrasing could mean either.",
+          "resolved": false,
+          "blocking": false
+        }
+      ],
+      "links": [],
+      "instruction": "Implement the three one-lobe shapes as data over the near-term Shape schema; name them so the box+lobe is unambiguous; goldens per (shape,card)"
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "Co-residency taxes every lobe even after the near-term reclaim; a box that gives its whole machine to the one lobe it is best at repays the tax completely \u2014 and the fleet still has to present a whole brain, which is exactly the cross-box design this issue owns",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "The tax and its repayment are quoted with shipped numbers, not estimates: cortex 131072 co-resident vs 262144 native, senses 32768 trimmed vs 131072 full \u2014 and the post-specialization measured values recorded in docs",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Quote the co-resident vs full-native context values in the spec; the repayment itself is verified under the c9 measurement requirement"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "The cross-box question is answered as a first-class design decision: how a consumer reaches a lobe its local box no longer hosts \u2014 gateway proxying to the peer that hosts it vs direct per-box addressing \u2014 including whether a brain-level capabilities view exists across boxes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "The cross-box reachability decision (proxy vs direct addressing, and whether a brain-level capabilities view exists) is recorded in the spec as a confirmed decision and the shipped behaviour matches it, provable by a test or live transcript",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "When a consumer asks a one-lobe box for a role it no longer hosts: does that box's gateway proxy to the peer that hosts it, or does the consumer address each box directly (as the Culture mesh does today)? And is there any brain-level capabilities view, or only per-box truth?",
+          "resolved": true,
+          "blocking": true
+        }
+      ],
+      "links": [],
+      "instruction": "Record the user's cross-box decision as a decision claim; implement and test exactly that behaviour \u2014 no half-proxy"
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The cheap gears (embedder, reranker, stt, tts) have a designed home in the end-state: they are cheap enough to co-reside almost anywhere, so their placement is an explicit, recorded decision \u2014 not an accident of which box they started on",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "Each cheap gear (embedder, reranker, stt, tts) has exactly one designed host box in the end-state, recorded in the spec with a reason, and the shipped shapes place them there",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h12",
+          "text": "The recorded placement decision is co-residence: every shape may include the pooling and audio gears; the shipped reference shapes keep embedder/reranker/stt/tts on the Spark and Thor (consumers keep localhost endpoints) and the orin shape adds minor + pooling \u2014 no gear is forced to move boxes for the end-state to hold",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "Where does each cheap gear land? The #112 table puts the 0.6B pooling gears on the unvalidated Orin \u2014 if they land only there, the mesh loses embed/rerank until an Orin boots. Do they stay co-resident on Spark/Thor until then, and does audio follow senses or cortex?",
+          "resolved": true,
+          "blocking": true
+        }
+      ],
+      "links": [],
+      "instruction": "Decide placement per gear with the user (issue table suggests pooling gears on Orin; audio unstated); record consumer-facing consequences (e.g. embed URL moves off-box for eidetic)"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Per-box honesty (#92) holds in the end-state: a box that does not host a lobe never advertises it \u2014 capabilities flag or omit it and the gateway 4xxes requests for it, never silently rerouting to a different model",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "On each one-lobe box, live checks and contract tests show: capabilities flag/omit every unhosted role, GET /v1/models omits them, and generate/embed/rerank/audio requests for them return 4xx \u2014 mirroring the near-term t5 contract per dropped role",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Reuse the #110/#92 machinery and the near-term t5 tests; extend the per-dropped-role contract test matrix to the one-lobe shapes (five dropped roles per box, not one)"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Reclamation is real and measured on the physical boxes: Qwen-only Spark serves cortex at a strictly larger context/budget than spark-lobe (target: 256K native), senses-only Thor serves Gemma at full context vs the 32K trim \u2014 measured, not asserted",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "Measured on the physical boxes: qwen-only Spark serves cortex above the spark-lobe budget (target 262144 context), gemma-only Thor serves senses at its full context (128K \u2014 the value senses had before the 32K co-resident trim) \u2014 numbers recorded in docs, not estimated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Declare the raised budgets as shape overrides (never runtime mutation), then measure on the GB10 and Thor and record the shipped env values in docs"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "One-lobe shapes are pure data over the #108 Profile schema plus the near-term Shape schema \u2014 no per-shape code fork \u2014 proven by per-(shape,card) goldens like the near-term shapes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "The one-lobe shapes add zero new Python branches to the render path: they are shape TOML/data entries composed over existing #108+near-term machinery, proven by per-(shape,card) goldens byte-diffed in CI",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "If any one-lobe shape needs code the near-term Shape schema cannot express, stop and re-spec \u2014 that is a schema gap, not a shape"
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "machine-as-brain stays the default and one-box users are unaffected: bare lobes init is byte-identical on recognised cards; every one-lobe shape is opt-in per box",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Bare lobes init on a recognised card renders byte-identical before and after this change (machine-as-brain goldens untouched); no new required decisions on the default path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Golden-diff the default path in CI as the regression proof"
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "Orin 64GB ships nothing until someone boots one (the #108 rule): the orin shape may be declared as data but is not claimed supported until validated on a physical Orin",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "No doc, table, or capabilities output claims Orin support until a physical Orin boots the shape and its probes pass; the orin shape ships as declared-but-unvalidated data at most",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Mark the orin shape unvalidated in the support table exactly like the #108 'base' fallback discipline; file the physical validation as its own follow-up"
+    },
+    {
+      "id": "c13",
+      "kind": "assumption",
+      "text": "The near-term brain-shapes plan (t1\u2013t8: Shape schema, budget re-derivation, --shape flag, spark-lobe/thor-lobe, dropped-lobe honesty, GB10+Thor validation) lands before this work; this spec composes on its Shape schema rather than duplicating or re-doing it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c14",
+      "kind": "success_signal",
+      "text": "On each box one safe command (dry-run diff, --apply) moves it to its one-lobe shape: the Spark serves only the Qwen cortex with measured larger context, Thor serves only Gemma senses at full context, every hosted role passes its correctness probe, per-box capabilities are honest, and a consumer can still reach every role of the brain per the answered cross-box design",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "The success-signal command sequence exists, runs unattended on both physical boxes, and its transcript (probes, capabilities, measured budgets) is attached to the PR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend the near-term acceptance script to the one-lobe shapes; run it on the physical Spark and Thor and attach transcripts to the PR"
+    },
+    {
+      "id": "c15",
+      "kind": "decision",
+      "text": "Backward compatible, just a design option: either you have many machines (some cloud if you want) and each is specialized, or some machines take multiple roles, or any mix \u2014 machine-as-brain stays the default and the one-lobe shapes are the far end of the same shape axis, not a mandate",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c16",
+      "kind": "decision",
+      "text": "Cross-box reachability = direct + honest referral: no data-plane proxying \u2014 consumers dial each box directly as the Culture mesh does today; with opt-in peer config, a box's capabilities and role_infeasible 404s name the peer that hosts an absent role; the #92 invariant holds \u2014 a box never serves what it does not host",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "Cheap gears co-reside everywhere: 'one lobe per box' specializes the heavy generate lobes only; embedder/reranker/stt/tts stay on every box that wants them (~0.06 util each), consumers keep localhost embed/rerank, and the Orin takes minor + optionally pooling when validated",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "The Qwen-only Spark stays a fleet shape: gateway + one heavy vLLM behind it, capabilities/honesty surfaces intact; 'return to 256K-native solo' means the full GPU budget and 262144 context as shape overrides, not the legacy single-model scaffold",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c19",
+      "kind": "after_state",
+      "text": "The deployment-shape axis reaches full specialization: a box can host as few as one heavy lobe. Reference instances: the Spark GB10 gives its whole machine to the Qwen cortex at 262144 native context, Thor 128GB to Gemma senses at its full 128K instead of the 32K trim, and the Orin 64GB hosts the small-model lobes (minor-class generate + pooling) \u2014 while the cheap gears co-reside on every box that wants them, and specialized, multi-role, and mixed boxes (local or cloud) compose into one brain",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The three reference one-heavy-lobe shapes exist as data (qwen-only spark, gemma-only thor, small-model orin), render to per-(shape,card) goldens, and the Spark and Thor shapes boot on their physical boxes with the heavy lobe at its measured full budget",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement the three reference shapes over the near-term Shape schema; shapes stay per-box and orthogonal to peers so any specialized/multi-role/mixed fleet composes; Orin stays declared-but-unvalidated until booted"
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "Measured on the physical boxes: the qwen-only Spark serves cortex at max_model_len=262144 (2.0x the co-resident 131072), the gemma-only Thor serves senses at 131072 (4.0x the 32768 trim), 5/5 hosted roles pass their correctness probes on each reference shape, and a request for an unhosted role returns 404 carrying the honest referral per the confirmed cross-box decision",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The 262144 / 131072 / 5-of-5 / 404-referral numbers are read from the acceptance-script transcripts run on the physical Spark and Thor (deployed env values, /capabilities context fields, probe output) attached to the PR \u2014 not asserted in prose",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Exact reclaimed budget values per one-lobe box (cortex util/context on qwen-only Spark, senses util/context on gemma-only Thor) \u2014 declared as shape overrides at build time but the final shipped numbers come from physical-box measurement during validation",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Physical Jetson AGX Orin 64GB boot + probe validation \u2014 the orin small-model shape ships as declared-but-unvalidated data until someone boots one (the #108 rule); validation is its own follow-up with its own evidence",
+      "kind": "follow_up",
+      "claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Consumer config repointing when a cheap gear moves boxes (e.g. eidetic's embed endpoint default http://localhost:8002/v1 stops being local if the embedder leaves the Spark) \u2014 the exact migration story depends on the q3 placement decision",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Proxy-lobes \u2014 a box serves a sleeping lobe by following its own referral (gateway forwards to the hosting peer, advertised as proxied, never impersonating local serving); opt-in per box per role, direct+referral stays the default \u2014 filed as agentculture/lobes-cli#115, sequenced after #112",
+      "kind": "follow_up",
+      "claim_id": null
+    }
+  ],
+  "scope_entries": []
+}
