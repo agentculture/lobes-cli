@@ -74,7 +74,10 @@ ready / loaded); see `docs/colleague-stack.md` for the full contract.
 DGX Spark GB10: `cortex` serves its **full 128K native context at util 0.30**,
 `senses` is trimmed to **32K at util 0.14**, and the two ~0.6B pooling gears
 run at `*_GPU_MEM_UTIL=0.06` each — default budget `0.30 + 0.14 + 0.06 + 0.06 =
-0.56` on the 128 GB GB10. The 4B `minor` (back-compat `cheap`,
+0.56` on the 128 GB GB10. These are the **machine-as-brain** (default)
+values — one box hosting every role it can serve; a mesh-brain **deployment
+shape** (below) drops one heavy lobe to a peer box and reclaims its budget
+instead of merely co-residing it. The 4B `minor` (back-compat `cheap`,
 `COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
 (`COMPOSE_PROFILES=middle`, util 0.12) are **opt-in** gears and are not
 first-class Colleague roles. Callers address the generate lane by
@@ -130,6 +133,35 @@ the format, and `lobes explain profiles` for the brief reference.
 **See also:** `docs/machine-profiles.md` (the deep reference: detection flow, knob
 meanings, Thor's validated divergences, custom profiles, goldens contract);
 `lobes explain profiles` / `lobes explain tuning` (in-CLI).
+
+## Deployment shapes
+
+Orthogonal to the machine-profile axis above (how a role is *tuned* on a
+card) is the **deployment-shape** axis (issue #113): which of the six
+Colleague roles a box *hosts* at all, composed as pure data over the card
+profile at render time (`lobes/profiles/shapes.py`, `shape_render.py`).
+**machine-as-brain** (the default — bare `lobes init`, unchanged, zero new
+decisions) hosts every role a card can serve; the four core roles stay
+default-on **by machine-as-brain**, not unconditionally — a mesh-brain shape
+drops one heavy generate lobe to a peer box via a *generated*
+`docker-compose.shape.yml` override (the base fleet template itself stays
+unconditional). Two mesh-lobe shapes are validated live (2026-07-14):
+**`spark-lobe`** (DGX Spark GB10 — drops `senses`, `cortex` reclaims to
+`gpu_mem_util=0.44` / `max_model_len=262144`, measured KV pool 888,946
+tokens / 3.39× concurrency at full 256K) and **`thor-lobe`** (Jetson AGX
+Thor — drops `cortex`, `senses` reclaims to `gpu_mem_util=0.30` /
+`max_model_len=131072`, measured KV pool 1,418,554 tokens / 10.82×
+concurrency at 131072). Both reclaim values are *measured*, not computed —
+the naive reclaim-sum/solo-default was refused by vLLM on the live,
+unified-memory box in each case. Select with `lobes init --shape
+<machine-as-brain|spark-lobe|thor-lobe>` (dry-run by default, `--apply` to
+commit, byte-for-byte restorable by re-running with the previous shape). A
+dropped role is flagged `feasible:false` on both `lobes capabilities` and
+`GET /capabilities`, omitted from `/v1/models`, and 404s `role_infeasible`
+on every alias — never half-served. One-lobe-per-box end-states, cross-box
+referral, and an Orin profile are out of scope here (issue #112, spec+plan
+in PR #116; proxy-lobes are issue #115). See `docs/deployment-shapes.md`
+(the deep reference) and `lobes explain shapes` (in-CLI).
 
 ## Deployment model
 
