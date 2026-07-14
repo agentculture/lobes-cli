@@ -292,6 +292,31 @@ def _strict_tools_payload(model: str, *, strict: bool, enable_thinking: bool | N
     return payload
 
 
+def _parse_leg_tool_calls(msg: dict) -> tuple[list, bool]:
+    """Extract ``(names, args_ok)`` from a chat message's ``tool_calls``.
+
+    ``args_ok`` is True only when EVERY call's ``arguments`` string parses as
+    a JSON object — a parser-salvage mangle leaves ``{}``-defaulted or
+    unparseable arguments behind.
+    """
+    raw = msg.get("tool_calls")
+    calls = raw if isinstance(raw, list) else []
+    names = []
+    args_ok = True
+    for c in calls:
+        fn = (c.get("function") if isinstance(c, dict) else None) or {}
+        names.append(fn.get("name"))
+        try:
+            args_ok = args_ok and isinstance(json.loads(fn.get("arguments") or ""), dict)
+        except (TypeError, json.JSONDecodeError):
+            args_ok = False
+    return names, args_ok
+
+
+def _leg_error(message: str) -> dict:
+    return {"ok": False, "clean": False, "tool_calls": [], "error": message}
+
+
 def _strict_matrix_leg(url: str, model: str, *, strict: bool, enable_thinking: bool | None) -> dict:
     """One leg of the strict matrix; never raises (mirrors ``_tool_probe``).
 
@@ -306,44 +331,24 @@ def _strict_matrix_leg(url: str, model: str, *, strict: bool, enable_thinking: b
         d = _post(url, _strict_tools_payload(model, strict=strict, enable_thinking=enable_thinking))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace").strip()
-        return {
-            "ok": False,
-            "clean": False,
-            "tool_calls": [],
-            "error": f"HTTP {exc.code}: {body[:200]}",
-        }
+        return _leg_error(f"HTTP {exc.code}: {body[:200]}")
     except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "clean": False, "tool_calls": [], "error": f"probe failed: {exc}"}
+        return _leg_error(f"probe failed: {exc}")
     try:
         choice = (d.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
-        calls = msg.get("tool_calls") if isinstance(msg.get("tool_calls"), list) else []
-        names = []
-        args_ok = True
-        for c in calls:
-            fn = c.get("function") if isinstance(c, dict) else None
-            names.append((fn or {}).get("name"))
-            try:
-                parsed = json.loads((fn or {}).get("arguments") or "")
-                args_ok = args_ok and isinstance(parsed, dict)
-            except (TypeError, json.JSONDecodeError):
-                args_ok = False
-        clean = bool(calls) and args_ok and all(n in offered for n in names)
-        answered = bool(calls) or bool(msg.get("content"))
+        names, args_ok = _parse_leg_tool_calls(msg)
+        clean = bool(names) and args_ok and all(n in offered for n in names)
+        answered = bool(names) or bool(msg.get("content"))
         return {
-            "ok": answered if not strict else clean,
+            "ok": clean if strict else answered,
             "clean": clean,
             "tool_calls": names,
             "finish": choice.get("finish_reason"),
             "error": None,
         }
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
-        return {
-            "ok": False,
-            "clean": False,
-            "tool_calls": [],
-            "error": f"unexpected response shape ({exc.__class__.__name__}: {exc})",
-        }
+        return _leg_error(f"unexpected response shape ({exc.__class__.__name__}: {exc})")
 
 
 def run_strict_tool_matrix(url: str, model: str) -> dict:
