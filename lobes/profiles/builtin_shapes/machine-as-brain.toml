@@ -1,0 +1,24 @@
+# The default deployment shape (brain-shapes t1, issue #113): one box hosts
+# every role it can serve -- today's behaviour, made explicit as data. Bare
+# `lobes init` (no --shape) resolves this shape with zero new decisions (a
+# later task, t4, wires the flag; this file only needs to exist and round-trip
+# so t3's shape-x-card renderer has a first, whole-brain shape to compose).
+#
+# Carries every one of the six first-class Colleague roles (issue #81) --
+# the four Profile-machinery core roles (cortex/senses/embedder/reranker,
+# lobes/profiles/schema.py) plus the audio-overlay pair (stt/tts,
+# lobes/templates/fleet/docker-compose.audio.yml). Whether a hosted role is
+# actually FEASIBLE on a given card is the Profile axis's job (e.g.
+# builtin/base.toml marks senses infeasible on an unrecognised card) -- this
+# shape only says "host everything this box can serve", never a hardware
+# capability claim of its own.
+#
+# `overrides` MUST stay empty here, always: a box hosting every role never
+# re-derives a budget away from the co-resident Profile defaults -- there is
+# nothing to reclaim when nothing was ever dropped. See spark-lobe.toml /
+# thor-lobe.toml, whose overrides a later task (t2) fills in for the lobe(s)
+# that stop sharing the box.
+name = "machine-as-brain"
+summary = "The whole brain on one box -- every role this card can serve, hosted here"
+
+hosts = ["cortex", "senses", "embedder", "reranker", "stt", "tts"]

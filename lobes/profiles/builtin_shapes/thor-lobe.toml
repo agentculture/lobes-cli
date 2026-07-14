@@ -1,0 +1,15 @@
+# The Jetson AGX Thor half of a mesh-brain deployment (brain-shapes t1, issue
+# #113): keeps the Gemma `senses` lobe + the two pooling gears + the audio
+# overlay on this box, and drops the Qwen `cortex` primary to a peer box
+# (today, the DGX Spark running spark-lobe.toml) instead of co-residing it
+# here.
+#
+# Differs from machine-as-brain.toml ONLY in `hosts` (cortex dropped) and,
+# from a later task (t2) onward, `overrides` (t2 re-derives senses's budget
+# upward now that it no longer shares the box with cortex). This task (t1)
+# leaves `overrides` empty -- the budget-override FIELDS exist in the schema
+# (RoleProfile, reused verbatim), but no re-derived value is filled in yet.
+name = "thor-lobe"
+summary = "Jetson AGX Thor mesh-lobe -- Gemma senses + embedder + reranker + audio, no Qwen cortex"
+
+hosts = ["senses", "embedder", "reranker", "stt", "tts"]

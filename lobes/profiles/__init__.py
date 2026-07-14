@@ -18,7 +18,14 @@ axes:
   target box, which model serves it, and every compose-template knob
   (``gpu_mem_util``, ``max_model_len``, ``quantization``, ``kv_cache_dtype``,
   ``attention_backend``, ``enforce_eager``, ``max_num_seqs``) — see
-  :func:`resolve_profile`.
+  :func:`resolve_profile`; and
+* a **:class:`~lobes.profiles.shapes.Shape`** (:mod:`lobes.profiles.shapes`,
+  brain-shapes issue #113) is the DEPLOYMENT-SHAPE axis, orthogonal to the
+  above: which role subset a BOX hosts at all — ``machine-as-brain`` (every
+  role the card can serve, the default) or a mesh-brain lobe (``spark-lobe``
+  / ``thor-lobe``, each keeping some Colleague roles and leaving the rest to
+  a peer box) — composed with a :class:`Profile` at render time (a later
+  task), never re-implementing it — see :func:`resolve_shape`.
 
 The legacy machine layer is no longer a table in this module: it is *derived*
 from the per-chip strategy registry in :mod:`lobes.machines` (one
@@ -58,6 +65,14 @@ from lobes.profiles.loader import (
     resolve_profile,
 )
 from lobes.profiles.schema import KNOB_NAMES, ROLES, Profile, RoleProfile
+from lobes.profiles.shapes import (
+    AUDIO_ROLES,
+    SHAPE_ROLES,
+    Shape,
+    builtin_shape_names,
+    load_builtin_shape,
+    resolve_shape,
+)
 
 __all__ = [
     # workload profiles
@@ -87,6 +102,13 @@ __all__ = [
     "discover_operator_profiles",
     "available_profiles",
     "resolve_profile",
+    # deployment-shape schema + built-in loader (lobes.profiles.shapes)
+    "AUDIO_ROLES",
+    "SHAPE_ROLES",
+    "Shape",
+    "builtin_shape_names",
+    "load_builtin_shape",
+    "resolve_shape",
 ]
 
 DEFAULT_PURPOSE = "balanced"
