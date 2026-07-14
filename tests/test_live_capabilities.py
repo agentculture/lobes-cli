@@ -482,15 +482,40 @@ def test_deployed_gateway_version_matches_cli() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Check 5 — a Colleague can discover + dial cortex/senses from the contract alone
-# (#81, #87). No model id is hardcoded — everything comes from /capabilities.
+# Check 5 — a Colleague can discover + dial the generate lobes from the contract
+# alone (#81, #87). No model id is hardcoded — everything comes from
+# /capabilities. SHAPE-AWARE (#113): a deployment shape may drop a generate
+# lobe; a role the contract flags feasible:false must NOT be dialable (the #92
+# invariant — its 404 is the honest answer), and at least one generate lobe
+# must remain discoverable, or the box serves no brain at all.
 # ---------------------------------------------------------------------------
-def test_colleague_discovers_and_dials_cortex_and_senses(caps: dict) -> None:
-    """Given only the gateway origin, resolve cortex/senses and get an answer."""
+def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
+    """Given only the gateway origin, resolve the hosted generate lobes and get answers."""
     answers: list[str] = []
     faults: list[str] = []
+    dialed = 0
     for role in ("cortex", "senses"):
         info = caps[role]
+        if info.get("feasible") is False:
+            # Dropped by the deployment shape — honesty demands a 404 here.
+            probe = _dial(
+                "POST",
+                _url("/v1/chat/completions"),
+                data=json.dumps(
+                    {"model": role, "messages": [{"role": "user", "content": "hi"}]}
+                ).encode(),
+                content_type="application/json",
+                timeout=_META_TIMEOUT,
+            )
+            if probe.status == 404:
+                answers.append(f"  {role}: dropped by shape, honestly 404s — correct")
+            else:
+                faults.append(
+                    f"  {role}: flagged feasible:false but POST model={role} returned "
+                    f"{probe.status!r} instead of the honest 404 (#92/#113)"
+                )
+            continue
+        dialed += 1
         if not info.get("ready"):
             faults.append(f"  {role}: /capabilities reports ready=false — cannot be discovered")
             continue
@@ -540,6 +565,8 @@ def test_colleague_discovers_and_dials_cortex_and_senses(caps: dict) -> None:
             # Reachable but shed/warming (429/503+Retry-After). Discovery still
             # worked — the endpoint was resolved from the contract and answered.
             answers.append(f"  {role}: discovered {endpoint + path}, reachable ({verdict})")
+    if dialed == 0:
+        faults.append("  every generate lobe is flagged feasible:false — this box serves no brain")
     report = (
         "#81/#87 Colleague discovery path failed — a peer given ONLY the gateway "
         "origin could not resolve-and-dial these roles from the contract:\n"

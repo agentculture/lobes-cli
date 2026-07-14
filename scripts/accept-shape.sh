@@ -21,6 +21,9 @@
 #                      https://test.pypi.org/simple/)
 #   --port N           Host port for the gateway (sed into VLLM_PORT after the
 #                      scaffold — for boxes where the default 8000 is taken)
+#   --env KEY=VAL      Append an operator env var to the scaffolded .env
+#                      (repeatable — e.g. the documented #100 pressure-threshold
+#                      workaround on boxes with phantom swap/iowait readings)
 #   --timeout SECS     Health-wait budget for the fleet boot (default 1500)
 #   --restore          Restore the newest <deploy-dir>.pre-accept-* backup, boot
 #                      it, and exit
@@ -41,6 +44,7 @@ AUDIO=0
 DEV_VERSION=""
 DEV_INDEX=""
 PORT_OVERRIDE=""
+ENV_OVERRIDES=()
 TIMEOUT=1500
 RESTORE=0
 
@@ -57,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
     --dev-index)   DEV_INDEX="$2"; shift 2 ;;
     --port)        PORT_OVERRIDE="$2"; shift 2 ;;
+    --env)         ENV_OVERRIDES+=("$2"); shift 2 ;;
     --timeout)     TIMEOUT="$2"; shift 2 ;;
     --restore)     RESTORE=1; shift ;;
     -h|--help)     _usage ;;
@@ -207,6 +212,15 @@ if [[ -n "${PORT_OVERRIDE}" ]]; then
   sed -i -E "s|^VLLM_PORT=.*$|VLLM_PORT=${PORT_OVERRIDE}|" "${DEPLOY_DIR}/.env"
 fi
 
+if [[ "${#ENV_OVERRIDES[@]}" -gt 0 ]]; then
+  printf '=== phase 2a2: operator env overrides ===\n'
+  for kv in "${ENV_OVERRIDES[@]}"; do
+    printf '  %s\n' "${kv}"
+    printf '%s\n' "${kv}" >> "${DEPLOY_DIR}/.env"
+  done
+  printf '\n'
+fi
+
 # Dev lane: pin the gateway image to the published .devN of this branch.
 if [[ -n "${DEV_VERSION}" ]]; then
   printf '=== phase 2b: dev lane — MODEL_GEAR_VERSION=%s via %s ===\n' "${DEV_VERSION}" "${DEV_INDEX}"
@@ -225,6 +239,46 @@ _wait_healthy "${PORT}" "${TIMEOUT}"
 printf '\n'
 
 BASE="http://localhost:${PORT}"
+
+# ---------------------------------------------------------------------------
+# Phase 3b — audio warm-up (first STT/TTS calls trigger model loads; checking
+# the lanes before they are warm reports the warm-up window, not the shape)
+# ---------------------------------------------------------------------------
+if [[ "${AUDIO}" -eq 1 ]]; then
+  printf '=== phase 3b: audio warm-up (TTS + STT first-call load) ===\n'
+  AWORK="$(mktemp -d /tmp/lobes-accept-audio.XXXXXX)"
+  python3 - "${AWORK}/tiny.wav" <<'PY'
+import struct, sys, wave
+with wave.open(sys.argv[1], "wb") as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+    w.writeframes(struct.pack("<3200h", *([0] * 3200)))  # 0.2 s silence
+PY
+  AUDIO_START="$(date +%s)"
+  for lane in tts stt; do
+    while :; do
+      if [[ "${lane}" == tts ]]; then
+        CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/v1/audio/speech" \
+          -H 'Content-Type: application/json' -d '{"model":"tts-1","input":"ok"}' || echo 000)"
+      else
+        CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/v1/audio/transcriptions" \
+          -F "file=@${AWORK}/tiny.wav;type=audio/wav" -F model=stt-1 || echo 000)"
+      fi
+      # Warm means the relay reached a live backend: 2xx (or a parameter-level
+      # 4xx) — a 5xx means the sidecar is still loading its model.
+      if [[ "${CODE}" =~ ^[23-4] ]]; then
+        printf '  %s warm (HTTP %s, %ss)\n' "${lane}" "${CODE}" "$(( $(date +%s) - AUDIO_START ))"
+        break
+      fi
+      if (( $(date +%s) - AUDIO_START > TIMEOUT )); then
+        printf '  %s NOT warm within budget (last HTTP %s)\n' "${lane}" "${CODE}"
+        FAILURES=$((FAILURES + 1))
+        break
+      fi
+      sleep 10
+    done
+  done
+  printf '\n'
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 4 — dropped-lobe honesty (#92 invariant, per dropped alias)
