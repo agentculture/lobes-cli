@@ -19,12 +19,47 @@ from __future__ import annotations
 
 import json
 
+import yaml
+
 from lobes.cli import main
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.render import profile_env
 from lobes.profiles.shape_render import render_shape
 from lobes.profiles.shapes import builtin_shape_names, resolve_shape
-from lobes.runtime import _detect, _env
+from lobes.runtime import _compose, _detect, _env
+
+
+class _ComposeTagLoader(yaml.SafeLoader):
+    """A SafeLoader that tolerates docker-compose's `!reset` / `!override` merge tags.
+
+    PyYAML rejects unknown custom tags; compose override files use them. `!reset`
+    clears an attribute (its value is ignored by compose), so we resolve it to a
+    sentinel that records the tag was used; `!override` keeps its underlying value.
+    """
+
+
+def _construct_reset(loader, node):  # noqa: ANN001 — pyyaml constructor signature
+    return {"__reset__": True}
+
+
+def _construct_override(loader, node):  # noqa: ANN001 — pyyaml constructor signature
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node)
+
+
+_ComposeTagLoader.add_constructor("!reset", _construct_reset)
+_ComposeTagLoader.add_constructor("!override", _construct_override)
+
+
+def _load_shape_override(target) -> dict:
+    """Parse ``docker-compose.shape.yml`` with the merge-tag-tolerant loader."""
+    return yaml.load(
+        (target / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8"),
+        Loader=_ComposeTagLoader,
+    )
 
 
 def _fake_card(
@@ -301,3 +336,166 @@ def test_reapplying_the_same_shape_is_byte_for_byte_idempotent(tmp_path, monkeyp
     # ...then switch back to the original shape — byte-for-byte restore.
     assert main(["init", "--shape", "spark-lobe", str(target), "--apply", "--force"]) == 0
     assert (target / ".env").read_text() == first
+
+
+# --- t4b: the shape compose override — a dropped lobe must not RUN ----------
+# The gap: rendering MULTIMODAL_FEASIBLE=false is honest, but the base compose
+# keeps every core service unconditional, so `lobes fleet up` boots the dropped
+# lobe anyway (proven live on the GB10). The override profile-disables it.
+
+
+def test_spark_lobe_writes_shape_override_disabling_multimodal(tmp_path, monkeypatch) -> None:
+    """Acceptance 1: the override parks vllm-multimodal in an inert profile and
+    !resets the gateway depends_on to exclude it."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    override_path = target / _compose.SHAPE_OVERLAY
+    assert override_path.is_file()
+    doc = _load_shape_override(target)
+    services = doc["services"]
+    # vllm-multimodal (senses) is dropped → parked in the inert shape-dropped profile.
+    assert services["vllm-multimodal"]["profiles"] == ["shape-dropped"]
+    # cortex/embedder/reranker stay hosted → NOT in the override's service set.
+    assert "vllm-primary" not in services
+    assert "vllm-embed" not in services
+    assert "vllm-rerank" not in services
+    # The gateway's depends_on is cleared with the !reset tag (sentinel), so it no
+    # longer references the now-profile-disabled vllm-multimodal.
+    assert services["gateway"]["depends_on"] == {"__reset__": True}
+    # The raw text carries the literal merge tag + a compose-version note.
+    raw = override_path.read_text(encoding="utf-8")
+    assert "depends_on: !reset" in raw
+    assert "v2.24" in raw
+
+
+def test_thor_lobe_shape_override_disables_primary(tmp_path, monkeypatch) -> None:
+    """Acceptance 1 mirror: thor-lobe drops cortex → disables vllm-primary."""
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "thor-lobe", str(target), "--apply"]) == 0
+    doc = _load_shape_override(target)
+    services = doc["services"]
+    assert services["vllm-primary"]["profiles"] == ["shape-dropped"]
+    assert "vllm-multimodal" not in services
+    assert services["gateway"]["depends_on"] == {"__reset__": True}
+
+
+def test_shape_override_disabled_service_matches_render_api(tmp_path, monkeypatch) -> None:
+    """The disabled service is DERIVED from the render API (ROLE_SERVICE over the
+    dropped role), never hardcoded — the override's service set equals exactly the
+    core services render_shape would NOT run."""
+    from lobes.profiles.schema import ROLES
+    from lobes.profiles.shape_render import ROLE_SERVICE
+
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    shape = resolve_shape("spark-lobe")
+    expected_dropped = {ROLE_SERVICE[r] for r in ROLES if not shape.hosts_role(r)}
+    doc = _load_shape_override(target)
+    disabled = {
+        svc
+        for svc, body in doc["services"].items()
+        if isinstance(body, dict) and body.get("profiles") == ["shape-dropped"]
+    }
+    assert disabled == expected_dropped
+
+
+def test_machine_as_brain_writes_no_shape_override(tmp_path, monkeypatch) -> None:
+    """Acceptance 2: the whole-brain shape drops nothing → no override file at all."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "machine-as-brain", str(target), "--apply"]) == 0
+    assert not (target / _compose.SHAPE_OVERLAY).exists()
+
+
+def test_bare_init_writes_no_shape_override(tmp_path, monkeypatch) -> None:
+    """Acceptance 2: a bare `lobes init` (no --shape) writes no override either."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    assert not (target / _compose.SHAPE_OVERLAY).exists()
+
+
+def test_bare_scaffold_is_byte_identical_and_override_absent(tmp_path, monkeypatch) -> None:
+    """Acceptance 2 (hard): the bare scaffold is byte-identical to explicit
+    machine-as-brain, and NEITHER grows a shape override."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    bare = tmp_path / "bare"
+    explicit = tmp_path / "explicit"
+    assert main(["init", str(bare), "--apply"]) == 0
+    assert main(["init", "--shape", "machine-as-brain", str(explicit), "--apply"]) == 0
+    assert sorted(p.name for p in bare.iterdir()) == sorted(p.name for p in explicit.iterdir())
+    assert not (bare / _compose.SHAPE_OVERLAY).exists()
+    assert not (explicit / _compose.SHAPE_OVERLAY).exists()
+
+
+def test_reinit_machine_as_brain_removes_stale_override(tmp_path, monkeypatch) -> None:
+    """Acceptance 3: re-init to machine-as-brain over a mesh-shape scaffold REMOVES
+    the stale override (else boot keeps skipping the re-hosted lobe)."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    assert (target / _compose.SHAPE_OVERLAY).is_file()
+    assert main(["init", "--shape", "machine-as-brain", str(target), "--apply", "--force"]) == 0
+    assert not (target / _compose.SHAPE_OVERLAY).exists()
+
+
+def test_reinit_machine_as_brain_dry_run_reports_removal(tmp_path, monkeypatch, capsys) -> None:
+    """Acceptance 3 (dry-run): the plan reports the stale override would be REMOVED,
+    and leaves it untouched on disk."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    capsys.readouterr()  # drop the apply output
+    rc = main(["init", "--shape", "machine-as-brain", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert _compose.SHAPE_OVERLAY in out
+    assert "REMOVED" in out
+    assert (target / _compose.SHAPE_OVERLAY).is_file()  # dry-run touched nothing
+
+
+def test_shape_dry_run_reports_override_would_be_written(tmp_path, monkeypatch, capsys) -> None:
+    """The dry-run plan mentions the override that would be written; zero bytes on disk."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    rc = main(["init", "--shape", "spark-lobe", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert _compose.SHAPE_OVERLAY in out
+    assert "vllm-multimodal" in out
+    assert not target.exists()
+
+
+def test_shape_dry_run_json_reports_override_plan(tmp_path, monkeypatch, capsys) -> None:
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    rc = main(["init", "--shape", "spark-lobe", str(target), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shape_override"]["action"] == "write"
+    assert payload["shape_override"]["disables"] == ["vllm-multimodal"]
+    assert payload["shape_override"]["file"] == _compose.SHAPE_OVERLAY
+    assert not target.exists()
+
+
+def test_shape_apply_json_reports_override_written(tmp_path, monkeypatch, capsys) -> None:
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    rc = main(["init", "--shape", "thor-lobe", str(target), "--apply", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shape_override"]["written"] is True
+    assert payload["shape_override"]["disables"] == ["vllm-primary"]
+
+
+def test_reapplying_shape_is_idempotent_including_override(tmp_path, monkeypatch) -> None:
+    """Re-applying the same mesh shape restores the override byte-for-byte too."""
+    _patch_detect(monkeypatch, _fake_card("spark"))
+    target = tmp_path / "deploy"
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
+    first = (target / _compose.SHAPE_OVERLAY).read_text()
+    assert main(["init", "--shape", "spark-lobe", str(target), "--apply", "--force"]) == 0
+    assert (target / _compose.SHAPE_OVERLAY).read_text() == first
