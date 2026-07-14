@@ -59,9 +59,10 @@
 ## Hard questions
 
 - Does ToolParserManager.import_tool_parser in this image accept a mounted file path and register before serving starts, and does the compose template have a clean way to mount one file into vllm-primary?
-- When force-strict is on and a caller's tool schema fails xgrammar compilation (all 14 Colleague schemas compiled fine, but arbitrary mesh callers are unvetted), what does the caller see — a 400 with a clear error, or should the gateway retry that request without strict as a fallback? [RESOLVED by user decision 2026-07-14, recorded as confirmed claim c15: gateway retries once without strict on schema-compile failure; offending schema logged] (blocking)
+- When force-strict is on and a caller's tool schema fails xgrammar compilation (all 14 Colleague schemas compiled fine, but arbitrary mesh callers are unvetted), what does the caller see — a 400 with a clear error, or should the gateway retry that request without strict as a fallback? [RESOLVED by user decision 2026-07-14, recorded as confirmed claim c15: gateway retries once without strict on schema-compile failure; offending schema logged] (was blocking; resolved — no open blocker remains)
 
 ## Open / follow-up
 
 - Should GATEWAY_FORCE_STRICT_TOOLS eventually default ON for the cortex lane (making constrained tool calls the fleet default), and should Colleague ALSO send strict:true client-side for rigs without the gateway knob? Both are post-fix policy calls
+- [unknown, non-blocking] Whether current vLLM main has already fixed the reasoning=False hardcode at _apply_structural_tag (would obsolete the plugin on a future image bump); file the bug upstream either way
 - Why the model drifts to the hallucinated '[tool_id]{json}' format on some prompts at temp 0 (checkpoint training artifact; out of lobes' control — we constrain around it, we don't retrain it)
