@@ -13,7 +13,8 @@ it:
   checkpoint's native 262144 (256K —
   ``sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP``);
 * ``thor-lobe`` drops ``cortex`` -> ``senses`` reclaims the freed
-  ``gpu_mem_util`` (0.14 + 0.30 = 0.44, same co-resident-sum shape as t2) AND
+  ``gpu_mem_util`` (0.30 — the dropped cortex share; the 0.44 reclaim-sum was
+  measured not to fit the live Thor) AND
   rises to its own checkpoint's native ``max_model_len`` 131072 (128K —
   ``coolthor/gemma-4-12B-it-NVFP4A16``), previously trimmed to 32768 only to
   co-reside with cortex;
@@ -160,10 +161,16 @@ def test_thor_lobe_senses_override_is_strictly_larger_than_co_resident_budget() 
     )
 
 
-def test_thor_lobe_senses_util_reclaims_exactly_the_dropped_cortex_budget() -> None:
+def test_thor_lobe_senses_util_is_the_dropped_cortex_share_that_fits_the_box() -> None:
+    # The dropped cortex's own share (0.30), NOT the reclaim-sum 0.44: the
+    # live Thor measured 38.44 GiB free at boot vs the 54.04 GiB util 0.44
+    # demands — unified memory shared with heavier host workloads; see the
+    # TOML provenance comment.
     override = load_builtin_shape("thor-lobe").override("senses")
-    assert override.gpu_mem_util == pytest.approx(_THOR_SENSES_UTIL + _THOR_CORTEX_UTIL)
-    assert override.gpu_mem_util == pytest.approx(0.44)
+    assert override.gpu_mem_util == pytest.approx(_THOR_CORTEX_UTIL)
+    assert override.gpu_mem_util == pytest.approx(0.30)
+    # Strictly larger than senses' own co-resident 0.14.
+    assert override.gpu_mem_util > _THOR_SENSES_UTIL
 
 
 def test_thor_lobe_senses_max_model_len_rises_to_full_native() -> None:

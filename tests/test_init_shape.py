@@ -174,7 +174,7 @@ def test_shape_thor_lobe_drops_cortex_and_reclaims_senses_budget(tmp_path, monke
     assert rc == 0
     env = _env.read_env_file(target / ".env")
     assert env["PRIMARY_FEASIBLE"] == "false"
-    assert env["MULTIMODAL_GPU_MEM_UTIL"] == "0.44"
+    assert env["MULTIMODAL_GPU_MEM_UTIL"] == "0.3"
 
 
 def test_scaffolded_env_matches_render_shape_directly(tmp_path, monkeypatch) -> None:

@@ -17,13 +17,13 @@ summary = "Jetson AGX Thor mesh-lobe -- Gemma senses + embedder + reranker + aud
 hosts = ["senses", "embedder", "reranker", "stt", "tts"]
 
 [overrides.senses]
-# gpu_mem_util = 0.44 -- 0.14 (senses, thor co-resident) + 0.30 (cortex, thor
-# co-resident) reclaimed from dropped cortex -- see
-# lobes/profiles/builtin/thor.toml's [roles.senses]/[roles.cortex]
-# gpu_mem_util for the two co-resident values this sums (thor's baseline is
-# identical to spark's per thor.toml's own header comment; the
-# machine-registry overlay only touches cortex's kv_cache_dtype, never
-# gpu_mem_util -- see lobes/machines/thor.py). Unchanged since t2.
+# gpu_mem_util = 0.30 -- exactly the dropped cortex's freed share (thor
+# co-resident cortex value, see lobes/profiles/builtin/thor.toml). NOT the
+# reclaim-SUM 0.14 + 0.30 = 0.44: the 2026-07-14 live boot on the physical
+# Thor measured only 38.44/122.82 GiB free at senses startup (its unified
+# memory carries heavier host workloads than the Spark's) and vLLM refuses
+# util 0.44 (54.04 GiB) outright; 0.30 (36.85 GiB) fits the measured reality.
+# (Live transcript: lobes-accept-thor-lobe-20260714; issue #113.)
 #
 # max_model_len = 131072 -- the Gemma checkpoint's own native context
 # (coolthor/gemma-4-12B-it-NVFP4A16, 128K -- see CLAUDE.md's model section),
@@ -31,5 +31,5 @@ hosts = ["senses", "embedder", "reranker", "stt", "tts"]
 # the single-box shape. Cortex is dropped in THIS shape, so the trim's reason
 # is gone -- reclaimed here (issue #113, user decision on the PR), not
 # deferred to #112.
-gpu_mem_util = 0.44
+gpu_mem_util = 0.30
 max_model_len = 131072
