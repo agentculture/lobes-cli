@@ -1,4 +1,4 @@
-"""Shape-aware budget re-derivation (brain-shapes t2, issue #113).
+"""Shape-aware budget re-derivation (brain-shapes t2/t2b, issue #113).
 
 A shape that DROPS a lobe re-derives the remaining lobes' budgets as DECLARED
 DATA in the shape's ``overrides`` table — never a runtime mutation. This is
@@ -6,12 +6,18 @@ composed over the #108 per-machine :class:`~lobes.profiles.schema.Profile`
 (the "co-resident" values a card profile ships today), never re-implementing
 it:
 
-* ``spark-lobe`` drops ``senses`` -> ``cortex`` reclaims the freed budget
-  (the co-resident spark values: cortex ``gpu_mem_util`` 0.30, senses 0.14 —
-  see ``lobes/profiles/builtin/spark.toml``);
-* ``thor-lobe`` drops ``cortex`` -> ``senses`` reclaims the freed budget
-  (the co-resident thor values are identical to spark's baseline — see
-  ``lobes/profiles/builtin/thor.toml``);
+* ``spark-lobe`` drops ``senses`` -> ``cortex`` gets its FULL native budget:
+  ``gpu_mem_util`` rises to 0.60 (the proven GB10 primary value — the
+  pre-#68 fleet baseline and the legacy single-model scaffold both ran the
+  27B at 0.60 alongside the two 0.06 pooling gears; NOT the co-resident
+  reclaim-sum 0.30 + 0.14 = 0.44), and ``max_model_len`` rises to the
+  checkpoint's native 262144 (256K —
+  ``sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP``);
+* ``thor-lobe`` drops ``cortex`` -> ``senses`` reclaims the freed
+  ``gpu_mem_util`` (0.14 + 0.30 = 0.44, same co-resident-sum shape as t2) AND
+  rises to its own checkpoint's native ``max_model_len`` 131072 (128K —
+  ``coolthor/gemma-4-12B-it-NVFP4A16``), previously trimmed to 32768 only to
+  co-reside with cortex;
 * ``machine-as-brain`` drops nothing -> carries ZERO overrides, so its
   composed budgets stay byte-identical to the shipped card-profile values.
 
@@ -23,10 +29,11 @@ this module's ``_compose`` helper is a narrow, test-local reading of that
 composition semantics (the real renderer lands in t3), not a claim about how
 t3 will implement it.
 
-``max_model_len`` is deliberately left at the co-resident value on both
-mesh-lobe shapes here — raising it to the model's full native context
-(cortex's 262144 solo-native ceiling) is explicitly out of scope for this
-task (issue #112); only ``gpu_mem_util`` is reclaimed.
+As of t2b (issue #113, user decision on the PR), ``max_model_len`` on BOTH
+mesh-lobe shapes now rises to the surviving lobe's own checkpoint-native
+ceiling in this task — the earlier t2 deferral to issue #112 no longer
+applies now that the co-resident lobe each shape reclaims budget FROM is
+gone from the box entirely (the trim's original reason).
 """
 
 from __future__ import annotations
@@ -54,6 +61,24 @@ _SPARK_CORTEX_MAX_LEN = _SPARK_PROFILE.role("cortex").max_model_len
 _THOR_CORTEX_UTIL = _THOR_PROFILE.role("cortex").gpu_mem_util
 _THOR_SENSES_UTIL = _THOR_PROFILE.role("senses").gpu_mem_util
 _THOR_SENSES_MAX_LEN = _THOR_PROFILE.role("senses").max_model_len
+
+# --- the surviving lobes' own checkpoint-native ceilings (t2b) ---------------
+# Fixed facts about the model checkpoints themselves, not derived from any
+# card profile — a card profile's max_model_len is a co-residency TRIM of
+# these, never the source of truth for them. See CLAUDE.md's model section:
+# the 27B cortex checkpoint (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) is
+# native 256K; the Gemma senses checkpoint (coolthor/gemma-4-12B-it-NVFP4A16)
+# is native 128K.
+_CORTEX_FULL_NATIVE_MAX_LEN = 262144  # 256K
+_SENSES_FULL_NATIVE_MAX_LEN = 131072  # 128K
+
+# spark-lobe's cortex gpu_mem_util override is NOT the co-resident reclaim-sum
+# (0.30 + 0.14 = 0.44, what t2 used) — issue #113's user decision (t2b) sets it
+# to the proven GB10 primary value instead: 0.60 is what the pre-#68 fleet
+# baseline and the legacy single-model scaffold both ran the 27B at, alongside
+# the two 0.06 + 0.06 pooling gears (see CLAUDE.md's "Colleague roles"
+# migration table).
+_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.60
 
 
 def _compose(base: RoleProfile, override: RoleProfile) -> RoleProfile:
@@ -92,20 +117,29 @@ def test_spark_lobe_cortex_override_is_strictly_larger_than_co_resident_budget()
     )
 
 
-def test_spark_lobe_cortex_util_reclaims_exactly_the_dropped_senses_budget() -> None:
-    # Provenance, not just "some number bigger than 0.30": cortex's util rises
-    # by EXACTLY the dropped senses lobe's co-resident util share.
+def test_spark_lobe_cortex_util_is_the_proven_gb10_primary_value() -> None:
+    # t2b (issue #113): NOT the co-resident reclaim-sum (0.30 + 0.14 = 0.44,
+    # what t2 used) -- 0.60 is the proven GB10 primary value the pre-#68 fleet
+    # baseline and the legacy single-model scaffold both ran the 27B at.
     override = load_builtin_shape("spark-lobe").override("cortex")
-    assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_UTIL + _SPARK_SENSES_UTIL)
-    assert override.gpu_mem_util == pytest.approx(0.44)
+    assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_FULL_NATIVE_UTIL)
+    assert override.gpu_mem_util == pytest.approx(0.60)
+    # Still strictly larger than BOTH the co-resident value and the naive
+    # reclaim-sum -- this is a bigger rise than a simple reclaim would give.
+    assert override.gpu_mem_util > _SPARK_CORTEX_UTIL
+    assert override.gpu_mem_util > (_SPARK_CORTEX_UTIL + _SPARK_SENSES_UTIL)
 
 
-def test_spark_lobe_cortex_max_model_len_stays_at_co_resident_value() -> None:
-    # #112 scope, not this task -- the override must NOT touch max_model_len.
+def test_spark_lobe_cortex_max_model_len_rises_to_full_native() -> None:
+    # t2b (issue #113, user decision): the co-resident lobe (senses) this
+    # shape drops is GONE from the box entirely, so the trim's original
+    # reason is gone too -- cortex now gets its full native 262144 (256K) in
+    # THIS task, not deferred to #112.
     override = load_builtin_shape("spark-lobe").override("cortex")
-    assert override.max_model_len is None
+    assert override.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN == 262144
     composed = _compose(_SPARK_PROFILE.role("cortex"), override)
-    assert composed.max_model_len == _SPARK_CORTEX_MAX_LEN == 131072
+    assert composed.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN
+    assert composed.max_model_len > _SPARK_CORTEX_MAX_LEN  # strictly > co-resident 131072
 
 
 # --- thor-lobe: senses reclaims the dropped cortex's budget, symmetrically ---
@@ -133,11 +167,16 @@ def test_thor_lobe_senses_util_reclaims_exactly_the_dropped_cortex_budget() -> N
     assert override.gpu_mem_util == pytest.approx(0.44)
 
 
-def test_thor_lobe_senses_max_model_len_stays_at_co_resident_value() -> None:
+def test_thor_lobe_senses_max_model_len_rises_to_full_native() -> None:
+    # t2b (issue #113, user decision): the co-resident lobe (cortex) this
+    # shape drops is GONE from the box entirely, so the trim's original
+    # reason is gone too -- senses now gets its full native 131072 (128K) in
+    # THIS task, not deferred to #112.
     override = load_builtin_shape("thor-lobe").override("senses")
-    assert override.max_model_len is None
+    assert override.max_model_len == _SENSES_FULL_NATIVE_MAX_LEN == 131072
     composed = _compose(_THOR_PROFILE.role("senses"), override)
-    assert composed.max_model_len == _THOR_SENSES_MAX_LEN == 32768
+    assert composed.max_model_len == _SENSES_FULL_NATIVE_MAX_LEN
+    assert composed.max_model_len > _THOR_SENSES_MAX_LEN  # strictly > co-resident 32768
 
 
 # --- acceptance criterion 2: machine-as-brain is untouched, byte-identical ---
@@ -214,7 +253,8 @@ def test_spark_lobe_and_thor_lobe_overrides_are_the_only_non_hosts_divergence() 
     assert set(thor_lobe.overrides.keys()) == {"senses"}
 
     # Neither mesh-lobe shape touches a role's `model`/`feasible`/other knobs --
-    # only gpu_mem_util is reclaimed (the acceptance criterion's exact ask).
+    # only `gpu_mem_util` and `max_model_len` are risen (as of t2b), never any
+    # other knob (the acceptance criterion's exact ask).
     for shape, role in (("spark_lobe", "cortex"), ("thor_lobe", "senses")):
         override = (spark_lobe if shape == "spark_lobe" else thor_lobe).override(role)
         assert override.model is None
