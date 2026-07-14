@@ -4,3 +4,4 @@
 {"ts":"2026-07-13T17:47:12.701140+00:00","type":"pr_reply","pr":108,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-07-13T17:47:14.042076+00:00","type":"pr_reply","pr":108,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-07-13T17:47:14.043972+00:00","type":"pr_batch_replied","pr":108,"count":2,"resolved":0}
+{"ts":"2026-07-14T06:22:55.673935+00:00","type":"pr_read","pr":116,"comment_count":5,"threads_unresolved":0,"ci_state":"ok"}
