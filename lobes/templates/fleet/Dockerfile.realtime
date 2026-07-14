@@ -10,10 +10,15 @@
 # deployment (init --fleet writes the running version into .env). Required.
 FROM python:3.12-slim
 ARG MODEL_GEAR_VERSION
+# Dev lane — same contract as Dockerfile.gateway: GATEWAY_PIP_EXTRA_INDEX_URL in
+# .env lets a from-source box resolve a TestPyPI .devN of MODEL_GEAR_VERSION
+# (extra index only — the [realtime] deps still come from PyPI). Empty = no-op.
+ARG PIP_EXTRA_INDEX_URL=
 # One layer: install lobes-cli[realtime] (system-wide, as root) and create the
 # unprivileged runtime user. The bridge binds :8080 internally and makes outbound
 # HTTP calls to stt / tts / the gateway on the compose network.
-RUN pip install --no-cache-dir "lobes-cli[realtime]==${MODEL_GEAR_VERSION}" \
+RUN env ${PIP_EXTRA_INDEX_URL:+PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}} \
+    pip install --no-cache-dir "lobes-cli[realtime]==${MODEL_GEAR_VERSION}" \
     && useradd --create-home --uid 10002 realtime
 USER realtime
 EXPOSE 8080
