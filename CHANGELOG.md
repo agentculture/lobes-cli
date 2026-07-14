@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.0] - 2026-07-14
+
+### Added
+
+- Strict, grammar-constrained tool calls with thinking enabled (colleague#320): new lobes.vllm_plugins package ships the qwen3_coder_thinking vLLM tool-parser plugin (overrides get_structural_tag to derive reasoning from the request's effective enable_thinking, fixing the strict+thinking HTTP 500 caused by the served build's hardcoded reasoning=False); the fleet template mounts it into vllm-primary via --tool-parser-plugin and flips PRIMARY_TOOL_CALL_PARSER default to qwen3_coder_thinking; lobes init materialises the plugin file into the deployment dir; the gateway gains an opt-in GATEWAY_FORCE_STRICT_TOOLS knob injecting function.strict=true on cortex-lane tools requests with a retry-once-without-strict fallback on schema-compile failures
+
 ## [0.43.0] - 2026-07-14
 
 ### Added
