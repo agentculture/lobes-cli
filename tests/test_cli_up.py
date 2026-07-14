@@ -263,3 +263,55 @@ def test_up_bogus_role_errors_before_scaffold_resolution(capsys) -> None:
     rc = main(["up", "bogus"])
     assert rc == 1
     assert "colleague-stack" in capsys.readouterr().err
+
+
+# --- shape overlay (t4b): dropped roles neither start nor slip through -----
+
+_SPARK_LOBE_OVERRIDE = """services:
+  vllm-multimodal:
+    profiles: ["shape-dropped"]
+  gateway:
+    depends_on: !reset null
+"""
+
+
+def _scaffold_fleet_shape(path):
+    _scaffold_fleet(path)
+    (path / _compose.SHAPE_OVERLAY).write_text(_SPARK_LOBE_OVERRIDE, encoding="utf-8")
+    return path
+
+
+def test_up_hosted_role_includes_shape_overlay_last(tmp_path, capsys) -> None:
+    """With a mesh-lobe scaffold, `lobes up <hosted-role>` carries the shape
+    override in the -f chain (last — its !reset must win) so a dropped sibling
+    can never be resurrected by the scoped up."""
+    _scaffold_fleet_shape(tmp_path)
+    rc = main(["up", "cortex", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == (
+        "docker compose -f docker-compose.yml -f docker-compose.shape.yml up -d vllm-primary"
+    )
+
+
+def test_up_dropped_role_is_a_user_error_naming_the_shape(tmp_path, capsys) -> None:
+    """`lobes up senses` on a spark-lobe box errors up front, naming the shape
+    override — never a confusing compose 'no such service' failure."""
+    _scaffold_fleet_shape(tmp_path)
+    rc = main(["up", "senses", "--compose-dir", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "vllm-multimodal" in err
+    assert _compose.SHAPE_OVERLAY in err
+
+
+def test_up_colleague_stack_on_mesh_lobe_scaffold_errors(tmp_path, capsys) -> None:
+    """The six-role bundle needs every role — a mesh-lobe box that drops one
+    refuses the bundle instead of silently starting a subset."""
+    templates = {**_compose.FLEET_TEMPLATES, **_compose.AUDIO_TEMPLATES}
+    _compose.write_scaffold(tmp_path, force=True, templates=templates)
+    (tmp_path / _compose.SHAPE_OVERLAY).write_text(_SPARK_LOBE_OVERRIDE, encoding="utf-8")
+    rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "vllm-multimodal" in err
