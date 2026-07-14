@@ -4,12 +4,25 @@
 # (today, the DGX Spark running spark-lobe.toml) instead of co-residing it
 # here.
 #
-# Differs from machine-as-brain.toml ONLY in `hosts` (cortex dropped) and,
-# from a later task (t2) onward, `overrides` (t2 re-derives senses's budget
-# upward now that it no longer shares the box with cortex). This task (t1)
-# leaves `overrides` empty -- the budget-override FIELDS exist in the schema
-# (RoleProfile, reused verbatim), but no re-derived value is filled in yet.
+# Differs from machine-as-brain.toml in `hosts` (cortex dropped) and, as of
+# brain-shapes t2, `overrides` -- senses reclaims dropped cortex's share of
+# the co-resident gpu_mem_util budget now that it no longer shares the box
+# with cortex. max_model_len is deliberately left at the co-resident value
+# (senses stays capped at 32768 tokens here) -- any rise to a larger context
+# is out of scope for this task, mirroring spark-lobe's cortex (issue #112).
 name = "thor-lobe"
 summary = "Jetson AGX Thor mesh-lobe -- Gemma senses + embedder + reranker + audio, no Qwen cortex"
 
 hosts = ["senses", "embedder", "reranker", "stt", "tts"]
+
+[overrides.senses]
+# 0.14 (senses, thor co-resident) + 0.30 (cortex, thor co-resident) reclaimed
+# from dropped cortex -- see lobes/profiles/builtin/thor.toml's
+# [roles.senses]/[roles.cortex] gpu_mem_util for the two co-resident values
+# this sums (thor's baseline is identical to spark's per thor.toml's own
+# header comment; the machine-registry overlay only touches cortex's
+# kv_cache_dtype, never gpu_mem_util -- see lobes/machines/thor.py).
+# max_model_len is intentionally NOT declared here (stays at the co-resident
+# 32768 via the resolved Profile -- no override = no opinion, per
+# RoleProfile/Shape.override's convention).
+gpu_mem_util = 0.44
