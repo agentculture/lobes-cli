@@ -12,19 +12,25 @@ it: its role vocabulary (:data:`SHAPE_ROLES`) is
 :data:`~lobes.profiles.schema.ROLES` (the four Profile-machinery core roles —
 ``cortex``/``senses``/``embedder``/``reranker``) plus :data:`AUDIO_ROLES`
 (``stt``/``tts``, the opt-in audio-overlay sidecars —
-``lobes/templates/fleet/docker-compose.audio.yml``); and its per-role budget
-``overrides`` reuse :class:`~lobes.profiles.schema.RoleProfile` verbatim (the
-SAME knob vocabulary, :data:`~lobes.profiles.schema.KNOB_NAMES`, and the SAME
+``lobes/templates/fleet/docker-compose.audio.yml``) plus :data:`OPT_IN_ROLES`
+(``minor``, the opt-in ``vllm-minor`` compose service — added in the
+mesh-brain end-state's t2, issue #112, for the ``orin-small`` reference
+shape); and its per-role budget ``overrides`` reuse
+:class:`~lobes.profiles.schema.RoleProfile` verbatim (the SAME knob
+vocabulary, :data:`~lobes.profiles.schema.KNOB_NAMES`, and the SAME
 validation), so a shape's override table is never a parallel, re-typed
-schema. ``stt``/``tts`` carry no Profile knobs of their own (see
-``schema.py``'s ``ROLES`` docstring) and so cannot appear in ``overrides`` —
-only in ``hosts``.
+schema. ``stt``/``tts``/``minor`` carry no Profile knobs of their own (see
+``schema.py``'s ``ROLES`` docstring for stt/tts; ``minor`` is the existing
+opt-in ``vllm-minor`` service, whose knobs are the compose template's own
+fixed ``${MINOR_MODEL:-...}``/``${VLLM_MINOR_GPU_MEM_UTIL:-...}``/
+``${VLLM_MINOR_MAX_MODEL_LEN:-...}`` defaults) and so cannot appear in
+``overrides`` — only in ``hosts``.
 
 Every built-in shape (:mod:`lobes.profiles.builtin_shapes`) is PURE DATA: the
-three shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``)
-differ from each other only in their ``hosts`` role subset and (from t2
-onward) their ``overrides`` budget re-derivation — there is no per-shape
-Python branch anywhere in this module.
+four shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``,
+``orin-small``) differ from each other only in their ``hosts`` role subset
+and their ``overrides`` budget re-derivation — there is no per-shape Python
+branch anywhere in this module.
 
 ``overrides`` here are DECLARED DATA, never a runtime mutation: this task (t1)
 leaves every shape's overrides empty (machine-as-brain must ALWAYS stay
@@ -55,11 +61,42 @@ from lobes.profiles.schema import RoleProfile
 # dependency stays lobes.profiles.schema, per the brain-shapes t1 scope.
 AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
-# Every role a Shape may declare hosted: the four Profile-machinery core roles
-# (schema.ROLES) plus the two audio-overlay roles. This is the same six-role
-# vocabulary as the Colleague-facing role registry (lobes.roles.ROLES) --
-# composed here from schema.ROLES rather than re-typed.
-SHAPE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
+# The six first-class, Colleague-facing roles (issue #81): the four
+# Profile-machinery core roles plus the two audio-overlay sidecars. This is
+# the "whole brain" set machine-as-brain hosts exactly -- the identity-shape
+# invariant (see shape_render.py's module docstring and
+# tests/goldens/regen.py's `_shape_needs_goldens`) is defined against THIS
+# set, not the broader :data:`SHAPE_ROLES` below, because the opt-in `minor`
+# gear (added after this constant, for t2) is deliberately excluded from
+# "every role this card can serve" -- machine-as-brain never hosts it.
+COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
+
+# The opt-in `minor` compose service (`vllm-minor`, gated in the fleet
+# template by the "minor" Docker Compose profile -- see env.example's
+# `COMPOSE_PROFILES=minor`) -- a light 4B bf16 generate gear that is
+# DELIBERATELY NOT one of the six first-class Colleague roles (issue #81;
+# see CLAUDE.md's "Colleague roles" section: "the 4B minor ... are opt-in
+# gears and not first-class Colleague roles"). Added to the Shape schema's
+# hostable vocabulary for the mesh-brain end-state's t2 (issue #112): a box
+# with no heavy cortex/senses lobe at all (the `orin-small` reference shape)
+# still needs SOME generate lane to host, and re-using the `cortex` role slot
+# for it would mean the box advertises the 27B Colleague role while actually
+# serving a 4B model behind it -- exactly the half-honest posture #92 exists
+# to forbid. `minor` carries no Profile/RoleProfile knobs of its own (its
+# budget is the compose template's own fixed defaults -- see the module
+# docstring), so -- like AUDIO_ROLES -- it can only appear in `hosts`, never
+# `overrides`.
+OPT_IN_ROLES: tuple[str, ...] = ("minor",)
+
+# Roles that carry no Profile/RoleProfile knobs of their own -- hostable, but
+# never valid inside a shape's `overrides` table (there is nothing on them to
+# re-derive a budget for).
+_NO_OVERRIDE_ROLES: tuple[str, ...] = AUDIO_ROLES + OPT_IN_ROLES
+
+# Every role a Shape may declare hosted: :data:`COLLEAGUE_ROLES` (the six
+# first-class, Colleague-facing roles) plus the opt-in `minor` gear
+# (:data:`OPT_IN_ROLES`) -- the one addition beyond that six-role vocabulary.
+SHAPE_ROLES: tuple[str, ...] = COLLEAGUE_ROLES + OPT_IN_ROLES
 
 BUILTIN_SHAPES_PACKAGE = "lobes.profiles.builtin_shapes"
 SHAPE_SUFFIX = ".toml"
@@ -135,7 +172,8 @@ class Shape:
         """Build a :class:`Shape` from a parsed TOML/JSON mapping.
 
         An unrecognised top-level key, an unrecognised role in ``hosts``, an
-        unrecognised role in ``overrides`` (including the audio roles, which
+        unrecognised role in ``overrides`` (including the roles in
+        :data:`_NO_OVERRIDE_ROLES` -- the audio roles and ``minor`` -- which
         carry no Profile knobs to override), or a malformed knob value inside
         an override is always a LOAD ERROR -- never a silently dropped key or
         a silently ignored value, matching
@@ -179,12 +217,13 @@ class Shape:
                 ),
                 remediation=f"known roles: {', '.join(SHAPE_ROLES)}",
             )
-        audio_override_roles = set(raw_overrides.keys()) & set(AUDIO_ROLES)
-        if audio_override_roles:
+        no_override_roles_used = set(raw_overrides.keys()) & set(_NO_OVERRIDE_ROLES)
+        if no_override_roles_used:
             raise _shape_error(
                 message=(
-                    f"role(s) {sorted(audio_override_roles)!r} in shape {name!r} 'overrides' "
-                    "are audio-overlay roles -- they carry no Profile knobs to override"
+                    f"role(s) {sorted(no_override_roles_used)!r} in shape {name!r} 'overrides' "
+                    "carry no Profile knobs to override (the audio-overlay sidecars stt/tts, "
+                    "or the opt-in 'minor' gear)"
                 ),
                 remediation="only the four Profile-machinery core roles may appear in overrides: "
                 f"{', '.join(PROFILE_ROLES)}",

@@ -67,6 +67,8 @@ from lobes.profiles.loader import (
 from lobes.profiles.schema import KNOB_NAMES, ROLES, Profile, RoleProfile
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
+    COLLEAGUE_ROLES,
+    OPT_IN_ROLES,
     SHAPE_ROLES,
     Shape,
     builtin_shape_names,
@@ -104,6 +106,8 @@ __all__ = [
     "resolve_profile",
     # deployment-shape schema + built-in loader (lobes.profiles.shapes)
     "AUDIO_ROLES",
+    "COLLEAGUE_ROLES",
+    "OPT_IN_ROLES",
     "SHAPE_ROLES",
     "Shape",
     "builtin_shape_names",

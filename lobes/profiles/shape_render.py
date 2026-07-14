@@ -19,15 +19,21 @@ synthetic :class:`~lobes.profiles.schema.Profile` and hands that to the existing
 yields exactly the bare card profile's rendering (the invariant the goldens
 pin).
 
-**Core roles vs audio roles.** The four Profile-machinery core roles
-(:data:`~lobes.profiles.schema.ROLES` — ``cortex`` / ``senses`` / ``embedder``
-/ ``reranker``) carry the ``.env`` knobs and map through ``profile_env``. The
-two audio-overlay roles (``stt`` / ``tts``) carry no per-machine vLLM knobs of
-their own; hosting either is what turns on the **audio overlay compose file**
-(``docker-compose.audio.yml``) — mirroring ``lobes init --fleet --audio`` /
-``lobes fleet up`` auto-including it when present. So a shape contributes to
-BOTH sides of "compose/.env": the ``.env`` via the core roles, and the compose
-file list + service set via what it hosts.
+**Core roles vs audio roles vs the opt-in `minor` gear.** The four
+Profile-machinery core roles (:data:`~lobes.profiles.schema.ROLES` —
+``cortex`` / ``senses`` / ``embedder`` / ``reranker``) carry the ``.env``
+knobs and map through ``profile_env``. The two audio-overlay roles (``stt`` /
+``tts``) carry no per-machine vLLM knobs of their own; hosting either is what
+turns on the **audio overlay compose file** (``docker-compose.audio.yml``) —
+mirroring ``lobes init --fleet --audio`` / ``lobes fleet up`` auto-including
+it when present. The opt-in ``minor`` gear (:data:`~lobes.profiles.shapes.OPT_IN_ROLES`,
+added for the mesh-brain end-state's t2, issue #112) likewise carries no
+Profile knobs — its service (``vllm-minor``) already lives, unconditionally,
+in the base fleet compose file, gated only by the ``minor`` Docker Compose
+profile; hosting it contributes no new ``.env`` key, only a service-set
+entry. So a shape contributes to BOTH sides of "compose/.env": the ``.env``
+via the core roles, and the compose file list + service set via what it
+hosts.
 
 **Dropped role -> flagged off, no service.** A core role a shape does NOT host
 renders the #110-conventional ``<PREFIX>_FEASIBLE=false`` marker and nothing
@@ -45,7 +51,7 @@ from typing import Mapping
 
 from lobes.profiles.render import profile_env
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
-from lobes.profiles.shapes import AUDIO_ROLES, Shape
+from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_ROLES, Shape
 
 # The base fleet compose file every deployment runs, plus the opt-in audio
 # overlay. A Shape hosting an audio role (stt/tts) is what turns the overlay on
@@ -55,10 +61,10 @@ FLEET_COMPOSE_FILE = "docker-compose.yml"
 AUDIO_OVERLAY_FILE = "docker-compose.audio.yml"
 
 # role -> the compose SERVICE (the `services:` key the compose template
-# declares) that serves it. The four core roles live in the base fleet; stt/tts
-# live in the audio overlay. Kept as a constant mirroring the shipped template
-# exactly -- same design as render.ROLE_ENV_PREFIX, and verified against the
-# real compose files by tests/test_shape_goldens.py.
+# declares) that serves it. The four core roles and `minor` live in the base
+# fleet; stt/tts live in the audio overlay. Kept as a constant mirroring the
+# shipped template exactly -- same design as render.ROLE_ENV_PREFIX, and
+# verified against the real compose files by tests/test_shape_goldens.py.
 ROLE_SERVICE: dict[str, str] = {
     "cortex": "vllm-primary",
     "senses": "vllm-multimodal",
@@ -66,6 +72,7 @@ ROLE_SERVICE: dict[str, str] = {
     "reranker": "vllm-rerank",
     "stt": "stt",
     "tts": "chatterbox",
+    "minor": "vllm-minor",
 }
 
 # The fleet front (always up) and the audio overlay's realtime bridge (up
@@ -155,7 +162,10 @@ def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
     A core role the shape drops -- or one the card marks infeasible -- has no
     service here (the "dropped role -> no running service" contract). The
     gateway always fronts the fleet; the realtime bridge comes up with the audio
-    overlay.
+    overlay. The opt-in `minor` gear (:data:`OPT_IN_ROLES`) has no card-level
+    feasibility of its own -- unlike the four core roles, it is never
+    conditioned on ``profile.role(...).feasible`` -- so it is added whenever
+    the shape hosts it, exactly like the audio roles.
     """
     services = {GATEWAY_SERVICE}
     for role in ROLES:
@@ -168,6 +178,9 @@ def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
             audio_hosted = True
     if audio_hosted:
         services.add(REALTIME_SERVICE)
+    for role in OPT_IN_ROLES:
+        if shape.hosts_role(role):
+            services.add(ROLE_SERVICE[role])
     return tuple(sorted(services))
 
 
