@@ -142,6 +142,98 @@ def filter_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(k, v) for k, v in headers if k.lower() not in _HOP_BY_HOP]
 
 
+# --- force-strict-tools (GATEWAY_FORCE_STRICT_TOOLS, opt-in, colleague#320) -
+
+# The cortex thinking model occasionally drifts off its tool-call template;
+# vLLM's parser salvage then mangles the call (e.g. name='read_file"' + empty
+# args). xgrammar structural-tag constrained decoding (OpenAI's `strict:
+# true` on a tool's `function`) makes a malformed call impossible — this knob
+# is how EXISTING callers get that without a client-side change. Default off
+# (ServerConfig.force_strict_tools, from GATEWAY_FORCE_STRICT_TOOLS) is a
+# hard byte-identical-passthrough guarantee: every helper below is only
+# reachable from handle_post when the knob is truthy.
+
+_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+
+
+def _is_chat_completions_request(path: str) -> bool:
+    """True for the one endpoint force-strict-tools may touch — the chat
+    lane. ``/v1/completions`` (legacy, no ``tools``), embeddings, rerank, and
+    audio are never in scope."""
+    return path.split("?", 1)[0] == _CHAT_COMPLETIONS_PATH
+
+
+def _tools_present(data: dict) -> bool:
+    tools = data.get("tools")
+    return isinstance(tools, list) and len(tools) > 0
+
+
+def inject_strict_tools(body: bytes) -> tuple[bytes, list[str]] | None:
+    """Inject ``"strict": true`` into every ``tools[i].function`` that lacks
+    an explicit ``strict`` key.
+
+    Caller wins: a tool that already carries ANY ``strict`` value (``true``
+    OR ``false``) is left untouched — only an ABSENT key is filled in. Pure
+    and testable without sockets, matching the sibling body helpers above
+    (:func:`rewrite_model` etc).
+
+    Returns ``None`` — no injection performed — when the body is not JSON,
+    carries no non-empty ``tools`` array, or every tool already declares its
+    own ``strict`` (nothing was actually modified). :func:`handle_post` reads
+    ``None`` as "this request is not eligible for the retry-without-strict
+    fallback": a caller who set ``strict`` themselves and then hits a
+    compile failure gets that failure as their own outcome, not a retry.
+    """
+    data = _parse_body(body)
+    if data is None or not _tools_present(data):
+        return None
+    tool_names: list[str] = []
+    for tool in data["tools"]:
+        if not isinstance(tool, dict):
+            continue
+        func = tool.get("function")
+        if not isinstance(func, dict) or "strict" in func:
+            continue  # absent-only: an explicit strict (true OR false) wins
+        func["strict"] = True
+        name = func.get("name")
+        tool_names.append(name if isinstance(name, str) and name else "<unnamed>")
+    if not tool_names:
+        return None  # nothing was actually modified — not retry-eligible
+    return json.dumps(data).encode("utf-8"), tool_names
+
+
+# Heuristic signature list for a strict-injection schema/grammar-compile
+# failure — a HEURISTIC pending live discovery of vLLM's actual error text
+# (devague plan risk r1). Matched case-insensitively as a bare substring
+# against the upstream error body. Module-level so it is one place to widen
+# once a real failure is observed on the live rig.
+_STRICT_FAILURE_SIGNATURES: tuple[str, ...] = (
+    "structural_tag",
+    "xgrammar",
+    "grammar",
+    "json_schema",
+)
+
+_STRICT_RETRY_LOG_SNIPPET_LEN = 200
+
+
+def _matches_strict_failure_signature(body: bytes) -> bool:
+    text = body.decode("utf-8", errors="replace").lower()
+    return any(sig in text for sig in _STRICT_FAILURE_SIGNATURES)
+
+
+def _log_strict_retry(tool_names: list[str], upstream_body: bytes) -> None:
+    """One log line naming the failing tool schema(s) + an upstream error
+    snippet, via the module's existing stderr-logging pattern (see
+    :meth:`_Handler.log_message` / :func:`serve`)."""
+    snippet = upstream_body.decode("utf-8", errors="replace")[:_STRICT_RETRY_LOG_SNIPPET_LEN]
+    names = ", ".join(tool_names) or "<none>"
+    sys.stderr.write(
+        f"[gateway] strict-tools compile failure for tool(s) [{names}] — "
+        f"retrying without strict; upstream said: {snippet!r}\n"
+    )
+
+
 # The request header that forces the requested tier despite pressure (t6, #68).
 OVERRIDE_HEADER = "X-Lobes-Override"
 _CONTENT_TYPE_JSON = "application/json"
@@ -527,6 +619,105 @@ def _try_backends(
     return None, attempts
 
 
+def _try_primary_with_strict_retry(
+    backend: Backend,
+    cfg: ServerConfig,
+    path: str,
+    injected_body: bytes,
+    original_body: bytes,
+    tool_names: list[str],
+    fwd_headers: list[tuple[str, str]],
+    open_upstream: OpenUpstream,
+    streaming: bool,
+    tier_headers: list[tuple[str, str]],
+) -> tuple[GatewayResponse | None, list[str]]:
+    """The force-strict-tools dial (GATEWAY_FORCE_STRICT_TOOLS, opt-in): try
+    ``backend`` once with ``injected_body``; on an HTTP 4xx/5xx whose body
+    matches :data:`_STRICT_FAILURE_SIGNATURES`, retry EXACTLY ONCE with
+    ``original_body`` (the un-injected request) and relay that retry's
+    response VERBATIM — whatever its status, success or failure, never a
+    second retry.
+
+    Deliberately bypasses :func:`_try_backends`: that function never reads a
+    ``>=500`` body (it treats any 5xx as owner-down and swallows it into the
+    generic retryable 503 below), but a compile-failure signature can only be
+    read by inspecting the body — so this function reads a 4xx/5xx body
+    itself, checks the signature, and either retries or relays it as-is
+    (bypassing the 500->503 remap on purpose: a failure caused by OUR OWN
+    strict injection is not an "owner is down" condition).
+
+    A connect failure at either hop (initial or retry) degrades exactly like
+    ``_try_backends`` — an attempt string appended, ``response=None`` — so
+    the caller's existing owner-down 503 tail in :func:`handle_post` is
+    unaffected either way.
+    """
+    attempts: list[str] = []
+    try:
+        up = open_upstream(
+            backend,
+            path,
+            injected_body,
+            fwd_headers,
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        attempts.append(str(exc))
+        return None, attempts
+    if up.status < 400:
+        return (
+            GatewayResponse(
+                status=up.status,
+                headers=tier_headers + up.headers,
+                upstream=up,
+                streaming=streaming,
+                attempts=attempts,
+            ),
+            attempts,
+        )
+    # A 4xx/5xx: read the FULL body (never done for a >=500 in _try_backends)
+    # so the compile-failure signature can actually be checked.
+    body_bytes = up.read_all()
+    up.close()
+    if not _matches_strict_failure_signature(body_bytes):
+        # Not our injection's fault — relay verbatim, no retry (caller's
+        # own error, or an unrelated owner problem this path already
+        # committed to by reading the body).
+        return (
+            GatewayResponse(
+                status=up.status,
+                headers=tier_headers + up.headers,
+                body=body_bytes,
+                streaming=False,
+                attempts=attempts,
+            ),
+            attempts,
+        )
+    _log_strict_retry(tool_names, body_bytes)
+    try:
+        retry_up = open_upstream(
+            backend,
+            path,
+            original_body,
+            fwd_headers,
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        attempts.append(str(exc))
+        return None, attempts
+    return (
+        GatewayResponse(
+            status=retry_up.status,
+            headers=tier_headers + retry_up.headers,
+            upstream=retry_up,
+            streaming=streaming,
+            attempts=attempts,
+        ),
+        attempts,
+    )
+
+
 def handle_post(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -585,6 +776,19 @@ def handle_post(
     ``X-Lobes-Tier-Reason`` headers still travel with the response (prepended,
     streaming-safe). A plain model id, or ``pressure=None``, takes the existing
     non-tier path unchanged.
+
+    Force-strict-tools (``cfg.force_strict_tools``, opt-in, colleague#320): once
+    the owner is resolved, a ``/v1/chat/completions`` request whose owner is the
+    ``primary`` (cortex) backend and whose body carries a non-empty ``tools``
+    array is passed through :func:`inject_strict_tools`. When that ACTUALLY
+    modifies the body (at least one ``tools[i].function`` lacked ``strict``),
+    dialing is handed to :func:`_try_primary_with_strict_retry` instead of
+    :func:`_try_backends` — it dials with the injected body, and on a 4xx/5xx
+    matching a compile-failure signature retries once with the ORIGINAL
+    un-injected body, relaying whichever response resulted. Every other
+    request (knob off, non-primary lane, no tools, or every tool already
+    carrying its own ``strict``) is entirely unaffected — same
+    :func:`_try_backends` call as before this knob existed.
     """
     requested = extract_model(body)
     tier_headers: list[tuple[str, str]] = []
@@ -636,16 +840,44 @@ def handle_post(
             attempts=[],
         )
 
-    response, attempts = _try_backends(
-        ordered,
-        cfg,
-        path,
-        fwd_body,
-        fwd_headers,
-        open_upstream,
-        streaming,
-        tier_headers,
-    )
+    # Force-strict-tools (opt-in, colleague#320): only the primary/cortex lane,
+    # only chat-completions, only a body an injection actually changed. Every
+    # other request takes the untouched _try_backends call below — this is
+    # the byte-identical-passthrough guarantee when the knob is off (or simply
+    # inapplicable to this request).
+    strict_injection = None
+    if (
+        cfg.force_strict_tools
+        and ordered[0].name == "primary"
+        and _is_chat_completions_request(path)
+    ):
+        strict_injection = inject_strict_tools(fwd_body)
+
+    if strict_injection is not None:
+        injected_body, tool_names = strict_injection
+        response, attempts = _try_primary_with_strict_retry(
+            ordered[0],
+            cfg,
+            path,
+            injected_body,
+            fwd_body,
+            tool_names,
+            fwd_headers,
+            open_upstream,
+            streaming,
+            tier_headers,
+        )
+    else:
+        response, attempts = _try_backends(
+            ordered,
+            cfg,
+            path,
+            fwd_body,
+            fwd_headers,
+            open_upstream,
+            streaming,
+            tier_headers,
+        )
     if response is not None:
         return response
 

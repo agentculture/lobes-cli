@@ -53,6 +53,23 @@ FEASIBLE_ENV: dict[str, str] = {
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 
+# Generic truthy-token set for opt-in boolean env knobs (mirrors
+# lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
+# X-Lobes-Override HEADER — this is the env-var counterpart). Kept local to
+# this module rather than imported from server.py to avoid the reverse
+# import (server.py imports THIS module, not the other way around).
+_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+def _as_bool(env: Mapping[str, str], key: str) -> bool:
+    """True iff ``env[key]`` holds a truthy token (``1``/``true``/``yes``,
+    case-insensitive). Absent/blank/anything else -> False, so an untouched
+    deployment is unaffected — every opt-in boolean knob built on this
+    (e.g. ``GATEWAY_FORCE_STRICT_TOOLS``) is default-off.
+    """
+    return (env.get(key) or "").strip().lower() in _TRUTHY
+
+
 # Per-backend "the peer box at THIS origin hosts the role I dropped" channel
 # (mesh-brain t3, issue #112's confirmed cross-box decision: direct + honest
 # referral). DESIGN DECISION, made within the #92 lesson: the referral origin
@@ -128,6 +145,14 @@ class ServerConfig:
     # incoming request Host header (correct for a normal published host port);
     # set GATEWAY_PUBLIC_URL to override for a tunnel / Host-rewriting proxy.
     public_url: str | None = None
+    # Opt-in (colleague#320): force `"strict": true` onto every tool schema of
+    # a chat-completions request routed to the PRIMARY (cortex) lane, so
+    # xgrammar's structural-tag constrained decoding makes a malformed tool
+    # call impossible. False (default) is a byte-identical passthrough — this
+    # knob touches NOTHING unless explicitly turned on. See
+    # lobes.gateway.server.inject_strict_tools / handle_post for the
+    # injection + retry-without-strict-on-compile-failure behaviour.
+    force_strict_tools: bool = False
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -359,5 +384,6 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         read_timeout=_as_float(env, "GATEWAY_READ_TIMEOUT", 600.0),
         audio_url=(env.get("AUDIO_URL") or "").rstrip("/") or None,
         public_url=(env.get("GATEWAY_PUBLIC_URL") or "").rstrip("/") or None,
+        force_strict_tools=_as_bool(env, "GATEWAY_FORCE_STRICT_TOOLS"),
     )
     return table, server
