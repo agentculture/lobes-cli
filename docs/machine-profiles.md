@@ -1,12 +1,14 @@
 # Machine profiles — hardware detection and per-role tuning
 
-lobes runs the **fleet** (four co-resident vLLM backends + a gateway) with knob
-values tuned to the hardware it lands on. A **machine profile** is the per-card
-tuning declaration: which models serve each role (`cortex` / `senses` /
-`embedder` / `reranker`), their GPU memory budget, context length, attention
-backend, and other vLLM knobs the compose template substitutes. This document
-walks the detection flow, how a profile is chosen, the knobs' meanings and
-provenance, and how to write custom profiles for new hardware.
+lobes runs the **fleet** (four co-resident vLLM backends + a gateway, by
+default — a mesh-brain deployment shape can drop one of them to a peer box;
+see `docs/deployment-shapes.md`) with knob values tuned to the hardware it
+lands on. A **machine profile** is the per-card tuning declaration: which
+models serve each role (`cortex` / `senses` / `embedder` / `reranker`), their
+GPU memory budget, context length, attention backend, and other vLLM knobs
+the compose template substitutes. This document walks the detection flow,
+how a profile is chosen, the knobs' meanings and provenance, and how to
+write custom profiles for new hardware.
 
 See `lobes explain profiles` or `lobes explain tuning` for the brief version.
 That command reads from `lobes/explain/catalog.py`; this file is the deep
@@ -524,6 +526,8 @@ long-running hand-tuned deployment serves with.
 - `docs/tuning-profiles.md` — workload (`purpose`) profiles and shahizat's
   benchmark baseline
 - `docs/colleague-stack.md` — the fleet contract (roles, context, memory budget)
+- `docs/deployment-shapes.md` — the orthogonal deployment-shape axis (which
+  roles a box hosts at all, composed over this per-machine tuning)
 - `lobes/machines/` — CardStrategy modules (one per chip; the source of truth
   for detection signatures and machine knobs)
 - `lobes/profiles/` — profile schema, loader, renderer, and built-in TOML

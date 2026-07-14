@@ -811,23 +811,29 @@ the gateway NEVER forwards a request to a peer (no data-plane proxying),
 and with no peer config every response is byte-identical to the
 pre-referral contract. See `docs/deployment-shapes.md`.
 
-## Scope
+## The mesh-brain end-state (issue #112)
 
-One-lobe-per-box end-states are out of scope here — tracked as issue #112
-(spec + plan in PR #116); its cross-box decision (direct + honest referral,
-above) is implemented; proxy-lobes (following the referral on the caller's
-behalf) are issue #115. `orin-small` (above) ships as
+One heavy lobe per box, cheap gears co-reside, the brain stays whole across
+the mesh — four decisions, all shipped: (1) cross-box reachability is
+**direct + opt-in honest referral**, never proxying (proxy-lobes are their
+own follow-up, issue #115); (2) cheap gears (`embedder`/`reranker`/`stt`/
+`tts`) **co-reside** on every box that wants them; (3) the reference shape
+assignment is Spark GB10 = `cortex` via `spark-lobe`, Thor = `senses` via
+`thor-lobe`, Orin 64GB = small-model lobes via `orin-small`; (4) the shape
+axis is **mixable** — specialized, multi-role, and mixed boxes compose into
+one brain, and `machine-as-brain` stays the default. `orin-small` ships as
 declared-but-unvalidated data only — physical Jetson AGX Orin validation is
 its own follow-up.
 
 ## See also
 
 - `docs/deployment-shapes.md` — the deep reference (support table, the
-  co-residency tax numbers, the acceptance script, the dev lane)
+  co-residency tax numbers, the mesh-brain end-state decisions, the
+  acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
 - `lobes explain roles` — the six-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the three shipped shapes
+- `lobes/profiles/builtin_shapes/*.toml` — the four shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
 """
 

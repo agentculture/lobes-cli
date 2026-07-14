@@ -183,6 +183,16 @@ deliberate non-goal here, deferred to issue #115.
 
 ## The co-residency tax and its measured repayment
 
+| box (mesh shape) | heavy lobe | co-resident context (machine-as-brain) | full-native context | repayment | measured `gpu_mem_util` | measured KV pool | measured concurrency |
+|---|---|---|---|---|---|---|---|
+| Spark GB10 (`spark-lobe`) | `cortex` | 131072 | 262144 | **2.0×** | 0.44 | **888,946 tokens** | **3.39×** at full 256K |
+| Jetson AGX Thor (`thor-lobe`) | `senses` | 32768 | 131072 | **4.0×** | 0.30 | **1,418,554 tokens** | **10.82×** at 131072 |
+
+All eight numbers above are read verbatim from the two `#113` acceptance
+transcripts (`docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt` phase 7,
+`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` phase 7) plus the
+deployed `.env` overrides they measured — none are estimated.
+
 **Before** (machine-as-brain, the default, on the GB10): every role
 co-resides, so each one is trimmed to fit alongside the others —
 `senses` 32768 @ util 0.14, `cortex` 131072 @ util 0.30, embedder/reranker
@@ -249,7 +259,7 @@ other dependency from real PyPI, avoids that entirely.
 ## The acceptance script
 
 ```bash
-scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe> [--audio] \
+scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-small> [--audio] \
   [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
   [--dev-index URL] [--timeout SECS]
 scripts/accept-shape.sh --restore [--deploy-dir DIR]
@@ -261,23 +271,119 @@ scaffold the requested shape into a clean dir (dry-run shown first, then
 correctness **live**, run the advertised-implies-reachable gate
 (`scripts/live-check.sh`), measure the reclaimed heavy-lobe budget, and leave
 a full transcript at `~/lobes-accept-<shape>-<UTC-stamp>.log`. `--restore`
-puts the previous deployment back. This is the exact command sequence behind
-both validation transcripts in `docs/evidence/`:
+puts the previous deployment back. Phase 4b additionally checks the opt-in
+honest-referral surface (mesh-brain t3, issue #112) whenever a
+`<PREFIX>_PEER_ORIGIN` is declared on the box under test — skipped, not
+failed, with zero peer config. This is the exact command sequence behind the
+two `#113` shape-validation transcripts in `docs/evidence/`:
 `2026-07-14-accept-spark-lobe-gb10.txt` and
-`2026-07-14-accept-thor-lobe-thor.txt`.
+`2026-07-14-accept-thor-lobe-thor.txt`. The cross-box referral proof (a
+consumer actually reaching the peer that hosts a dropped role) needs two live
+boxes at once and so was run as a bespoke variant rather than a single
+`accept-shape.sh` invocation — see
+`docs/evidence/2026-07-14-accept-referral-thor.txt` and "The mesh-brain
+end-state" below.
+
+## The mesh-brain end-state (issue #112)
+
+The near-term spec that shipped shape selection plus `spark-lobe`/`thor-lobe`
+(`docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md`)
+deliberately left the cross-box question open. Its Decisions section says so
+explicitly:
+
+> Cross-box story is per-box honesty only for this change: each box
+> advertises only the lobes it hosts and consumers address each box directly
+> (how the Culture mesh already connects per machine); gateway proxying of
+> absent roles and a brain-level capabilities view are deferred to the #112
+> design work.
+
+Issue #112's own exported spec
+(`docs/specs/2026-07-14-lobes-serves-the-mesh-brain-end-state-one-lobe-per.md`)
+is the answer to that deferral. Its framing, in one line: **one heavy lobe
+per box, cheap gears co-reside, and the brain stays whole across the mesh via
+direct addressing plus honest referral.** Four decisions came out of it, all
+now shipped:
+
+1. **Cross-box reachability = direct addressing + opt-in honest referral.**
+   No data-plane proxying: a consumer dials each box directly, exactly as the
+   Culture mesh does today; with opt-in peer config, a box's `capabilities`
+   and its `role_infeasible` 404s name the peer that hosts an absent role
+   (`hosted_by`, above). The #92 invariant holds throughout — a box never
+   serves what it does not host. *Following* a referral on the caller's
+   behalf (a proxy-lobe) is a deliberate non-goal here, deferred to issue
+   #115.
+2. **Cheap-gear placement = co-residence.** "One lobe per box" specializes
+   the heavy *generate* lobes only — `embedder` / `reranker` / `stt` / `tts`
+   may ride on every box that wants them (~0.06 util each, as today); no
+   gear is forced to move for the end-state to hold, and consumers keep
+   localhost embed/rerank/audio endpoints on every box.
+3. **The fleet's reference shape assignment.** The Spark GB10 gives its
+   whole machine to the Qwen `cortex` (shape `spark-lobe` — see the tax table
+   above: it already reaches `cortex`'s full native 262144 context, not a
+   partial reclaim); the Jetson AGX Thor 128GB gives its whole machine to the
+   Gemma `senses` (shape `thor-lobe` — likewise reaches `senses`'s full
+   native 131072); the Jetson AGX Orin 64GB hosts the small-model lobes
+   (shape `orin-small` — the opt-in `minor` gear plus the pooling gears, no
+   heavy 27B/12B at all). The two near-term shapes turned out to already *be*
+   their one-lobe-per-box reference instances once their reclaim was
+   measured; `orin-small` is the third reference instance, added by this
+   work as declared-but-unvalidated data (support table above).
+4. **The shape axis is mixable.** Backward compatible, just a design option:
+   either many machines (some cloud, if you want) each specialized to one
+   lobe, or some machines taking multiple roles, or any mix of the two —
+   `machine-as-brain` stays the default and the one-lobe shapes are the far
+   end of the same shape axis, not a mandate. A single-box operator running
+   bare `lobes init` is completely unaffected.
+
+**Live evidence for the cross-box surface.** Decisions 1–2 (referral +
+co-residence) were validated live on the physical Jetson AGX Thor
+(2026-07-14, `docs/evidence/2026-07-14-accept-referral-thor.txt`), dialing a
+real declared peer (`PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001`,
+the box that hosts `cortex`) from a from-source gateway on the Thor with
+`cortex` dropped. It proved, live: `capabilities` flags `cortex
+feasible:false` and carries `hosted_by`, not hidden; every dropped-`cortex`
+alias 404s `role_infeasible` with the same `hosted_by`; the hosted roles
+(`senses`, `embedder`) answer through the same gateway; a consumer that
+follows the referral and dials the peer directly reaches `cortex` there
+(`'cortex-on-spark-alive'`); and a shape move is byte-for-byte restorable
+(`machine-as-brain` → `thor-lobe` → `machine-as-brain`, tree hashes
+`965708cc23da1ea5…` / `0c8e921fd3b27689…` / `965708cc23da1ea5…`). The
+full-shape boots, per-role correctness probes, and measured reclaimed budgets
+that decision 3 depends on were **not** re-run for this evidence — they reuse
+the `#113` acceptance transcripts already cited in the tax table above (an
+explicit operator decision recorded in the transcript itself, since spinning
+up both physical boxes again would prove nothing new).
+
+That referral run also surfaced one honest, unrelated finding: the Thor box's
+*long-running* machine-as-brain deployment — the one left up to host the
+`senses`/`embedder`/`reranker` lanes the referral test dialed through —
+predates the `#110` per-machine-profile work, so its `.env` carries the
+pre-`#110` reranker knobs and its rerank lane hangs. This is deployment
+staleness on that one box, not a defect of the shapes or referral feature:
+`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` (a freshly-scaffolded
+`thor-lobe` deployment, `#113`) already shows the reranker probe passing
+under the correct `RERANK_ENFORCE_EAGER`/`TRITON_ATTN` knobs. The fix, when
+that box is next touched, is simply to re-scaffold with the current release.
+
+**What's still open:** proxy-lobes (issue #115, decision 1's explicit
+non-goal) and physical Jetson AGX Orin 64GB validation (decision 3's
+`orin-small` reference instance — declared, not yet booted; see the support
+table above and the scope boundary below).
 
 ## Scope boundary
 
-This feature ships shape selection plus the two near-term mesh-lobe shapes
-(both validated live). Explicitly out of scope, routed elsewhere:
+The near-term work (issue #113) shipped shape selection plus `spark-lobe` and
+`thor-lobe` (both validated live). The mesh-brain end-state (issue #112,
+spec+plan in PR #116) has since landed on top of it: the `orin-small`
+reference shape, the opt-in honest-referral surface, the per-(shape,
+dropped-role) contract-test matrix, and the live cross-box referral evidence
+above are all shipped. Two things remain explicitly out of scope, routed
+elsewhere:
 
-- **The rest of the one-lobe-per-box end-state** (a Qwen-only Spark, a
-  Gemma-only Thor) — tracked as issue #112, with its own spec + plan opened
-  in PR #116. Its confirmed cross-box decision — direct addressing + the
-  opt-in **honest referral** above — is implemented here; actually
-  *forwarding* a request to the peer is not (see next item).
-- **Proxy-lobes** (serving a "sleeping" lobe via a followed referral to
-  whichever peer box hosts it) — parked as its own follow-up, issue #115.
+- **Proxy-lobes** (serving a "sleeping" lobe by following its own referral to
+  whichever peer box hosts it, on the caller's behalf) — parked as its own
+  follow-up, issue #115. Direct addressing + referral (decision 1, above) is
+  the shipped default; proxying is a deliberate non-goal here.
 - **Jetson AGX Orin physical validation** — the `orin-small` shape (above)
   ships as **declared, unvalidated data** (issue #112, mesh-brain end-state
   t2), exactly like `lobes/profiles/builtin/base.toml`'s existing
@@ -289,6 +395,13 @@ This feature ships shape selection plus the two near-term mesh-lobe shapes
 ## See also
 
 - `lobes explain shapes` — brief in-CLI reference
+- `docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md`
+  — the near-term (#113) spec: machine-as-brain default, `spark-lobe` /
+  `thor-lobe`, per-box-honesty-only cross-box decision deferred to #112
+- `docs/specs/2026-07-14-lobes-serves-the-mesh-brain-end-state-one-lobe-per.md`
+  — the mesh-brain end-state (#112) spec: the four decisions above
+- `docs/evidence/2026-07-14-accept-referral-thor.txt` — the live cross-box
+  referral evidence (#112, t5)
 - `docs/machine-profiles.md` — the per-machine (card) tuning axis this
   composes with
 - `docs/colleague-stack.md` — the six-role Colleague contract
