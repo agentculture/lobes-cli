@@ -8,11 +8,12 @@ slug: `lobes-serves-the-brain-shape-you-choose-machine-as` · status: `exported`
 
 ### t1 — Shape schema + built-in shapes: a Shape declares the role subset a box hosts (machine-as-brain = every role the card can serve; spark-lobe = cortex+embedder+reranker+audio, no senses; thor-lobe = senses+embedder+reranker+audio, no cortex) as pure data composed over the #108 Profile schema
 
-- instruction: OWNS: lobes/profiles/ shape schema + builtin shape data files (machine-as-brain, spark-lobe, thor-lobe) + tests/test_shapes.py. Touch NOTHING else. Compose over the #108 t1 Profile schema; if it has not landed yet, coordinate with that build — do not fork or duplicate it.
+- instruction: OWNS: lobes/profiles/ shape schema + builtin shape data files (machine-as-brain, spark-lobe, thor-lobe) + tests/test_shapes.py. Touch NOTHING else. Compose over the LANDED #110 substrate: lobes/profiles/schema.py (Profile/RoleProfile, ROLES, KNOB_NAMES) + loader.py (resolve_profile, operator TOML overrides). Shape data files are TOML, matching lobes/profiles/builtin/. Per user decision: shapes own all SIX Colleague roles — the four core roles map onto Profile machinery; stt/tts are first-class shape members mapping onto the audio overlay (lobes/templates/fleet/docker-compose.audio.yml surfaces).
 - covers: c4, c9, h1
 - acceptance:
   - A Shape round-trips load -> serialise -> identical; an unknown role in a shape is a load error, not a silent drop
   - All three built-in shapes are expressible as data files with zero per-shape python forks; spark-lobe and thor-lobe differ from machine-as-brain only by role subset and budget overrides
+  - stt/tts are expressible shape members: spark-lobe and thor-lobe both declare them hosted, and the schema maps the four core roles to Profile entries and the audio pair to the overlay — an unknown role in a shape is still a load error
 
 ### t2 — Shape-aware budget re-derivation: a shape that drops a lobe re-derives the remaining lobes' budgets (spark-lobe raises cortex util/context above the co-resident 0.30/131072) as declared shape overrides, never runtime mutation
 
@@ -25,7 +26,7 @@ slug: `lobes-serves-the-brain-shape-you-choose-machine-as` · status: `exported`
 
 ### t3 — Render composition shape x card: rendering a (shape, card-profile) pair yields compose/.env; per-(shape,card) goldens checked into tests, rendering a pure function of (shape, profile, template) with no host state
 
-- instruction: OWNS: the shape-x-card render glue + tests/goldens/<shape>-<card>/ + tests/test_shape_goldens.py. Touch NO CLI. Rendering is a pure function of (shape, profile, template) — no GPU, no host reads — so goldens run on a GPU-less CI runner.
+- instruction: OWNS: the shape-x-card render glue + tests/goldens/<shape>-<card>/ + tests/test_shape_goldens.py. Touch NO CLI. Build on the LANDED #110 renderer (lobes/profiles/render.py:profile_env; infeasible role renders <PREFIX>_FEASIBLE=false) and follow the existing tests/goldens/*.env + regen.py convention — the nested per-(shape,card) goldens are additive, do not break test_profile_goldens.py. Rendering maps the four core roles via profile_env and stt/tts via the audio overlay env/compose include; stays a pure function of (shape, profile, template) — no GPU, no host reads.
 - depends on: t1
 - covers: c9, h1, c5, h6, c2
 - acceptance:
@@ -43,12 +44,13 @@ slug: `lobes-serves-the-brain-shape-you-choose-machine-as` · status: `exported`
 
 ### t5 — Dropped-lobe honesty end-to-end: a role the shape drops is omitted from lobes capabilities and GET /capabilities, and the gateway returns 4xx for requests addressing it (model=senses/multimodal on spark-lobe; model=cortex/main on thor-lobe) — reusing the #92 invariant and #108-t6 machinery, one contract test per dropped role
 
-- instruction: OWNS: lobes/gateway/ + the capabilities command + contract tests. Extend the existing #92 never-advertise-what-you-cannot-serve path (and #108-t6 machinery when it lands); no parallel honesty implementation.
+- instruction: OWNS: lobes/gateway/ + the capabilities command + contract tests. Target the SHIPPED #110 machinery exactly: _config.py (FEASIBLE_ENV), _routing.py (RoutingTable.infeasible, list_models_payload), server.py (_feasibility_response -> 404 role_infeasible), roles.py (RoleInfo.feasible), cli/_commands/capabilities.py. Shipped contract: capabilities FLAG a dropped role (feasible:false, annotated), /v1/models omits it, generate lane returns 404 role_infeasible. The corrective acceptance criterion below supersedes the earlier 'omitted from capabilities / generic 4xx' phrasing.
 - depends on: t1
-- covers: c11, h3
+- covers: c11, h3, c17, h13
 - acceptance:
   - With spark-lobe rendered, capabilities omit senses and a POST with model=senses or model=multimodal returns 4xx (contract test); mirror assertions for thor-lobe and cortex/main
   - No dropped role is ever silently rerouted to a different model — the 4xx names the role as not hosted on this box
+  - SUPERSEDES the omit-wording above: with spark-lobe rendered, capabilities show senses feasible:false, /v1/models omits senses, and POST model=senses or model=multimodal returns 404 role_infeasible (contract test); mirror assertions for thor-lobe and cortex/main
 
 ### t6 — Acceptance script + GB10 validation: a documented, runnable command sequence (init --shape spark-lobe, dry-run diff, --apply, correctness probes, capabilities check) executed on the physical Spark; senses gone, every remaining role passes its probe, reclaimed cortex budget measured and recorded
 
@@ -59,6 +61,7 @@ slug: `lobes-serves-the-brain-shape-you-choose-machine-as` · status: `exported`
   - The script runs end-to-end on the GB10 with zero hand-edits to the generated compose; its transcript is attached to the PR
   - Live on the box: GET /capabilities omits senses and model=senses returns 4xx; every hosted role passes its correctness probe
   - The measured reclaimed cortex budget (util/context) is recorded with numbers, not asserted
+  - Live on the box, per the shipped #110 surface (supersedes the omit/4xx phrasing above): GET /capabilities shows senses feasible:false, GET /v1/models omits it, POST model=senses returns 404 role_infeasible
 
 ### t7 — Thor validation: the same acceptance script with --shape thor-lobe on the physical Thor; the Qwen cortex is gone, senses + the pooling gears are up and pass their probes
 
@@ -68,6 +71,7 @@ slug: `lobes-serves-the-brain-shape-you-choose-machine-as` · status: `exported`
 - acceptance:
   - The script runs end-to-end on the Thor with zero hand-edits; transcript attached to the PR; capabilities omit cortex and model=cortex/main returns 4xx
   - Senses and the pooling gears pass their correctness probes (rerank ordering stays an expected failure only if #105/#106 are still open, recorded as such)
+  - Live on the Thor, per the shipped #110 surface (supersedes the omit/4xx phrasing above): capabilities show cortex feasible:false, /v1/models omits it, POST model=cortex or model=main returns 404 role_infeasible
 
 ### t8 — Docs + evidence: docs/deployment-shapes.md (the shape reference, support table, co-residency tax numbers, before-state citation of the unconditional core roles and closed #109), lobes explain shapes, CLAUDE.md update, and the PR scope checklist enforcing the boundary (shape selection + two shapes only; anything one-lobe-per-box or Orin routes to #112)
 

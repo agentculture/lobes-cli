@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-14T04:24:32Z",
-  "updated": "2026-07-14T04:39:51Z",
+  "updated": "2026-07-14T05:11:02Z",
   "targets": [
     {
       "id": "c1",
@@ -108,16 +108,6 @@
       "text": "A dry-run shape change prints the full compose/.env diff and changes zero bytes on disk; --apply is required to commit; re-running init with the previous shape restores the previous rendering byte-for-byte."
     },
     {
-      "id": "c11",
-      "kind": "requirement",
-      "text": "A dropped lobe is dropped honestly end-to-end: the box capabilities omit it and the gateway 4xxes requests for it (reusing the #92 invariant and #108-t6 machinery) \u2014 never half-served, never silently rerouted to a different model."
-    },
-    {
-      "id": "h3",
-      "kind": "honesty",
-      "text": "With senses dropped on the Spark, GET /capabilities omits senses and a POST with model=senses or model=multimodal returns 4xx \u2014 verified live on the box and encoded as a contract test."
-    },
-    {
       "id": "c12",
       "kind": "requirement",
       "text": "Freed budget is actually reclaimed: when senses leaves the Spark, the remaining lobes budgets are re-derived (cortex util/context can rise) rather than staying at co-residency values \u2014 otherwise specialization buys nothing."
@@ -126,6 +116,16 @@
       "id": "h4",
       "kind": "honesty",
       "text": "The spark mesh-lobe rendered .env gives cortex a strictly larger budget than the co-resident values (util 0.30 / 131072), and the box boots it healthily \u2014 measured on the GB10, not asserted."
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "A dropped lobe is dropped honestly end-to-end, matching the shipped #110 surface: capabilities FLAG it (feasible:false, annotated) rather than hiding it, /v1/models omits it entirely, and the generate lane returns 404 role_infeasible \u2014 never half-served, never silently rerouted to a different model."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "With senses dropped on the Spark: lobes capabilities and GET /capabilities show senses feasible:false, GET /v1/models omits it, and a POST with model=senses or model=multimodal returns 404 role_infeasible \u2014 verified live on the box and encoded as a contract test."
     }
   ],
   "tasks": [
@@ -136,7 +136,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "A Shape round-trips load -> serialise -> identical; an unknown role in a shape is a load error, not a silent drop",
-        "All three built-in shapes are expressible as data files with zero per-shape python forks; spark-lobe and thor-lobe differ from machine-as-brain only by role subset and budget overrides"
+        "All three built-in shapes are expressible as data files with zero per-shape python forks; spark-lobe and thor-lobe differ from machine-as-brain only by role subset and budget overrides",
+        "stt/tts are expressible shape members: spark-lobe and thor-lobe both declare them hosted, and the schema maps the four core roles to Profile entries and the audio pair to the overlay \u2014 an unknown role in a shape is still a load error"
       ],
       "deps": [],
       "covers": [
@@ -144,7 +145,7 @@
         "c9",
         "h1"
       ],
-      "instruction": "OWNS: lobes/profiles/ shape schema + builtin shape data files (machine-as-brain, spark-lobe, thor-lobe) + tests/test_shapes.py. Touch NOTHING else. Compose over the #108 t1 Profile schema; if it has not landed yet, coordinate with that build \u2014 do not fork or duplicate it."
+      "instruction": "OWNS: lobes/profiles/ shape schema + builtin shape data files (machine-as-brain, spark-lobe, thor-lobe) + tests/test_shapes.py. Touch NOTHING else. Compose over the LANDED #110 substrate: lobes/profiles/schema.py (Profile/RoleProfile, ROLES, KNOB_NAMES) + loader.py (resolve_profile, operator TOML overrides). Shape data files are TOML, matching lobes/profiles/builtin/. Per user decision: shapes own all SIX Colleague roles \u2014 the four core roles map onto Profile machinery; stt/tts are first-class shape members mapping onto the audio overlay (lobes/templates/fleet/docker-compose.audio.yml surfaces)."
     },
     {
       "id": "t2",
@@ -183,7 +184,7 @@
         "h6",
         "c2"
       ],
-      "instruction": "OWNS: the shape-x-card render glue + tests/goldens/<shape>-<card>/ + tests/test_shape_goldens.py. Touch NO CLI. Rendering is a pure function of (shape, profile, template) \u2014 no GPU, no host reads \u2014 so goldens run on a GPU-less CI runner."
+      "instruction": "OWNS: the shape-x-card render glue + tests/goldens/<shape>-<card>/ + tests/test_shape_goldens.py. Touch NO CLI. Build on the LANDED #110 renderer (lobes/profiles/render.py:profile_env; infeasible role renders <PREFIX>_FEASIBLE=false) and follow the existing tests/goldens/*.env + regen.py convention \u2014 the nested per-(shape,card) goldens are additive, do not break test_profile_goldens.py. Rendering maps the four core roles via profile_env and stt/tts via the audio overlay env/compose include; stays a pure function of (shape, profile, template) \u2014 no GPU, no host reads."
     },
     {
       "id": "t4",
@@ -212,16 +213,19 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "With spark-lobe rendered, capabilities omit senses and a POST with model=senses or model=multimodal returns 4xx (contract test); mirror assertions for thor-lobe and cortex/main",
-        "No dropped role is ever silently rerouted to a different model \u2014 the 4xx names the role as not hosted on this box"
+        "No dropped role is ever silently rerouted to a different model \u2014 the 4xx names the role as not hosted on this box",
+        "SUPERSEDES the omit-wording above: with spark-lobe rendered, capabilities show senses feasible:false, /v1/models omits senses, and POST model=senses or model=multimodal returns 404 role_infeasible (contract test); mirror assertions for thor-lobe and cortex/main"
       ],
       "deps": [
         "t1"
       ],
       "covers": [
         "c11",
-        "h3"
+        "h3",
+        "c17",
+        "h13"
       ],
-      "instruction": "OWNS: lobes/gateway/ + the capabilities command + contract tests. Extend the existing #92 never-advertise-what-you-cannot-serve path (and #108-t6 machinery when it lands); no parallel honesty implementation."
+      "instruction": "OWNS: lobes/gateway/ + the capabilities command + contract tests. Target the SHIPPED #110 machinery exactly: _config.py (FEASIBLE_ENV), _routing.py (RoutingTable.infeasible, list_models_payload), server.py (_feasibility_response -> 404 role_infeasible), roles.py (RoleInfo.feasible), cli/_commands/capabilities.py. Shipped contract: capabilities FLAG a dropped role (feasible:false, annotated), /v1/models omits it, generate lane returns 404 role_infeasible. The corrective acceptance criterion below supersedes the earlier 'omitted from capabilities / generic 4xx' phrasing."
     },
     {
       "id": "t6",
@@ -231,7 +235,8 @@
       "acceptance_criteria": [
         "The script runs end-to-end on the GB10 with zero hand-edits to the generated compose; its transcript is attached to the PR",
         "Live on the box: GET /capabilities omits senses and model=senses returns 4xx; every hosted role passes its correctness probe",
-        "The measured reclaimed cortex budget (util/context) is recorded with numbers, not asserted"
+        "The measured reclaimed cortex budget (util/context) is recorded with numbers, not asserted",
+        "Live on the box, per the shipped #110 surface (supersedes the omit/4xx phrasing above): GET /capabilities shows senses feasible:false, GET /v1/models omits it, POST model=senses returns 404 role_infeasible"
       ],
       "deps": [
         "t2",
@@ -256,7 +261,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "The script runs end-to-end on the Thor with zero hand-edits; transcript attached to the PR; capabilities omit cortex and model=cortex/main returns 4xx",
-        "Senses and the pooling gears pass their correctness probes (rerank ordering stays an expected failure only if #105/#106 are still open, recorded as such)"
+        "Senses and the pooling gears pass their correctness probes (rerank ordering stays an expected failure only if #105/#106 are still open, recorded as such)",
+        "Live on the Thor, per the shipped #110 surface (supersedes the omit/4xx phrasing above): capabilities show cortex feasible:false, /v1/models omits it, POST model=cortex or model=main returns 404 role_infeasible"
       ],
       "deps": [
         "t4",

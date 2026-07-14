@@ -30,12 +30,12 @@
 - Selecting the shape is easy and safe: a flag, a wizard, or a profile set on lobes init — something easy to set up without doing damage. Dry-run by default, --apply to commit, recoverable by re-running init with the previous shape.
   - instruction: Implement shape selection on lobes init behind the existing dry-run/--apply mutation-safety contract; verify via h2: diff shown on dry-run, zero bytes changed, --apply commits, re-init with the previous shape restores it byte-for-byte.
   - honesty: A dry-run shape change prints the full compose/.env diff and changes zero bytes on disk; --apply is required to commit; re-running init with the previous shape restores the previous rendering byte-for-byte.
-- A dropped lobe is dropped honestly end-to-end: the box capabilities omit it and the gateway 4xxes requests for it (reusing the #92 invariant and #108-t6 machinery) — never half-served, never silently rerouted to a different model.
-  - instruction: Wire dropped-role honesty through the existing #92 / #108-t6 path: capabilities omission plus gateway 4xx, with a contract test per dropped role.
-  - honesty: With senses dropped on the Spark, GET /capabilities omits senses and a POST with model=senses or model=multimodal returns 4xx — verified live on the box and encoded as a contract test.
 - Freed budget is actually reclaimed: when senses leaves the Spark, the remaining lobes budgets are re-derived (cortex util/context can rise) rather than staying at co-residency values — otherwise specialization buys nothing.
   - instruction: Re-derive budgets in the shape overlay (spark-lobe raises cortex util/context above 0.30/131072); measure on the GB10 and record the numbers in the docs.
   - honesty: The spark mesh-lobe rendered .env gives cortex a strictly larger budget than the co-resident values (util 0.30 / 131072), and the box boots it healthily — measured on the GB10, not asserted.
+- A dropped lobe is dropped honestly end-to-end, matching the shipped #110 surface: capabilities FLAG it (feasible:false, annotated) rather than hiding it, /v1/models omits it entirely, and the generate lane returns 404 role_infeasible — never half-served, never silently rerouted to a different model.
+  - instruction: Wire dropped-role honesty through the SHIPPED #110 machinery: lobes/gateway/_config.py (FEASIBLE_ENV), _routing.py (RoutingTable.infeasible, list_models_payload), server.py (_feasibility_response, 404 role_infeasible), roles.py (RoleInfo.feasible) — one contract test per dropped role; do not build a parallel path.
+  - honesty: With senses dropped on the Spark: lobes capabilities and GET /capabilities show senses feasible:false, GET /v1/models omits it, and a POST with model=senses or model=multimodal returns 404 role_infeasible — verified live on the box and encoded as a contract test.
 
 ## Honesty conditions
 
@@ -67,6 +67,7 @@
 - machine-as-brain stays the default: bare lobes init on any box yields the whole brain that box can serve; mesh-brain shapes are opt-in per box.
 - Cross-box story is per-box honesty only for this change: each box advertises only the lobes it hosts and consumers address each box directly (how the Culture mesh already connects per machine); gateway proxying of absent roles and a brain-level capabilities view are deferred to the #112 design work.
 - Shape selection ships as a flag first: lobes init --shape <machine-as-brain|spark-lobe|thor-lobe>, dry-run by default, --apply to commit; an interactive wizard is a parked follow-up, not part of this change.
+- Shapes own all six Colleague roles, audio included: stt and tts are first-class shape members (spark-lobe = cortex+embedder+reranker+stt+tts, no senses; thor-lobe = senses+embedder+reranker+stt+tts, no cortex); the four core roles render via the #110 Profile machinery and the audio pair via the audio overlay — the shape is the single per-box hosting contract.
 
 ## Hard questions
 
