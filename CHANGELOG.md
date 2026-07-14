@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Strict, grammar-constrained tool calls with thinking enabled (colleague#320): new lobes.vllm_plugins package ships the qwen3_coder_thinking vLLM tool-parser plugin (overrides get_structural_tag to derive reasoning from the request's effective enable_thinking, fixing the strict+thinking HTTP 500 caused by the served build's hardcoded reasoning=False); the fleet template mounts it into vllm-primary via --tool-parser-plugin and flips PRIMARY_TOOL_CALL_PARSER default to qwen3_coder_thinking; lobes init materialises the plugin file into the deployment dir; the gateway gains an opt-in GATEWAY_FORCE_STRICT_TOOLS knob injecting function.strict=true on cortex-lane tools requests with a retry-once-without-strict fallback on schema-compile failures
+- spec + plan (devague /think + /spec-to-plan): docs/specs/2026-07-14-lobes-serves-strict-grammar-constrained-tool-calls.md and docs/plans/2026-07-14-… — converged frame with the proven root cause (server-side parser-salvage mangle of off-template emissions, deterministic at temp 0) and the user decisions (arm strict BOTH ways; retry-without-strict on schema-compile failure); live evidence recorded in the in-repo eidetic store
 
 ## [0.43.0] - 2026-07-14
 
