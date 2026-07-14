@@ -4,7 +4,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-14T05:37:43Z",
-  "updated": "2026-07-14T05:56:50Z",
+  "updated": "2026-07-14T06:09:22Z",
   "claims": [
     {
       "id": "c1",
@@ -376,6 +376,12 @@
       "id": "v3",
       "text": "Consumer config repointing when a cheap gear moves boxes (e.g. eidetic's embed endpoint default http://localhost:8002/v1 stops being local if the embedder leaves the Spark) \u2014 the exact migration story depends on the q3 placement decision",
       "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Proxy-lobes \u2014 a box serves a sleeping lobe by following its own referral (gateway forwards to the hosting peer, advertised as proxied, never impersonating local serving); opt-in per box per role, direct+referral stays the default \u2014 filed as agentculture/lobes-cli#115, sequenced after #112",
+      "kind": "follow_up",
       "claim_id": null
     }
   ],

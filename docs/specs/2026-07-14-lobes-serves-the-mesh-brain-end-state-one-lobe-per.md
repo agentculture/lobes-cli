@@ -83,3 +83,4 @@
 ## Open / follow-up
 
 - Physical Jetson AGX Orin 64GB boot + probe validation — the orin small-model shape ships as declared-but-unvalidated data until someone boots one (the #108 rule); validation is its own follow-up with its own evidence
+- Proxy-lobes — a box serves a *sleeping lobe* by following its own referral (gateway forwards to the hosting peer, advertised as proxied, never impersonating local serving); opt-in per box per role, direct+referral stays the default — tracked as agentculture/lobes-cli#115, sequenced after #112
