@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.4] - 2026-07-14
+
+### Added
+
+- Spec + plan: deployment shapes — machine-as-brain (default) vs per-box mesh-brain lobe profiles (spark-lobe drops Gemma senses, thor-lobe drops the Qwen cortex), flag-first selection on lobes init, per-box honesty; end-state tracked as #112 (devague frame + 8-task plan)
+
 ## [0.40.3] - 2026-07-13
 
 ### Added

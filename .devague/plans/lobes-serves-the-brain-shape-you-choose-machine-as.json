@@ -1,0 +1,326 @@
+{
+  "slug": "lobes-serves-the-brain-shape-you-choose-machine-as",
+  "title": "lobes serves the brain shape you choose: machine-as-brain keeps the whole brain on one box; mesh-brain gives each box the lobes it is best at \u2014 the Spark drops Gemma, Thor drops Qwen \u2014 one safe command either way",
+  "frame_slug": "lobes-serves-the-brain-shape-you-choose-machine-as",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-14T04:24:32Z",
+  "updated": "2026-07-14T04:39:51Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves the brain shape you choose: machine-as-brain keeps the whole brain on one box; mesh-brain gives each box the lobes it is best at \u2014 the Spark drops Gemma, Thor drops Qwen \u2014 one safe command either way"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Both commands exist and are safe: on a supported box, bare lobes init yields machine-as-brain and lobes init --shape <mesh-lobe> yields that box's mesh shape \u2014 both dry-run by default, proven live on the GB10 and the Thor plus goldens in CI."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Operators of one-or-many NVIDIA boxes running the Culture mesh local brain \u2014 the single-box user (whole brain on one machine) and the multi-box fleet operator (DGX Spark GB10 + Jetson AGX Thor 128GB today, Jetson AGX Orin 64GB next) \u2014 plus the agents consuming the roles."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Every named audience is actually served: the one-box default path stays zero-decision (goldens byte-identical), the Spark and Thor shapes are validated on their physical boxes, and consuming agents keep addressing each box exactly as the Culture mesh does today."
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Fleet composition is fixed, not chosen: the four core roles (cortex, senses, embedder, reranker) are unconditional in the fleet template \u2014 only minor/middle/multimodal-coder sit behind COMPOSE_PROFILES \u2014 so Spark-drops-Gemma or Thor-drops-Qwen today means hand-editing docker-compose.yml, exactly the drift the #108 goldens exist to prevent. #108 profiles say what a card CAN serve and how it is tuned; nothing says what a box SHOULD host in a mesh. The substrate is verified: #109 closed on GB10 evidence (fp8-KV is an sm_110-conditional trait; the attention-backend env is dead on the shared pinned nightly)."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The before-state is checkable in the shipped tree: the four core roles carry no profiles: stanza in lobes/templates/fleet/docker-compose.yml (only minor/middle/multimodal-coder do), and #109 is closed with the GB10 evidence recorded on the issue."
+    },
+    {
+      "id": "c4",
+      "kind": "after_state",
+      "text": "An operator picks a deployment shape safely: machine-as-brain (default \u2014 one box hosts every lobe it can, today's behaviour) or a per-box mesh-brain lobe profile. Near-term shapes: the Spark keeps the Qwen cortex + embedder + reranker + audio and drops Gemma senses; Thor keeps Gemma senses + the rest and drops the Qwen cortex."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Both near-term shapes boot on their physical boxes with zero hand-edits: spark mesh-lobe (no Gemma) on the GB10 and thor mesh-lobe (no Qwen) on the Thor, every remaining role passing its correctness probe."
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "Not everyone has many machines \u2014 the whole-brain-on-one-box shape must stay first-class and zero-decision; mesh-brain specialization is opt-in for operators who have a fleet."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The bare-init machine-as-brain path is regression-proof: rendering on a recognised card is byte-identical before and after this change (goldens unchanged)."
+    },
+    {
+      "id": "c6",
+      "kind": "why_it_matters",
+      "text": "Co-residency taxes every lobe: senses is trimmed to 32K, cortex to 128K instead of its 256K native, inside a 0.56 GPU budget on the GB10 \u2014 a box that hosts only the lobes it is best at gives each lobe its machine back."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The tax numbers are the shipped values, not estimates: MULTIMODAL_MAX_MODEL_LEN=32768, PRIMARY_MAX_MODEL_LEN=131072 vs 262144 solo-native, and the 0.30+0.14+0.06+0.06=0.56 GPU budget \u2014 all readable in the deployed env."
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "The one-lobe-per-box end-state (Qwen-only Spark, Gemma-only Thor, small models on Orin 64GB) is tracked as #112 and stays a future PR \u2014 this change only makes deployment shape a safe first-class choice and ships the first two mesh-lobe shapes. The #108 knob/feasibility/golden machinery is the substrate, not re-done here. Orin ships nothing until someone boots one."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Scope holds in the diff: the PR ships shape selection plus the two mesh-lobe shapes only \u2014 no one-lobe-per-box rendering, no Orin profile, no re-doing the #108 substrate \u2014 anything beyond routes to #112."
+    },
+    {
+      "id": "c8",
+      "kind": "success_signal",
+      "text": "On the Spark, one safe command (dry-run shows the full diff, --apply commits) moves the box from machine-as-brain to its mesh-lobe shape: Gemma is gone, every remaining role is up and passes its correctness probe, and capabilities are honest \u2014 senses is absent and a request for it gets a 4xx (#92 invariant). The mirror move on Thor drops the Qwen cortex. A one-box user runs bare lobes init and gets machine-as-brain with zero extra decisions."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The signal is runnable, not prose: a documented command sequence (init --shape, dry-run diff, --apply, correctness probes, capabilities check) executes on both boxes and its transcript is recorded in the PR."
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Deployment shape is a first-class axis ORTHOGONAL to the hardware profile: shape (which lobes this box hosts) x card (how each lobe is tuned on this silicon) compose as data, without a named-profile matrix explosion."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The spark and thor mesh-lobe shapes are expressible purely as data over the #108 Profile schema (role subset + model per role + knobs) \u2014 no per-shape code fork \u2014 proven by rendering both shapes into byte-diffed goldens like t13."
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Selecting the shape is easy and safe: a flag, a wizard, or a profile set on lobes init \u2014 something easy to set up without doing damage. Dry-run by default, --apply to commit, recoverable by re-running init with the previous shape."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A dry-run shape change prints the full compose/.env diff and changes zero bytes on disk; --apply is required to commit; re-running init with the previous shape restores the previous rendering byte-for-byte."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "A dropped lobe is dropped honestly end-to-end: the box capabilities omit it and the gateway 4xxes requests for it (reusing the #92 invariant and #108-t6 machinery) \u2014 never half-served, never silently rerouted to a different model."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "With senses dropped on the Spark, GET /capabilities omits senses and a POST with model=senses or model=multimodal returns 4xx \u2014 verified live on the box and encoded as a contract test."
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Freed budget is actually reclaimed: when senses leaves the Spark, the remaining lobes budgets are re-derived (cortex util/context can rise) rather than staying at co-residency values \u2014 otherwise specialization buys nothing."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The spark mesh-lobe rendered .env gives cortex a strictly larger budget than the co-resident values (util 0.30 / 131072), and the box boots it healthily \u2014 measured on the GB10, not asserted."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Shape schema + built-in shapes: a Shape declares the role subset a box hosts (machine-as-brain = every role the card can serve; spark-lobe = cortex+embedder+reranker+audio, no senses; thor-lobe = senses+embedder+reranker+audio, no cortex) as pure data composed over the #108 Profile schema",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A Shape round-trips load -> serialise -> identical; an unknown role in a shape is a load error, not a silent drop",
+        "All three built-in shapes are expressible as data files with zero per-shape python forks; spark-lobe and thor-lobe differ from machine-as-brain only by role subset and budget overrides"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "c9",
+        "h1"
+      ],
+      "instruction": "OWNS: lobes/profiles/ shape schema + builtin shape data files (machine-as-brain, spark-lobe, thor-lobe) + tests/test_shapes.py. Touch NOTHING else. Compose over the #108 t1 Profile schema; if it has not landed yet, coordinate with that build \u2014 do not fork or duplicate it."
+    },
+    {
+      "id": "t2",
+      "summary": "Shape-aware budget re-derivation: a shape that drops a lobe re-derives the remaining lobes' budgets (spark-lobe raises cortex util/context above the co-resident 0.30/131072) as declared shape overrides, never runtime mutation",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The spark-lobe rendered .env gives cortex a strictly larger budget than the co-resident values (util > 0.30 or max-model-len > 131072), stated as data in the shape with provenance",
+        "machine-as-brain budgets are byte-identical to today's shipped values"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c12",
+        "h4"
+      ],
+      "instruction": "OWNS: the budget-override fields inside t1's shape data files + their tests. Sequenced after t1 (same files \u2014 never same-wave). Every derived value carries a provenance comment naming its cause; machine-as-brain values stay byte-identical to shipped."
+    },
+    {
+      "id": "t3",
+      "summary": "Render composition shape x card: rendering a (shape, card-profile) pair yields compose/.env; per-(shape,card) goldens checked into tests, rendering a pure function of (shape, profile, template) with no host state",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The spark-lobe golden contains no senses service; the thor-lobe golden contains no cortex service; the machine-as-brain golden is byte-identical to the pre-change rendering on a recognised card",
+        "A change to one shape's data leaves every other (shape,card) golden byte-identical, enforced by CI on a GPU-less runner"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c9",
+        "h1",
+        "c5",
+        "h6",
+        "c2"
+      ],
+      "instruction": "OWNS: the shape-x-card render glue + tests/goldens/<shape>-<card>/ + tests/test_shape_goldens.py. Touch NO CLI. Rendering is a pure function of (shape, profile, template) \u2014 no GPU, no host reads \u2014 so goldens run on a GPU-less CI runner."
+    },
+    {
+      "id": "t4",
+      "summary": "lobes init --shape <machine-as-brain|spark-lobe|thor-lobe>: flag-first selection behind the existing dry-run/--apply mutation-safety contract; bare init stays machine-as-brain with zero new decisions",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Dry-run prints the full compose/.env diff and changes zero bytes on disk; --apply is required to commit; re-running init with the previous shape restores the previous rendering byte-for-byte",
+        "Bare lobes init renders machine-as-brain exactly as before this change (golden unchanged); --shape with an unknown value is a user error naming the valid shapes"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h7",
+        "c10",
+        "h2"
+      ],
+      "instruction": "OWNS: lobes/cli/_commands/init.py + its tests. Keep the existing dry-run-by-default/--apply mutation-safety contract; consume t3's render API, do not re-implement rendering; bare init path byte-identical."
+    },
+    {
+      "id": "t5",
+      "summary": "Dropped-lobe honesty end-to-end: a role the shape drops is omitted from lobes capabilities and GET /capabilities, and the gateway returns 4xx for requests addressing it (model=senses/multimodal on spark-lobe; model=cortex/main on thor-lobe) \u2014 reusing the #92 invariant and #108-t6 machinery, one contract test per dropped role",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With spark-lobe rendered, capabilities omit senses and a POST with model=senses or model=multimodal returns 4xx (contract test); mirror assertions for thor-lobe and cortex/main",
+        "No dropped role is ever silently rerouted to a different model \u2014 the 4xx names the role as not hosted on this box"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c11",
+        "h3"
+      ],
+      "instruction": "OWNS: lobes/gateway/ + the capabilities command + contract tests. Extend the existing #92 never-advertise-what-you-cannot-serve path (and #108-t6 machinery when it lands); no parallel honesty implementation."
+    },
+    {
+      "id": "t6",
+      "summary": "Acceptance script + GB10 validation: a documented, runnable command sequence (init --shape spark-lobe, dry-run diff, --apply, correctness probes, capabilities check) executed on the physical Spark; senses gone, every remaining role passes its probe, reclaimed cortex budget measured and recorded",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The script runs end-to-end on the GB10 with zero hand-edits to the generated compose; its transcript is attached to the PR",
+        "Live on the box: GET /capabilities omits senses and model=senses returns 4xx; every hosted role passes its correctness probe",
+        "The measured reclaimed cortex budget (util/context) is recorded with numbers, not asserted"
+      ],
+      "deps": [
+        "t2",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c8",
+        "h12",
+        "h5",
+        "h4",
+        "h8",
+        "c1",
+        "c4"
+      ],
+      "instruction": "Validation ON the GB10 (this box). Author the acceptance script (init --shape spark-lobe, dry-run diff, --apply, probes, capabilities check); move ~/.lobes aside first so the run starts from a clean deployment dir; record the transcript and the measured reclaimed cortex budget in the PR."
+    },
+    {
+      "id": "t7",
+      "summary": "Thor validation: the same acceptance script with --shape thor-lobe on the physical Thor; the Qwen cortex is gone, senses + the pooling gears are up and pass their probes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The script runs end-to-end on the Thor with zero hand-edits; transcript attached to the PR; capabilities omit cortex and model=cortex/main returns 4xx",
+        "Senses and the pooling gears pass their correctness probes (rerank ordering stays an expected failure only if #105/#106 are still open, recorded as such)"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "h5",
+        "h12",
+        "c4",
+        "h8"
+      ],
+      "instruction": "Validation ON the physical Thor \u2014 cannot run from the Spark; coordinate with the Thor operator. Re-run t6's script with --shape thor-lobe from a clean deployment dir; transcript to the PR; rerank ordering remains an expected failure only while #105/#106 stay open."
+    },
+    {
+      "id": "t8",
+      "summary": "Docs + evidence: docs/deployment-shapes.md (the shape reference, support table, co-residency tax numbers, before-state citation of the unconditional core roles and closed #109), lobes explain shapes, CLAUDE.md update, and the PR scope checklist enforcing the boundary (shape selection + two shapes only; anything one-lobe-per-box or Orin routes to #112)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs quote the shipped tax values (senses 32K, cortex 128K vs 256K solo-native, 0.56 budget) and cite the template lines + closed #109 as before-state evidence",
+        "The PR description carries the scope checklist; review rejects any diff beyond shape selection + the two shapes",
+        "lobes explain shapes renders the same reference in-CLI"
+      ],
+      "deps": [
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c2",
+        "h8",
+        "c3",
+        "h9",
+        "c6",
+        "h10",
+        "c7",
+        "h11"
+      ],
+      "instruction": "OWNS: docs/deployment-shapes.md (new) + lobes/explain/ + CLAUDE.md + the PR scope checklist. Docs only, no source. Quote shipped tax values; cite the template lines and closed #109 as before-state evidence; route anything one-lobe-per-box or Orin to #112."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The #108 implementation (t1 profile schema, t6 feasibility honesty, t13 goldens) has not landed yet \u2014 this plan's t1/t3/t5 compose on that machinery; build alongside or after it and re-check the composition surface when it lands",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r2",
+      "text": "t7 needs hands on the physical Thor box \u2014 it cannot run from the Spark; schedule with the Thor operator",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r3",
+      "text": "Exact reclaimed cortex numbers on spark-lobe (256K native? higher util?) are measured in t6, not specced",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r4",
+      "text": "Interactive shape wizard and gateway proxying of absent roles are parked follow-ups (frame v4, #112)",
+      "kind": "follow_up",
+      "task_id": null
+    }
+  ]
+}
