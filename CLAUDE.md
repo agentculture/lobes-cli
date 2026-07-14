@@ -53,6 +53,23 @@ delta) proves the input-side round-trip is live; the continuity benefit to
 output quality is expected and opt-in, not guaranteed by the diagnostic. See
 `docs/qwen3.6-27b-text-nvfp4-mtp.md` for the flag and diagnostic detail.
 
+**Strict tool calling with thinking (colleague#320).** Unconstrained
+thinking-mode generation can drift off the `qwen3_coder` tool-call template
+and get "salvaged" by vLLM's parser into a mangled call; `strict: true` on a
+tool schema arms xgrammar structural-tag constrained decoding to make that
+impossible, but the served build hardcodes `reasoning=False` at its
+structural-tag call site, which breaks the grammar for a thinking model
+(`</think>` rejected → 500). The fix is the `qwen3_coder_thinking`
+tool-parser plugin (`lobes/vllm_plugins/`, loaded via vLLM's own
+`--tool-parser-plugin` file-path surface, cortex/main lane only — mirrors
+the `preserve_thinking` #93 scoping) — it derives the grammar's `reasoning`
+flag from the request's own `enable_thinking` instead of the hardcoded
+`False`. A separate, default-off gateway knob (`GATEWAY_FORCE_STRICT_TOOLS`)
+opts existing callers into strict schemas without a client-side change, with
+a retry-without-strict fallback on a grammar-compile failure. See
+`docs/qwen3.6-27b-text-nvfp4-mtp.md`, `docs/openai-api.md`, and
+`docs/gateway-fleet.md` for the mechanism, scope, and knob detail.
+
 ### Colleague roles: cortex / senses / embedder / reranker / stt / tts
 
 Beyond `cortex`, the **fleet** exposes SIX first-class, Colleague-facing
