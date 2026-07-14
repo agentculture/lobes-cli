@@ -468,7 +468,11 @@ def test_deployed_gateway_version_matches_cli() -> None:
         f"the host CLI ({LOBES_VERSION}) and PyPI moved on. A missing version is skew, "
         f"not a pass: redeploy the gateway to at least {LOBES_VERSION}. Body: {health!r}"
     )
-    assert gw_version == LOBES_VERSION, (
+    # Dev lane: a gateway built from a TestPyPI pre-release of THIS version
+    # (MODEL_GEAR_VERSION=X.Y.Z.devN + GATEWAY_PIP_EXTRA_INDEX_URL) is this
+    # branch's own code, not drift — accept when the public base matches.
+    gw_base = gw_version.split(".dev", 1)[0]
+    assert gw_version == LOBES_VERSION or (".dev" in gw_version and gw_base == LOBES_VERSION), (
         f"#99 version skew: the gateway /health reports {gw_version!r} but this CLI is "
         f"{LOBES_VERSION!r}. A merged fix has not reached this deployment — redeploy "
         f"(re-run `lobes init` / rebuild the gateway image) so Dockerfile.gateway "
