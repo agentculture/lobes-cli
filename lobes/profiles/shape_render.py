@@ -29,11 +29,14 @@ mirroring ``lobes init --fleet --audio`` / ``lobes fleet up`` auto-including
 it when present. The opt-in ``minor`` gear (:data:`~lobes.profiles.shapes.OPT_IN_ROLES`,
 added for the mesh-brain end-state's t2, issue #112) likewise carries no
 Profile knobs — its service (``vllm-minor``) already lives, unconditionally,
-in the base fleet compose file, gated only by the ``minor`` Docker Compose
-profile; hosting it contributes no new ``.env`` key, only a service-set
-entry. So a shape contributes to BOTH sides of "compose/.env": the ``.env``
-via the core roles, and the compose file list + service set via what it
-hosts.
+in the base fleet compose file, gated by the ``minor`` Docker Compose
+profile; hosting it contributes a service-set entry PLUS its **activation
+env** (:data:`OPT_IN_ACTIVATION_ENV` / :data:`OPT_IN_COMPOSE_PROFILE` —
+``COMPOSE_PROFILES`` to un-gate the service and the ``MINOR_BASE_URL`` /
+``MINOR_SERVED_NAME`` pair the gateway needs to wire the backend). So a
+shape contributes to BOTH sides of "compose/.env": the ``.env`` via the core
+roles + opt-in activation, and the compose file list + service set via what
+it hosts.
 
 **Dropped role -> flagged off, no service.** A core role a shape does NOT host
 renders the #110-conventional ``<PREFIX>_FEASIBLE=false`` marker and nothing
@@ -79,6 +82,30 @@ ROLE_SERVICE: dict[str, str] = {
 # whenever the overlay is), neither of which is a per-role gear.
 GATEWAY_SERVICE = "gateway"
 REALTIME_SERVICE = "realtime"
+
+# Opt-in role -> the .env keys that ACTIVATE it (mesh-brain t2 review fix,
+# issue #112 / PR #121). Unlike the four core roles, an opt-in gear's service
+# is gated behind a Docker Compose profile and its gateway backend is wired
+# only when its *_BASE_URL is non-empty -- so merely listing the service
+# (shape_services) starts nothing: `docker compose up` skips the profile-gated
+# service and the gateway leaves the backend unwired. A shape that HOSTS an
+# opt-in role must therefore also render its activation env. Values mirror the
+# shipped fleet template's own defaults exactly (vllm-minor serves
+# --served-model-name=${MINOR_SERVED_NAME:-Qwen/Qwen3.5-4B} on the compose
+# net at vllm-minor:8000) -- same mirror-the-template design as ROLE_SERVICE,
+# verified against the real compose file by tests/test_shapes.py.
+OPT_IN_ACTIVATION_ENV: dict[str, dict[str, str]] = {
+    "minor": {
+        "MINOR_BASE_URL": "http://vllm-minor:8000",
+        "MINOR_SERVED_NAME": "Qwen/Qwen3.5-4B",
+    },
+}
+# Opt-in role -> the Docker Compose profile that gates its service; rendered
+# as COMPOSE_PROFILES so a plain `docker compose up` (no --profile flag --
+# exactly what `lobes fleet up` runs) brings the service up.
+OPT_IN_COMPOSE_PROFILE: dict[str, str] = {
+    "minor": "minor",
+}
 
 
 def _overlay(base: RoleProfile, override: RoleProfile) -> RoleProfile:
@@ -134,13 +161,27 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
 def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     """The ``.env`` projection for a (shape, card) pair.
 
-    Pure passthrough of :func:`lobes.profiles.render.profile_env` over the
-    composed :class:`Profile` (:func:`compose_profile`) -- never a
-    reimplementation of the role -> env mapping. Byte-identical to
+    Passthrough of :func:`lobes.profiles.render.profile_env` over the composed
+    :class:`Profile` (:func:`compose_profile`) -- never a reimplementation of
+    the role -> env mapping -- plus, for each **hosted opt-in role**, the
+    activation keys that actually bring its gear up
+    (:data:`OPT_IN_ACTIVATION_ENV` + :data:`OPT_IN_COMPOSE_PROFILE`): without
+    them the service stays parked behind its Compose profile and the gateway
+    leaves the backend unwired (Qodo find on PR #121). Byte-identical to
     ``profile_env(profile)`` for the whole-brain ``machine-as-brain`` shape
-    (hosts every role, no overrides), which is the invariant the goldens pin.
+    (hosts every role, no overrides, no opt-in gear), which is the invariant
+    the goldens pin.
     """
-    return profile_env(compose_profile(shape, profile))
+    env = profile_env(compose_profile(shape, profile))
+    compose_profiles = [
+        OPT_IN_COMPOSE_PROFILE[role] for role in OPT_IN_ROLES if shape.hosts_role(role)
+    ]
+    for role in OPT_IN_ROLES:
+        if shape.hosts_role(role):
+            env.update(OPT_IN_ACTIVATION_ENV[role])
+    if compose_profiles:
+        env["COMPOSE_PROFILES"] = ",".join(compose_profiles)
+    return env
 
 
 def shape_compose_files(shape: Shape) -> tuple[str, ...]:

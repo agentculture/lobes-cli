@@ -63,7 +63,13 @@ new hostable role beyond the six first-class Colleague roles: the opt-in
 Profile knobs of its own — re-using the `cortex` role slot for a 4B model
 instead would mean the box advertises the 27B Colleague role while actually
 serving something else, which is exactly the half-honest posture #92
-forbids.
+forbids. Hosting an opt-in gear also renders its **activation env**
+(`shape_render.OPT_IN_ACTIVATION_ENV`): `COMPOSE_PROFILES=minor` un-gates the
+profile-gated `vllm-minor` service and `MINOR_BASE_URL` /
+`MINOR_SERVED_NAME` wire the gateway backend — without these three keys a
+scaffolded `orin-small` would start no generate lane at all (found by review
+on PR #121; pinned by `tests/test_shape_goldens.py` and the orin-small
+goldens).
 
 ## Selecting a shape
 

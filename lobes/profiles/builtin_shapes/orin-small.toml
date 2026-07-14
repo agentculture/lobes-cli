@@ -48,7 +48,11 @@
 # for an unrecognised card. Like stt/tts, `minor` carries no Profile knobs
 # of its own (its budget is the compose template's own fixed defaults) so it
 # can only appear in `hosts`, never in `overrides` -- this shape declares
-# none.
+# none. Hosting `minor` DOES render activation env, though (PR #121 Qodo
+# fix): COMPOSE_PROFILES=minor un-gates the profile-gated vllm-minor
+# service, and MINOR_BASE_URL + MINOR_SERVED_NAME wire the gateway backend
+# (shape_render.OPT_IN_ACTIVATION_ENV) -- without them `docker compose up`
+# starts no generate lane at all on this shape.
 name = "orin-small"
 summary = "Jetson AGX Orin 64GB reference (DECLARED, UNVALIDATED) -- minor + embedder + reranker + audio, no cortex/senses"
 

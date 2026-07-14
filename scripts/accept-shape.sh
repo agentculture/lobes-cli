@@ -38,6 +38,14 @@
 
 set -euo pipefail
 
+# Every phase leans on these non-core tools (curl for the live endpoints,
+# python3 for JSON assertions, docker + uv for the fleet itself) — validate
+# up front so a fresh host fails with one clear line, not mid-run noise.
+for dep in curl python3 docker uv; do
+  command -v "${dep}" >/dev/null 2>&1 \
+    || { printf 'error: required tool not found: %s\n' "${dep}" >&2; exit 2; }
+done
+
 SHAPE=""
 DEPLOY_DIR=""
 AUDIO=0

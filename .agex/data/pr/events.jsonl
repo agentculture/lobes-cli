@@ -27,3 +27,4 @@
 {"ts":"2026-07-14T15:00:40.685720+00:00","type":"pr_review_triggered","pr":121,"command":"/agentic_review"}
 {"ts":"2026-07-14T15:01:44.353002+00:00","type":"readiness_arrived","pr":121,"waited_secs":60}
 {"ts":"2026-07-14T15:01:49.360136+00:00","type":"pr_read","pr":121,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-14T16:03:49.298219+00:00","type":"pr_read","pr":121,"comment_count":7,"threads_unresolved":1,"ci_state":"ok"}
