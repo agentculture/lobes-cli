@@ -198,6 +198,53 @@ heavier co-resident agents need the headroom.
    recipe omitted `--enable-auto-tool-choice`; the promotion run served through the
    compose template (which enables it + `--tool-call-parser=qwen3_coder`) and the
    tool path passed — see "Tool calling — verified" below.
+8. **Strict tool calling with thinking — think-aware structural tags
+   (colleague#320).** Unconstrained thinking-mode generation can drift off the
+   `qwen3_coder` XML tool-call template — a captured request reproduced a
+   hallucinated `<tool_call>\n\n[tool_id]{json}` emission, deterministic at
+   temperature 0 with that request, and **not** a long-prompt effect (a
+   ~4K-char system prompt sufficed) — and vLLM's parser then "salvages" a
+   mangled call (`name='read_file"'`, empty `arguments`). OpenAI's `strict:
+   true` on a tool's `function` arms xgrammar structural-tag constrained
+   decoding (`VLLM_ENFORCE_STRICT_TOOL_CALLING` defaults true, but with
+   `tool_choice:"auto"` it only arms when a tool itself declares `strict`),
+   which makes a malformed call impossible by construction — but the served
+   build (`0.23.1rc1.dev672`) hardcodes `reasoning=False` at the
+   structural-tag call site (`vllm/parser/abstract_parser.py:
+   _apply_structural_tag`), so with thinking enabled the resulting grammar
+   cannot accept the `</think>` special token and a strict request 500s
+   ("grammar rejected tokens"). With `enable_thinking:false`, strict already
+   returns a clean call (MTP spec-decode stays active throughout). The
+   reasoning-aware grammar exists in the image — only the call site never
+   passes `reasoning=True`.
+
+   The fix is the `qwen3_coder_thinking` tool-parser plugin
+   (`lobes/vllm_plugins/qwen3_thinking_tool_parser.py`, registered under the
+   name `qwen3_coder_thinking` via vLLM's own `--tool-parser-plugin`
+   file-path surface — vLLM `exec`s the file directly, it is never `import
+   lobes`): it overrides `get_structural_tag` to derive `reasoning` from the
+   *request's own* effective `enable_thinking` (absent → on, the server
+   default — same rule `preserve_thinking` above uses) instead of the
+   caller's hardcoded `False`, so `lobes route`'s `enable_thinking=false`
+   terse path keeps getting a thinking-free grammar, unaffected. It is the
+   compose default (`PRIMARY_TOOL_CALL_PARSER=qwen3_coder_thinking`, falling
+   back to plain upstream `qwen3_coder` if an operator overrides it), loaded
+   on the **cortex/main generate lane only** (mirrors the `preserve_thinking`
+   #93 scoping — the multimodal/embed/rerank lanes never mount or load it),
+   and asserts loudly at import time if the served image's tool-parser
+   surface ever drifts from the pinned `0.23.1rc1.dev672` shape, refusing to
+   boot rather than silently serving an unconstrained grammar. No vLLM image
+   rebuild (the pin is unchanged) and no served-model change — this
+   constrains *around* the template drift, it does not fix the drift itself
+   (out of scope here; filing the `reasoning=False` hardcode upstream is a
+   tracked follow-up). A companion, independent gateway knob
+   (`GATEWAY_FORCE_STRICT_TOOLS`) that injects `strict: true` for existing
+   callers who don't set it themselves is documented in
+   [`docs/openai-api.md`](openai-api.md) and
+   [`docs/gateway-fleet.md`](gateway-fleet.md). Verified at spec time by
+   replaying the captured request across the four thinking×strict
+   combinations; fleet-level acceptance runs in the deployment, as a
+   separate follow-on task.
 
 ## Live-test (run on `spark-f8a9`, 2026-05-31) — how to reproduce
 

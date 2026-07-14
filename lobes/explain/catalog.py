@@ -321,6 +321,23 @@ honour `429` + `Retry-After` and retry with backoff. `X-Lobes-Override: true`
 forces the requested tier (served, not shed). `lobes status --pressure` and the
 gateway `GET /status` (`pressure` block) report the current busy state.
 
+## Force-strict tool calling (opt-in, colleague#320)
+
+`GATEWAY_FORCE_STRICT_TOOLS` (unset by default) injects `"strict": true` into
+every `tools[i].function` on a `/v1/chat/completions` request that both routes
+to the **cortex/primary** lane and carries a non-empty `tools` array — arming
+xgrammar structural-tag constrained decoding so a malformed tool call is
+impossible by construction. A caller-supplied `strict` (either value) always
+wins over the injection; every other lane/endpoint (`multimodal`/`senses`,
+embed, rerank, audio, `/v1/completions`) is untouched, and the knob off is a
+byte-identical passthrough. On an upstream schema/grammar-compile failure the
+gateway retries the same request exactly once with `strict` stripped back out
+and relays whatever that retry returns. Pairs with, but is independent of, the
+`qwen3_coder_thinking` tool-parser plugin (a served-vLLM-side fix for the same
+colleague#320 failure mode — see `docs/qwen3.6-27b-text-nvfp4-mtp.md`); this
+knob is the gateway-side half. See `docs/openai-api.md` and
+`docs/gateway-fleet.md` for the full contract.
+
 ## Endpoints
 
 - `/v1/chat/completions`, `/v1/completions` — chat and completion requests;
