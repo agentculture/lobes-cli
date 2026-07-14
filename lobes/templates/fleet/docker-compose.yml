@@ -640,6 +640,8 @@ services:
       dockerfile: Dockerfile.gateway
       args:
         MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+        # Dev lane only (see Dockerfile.gateway): empty on release deployments.
+        PIP_EXTRA_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
     container_name: model-gear-gateway
     restart: unless-stopped
     # Start order only — the gateway tolerates a backend still loading (it routes
