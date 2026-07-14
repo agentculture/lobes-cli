@@ -7,10 +7,9 @@ composed over the #108 per-machine :class:`~lobes.profiles.schema.Profile`
 it:
 
 * ``spark-lobe`` drops ``senses`` -> ``cortex`` gets its FULL native budget:
-  ``gpu_mem_util`` rises to 0.60 (the proven GB10 primary value — the
-  pre-#68 fleet baseline and the legacy single-model scaffold both ran the
-  27B at 0.60 alongside the two 0.06 pooling gears; NOT the co-resident
-  reclaim-sum 0.30 + 0.14 = 0.44), and ``max_model_len`` rises to the
+  ``gpu_mem_util`` rises to 0.44 (the co-resident reclaim-sum 0.30 + 0.14 —
+  the 0.60 solo value was measured not to fit the live GB10's shared unified
+  memory), and ``max_model_len`` rises to the
   checkpoint's native 262144 (256K —
   ``sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP``);
 * ``thor-lobe`` drops ``cortex`` -> ``senses`` reclaims the freed
@@ -72,13 +71,13 @@ _THOR_SENSES_MAX_LEN = _THOR_PROFILE.role("senses").max_model_len
 _CORTEX_FULL_NATIVE_MAX_LEN = 262144  # 256K
 _SENSES_FULL_NATIVE_MAX_LEN = 131072  # 128K
 
-# spark-lobe's cortex gpu_mem_util override is NOT the co-resident reclaim-sum
-# (0.30 + 0.14 = 0.44, what t2 used) — issue #113's user decision (t2b) sets it
-# to the proven GB10 primary value instead: 0.60 is what the pre-#68 fleet
-# baseline and the legacy single-model scaffold both ran the 27B at, alongside
-# the two 0.06 + 0.06 pooling gears (see CLAUDE.md's "Colleague roles"
-# migration table).
-_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.60
+# spark-lobe's cortex gpu_mem_util override is the co-resident reclaim-sum:
+# 0.30 (cortex) + 0.14 (dropped senses) = 0.44. The historical 0.60 solo value
+# was tried first (t2b) and REFUSED by vLLM on the live GB10: unified memory is
+# shared with the host OS/services, and the 2026-07-14 boot measured only
+# 59.35 GiB free at primary startup vs the 73.01 GiB util 0.60 demands. 0.44
+# (53.5 GiB) fits the measured reality (live transcript, issue #113).
+_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.44
 
 
 def _compose(base: RoleProfile, override: RoleProfile) -> RoleProfile:
@@ -117,17 +116,17 @@ def test_spark_lobe_cortex_override_is_strictly_larger_than_co_resident_budget()
     )
 
 
-def test_spark_lobe_cortex_util_is_the_proven_gb10_primary_value() -> None:
-    # t2b (issue #113): NOT the co-resident reclaim-sum (0.30 + 0.14 = 0.44,
-    # what t2 used) -- 0.60 is the proven GB10 primary value the pre-#68 fleet
-    # baseline and the legacy single-model scaffold both ran the 27B at.
+def test_spark_lobe_cortex_util_is_the_reclaim_sum_that_fits_the_box() -> None:
+    # The reclaim-sum 0.30 + 0.14 = 0.44: the exact budget the dropped senses
+    # lobe frees. The 0.60 solo value was measured NOT to fit the live GB10
+    # (59.35 GiB free at boot vs 73.01 GiB demanded — unified memory shared
+    # with the host); see the TOML provenance comment.
     override = load_builtin_shape("spark-lobe").override("cortex")
     assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_FULL_NATIVE_UTIL)
-    assert override.gpu_mem_util == pytest.approx(0.60)
-    # Still strictly larger than BOTH the co-resident value and the naive
-    # reclaim-sum -- this is a bigger rise than a simple reclaim would give.
+    assert override.gpu_mem_util == pytest.approx(0.44)
+    # Strictly larger than the co-resident value, and exactly the reclaim-sum.
     assert override.gpu_mem_util > _SPARK_CORTEX_UTIL
-    assert override.gpu_mem_util > (_SPARK_CORTEX_UTIL + _SPARK_SENSES_UTIL)
+    assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_UTIL + _SPARK_SENSES_UTIL)
 
 
 def test_spark_lobe_cortex_max_model_len_rises_to_full_native() -> None:

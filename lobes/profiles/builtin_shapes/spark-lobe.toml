@@ -16,14 +16,15 @@ summary = "DGX Spark mesh-lobe -- Qwen cortex + embedder + reranker + audio, no 
 hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
 
 [overrides.cortex]
-# gpu_mem_util = 0.60 -- NOT the co-resident reclaim-sum (0.30 cortex + 0.14
-# senses = 0.44, what t2 used before the co-resident senses lobe was fully
-# dropped from this shape). 0.60 is the proven GB10 primary value: the
-# pre-#68 fleet baseline and the legacy single-model scaffold both ran the
-# 27B `cortex` at 0.60 alongside the two 0.06 + 0.06 pooling gears (embedder +
-# reranker) -- see CLAUDE.md's "Colleague roles" migration table
-# (docs/colleague-stack.md#migration-before--after). With senses dropped from
-# this shape, that same headroom is available again.
+# gpu_mem_util = 0.44 -- the co-resident reclaim-sum: 0.30 (cortex, spark
+# co-resident) + 0.14 (senses, spark co-resident), reclaimed because senses is
+# dropped from this shape. NOT the historical 0.60 solo value: the GB10's
+# 121.69 GiB is UNIFIED memory shared with the host OS and its services, and
+# the 2026-07-14 live boot measured only 59.35 GiB free at primary startup --
+# vLLM refuses util 0.60 (73.01 GiB) outright on a box that also runs the
+# pooling gears, the audio sidecars, and ordinary host workloads. 0.44
+# (53.5 GiB) fits that measured reality with margin. (Live transcript:
+# lobes-accept-spark-lobe-20260714; issue #113.)
 #
 # max_model_len = 262144 -- the checkpoint's own native context
 # (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP, 256K -- see CLAUDE.md's model
@@ -31,5 +32,5 @@ hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
 # senses on the single-box shape. Senses is dropped in THIS shape, so the
 # trim's reason is gone -- reclaimed here (issue #113, user decision on the
 # PR), not deferred to #112.
-gpu_mem_util = 0.60
+gpu_mem_util = 0.44
 max_model_len = 262144

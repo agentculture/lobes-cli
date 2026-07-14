@@ -164,7 +164,7 @@ def test_shape_spark_lobe_drops_senses_and_reclaims_cortex_budget(tmp_path, monk
     assert rc == 0
     env = _env.read_env_file(target / ".env")
     assert env["MULTIMODAL_FEASIBLE"] == "false"
-    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.6"
+    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.44"
 
 
 def test_shape_thor_lobe_drops_cortex_and_reclaims_senses_budget(tmp_path, monkeypatch) -> None:
@@ -198,7 +198,7 @@ def test_shape_composes_with_explicit_profile_override(tmp_path, monkeypatch) ->
     assert rc == 0
     env = _env.read_env_file(target / ".env")
     assert env["MULTIMODAL_FEASIBLE"] == "false"
-    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.6"
+    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.44"
     assert env["PRIMARY_KV_CACHE_DTYPE"] == "fp8"  # spark's own default, not thor's
 
 
@@ -260,7 +260,7 @@ def test_shape_with_audio_scaffolds_both_normally(tmp_path, monkeypatch) -> None
     assert (target / "docker-compose.audio.yml").is_file()
     env = _env.read_env_file(target / ".env")
     assert env["MULTIMODAL_FEASIBLE"] == "false"
-    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.6"
+    assert env["PRIMARY_GPU_MEM_UTIL"] == "0.44"
     assert "CHATTERBOX_PORT" in env  # audio keys still appended, unaffected by shape
 
 

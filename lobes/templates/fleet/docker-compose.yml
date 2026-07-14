@@ -644,6 +644,13 @@ services:
         LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
     container_name: model-gear-gateway
     restart: unless-stopped
+    # The gateway must read the SAME .env truth the CLI reads (one builder, one
+    # config — the #92 lesson): without this, shape-rendered flags like
+    # MULTIMODAL_FEASIBLE=false never reach the container and GET /capabilities
+    # advertises a dropped lobe as feasible while `lobes capabilities` denies it.
+    env_file:
+      - path: .env
+        required: false
     # Start order only — the gateway tolerates a backend still loading (it routes
     # and fails over per request), so it must not block on backend health.
     depends_on:
