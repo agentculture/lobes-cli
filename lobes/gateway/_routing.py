@@ -66,12 +66,14 @@ class RoutingTable:
     # already use — and ONLY for a name that ALSO has a declared peer origin
     # AND is in ``infeasible`` (a knob without an origin has nothing to dial;
     # a knob on a locally-feasible role is ignored — the local engine serves
-    # it). CONFIG ONLY in this task: this field is consulted by the proxy
-    # data-plane branch, which lands in a LATER task — today NOTHING dials
-    # these peers, and a name here changes no response. Defaults to empty so
-    # every existing table construction is completely unaffected, and so an
-    # origin declared WITHOUT the knob stays annotation-only referral —
-    # the issue #112 contract is preserved byte-for-byte.
+    # it). Consumed by the proxy data plane (t6): a request resolving to a
+    # name here is FORWARDED to its declared peer instead of taking the
+    # referral 404 (see ``lobes.gateway.server._proxy_to_peer``), and its
+    # served id is advertised on /v1/models while the live peer probe verifies
+    # it. Defaults to empty so every existing table construction is completely
+    # unaffected, and so an origin declared WITHOUT the knob stays
+    # annotation-only referral — the issue #112 contract is preserved
+    # byte-for-byte.
     peer_proxied: frozenset[str] = frozenset()
     # Backend NAME -> the OUTBOUND API key this box presents when dialing
     # that role's declared peer (proxy-lobes t1, issues #115/#127 — the
@@ -79,9 +81,10 @@ class RoutingTable:
     # build_config` from ``<PREFIX>_PEER_API_KEY`` env vars
     # (:data:`lobes.gateway._config.PEER_API_KEY_ENV`), verbatim (stripped),
     # and ONLY for names with a declared peer origin (a key without an
-    # origin is inert — there is no peer to authenticate to). Like
-    # ``peer_proxied`` this is CONFIG ONLY today: the data-plane branch that
-    # attaches these credentials lands in a LATER task — nothing dials them.
+    # origin is inert — there is no peer to authenticate to). Attached by the
+    # proxy data plane (t6) as the OUTBOUND ``Authorization: Bearer`` on a
+    # forwarded request — replacing, never accompanying, the caller's own
+    # credential — and by the peer-readiness probe (t4).
     # ``repr=False`` because the values are SECRETS: they must NEVER appear
     # in ``repr``/``str`` of the table (logs, tracebacks, --json debug
     # output). Defaults to empty so every existing construction is
@@ -338,7 +341,9 @@ def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
 
 
 def list_models_payload(
-    table: RoutingTable, ready: Mapping[str, "bool | None"] | None = None
+    table: RoutingTable,
+    ready: Mapping[str, "bool | None"] | None = None,
+    peer_served: Mapping[str, str] | None = None,
 ) -> dict:
     """OpenAI ``/v1/models`` shape listing the fleet's served models.
 
@@ -360,19 +365,40 @@ def list_models_payload(
     supplied — a backend this machine's profile declared infeasible is never
     listed, even when a live readiness probe reports it healthy (``ready=True``
     is not evidence of hardware capability, only of "the process answered").
+
+    **Proxied roles** (proxy-lobes t6, issues #115/#127): ``peer_served`` maps
+    a proxied backend name to the served id this box forwards for it — a
+    dropped role is realistically UNWIRED (no local :class:`Backend` exists),
+    so the id cannot come from ``table.backends``; the caller supplies it from
+    the same :class:`~lobes.gateway._readiness.PeerSpec` the peer probe
+    verifies (see ``lobes.gateway.server.peer_specs_from_table`` for the
+    resolution order). A proxied id is listed IFF ALL of: its name is in
+    ``table.peer_proxied`` (the routing table's opt-in is the only gate —
+    stray ``peer_served`` entries are ignored), a live ``ready`` snapshot was
+    supplied, and that snapshot's verdict for the name ``is True`` — which for
+    a proxied name is the PEER probe's verdict ("the peer answered 200 AND its
+    own ``/v1/models`` lists exactly this id"). Peer down, unprobed (``None``),
+    missing, or ``ready`` omitted entirely ⇒ the id drops, exactly like a dead
+    local backend — #92 extended across the box boundary, never a hardcoded
+    reachability claim (h2). ``peer_served=None`` (the default) changes
+    nothing for every existing caller.
     """
     backends = table.backends
     if ready is not None:
         backends = tuple(b for b in backends if ready.get(b.name) is True)
     if table.infeasible:
         backends = tuple(b for b in backends if b.name not in table.infeasible)
-    return {
-        "object": "list",
-        "data": [
-            {"id": backend.served_name, "object": "model", "owned_by": "lobes"}
-            for backend in backends
-        ],
-    }
+    data = [
+        {"id": backend.served_name, "object": "model", "owned_by": "lobes"} for backend in backends
+    ]
+    if peer_served and ready is not None:
+        listed = {entry["id"] for entry in data}
+        for name in sorted(table.peer_proxied):
+            served = peer_served.get(name)
+            if served and served not in listed and ready.get(name) is True:
+                data.append({"id": served, "object": "model", "owned_by": "lobes"})
+                listed.add(served)
+    return {"object": "list", "data": data}
 
 
 def supported_models_payload(table: RoutingTable, catalog) -> dict:

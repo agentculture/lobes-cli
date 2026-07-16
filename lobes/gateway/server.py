@@ -39,8 +39,16 @@ section below for the route policy, the timing-safe comparison, and the
 never-echo-key-material contract. With ``api_key`` unset (the default) the
 gate is provably inert: no header is ever inspected and every route behaves
 byte-identically to the pre-auth gateway. The gate is the INBOUND edge only —
-outbound header forwarding to local backends is unchanged, and nothing here
-dials a peer (the proxy data plane is a later task).
+outbound header forwarding to local backends is unchanged.
+
+**The proxy data plane** (proxy-lobes t6, issues #115/#127) is the third lobe
+state — awake (hosted) / asleep (referral-only 404) / **PROXY**: a dropped
+role whose operator armed ``<PREFIX>_PEER_PROXY`` (``table.peer_proxied``) is
+answered by FORWARDING the request to the operator-declared peer origin,
+replacing the referral 404 for exactly those names and nothing else. See the
+"proxy data plane" section below for the loop guard, the pairwise-credential
+swap, the failure modes, and why proxied requests bypass the LOCAL pressure
+policy.
 """
 
 from __future__ import annotations
@@ -60,10 +68,11 @@ from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
 from lobes import __version__, _metrics
+from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._config import ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
-from lobes.gateway._readiness import ReadinessCache
+from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
@@ -553,10 +562,11 @@ def _role_infeasible_body(
     #112): the OPERATOR-DECLARED origin of the peer box that hosts this role
     (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`). When set, the message
     names it and a machine-readable ``hosted_by`` key is added — a referral
-    for the CALLER to dial directly; this gateway never forwards the request
-    there (no data-plane proxying; proxy-lobes is issue #115). When ``None``
-    (no peer config — the default) the body is BYTE-IDENTICAL to the
-    pre-referral contract.
+    for the CALLER to dial directly; a REFERRAL-ONLY gateway never forwards
+    the request there (data-plane forwarding exists only for names the
+    operator additionally armed via ``table.peer_proxied``, which never reach
+    this body — see :func:`_proxy_to_peer`). When ``None`` (no peer config —
+    the default) the body is BYTE-IDENTICAL to the pre-referral contract.
     """
     label = requested or "(unspecified)"
     message = (
@@ -594,6 +604,337 @@ def _busy_body(requested_tier: str) -> bytes:
     ).encode("utf-8")
 
 
+# --- the proxy data plane: follow the referral (proxy-lobes t6, #115/#127) --
+
+# The THIRD lobe state — awake / asleep / PROXY. A role this box dropped
+# (``table.infeasible``) whose operator declared a peer origin AND armed the
+# ``<PREFIX>_PEER_PROXY`` knob (``table.peer_proxied``, t1) is answered by
+# FORWARDING the request to that peer instead of the referral 404. The forward
+# reuses the existing relay machinery unchanged (a synthetic Backend whose
+# base_url is the operator-declared origin → open_upstream → buffered JSON or
+# SSE chunk relay), plus four proxy-specific rules:
+#
+# * **pairwise credentials** — the outbound request carries ``Authorization:
+#   Bearer <table.peer_api_keys[name]>`` when a per-peer key is declared, and
+#   NO Authorization header otherwise. The CALLER's own credential is REMOVED
+#   either way: it authenticated the caller to THIS box (t2's inbound gate)
+#   and must never travel to a peer that was issued its own pairwise key.
+# * **single hop** — every proxied departure is stamped with
+#   ``X-Lobes-Proxied: <backend name>`` (an origin-less, key-free token). A
+#   request that ARRIVES already carrying that marker and would depart again
+#   via this branch is REFUSED (508 ``proxy_loop``, naming both hops) with
+#   zero outbound attempts; a marked arrival whose role is served locally
+#   processes normally (the marker only gates the proxy branch).
+# * **response marker** — every response produced by this branch (a 2xx/4xx
+#   relay, the peer-declined 404, the peer-down 503) carries
+#   ``X-Lobes-Proxied-By: <peer origin, verbatim>`` so a caller can always
+#   tell a proxied answer from a locally-served one (which NEVER carries it).
+#   The loop refusal does not: nothing was proxied.
+# * **local pressure bypass** — a proxied request skips this box's
+#   swap/iowait tier shedding entirely: pressure describes THIS box's load,
+#   and the model runs on the PEER, whose own gateway applies its own policy
+#   when the forward arrives; shedding here too would double-gate the role on
+#   the wrong box's load (the peer's 429 rides back through the 4xx relay).
+#
+# Failure modes mirror the single-owner rules (#91 — never a cross-model
+# fallback): peer refused/timeout/>=500 → the retryable 503
+# ``backend_unavailable`` + Retry-After; peer 2xx/4xx relays verbatim — with
+# ONE exception: a peer 404 whose body is ``role_infeasible`` means the peer
+# ALSO dropped the role (a misdeclared referral) → relay it terminally with
+# the message rewritten to name the declining peer, and never attempt another
+# hop.
+
+PROXIED_HEADER = "X-Lobes-Proxied"
+PROXIED_BY_HEADER = "X-Lobes-Proxied-By"
+
+# 508 Loop Detected — the refusal for a marked request that would re-proxy.
+_PROXY_LOOP_STATUS = 508
+
+# Backend name → the deployment env var carrying that role's served model id
+# (the same ``<PREFIX>_SERVED_NAME`` convention build_config reads). Consulted
+# by _peer_served_name for a proxied role whose backend is UNWIRED locally.
+_PEER_SERVED_NAME_ENV: dict[str, str] = {
+    "primary": "PRIMARY_SERVED_NAME",
+    "multimodal": "MULTIMODAL_SERVED_NAME",
+    "embed": "EMBED_SERVED_NAME",
+    "rerank": "RERANK_SERVED_NAME",
+}
+
+# Backend name → the catalog ``role_hint`` of its canonical model — the same
+# fallback lobes.roles uses to NAME an unwired role's model. Scoped, like every
+# peer channel, to the four core roles (see lobes.gateway._config.PEER_PROXY_ENV).
+_PEER_ROLE_HINT: dict[str, str] = {
+    "primary": "primary",
+    "multimodal": "multimodal",
+    "embed": "embedding",
+    "rerank": "reranker",
+}
+
+
+def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) -> str:
+    """The model id this box forwards/advertises for proxied backend ``name``.
+
+    **The source-of-truth decision for an UNWIRED proxied role** (a dropped
+    lobe realistically has no ``*_BASE_URL``, so no :class:`Backend` exists in
+    the table): resolution order is
+
+    1. the WIRED backend's ``served_name`` when one exists (the
+       wired-but-infeasible shape — thor-lobe's unconditionally-wired primary)
+       — the table's own declaration outranks everything;
+    2. the deployment env's ``<PREFIX>_SERVED_NAME`` — what the shape render /
+       operator declared the role WOULD serve (same var build_config reads);
+    3. the catalog canonical id for the role — the same source
+       :mod:`lobes.roles` uses to name an unwired role's model.
+
+    Whatever is resolved here is only ever ADVERTISED after the peer probe
+    confirms the peer's own ``/v1/models`` lists exactly this id
+    (:func:`lobes.gateway._readiness.probe_peer_ready`) — resolution picks the
+    name; the probe supplies the honesty. A misresolved/misdeclared name
+    simply never advertises ready, and a forward naming it surfaces the peer's
+    own honest 404.
+    """
+    wired = next((b.served_name for b in table.backends if b.name == name), None)
+    if wired:
+        return wired
+    from_env = (env.get(_PEER_SERVED_NAME_ENV.get(name, "")) or "").strip()
+    if from_env:
+        return from_env
+    hint = _PEER_ROLE_HINT.get(name)
+    return next((m.id for m in SUPPORTED_MODELS if m.role_hint == hint), "")
+
+
+def peer_specs_from_table(
+    table: RoutingTable, env: Mapping[str, str] | None = None
+) -> dict[str, PeerSpec]:
+    """One :class:`PeerSpec` per proxied role, from the routing table's config.
+
+    The single builder both consumers share: :func:`serve` hands the specs to
+    the :class:`ReadinessCache` (the peer-probe thread) AND to the handler
+    (the data-plane branch in :func:`handle_post` + the ``/v1/models``
+    advertisement), so the origin/served-id/key a probe verified are exactly
+    the ones a forward dials. ``env`` defaults to ``os.environ`` (the same
+    environment ``build_config`` built ``table`` from in the gateway
+    container); see :func:`_peer_served_name` for the served-id resolution.
+    Every name in ``table.peer_proxied`` has a declared origin by construction
+    (:func:`lobes.gateway._config._peer_proxied` gates on it); the guard here
+    only protects against a hand-built table violating that invariant. Key
+    material rides only the ``repr``-hidden ``PeerSpec.api_key`` field.
+    """
+    resolved_env = os.environ if env is None else env
+    specs: dict[str, PeerSpec] = {}
+    for name in sorted(table.peer_proxied):
+        origin = table.peer_origins.get(name)
+        if not origin:
+            continue  # impossible via build_config; hand-built tables degrade safely
+        specs[name] = PeerSpec(
+            name=name,
+            origin=origin,
+            served_name=_peer_served_name(table, name, resolved_env),
+            api_key=table.peer_api_keys.get(name),
+        )
+    return specs
+
+
+def _proxied_owner(
+    table: RoutingTable, peer_specs: Mapping[str, PeerSpec], requested: str | None
+) -> str | None:
+    """The proxied backend name ``requested`` resolves to, else ``None``.
+
+    Resolution mirrors — and slots between — the existing precedence rules in
+    :func:`handle_post`:
+
+    * the proxied role's own served id matches FIRST: an UNWIRED dropped
+      role's id is in no wired backend and no alias, so
+      :func:`infeasible_owner` cannot see it — but it IS advertised on
+      ``/v1/models`` while the peer is ready, so it must forward, not 404;
+    * a genuinely unknown id (h23) stays ``model_not_found`` — checked BEFORE
+      the ``infeasible_owner`` fall-through below, because that helper routes
+      unknown ids to ``default_model`` (whose owner may be the proxied role,
+      e.g. thor-lobe's dropped cortex) and would otherwise silently forward a
+      never-advertised id to the peer under the default model's identity;
+    * everything else (role/tier aliases, wired-but-infeasible served ids, an
+      UNSPECIFIED model routing to a proxied default) resolves through the
+      same :func:`infeasible_owner` the referral 404 uses — the proxy branch
+      replaces that 404 for exactly the names in ``table.peer_proxied``.
+    """
+    if not table.peer_proxied or not peer_specs:
+        return None
+    for name, spec in peer_specs.items():
+        if name in table.peer_proxied and spec.served_name == requested:
+            return name
+    if is_unknown_model(table, requested):
+        return None
+    owner = infeasible_owner(table, requested)
+    if owner is not None and owner in table.peer_proxied and owner in peer_specs:
+        return owner
+    return None
+
+
+def _arriving_hop_marker(req_headers: Iterable[tuple[str, str]]) -> str | None:
+    """The inbound ``X-Lobes-Proxied`` marker value, if the request carries one."""
+    marker_key = PROXIED_HEADER.lower()
+    for key, value in req_headers:
+        if key.lower() == marker_key:
+            return value
+    return None
+
+
+def _proxy_loop_body(arriving: str, spec: PeerSpec) -> bytes:
+    """The 508 ``proxy_loop`` refusal body — names BOTH hops: the one already
+    taken (the arriving marker value, stamped by the gateway that forwarded
+    this request) and the one refused (this box's declared peer origin for the
+    role). Never any key material."""
+    return json.dumps(
+        {
+            "error": {
+                "message": (
+                    "refusing to proxy: this request already crossed one lobes "
+                    f"proxy hop (X-Lobes-Proxied: {arriving}); forwarding it again "
+                    f"to `{spec.origin}` for role `{spec.name}` could loop — peer "
+                    "proxying is single-hop only (issues #115/#127)."
+                ),
+                "type": "proxy_loop",
+                "code": "proxy_loop",
+                "hops": [arriving, spec.origin],
+            }
+        }
+    ).encode("utf-8")
+
+
+def _peer_unavailable_response(spec: PeerSpec, attempts: list[str]) -> GatewayResponse:
+    """The retryable 503 for a refused/timed-out/5xx'ing peer — the same
+    owner-down convention local backends get (#14/#91: the peer is the ONE
+    place this model lives; never a cross-model fallback), with the proxied-by
+    marker naming which peer failed."""
+    return GatewayResponse(
+        status=503,
+        headers=[
+            ("Retry-After", str(BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)),
+            ("Content-Type", _CONTENT_TYPE_JSON),
+            (PROXIED_BY_HEADER, spec.origin),
+        ],
+        body=_error_body(
+            f"the peer hosting this model (`{spec.origin}`) is unavailable — retry shortly",
+            attempts,
+            error_type="backend_unavailable",
+        ),
+        attempts=attempts,
+    )
+
+
+def _peer_declined_body(spec: PeerSpec, raw: bytes) -> bytes | None:
+    """The terminal body for a peer that answered 404 ``role_infeasible``.
+
+    That verdict means the PEER also dropped the role — the operator's
+    referral/proxy origin is misdeclared — so the error is TERMINAL (never
+    another hop; there is no third box to ask). The peer's own body is kept,
+    with its message rewritten to make unmistakable that the DECLARED PEER
+    declined, not this gateway. Returns ``None`` when ``raw`` is not a
+    ``role_infeasible`` error (any other 404 is the peer's authoritative
+    client-error verdict and relays verbatim)."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    error = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(error, dict):
+        return None
+    if "role_infeasible" not in (error.get("code"), error.get("type")):
+        return None
+    original = error.get("message")
+    prefix = (
+        f"the declared peer for this role (`{spec.origin}`) declined it as "
+        "role_infeasible — the peer does not host this role either (a "
+        "misdeclared referral/proxy origin); no further hop is attempted."
+    )
+    if isinstance(original, str) and original:
+        error["message"] = f"{prefix} Peer said: {original}"
+    else:
+        error["message"] = prefix
+    data["error"] = error
+    return json.dumps(data).encode("utf-8")
+
+
+def _proxy_to_peer(
+    cfg: ServerConfig,
+    spec: PeerSpec,
+    path: str,
+    req_headers: Iterable[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+) -> GatewayResponse:
+    """Forward one request to its proxied role's peer and relay the outcome.
+
+    See the section comment above for the full contract. The synthetic
+    :class:`Backend` (``peer:<name>`` at the operator-declared origin) lets
+    the UNCHANGED :func:`open_upstream` + relay machinery carry the forward —
+    buffered JSON and SSE streaming both work exactly as for a local backend.
+    """
+    req_headers = list(req_headers)
+    arriving = _arriving_hop_marker(req_headers)
+    if arriving is not None:
+        # Single-hop guard: this request was already forwarded once by a peer
+        # gateway; departing again could ping-pong between misconfigured boxes
+        # forever. Refuse with zero outbound attempts. (A marked arrival whose
+        # role is served LOCALLY never reaches this function — see handle_post.)
+        return GatewayResponse(
+            status=_PROXY_LOOP_STATUS,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_proxy_loop_body(arriving, spec),
+        )
+    streaming = is_streaming(body)
+    fwd_body = rewrite_model(body, spec.served_name)
+    # Credential swap: the caller's Authorization authenticated it to THIS box
+    # (t2's inbound gate) and must be provably absent outbound; the pairwise
+    # per-peer key — when declared — is the only credential that travels.
+    fwd_headers = [(k, v) for k, v in filter_headers(req_headers) if k.lower() != "authorization"]
+    if spec.api_key:
+        fwd_headers.append(("Authorization", f"Bearer {spec.api_key}"))
+    fwd_headers.append((PROXIED_HEADER, spec.name))
+    peer_backend = Backend(
+        name=f"peer:{spec.name}", base_url=spec.origin, served_name=spec.served_name
+    )
+    proxied_by = (PROXIED_BY_HEADER, spec.origin)
+    try:
+        up = open_upstream(
+            peer_backend,
+            path,
+            fwd_body,
+            fwd_headers,
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        return _peer_unavailable_response(spec, [str(exc)])
+    if up.status >= 500:
+        attempts = [f"{peer_backend.name}: HTTP {up.status}"]
+        up.close()
+        return _peer_unavailable_response(spec, attempts)
+    if up.status == 404:
+        # The one 4xx that must be INSPECTED (mirroring the strict-retry path's
+        # read-the-body rationale): a role_infeasible 404 is a misdeclared
+        # referral and needs the peer named; any other 404 relays verbatim.
+        raw = up.read_all()
+        up.close()
+        declined = _peer_declined_body(spec, raw)
+        if declined is not None:
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
+                body=declined,
+            )
+        return GatewayResponse(status=404, headers=[proxied_by] + up.headers, body=raw)
+    # 2xx or any other 4xx: the peer's authoritative verdict, relayed exactly
+    # like the single-owner rules relay a local backend's (#91) — including
+    # the peer's own 429 pressure shed riding back to the caller.
+    return GatewayResponse(
+        status=up.status,
+        headers=[proxied_by] + up.headers,
+        upstream=up,
+        streaming=streaming,
+    )
+
+
 def _feasibility_response(table: RoutingTable, requested: str | None) -> GatewayResponse | None:
     """404 ``role_infeasible`` iff ``requested``'s owning backend is declared
     hardware-infeasible by this deployment's per-machine profile (task t6);
@@ -607,10 +948,12 @@ def _feasibility_response(table: RoutingTable, requested: str | None) -> Gateway
         return None
     # Opt-in honest referral (mesh-brain t3): when the operator declared the
     # peer that hosts this role (table.peer_origins), the 404 names it — as an
-    # ANNOTATION only. The request is still answered HERE, terminally; it is
-    # never forwarded to the peer (no data-plane proxying — issue #115 is the
-    # deferred proxy-lobes follow-up). No declaration → the pre-referral body,
-    # byte for byte.
+    # ANNOTATION only. The request is still answered HERE, terminally; a
+    # referral-only role is never forwarded (the proxy data plane, t6, only
+    # fires for names in table.peer_proxied, which handle_post routes to
+    # _proxy_to_peer BEFORE this gate — so every 404 built here stays
+    # byte-identical to the pre-proxy contract). No declaration → the
+    # pre-referral body, byte for byte.
     return GatewayResponse(
         status=404,
         headers=[("Content-Type", _CONTENT_TYPE_JSON)],
@@ -848,6 +1191,7 @@ def handle_post(
     *,
     pressure: dict[str, float] | None = None,
     override: bool = False,
+    peer_specs: Mapping[str, PeerSpec] | None = None,
 ) -> GatewayResponse:
     """Resolve the model to its ONE owning backend and try it exactly once.
 
@@ -909,8 +1253,29 @@ def handle_post(
     request (knob off, non-primary lane, no tools, or every tool already
     carrying its own ``strict``) is entirely unaffected — same
     :func:`_try_backends` call as before this knob existed.
+
+    The proxy data plane (``peer_specs``, proxy-lobes t6, issues #115/#127):
+    when the requested model/alias resolves to a backend name in
+    ``table.peer_proxied`` AND a :class:`PeerSpec` is wired for it (see
+    :func:`peer_specs_from_table`), the request is FORWARDED to the declared
+    peer via :func:`_proxy_to_peer` instead of taking the referral 404.
+    Precedence is surgical: the unknown-id 404 (h23) still outranks proxying —
+    :func:`_proxied_owner` checks it — while the proxy branch runs BEFORE the
+    tier branch's pressure shedding, so a proxied request bypasses the LOCAL
+    pressure policy entirely (pressure describes THIS box's load; the model
+    runs on the peer, whose own gateway applies its own policy — shedding here
+    too would double-gate the role on the wrong box's load). Non-proxied names
+    — hosted, referral-only infeasible, unknown — take exactly the paths below,
+    byte-identically; so does EVERY request when ``peer_specs`` is ``None``
+    (every pre-t6 call site, and any deployment with no proxy config).
     """
     requested = extract_model(body)
+    if peer_specs:
+        proxied_name = _proxied_owner(table, peer_specs, requested)
+        if proxied_name is not None:
+            return _proxy_to_peer(
+                cfg, peer_specs[proxied_name], path, req_headers, body, open_upstream
+            )
     tier_headers: list[tuple[str, str]] = []
     if pressure is not None and is_tier_alias(requested):
         # Hardware feasibility gate (issue #92 extended to the HARDWARE
@@ -1342,11 +1707,24 @@ def capabilities_payload(
     route passes it straight through; when ``None`` each role's ``ready`` falls
     back to ``loaded`` (the CLI/unit path). All three signal kwargs default to
     ``None`` so this pure function's shape is unchanged for its non-HTTP callers.
+
+    Proxied roles (t6, issues #115/#127): for each name in
+    ``table.peer_proxied`` the ``backend_ready`` snapshot's value IS the live
+    PEER probe verdict — :meth:`ReadinessCache.current` merges the peer store
+    over the local one for exactly those names (the peer thread's
+    :func:`~lobes.gateway._readiness.probe_peer_ready` result) — so this
+    function slices those entries into the builder's separate ``peer_ready``
+    channel, and a proxied role's ``ready`` honestly reflects the live
+    proxied-path probe (h2). With ``backend_ready`` omitted, or with no
+    proxied names, nothing is derived and every payload is unchanged.
     """
     # deferred imports — see the module-level NOTE
     from lobes.roles import ROLES, annotate_peer_referrals, build_role_registry
 
     resolved_env = os.environ if env is None else env
+    peer_ready = None
+    if backend_ready is not None and table.peer_proxied:
+        peer_ready = {name: backend_ready.get(name) for name in table.peer_proxied}
     registry = build_role_registry(
         table,
         cfg,
@@ -1354,6 +1732,7 @@ def capabilities_payload(
         gateway_url=gateway_url,
         audio_ready=audio_ready,
         backend_ready=backend_ready,
+        peer_ready=peer_ready,
     )
     payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
     # Opt-in honest referral (mesh-brain t3): annotate each unhosted
@@ -1380,6 +1759,12 @@ class _Handler(BaseHTTPRequestHandler):
     # coarse `loaded` proxy (the offline/unit path). Read only via .current()
     # (socket-free); the POST hot path never touches it.
     readiness_cache: ReadinessCache | None = None
+    # The proxied roles' peer specs (proxy-lobes t6, #115/#127), keyed by
+    # backend name — built once by peer_specs_from_table and shared with the
+    # ReadinessCache's peer-probe thread (see serve). None/empty → the proxy
+    # data plane is inert and every request behaves byte-identically to the
+    # pre-proxy gateway.
+    peer_specs: Mapping[str, PeerSpec] | None = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -1460,9 +1845,17 @@ class _Handler(BaseHTTPRequestHandler):
             # (issue #92): a wired-but-dead backend must NOT appear here, so a
             # client can trust that a listed model id reaches a live engine. The
             # snapshot is socket-free (.current() never probes); with no cache
-            # wired, every backend is listed (the offline/unit path).
+            # wired, every backend is listed (the offline/unit path). A PROXIED
+            # role's served id (t6, #115/#127) rides the same rule: the peer
+            # spec supplies the id and the snapshot's peer-probe verdict gates
+            # it — listed iff the peer verifiably serves it right now.
             ready = self.readiness_cache.current() if self.readiness_cache is not None else None
-            self._send_json(200, list_models_payload(self.table, ready))
+            peer_served = (
+                {name: spec.served_name for name, spec in self.peer_specs.items()}
+                if self.peer_specs
+                else None
+            )
+            self._send_json(200, list_models_payload(self.table, ready, peer_served))
         elif route == "/v1/models/supported":
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
@@ -1540,6 +1933,7 @@ class _Handler(BaseHTTPRequestHandler):
                 open_upstream,
                 pressure=pressure,
                 override=override,
+                peer_specs=self.peer_specs,
             )
         if resp.upstream is None:
             self._send_simple(resp.status, resp.headers, resp.body or b"")
@@ -1611,6 +2005,7 @@ def _make_handler(
     cfg: ServerConfig,
     pressure_cache: PressureCache | None = None,
     readiness_cache: ReadinessCache | None = None,
+    peer_specs: Mapping[str, PeerSpec] | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
@@ -1620,6 +2015,7 @@ def _make_handler(
             "server_config": cfg,
             "pressure_cache": pressure_cache,
             "readiness_cache": readiness_cache,
+            "peer_specs": peer_specs,
         },
     )
     return bound
@@ -1638,11 +2034,23 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # refreshes to a background daemon thread so no probe ever lands on the request
     # path. Read verbs consult it via .current() (socket-free); the POST hot path
     # never touches it.
-    readiness_cache = ReadinessCache.from_backends(table.backends, start=False)
+    #
+    # Proxied roles (t6, #115/#127): ONE PeerSpec set is built here from the
+    # routing table (origin + resolved served id + pairwise key per proxied
+    # name) and shared by BOTH consumers — the cache's peer-probe thread (so
+    # /v1/models + /capabilities advertise a proxied role only while its peer
+    # verifiably serves the id) and the handler (so the data-plane forward
+    # dials exactly what the probe verified). No proxy config → empty specs →
+    # no peer thread, no proxy branch, byte-identical pre-proxy behaviour.
+    peer_specs = peer_specs_from_table(table)
+    readiness_cache = ReadinessCache.from_backends(
+        table.backends, peer_specs=tuple(peer_specs.values()), start=False
+    )
     readiness_cache.refresh()
     readiness_cache.start()
     httpd = ThreadingHTTPServer(
-        (cfg.host, cfg.port), _make_handler(table, cfg, pressure_cache, readiness_cache)
+        (cfg.host, cfg.port),
+        _make_handler(table, cfg, pressure_cache, readiness_cache, peer_specs),
     )
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
     httpd.serve_forever()
