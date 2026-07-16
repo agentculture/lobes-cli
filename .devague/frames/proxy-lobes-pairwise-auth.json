@@ -4,7 +4,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-16T12:04:34Z",
-  "updated": "2026-07-16T12:22:48Z",
+  "updated": "2026-07-16T12:26:25Z",
   "claims": [
     {
       "id": "c1",
@@ -312,9 +312,105 @@
       "hard_questions": [],
       "links": [],
       "instruction": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "Proxied answers are visible: a proxied response carries an explicit marker header (e.g. X-Lobes-Proxied-By: <peer origin>) so callers always see which box actually answered \u2014 #127's stated design principle ('without hiding which lobe actually handled the request'); the request-side hop marker (loop guard, h5) and this response-side marker are one header family.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "A unit test asserts the marker header is present on proxied responses, absent on locally-served ones, and carries the operator-declared peer origin verbatim (never a derived URL, #92).",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Turning on inbound auth must not break the box's own tooling: the lobes CLI verbs that dial the local gateway (capabilities, assess, status --pressure, measure, benchmark) read the deployment's key from .env and send Authorization when GATEWAY_API_KEY resolves \u2014 provenance: lobes/assess.py + cli/_runtime_ops.py dial the gateway with stdlib urllib today, keyless.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "With GATEWAY_API_KEY set in a test deployment .env, lobes capabilities / assess against the local gateway succeed keylessly-from-the-user's-view (the CLI attaches the key itself); with the wrong key in .env they fail with a clear 401 message, not a traceback.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Peer-declines honesty: when the proxied-to peer itself answers 404 role_infeasible (the peer also dropped the role \u2014 a misdeclared peer origin), the proxying box relays an honest terminal failure naming the peer, and never chains a second hop (single-hop rule, h5).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "A mock-peer test where the peer returns role_infeasible asserts the proxying box's response is a terminal error naming the peer and that no second outbound request is attempted.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Key handling hygiene: bearer comparison is timing-safe (hmac.compare_digest); GATEWAY_API_KEY and *_PEER_API_KEY reach the gateway container as scoped environment: entries in the compose template \u2014 never via env_file (the gateway env block deliberately avoids inheriting .env secrets; PR #117 Qodo finding).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Code review + a grep-test assert compare_digest is used for the bearer check and that no key value appears in any log line, error body, or capabilities payload the test suite captures.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c24",
+      "kind": "assumption",
+      "text": "The forwarded body carries the RESOLVED served model id and the peer serves that same id \u2014 verified at runtime by the peer-readiness probe against the peer's /v1/models (c19), so a proxied request never asks the peer for a model it does not serve.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
     }
   ],
-  "open_vagueness": [],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Replay protection, rate limiting, and TLS between boxes are NOT provided by this layer \u2014 transport security remains the tailnet's job (c11); revisit if a peer origin ever leaves the tailnet",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Thor's gateway still runs the TestPyPI pin 0.43.0.dev239 (probed live 2026-07-16) \u2014 the acceptance run must re-pin Thor to the released wheel carrying this feature before cross-box validation",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    }
+  ],
   "scope_entries": [
     {
       "id": "s1",
@@ -381,6 +477,50 @@
       "finding": "shapes are pure data (hosts + overrides) rendered to env; the proxy opt-in and per-peer key knobs must render through the same shape/env pipeline so lobes init --shape stays the single entry point and restore stays byte-for-byte",
       "seeds": [
         "c8"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "challenge pass / adjacent-systems lens: lobes/templates/fleet/docker-compose.yml ports + eidetic/colleague consumers",
+      "finding": "only the gateway publishes a host port (${VLLM_PORT:-8000}:8000) \u2014 backends are compose-network-internal, so inbound gateway auth covers the box's entire published surface; local consumers (colleague CLI :8001, eidetic embed) dial the gateway and are covered by c21",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "challenge pass / concurrency lens: lobes/gateway/server.py ThreadingHTTPServer + per-request upstream connections",
+      "finding": "clean pass \u2014 the proxy branch reuses the existing per-request connection + read1 streaming relay; no shared mutable state is added; the readiness cache is the only cross-thread structure and already exists",
+      "seeds": []
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / lifecycle lens: accept-shape backup/restore + image rollback",
+      "finding": "new env keys are inert to an old gateway image (unknown env ignored) so rollback is safe; the shape re-render must round-trip the new knobs byte-for-byte like *_PEER_ORIGIN does (c8 goldens)",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / cheap probe: live Thor gateway from Spark (2026-07-16)",
+      "finding": "http://thor.tail0be7e0.ts.net:8000/health ok + /capabilities 200 \u2014 peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)",
+      "seeds": []
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / security lens: bearer handling + secret scoping",
+      "finding": "timing-safe compare + scoped environment: entries captured as c23; replay/rate-limit/TLS parked as v1 (tailnet transport assumption c11)",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / observability lens: issue #127 design principle",
+      "finding": "the spec lacked any caller-visible signal of WHERE a proxied answer came from \u2014 c20 adds the proxied-by marker family",
+      "seeds": [
+        "c20"
       ]
     }
   ]

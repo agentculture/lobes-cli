@@ -26,6 +26,14 @@
   - honesty: With GATEWAY_API_KEY set, every data-plane route (chat, embeddings, rerank, audio) rejects a missing/wrong Authorization: Bearer with 401 before touching any backend; health/readiness endpoints stay unauthenticated for probes; with the knob unset behavior is byte-identical to today.
 - Pairwise outbound credentials: when proxying to a peer the gateway REPLACES the inbound Authorization header with an operator-declared per-peer key (e.g. <PREFIX>_PEER_API_KEY next to <PREFIX>_PEER_ORIGIN in _config.PEER_ORIGIN_ENV's convention) — the caller's key authenticates only to the box it dialed; keys are between machines and never propagated forward.
   - honesty: The inbound Authorization header is NEVER forwarded to a peer: the proxy branch strips it and attaches the operator-declared per-peer key; a test asserts the caller's key does not appear in the outbound request; peer keys never appear in logs, traces, capabilities output, or error bodies.
+- Proxied answers are visible: a proxied response carries an explicit marker header (e.g. X-Lobes-Proxied-By: <peer origin>) so callers always see which box actually answered — #127's stated design principle ('without hiding which lobe actually handled the request'); the request-side hop marker (loop guard, h5) and this response-side marker are one header family.
+  - honesty: A unit test asserts the marker header is present on proxied responses, absent on locally-served ones, and carries the operator-declared peer origin verbatim (never a derived URL, #92).
+- Turning on inbound auth must not break the box's own tooling: the lobes CLI verbs that dial the local gateway (capabilities, assess, status --pressure, measure, benchmark) read the deployment's key from .env and send Authorization when GATEWAY_API_KEY resolves — provenance: lobes/assess.py + cli/_runtime_ops.py dial the gateway with stdlib urllib today, keyless.
+  - honesty: With GATEWAY_API_KEY set in a test deployment .env, lobes capabilities / assess against the local gateway succeed keylessly-from-the-user's-view (the CLI attaches the key itself); with the wrong key in .env they fail with a clear 401 message, not a traceback.
+- Peer-declines honesty: when the proxied-to peer itself answers 404 role_infeasible (the peer also dropped the role — a misdeclared peer origin), the proxying box relays an honest terminal failure naming the peer, and never chains a second hop (single-hop rule, h5).
+  - honesty: A mock-peer test where the peer returns role_infeasible asserts the proxying box's response is a terminal error naming the peer and that no second outbound request is attempted.
+- Key handling hygiene: bearer comparison is timing-safe (hmac.compare_digest); GATEWAY_API_KEY and *_PEER_API_KEY reach the gateway container as scoped environment: entries in the compose template — never via env_file (the gateway env block deliberately avoids inheriting .env secrets; PR #117 Qodo finding).
+  - honesty: Code review + a grep-test assert compare_digest is used for the bearer check and that no key value appears in any log line, error body, or capabilities payload the test suite captures.
 
 ## Honesty conditions
 
@@ -58,6 +66,7 @@
 
 - Peers are reachable at operator-declared origins on the tailnet (e.g. <http://thor.tail0be7e0.ts.net:8000>); transport security between boxes is the tailnet's/tunnel's job at this layer — pairwise keys authenticate, TLS termination is out of scope (existing practice for CULTURE_VLLM_API_KEY over cloudflared).
 - stt/tts (audio overlay) have no peer-origin channel today (outside the Profile schema, lobes/gateway/_config.py PEER_ORIGIN_ENV covers primary/multimodal/embed/rerank only) — proxy-lobes covers the four core roles first; audio-role proxying is a follow-up.
+- The forwarded body carries the RESOLVED served model id and the peer serves that same id — verified at runtime by the peer-readiness probe against the peer's /v1/models (c19), so a proxied request never asks the peer for a model it does not serve.
 
 ## Scope exploration
 
@@ -77,6 +86,16 @@
   - seeds: `c11`
 - `s8` — `lobes/profiles/shapes.py + shape_render.py (deployment shapes t1-t3)`: shapes are pure data (hosts + overrides) rendered to env; the proxy opt-in and per-peer key knobs must render through the same shape/env pipeline so lobes init --shape stays the single entry point and restore stays byte-for-byte
   - seeds: `c8`
+- `s9` — `challenge pass / adjacent-systems lens: lobes/templates/fleet/docker-compose.yml ports + eidetic/colleague consumers`: only the gateway publishes a host port (${VLLM_PORT:-8000}:8000) — backends are compose-network-internal, so inbound gateway auth covers the box's entire published surface; local consumers (colleague CLI :8001, eidetic embed) dial the gateway and are covered by c21
+  - seeds: `c21`
+- `s10` — `challenge pass / concurrency lens: lobes/gateway/server.py ThreadingHTTPServer + per-request upstream connections`: clean pass — the proxy branch reuses the existing per-request connection + read1 streaming relay; no shared mutable state is added; the readiness cache is the only cross-thread structure and already exists
+- `s11` — `challenge pass / lifecycle lens: accept-shape backup/restore + image rollback`: new env keys are inert to an old gateway image (unknown env ignored) so rollback is safe; the shape re-render must round-trip the new knobs byte-for-byte like *_PEER_ORIGIN does (c8 goldens)
+  - seeds: `c8`
+- `s12` — `challenge pass / cheap probe: live Thor gateway from Spark (2026-07-16)`: <http://thor.tail0be7e0.ts.net:8000/health> ok + /capabilities 200 — peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)
+- `s13` — `challenge pass / security lens: bearer handling + secret scoping`: timing-safe compare + scoped environment: entries captured as c23; replay/rate-limit/TLS parked as v1 (tailnet transport assumption c11)
+  - seeds: `c23`
+- `s14` — `challenge pass / observability lens: issue #127 design principle`: the spec lacked any caller-visible signal of WHERE a proxied answer came from — c20 adds the proxied-by marker family
+  - seeds: `c20`
 
 ## Decisions
 
