@@ -1,0 +1,407 @@
+{
+  "slug": "proxy-lobes-pairwise-auth",
+  "title": "proxy-lobes + pairwise auth",
+  "frame_slug": "proxy-lobes-pairwise-auth",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-16T12:27:32Z",
+  "updated": "2026-07-16T12:30:59Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves the whole mesh brain from any box: a gateway can serve a dropped role by following its own referral \u2014 proxying the request to the peer that hosts the lobe (proxy-lobes, #115) \u2014 so a local app on Spark asking for senses seamlessly gets Thor's answer; the exposed gateway enforces inbound auth on its own key, and each box reaches its peers with pairwise operator-declared credentials that are never propagated forward from the caller (#127)"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The shipped feature matches the announcement end-to-end on the live pair: Spark serves senses by proxy from Thor under pairwise keys, and the exported spec's success signal (c17) is demonstrated with committed evidence."
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Proxy-lobe data plane: when a role is dropped (<PREFIX>_FEASIBLE=false) AND a peer origin is declared AND proxying is opted in for that role, lobes/gateway/server.py handle_post forwards the request to the peer origin instead of returning the 404 role_infeasible \u2014 the third lobe state from issue #115 (awake / asleep / proxy). Builds on RoutingTable.peer_origins (lobes/gateway/_routing.py:59) which today is annotation-only ('it is NEVER dialed')."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A senses request against Spark with proxy enabled returns the PEER's model output (Gemma served_name in the response body) \u2014 never a locally-substituted model (#91); verified by a unit test with a mock peer and live on the physical pair."
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Honesty surfaces follow #115's table: a proxied role is advertised as PROXIED (origin = the peer) on lobes capabilities and GET /capabilities (lobes/roles.py hosted_by annotation site) \u2014 never as locally served; per the #92 lesson (gotcha gateway-public-url-must-not-default-2026-07-09) proxy origins are operator-declared, never derived."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "lobes capabilities and GET /capabilities on a proxying box mark the role with an explicit proxied state naming the peer origin (hosted_by retained), and ready reflects a live proxied-path probe or is honestly unknown \u2014 never a hardcoded true."
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Inbound gateway auth: the fleet gateway grows opt-in Authorization: Bearer enforcement against a configured key (docs/gateway-fleet.md:376 records today's known limitation \u2014 the gateway is pass-through, not auth-aware; CULTURE_VLLM_API_KEY only protects the legacy single-model path via VLLM_API_KEY in templates/docker-compose.yml:51)."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "With GATEWAY_API_KEY set, every data-plane route (chat, embeddings, rerank, audio) rejects a missing/wrong Authorization: Bearer with 401 before touching any backend; health/readiness endpoints stay unauthenticated for probes; with the knob unset behavior is byte-identical to today."
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Pairwise outbound credentials: when proxying to a peer the gateway REPLACES the inbound Authorization header with an operator-declared per-peer key (e.g. <PREFIX>_PEER_API_KEY next to <PREFIX>_PEER_ORIGIN in _config.PEER_ORIGIN_ENV's convention) \u2014 the caller's key authenticates only to the box it dialed; keys are between machines and never propagated forward."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The inbound Authorization header is NEVER forwarded to a peer: the proxy branch strips it and attaches the operator-declared per-peer key; a test asserts the caller's key does not appear in the outbound request; peer keys never appear in logs, traces, capabilities output, or error bodies."
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Proxying is single-hop with a loop guard: a gateway never re-proxies a request that already arrived proxied (e.g. an X-Lobes-Proxied marker refused at the second hop) \u2014 two boxes misconfigured to point at each other must fail fast, not ping-pong."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A request carrying the proxy-hop marker that resolves to another proxy departure is refused with an explicit error (not forwarded), covered by a two-box misconfiguration unit test."
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "Failure modes carried from #115: hosting peer down => 503 with Retry-After (single-owner rule, no cross-model failover per #91); a proxied request counts against the PEER's pressure policy, never masked by the proxying box."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Peer connect-refused/timeout yields 503 with Retry-After from the proxying box (no cross-model fallback); the proxying box's own pressure policy does NOT gate proxied requests \u2014 the peer's does (its gateway applies its own policy on arrival)."
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "Default-off, byte-identical: with no proxy opt-in config, every surface (capabilities, 404 role_infeasible + hosted_by referral, /v1/models) stays byte-identical to today's contract \u2014 referral-only deployments (Spark/Thor live today) must not silently start proxying or enforcing auth."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "A golden/regression test renders a no-proxy, no-auth deployment before and after this change and asserts byte-identical gateway responses on /capabilities, /v1/models, and the role_infeasible 404 body."
+    },
+    {
+      "id": "c13",
+      "kind": "audience",
+      "text": "Local apps and mesh agents on any box (Culture agents, eidetic, colleague CLI) that dial their box's lobes gateway; operators running lobes init --shape across Spark/Thor/Orin."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The delivered surfaces are exercised by the named consumers' path: an OpenAI-compatible client pointed at the box gateway (no client-side changes needed) and lobes init/--shape for operators."
+    },
+    {
+      "id": "c14",
+      "kind": "after_state",
+      "text": "An app pointed at Spark's gateway asks for senses and gets Thor's Gemma answer over the spark->thor pairwise credential, without knowing Thor exists; the exposed Spark key authenticates callers inbound; lobes capabilities shows senses as PROXIED with the peer origin; misconfig loops fail fast; no-peer deployments byte-identical."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Each element of the after-state maps to a shipped, tested behavior: proxied senses answer, inbound 401 gate, PROXIED capabilities state, loop-guard error, byte-identical no-config goldens."
+    },
+    {
+      "id": "c15",
+      "kind": "before_state",
+      "text": "Today a dropped role 404s role_infeasible with a hosted_by referral the CLIENT must follow \u2014 every local app needs per-box endpoint config + the peer's key propagated to it; the fleet gateway enforces no inbound auth at all (docs/gateway-fleet.md known limitation)."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The before-state is cited from code/docs as they exist today (docs/gateway-fleet.md:376 known limitation; _routing.py peer_origins 'NEVER dialed' comment) \u2014 re-verified against main at implementation start."
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "One brain across the mesh (#112 end-state) only works if consumers can stay single-endpoint: apps configured once against their local box, placement changed by operators in config \u2014 and key distribution stays O(machines) pairwise instead of O(apps x machines)."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Key distribution stays O(machines): the delivered config needs exactly one inbound key per box plus one outbound key per (box, peer role source) pair \u2014 no per-app peer keys anywhere in the shipped docs or templates."
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "Live cross-box proof on the physical boxes (like docs/evidence/2026-07-14-accept-referral-thor.txt): a chat request naming senses against Spark's gateway returns a Gemma completion produced on Thor, with capabilities honest on both boxes; plus offline unit coverage for routing, auth, loop-guard, and peer-down 503."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The success signal is only claimed once the live cross-box run's transcript is committed under docs/evidence/ and the offline suite passes in CI."
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "Proxied answers are visible: a proxied response carries an explicit marker header (e.g. X-Lobes-Proxied-By: <peer origin>) so callers always see which box actually answered \u2014 #127's stated design principle ('without hiding which lobe actually handled the request'); the request-side hop marker (loop guard, h5) and this response-side marker are one header family."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "A unit test asserts the marker header is present on proxied responses, absent on locally-served ones, and carries the operator-declared peer origin verbatim (never a derived URL, #92)."
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Turning on inbound auth must not break the box's own tooling: the lobes CLI verbs that dial the local gateway (capabilities, assess, status --pressure, measure, benchmark) read the deployment's key from .env and send Authorization when GATEWAY_API_KEY resolves \u2014 provenance: lobes/assess.py + cli/_runtime_ops.py dial the gateway with stdlib urllib today, keyless."
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "With GATEWAY_API_KEY set in a test deployment .env, lobes capabilities / assess against the local gateway succeed keylessly-from-the-user's-view (the CLI attaches the key itself); with the wrong key in .env they fail with a clear 401 message, not a traceback."
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Peer-declines honesty: when the proxied-to peer itself answers 404 role_infeasible (the peer also dropped the role \u2014 a misdeclared peer origin), the proxying box relays an honest terminal failure naming the peer, and never chains a second hop (single-hop rule, h5)."
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A mock-peer test where the peer returns role_infeasible asserts the proxying box's response is a terminal error naming the peer and that no second outbound request is attempted."
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Key handling hygiene: bearer comparison is timing-safe (hmac.compare_digest); GATEWAY_API_KEY and *_PEER_API_KEY reach the gateway container as scoped environment: entries in the compose template \u2014 never via env_file (the gateway env block deliberately avoids inheriting .env secrets; PR #117 Qodo finding)."
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Code review + a grep-test assert compare_digest is used for the bearer check and that no key value appears in any log line, error body, or capabilities payload the test suite captures."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "t1 Config plumbing: <PREFIX>_PEER_PROXY + <PREFIX>_PEER_API_KEY env channels and GATEWAY_API_KEY (fallback CULTURE_VLLM_API_KEY) in lobes/gateway/_config.py; RoutingTable gains peer_proxied + peer_api_keys, ServerConfig gains api_key. Files: lobes/gateway/_config.py, lobes/gateway/_routing.py (fields only), tests/test_gateway_config_proxy.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "build_config maps <PREFIX>_PEER_PROXY=true into RoutingTable.peer_proxied ONLY when that prefix also has a peer origin and is infeasible; origin without the knob stays referral-only (q1)",
+        "GATEWAY_API_KEY resolution: explicit value wins, else CULTURE_VLLM_API_KEY, else None => auth disabled (q2); channels scoped to the four core roles",
+        "no-knob env yields config objects equal to today's on every existing field; peer keys never appear in repr/str"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h12",
+        "c16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "t2 Inbound auth gate in lobes/gateway/server.py: when cfg.api_key is set every data-plane route 401s missing/wrong Authorization: Bearer via hmac.compare_digest BEFORE body parse; /health + probes stay keyless. Files: lobes/gateway/server.py (auth helpers, handle_post entry, GET dispatch), tests/test_gateway_auth.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no header / malformed / wrong key each 401 with an OpenAI-shaped error and zero upstream connections (h3)",
+        "/health answers keyless; api_key unset => byte-identical on every route",
+        "comparison is hmac.compare_digest; 401 body never echoes any key material"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c23",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "t3 CLI attaches the key: gateway-dialing paths in lobes/assess.py + lobes/cli/_runtime_ops.py read GATEWAY_API_KEY/CULTURE_VLLM_API_KEY from the deployment .env and send Authorization. Files: lobes/assess.py, lobes/cli/_runtime_ops.py, tests/test_cli_gateway_auth.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes capabilities/assess succeed against an auth-enabled mock gateway using the .env key; wrong key => clear 401 message, not a traceback (h15)",
+        "keyless deployment sends no Authorization header (byte-identical)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c21",
+        "h15",
+        "c13",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "t4 Peer-readiness probe: lobes/gateway/_readiness.py learns to probe a proxied role's peer origin (/v1/models with the per-peer key) so ready/advertised reflects the peer's live state; bounded timeout, never blocks local probes. Files: lobes/gateway/_readiness.py, tests/test_readiness_peer_probe.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a proxied role reports ready=True only when the peer answers and lists the resolved served id (c19/c24); peer down => ready None/False and the id drops from /v1/models",
+        "peer probe failures never delay or fail local-backend probing (isolated timeout + thread-safety preserved)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "t5 PROXIED capabilities state: lobes/roles.py advertises a proxied role as state=proxied with the operator-declared origin (hosted_by retained) \u2014 never as locally served. Files: lobes/roles.py, tests/test_roles_proxied.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "capabilities payload marks proxied roles distinctly from hosted and from referral-only-dropped; origin string is the operator's verbatim (#92)",
+        "referral-only and no-peer deployments render byte-identically to today"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "t6 Proxy data-plane branch in lobes/gateway/server.py: follow-the-referral forwarding for dropped+proxied roles \u2014 replace inbound Authorization with the per-peer key, add hop-marker request header + X-Lobes-Proxied-By response header, single-hop loop guard, peer-down 503 Retry-After, peer role_infeasible relay, /v1/models peer-gating; reuse the existing streaming relay. Files: lobes/gateway/server.py, lobes/gateway/_routing.py (list_models_payload peer gating), tests/test_gateway_proxy.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a dropped+proxied role's request forwards to the peer origin and streams the peer's SSE/JSON answer back unchanged, model id = the peer's served id (h1)",
+        "outbound request carries the per-peer key and NOT the caller's Authorization; a test greps the captured outbound headers for the caller's token and finds nothing (h4)",
+        "a request already carrying the hop marker that would depart again is refused with an explicit error and no outbound attempt (h5)",
+        "peer connect-refused/timeout => 503 with Retry-After; local pressure policy is not applied to proxied requests (h6)",
+        "peer answers role_infeasible => terminal error naming the peer, no second hop (h16)",
+        "proxied responses carry X-Lobes-Proxied-By: <peer origin> verbatim; locally-served responses do not (h14)"
+      ],
+      "deps": [
+        "t2",
+        "t4"
+      ],
+      "covers": [
+        "c2",
+        "h1",
+        "h4",
+        "c6",
+        "h5",
+        "c7",
+        "h6",
+        "c20",
+        "h14",
+        "c22",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "t7 Templates + shape render: fleet compose gateway env block gains GATEWAY_API_KEY + per-role PEER_PROXY/PEER_API_KEY as scoped environment: entries (never env_file); env.example documents them; shape render/accept round-trips the new knobs byte-for-byte. Files: lobes/templates/fleet/docker-compose.yml, lobes/templates/fleet/env.example, lobes/profiles/shape_render.py (if knobs flow through shapes), tests/goldens updates via regen",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "default-rendered deployment (no new vars set) produces byte-identical compose/env to today (goldens regen shows no diff for machine-as-brain/spark-lobe/thor-lobe/orin-small without the new knobs)",
+        "keys reach the gateway service as scoped environment: entries; env_file is not introduced (c23)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "t8 Integration suite + goldens: a two-gateway mock-pair test (proxying box + peer box in-process) exercising the full after-state \u2014 proxied senses answer, 401 gate, loop guard, peer-down 503, marker headers, no-key-leak grep across captured logs/bodies \u2014 plus the byte-identical no-config golden assertions. Files: tests/test_proxy_integration.py (new), tests/goldens/ additions",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every after-state element of c14 maps to a passing test in this suite (h10)",
+        "before/after golden responses for a no-proxy no-auth deployment are byte-identical on /capabilities, /v1/models, and the role_infeasible 404 (h7)"
+      ],
+      "deps": [
+        "t6",
+        "t5",
+        "t7",
+        "t3"
+      ],
+      "covers": [
+        "h7",
+        "c14",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "t9 Docs: rewrite docs/gateway-fleet.md auth section (limitation lifted), extend docs/deployment-shapes.md + docs/colleague-stack.md + docs/openai-api.md with proxy-lobes states, pairwise-key contract (one inbound key per box, one outbound key per peer), marker headers; update lobes/explain catalog + CLAUDE.md; re-verify before-state citations against main. Files: docs/*.md, lobes/explain/, CLAUDE.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the before-state citations (gateway-fleet.md:376 known limitation, _routing.py NEVER-dialed comment) are updated where the code changed and confirmed-still-true where it did not (h11)",
+        "docs state the O(machines) key layout and the tailnet transport assumption; no doc claims Orin validation (#108 rule)"
+      ],
+      "deps": [
+        "t6",
+        "t5"
+      ],
+      "covers": [
+        "c15",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "t10 Live cross-box acceptance (operator-led, post-merge/publish): re-pin Thor off 0.43.0.dev239, enable MULTIMODAL_PEER_PROXY + pairwise keys on Spark, run a senses chat request against Spark's gateway, verify Thor-produced Gemma completion + honest capabilities on both boxes, commit the transcript under docs/evidence/",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "committed docs/evidence/ transcript shows: request to Spark, X-Lobes-Proxied-By Thor origin, Gemma served id in the response, capabilities honest on both boxes (h13)",
+        "the offline suite passes in CI on the release commit (h13)"
+      ],
+      "deps": [
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c1",
+        "h8",
+        "c17",
+        "h13"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Live acceptance (t10) depends on a PyPI release carrying this feature and re-pinning Thor's gateway off the TestPyPI 0.43.0.dev239 pin (challenge park v2) \u2014 it runs post-merge, outside the workforce waves",
+      "kind": "unknown_nonblocking",
+      "task_id": null
+    },
+    {
+      "id": "r2",
+      "text": "Cross-box peer probes from the readiness cache add WAN-ish latency into a loop that today only probes localhost containers \u2014 t4 must isolate cadence/timeouts so a flapping tailnet link cannot stall local readiness",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4"
+    },
+    {
+      "id": "r3",
+      "text": "t8's integration suite may need to touch shared test fixtures other tasks also edit \u2014 merge it last in its wave and re-run the full suite after merge (TDD gate)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8"
+    }
+  ]
+}
