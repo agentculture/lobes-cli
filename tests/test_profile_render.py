@@ -20,6 +20,7 @@ def test_role_env_prefix_covers_all_four_roles() -> None:
     assert ROLE_ENV_PREFIX == {
         "cortex": "PRIMARY",
         "senses": "MULTIMODAL",
+        "muse": "MUSE",
         "embedder": "EMBED",
         "reranker": "RERANK",
     }

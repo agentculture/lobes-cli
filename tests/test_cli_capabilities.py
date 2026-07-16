@@ -295,6 +295,7 @@ def test_endpoint_works_for_every_role(tmp_path, capsys) -> None:
     expected = {
         "cortex": "http://localhost:8000",
         "senses": "http://localhost:8000",
+        "muse": "http://localhost:8000",
         "embedder": "http://localhost:8000",
         "reranker": "http://localhost:8000",
         "stt": "",

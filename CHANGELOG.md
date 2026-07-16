@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.0] - 2026-07-17
+
+### Added
+
+- **`muse` — the seventh first-class Colleague role**: the creative/ideation
+  lobe, serving `nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's
+  official modelopt NVFP4 export; 256K native; unified multimodal
+  vision+audio configs; MTP DECLARED via `google/gemma-4-31B-it-assistant`,
+  unmeasured). Addressable as `model=muse`; capability order is now
+  `minor < multimodal < muse < primary`. Responsibilities:
+  creative_generation / long_form_writing / ideation / style_variation /
+  divergent_second_opinion; forbidden: final_decision / repo_action /
+  security_decision (muse proposes, cortex decides).
+- **Opt-in core roles** (`lobes.profiles.shapes.OPT_IN_CORE_ROLES`): muse
+  carries the full per-machine Profile knob set (`MUSE_*` prefix, schema is
+  now five core roles) but `machine-as-brain` never hosts it — a 31B cannot
+  co-reside with the cortex+senses duo on a 128 GB box. The machine-as-brain
+  identity set is now `DEFAULT_HOSTED_ROLES` (the six), and the
+  machine-as-brain-equals-bare-card byte-identity invariant is preserved
+  exactly (a non-hosted opt-in core role renders nothing).
+- **`thor-muse` built-in deployment shape** (DECLARED/UNVALIDATED, #108 rule):
+  hosts muse + embedder + reranker + audio; drops BOTH heavy default lobes
+  (cortex and senses) to peer boxes. Carries the full muse declaration in its
+  `[overrides.muse]` (model, `gpu_mem_util=0.40` hypothesis,
+  `max_model_len=131072`, `quantization=modelopt`,
+  `attention_backend=TRITON_ATTN`); hosting muse renders its activation env
+  (`COMPOSE_PROFILES=muse` + `MUSE_BASE_URL`). `base.toml` vetoes muse on
+  unrecognised cards.
+- **`vllm-muse` compose service** — profile-gated behind the `muse` Docker
+  Compose profile (never started by a plain `docker compose up`), same custom
+  Gemma 4 image as `vllm-multimodal` (`MUSE_IMAGE` overrides the tag).
+- Gateway: muse joins all four peer/feasibility env channels
+  (`MUSE_FEASIBLE` / `MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` /
+  `MUSE_PEER_API_KEY`) — referral and proxy-lobes work for muse exactly like
+  every core role. `lobes up muse`, `lobes measure` (llm family), pressure
+  shedding (muse degrades to `minor`), and `lobes fleet status` (container
+  included when activated) all cover the new role. `lobes up colleague-stack`
+  deliberately stays the six default roles.
+
+### Changed
+
+- `OPT_IN_BACKENDS` (gateway): an unwired, unflagged muse backend is
+  **infeasible by default**, so `model=muse` on every pre-muse/stale `.env`
+  404s `role_infeasible` (honest, referable, proxyable) instead of silently
+  upward-falling-back to cortex.
+- `/capabilities` (gateway + CLI) now reports SEVEN roles; docs and the
+  in-CLI explain catalog updated throughout.
+
+### Fixed
+
 ## [0.45.2] - 2026-07-17
 
 ### Added
@@ -37,7 +87,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - CI hardening: pin `astral-sh/setup-uv`'s `version` to `0.11.29` (was `latest`) and turn on `enable-cache: true` across both workflows (`tests.yml`, `publish.yml`, 6 usages total), so a transient GitHub release-CDN outage can no longer take down every job by failing uv's "resolve latest" step; two identical CI failures on PR #132 (2026-07-16 22:39Z/22:43Z, GitHub 503 HTML from the setup-uv download) prompted the change. The action's SHA pin, tokens, and cache-dependency-glob are unchanged
-
 ## [0.45.0] - 2026-07-16
 
 ### Added

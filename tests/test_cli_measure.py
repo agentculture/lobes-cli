@@ -385,6 +385,7 @@ def test_measure_role_family_assignment_covers_all_six_roles() -> None:
     assert RM._FAMILY_BY_ROLE == {
         "cortex": "llm",
         "senses": "llm",
+        "muse": "llm",
         "embedder": "embed_rerank",
         "reranker": "embed_rerank",
         "stt": "audio",

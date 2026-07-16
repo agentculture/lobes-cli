@@ -96,19 +96,22 @@ _TIER_ROLE: dict[str, str] = {
     "cheap": "minor",
     "normal": "multimodal",
     "hard": "primary",
-    # Capability-ROLE names (alias the same backends as main / multimodal). Kept
-    # in the same order as catalog.TIER_ROLE (senses before cortex) so the two
-    # dicts stay identical — the mirror guard test asserts equality.
+    # Capability-ROLE names (alias the same backends as main / multimodal;
+    # muse is its own backend). Kept in the same order as catalog.TIER_ROLE
+    # (senses, then muse, then cortex) so the two dicts stay identical — the
+    # mirror guard test asserts equality.
     "senses": "multimodal",
+    "muse": "muse",
     "cortex": "primary",
 }
 
 #: Backend role → canonical new-vocabulary tier name (the inverse of the primary
-#: vocabulary rows above).
+#: vocabulary rows above; muse's role IS its tier name).
 _ROLE_TO_TIER: dict[str, str] = {
     "primary": "main",
     "minor": "minor",
     "multimodal": "multimodal",
+    "muse": "muse",
 }
 
 _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)

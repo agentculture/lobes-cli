@@ -7,10 +7,14 @@ is covered automatically the moment its TOML lands. Today the cells are:
 
 * ``spark-lobe``  drops ``senses``            (the Gemma gear lives on a peer);
 * ``thor-lobe``   drops ``cortex``            (the Qwen primary lives on a peer);
+* ``thor-muse``   drops BOTH heavies (``cortex`` AND ``senses``) — its generate
+  lane is the opt-in 31B ``muse`` lobe;
 * ``orin-small``  drops BOTH heavies (``cortex`` AND ``senses``) — its generate
   lane is the opt-in 4B ``minor`` gear;
-* ``machine-as-brain`` drops NOTHING and therefore contributes zero cells (the
-  default path is regression-pinned by the golden suites instead — see below).
+* ``machine-as-brain`` drops no DEFAULT role; since the opt-in core ``muse``
+  lobe landed it contributes exactly one cell (``muse`` — like every shape
+  that doesn't host it), while its default path stays regression-pinned by the
+  golden suites (see below).
 
 For EVERY cell, the honesty contract shipped by #110/#113-t5 and extended by
 mesh-brain t3 is asserted in full:
@@ -68,7 +72,12 @@ from lobes.gateway._config import FEASIBLE_ENV, PEER_ORIGIN_ENV, build_config
 from lobes.gateway._routing import list_models_payload
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.schema import ROLES as CORE_ROLES
-from lobes.profiles.shapes import Shape, builtin_shape_names, resolve_shape
+from lobes.profiles.shapes import (
+    OPT_IN_CORE_ROLES,
+    Shape,
+    builtin_shape_names,
+    resolve_shape,
+)
 from lobes.roles import ROLE_BACKEND, ROLES, build_role_registry, role_registry_from_env
 
 _GATEWAY_URL = "http://localhost:8000"
@@ -78,6 +87,7 @@ _GATEWAY_URL = "http://localhost:8000"
 _MODEL_ID: dict[str, str] = {
     "cortex": "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
     "senses": "coolthor/gemma-4-12B-it-NVFP4A16",
+    "muse": "nvidia/Gemma-4-31B-IT-NVFP4",
     "embedder": "Qwen/Qwen3-Embedding-0.6B",
     "reranker": "Qwen/Qwen3-Reranker-0.6B",
 }
@@ -89,6 +99,7 @@ _MINOR_ID = "Qwen/Qwen3.5-4B"
 _WIRE_ENV: dict[str, tuple[str, str]] = {
     "cortex": ("PRIMARY_URL", "PRIMARY_SERVED_NAME"),
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
+    "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
 }
@@ -137,18 +148,27 @@ _ALIAS_CELL_IDS = [f"{shape}--{role}--{alias}" for shape, role, alias in ALIAS_C
 def test_matrix_enumerates_the_documented_reference_cells() -> None:
     """The derived matrix IS the documented one — the explicit enumeration.
 
-    spark-lobe drops senses; thor-lobe drops cortex; orin-small drops BOTH
-    heavies; machine-as-brain drops nothing. If this fails because a NEW
+    spark-lobe drops senses; thor-lobe drops cortex; thor-muse and orin-small
+    drop BOTH heavies; every shape that doesn't host the opt-in muse lobe
+    (all but thor-muse) contributes a muse cell too. If this fails because a NEW
     built-in shape landed: the parametrized cell tests below already cover it —
     just extend this documented set to match its declared drops.
     """
     assert set(CELLS) == {
+        ("machine-as-brain", "muse"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
+        ("orin-small", "muse"),
         ("spark-lobe", "senses"),
+        ("spark-lobe", "muse"),
         ("thor-lobe", "cortex"),
+        ("thor-lobe", "muse"),
+        ("thor-muse", "cortex"),
+        ("thor-muse", "senses"),
     }
-    assert all(shape != "machine-as-brain" for shape, _ in CELLS)
+    # machine-as-brain contributes ONLY the opt-in muse cell — never a
+    # default-role drop (its default path is golden-pinned instead).
+    assert all(role == "muse" for shape, role in CELLS if shape == "machine-as-brain")
 
 
 def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
@@ -175,7 +195,13 @@ def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
             env[url_key] = f"http://vllm-{backend}:8000"
             env[name_key] = _MODEL_ID[role]
         else:
-            env[FEASIBLE_ENV[backend]] = "false"
+            # A non-hosted OPT-IN core role (muse) renders NO marker on a
+            # silent card (see shape_render.compose_profile) — the gateway's
+            # OPT_IN_BACKENDS unwired-by-default rule makes it infeasible
+            # anyway, and THAT is the realistic stale/silent-card shape this
+            # matrix must prove honest.
+            if role not in OPT_IN_CORE_ROLES:
+                env[FEASIBLE_ENV[backend]] = "false"
             if peers:
                 env[PEER_ORIGIN_ENV[backend]] = _peer_origin(role)
     if shape.hosts_role("minor"):
@@ -362,6 +388,8 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
             ("multimodal", "multimodal"),
             ("normal", "multimodal"),
         ]
+    if shape.hosts_role("muse"):
+        expected += [("muse", "muse")]
     if shape.hosts_role("minor"):
         expected += [("minor", "minor"), ("cheap", "minor")]
     assert expected, f"{shape_name} hosts no generate lane at all?"

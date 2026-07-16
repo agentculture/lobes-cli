@@ -24,7 +24,7 @@ from lobes.profiles.schema import KNOB_NAMES, ROLES, Profile, RoleProfile
 
 
 def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
-    assert ROLES == ("cortex", "senses", "embedder", "reranker")
+    assert ROLES == ("cortex", "senses", "muse", "embedder", "reranker")
     assert set(KNOB_NAMES) == {
         "gpu_mem_util",
         "max_model_len",

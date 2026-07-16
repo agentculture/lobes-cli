@@ -34,6 +34,8 @@ from lobes.profiles.schema import RoleProfile
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
     COLLEAGUE_ROLES,
+    DEFAULT_HOSTED_ROLES,
+    OPT_IN_CORE_ROLES,
     OPT_IN_ROLES,
     SHAPE_ROLES,
     Shape,
@@ -59,13 +61,25 @@ def test_opt_in_roles_is_minor() -> None:
 
 
 def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
-    # The six first-class Colleague roles (issue #81): the four Profile-
+    # The seven first-class Colleague roles (issue #81): the five Profile-
     # machinery core roles plus the two audio-overlay sidecars. No role
     # vocabulary is re-typed here — it is composed from schema.ROLES. This is
-    # exactly the set machine-as-brain hosts (see
-    # test_machine_as_brain_hosts_every_colleague_role below).
+    # the Colleague CONTRACT set; the set machine-as-brain hosts is the
+    # narrower DEFAULT_HOSTED_ROLES (opt-in core roles excluded — see
+    # test_machine_as_brain_hosts_every_default_role below).
     assert COLLEAGUE_ROLES == PROFILE_ROLES + AUDIO_ROLES
-    assert COLLEAGUE_ROLES == ("cortex", "senses", "embedder", "reranker", "stt", "tts")
+    assert COLLEAGUE_ROLES == ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
+
+
+def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
+    # The machine-as-brain identity set: every Colleague role EXCEPT the
+    # opt-in core lobes (muse — a 31B that cannot co-reside with the
+    # cortex+senses duo; hosted only by an explicit muse-hosting shape).
+    assert OPT_IN_CORE_ROLES == ("muse",)
+    assert DEFAULT_HOSTED_ROLES == tuple(
+        role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
+    )
+    assert DEFAULT_HOSTED_ROLES == ("cortex", "senses", "embedder", "reranker", "stt", "tts")
 
 
 def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
@@ -77,6 +91,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
     assert SHAPE_ROLES == (
         "cortex",
         "senses",
+        "muse",
         "embedder",
         "reranker",
         "stt",
@@ -193,18 +208,26 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
 
 def test_builtin_shape_names_lists_all_four() -> None:
     names = builtin_shape_names()
-    assert set(names) == {"machine-as-brain", "spark-lobe", "thor-lobe", "orin-small"}
+    assert set(names) == {
+        "machine-as-brain",
+        "spark-lobe",
+        "thor-lobe",
+        "thor-muse",
+        "orin-small",
+    }
 
 
-def test_machine_as_brain_hosts_every_colleague_role() -> None:
+def test_machine_as_brain_hosts_every_default_role() -> None:
     mab = load_builtin_shape("machine-as-brain")
     assert mab is not None
     assert mab.name == "machine-as-brain"
-    # machine-as-brain hosts the six first-class Colleague roles -- NOT the
-    # opt-in `minor` gear, which is deliberately excluded from "every role
-    # this card can serve" (see COLLEAGUE_ROLES vs SHAPE_ROLES above).
-    assert set(mab.hosts) == set(COLLEAGUE_ROLES)
+    # machine-as-brain hosts the six DEFAULT-hosted Colleague roles -- NOT
+    # the opt-in `minor` gear, and NOT the opt-in core `muse` lobe: both are
+    # deliberately excluded from "every role this card can serve" (see
+    # DEFAULT_HOSTED_ROLES vs COLLEAGUE_ROLES/SHAPE_ROLES above).
+    assert set(mab.hosts) == set(DEFAULT_HOSTED_ROLES)
     assert "minor" not in mab.hosts
+    assert "muse" not in mab.hosts
 
 
 def test_machine_as_brain_carries_no_overrides() -> None:
@@ -224,6 +247,25 @@ def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:
     assert thor_lobe is not None
     assert set(thor_lobe.hosts) == {"senses", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in thor_lobe.hosts
+
+
+def test_thor_muse_hosts_muse_pooling_and_audio_no_default_heavy_lobe() -> None:
+    # The muse reference shape: hosts the opt-in 31B muse lobe + the cheap
+    # gears, and drops BOTH heavy default lobes (cortex to a spark-lobe box,
+    # senses to a peer box, e.g. an Orin — declared via MULTIMODAL_PEER_*).
+    thor_muse = load_builtin_shape("thor-muse")
+    assert thor_muse is not None
+    assert set(thor_muse.hosts) == {"muse", "embedder", "reranker", "stt", "tts"}
+    assert "cortex" not in thor_muse.hosts
+    assert "senses" not in thor_muse.hosts
+    # The FULL muse declaration lives in the shape's overrides (the card
+    # profiles stay silent): model + budget hypothesis + backend divergence.
+    muse = thor_muse.override("muse")
+    assert muse.model == "nvidia/Gemma-4-31B-IT-NVFP4"
+    assert muse.gpu_mem_util == 0.40
+    assert muse.max_model_len == 131072
+    assert muse.quantization == "modelopt"
+    assert muse.attention_backend == "TRITON_ATTN"
 
 
 def test_orin_small_hosts_minor_embedder_reranker_and_audio_no_heavy_lobe() -> None:

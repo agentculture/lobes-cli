@@ -32,8 +32,9 @@ class SupportedModel:
 
     id: str  # OpenAI model id (== the vLLM --served-model-name)
     # The fleet's default role for this gear. One of:
-    # "primary" | "fallback" | "candidate" | "minor" | "multimodal" | "embedding" | "reranker".
-    # The generate-lane tier aliases (main/minor/multimodal + back-compat
+    # "primary" | "fallback" | "candidate" | "minor" | "multimodal" | "muse" |
+    # "embedding" | "reranker".
+    # The generate-lane tier aliases (main/minor/multimodal/muse + back-compat
     # cheap/normal/hard) resolve to a gear by this field — see TIER_ROLE / resolve_tier.
     role_hint: str
     shape: str  # architecture in a phrase, e.g. "dense" / "MoE (~3B active)"
@@ -319,6 +320,49 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # docs/vllm-nightly-migration.md §7.
     ),
     SupportedModel(
+        id="nvidia/Gemma-4-31B-IT-NVFP4",
+        # Gemma 4 31B IT (Google DeepMind), NVIDIA's official NVFP4 export — the
+        # `muse` gear: the fleet's OPT-IN creative/ideation generate lobe (the
+        # seventh Colleague role). NVIDIA ships only the 31B + 26B-A4B Gemma 4
+        # sizes in NVFP4 (the 12B `senses` gear is a community export) — this is
+        # the 31B. PLAIN gemma4 line (model_type "gemma4",
+        # Gemma4ForConditionalGeneration), NOT the Unified 12B family — but the
+        # checkpoint still declares vision_config + audio_config with
+        # image/audio token ids, i.e. multimodal intake like `senses`; the same
+        # vLLM audio gap (#101) is assumed to apply until measured. Weights are
+        # 30.4 GiB across 4 safetensors shards; config.json quant_method is
+        # "modelopt" (hf_quant_config.json: NVFP4, FP8 KV-cache scheme with
+        # calibrated scales — unlike the Qwen MTP re-export on Thor, #109).
+        # Tool calls use the "pythonic" parser (infer_parser: gemma-4* ids).
+        #
+        # Too heavy to co-reside with the cortex+senses duo on a 128 GB box —
+        # machine-as-brain never hosts it; a muse-hosting deployment shape
+        # (`lobes init --shape thor-muse`) is the only built-in way to serve it.
+        role_hint="muse",
+        shape="unified multimodal (text+image+audio)",
+        # text_config.max_position_embeddings=262144 (read from the checkpoint
+        # config, 2026-07-17); a muse-hosting shape trims the SERVED context to
+        # its box budget (thor-muse: 131072).
+        context="256K native",
+        native_max_model_len=262144,
+        tool_parser="pythonic",
+        # NVIDIA modelopt NVFP4 (config.json quant_method="modelopt" — resolves
+        # to modelopt_fp4), NOT compressed-tensors like the community 12B export.
+        quantization="modelopt",
+        status="configured",  # declared 2026-07-17; first live boot pending (Thor)
+        doc="gemma-4-31b-nvfp4.md",
+        task="generate",
+        # Native MTP via the public plain-line assistant draft
+        # (gemma4_assistant family — vLLM's hf_config_override normalizes it to
+        # gemma4_mtp with forced n_predict=1; see docs/gemma4-mtp-draft.md's
+        # family table). Same "model" key shape as the 12B entry. DECLARED, not
+        # yet measured on this 31B target — the first acceptance run gates it.
+        speculative_config=(
+            '{"method": "mtp", "model": "google/gemma-4-31B-it-assistant",'
+            ' "num_speculative_tokens": 1}'
+        ),
+    ),
+    SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
         # Reranker gear (issue #44): cross-encoder that scores (query, passage) pairs.
         # Built on Qwen3ForSequenceClassification with a binary yes/no logit head;
@@ -385,6 +429,9 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 #: — no internal service/env/container is renamed):
 #:   cortex → primary    (== main — the "thinking" primary backend)
 #:   senses → multimodal (== multimodal — the vision+audio backend)
+#:   muse   → muse       (Gemma 4 31B creative/ideation lobe — role IS the
+#:                        backend name; opt-in, hosted only by a muse-hosting
+#:                        deployment shape)
 TIER_ROLE: dict[str, str] = {
     # Primary vocabulary.
     "main": "primary",
@@ -394,12 +441,15 @@ TIER_ROLE: dict[str, str] = {
     "cheap": "minor",
     "normal": "multimodal",
     "hard": "primary",
-    # Capability-ROLE names (alias the same backends as main / multimodal).
-    # Order matters: ``tier_aliases`` derives ascending capability order from each
-    # role's *last* occurrence position here, so a multimodal-role alias must
-    # appear before a primary-role one (senses before cortex) to keep the
-    # last-occurrence sequence ascending (minor < multimodal < primary).
+    # Capability-ROLE names (alias the same backends as main / multimodal;
+    # muse is its own backend). Order matters: ``tier_aliases`` derives
+    # ascending capability order from each role's *last* occurrence position
+    # here, so a multimodal-role alias must appear before the muse one, and
+    # muse before a primary-role one (senses < muse < cortex) to keep the
+    # last-occurrence sequence ascending
+    # (minor < multimodal < muse < primary).
     "senses": "multimodal",
+    "muse": "muse",
     "cortex": "primary",
 }
 

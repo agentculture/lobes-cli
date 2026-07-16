@@ -61,17 +61,18 @@ def _spark_lobe_env(**over: str) -> dict[str, str]:
 
 
 # ============================================================================
-# The env channels: one <PREFIX>_<KNOB> convention, four core roles
+# The env channels: one <PREFIX>_<KNOB> convention, five core roles
 # ============================================================================
 
 
 def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
-    # Channels scoped to the four core roles: the proxy knob names exactly
+    # Channels scoped to the five core roles: the proxy knob names exactly
     # the backends the feasibility / peer-origin channels name.
     assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) == set(PEER_ORIGIN_ENV)
     assert PEER_PROXY_ENV == {
         "primary": "PRIMARY_PEER_PROXY",
         "multimodal": "MULTIMODAL_PEER_PROXY",
+        "muse": "MUSE_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
     }
@@ -82,6 +83,7 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
     assert PEER_API_KEY_ENV == {
         "primary": "PRIMARY_PEER_API_KEY",
         "multimodal": "MULTIMODAL_PEER_API_KEY",
+        "muse": "MUSE_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
     }
@@ -317,6 +319,12 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         backends=(primary,),
         default_model=_CORTEX_ID,
         aliases=tier_aliases([primary], TIER_ROLE),
+        # The ONE deliberate delta since muse landed: the opt-in muse lobe is
+        # unwired here (no MUSE_BASE_URL) and unflagged, so it defaults to
+        # INFEASIBLE (OPT_IN_BACKENDS) — `model=muse` 404s role_infeasible
+        # instead of silently upward-falling-back to the primary. Every
+        # pre-muse behaviour is otherwise unchanged.
+        infeasible=frozenset({"muse"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding

@@ -229,6 +229,7 @@ def test_builtin_shape_names_are_sorted() -> None:
         "orin-small",
         "spark-lobe",
         "thor-lobe",
+        "thor-muse",
     )
 
 
@@ -392,12 +393,17 @@ def test_shape_override_disabled_service_matches_render_api(tmp_path, monkeypatc
     core services render_shape would NOT run."""
     from lobes.profiles.schema import ROLES
     from lobes.profiles.shape_render import ROLE_SERVICE
+    from lobes.profiles.shapes import OPT_IN_CORE_ROLES
 
     _patch_detect(monkeypatch, _fake_card("spark"))
     target = tmp_path / "deploy"
     assert main(["init", "--shape", "spark-lobe", str(target), "--apply"]) == 0
     shape = resolve_shape("spark-lobe")
-    expected_dropped = {ROLE_SERVICE[r] for r in ROLES if not shape.hosts_role(r)}
+    # Opt-in core roles (muse) are excluded: their services are already parked
+    # behind their own compose profile, so the override never names them.
+    expected_dropped = {
+        ROLE_SERVICE[r] for r in ROLES if r not in OPT_IN_CORE_ROLES and not shape.hosts_role(r)
+    }
     doc = _load_shape_override(target)
     disabled = {
         svc

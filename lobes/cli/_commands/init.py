@@ -13,14 +13,15 @@ gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
-``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-small>`` (brain-shapes
-t4, issue #113; ``orin-small`` added by the mesh-brain end-state's t2, issue
-#112) selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
+``--shape <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small>``
+(brain-shapes t4, issue #113; ``orin-small`` added by the mesh-brain
+end-state's t2, issue #112; ``thor-muse`` added with the seventh role, muse)
+selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
 — composed on top of whichever per-machine
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
 per-machine TUNING axis, issue #110). Fleet topology only (a fleet-scaffold
 axis — incompatible with ``--single``). The default, ``machine-as-brain``,
-hosts every one of the six first-class Colleague roles this card can serve —
+hosts every one of the six default-hosted Colleague roles this card can serve —
 today's behaviour, unchanged — and t3's
 :func:`~lobes.profiles.shape_render.render_shape` composes it as a strict
 no-op over the profile, so a bare ``lobes init`` (no ``--shape`` at all) makes
@@ -44,7 +45,7 @@ from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import ROLES as CORE_ROLES
 from lobes.profiles.shape_render import GATEWAY_SERVICE, ROLE_SERVICE, render_shape
-from lobes.profiles.shapes import Shape, resolve_shape
+from lobes.profiles.shapes import OPT_IN_CORE_ROLES, Shape, resolve_shape
 from lobes.runtime import _compose, _env
 
 # The deployment shape a bare `lobes init` (no --shape) resolves: the
@@ -65,12 +66,21 @@ def _shape_dropped_services(shape: Shape) -> list[str]:
     """The base-fleet core compose SERVICES this shape drops (does not host), sorted.
 
     A pure function of the shape's ``hosts`` (the deployment-shape axis) via t3's
-    render API ``ROLE_SERVICE`` map over the four Profile-machinery core roles —
-    never hardcoded per shape. Card feasibility is a SEPARATE axis (#107) and is
-    deliberately not folded in: this override exists to enforce the SHAPE's own
-    drop decision, so machine-as-brain (hosts every role) always yields ``[]``.
+    render API ``ROLE_SERVICE`` map over the DEFAULT-HOSTED Profile-machinery
+    core roles — never hardcoded per shape. Card feasibility is a SEPARATE axis
+    (#107) and is deliberately not folded in: this override exists to enforce the
+    SHAPE's own drop decision, so machine-as-brain (hosts every default role)
+    always yields ``[]``. Opt-in core roles (``muse``) are excluded: their
+    services are already parked behind their own Docker Compose profile in the
+    base template (nothing activates it unless a hosting shape renders
+    ``COMPOSE_PROFILES``), so a non-hosting shape has nothing to park — and
+    machine-as-brain keeps writing NO override file at all.
     """
-    return sorted(ROLE_SERVICE[role] for role in CORE_ROLES if not shape.hosts_role(role))
+    return sorted(
+        ROLE_SERVICE[role]
+        for role in CORE_ROLES
+        if role not in OPT_IN_CORE_ROLES and not shape.hosts_role(role)
+    )
 
 
 def render_shape_override(shape: Shape) -> str | None:
@@ -496,20 +506,21 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--shape",
-        metavar="{machine-as-brain,spark-lobe,thor-lobe,orin-small}",
+        metavar="{machine-as-brain,spark-lobe,thor-lobe,thor-muse,orin-small}",
         help="Deployment shape to render (brain-shapes, issue #113): which "
         "roles this box hosts, composed on top of whichever --profile/"
         "detection resolves. Default 'machine-as-brain' (host every "
-        "first-class Colleague role this card can serve — today's behaviour; "
-        "a bare 'lobes init' makes zero new decisions and renders "
+        "default first-class Colleague role this card can serve — today's "
+        "behaviour; a bare 'lobes init' makes zero new decisions and renders "
         "byte-identically). Mesh-brain alternatives drop one generate lobe "
         "to a peer box and reclaim its GPU-memory budget: 'spark-lobe' "
-        "(drops senses), 'thor-lobe' (drops cortex). 'orin-small' (issue "
-        "#112, DECLARED/UNVALIDATED — no physical Jetson AGX Orin has "
-        "booted it) drops BOTH heavy lobes and hosts the opt-in 'minor' "
-        "generate gear instead. Fleet topology only — incompatible with "
-        "--single. An unknown value is a user error naming the valid "
-        "shapes.",
+        "(drops senses), 'thor-lobe' (drops cortex). 'thor-muse' drops BOTH "
+        "heavy default lobes and hosts the opt-in 31B 'muse' creative lobe "
+        "instead. 'orin-small' (issue #112, DECLARED/UNVALIDATED — no "
+        "physical Jetson AGX Orin has booted it) drops both heavy lobes and "
+        "hosts the opt-in 'minor' generate gear instead. Fleet topology only "
+        "— incompatible with --single. An unknown value is a user error "
+        "naming the valid shapes.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")

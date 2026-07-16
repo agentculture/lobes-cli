@@ -39,6 +39,13 @@ max_model_len = 32768
 [roles.senses]
 feasible = false
 
+# The opt-in 31B `muse` lobe is likewise vetoed on an unrecognised card — a
+# 30.4 GiB-weight model on unknown hardware risks the same OOM crash-loop as
+# the 27B cortex. A muse-hosting shape (thor-muse) rendered against THIS card
+# stays muse-less; write a custom card profile to override.
+[roles.muse]
+feasible = false
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

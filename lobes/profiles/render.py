@@ -7,14 +7,15 @@ The single profile -> env mapping ``lobes init`` (t4) uses to turn "which
 via ``${PREFIX_SUFFIX:-default}``. Nothing here writes a file — see
 :func:`lobes.runtime._env.set_env` for that; this module is pure.
 
-**Role -> env prefix.** The four :data:`~lobes.profiles.schema.ROLES` map onto
-the compose template's four service prefixes:
+**Role -> env prefix.** The five :data:`~lobes.profiles.schema.ROLES` map onto
+the compose template's five service prefixes:
 
 =========  ============
 role       env prefix
 =========  ============
 cortex     PRIMARY
 senses     MULTIMODAL
+muse       MUSE
 embedder   EMBED
 reranker   RERANK
 =========  ============
@@ -65,6 +66,7 @@ from lobes.profiles.schema import ROLES, Profile, RoleProfile
 ROLE_ENV_PREFIX: dict[str, str] = {
     "cortex": "PRIMARY",
     "senses": "MULTIMODAL",
+    "muse": "MUSE",
     "embedder": "EMBED",
     "reranker": "RERANK",
 }

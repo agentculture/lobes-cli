@@ -305,6 +305,42 @@ def test_up_dropped_role_is_a_user_error_naming_the_shape(tmp_path, capsys) -> N
     assert _compose.SHAPE_OVERLAY in err
 
 
+def test_up_muse_without_activation_is_a_user_error(tmp_path, capsys) -> None:
+    """`lobes up muse` on a deployment whose shape never activated the muse
+    compose profile errors up front, naming the real fix — never compose's
+    bare 'no such service' (the vllm-muse service is profile-gated)."""
+    _scaffold_fleet(tmp_path)
+    rc = main(["up", "muse", "--compose-dir", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "COMPOSE_PROFILES" in err
+    assert "thor-muse" in err
+
+
+def test_up_muse_with_activation_targets_vllm_muse(tmp_path, capsys) -> None:
+    """On a muse-activated deployment (COMPOSE_PROFILES=muse in .env — what a
+    thor-muse shape render writes), `lobes up muse` plans exactly vllm-muse."""
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=muse\n", encoding="utf-8")
+    rc = main(["up", "muse", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["services"] == ["vllm-muse"]
+    assert payload["dry_run"] is True
+
+
+def test_up_colleague_stack_excludes_the_opt_in_muse_lobe(tmp_path, capsys) -> None:
+    """colleague-stack stays the SIX default roles — bundling the opt-in,
+    profile-gated muse service would break the bundle on every default
+    deployment."""
+    _scaffold_fleet_audio(tmp_path)
+    rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "vllm-muse" not in payload["services"]
+    assert set(payload["services"]) == set(_SIX)
+
+
 def test_up_colleague_stack_on_mesh_lobe_scaffold_errors(tmp_path, capsys) -> None:
     """The six-role bundle needs every role — a mesh-lobe box that drops one
     refuses the bundle instead of silently starting a subset."""

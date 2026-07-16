@@ -63,7 +63,8 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
-    COLLEAGUE_ROLES,
+    DEFAULT_HOSTED_ROLES,
+    OPT_IN_CORE_ROLES,
     OPT_IN_ROLES,
     Shape,
     builtin_shape_names,
@@ -120,15 +121,16 @@ def test_machine_as_brain_env_equals_profile_env(card: str) -> None:
 def test_machine_as_brain_carries_no_overrides_and_hosts_everything() -> None:
     """Guards the invariant the no-op property rests on (matches the t1 shape data).
 
-    "Everything" means the six first-class Colleague roles
-    (:data:`COLLEAGUE_ROLES`) -- NOT the broader
+    "Everything" means the six DEFAULT-hosted Colleague roles
+    (:data:`DEFAULT_HOSTED_ROLES`) -- NOT the broader
     :data:`~lobes.profiles.shapes.SHAPE_ROLES`, which also admits the opt-in
-    `minor` gear (t2, issue #112) that machine-as-brain deliberately never
-    hosts.
+    `minor` gear (t2, issue #112) and the opt-in core `muse` lobe, both of
+    which machine-as-brain deliberately never hosts.
     """
     shape = resolve_shape(_IDENTITY_SHAPE)
-    assert set(shape.hosts) == set(COLLEAGUE_ROLES)
+    assert set(shape.hosts) == set(DEFAULT_HOSTED_ROLES)
     assert "minor" not in shape.hosts
+    assert "muse" not in shape.hosts
     assert dict(shape.overrides) == {}
 
 
@@ -297,18 +299,30 @@ def test_opt_in_activation_env_mirrors_the_compose_template() -> None:
 
 
 def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:
-    """Across every shape x card, a dropped core role emits ONLY <PREFIX>_FEASIBLE=false."""
+    """Across every shape x card, a dropped DEFAULT core role emits ONLY
+    <PREFIX>_FEASIBLE=false. A non-hosted OPT-IN core role (muse) instead
+    passes the card's own declaration through: the base card's veto renders
+    its marker, a silent card renders NOTHING (the gateway's OPT_IN_BACKENDS
+    unwired-by-default rule carries the honesty) -- and never a model/knob
+    leak either way."""
     for shape_name in builtin_shape_names():
         shape = resolve_shape(shape_name)
         for card in builtin_names():
-            env = shape_env(shape, resolve_profile(card))
+            profile = resolve_profile(card)
+            env = shape_env(shape, profile)
             for role in ROLES:
                 if shape.hosts_role(role):
                     continue
                 prefix = ROLE_ENV_PREFIX[role]
-                assert (
-                    env.get(f"{prefix}_FEASIBLE") == "false"
-                ), f"dropped {role} on {shape_name}/{card} lacks its flagged-off marker"
+                if role in OPT_IN_CORE_ROLES:
+                    expected = "false" if role in profile.roles else None
+                    assert (
+                        env.get(f"{prefix}_FEASIBLE") == expected
+                    ), f"non-hosted opt-in {role} on {shape_name}/{card}: card passthrough broken"
+                else:
+                    assert (
+                        env.get(f"{prefix}_FEASIBLE") == "false"
+                    ), f"dropped {role} on {shape_name}/{card} lacks its flagged-off marker"
                 stray = [k for k in env if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE"]
                 assert stray == [], f"dropped {role} on {shape_name}/{card} leaked {stray}"
 

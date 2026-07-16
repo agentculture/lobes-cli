@@ -138,7 +138,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _explain_cmd.register(sub)
     _overview_cmd.register(sub)
     _doctor_cmd.register(sub)
-    # The #81 Colleague contract: the six first-class roles resolved to live
+    # The #81 Colleague contract: the seven first-class roles resolved to live
     # endpoint + metadata (read-only; no --apply — capabilities/endpoint never
     # touch docker/compose).
     _capabilities_cmd.register(sub)

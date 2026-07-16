@@ -37,6 +37,7 @@ LOG_DIR_ENV = "MODEL_GEAR_LOG_DIR"
 # default compose), so it is not.
 FLEET_PRIMARY = "model-gear-vllm-primary"
 FLEET_MULTIMODAL = "model-gear-vllm-multimodal"
+FLEET_MUSE = "model-gear-vllm-muse"  # opt-in (muse-hosting shapes); not started by default
 FLEET_EMBED = "model-gear-vllm-embed"
 FLEET_RERANK = "model-gear-vllm-rerank"
 FLEET_FALLBACK = "model-gear-vllm-fallback"  # opt-in; not started by default
@@ -411,16 +412,33 @@ def is_fleet(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / DOCKERFILE_GATEWAY).is_file()
 
 
+def _muse_activated(deploy_dir: os.PathLike | str) -> bool:
+    """True when the deployment's ``.env`` activates the opt-in muse compose profile.
+
+    A muse-hosting shape (``lobes init --shape thor-muse``) renders
+    ``COMPOSE_PROFILES=muse`` (see ``lobes.profiles.shape_render``); the
+    ``vllm-muse`` service is parked behind that Docker Compose profile in the
+    base fleet template, so its container exists exactly when this is true.
+    """
+    from lobes.runtime import _env  # local import — keeps module import order flat
+
+    profiles = _env.read_env(Path(deploy_dir) / ENV_FILE, "COMPOSE_PROFILES") or ""
+    return "muse" in [p.strip() for p in profiles.split(",")]
+
+
 def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     """Fleet container names.
 
     Excludes any core gear a deployment-shape override drops (its service is parked
     in an inert profile, so ``docker compose up`` never starts it — see
-    :func:`shape_dropped_containers`), and includes the audio trio when the audio
-    overlay is present.
+    :func:`shape_dropped_containers`), includes the opt-in muse gear when the
+    deployment activates its compose profile (:func:`_muse_activated`), and
+    includes the audio trio when the audio overlay is present.
     """
     dropped = shape_dropped_containers(deploy_dir)
     containers = tuple(c for c in FLEET_CONTAINERS if c not in dropped)
+    if _muse_activated(deploy_dir):
+        containers = containers + (FLEET_MUSE,)
     if audio_overlay_present(deploy_dir):
         return containers + FLEET_AUDIO_CONTAINERS
     return containers

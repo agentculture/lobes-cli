@@ -1,0 +1,49 @@
+# The Jetson AGX Thor MUSE variant of a mesh-brain deployment: hosts the
+# opt-in `muse` lobe (Gemma 4 31B IT, NVIDIA NVFP4 — the seventh Colleague
+# role, the creative/ideation lobe) + the two pooling gears + the audio
+# overlay, and drops BOTH heavy default lobes to peer boxes — no Qwen
+# `cortex` (lives on a spark-lobe box) and no Gemma 12B `senses` (lives on a
+# peer box too, e.g. an Orin; declare MULTIMODAL_PEER_ORIGIN — and optionally
+# MULTIMODAL_PEER_PROXY/MULTIMODAL_PEER_API_KEY to follow the referral — in
+# the deployment's .env, always operator-typed, never derived, per #92).
+#
+# `muse` is an OPT-IN core role (lobes/profiles/shapes.py's
+# OPT_IN_CORE_ROLES): machine-as-brain never hosts it — a 31B cannot
+# co-reside with the cortex+senses duo on a 128 GB box — so THIS shape
+# carries muse's FULL declaration (model + budget knobs) in its overrides and
+# the card profiles stay silent on it (base.toml vetoes it conservatively for
+# unrecognised cards). Hosting muse renders its activation env
+# (COMPOSE_PROFILES=muse un-gates the profile-gated vllm-muse service;
+# MUSE_BASE_URL wires the gateway backend — see
+# shape_render.OPT_IN_CORE_ACTIVATION_ENV).
+#
+# DECLARED-BUT-UNVALIDATED at authoring time (the #108 rule): the budget
+# values below are HYPOTHESES until a physical Thor boots this shape and the
+# acceptance run (scripts/accept-shape.sh) measures them — shape budgets on
+# unified-memory boxes are measured truths, not arithmetic (both spark-lobe
+# and thor-lobe shipped values vLLM refused at their declared reclaim-sums).
+name = "thor-muse"
+summary = "Jetson AGX Thor muse-lobe -- Gemma 4 31B muse + embedder + reranker + audio, no cortex/senses"
+
+hosts = ["muse", "embedder", "reranker", "stt", "tts"]
+
+[overrides.muse]
+# The full muse declaration lives HERE (not in a card profile) — see the
+# header comment. nvidia/Gemma-4-31B-IT-NVFP4: 30.4 GiB of NVFP4 weights,
+# 256K native context, config.json quant_method="modelopt" (NOT the
+# community 12B's compressed-tensors), calibrated FP8 KV-cache scales.
+model = "nvidia/Gemma-4-31B-IT-NVFP4"
+# gpu_mem_util = 0.40 — HYPOTHESIS, not a measured truth yet: 49.1 GiB of
+# the Thor's 122.82 GiB unified pool (~30.4 weights + ~18 GiB KV/overhead).
+# Thor's 2026-07-14 thor-lobe boot measured only 38.44 GiB free at startup
+# with senses still resident; THIS shape drops both heavy lobes first, so
+# more is free at boot — the acceptance run measures the real ceiling.
+gpu_mem_util = 0.40
+# max_model_len = 131072 — the checkpoint is 256K native, trimmed to the box
+# budget: the 31B's KV cost per token is roughly double the 12B's, so a
+# full-native 262144 muse would starve concurrency inside util 0.40.
+max_model_len = 131072
+quantization = "modelopt"
+# Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the same
+# divergence the 12B senses gear carries on both spark and thor cards.
+attention_backend = "TRITON_ATTN"

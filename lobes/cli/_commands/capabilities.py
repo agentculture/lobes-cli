@@ -37,7 +37,7 @@ of the gateway:
 * ``lobes capabilities`` / ``lobes endpoint <role>`` first try ``GET
   http://localhost:<resolved port>/capabilities`` against the gateway that
   would actually serve a request. On a clean 200 whose body is a JSON object
-  carrying all six roles, THAT payload is rendered verbatim — the gateway is
+  carrying all seven roles, THAT payload is rendered verbatim — the gateway is
   the one process that knows what it actually has wired and what its own
   readiness probes actually last observed, so its answer is the only one
   worth reporting.
@@ -337,7 +337,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     cap = sub.add_parser(
         "capabilities",
-        help="Read-only: the six first-class roles (cortex/senses/embedder/"
+        help="Read-only: the seven first-class roles (cortex/senses/muse/embedder/"
         "reranker/stt/tts) resolved to live endpoint + metadata (issue #81).",
     )
     _add_common_args(cap)

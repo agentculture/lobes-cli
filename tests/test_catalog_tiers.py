@@ -183,6 +183,32 @@ def test_cortex_and_senses_resolve_same_gears_as_main_and_multimodal() -> None:
     assert resolve_tier("senses").id == resolve_tier("multimodal").id == resolve_tier("normal").id
 
 
+def test_tier_role_map_includes_muse_as_its_own_backend() -> None:
+    """muse is the first capability-ROLE whose backend name IS the role name —
+    there is no pre-#81 internal name to preserve for it."""
+    assert TIER_ROLE["muse"] == "muse"
+
+
+def test_resolve_tier_muse_returns_the_31b_gear() -> None:
+    """resolve_tier('muse') must return the Gemma 4 31B muse gear."""
+    model = resolve_tier("muse")
+    assert model.role_hint == "muse"
+    assert model.task == "generate"
+    assert model.id == "nvidia/Gemma-4-31B-IT-NVFP4"
+
+
+def test_tier_role_capability_order_is_ascending_with_muse() -> None:
+    """tier_aliases derives ascending capability order from each role's LAST
+    occurrence in TIER_ROLE — muse must land between multimodal and primary
+    (minor < multimodal < muse < primary), or the upward-fallback ladder
+    breaks. Pinned here against the dict's insertion order."""
+    last_pos: dict[str, int] = {}
+    for i, role in enumerate(TIER_ROLE.values()):
+        last_pos[role] = i
+    roles_asc = sorted(last_pos, key=last_pos.__getitem__)
+    assert roles_asc == ["minor", "multimodal", "muse", "primary"]
+
+
 def test_resolve_tier_unknown_raises_value_error() -> None:
     """resolve_tier must raise ValueError for an unknown tier name."""
     with pytest.raises(ValueError, match="unknown tier"):

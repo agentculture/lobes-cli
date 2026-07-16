@@ -9,7 +9,7 @@
 # deployment back.
 #
 # Usage:
-#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-small> [OPTIONS]
+#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small> [OPTIONS]
 #   ./scripts/accept-shape.sh --restore [--deploy-dir DIR]
 #
 # Options:
@@ -63,7 +63,7 @@ _usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    machine-as-brain|spark-lobe|thor-lobe|orin-small) SHAPE="$1"; shift ;;
+    machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small) SHAPE="$1"; shift ;;
     --deploy-dir)  DEPLOY_DIR="$2"; shift 2 ;;
     --audio)       AUDIO=1; shift ;;
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
@@ -161,7 +161,7 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   exit 0
 fi
 
-[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|orin-small)\n' >&2; exit 2; }
+[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small)\n' >&2; exit 2; }
 if [[ -n "${DEV_VERSION}" && -z "${DEV_INDEX}" ]]; then DEV_INDEX="https://test.pypi.org/simple/"; fi
 
 TRANSCRIPT="${HOME}/lobes-accept-${SHAPE}-${STAMP}.log"
@@ -183,6 +183,7 @@ printf '  transcript   : %s\n\n' "${TRANSCRIPT}"
 # card exercises the shape contract only and validates nothing about Orin
 # (the #108 rule stands until a physical Orin boots it).
 MINOR_CURL=0
+MUSE_CURL=0
 case "${SHAPE}" in
   spark-lobe)
     DROPPED_ROLES=(senses); DROPPED_ALIASES=(senses multimodal normal)
@@ -192,6 +193,14 @@ case "${SHAPE}" in
     DROPPED_ROLES=(cortex); DROPPED_ALIASES=(cortex main hard)
     HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
     PROBES=(embedder reranker); SENSES_CURL=1 ;;
+  thor-muse)
+    # The muse variant drops BOTH heavy default lobes and hosts the opt-in
+    # 31B muse lobe instead (the seventh Colleague role). model=muse is the
+    # heavy lane; a known-answer curl stands in for a dedicated muse probe.
+    DROPPED_ROLES=(cortex senses)
+    DROPPED_ALIASES=(cortex main hard senses multimodal normal)
+    HEAVY_PREFIX="MUSE"; HEAVY_ALIAS="muse"
+    PROBES=(embedder reranker); SENSES_CURL=0; MUSE_CURL=1 ;;
   orin-small)
     DROPPED_ROLES=(cortex senses)
     DROPPED_ALIASES=(cortex main hard senses multimodal normal)
@@ -362,7 +371,7 @@ printf '\n'
 printf '=== phase 4b: honest referral (opt-in peer origins) ===\n'
 _role_prefix() { # role name -> env prefix
   case "$1" in
-    cortex) echo PRIMARY ;; senses) echo MULTIMODAL ;;
+    cortex) echo PRIMARY ;; senses) echo MULTIMODAL ;; muse) echo MUSE ;;
     embedder) echo EMBED ;; reranker) echo RERANK ;; *) echo "" ;;
   esac
 }
@@ -410,6 +419,13 @@ if [[ "${SENSES_CURL}" -eq 1 ]]; then
   _check "probe: senses text known-answer (model=multimodal)" bash -c "
     curl -fsS '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
       -d '{\"model\":\"multimodal\",\"messages\":[{\"role\":\"user\",\"content\":\"What color is a cloudless daytime sky? Answer with one word.\"}],\"max_tokens\":16}' \
+      | python3 -c 'import json,sys; body=json.load(sys.stdin); sys.exit(0 if \"blue\" in body[\"choices\"][0][\"message\"][\"content\"].lower() else 1)'
+  "
+fi
+if [[ "${MUSE_CURL}" -eq 1 ]]; then
+  _check "probe: muse text known-answer (model=muse)" bash -c "
+    curl -fsS '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+      -d '{\"model\":\"muse\",\"messages\":[{\"role\":\"user\",\"content\":\"What color is a cloudless daytime sky? Answer with one word.\"}],\"max_tokens\":16}' \
       | python3 -c 'import json,sys; body=json.load(sys.stdin); sys.exit(0 if \"blue\" in body[\"choices\"][0][\"message\"][\"content\"].lower() else 1)'
   "
 fi
