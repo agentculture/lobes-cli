@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 
+from lobes import assess as _assess
 from lobes.cli import _runtime_ops
 from lobes.cli._output import emit_result
 from lobes.roles import ROLES, RoleInfo, role_registry_from_env
@@ -73,7 +74,18 @@ def cmd_measure(args: argparse.Namespace) -> int:
     roles = _resolve_roles(args)
     registry = _registry(args)
     timeout = _resolve_timeout(args)
-    results = measure_registry(registry, roles=roles, timeout=timeout)
+    _port, deploy_dir = _runtime_ops.resolve_port_soft(args)
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
+
+    # `measure_registry` (lobes.roles_measure) reuses `lobes.assess`'s HTTP
+    # primitives (`_post`/`measure_prefill_ttft`) directly by name for the
+    # LLM/embed/rerank roles — `auth_headers()` reaches those call sites too
+    # (see the mechanism note in lobes.assess). The audio overlay probes
+    # (stt/tts) build their own request objects and are not covered by this
+    # context manager; a wrong key there degrades to `ready=False` rather
+    # than a clear message, same as any other stt/tts probe failure.
+    with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        results = measure_registry(registry, roles=roles, timeout=timeout)
 
     if json_mode:
         emit_result(results, json_mode=True)

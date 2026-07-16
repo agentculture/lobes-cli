@@ -7,11 +7,15 @@ modules (each with a ``register``); these are plain helpers.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
+import urllib.error
+from pathlib import Path
 
 from lobes import assess
 from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
+from lobes.gateway._config import _gateway_api_key
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.schema import Profile
 from lobes.runtime import _compose, _detect, _env
@@ -71,6 +75,66 @@ def deployment_env_soft(args: argparse.Namespace) -> dict[str, str]:
     except ModelGearError:
         return {}
     return _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+
+
+def gateway_auth_headers(deploy_dir: os.PathLike | str | None) -> dict[str, str]:
+    """The ``Authorization`` header to attach when dialing the LOCAL gateway.
+
+    Resolves ``GATEWAY_API_KEY`` / ``CULTURE_VLLM_API_KEY`` from ``deploy_dir``'s
+    ``.env`` — the SAME precedence as
+    :func:`lobes.gateway._config._gateway_api_key` (the gateway's own
+    inbound-auth resolution, issue #127 t1, reused here rather than
+    reimplemented so the two can never drift): explicit ``GATEWAY_API_KEY``
+    wins, else ``CULTURE_VLLM_API_KEY``, else no header at all.
+
+    Never raises: ``deploy_dir`` may be ``None`` (unscaffolded deployment —
+    every soft resolver in this module already returns that) or the ``.env``
+    unreadable/absent — both resolve to ``{}``. A keyless or unscaffolded
+    deployment's outbound requests therefore stay byte-identical to today: no
+    ``Authorization`` header is ever attached unless a key actually resolves.
+    """
+    if deploy_dir is None:
+        return {}
+    env = _env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE)
+    key = _gateway_api_key(env)
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+@contextlib.contextmanager
+def friendly_unauthorized_errors(deploy_dir: os.PathLike | str | None):
+    """Turn a bare 401 from the local gateway into one clear, actionable line.
+
+    Every read-only verb that dials the gateway (``capabilities``/``endpoint``/
+    ``assess``/``measure``/``benchmark``) wraps its dispatch body in this
+    context manager alongside :func:`gateway_auth_headers` (attaches the key)
+    and :func:`lobes.assess.auth_headers` (makes ``lobes.assess``'s HTTP
+    primitives send it). A wrong or missing ``GATEWAY_API_KEY`` /
+    ``CULTURE_VLLM_API_KEY`` then surfaces as a :class:`ModelGearError` naming
+    the actual ``.env`` to fix, instead of a raw ``urllib.error.HTTPError`` —
+    ``lobes.cli._dispatch`` already guarantees no Python traceback ever leaks
+    either way, but this names the actual cause so an agent doesn't have to
+    guess from ``unexpected: HTTPError: HTTP Error 401: Unauthorized``.
+
+    Every OTHER failure (connection refused, a non-401 HTTP status, malformed
+    JSON, a timeout, ...) passes through completely unchanged — this only
+    intercepts the one specific, unambiguous "the key was wrong" signal.
+    Some call paths (e.g. :mod:`lobes.assess`'s own ``_api_errors``-wrapped
+    functions) already convert a 401 to a friendly ``ModelGearError``
+    themselves before it would reach here; this is a no-op in that case
+    (``ModelGearError`` is not an ``HTTPError``, so it passes straight
+    through), and a safety net for the paths that don't.
+    """
+    try:
+        yield
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            raise
+        where = f"{deploy_dir}/.env" if deploy_dir is not None else "the deployment's .env"
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message="gateway rejected the API key (HTTP 401 Unauthorized)",
+            remediation=f"check GATEWAY_API_KEY / CULTURE_VLLM_API_KEY in {where}",
+        ) from exc
 
 
 def probe_tool_calling(port: int, served: str | None) -> dict:

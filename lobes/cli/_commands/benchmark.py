@@ -294,41 +294,43 @@ def _run_profile_mode(args: argparse.Namespace, json_mode: bool) -> int:
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
-
-    if getattr(args, "profile", None):
-        return _run_profile_mode(args, json_mode)
-
     port, deploy_dir = _runtime_ops.resolve_port_soft(args)
-    url = f"http://localhost:{port}"
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
 
-    if bool(getattr(args, "all_lobes", False)):
-        return _run_all_lobes(args, url, deploy_dir, json_mode)
+    with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        if getattr(args, "profile", None):
+            return _run_profile_mode(args, json_mode)
 
-    # Original single-model path (unchanged when --all-lobes is absent).
-    model = args.model
-    if model is None and deploy_dir is not None:
-        model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
+        url = f"http://localhost:{port}"
 
-    wl, input_len, output_len = _resolve_shape(args, deploy_dir)
-    result = _assess.run_benchmark(
-        url,
-        model,
-        purpose=wl.name,
-        input_len=input_len,
-        output_len=output_len,
-        runs=args.runs,
-    )
-    host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+        if bool(getattr(args, "all_lobes", False)):
+            return _run_all_lobes(args, url, deploy_dir, json_mode)
 
-    if json_mode:
-        emit_result({**result, "host": host}, json_mode=True)
-    else:
-        header = (
-            "### Host-side\n"
-            f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+        # Original single-model path (unchanged when --all-lobes is absent).
+        model = args.model
+        if model is None and deploy_dir is not None:
+            model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
+
+        wl, input_len, output_len = _resolve_shape(args, deploy_dir)
+        result = _assess.run_benchmark(
+            url,
+            model,
+            purpose=wl.name,
+            input_len=input_len,
+            output_len=output_len,
+            runs=args.runs,
         )
-        emit_result(header + "\n" + _assess.render_benchmark(result), json_mode=False)
-    return 0
+        host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+
+        if json_mode:
+            emit_result({**result, "host": host}, json_mode=True)
+        else:
+            header = (
+                "### Host-side\n"
+                f"- Image: `{host['image']}`  ·  GPU memory (EngineCore): {host['gpu_memory']}\n"
+            )
+            emit_result(header + "\n" + _assess.render_benchmark(result), json_mode=False)
+        return 0
 
 
 def register(sub: argparse._SubParsersAction) -> None:

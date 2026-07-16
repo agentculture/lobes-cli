@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import contextvars
 import json
 import math
 import statistics
@@ -31,6 +32,78 @@ from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
 # Markdown 2-column table header separator, reused by the render_* helpers.
 _MD_TABLE_SEP = "|---|---|"
 
+# ---------------------------------------------------------------------------
+# Outbound gateway auth (issue #127 t3): attach the deployment's opt-in
+# GATEWAY_API_KEY / CULTURE_VLLM_API_KEY to every request this module makes.
+# ---------------------------------------------------------------------------
+#
+# This module is deliberately deployment-agnostic (see the module docstring:
+# "Talks only to the OpenAI-compatible endpoint") — it knows URLs, never a
+# deployment dir or a parsed .env. The CLI layer
+# (`lobes.cli._runtime_ops.gateway_auth_headers`) resolves the actual header
+# from the deployment's .env and hands it down via `auth_headers()`, a
+# CONTEXT MANAGER rather than a `headers=` keyword threaded through this
+# module's ~10 public entry points (run_correctness / run_benchmark /
+# probe_tool_calls / run_role_probes / run_preserve_thinking_probe /
+# run_strict_tool_matrix / measure_prefill_ttft / run_concurrent /
+# auto_ramp_concurrency / served_model / health_status / ...). Two reasons:
+#
+# * every existing test in this suite monkeypatches `_post`/`_get` wholesale
+#   with a narrower fake signature (`def _post(url, payload, timeout=300)`,
+#   no `headers` kwarg) — adding an explicit `headers=` argument to every
+#   call site would break every one of those fakes with a TypeError;
+# * `lobes.roles_measure` (`lobes measure` / `lobes benchmark --profile`)
+#   calls `_post` / `measure_prefill_ttft` directly by name, not through a
+#   passed-down parameter — a context-manager default reaches those call
+#   sites too, so a single `with auth_headers(...)` at each CLI dispatch
+#   boundary covers every read-only verb without a second, parallel
+#   plumbing pass through that module.
+#
+# `contextvars.ContextVar` (not a bare module global) is thread-safe:
+# `concurrent.futures.ThreadPoolExecutor` (used by `run_concurrent`'s
+# concurrent probe fan-out) copies the calling thread's context into each
+# worker since Python 3.9, so the header still reaches every in-flight
+# request. Default `{}` — an untouched call site sends no header at all,
+# byte-identical to today.
+_auth_headers: "contextvars.ContextVar[dict[str, str]]" = contextvars.ContextVar(
+    "_auth_headers", default={}
+)
+
+
+@contextlib.contextmanager
+def auth_headers(headers: dict[str, str] | None):
+    """Make ``headers`` the ones every ``_post``/``_get`` call attaches.
+
+    ``headers`` is typically
+    :func:`lobes.cli._runtime_ops.gateway_auth_headers` applied to the
+    resolved deployment dir — ``{}`` (the default, a no-op) on a keyless or
+    unscaffolded deployment, so an untouched deployment's requests stay
+    byte-identical to today. Never raises.
+    """
+    token = _auth_headers.set(dict(headers) if headers else {})
+    try:
+        yield
+    finally:
+        _auth_headers.reset(token)
+
+
+def _unauthorized_error() -> ModelGearError:
+    """A clear, actionable error for a 401 from the local gateway.
+
+    Surfaced instead of a raw ``HTTPError``/traceback whenever the gateway
+    rejects a request with 401 — almost always a wrong or blank
+    ``GATEWAY_API_KEY`` / ``CULTURE_VLLM_API_KEY``. This module has no
+    deployment dir to name the actual ``.env`` path with (see the module-level
+    comment above); the CLI layer's own
+    :func:`lobes.cli._runtime_ops.friendly_unauthorized_errors` adds that for
+    the paths that route a raw ``HTTPError`` through it.
+    """
+    return ModelGearError(
+        code=EXIT_ENV_ERROR,
+        message="gateway rejected the API key (HTTP 401 Unauthorized)",
+        remediation="check GATEWAY_API_KEY / CULTURE_VLLM_API_KEY in the deployment's .env",
+    )
+
 
 @contextlib.contextmanager
 def _api_errors(what: str):
@@ -44,6 +117,14 @@ def _api_errors(what: str):
         yield
     except ModelGearError:
         raise
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise _unauthorized_error() from exc
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"{what} failed: {exc}",
+            remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
+        ) from exc
     except OSError as exc:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
@@ -100,17 +181,15 @@ def _post(
     reranker) by overriding it to ``/v1/embeddings`` / ``/v1/rerank``.
     """
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url + path,
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
+    headers = {"Content-Type": "application/json", **_auth_headers.get()}
+    req = urllib.request.Request(url + path, data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:  # local endpoint only
         return json.load(r)
 
 
 def _get(url: str, path: str, timeout: int = 10):
-    with urllib.request.urlopen(url + path, timeout=timeout) as r:  # local endpoint only
+    req = urllib.request.Request(url + path, headers=dict(_auth_headers.get()))
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # local endpoint only
         if r.headers.get("content-type", "").startswith("application/json"):
             return r.status, json.load(r)
         return r.status, r.read().decode()
@@ -133,6 +212,14 @@ def health_status(url: str) -> int:
     """Return the ``/health`` status code, or raise if the endpoint is unreachable."""
     try:
         status, _ = _get(url, "/health")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise _unauthorized_error() from exc
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"/health unreachable at {url} ({exc})",
+            remediation="start the server with 'lobes serve --apply'",
+        ) from exc
     except OSError as exc:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,

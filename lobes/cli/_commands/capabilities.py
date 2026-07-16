@@ -97,6 +97,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import urllib.error
 import urllib.request
 
 from lobes.cli import _runtime_ops
@@ -133,7 +134,10 @@ _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 
 
 def _fetch_gateway_capabilities(
-    port: int, timeout: float = _GATEWAY_TIMEOUT_SECONDS
+    port: int,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float = _GATEWAY_TIMEOUT_SECONDS,
 ) -> dict[str, dict] | None:
     """``GET /capabilities`` from the live gateway on ``port``.
 
@@ -149,15 +153,29 @@ def _fetch_gateway_capabilities(
 
     ``None`` is not an error to the caller: it means "fall back to the
     offline registry", exactly like every other read-only probe in this CLI
-    degrades when the thing it would rather ask isn't there.
+    degrades when the thing it would rather ask isn't there. The ONE
+    exception (issue #127 t3): a 401 is not folded into ``None`` — silently
+    showing stale offline data in place of an auth rejection would hide the
+    actual problem — it is re-raised so the caller's
+    :func:`lobes.cli._runtime_ops.friendly_unauthorized_errors` wrapper can
+    turn it into a clear, actionable error instead.
+
+    ``headers`` carries the outbound ``Authorization`` header (see
+    :func:`lobes.cli._runtime_ops.gateway_auth_headers`) — ``None``/``{}`` on
+    a keyless deployment sends no header at all, byte-identical to today.
     """
     url = f"http://localhost:{port}/capabilities"
+    req = urllib.request.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # local endpoint only
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # local endpoint only
             if not (200 <= resp.status < 300):
                 return None
             raw = resp.read()
-    except OSError:  # URLError (incl. HTTPError) subclasses OSError
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise
+        return None
+    except OSError:  # URLError (incl. other HTTPError codes) subclasses OSError
         return None
     try:
         data = json.loads(raw)
@@ -215,8 +233,9 @@ def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
     honestly claim a role is reachable, no matter what the offline registry's
     own ``loaded``/``ready`` computation would otherwise say.
     """
-    port, _ = _runtime_ops.resolve_port_soft(args)
-    live = _fetch_gateway_capabilities(port)
+    port, deploy_dir = _runtime_ops.resolve_port_soft(args)
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
+    live = _fetch_gateway_capabilities(port, headers=headers)
     if live is not None:
         return live, "gateway"
     offline = _offline_payload(args)
@@ -260,7 +279,9 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
 
 def cmd_capabilities(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
-    payload, source = _capabilities_view(args)
+    _port, deploy_dir = _runtime_ops.resolve_port_soft(args)
+    with _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        payload, source = _capabilities_view(args)
     if json_mode:
         # The JSON payload is the bare six-role dict in EVERY mode — no
         # "source"/mode key is ever mixed into it. In gateway mode this is
@@ -289,7 +310,9 @@ def cmd_endpoint(args: argparse.Namespace) -> int:
             message=f"unknown role {role!r}",
             remediation=f"valid roles: {', '.join(ROLES)}",
         )
-    payload, _source = _capabilities_view(args)
+    _port, deploy_dir = _runtime_ops.resolve_port_soft(args)
+    with _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        payload, _source = _capabilities_view(args)
     endpoint = payload[role]["endpoint"]
     if json_mode:
         emit_result({"role": role, "endpoint": endpoint}, json_mode=True)
