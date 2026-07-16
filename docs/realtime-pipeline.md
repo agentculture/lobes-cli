@@ -187,9 +187,10 @@ The audio surface **does not**:
 - Swap the STT engine — Parakeet (NeMo ASR) remains the hardcoded STT backend.
   TTS has been migrated from Magpie (NVIDIA NIM, proprietary) to Chatterbox
   (Resemble AI, open-weights, Apache-2.0).
-- Make the gateway auth-aware — the same `/v1/chat/completions` gateway token
-  that works for the LLM does not yet extend to audio. Plan to add per-endpoint
-  auth in a later release.
+- Add an audio-specific auth scheme. Audio endpoints are gated by the same
+  opt-in `GATEWAY_API_KEY` bearer check as every other gateway POST route —
+  see [`docs/gateway-fleet.md#auth-opt-in-bearer-gate`](gateway-fleet.md#auth-opt-in-bearer-gate)
+  and [`docs/openai-api.md#fleet-gateway`](openai-api.md#fleet-gateway).
 
 ## Memory (co-residence risk)
 

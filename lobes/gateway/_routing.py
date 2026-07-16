@@ -49,13 +49,16 @@ class RoutingTable:
     # build_config` from ``<PREFIX>_PEER_ORIGIN`` env vars
     # (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`) — the SAME
     # per-backend-name env convention ``infeasible`` above already uses.
-    # Consulted ONLY to ANNOTATE honesty surfaces (/capabilities and the 404
-    # ``role_infeasible`` body) for a role in ``infeasible``; it is NEVER
-    # dialed — the gateway does no data-plane proxying to peers (proxy-lobes
-    # is deferred, issue #115). Per the #92 lesson an origin here is always
-    # operator-declared, never derived from hostnames/interfaces. Defaults to
-    # empty so a deployment with no peer config is byte-identical to the
-    # pre-referral contract on every surface.
+    # Consulted to ANNOTATE honesty surfaces (/capabilities and the 404
+    # ``role_infeasible`` body) for a role in ``infeasible``, and — ONLY for a
+    # name that also appears in ``peer_proxied`` below — dialed by the
+    # data-plane proxy branch (:func:`lobes.gateway.server._proxy_to_peer`,
+    # proxy-lobes t6, issues #115/#127); an origin with no matching
+    # ``peer_proxied`` entry stays annotation-only, never dialed (the issue
+    # #112 referral contract, preserved byte-for-byte). Per the #92 lesson an
+    # origin here is always operator-declared, never derived from
+    # hostnames/interfaces. Defaults to empty so a deployment with no peer
+    # config is byte-identical to the pre-referral contract on every surface.
     peer_origins: Mapping[str, str] = field(default_factory=dict)
     # Backend NAMES whose dropped role this box has opted in to PROXY to its
     # declared peer (proxy-lobes t1, issues #115/#127 — the follow-up

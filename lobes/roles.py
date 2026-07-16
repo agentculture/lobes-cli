@@ -592,19 +592,25 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     not), an unhosted role with no declared peer stays exactly as it was, and
     with ``table.peer_origins`` empty (the default) the payload is
     byte-identical to the pre-referral contract. The origin is metadata for
-    the CALLER to dial directly; nothing here (or anywhere in the gateway)
-    ever forwards a request to it — no data-plane proxying (issue #115 is the
-    deferred proxy-lobes follow-up). Audio roles (stt/tts) are outside the
-    referral channel's scope, exactly as they are outside ``FEASIBLE_ENV``'s.
+    the CALLER to dial directly; THIS FUNCTION never forwards a request to
+    it — it only annotates. A name whose operator ALSO armed
+    ``<PREFIX>_PEER_PROXY`` (see the THIRD state below) IS forwarded, but by
+    the data-plane proxy branch in :mod:`lobes.gateway.server`
+    (:func:`~lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
+    #115/#127), never by this pure/offline annotator. Audio roles (stt/tts)
+    are outside the referral channel's scope, exactly as they are outside
+    ``FEASIBLE_ENV``'s.
 
-    **A THIRD honesty state — PROXIED (proxy-lobes t5, issues #115/#127).**
+    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127).**
     Referral above says "ask the peer yourself"; a role whose backend name is
     ALSO in ``table.peer_proxied`` (the operator's ``<PREFIX>_PEER_PROXY``
     opt-in — :data:`lobes.gateway._config.PEER_PROXY_ENV`, t1) is one this box
-    has committed to answering ON THE PEER'S BEHALF — the gateway itself will
-    forward the request once the data-plane branch lands (a LATER task; this
-    module stays pure/offline and dials nothing). That is a materially
-    different claim from a bare referral, so it gets its own explicit marker,
+    has committed to answering ON THE PEER'S BEHALF — the gateway itself
+    FORWARDS the request via the data-plane proxy branch
+    (:func:`lobes.gateway.server._proxy_to_peer`, landed in t6; this module
+    itself stays pure/offline and dials nothing — it only adds the marker
+    below). That is a materially different claim from a bare referral, so it
+    gets its own explicit marker,
     ``"proxied": true``, added ALONGSIDE (never instead of) ``hosted_by`` — the
     origin named there is unchanged: it is still "whoever ultimately serves
     this", now additionally reachable by asking THIS box too.

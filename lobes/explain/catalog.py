@@ -359,14 +359,34 @@ All endpoints are reached at the same gateway port — routing is by the request
 compose (`PRIMARY_URL` / `FALLBACK_URL` / `*_SERVED_NAME` / `GATEWAY_DEFAULT_MODEL`
 / `GATEWAY_ALIASES` / timeouts).
 
-## Auth (known limitation)
+## Auth (opt-in bearer gate)
 
-The gateway is a **pass-through** — it does not inspect or validate `Authorization`
-headers. `CULTURE_VLLM_API_KEY` is enforced by vLLM on the single-model `lobes
-serve` path, **not** by the gateway, so the fleet's proxied endpoints (generate /
-embed / rerank / `/v1/audio/*`) are not bearer-gated. Keep the port private; layer
-Cloudflare Access or an IP allowlist when exposing it via `lobes tunnel`.
-Per-endpoint gateway auth is planned. See `lobes explain tunnel`.
+Set `GATEWAY_API_KEY` (fallback `CULTURE_VLLM_API_KEY`) in `.env` to require
+`Authorization: Bearer <key>` on every data-plane route: every POST (chat,
+embeddings, rerank, `/v1/audio/*`) and `GET /v1/models` +
+`/v1/models/supported`. `/health`, `/capabilities`, and `/status` stay
+keyless by design — probes and
+peers must reach them before any key is distributed. Unset (the default) is
+byte-identical to before: no header is ever read. A rejected request gets
+`401 invalid_api_key` + `WWW-Authenticate: Bearer`, timing-safe compared.
+Keeping the port private (Cloudflare Access, an IP allowlist, `lobes tunnel`)
+is now defense-in-depth on top of the gate, not the only protection. See
+`docs/gateway-fleet.md#auth-opt-in-bearer-gate` and `lobes explain tunnel`.
+
+## Proxy-lobes (opt-in, the third lobe state)
+
+A dropped role can be **awake** (hosted), **asleep** (referral-only 404
+naming the peer), or **proxy** — this box forwards the request to its
+declared peer instead of 404ing. Arming it needs BOTH a declared
+`<PREFIX>_PEER_ORIGIN` AND the matching `<PREFIX>_PEER_PROXY=true`; the
+outbound credential (`<PREFIX>_PEER_API_KEY`) is always a copy of the peer's
+own inbound `GATEWAY_API_KEY`, never a value minted per pairing — key
+material scales with the number of machines, not the number of proxy links.
+The caller's own `Authorization` never travels past this box. Every proxied
+answer carries `X-Lobes-Proxied-By: <peer origin>`; a single-hop guard
+refuses (`508 proxy_loop`) a request that would re-proxy. Default off,
+byte-identical. See `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`
+and `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`.
 """
 
 _TUNNEL = """\
@@ -403,9 +423,11 @@ PATH and that the local server answers `/health` first. **Set `CULTURE_VLLM_API_
 before exposing the API** — without it the tunnel publishes an unauthenticated model.
 
 **Single-model vs. fleet:** vLLM enforces `CULTURE_VLLM_API_KEY` on the `lobes
-serve` (single-model) path. The **fleet gateway is a pass-through and is not
-auth-aware**, so tunnelling the fleet does *not* bearer-protect its endpoints — add
-Cloudflare Access or an IP allowlist for that case. See `lobes explain gateway`.
+serve` (single-model) path directly. The fleet gateway has its own **opt-in**
+bearer gate instead (`GATEWAY_API_KEY`, fallback `CULTURE_VLLM_API_KEY` —
+see `lobes explain gateway`'s "Auth" section) — set it before tunnelling the
+fleet, or tunnelling publishes an unauthenticated gateway. Either way,
+Cloudflare Access or an IP allowlist remains good defense-in-depth on top.
 
 See `lobes explain backend` and the README "Expose the API" section.
 """
@@ -823,17 +845,21 @@ flags (e.g. `MULTIMODAL_PEER_ORIGIN=http://thor.local:8001` on `spark-lobe`,
 `PRIMARY_PEER_ORIGIN=http://spark.local:8001` on `thor-lobe`) — and the two
 honesty surfaces name it: capabilities gains `hosted_by` on the unhosted
 role, and the 404 `role_infeasible` body carries the same referral. The
-origin is always operator-declared, never derived (#92). Annotation only:
-the gateway NEVER forwards a request to a peer (no data-plane proxying),
-and with no peer config every response is byte-identical to the
-pre-referral contract. See `docs/deployment-shapes.md`.
+origin is always operator-declared, never derived (#92). Declaring the
+origin alone is annotation only: the gateway does NOT forward a request to a
+peer on the strength of the origin alone, and with no peer config every
+response is byte-identical to the pre-referral contract. A box CAN be opted
+into actually following its own referral — see `lobes explain gateway`'s
+"Proxy-lobes" section for the second, separate `<PREFIX>_PEER_PROXY` opt-in.
+See `docs/deployment-shapes.md`.
 
 ## The mesh-brain end-state (issue #112)
 
 One heavy lobe per box, cheap gears co-reside, the brain stays whole across
 the mesh — four decisions, all shipped: (1) cross-box reachability is
-**direct + opt-in honest referral**, never proxying (proxy-lobes are their
-own follow-up, issue #115); (2) cheap gears (`embedder`/`reranker`/`stt`/
+**direct + opt-in honest referral** by default, with an opt-in extension to
+actually follow that referral (proxy-lobes, issues #115/#127 phase 1 —
+`lobes explain gateway`); (2) cheap gears (`embedder`/`reranker`/`stt`/
 `tts`) **co-reside** on every box that wants them; (3) the reference shape
 assignment is Spark GB10 = `cortex` via `spark-lobe`, Thor = `senses` via
 `thor-lobe`, Orin 64GB = small-model lobes via `orin-small`; (4) the shape
@@ -899,8 +925,10 @@ python3 scripts/audio-smoke.py       # live smoke test (+ TTS→STT round-trip)
 ```
 
 REST only today (`/v1/audio/transcriptions` + `/v1/audio/speech`); the
-`/v1/realtime` WebSocket is planned. The gateway is not yet auth-aware for audio.
-Full topology, runbooks, and memory guidance: `docs/realtime-pipeline.md`.
+`/v1/realtime` WebSocket is planned. Audio POST routes are gated by the same
+opt-in `GATEWAY_API_KEY` bearer check as every other route — `lobes explain
+gateway`. Full topology, runbooks, and memory guidance:
+`docs/realtime-pipeline.md`.
 """
 
 _STT = """\
@@ -993,6 +1021,13 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
   body streams). SSE (`"stream": true`) is relayed chunk-by-chunk.
 - **Audio** is fanned to the realtime bridge (`AUDIO_URL`).
 
+## Auth (opt-in)
+
+Every POST plus `GET /v1/models` and `/v1/models/supported` requires
+`Authorization: Bearer <key>` once `GATEWAY_API_KEY` (fallback
+`CULTURE_VLLM_API_KEY`) is set; `/health`, `/capabilities`, `/status` stay
+keyless. Unset = today's no-auth behaviour. See `lobes explain gateway`.
+
 See `lobes explain gateway` (routing), `lobes explain embeddings|rerank|score`
 (per-endpoint shapes), `lobes explain realtime` (audio), `lobes explain roles`
 (the six-role Colleague contract), and `docs/openai-api.md` for the full
@@ -1049,9 +1084,16 @@ curl -s http://localhost:8000/capabilities   # same contract, over HTTP
 Both are built by the ONE canonical registry (`lobes.roles.build_role_registry`),
 so the CLI and gateway payloads are identical in shape. Each role carries:
 `role, model, runtime, endpoint, path, context, quant, mtp, responsibilities,
-forbidden_responsibilities, ready, loaded`. All four gateway-fronted roles
+forbidden_responsibilities, ready, loaded, feasible`. All four gateway-fronted roles
 share ONE `endpoint` (the gateway) — routing is by the `model` field, not
 distinct URLs. An unwired role is never omitted, only `loaded: false`.
+
+A `feasible: false` role (this box's shape dropped it — `lobes explain
+shapes`) gains an optional `hosted_by: "<peer origin>"` when a peer is
+declared, and a further `proxied: true` when this box also opted in to
+forwarding that role's requests there (proxy-lobes, opt-in — `lobes explain
+gateway`). A proxied role's `ready` reflects a live probe of the PEER, not a
+local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
 
 ## Serving and measuring
 
