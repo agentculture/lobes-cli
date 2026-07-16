@@ -191,11 +191,12 @@ curl -s https://your-host.example/v1/chat/completions \
   -d '{"model":"default","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-**Hardening (future).** The bearer key is the minimum bar. For stronger exposure,
+**Hardening.** The bearer key is the minimum bar. For stronger exposure,
 layer Cloudflare Access (SSO/service tokens), a WAF rule or IP allowlist, and/or
-mTLS in front of the tunnel. Bearer auth currently gates the single-model
-deployment; the fleet gateway is not yet auth-aware (planned). See `lobes explain
-tunnel` for the full flow.
+mTLS in front of the tunnel. Bearer auth gates the single-model deployment via
+`CULTURE_VLLM_API_KEY`, and the fleet gateway enforces its own opt-in bearer
+gate via `GATEWAY_API_KEY` (falling back to `CULTURE_VLLM_API_KEY`) — see
+`docs/gateway-fleet.md`. See `lobes explain tunnel` for the full flow.
 
 ## Running the model behind a gateway (fleet)
 
