@@ -30,11 +30,23 @@ Readiness governs *advertisement*, not routing: ``GET /v1/models`` and
 ``GET /capabilities`` fold in the background :class:`~lobes.gateway._readiness.
 ReadinessCache` so a wired-but-dead backend is not advertised (issue #92); the
 POST hot path never probes (it reads the socket-free cache, if at all).
+
+**Inbound auth** (proxy-lobes t2, issues #115/#127): with
+:attr:`~lobes.gateway._config.ServerConfig.api_key` set (``GATEWAY_API_KEY`` →
+``CULTURE_VLLM_API_KEY``, resolved in t1) the handler gates every DATA-PLANE
+route on ``Authorization: Bearer <key>`` — see the "inbound bearer auth"
+section below for the route policy, the timing-safe comparison, and the
+never-echo-key-material contract. With ``api_key`` unset (the default) the
+gate is provably inert: no header is ever inspected and every route behaves
+byte-identically to the pre-auth gateway. The gate is the INBOUND edge only —
+outbound header forwarding to local backends is unchanged, and nothing here
+dials a peer (the proxy data plane is a later task).
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hmac
 import http.client
 import json
 import os
@@ -140,6 +152,103 @@ def rewrite_model(body: bytes, served_name: str) -> bytes:
 def filter_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     """Drop hop-by-hop headers (used both for the forwarded request and response)."""
     return [(k, v) for k, v in headers if k.lower() not in _HOP_BY_HOP]
+
+
+# --- inbound bearer auth (opt-in via GATEWAY_API_KEY, issues #115/#127) -----
+
+# Until proxy-lobes t2 the gateway forwarded the caller's Authorization header
+# to upstreams but never VALIDATED it inbound (the known limitation documented
+# in docs/gateway-fleet.md). With ServerConfig.api_key set (t1's config
+# channel: GATEWAY_API_KEY → CULTURE_VLLM_API_KEY → None) the handler now
+# gates the DATA PLANE at its inbound edge:
+#
+# * every **POST** route — chat/completions, completions, embeddings, rerank,
+#   score, audio/* … every POST the gateway answers is a forward to a backend,
+#   so the whole method is data plane;
+# * the **GET /v1/*** namespace — /v1/models and /v1/models/supported are part
+#   of the OpenAI surface callers script against (they enumerate this
+#   deployment's served models), and gating the whole /v1/ GET namespace also
+#   means an unauthenticated caller learns nothing about which /v1 routes
+#   exist (401 outranks the 404).
+#
+# Two surfaces stay KEYLESS — a POLICY DECISION, not an omission:
+#
+# * ``/health`` is the container-probe endpoint: the compose healthcheck and
+#   peer boxes must reach it before any key has been distributed, and a gated
+#   healthcheck would mark the container unhealthy the moment a key is
+#   configured — an auth knob must never masquerade as an outage.
+# * ``/capabilities`` is the control-plane discovery/honesty surface (issues
+#   #81/#112): peers and referral-followers read it to learn WHICH roles this
+#   box hosts (and, via ``hosted_by``, where a dropped role lives) BEFORE they
+#   hold any key; gating it would break the honest-referral contract for
+#   exactly the callers it exists to serve.
+#
+# ``/status`` (the operator observability aggregate ``lobes overview --live``
+# reads) is control-plane with them and stays keyless: it serves no inference
+# and echoes no request/response data.
+#
+# The gate runs BEFORE the request body is read/parsed, before model
+# resolution, before any readiness probe, and before any upstream connection —
+# a rejected request costs the fleet zero sockets. With ``api_key`` unset the
+# gate is provably inert (see _Handler._authorized: it returns before the
+# Authorization header is even READ), so an untouched deployment is
+# byte-identical to the pre-auth gateway on every route.
+
+_WWW_AUTHENTICATE_HEADER = ("WWW-Authenticate", "Bearer")
+
+
+def bearer_token_matches(api_key: str, authorization: str | None) -> bool:
+    """True iff ``authorization`` is a well-formed ``Bearer`` credential whose
+    token equals ``api_key``.
+
+    Parsing is strict and fails CLOSED: the scheme must be ``Bearer``
+    (case-insensitive, RFC 7235 §2.1) and the remainder — stripped of
+    surrounding whitespace — must be non-empty. A missing header, a foreign
+    scheme (``Basic …``), a bare token with no scheme, and an empty token are
+    all rejected before any comparison happens.
+
+    The token comparison is :func:`hmac.compare_digest` over **utf-8 bytes**:
+    constant-time, so a caller probing the gateway cannot use response-timing
+    differences to recover the key byte-by-byte (the standard remediation for
+    a string-equality timing oracle; bytes rather than str because
+    ``compare_digest`` is only timing-safe for ASCII-compatible str). Neither
+    input is ever logged or echoed by any caller of this function — see
+    :func:`_invalid_api_key_body`.
+    """
+    if not authorization:
+        return False
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    token = token.strip()
+    if not token:
+        return False
+    return hmac.compare_digest(token.encode("utf-8"), api_key.encode("utf-8"))
+
+
+def _invalid_api_key_body() -> bytes:
+    """OpenAI-shaped 401 body for a missing / malformed / wrong inbound key.
+
+    Mirrors the ``invalid_api_key`` error the OpenAI API emits, so a caller's
+    existing error handling (e.g. openai-python raising ``AuthenticationError``
+    on 401) works unchanged against the gateway. DELIBERATELY STATIC: the
+    message names the fix (send ``Authorization: Bearer <key>``) but never
+    distinguishes missing from malformed from wrong-key, and never echoes what
+    the caller sent nor any part of the expected key — a 401 must not become a
+    key-material oracle.
+    """
+    return json.dumps(
+        {
+            "error": {
+                "message": (
+                    "Invalid API key. Pass this gateway's configured key as "
+                    "'Authorization: Bearer <key>'."
+                ),
+                "type": "invalid_api_key",
+                "code": "invalid_api_key",
+            }
+        }
+    ).encode("utf-8")
 
 
 # --- force-strict-tools (GATEWAY_FORCE_STRICT_TOOLS, opt-in, colleague#320) -
@@ -1274,9 +1383,58 @@ class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
+    # --- inbound auth gate (opt-in, issues #115/#127) ---
+    def _authorized(self) -> bool:
+        """True when this request may proceed to its route.
+
+        With ``api_key`` unset (auth disabled — the default) this returns
+        before the ``Authorization`` header is even READ: no inspection, no
+        comparison, so every route is provably byte-identical to the pre-auth
+        gateway. With a key set, the credential must be a well-formed
+        ``Bearer`` token that matches it timing-safely — see
+        :func:`bearer_token_matches`.
+        """
+        api_key = self.server_config.api_key
+        if api_key is None:
+            return True
+        return bearer_token_matches(api_key, self.headers.get("Authorization"))
+
+    def _reject_unauthorized(self) -> None:
+        """Send the 401 ``invalid_api_key`` response and close the connection.
+
+        ``WWW-Authenticate: Bearer`` is the RFC 6750 §3 challenge a 401 to a
+        bearer-protected resource must carry. ``Connection: close`` because
+        the gate runs BEFORE the request body is read off the socket (a
+        rejected request must cost zero parsing and zero upstream sockets):
+        leaving an unread body on a kept-alive connection would poison the
+        framing of the next request, and ``send_header('Connection',
+        'close')`` both advertises and enforces the close
+        (``BaseHTTPRequestHandler`` flips ``close_connection`` on it). The
+        body/headers never echo any key material — see
+        :func:`_invalid_api_key_body`.
+        """
+        self._send_simple(
+            401,
+            [
+                ("Content-Type", _CONTENT_TYPE_JSON),
+                _WWW_AUTHENTICATE_HEADER,
+                ("Connection", "close"),
+            ],
+            _invalid_api_key_body(),
+        )
+
     # --- GET: /health, /status, /v1/models, /v1/models/supported ---
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
+        # Inbound auth (opt-in, #127): the GET /v1/* namespace is DATA PLANE —
+        # the model listings are part of the OpenAI surface callers script
+        # against. /health, /capabilities and /status stay KEYLESS by design
+        # (the container-probe and control-plane surfaces peers must reach
+        # before they hold any key) — see the inbound-bearer-auth section
+        # above for the full policy.
+        if route.startswith("/v1/") and not self._authorized():
+            self._reject_unauthorized()
+            return
         if route == "/health":
             # `version` is the deployed lobes-cli release THIS gateway process was
             # built from (`__version__`, read off installed package metadata inside
@@ -1344,6 +1502,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --- POST: proxy /v1/* to a backend ---
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        # Inbound auth (opt-in, #127): EVERY POST route is data plane — each
+        # one is a forward to a backend (chat/completions, completions,
+        # embeddings, rerank, score, audio/*). The gate runs before the body
+        # is even read off the socket, so a rejected request costs zero body
+        # parse, zero model resolution, zero readiness probes (including the
+        # audio probe below), and zero upstream connections.
+        if not self._authorized():
+            self._reject_unauthorized()
+            return
         body = self._read_body()
         if is_audio_path(self.path):
             # /v1/audio/* → the audio backend, path-routed (no model rewrite/failover).
