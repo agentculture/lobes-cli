@@ -63,11 +63,21 @@ _MD_TABLE_SEP = "|---|---|"
 # `concurrent.futures.ThreadPoolExecutor` (used by `run_concurrent`'s
 # concurrent probe fan-out) copies the calling thread's context into each
 # worker since Python 3.9, so the header still reaches every in-flight
-# request. Default `{}` — an untouched call site sends no header at all,
-# byte-identical to today.
-_auth_headers: "contextvars.ContextVar[dict[str, str]]" = contextvars.ContextVar(
-    "_auth_headers", default={}
+# request. Default `None` (an immutable sentinel, never a shared mutable
+# `{}` — Sonar S8508) — readers go through `_current_auth_headers()`, so an
+# untouched call site sends no header at all, byte-identical to today.
+_auth_headers: "contextvars.ContextVar[dict[str, str] | None]" = contextvars.ContextVar(
+    "_auth_headers", default=None
 )
+
+
+def _current_auth_headers() -> dict[str, str]:
+    """The headers `auth_headers` installed for this context, else ``{}``.
+
+    Always returns a fresh/owned mapping view for callers to splat or copy —
+    the ``None`` default never leaks and nothing shared is ever mutated.
+    """
+    return _auth_headers.get() or {}
 
 
 @contextlib.contextmanager
@@ -181,14 +191,14 @@ def _post(
     reranker) by overriding it to ``/v1/embeddings`` / ``/v1/rerank``.
     """
     data = json.dumps(payload).encode()
-    headers = {"Content-Type": "application/json", **_auth_headers.get()}
+    headers = {"Content-Type": "application/json", **_current_auth_headers()}
     req = urllib.request.Request(url + path, data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:  # local endpoint only
         return json.load(r)
 
 
 def _get(url: str, path: str, timeout: int = 10):
-    req = urllib.request.Request(url + path, headers=dict(_auth_headers.get()))
+    req = urllib.request.Request(url + path, headers=dict(_current_auth_headers()))
     with urllib.request.urlopen(req, timeout=timeout) as r:  # local endpoint only
         if r.headers.get("content-type", "").startswith("application/json"):
             return r.status, json.load(r)
