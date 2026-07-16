@@ -47,7 +47,7 @@ import pytest
 
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
-from lobes.gateway._routing import list_models_payload
+from lobes.gateway._routing import Backend, RoutingTable, list_models_payload
 from lobes.roles import build_role_registry
 
 _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
@@ -753,3 +753,42 @@ def test_integration_loop_marked_request_refused(proxy_gateway) -> None:
     assert exc.value.code == 508
     assert json.loads(exc.value.read())["error"]["type"] == "proxy_loop"
     assert proxy_gateway.opened == []  # zero outbound
+
+
+class TestBlankServedNameGuard:
+    """A proxied role whose served id cannot be honestly resolved builds NO spec.
+
+    Only reachable via a hand-built table naming a role outside the core four
+    (no wired backend, no ``<PREFIX>_SERVED_NAME`` env, no catalog role hint):
+    ``_peer_served_name`` falls through to ``""``, and a blank id must never
+    advertise, probe, or match a request's blank/unspecified model — the role
+    degrades to the referral-only 404 exactly as if the proxy knob were unset.
+    (Colleague review finding on the #127 branch.)
+    """
+
+    def test_unresolvable_served_name_builds_no_spec(self):
+        table = RoutingTable(
+            backends=(Backend("primary", "http://p:8000", "some/primary-id"),),
+            default_model="some/primary-id",
+            aliases={},
+            infeasible=frozenset({"customrole"}),
+            peer_origins={"customrole": "http://peer.example:8000"},
+            peer_proxied=frozenset({"customrole"}),
+            peer_api_keys={"customrole": "pk-secret"},
+        )
+        specs = S.peer_specs_from_table(table, env={})
+        assert specs == {}
+
+    def test_resolvable_core_role_still_builds_spec(self):
+        table = RoutingTable(
+            backends=(Backend("primary", "http://p:8000", "some/primary-id"),),
+            default_model="some/primary-id",
+            aliases={},
+            infeasible=frozenset({"multimodal"}),
+            peer_origins={"multimodal": "http://peer.example:8000"},
+            peer_proxied=frozenset({"multimodal"}),
+            peer_api_keys={},
+        )
+        specs = S.peer_specs_from_table(table, env={})
+        assert "multimodal" in specs
+        assert specs["multimodal"].served_name  # catalog hint resolves non-blank

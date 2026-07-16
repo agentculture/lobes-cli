@@ -180,6 +180,11 @@ def filter_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
 #   means an unauthenticated caller learns nothing about which /v1 routes
 #   exist (401 outranks the 404).
 #
+# Other HTTP methods (HEAD/OPTIONS/PUT/…) need no gate: the handler implements
+# only do_GET/do_POST, so BaseHTTPRequestHandler answers every other method
+# with its stock 501 before ANY routing, body read, or backend logic runs —
+# the same pre-auth contract the gateway always had, with nothing to leak.
+#
 # Two surfaces stay KEYLESS — a POLICY DECISION, not an omission:
 #
 # * ``/health`` is the container-probe endpoint: the compose healthcheck and
@@ -726,10 +731,19 @@ def peer_specs_from_table(
         origin = table.peer_origins.get(name)
         if not origin:
             continue  # impossible via build_config; hand-built tables degrade safely
+        served_name = _peer_served_name(table, name, resolved_env)
+        if not served_name:
+            # No honest model id resolved (unwired role, no <PREFIX>_SERVED_NAME,
+            # no catalog hint — only reachable via a hand-built table naming a
+            # role outside the core four). A blank id must never advertise,
+            # probe, or match a request's blank/unspecified model in
+            # _proxied_owner — so build no spec at all: the role degrades to
+            # the referral-only 404, exactly as if the proxy knob were unset.
+            continue
         specs[name] = PeerSpec(
             name=name,
             origin=origin,
-            served_name=_peer_served_name(table, name, resolved_env),
+            served_name=served_name,
             api_key=table.peer_api_keys.get(name),
         )
     return specs
