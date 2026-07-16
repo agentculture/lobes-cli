@@ -19,11 +19,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-# Shared ``context`` literal — three catalog entries (the archived Mistral
-# fallback and both Gemma 4 12B unified entries) share this exact native
-# context window; a single constant keeps them from drifting independently
-# (SonarCloud: duplicated string literal).
+# Shared ``context`` literals — several catalog entries share these exact
+# native context windows; a single constant keeps them from drifting
+# independently (SonarCloud: duplicated string literal). Same rationale for
+# the Gemma 4 unified-multimodal ``shape`` literal shared by the 12B pair and
+# the 31B muse gear.
 _CONTEXT_128K_NATIVE = "128K native"
+_CONTEXT_256K_NATIVE = "256K native"
+_SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
 
 @dataclass(frozen=True)
@@ -71,7 +74,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # so this is the fallback when an image path is needed.
         role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
-        context="256K native",
+        context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
@@ -208,7 +211,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # corrupt bf16 weights). See docs/qwen3.5-4b-minor.md.
         role_hint="minor",
         shape="hybrid linear-attn + ViT (multimodal)",
-        context="256K native",
+        context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="none",
@@ -242,7 +245,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # audio_token_id). Tracked as #101. See docs/gemma-4-12b-nvfp4.md
         # #live-validation-status-71 for the full evidence table.
         role_hint="multimodal",
-        shape="unified multimodal (text+image+audio)",
+        shape=_SHAPE_GEMMA4_UNIFIED,
         # Same base-model family as the coder entry — text_config.max_position_
         # embeddings=131072 confirmed for the Unified 12B IT line (#71); not
         # independently re-measured for this exact NVFP4A16 export.
@@ -298,7 +301,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # the input_audio content part rather than serving it. Tracked as #101.
         # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
         role_hint="candidate",
-        shape="unified multimodal (text+image+audio)",
+        shape=_SHAPE_GEMMA4_UNIFIED,
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
         # read from the checkpoint config during #71 live validation).
         context=_CONTEXT_128K_NATIVE,
@@ -339,11 +342,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # machine-as-brain never hosts it; a muse-hosting deployment shape
         # (`lobes init --shape thor-muse`) is the only built-in way to serve it.
         role_hint="muse",
-        shape="unified multimodal (text+image+audio)",
+        shape=_SHAPE_GEMMA4_UNIFIED,
         # text_config.max_position_embeddings=262144 (read from the checkpoint
         # config, 2026-07-17); a muse-hosting shape trims the SERVED context to
         # its box budget (thor-muse: 131072).
-        context="256K native",
+        context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="pythonic",
         # NVIDIA modelopt NVFP4 (config.json quant_method="modelopt" — resolves

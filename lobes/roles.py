@@ -81,12 +81,15 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "reranker": "reranker",
 }
 
+# The chat path the three generate lobes share (SonarCloud: duplicated literal).
+_CHAT_PATH = "/v1/chat/completions"
+
 # role → the OpenAI path a caller hits. The reranker exposes both /v1/rerank and
 # /v1/score; /v1/rerank is the canonical path advertised here.
 ROLE_PATH: dict[str, str] = {
-    "cortex": "/v1/chat/completions",
-    "senses": "/v1/chat/completions",
-    "muse": "/v1/chat/completions",
+    "cortex": _CHAT_PATH,
+    "senses": _CHAT_PATH,
+    "muse": _CHAT_PATH,
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
