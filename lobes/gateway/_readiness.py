@@ -177,19 +177,32 @@ PeerOpener = Callable[[str, float, "str | None"], "tuple[int, bytes]"]
 def _default_peer_opener(
     url: str, timeout: float, api_key: str | None
 ) -> tuple[int, bytes]:  # pragma: no cover - opens a socket
-    """GET *url* over plain HTTP, attach ``Authorization`` iff ``api_key`` is
+    """GET *url* scheme-aware, attach ``Authorization`` iff ``api_key`` is
     set, and return ``(status, body)``.
 
-    Fleet peers are reached over their operator-declared origin (mirrors
-    :func:`_default_ready_opener`'s HTTP-only contract for internal
-    backends — a mesh link, not necessarily public). The header is built
+    Fleet peers are reached over their operator-declared origin. Unlike
+    :func:`_default_ready_opener` (HTTP-only: internal compose-network
+    backends), a PEER origin is a cross-box URL the operator typed — it may
+    legitimately be ``https://`` (a tunnel, a TLS-terminating proxy), and the
+    data-plane forward (:func:`lobes.gateway.server.open_upstream`) already
+    honours the scheme, so the probe must match or an https peer would probe
+    over plain HTTP and false-negative every readiness check (Qodo finding,
+    PR #130). The query string rides along when present. The header is built
     from ``api_key`` exactly once and never logged or otherwise persisted.
     """
     parts = urlsplit(url)
-    conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=timeout)
+    if parts.scheme == "https":
+        conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+            parts.hostname, parts.port or 443, timeout=timeout
+        )
+    else:
+        conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=timeout)
     try:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        conn.request("GET", parts.path or "/", headers=headers)
+        target = parts.path or "/"
+        if parts.query:
+            target = f"{target}?{parts.query}"
+        conn.request("GET", target, headers=headers)
         response = conn.getresponse()
         return response.status, response.read()
     finally:

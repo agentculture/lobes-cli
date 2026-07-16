@@ -34,6 +34,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import pytest
+
 from lobes.gateway import _readiness as R
 
 # --- probe_peer_ready: the peer honesty check -------------------------------
@@ -512,3 +514,71 @@ def test_current_returns_a_copy_isolated_from_caller_mutation_for_peers_too() ->
         assert cache.current() == {"multimodal": None}
     finally:
         cache.stop()
+
+
+class TestPeerOpenerSchemeSelection:
+    """_default_peer_opener honours the origin's scheme (Qodo, PR #130).
+
+    An https:// peer origin must be dialed with HTTPSConnection (default port
+    443) — probing it over plain HTTP false-negatives every readiness check
+    while the data-plane forward (which honours the scheme) still works. The
+    query string must ride along when present.
+    """
+
+    def _capture(self, monkeypatch):
+        made: dict = {}
+
+        class _FakeResponse:
+            status = 200
+
+            @staticmethod
+            def read():
+                return b"{}"
+
+        class _FakeConn:
+            def __init__(self, host, port, timeout=None):
+                made["host"], made["port"], made["timeout"] = host, port, timeout
+
+            def request(self, method, target, headers=None):
+                made["method"], made["target"], made["headers"] = method, target, headers
+
+            @staticmethod
+            def getresponse():
+                return _FakeResponse()
+
+            def close(self):
+                pass
+
+        return made, _FakeConn
+
+    def test_https_origin_uses_https_connection_default_443(self, monkeypatch):
+        made, fake = self._capture(monkeypatch)
+        monkeypatch.setattr(R.http.client, "HTTPSConnection", fake)
+        monkeypatch.setattr(
+            R.http.client,
+            "HTTPConnection",
+            lambda *a, **k: pytest.fail("https origin must not use HTTPConnection"),
+        )
+        status, _ = R._default_peer_opener("https://peer.example/v1/models", 3.0, None)
+        assert status == 200
+        assert made["host"] == "peer.example"
+        assert made["port"] == 443
+        assert made["target"] == "/v1/models"
+
+    def test_http_origin_uses_plain_connection_default_80(self, monkeypatch):
+        made, fake = self._capture(monkeypatch)
+        monkeypatch.setattr(R.http.client, "HTTPConnection", fake)
+        monkeypatch.setattr(
+            R.http.client,
+            "HTTPSConnection",
+            lambda *a, **k: pytest.fail("http origin must not use HTTPSConnection"),
+        )
+        status, _ = R._default_peer_opener("http://peer.example:8000/v1/models", 3.0, None)
+        assert status == 200
+        assert made["port"] == 8000
+
+    def test_query_string_rides_along(self, monkeypatch):
+        made, fake = self._capture(monkeypatch)
+        monkeypatch.setattr(R.http.client, "HTTPConnection", fake)
+        R._default_peer_opener("http://peer.example:8000/v1/models?x=1", 3.0, None)
+        assert made["target"] == "/v1/models?x=1"
