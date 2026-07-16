@@ -57,6 +57,36 @@ class RoutingTable:
     # empty so a deployment with no peer config is byte-identical to the
     # pre-referral contract on every surface.
     peer_origins: Mapping[str, str] = field(default_factory=dict)
+    # Backend NAMES whose dropped role this box has opted in to PROXY to its
+    # declared peer (proxy-lobes t1, issues #115/#127 — the follow-up
+    # ``peer_origins`` above explicitly deferred). Populated by
+    # :func:`lobes.gateway._config.build_config` from ``<PREFIX>_PEER_PROXY``
+    # truthy env vars (:data:`lobes.gateway._config.PEER_PROXY_ENV`) — the
+    # SAME per-backend-name env convention ``infeasible``/``peer_origins``
+    # already use — and ONLY for a name that ALSO has a declared peer origin
+    # AND is in ``infeasible`` (a knob without an origin has nothing to dial;
+    # a knob on a locally-feasible role is ignored — the local engine serves
+    # it). CONFIG ONLY in this task: this field is consulted by the proxy
+    # data-plane branch, which lands in a LATER task — today NOTHING dials
+    # these peers, and a name here changes no response. Defaults to empty so
+    # every existing table construction is completely unaffected, and so an
+    # origin declared WITHOUT the knob stays annotation-only referral —
+    # the issue #112 contract is preserved byte-for-byte.
+    peer_proxied: frozenset[str] = frozenset()
+    # Backend NAME -> the OUTBOUND API key this box presents when dialing
+    # that role's declared peer (proxy-lobes t1, issues #115/#127 — the
+    # pairwise-auth half). Populated by :func:`lobes.gateway._config.
+    # build_config` from ``<PREFIX>_PEER_API_KEY`` env vars
+    # (:data:`lobes.gateway._config.PEER_API_KEY_ENV`), verbatim (stripped),
+    # and ONLY for names with a declared peer origin (a key without an
+    # origin is inert — there is no peer to authenticate to). Like
+    # ``peer_proxied`` this is CONFIG ONLY today: the data-plane branch that
+    # attaches these credentials lands in a LATER task — nothing dials them.
+    # ``repr=False`` because the values are SECRETS: they must NEVER appear
+    # in ``repr``/``str`` of the table (logs, tracebacks, --json debug
+    # output). Defaults to empty so every existing construction is
+    # unaffected.
+    peer_api_keys: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
 def is_audio_path(path: str) -> bool:
