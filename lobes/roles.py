@@ -282,6 +282,7 @@ def _gateway_role(
     gateway: str,
     env: Mapping[str, str],
     ready_signal: bool | None,
+    peer_signal: bool | None = None,
 ) -> RoleInfo:
     """Resolve a gateway-fronted role (cortex/senses/embedder/reranker).
 
@@ -314,6 +315,23 @@ def _gateway_role(
     #89/#90 established for stt/tts (a caller-supplied signal can never
     override "nothing is wired" or "nothing to dial") — and now also "this
     machine can't run it at all", independent of wiring or a live health probe.
+
+    ``peer_signal`` is exactly that NEW live signal t5's clamp docstring
+    demanded (proxy-lobes t6, issues #115/#127): the live PEER-probe verdict
+    for a PROXIED role, threaded through by :func:`build_role_registry` from
+    its ``peer_ready`` mapping — mirroring how ``backend_ready``/
+    ``audio_ready`` thread their signals — and ``None`` for every other role
+    and every caller without one. It is a SEPARATE channel from
+    ``ready_signal``, deliberately: ``backend_ready`` (the LOCAL probe) still
+    NEVER unclamps a proxied role — a healthy local process is not evidence
+    the peer serves the model — while ``peer_signal`` reports a probe of the
+    actual proxied path (:func:`lobes.gateway._readiness.probe_peer_ready`:
+    the peer answered 200 AND its own ``/v1/models`` lists the served id), so
+    a proxied role's ``ready`` honestly reflects it (honesty h2 — a live
+    proxied-path probe or ``False``, never hardcoded true). It is still
+    clamped on an empty ``endpoint`` (nothing for a caller to dial —
+    unchanged from every other role), and ``feasible`` stays ``False``
+    regardless: hosting is a hardware fact a forward does not change.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -331,6 +349,11 @@ def _gateway_role(
     endpoint = gateway
     if loaded and feasible and endpoint:
         ready = ready_signal if ready_signal is not None else loaded
+    elif peer_signal is not None and endpoint:
+        # PROXIED role with a live peer probe (t6): ready reflects the peer's
+        # verified state — never `loaded` (it isn't, here) and never a local
+        # backend_ready signal (see the docstring's two-channel rationale).
+        ready = peer_signal
     else:
         ready = False
     return RoleInfo(
@@ -386,6 +409,7 @@ def build_role_registry(
     gateway_url: str | None = None,
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
+    peer_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the six first-class roles to live metadata — the #81 contract.
 
@@ -446,6 +470,22 @@ def build_role_registry(
         itself never probes anything to produce this signal — it is computed
         elsewhere (t3's :class:`~lobes.gateway._readiness.ReadinessCache`,
         socket-free to read) and handed in, exactly like ``audio_ready``.
+    :param peer_ready: optional live-readiness signal for PROXIED roles
+        (proxy-lobes t6, issues #115/#127) — the NEW, SEPARATE channel the
+        t5 clamp docstring demanded, keyed by backend name like
+        ``backend_ready`` but carrying the PEER-probe verdict
+        (:func:`lobes.gateway._readiness.probe_peer_ready` via the readiness
+        cache's peer thread: the declared peer answered 200 AND its own
+        ``/v1/models`` lists the served id). Consulted ONLY for a role whose
+        backend is in ``table.peer_proxied``; for exactly those roles
+        ``ready`` reflects it (``is True`` — the h14 missing-key/None/False
+        discipline applies), which is the live proxied-path probe honesty h2
+        requires. ``backend_ready`` — the LOCAL probe channel — still never
+        unclamps a proxied role (a healthy local process is not evidence the
+        peer serves the model). ``None`` (the default — every pre-t6 caller,
+        and every deployment with no proxied roles) leaves every role's
+        ``ready`` exactly as before: a proxied role without a live peer
+        signal is honestly not-ready, never hardcoded true.
     :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
@@ -489,7 +529,16 @@ def build_role_registry(
             # configured". By passing `_gateway_role` a concrete `True`/`False`
             # (never `None`) on the supplied path, that trap cannot recur.
             signal = backend_ready.get(ROLE_BACKEND[role]) is True
-        registry[role] = _gateway_role(role, table, gateway, resolved_env, signal)
+        # The SEPARATE peer channel (t6): only a PROXIED role's backend, and
+        # only when a live peer_ready mapping was supplied, gets a concrete
+        # bool (missing key / present None / present False all collapse to
+        # "not ready", the same h14 discipline as the local channel above).
+        # Every other role — and every caller without a peer signal — passes
+        # None, so _gateway_role's clamp behaves exactly as before.
+        peer_signal = None
+        if peer_ready is not None and ROLE_BACKEND[role] in table.peer_proxied:
+            peer_signal = peer_ready.get(ROLE_BACKEND[role]) is True
+        registry[role] = _gateway_role(role, table, gateway, resolved_env, signal, peer_signal)
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
@@ -543,10 +592,57 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     not), an unhosted role with no declared peer stays exactly as it was, and
     with ``table.peer_origins`` empty (the default) the payload is
     byte-identical to the pre-referral contract. The origin is metadata for
-    the CALLER to dial directly; nothing here (or anywhere in the gateway)
-    ever forwards a request to it — no data-plane proxying (issue #115 is the
-    deferred proxy-lobes follow-up). Audio roles (stt/tts) are outside the
-    referral channel's scope, exactly as they are outside ``FEASIBLE_ENV``'s.
+    the CALLER to dial directly; THIS FUNCTION never forwards a request to
+    it — it only annotates. A name whose operator ALSO armed
+    ``<PREFIX>_PEER_PROXY`` (see the THIRD state below) IS forwarded, but by
+    the data-plane proxy branch in :mod:`lobes.gateway.server`
+    (:func:`~lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
+    #115/#127), never by this pure/offline annotator. Audio roles (stt/tts)
+    are outside the referral channel's scope, exactly as they are outside
+    ``FEASIBLE_ENV``'s.
+
+    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127).**
+    Referral above says "ask the peer yourself"; a role whose backend name is
+    ALSO in ``table.peer_proxied`` (the operator's ``<PREFIX>_PEER_PROXY``
+    opt-in — :data:`lobes.gateway._config.PEER_PROXY_ENV`, t1) is one this box
+    has committed to answering ON THE PEER'S BEHALF — the gateway itself
+    FORWARDS the request via the data-plane proxy branch
+    (:func:`lobes.gateway.server._proxy_to_peer`, landed in t6; this module
+    itself stays pure/offline and dials nothing — it only adds the marker
+    below). That is a materially different claim from a bare referral, so it
+    gets its own explicit marker,
+    ``"proxied": true``, added ALONGSIDE (never instead of) ``hosted_by`` — the
+    origin named there is unchanged: it is still "whoever ultimately serves
+    this", now additionally reachable by asking THIS box too.
+    ``table.peer_proxied`` is a subset of ``table.infeasible`` ∩
+    ``table.peer_origins`` by construction (:func:`lobes.gateway._config.
+    _peer_proxied`), so a proxied role always also gets ``hosted_by`` — the
+    three states are told apart by KEY PRESENCE alone, never by a sentinel
+    value:
+
+    * **hosted** (this box serves it) — neither key present.
+    * **referral-only** (dropped, no local proxy) — ``hosted_by`` present,
+      ``proxied`` ABSENT (never ``false``) — mirrors ``hosted_by``'s own
+      optional-key convention above: a key that doesn't apply is omitted, not
+      set to a falsy sentinel, so ``"proxied" in entry`` is itself the signal.
+    * **proxied** (dropped, this box forwards) — BOTH ``hosted_by`` and
+      ``proxied: true`` present.
+
+    ``feasible`` stays ``false`` for a proxied role in all cases — it remains
+    a HARDWARE/deployment fact ("this box does not itself host the model"),
+    independent of whether a request for it happens to be answerable via a
+    forward. Likewise ``ready`` is never forced ``true`` here: it is left
+    exactly as :func:`build_role_registry` already computed it — which, since
+    proxy-lobes t6, means a proxied role's ``ready`` reflects the live
+    PEER-probe verdict when the caller threaded one through the ``peer_ready``
+    channel (see :func:`build_role_registry`), and stays the clamp's honest
+    ``False`` otherwise. This annotator adds no readiness claim of its own.
+
+    With ``table.peer_proxied`` empty (the default — every deployment that
+    predates issues #115/#127, and every referral-only or no-peer deployment
+    today) this branch never fires, so the payload is byte-identical to the
+    pre-proxy contract, exactly as it already is byte-identical to the
+    pre-referral one when ``table.peer_origins`` is empty.
     """
     for role, backend in ROLE_BACKEND.items():
         entry = payload.get(role)
@@ -555,6 +651,8 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
         origin = table.peer_origins.get(backend)
         if origin:
             entry["hosted_by"] = origin
+            if backend in table.peer_proxied:
+                entry["proxied"] = True
     return payload
 
 

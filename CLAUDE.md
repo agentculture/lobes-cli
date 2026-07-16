@@ -185,15 +185,17 @@ referral** (issue #112, t3): declaring a peer origin per dropped role
 (`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `EMBED_PEER_ORIGIN` /
 `RERANK_PEER_ORIGIN` — always operator-typed, never derived, per #92) makes
 both capabilities surfaces and the `role_infeasible` 404 body name the
-hosting peer (`hosted_by`); annotation only — the gateway never forwards a
-request to a peer, and with no peer config every response is byte-identical
-to the pre-referral contract.
+hosting peer (`hosted_by`); by default this is annotation only — the gateway
+does not forward a request to a peer on the origin declaration alone, and
+with no peer config every response is byte-identical to the pre-referral
+contract. A box can opt into actually following its own referral — see
+proxy-lobes, next.
 
 **The mesh-brain end-state (issue #112)** — one heavy lobe per box, cheap
 gears co-reside, the brain stays whole across the mesh — has landed on top of
 the near-term work above, recording four decisions: (1) cross-box
-reachability is **direct addressing + opt-in honest referral**, never
-proxying (proxy-lobes are their own follow-up, issue #115); (2) the cheap
+reachability is **direct addressing + opt-in honest referral** by default,
+now with an opt-in proxy extension (below); (2) the cheap
 gears (`embedder`/`reranker`/`stt`/`tts`) **co-reside** on every box that
 wants them — no gear is forced to move; (3) the reference shape assignment is
 **Spark GB10 = `cortex` via `spark-lobe`, Thor 128GB = `senses` via
@@ -205,6 +207,27 @@ cross-box on the physical Thor
 (`docs/evidence/2026-07-14-accept-referral-thor.txt`); physical Orin
 validation remains open. See `docs/deployment-shapes.md` (the deep
 reference) and `lobes explain shapes` (in-CLI).
+
+**Proxy-lobes (issues #115/#127, phase 1 — landed on top of referral).** A
+dropped role can go beyond referral-only to a third state, **proxy**: this
+box forwards the request to its declared peer instead of 404ing, so the
+caller never has to know it moved. Two knobs, both opt-in and both required
+together: `<PREFIX>_PEER_PROXY=true` (arms the forward; inert without a
+declared `<PREFIX>_PEER_ORIGIN`) and `<PREFIX>_PEER_API_KEY` (the outbound
+credential — always **a copy of the peer's own inbound `GATEWAY_API_KEY`**,
+never a value minted per pairing, so key material scales **O(machines)**,
+not O(pairs)). The caller's own `Authorization` (validated by this box's own
+opt-in `GATEWAY_API_KEY` inbound gate) is stripped before every forward and
+never reaches a peer. Proxying is single-hop — a request that arrives already
+marked `X-Lobes-Proxied` is refused (`508 proxy_loop`) rather than re-forwarded
+— and every proxied answer carries `X-Lobes-Proxied-By: <peer origin>` so a
+caller can always tell a forwarded answer from a locally-served one. Peer
+origins are assumed reachable over a private/tailnet transport, never the
+public internet (no TLS termination happens at this layer). With no
+`<PREFIX>_PEER_PROXY` set anywhere — every pre-#115 deployment, and both live
+`spark-lobe`/`thor-lobe` boxes as of this writing — every response stays
+byte-identical to the pre-proxy contract. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
+and `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`.
 
 ## Deployment model
 

@@ -179,13 +179,99 @@ not).
 **zero peer config — the default — every response is byte-identical to the
 pre-referral contract** (regression-pinned in `tests/test_peer_referral.py`).
 
-**The boundary: no data-plane proxying.** The referral is an annotation for
-the *caller* to act on — the gateway never forwards a generate/embed/rerank/
-audio request to a peer, never probes the declared origin on the request hot
-path, and a request for an unhosted role terminates locally at the 404 with
-zero outbound connections (test-enforced). A box that *follows* its own
-referral on the caller's behalf — a proxy-lobe, advertised as proxied — is a
-deliberate non-goal here, deferred to issue #115.
+**The default boundary: no data-plane proxying.** Declaring `*_PEER_ORIGIN`
+alone is an annotation for the *caller* to act on — the gateway never forwards
+a generate/embed/rerank/audio request to a peer on the strength of the origin
+alone, never probes the declared origin on the request hot path, and a
+request for an unhosted role terminates locally at the 404 with zero outbound
+connections (test-enforced). A box that *follows* its own referral on the
+caller's behalf — a proxy-lobe, advertised as proxied — is an explicit,
+separate opt-in on top of the origin declaration: see
+[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+below. With no `*_PEER_PROXY` armed anywhere (every deployment that predates
+that feature, and every referral-only deployment today) this boundary holds
+exactly as described here.
+
+## Following the referral: proxy-lobes (opt-in)
+
+Referral answers "who hosts this?"; proxy-lobes (issues #115/#127, phase 1)
+answers the next question — "will you get it for me?" — with a third lobe
+state on top of the two above:
+
+| State | This box... | A request for the role gets |
+|---|---|---|
+| **awake** | hosts the role | served locally |
+| **asleep** (referral-only) | dropped the role, named its peer | `404 role_infeasible` + `hosted_by: <peer origin>` — the caller must dial the peer itself |
+| **proxy** | dropped the role, named its peer, *and* opted in to following the referral | forwarded to the peer; the caller never has to know it moved |
+
+**The opt-in is a second, deliberate step — q1 from the #115/#127 design
+work.** Declaring `<PREFIX>_PEER_ORIGIN` alone (above) stays **referral-only**
+— origin without the proxy knob never gets dialed, preserving the issue #112
+contract byte-for-byte. Setting the matching `<PREFIX>_PEER_PROXY=true` is
+what additionally arms the gateway to **follow its own referral** on the
+caller's behalf — and only for a name that is *also* infeasible on this box
+*and* has that declared origin; the knob is inert on its own.
+
+**The pairwise key contract.** Proxying introduces credentials in both
+directions, and they are deliberately asymmetric:
+
+- **One *inbound* key per box** — `GATEWAY_API_KEY` (fallback
+  `CULTURE_VLLM_API_KEY`), the same knob [gateway auth](gateway-fleet.md#auth-opt-in-bearer-gate)
+  uses to gate this box's own data plane.
+- **One *outbound* key per dropped-role peer** — `<PREFIX>_PEER_API_KEY`. Its
+  value is **the peer's own inbound key** (the credential *that box* requires
+  from callers), never a value this box invents, and never this box's own
+  `GATEWAY_API_KEY`.
+
+Because the outbound credential is always a *copy* of the peer's existing
+inbound key — never a secret freshly minted per relationship — key material
+scales **O(machines)**: an N-box mesh needs N inbound keys total (one per
+box), and a box proxying to M peers holds at most M copies of those peers'
+own keys. **Keys never propagate through**: the caller's own `Authorization`
+authenticated it to *this* box and is stripped before every forward; only the
+declared pairwise key (or nothing, if none is declared) travels onward. This
+is also why the referral/proxy origins assume a **tailnet-class transport**
+(Tailscale, a VPN, or an otherwise-private/trusted network between boxes) —
+the forward is plain HTTP with no TLS termination of its own, so
+confidentiality in transit is the tailnet's job, exactly as it already is for
+`CULTURE_VLLM_API_KEY` over `lobes tunnel`/cloudflared. Never point a
+`*_PEER_ORIGIN` at a box reachable only over the public internet.
+
+**Worked example — spark-lobe dropped `senses`; thor-lobe hosts it.** (Both
+hostnames below are placeholders — substitute your own tailnet/VPN names,
+never a real hostname or key in a committed file.)
+
+```bash
+# On the Spark box (spark-lobe: hosts cortex, dropped senses):
+GATEWAY_API_KEY=<spark's own inbound key>
+MULTIMODAL_PEER_ORIGIN=http://thor.example.ts.net:8000
+MULTIMODAL_PEER_PROXY=true
+MULTIMODAL_PEER_API_KEY=<thor's inbound GATEWAY_API_KEY — a copy, not a new secret>
+
+# On the Thor box (thor-lobe: hosts senses), correspondingly:
+GATEWAY_API_KEY=<thor's own inbound key — the SAME value Spark put in MULTIMODAL_PEER_API_KEY>
+```
+
+A `senses` chat request against Spark's gateway now: strips the caller's own
+`Authorization`, attaches `Bearer <thor's key>`, forwards to
+`http://thor.example.ts.net:8000`, and relays Thor's Gemma answer back with
+`X-Lobes-Proxied-By: http://thor.example.ts.net:8000` — the caller never has
+to know Thor exists. If Spark instead only set `MULTIMODAL_PEER_ORIGIN`
+(no `_PEER_PROXY`, no key), the exact same request would still 404
+`role_infeasible` naming Thor, as it did before proxy-lobes existed.
+
+**Referral-only deployments are byte-identical to before.** Every honesty
+surface, failure mode, and header this section describes is gated on
+`<PREFIX>_PEER_PROXY` being armed for that specific role. A deployment that
+never sets it — including both live `spark-lobe`/`thor-lobe` boxes as of this
+writing (referral-only) — sees no behavior change at all: same 404 body, same
+`hosted_by` annotation, same zero outbound connections.
+
+See [`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`](gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in)
+for the data-plane mechanics (marker headers, the single-hop loop guard, peer
+failure modes, pressure semantics) and
+[`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied) for
+how a proxied role shows up in the role contract.
 
 ## The co-residency tax and its measured repayment
 
@@ -311,13 +397,17 @@ direct addressing plus honest referral.** Four decisions came out of it, all
 now shipped:
 
 1. **Cross-box reachability = direct addressing + opt-in honest referral.**
-   No data-plane proxying: a consumer dials each box directly, exactly as the
-   Culture mesh does today; with opt-in peer config, a box's `capabilities`
-   and its `role_infeasible` 404s name the peer that hosts an absent role
-   (`hosted_by`, above). The #92 invariant holds throughout — a box never
-   serves what it does not host. *Following* a referral on the caller's
-   behalf (a proxy-lobe) is a deliberate non-goal here, deferred to issue
-   #115.
+   By default, no data-plane proxying: a consumer dials each box directly,
+   exactly as the Culture mesh does today; with opt-in peer config, a box's
+   `capabilities` and its `role_infeasible` 404s name the peer that hosts an
+   absent role (`hosted_by`, above). The #92 invariant holds throughout — a
+   box never serves what it does not host. *Following* a referral on the
+   caller's behalf (a proxy-lobe) was a deliberate non-goal **at the time
+   this decision was recorded** — it has since landed as its own opt-in
+   extension (issues #115/#127, phase 1): see
+   [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+   above. Direct addressing remains the default; proxying is additive, never
+   a replacement for it.
 2. **Cheap-gear placement = co-residence.** "One lobe per box" specializes
    the heavy *generate* lobes only — `embedder` / `reranker` / `stt` / `tts`
    may ride on every box that wants them (~0.06 util each, as today); no
@@ -371,10 +461,17 @@ staleness on that one box, not a defect of the shapes or referral feature:
 under the correct `RERANK_ENFORCE_EAGER`/`TRITON_ATTN` knobs. The fix, when
 that box is next touched, is simply to re-scaffold with the current release.
 
-**What's still open:** proxy-lobes (issue #115, decision 1's explicit
-non-goal) and physical Jetson AGX Orin 64GB validation (decision 3's
-`orin-small` reference instance — declared, not yet booted; see the support
-table above and the scope boundary below).
+**What's still open:** proxy-lobes' phase-1 substrate (config channels,
+inbound auth, the data-plane forward, the PROXIED capabilities state — see
+[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+above) has landed, but its **live cross-box acceptance run** — the same kind
+of physical-pair proof the referral evidence above already has — has not; no
+doc here claims a proxied answer has been observed on physical hardware yet.
+Issue #127's own later phases (fan-out execution, a request-tracing store,
+latency-aware routing, policy plugins) remain explicitly out of scope for
+this delivery. Physical Jetson AGX Orin 64GB validation (decision 3's
+`orin-small` reference instance — declared, not yet booted) is also still
+open; see the support table above and the scope boundary below.
 
 ## Scope boundary
 
@@ -387,9 +484,13 @@ above are all shipped. Two things remain explicitly out of scope, routed
 elsewhere:
 
 - **Proxy-lobes** (serving a "sleeping" lobe by following its own referral to
-  whichever peer box hosts it, on the caller's behalf) — parked as its own
-  follow-up, issue #115. Direct addressing + referral (decision 1, above) is
-  the shipped default; proxying is a deliberate non-goal here.
+  whichever peer box hosts it, on the caller's behalf) — the phase-1
+  substrate has shipped as an opt-in extension (issues #115/#127; see
+  [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+  above). Direct addressing + referral (decision 1, above) remains the
+  shipped **default**; a live cross-box acceptance run for the proxy path,
+  and #127's later phases (fan-out execution, request tracing, latency-aware
+  routing, policy plugins), are their own follow-ups, out of scope here.
 - **Jetson AGX Orin physical validation** — the `orin-small` shape (above)
   ships as **declared, unvalidated data** (issue #112, mesh-brain end-state
   t2), exactly like `lobes/profiles/builtin/base.toml`'s existing
@@ -406,11 +507,21 @@ elsewhere:
   `thor-lobe`, per-box-honesty-only cross-box decision deferred to #112
 - `docs/specs/2026-07-14-lobes-serves-the-mesh-brain-end-state-one-lobe-per.md`
   — the mesh-brain end-state (#112) spec: the four decisions above
+- `docs/specs/2026-07-16-proxy-lobes-pairwise-auth.md` /
+  `docs/plans/2026-07-16-proxy-lobes-pairwise-auth.md` — the proxy-lobes +
+  pairwise-auth spec and plan (#115/#127 phase 1): the awake/asleep/proxy
+  table, the pairwise credential model, the tailnet transport assumption, and
+  the task-by-task delivery this document's [Following the referral](#following-the-referral-proxy-lobes-opt-in)
+  section describes
 - `docs/evidence/2026-07-14-accept-referral-thor.txt` — the live cross-box
-  referral evidence (#112, t5)
+  referral evidence (#112, t5); proxy-lobes' own live cross-box evidence is
+  still open (see "What's still open" above)
+- `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in` — the
+  data-plane mechanics: marker headers, the loop guard, peer failure modes
 - `docs/machine-profiles.md` — the per-machine (card) tuning axis this
   composes with
-- `docs/colleague-stack.md` — the six-role Colleague contract
+- `docs/colleague-stack.md` — the six-role Colleague contract, including the
+  proxied role state
 - `lobes/profiles/shapes.py` — the `Shape` schema + built-in loader
   (`COLLEAGUE_ROLES` / `OPT_IN_ROLES` / `SHAPE_ROLES`)
 - `lobes/profiles/shape_render.py` — the pure `(shape, profile) → compose/.env`

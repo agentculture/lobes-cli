@@ -1,0 +1,90 @@
+proxy-lobes + pairwise gateway auth — LIVE cross-box acceptance (plan t10, PR #130)
+date: 2026-07-16 · boxes: Spark GB10 (spark-lobe) ←→ Jetson AGX Thor (thor-lobe)
+build: lobes-cli 0.45.0.dev260 (TestPyPI dev wheel from the PR branch; gateways
+rebuilt on both boxes — engines untouched except where noted). Hostnames below
+scrubbed to <tailnet>; keys redacted. Spark gateway :8001, Thor gateway :8000.
+
+CONFIG (operator .env, per box)
+  Spark (~/.lobes/.env): MODEL_GEAR_VERSION=0.45.0.dev260,
+    MULTIMODAL_PEER_ORIGIN=http://thor.<tailnet>.ts.net:8000,
+    MULTIMODAL_PEER_PROXY=true, MULTIMODAL_PEER_API_KEY=<thor's inbound key>,
+    CULTURE_VLLM_API_KEY=<spark key> (arms inbound auth via the GATEWAY_API_KEY fallback)
+  Thor (~/.lobes/.env): MODEL_GEAR_VERSION=0.45.0.dev260,
+    GATEWAY_API_KEY=<thor key> (minted this session, exchanged operator-to-operator),
+    PRIMARY_PEER_ORIGIN=http://spark.<tailnet>.ts.net:8001 (referral-only — no proxy knob)
+  Deployed compose gateway env blocks gained the scoped passthrough lines
+  (GATEWAY_API_KEY / CULTURE_VLLM_API_KEY / MULTIMODAL_PEER_PROXY /
+  MULTIMODAL_PEER_API_KEY) matching the 0.45.0 template.
+
+RESULTS
+
+1) Inbound auth (Spark, CULTURE fallback armed):
+   GET /v1/models keyless                      -> 401
+   POST /v1/chat/completions keyless           -> 401
+   GET /v1/models with Spark key               -> 200
+   GET /health keyless                         -> 200 {"version": "0.45.0.dev260"}
+   (Thor mirrors: keyless /v1/models 401; with its key 200.)
+
+2) Honesty surfaces (Spark):
+   GET /capabilities (keyless, by design):
+     senses -> ready: True, feasible: False, proxied: True,
+               hosted_by: http://thor.<tailnet>.ts.net:8000
+     cortex -> ready: True, feasible: True (local)
+   GET /v1/models (keyed) -> ["sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+     "Qwen/Qwen3-Embedding-0.6B", "Qwen/Qwen3-Reranker-0.6B",
+     "coolthor/gemma-4-12B-it-NVFP4A16"]   <- Gemma id listed ONLY via the live
+     peer probe (earlier in the session, with Thor's engine down, the id was
+     absent and capabilities showed ready: False — the probe-gating works both ways)
+
+3) THE proxied request (Spark gateway, Spark key, model=senses):
+   POST /v1/chat/completions {"model":"senses","messages":[...sunrise...]}
+   -> HTTP/1.1 200 OK
+      X-Lobes-Proxied-By: http://thor.<tailnet>.ts.net:8000
+      body model: coolthor/gemma-4-12B-it-NVFP4A16
+      answer: "I see a radiant transition of light and color marking the
+               beginning of a new day."
+   The completion was produced by Thor's Gemma engine; the caller only ever
+   held the Spark key; Spark presented Thor's key pairwise (Thor's inbound
+   gate would 401 anything else — proven keyless in (1)).
+
+4) SSE through the proxy (same route, "stream": true):
+   chunks relayed incrementally; first chunk:
+   data: {"id":"chatcmpl-aa42ad3e87084cb0","object":"chat.completion.chunk",
+          "model":"coolthor/gemma-4-12B-it-NVFP4A16", ...}
+
+5) Peer-down honesty (observed live mid-session while Thor's engine was down):
+   POST model=senses -> 503, Retry-After: 5, X-Lobes-Proxied-By present,
+   body: {"error":{"message":"the peer hosting this model
+     (`http://thor.<tailnet>.ts.net:8000`) is unavailable — retry shortly",
+     "type":"backend_unavailable","attempts":["peer:multimodal: HTTP 503"]}}
+
+6) Thor-side contract (unchanged, referral-only for cortex):
+   GET /capabilities: senses -> ready True, feasible True (hosted);
+   cortex -> feasible False, hosted_by http://spark.<tailnet>.ts.net:8001,
+   no proxied key (Thor's knob unset — origin alone stays referral-only).
+
+7) CLI under auth (Spark): `lobes capabilities` succeeds with no flags (the
+   CLI attaches the key from the deployment .env — t3) and renders the third
+   state distinctly: "proxied via this gateway from peer: http://thor.<tailnet>.ts.net:8000"
+   (renderer fix committed this session after the live run exposed the gap).
+
+OPERATIONAL NOTES (what it took — faithfully recorded)
+  - A bare `docker compose up -d gateway` (without the shape override files)
+    recreated the dependent engine containers on BOTH boxes and booted the
+    shape-dropped ones (multimodal on Spark, primary on Thor). Recovered by
+    stopping the dropped containers; always use
+    `docker compose -f docker-compose.yml -f docker-compose.shape.yml ...`
+    (or `lobes fleet up --apply`, which auto-includes the override).
+  - Thor's recreated Gemma engine self-shut-down (the known unified-memory
+    boot race) and a wedged embed container became an unkillable zombie that
+    then wedged the GPU driver itself (nvidia-smi "Unknown Error", CDI spec
+    unresolvable). Recovery: docker rm -f of the wedged containers, host
+    reboot (user-approved), nvidia-ctk cdi generate not needed post-reboot,
+    then sync + drop_caches + shape-aware fleet up -> all healthy.
+  - Follow-up: after PR #130 merges and 0.45.0 publishes, re-pin both boxes
+    from 0.45.0.dev260/TestPyPI to the release wheel.
+
+VERDICT: the announcement's end-to-end claim is DEMONSTRATED live — an app
+pointed at Spark's gateway asked for senses and got Thor's Gemma answer over
+the spark->thor pairwise credential, with honest capabilities on both boxes,
+probe-gated /v1/models, marker headers, and the 401 gate live on both edges.

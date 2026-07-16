@@ -160,6 +160,27 @@ def test_capabilities_non_json_table_flags_hardware_infeasible_role(tmp_path, ca
     assert "infeasible on this machine" in out
 
 
+def test_capabilities_table_distinguishes_proxied_from_referral_only(tmp_path, capsys) -> None:
+    # Proxy-lobes (#115/#127): a dropped role with origin + proxy knob renders
+    # the PROXIED wording (this gateway forwards), never the referral-only
+    # "dial it directly" wording — and vice versa when the knob is absent.
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_FEASIBLE", "false")
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_PEER_ORIGIN", "http://peer.example:8000")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "hosted by peer: http://peer.example:8000 (dial it directly)" in out
+    assert "proxied via this gateway" not in out
+
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_PEER_PROXY", "true")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "proxied via this gateway from peer: http://peer.example:8000" in out
+    assert "dial it directly" not in out
+
+
 def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
     """Read-only: with nothing scaffolded, capabilities degrades gracefully to
     catalog defaults (all unloaded except the always-present cortex) instead of

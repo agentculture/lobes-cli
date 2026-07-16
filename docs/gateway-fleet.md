@@ -373,15 +373,161 @@ CLI's own version and fails the run on a real mismatch (remediation: bump
 `MODEL_GEAR_VERSION` in `.env` and `docker compose up -d --build gateway`) —
 see [Verbs](#verbs) below.
 
-### Auth (known limitation)
+### Auth (opt-in bearer gate)
 
-The gateway is a **pass-through** and is **not auth-aware** — it does not inspect
-or validate `Authorization` headers. `CULTURE_VLLM_API_KEY` is enforced by vLLM on
-the **single-model** serve path (`lobes serve`), but it does **not** protect the
-fleet gateway's proxied endpoints (generate, embed, rerank, or `/v1/audio/*`). Keep
-the gateway port off the public internet; when exposing it with `lobes tunnel`,
-layer Cloudflare Access or an IP allowlist on top. Per-endpoint gateway auth is
-planned for a later release.
+Set `GATEWAY_API_KEY` in the deployment `.env` to require every data-plane
+request to present it as `Authorization: Bearer <key>` (issues #115/#127).
+Unset — the default — leaves auth disabled, byte-identical to the pre-auth
+gateway: the handler returns before the `Authorization` header is even read,
+so an untouched deployment is unaffected. `CULTURE_VLLM_API_KEY` is a fallback
+source for the same inbound key (`GATEWAY_API_KEY` wins if both are set, and
+either resolves the same way vLLM's single-model path already reads
+`CULTURE_VLLM_API_KEY`) — an operator who already distributes that key to
+callers of this endpoint gets gateway auth for free, with no second secret to
+mint or redistribute.
+
+**Gated (the data plane):** every `POST` — `/v1/chat/completions`,
+`/v1/completions`, `/v1/embeddings`, `/v1/rerank`, `/v1/score`,
+`/v1/audio/*` — every POST the gateway answers is a forward to a backend, so
+the whole method is data plane; and the `GET /v1/*` namespace (`/v1/models`,
+`/v1/models/supported`) — those enumerate this deployment's served models, and
+gating the namespace also means an unauthenticated caller learns nothing about
+which `/v1` routes exist (a 401 outranks the 404 a probing GET would otherwise
+get).
+
+**Keyless by policy, not omission:**
+
+- `GET /health` — the compose healthcheck and peer boxes must reach it before
+  any key has been distributed; a gated healthcheck would let a configured
+  auth knob masquerade as an outage.
+- `GET /capabilities` — the control-plane discovery/honesty surface
+  (issues #81/#112): peers and referral-followers read it to learn which
+  roles a box hosts (and, via `hosted_by`, where a dropped role lives)
+  *before* they hold any key.
+- `GET /status` — the operator observability aggregate `lobes overview --live`
+  reads; it serves no inference and echoes no request/response data.
+
+**The 401.** A missing, malformed (non-`Bearer` scheme, blank token), or
+wrong key gets a static, OpenAI-shaped `invalid_api_key` body —
+`{"error": {"type": "invalid_api_key", "code": "invalid_api_key", "message":
+"..."}}` — plus a `WWW-Authenticate: Bearer` header (RFC 6750 §3). The
+message names the fix but never echoes what the caller sent nor any part of
+the expected key, and the comparison is `hmac.compare_digest` (timing-safe).
+The gate runs *before* the request body is read off the socket, before model
+resolution, and before any upstream connection, so a rejected request costs
+the fleet zero parsing and zero sockets.
+
+**Tunnel guidance is now defense-in-depth, not the only option.** Before this,
+keeping the gateway port off the public internet — Cloudflare Access, an IP
+allowlist — was the *only* protection available for a `lobes tunnel`-exposed
+fleet deployment. With `GATEWAY_API_KEY` set, the bearer gate protects the
+endpoint in its own right; the tunnel guidance is unchanged (it's still the
+right call to also keep the port private), it's just no longer the sole line
+of defense.
+
+**Known gaps.** The CLI's own gateway-dialing verbs (`lobes capabilities`,
+`lobes assess`, `lobes status --pressure`, `lobes measure`'s LLM/embed/rerank
+probes) resolve and attach `GATEWAY_API_KEY` / `CULTURE_VLLM_API_KEY`
+automatically from the deployment's `.env`. Two paths do not yet: `lobes
+measure`'s audio-overlay (`stt`/`tts`) probes build their requests with raw
+`urllib` rather than reusing `lobes.assess`'s auth-aware helpers, and the
+`minor`-lobe chat client (`lobes/minor/_client.py`, used by `lobes route` /
+`run` / `eval`) never attaches it either — both degrade gracefully (a keyless
+request against a keyed gateway gets the ordinary 401), never crash or
+half-answer.
+
+### Proxy-lobes: the third lobe state (opt-in)
+
+A dropped role (`<PREFIX>_FEASIBLE=false` — see
+[`docs/deployment-shapes.md`](deployment-shapes.md)) has always had two
+states: **awake** (this box serves it) and **asleep** (referral-only — a 404
+`role_infeasible` naming the peer that hosts it, when one is declared).
+Proxy-lobes (issues #115/#127, phase 1) adds a third: **proxy** — this box
+*forwards* the request to the declared peer on the caller's behalf, instead of
+404ing.
+
+**Arming it is a second, deliberate opt-in step.** Declaring a peer origin
+(`<PREFIX>_PEER_ORIGIN`) alone stays referral-only, unchanged — see
+[Honest referral](deployment-shapes.md#honest-referral-to-the-peer-that-hosts-a-dropped-role-opt-in).
+Setting the matching `<PREFIX>_PEER_PROXY=true` arms the gateway to dial that
+origin itself — but only for a name that is *also* declared infeasible *and*
+has a declared origin; a knob with neither is inert.
+
+**The pairwise credential model — O(machines), not O(pairs).** One *inbound*
+key per box (`GATEWAY_API_KEY`, above); one *outbound* key per dropped-role
+peer (`<PREFIX>_PEER_API_KEY`) — the value you put there is **the peer's own
+inbound `GATEWAY_API_KEY`**, never a caller's forwarded key and never this
+box's own key. Because every box mints exactly one inbound key, and every box
+that dials it simply carries a copy of that same value as its outbound
+credential, key material scales with the number of **machines**, not the
+number of proxy relationships: an N-box mesh needs N inbound keys total, and
+a box that proxies to M peers holds (at most) M copies of those peers'
+existing keys — never a uniquely-minted secret per pairing. The caller's own
+`Authorization` (which authenticated it to *this* box, via the inbound gate)
+is always stripped before the forward, and the peer's key is attached only
+when one is declared — a caller's credential never reaches a peer.
+
+**Transport assumption.** Peer origins are dialed over plain HTTP, exactly
+like a local backend — the gateway does no TLS termination or certificate
+validation of its own on this path. This is safe only when boxes reach each
+other over a private, trusted network — a tailnet (e.g. Tailscale), a VPN, or
+an isolated LAN — never the raw public internet. Confidentiality of the
+pairwise keys and payloads in transit is the tailnet/tunnel's job at this
+layer, not the gateway's; the gateway's own contribution is authenticating
+*which* box is calling, not encrypting the call.
+
+**Marker headers.** Every proxied departure carries `X-Lobes-Proxied:
+<backend name>` (the hop marker, consulted only by the loop guard below);
+every response the branch produces — a relayed 2xx/4xx, the peer-down 503,
+the peer-declined 404 — carries `X-Lobes-Proxied-By: <peer origin, verbatim>`,
+so a caller can always tell a proxied answer from a locally-served one, which
+never carries the header. The loop refusal itself (below) carries neither —
+nothing was actually proxied.
+
+**Single hop only.** A request that *arrives* already carrying
+`X-Lobes-Proxied` and would depart again via this branch is refused: `508
+proxy_loop`, naming both hops, zero outbound attempts. Two boxes
+misconfigured to proxy to each other fail fast instead of ping-ponging
+forever. A marked arrival whose role is served *locally* is unaffected — the
+marker only gates the proxy branch.
+
+**Failure modes mirror the single-owner rules (issue #91 — never a
+cross-model fallback):**
+
+| Peer outcome | Response |
+|---|---|
+| refused / timeout / ≥500 | retryable **503** `backend_unavailable` + `Retry-After` — the same owner-down convention a down local backend gets |
+| `404 role_infeasible` (the peer *also* dropped the role — a misdeclared referral) | terminal **404**, message rewritten to name the declining peer; no second hop is ever attempted |
+| any other 2xx/4xx | relayed verbatim, including the peer's own `429` pressure shed |
+
+**Pressure is the peer's job.** A proxied request bypasses this box's own
+swap/iowait pressure policy entirely (issue #85) — pressure describes *this*
+box's load, and the model runs on the peer, whose own gateway applies its own
+policy when the forward arrives. Shedding here too would gate the role a
+second time, against the wrong box's load.
+
+**`/v1/models` and `GET /capabilities` only advertise what the peer honestly
+serves.** A background thread probes the declared peer's own `GET
+/v1/models` (with the pairwise key, when declared) and lists the proxied id
+on *this* box's `/v1/models` only when the peer's own response actually
+lists it — issue #92 ("advertised implies reachable") extended across a box
+boundary. `GET /capabilities` mirrors this: a proxied role reports
+`"proxied": true` alongside `"hosted_by": "<peer origin>"`, and its `ready`
+reflects the same live peer-probe verdict, never a hardcoded `true`. See
+[`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied)
+for the role-contract view.
+
+**Default off, byte-identical.** With no `<PREFIX>_PEER_PROXY` set anywhere —
+every deployment that predates this feature, and every referral-only
+deployment today — this branch never fires: every response stays
+byte-identical to the pre-proxy contract, exactly as a referral-only
+deployment is already byte-identical to the pre-referral one.
+
+**Scope.** Proxy-lobes covers the four core roles (`cortex`, `senses`,
+`embedder`, `reranker`) only — `stt`/`tts` (the audio overlay) have no
+peer-origin or peer-proxy channel at all, mirroring their exclusion from
+`<PREFIX>_FEASIBLE`. See [`docs/openai-api.md`](openai-api.md#auth-and-exposure)
+for the wire-level header/401 detail.
 
 ### Supported catalog vs. warm backends
 

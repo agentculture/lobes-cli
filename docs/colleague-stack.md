@@ -126,11 +126,21 @@ by role name, each value carrying exactly these fields:
     "responsibilities": [str, ...],
     "forbidden_responsibilities": [str, ...],
     "ready": bool | null,                 # see the note below
-    "loaded": bool                        # is this role's backend wired in THIS deployment?
+    "loaded": bool,                       # is this role's backend wired in THIS deployment?
+    "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
+    "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
+    "proxied": bool                       # OPTIONAL — present (and true) only when this box also forwards to that peer
   },
   ...
 }
 ```
+
+`feasible` is always present (a hardware/deployment fact — see
+[`docs/deployment-shapes.md`](deployment-shapes.md)); `hosted_by` and
+`proxied` are **optional keys**, added only for a role this box does not
+host, and only when the operator declared a peer for it — see
+[A third role state: proxied](#a-third-role-state-proxied) below for the full
+three-state contract.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
 it directly (issue #87). All six roles (`cortex`/`senses`/`embedder`/`reranker`
@@ -151,7 +161,9 @@ the audio backend (issue #89) — `ready: true` only when an audio round-trip
 would actually succeed (Chatterbox + Parakeet both up, no poisoned CUDA
 context), `false` while they warm — so an advertised-ready audio role is truly
 consumable. The four gateway-fronted roles still report `ready` as a
-same-cost-as-`loaded` boolean. No `ready` value is a task-quality claim.
+same-cost-as-`loaded` boolean **unless the role is proxied** (below), in which
+case `ready` reflects a live probe of the *peer*, not a local boolean. No
+`ready` value is a task-quality claim.
 
 Example (`cortex`, fully wired, default fleet):
 
@@ -176,6 +188,75 @@ An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
 client can always render all six roles.
+
+## A third role state: proxied
+
+A role's `feasible: false` (this box's deployment shape dropped it — see
+[`docs/deployment-shapes.md`](deployment-shapes.md)) has always meant one of
+two things a client can tell apart by key presence alone:
+
+- **referral-only** — `hosted_by: "<peer origin>"` is present, `proxied` is
+  **absent** (never `false` — a key that doesn't apply is omitted, not set to
+  a falsy sentinel). The caller must dial the peer origin itself; this box
+  answers the role with `404 role_infeasible`.
+- **proxied** — `hosted_by` **and** `proxied: true` are both present. This box
+  has opted in to *following its own referral* (issues #115/#127): a request
+  for the role is forwarded to the peer named in `hosted_by`, and the answer
+  comes back through this box's own `endpoint` — the caller never has to
+  learn the peer exists or change its request.
+
+```json
+{
+  "role": "senses",
+  "model": "coolthor/gemma-4-12B-it-NVFP4A16",
+  "endpoint": "http://localhost:8000",
+  "feasible": false,
+  "hosted_by": "http://thor.example.ts.net:8000",
+  "proxied": true,
+  "ready": true,
+  "loaded": false
+}
+```
+
+**What a caller actually sees.** A proxied role's `endpoint`/`path` are
+unchanged — a client that already discovered them via `GET /capabilities`
+keeps POSTing to the same URL it always would; `proxied: true` is purely
+informational (a client that ignores it still works). The one visible
+difference on the wire is a response header the *raw* OpenAI endpoint
+carries — never surfaced in the `/capabilities` JSON itself —
+`X-Lobes-Proxied-By: <peer origin>`, present on every answer this box
+produced by forwarding, absent on every locally-served answer. See
+[`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`](gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in)
+for the full marker-header and failure-mode contract.
+
+**`ready` is the live peer probe, not a hardcoded claim.** A proxied role's
+`ready` is never forced `true` just because a local process happens to be
+healthy — a background thread probes the declared peer's own `GET
+/v1/models` and `ready` reflects whether the peer actually lists the id this
+box would forward to it. A dead or misconfigured peer means `ready: false`
+(or the id drops off `/v1/models` entirely) even though `proxied: true` is
+still declared — declaring the intent to proxy is not evidence the peer is
+reachable right now.
+
+**The honesty invariants this state carries forward, unchanged:**
+
+- **#91 (no silent substitution)** — a proxied `senses` request is answered
+  by `senses` running on the peer, never quietly served by a different,
+  locally-feasible model. The peer's own served id is what comes back; a
+  peer that itself declines the role (`404 role_infeasible`) is relayed
+  terminally, naming the peer, never silently retried against something else.
+- **#92 (operator-declared origins, never derived)** — `hosted_by` is always
+  the literal `<PREFIX>_PEER_ORIGIN` an operator typed into `.env`; nothing
+  here infers a peer from hostnames, interfaces, or DNS.
+- **Single-hop** — a role proxied on this box is never proxied a second time:
+  a request already carrying the internal hop marker that would need to
+  depart again is refused rather than forwarded onward, so two
+  misconfigured boxes pointing at each other fail fast instead of looping.
+
+**Default off, byte-identical.** With no `<PREFIX>_PEER_PROXY` armed
+anywhere, no role in this deployment is ever proxied — every payload here
+looks exactly as it did before this state existed (a `feasible: false` role
+carries `hosted_by` at most, never `proxied`).
 
 ## Serving: `lobes up <role>` and `colleague-stack`
 
@@ -345,8 +426,12 @@ and live-validation history behind this rebalance.
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
   deployment-shape axis: which of these six roles a given box hosts at all,
-  and the cross-box honest-referral surface for a role it doesn't.
+  the cross-box honest-referral surface for a role it doesn't, and the
+  opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
+  key contract, a worked example).
 - `lobes explain roles` — the in-CLI version of this doc.
 - `lobes explain fleet` / `lobes explain gateway` — routing semantics.
 - `tests/test_colleague_contract.py` — the end-to-end proof of the client flow
   and the runtime-only boundary described above.
+- `tests/test_roles_proxied.py` / `tests/test_gateway_proxy.py` — the proxied
+  role state and the data-plane forward it rides on.
