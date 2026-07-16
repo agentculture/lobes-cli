@@ -16,9 +16,21 @@ reference.
 
 ## How detection works
 
-When `lobes init` runs (or `lobes serve` / `lobes status` without an explicit
-profile override — `--profile` on `init`, `--machine` on `switch`), the
-following steps resolve the machine name:
+The card-detection flow below runs only during **`lobes init`** — either
+auto-detected from the card, or forced with an explicit `--profile <name>` —
+to resolve the per-role `Profile` this document describes and render it into
+`.env`. **`lobes serve` and `lobes status` run no detection at all** and
+accept neither `--profile` nor `--machine`: they only read the deployment's
+already-rendered `.env` (including the persisted `LOBES_PROFILE`) — profile
+selection happens once, at `init` time, not on every `serve`/`status` call.
+`lobes switch` has its own, separate `--machine` flag — a *different*,
+legacy single-model machine-profile knob (`lobes/profiles/__init__.py`'s
+`MachineProfile` / `resolve_machine()`, tuning the single-model template's
+GPU/context defaults), not the fleet `Profile` system covered here; left at
+its default (`auto`), it re-detects the GPU name via `nvidia-smi -L` on its
+own code path, not `lobes/runtime/_detect.py::detect_card()`.
+
+The following steps resolve the machine name at `lobes init` time:
 
 1. **Gather raw facts** (from `lobes/runtime/_detect.py::detect_card()`):
    - **Device name**: from `nvidia-smi --query-gpu=name,compute_cap`
@@ -52,8 +64,8 @@ following steps resolve the machine name:
 
 ## How a profile is chosen
 
-Once detection (or an explicit `--profile`/`--machine` flag) resolves the card name, a
-profile is looked up via `lobes/profiles/loader.py::resolve_profile()`:
+Once detection (or an explicit `--profile` flag on `lobes init`) resolves the
+card name, a profile is looked up via `lobes/profiles/loader.py::resolve_profile()`:
 
 1. **Explicit always wins**: if `--profile <name>` was given (or a
    `LOBES_PROFILE` env var), that profile is used, even if it diverges from
@@ -295,7 +307,8 @@ latency (higher tail latency per request).
 
 Operator-defined profiles go in `<deployment-dir>/profiles/<name>.toml` (the
 file's stem is the profile name). They are discovered automatically by
-`lobes init` / `lobes serve` and override any built-in with the same name.
+`lobes init` (the only verb that resolves a `Profile` — see "How detection
+works" above) and override any built-in with the same name.
 
 A profile is a self-contained TOML declaration. Example:
 
@@ -402,14 +415,21 @@ built-in defaults (when no profile is loaded) render as expected.
 
 lobes is deployed and validated on the following hardware, with the stated
 caveat profile as the truthful, tested configuration. Aspirational entries are
-marked clearly as **unvalidated**.
+marked clearly as **unvalidated**. **This table's scope is BUILT-IN
+profiles/shapes** (`lobes/profiles/builtin/*.toml`,
+`lobes/profiles/builtin_shapes/*.toml`) — the #108 rule is that a built-in
+earns "validated" status only via a repo-recorded boot of that *exact*
+built-in, so a validated operator-defined profile (`<deploy-dir>/profiles/
+<name>.toml`) does not by itself validate a built-in for the same card. The
+Orin row below carries both facts side by side so they read as complementary,
+not contradictory.
 
 | card | machine | profile | status | validation |
 |---|---|---|---|---|
 | **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | `spark.toml` | load-tested | 2026-06-03 — `lobes benchmark` ran at ~7.8–8.0 tok/s decode (27B primary, util 0.30, single-stream) on the fleet duo (cortex 128K, senses 32K) with FlashInfer attention. **The correctness probes postdate that run and have not been executed on the GB10** — rerank ordering there is explicitly unverified (issue #106). See `docs/tuning-profiles.md` and the Spark run on `docs/qwen3.6-27b-text-nvfp4-mtp.md`. |
 | **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | `thor.toml` | load-tested | 2026-07-13 — the three correctness probes (cortex known-answer, embed paraphrase-ranking, rerank ordering) all pass with the profile's four divergences (`cortex kv_cache_dtype=auto`, `embedder TRITON_ATTN`, `reranker TRITON_ATTN + enforce_eager=true`); senses' health was not confirmed in that run (it boots last and the concurrent-boot race, caveat 4 below, can catch it). |
 | **unknown card** (UNKNOWN) | `generic` | `base.toml` | conservative fallback | — — no hardware beyond Spark/Thor is load-tested; UNKNOWN cards are served a small 4B model, no 27B, and no multimodal (`senses` disabled). Avoids OOM crashes on first boot. See issue #107 for broader "small default on every card" work. |
-| Jetson AGX Orin / Orin Nano Super | `(not yet)` | (not yet) | **unvalidated** | Not deployed or tested. Named in the mesh topology for future integration but no profile yet. Do not claim Orin support. |
+| Jetson AGX Orin / Orin Nano Super | `(not yet)` | (not yet) | **no built-in profile — unvalidated at that scope; operator-validated separately** | **Built-ins:** no built-in `orin` profile exists, and the built-in `orin-small` *shape* remains DECLARED/UNVALIDATED (#108 — an unbooted built-in stays unvalidated regardless of operator activity elsewhere). Do not claim built-in Orin support from this row. **Operator deployment:** a physical Jetson AGX Orin 64GB WAS operator-validated 2026-07-16/17, using a hand-written **operator profile** (`<deploy-dir>/profiles/orin.toml` — `senses`/`embedder`/`reranker`, `senses` at its full native 131072 context, measured `gpu_mem_util=0.45`) composed with the built-in `thor-lobe` *shape* (not `orin-small`). See [`orin-profiles.md`](orin-profiles.md) for the measured knobs and the Jetson/sm_87 divergences found live. |
 
 ## Thor caveats and validation facts
 
