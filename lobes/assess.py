@@ -32,6 +32,10 @@ from lobes.cli._errors import EXIT_ENV_ERROR, ModelGearError
 # Markdown 2-column table header separator, reused by the render_* helpers.
 _MD_TABLE_SEP = "|---|---|"
 
+# The standard "is the server even up" remediation, shared by every probe-path
+# error this module raises (Sonar S1192: one constant, not a repeated literal).
+_STATUS_REMEDIATION = "check 'lobes status' / 'docker logs model-gear-vllm'"
+
 # ---------------------------------------------------------------------------
 # Outbound gateway auth (issue #127 t3): attach the deployment's opt-in
 # GATEWAY_API_KEY / CULTURE_VLLM_API_KEY to every request this module makes.
@@ -133,13 +137,13 @@ def _api_errors(what: str):
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"{what} failed: {exc}",
-            remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
+            remediation=_STATUS_REMEDIATION,
         ) from exc
     except OSError as exc:
         raise ModelGearError(
             code=EXIT_ENV_ERROR,
             message=f"{what} failed: {exc}",
-            remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
+            remediation=_STATUS_REMEDIATION,
         ) from exc
     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise ModelGearError(
@@ -248,7 +252,7 @@ def served_model(url: str, override: str | None = None) -> tuple[str, object]:
             raise ModelGearError(
                 code=EXIT_ENV_ERROR,
                 message=f"/v1/models returned no models at {url}",
-                remediation="check 'lobes status' / 'docker logs model-gear-vllm'",
+                remediation=_STATUS_REMEDIATION,
             )
         first = data[0]
         return (override or first["id"]), first.get("max_model_len")

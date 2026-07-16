@@ -39,3 +39,19 @@
 {"ts":"2026-07-14T18:30:16.882691+00:00","type":"readiness_arrived","pr":123,"waited_secs":60}
 {"ts":"2026-07-14T18:30:21.502737+00:00","type":"pr_read","pr":123,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
 {"ts":"2026-07-14T18:42:04.294614+00:00","type":"pr_read","pr":123,"comment_count":7,"threads_unresolved":2,"ci_state":"ok"}
+{"ts":"2026-07-14T19:20:42.840014+00:00","type":"pr_opened","pr":124,"title":"docs: t5 live evidence \u2014 strict tool calls verified on spark-lobe (colleague#320) (0.44.1)"}
+{"ts":"2026-07-14T19:20:44.310692+00:00","type":"pr_review_triggered","pr":124,"command":"/agentic_review"}
+{"ts":"2026-07-14T19:20:45.035005+00:00","type":"pr_webhook_posted","pr":124,"event":"pr_opened"}
+{"ts":"2026-07-14T19:21:48.438788+00:00","type":"readiness_arrived","pr":124,"waited_secs":60}
+{"ts":"2026-07-14T19:21:52.859196+00:00","type":"pr_read","pr":124,"comment_count":4,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-14T20:01:03.018051+00:00","type":"pr_reply","pr":124,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-07-14T20:01:03.030406+00:00","type":"pr_batch_replied","pr":124,"count":1,"resolved":0}
+{"ts":"2026-07-14T20:01:03.745130+00:00","type":"pr_webhook_posted","pr":124,"event":"pr_replied"}
+{"ts":"2026-07-14T20:01:18.045238+00:00","type":"readiness_arrived","pr":124,"waited_secs":0}
+{"ts":"2026-07-14T20:01:22.453437+00:00","type":"pr_read","pr":124,"comment_count":6,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-16T14:07:36.643727+00:00","type":"pr_opened","pr":130,"title":"Proxy-lobes + pairwise gateway auth: serve a dropped role by following its own referral (#127 phase 1 / #115) (0.45.0)"}
+{"ts":"2026-07-16T14:07:37.735049+00:00","type":"pr_review_triggered","pr":130,"command":"/agentic_review"}
+{"ts":"2026-07-16T14:07:38.427964+00:00","type":"pr_webhook_posted","pr":130,"event":"pr_opened"}
+{"ts":"2026-07-16T14:08:41.435273+00:00","type":"readiness_arrived","pr":130,"waited_secs":60}
+{"ts":"2026-07-16T14:08:46.059407+00:00","type":"pr_read","pr":130,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-16T14:10:29.373883+00:00","type":"pr_read","pr":130,"comment_count":4,"threads_unresolved":0,"ci_state":"failure"}

@@ -1195,6 +1195,60 @@ def _try_primary_with_strict_retry(
     )
 
 
+def _dial_owner(
+    ordered: list[Backend],
+    cfg: ServerConfig,
+    path: str,
+    fwd_body: bytes,
+    fwd_headers: list[tuple[str, str]],
+    open_upstream: OpenUpstream,
+    streaming: bool,
+    tier_headers: list[tuple[str, str]],
+) -> tuple[GatewayResponse | None, list[str]]:
+    """Dial the resolved owner once, via the strict-tools lane when armed.
+
+    Force-strict-tools (opt-in, colleague#320): only the primary/cortex lane,
+    only chat-completions, only a body an injection actually changed. Every
+    other request takes the untouched :func:`_try_backends` call below — this
+    is the byte-identical-passthrough guarantee when the knob is off (or
+    simply inapplicable to this request). Extracted from :func:`handle_post`
+    verbatim (Sonar S3776); returns exactly what the dial helpers return:
+    ``(response-or-None, attempts)``.
+    """
+    strict_injection = None
+    if (
+        cfg.force_strict_tools
+        and ordered[0].name == "primary"
+        and _is_chat_completions_request(path)
+    ):
+        strict_injection = inject_strict_tools(fwd_body)
+
+    if strict_injection is not None:
+        injected_body, tool_names = strict_injection
+        return _try_primary_with_strict_retry(
+            ordered[0],
+            cfg,
+            path,
+            injected_body,
+            fwd_body,
+            tool_names,
+            fwd_headers,
+            open_upstream,
+            streaming,
+            tier_headers,
+        )
+    return _try_backends(
+        ordered,
+        cfg,
+        path,
+        fwd_body,
+        fwd_headers,
+        open_upstream,
+        streaming,
+        tier_headers,
+    )
+
+
 def handle_post(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -1339,44 +1393,9 @@ def handle_post(
             attempts=[],
         )
 
-    # Force-strict-tools (opt-in, colleague#320): only the primary/cortex lane,
-    # only chat-completions, only a body an injection actually changed. Every
-    # other request takes the untouched _try_backends call below — this is
-    # the byte-identical-passthrough guarantee when the knob is off (or simply
-    # inapplicable to this request).
-    strict_injection = None
-    if (
-        cfg.force_strict_tools
-        and ordered[0].name == "primary"
-        and _is_chat_completions_request(path)
-    ):
-        strict_injection = inject_strict_tools(fwd_body)
-
-    if strict_injection is not None:
-        injected_body, tool_names = strict_injection
-        response, attempts = _try_primary_with_strict_retry(
-            ordered[0],
-            cfg,
-            path,
-            injected_body,
-            fwd_body,
-            tool_names,
-            fwd_headers,
-            open_upstream,
-            streaming,
-            tier_headers,
-        )
-    else:
-        response, attempts = _try_backends(
-            ordered,
-            cfg,
-            path,
-            fwd_body,
-            fwd_headers,
-            open_upstream,
-            streaming,
-            tier_headers,
-        )
+    response, attempts = _dial_owner(
+        ordered, cfg, path, fwd_body, fwd_headers, open_upstream, streaming, tier_headers
+    )
     if response is not None:
         return response
 
@@ -1855,57 +1874,61 @@ class _Handler(BaseHTTPRequestHandler):
             pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
             self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
-            # Advertise only backends the live readiness snapshot marks ready
-            # (issue #92): a wired-but-dead backend must NOT appear here, so a
-            # client can trust that a listed model id reaches a live engine. The
-            # snapshot is socket-free (.current() never probes); with no cache
-            # wired, every backend is listed (the offline/unit path). A PROXIED
-            # role's served id (t6, #115/#127) rides the same rule: the peer
-            # spec supplies the id and the snapshot's peer-probe verdict gates
-            # it — listed iff the peer verifiably serves it right now.
-            ready = self.readiness_cache.current() if self.readiness_cache is not None else None
-            peer_served = (
-                {name: spec.served_name for name, spec in self.peer_specs.items()}
-                if self.peer_specs
-                else None
-            )
-            self._send_json(200, list_models_payload(self.table, ready, peer_served))
+            self._get_v1_models()
         elif route == "/v1/models/supported":
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         elif route == "/capabilities":
-            # The #81 role→endpoint contract: SIX first-class roles resolved to
-            # live metadata via the shared lobes.roles registry. The endpoint is
-            # the client-reachable origin this request actually dialed (#87),
-            # stt/tts readiness is a live probe of the audio backend (#89), and the
-            # four gateway-fronted roles' readiness comes from the background
-            # ReadinessCache snapshot (#92) — read socket-free, no probe here.
-            cfg = self.server_config
-            origin = reachable_origin(self.headers.get("Host"), cfg.public_url)
-            audio_ready = probe_audio_ready(cfg.audio_url) is True if cfg.audio_url else None
-            # Pass the cache's tri-state snapshot STRAIGHT THROUGH — no boundary
-            # coercion here. build_role_registry treats a SUPPLIED backend_ready
-            # as authoritative and collapses the cache's None (dead/unreachable)
-            # to ready=False itself (issue #92 / honesty h14): coercing the
-            # tri-state is the builder's job, not this call site's, so a dead
-            # backend can never be advertised ready=True no matter who calls the
-            # builder. (This deletes t6's _ready_iff_true bridge — see roles.py.)
-            backend_ready = (
-                self.readiness_cache.current() if self.readiness_cache is not None else None
-            )
-            self._send_json(
-                200,
-                capabilities_payload(
-                    self.table,
-                    cfg,
-                    gateway_url=origin,
-                    audio_ready=audio_ready,
-                    backend_ready=backend_ready,
-                ),
-            )
+            self._get_capabilities()
         else:
             self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
+
+    def _get_v1_models(self) -> None:
+        # Advertise only backends the live readiness snapshot marks ready
+        # (issue #92): a wired-but-dead backend must NOT appear here, so a
+        # client can trust that a listed model id reaches a live engine. The
+        # snapshot is socket-free (.current() never probes); with no cache
+        # wired, every backend is listed (the offline/unit path). A PROXIED
+        # role's served id (t6, #115/#127) rides the same rule: the peer
+        # spec supplies the id and the snapshot's peer-probe verdict gates
+        # it — listed iff the peer verifiably serves it right now.
+        ready = self.readiness_cache.current() if self.readiness_cache is not None else None
+        peer_served = (
+            {name: spec.served_name for name, spec in self.peer_specs.items()}
+            if self.peer_specs
+            else None
+        )
+        self._send_json(200, list_models_payload(self.table, ready, peer_served))
+
+    def _get_capabilities(self) -> None:
+        # The #81 role→endpoint contract: SIX first-class roles resolved to
+        # live metadata via the shared lobes.roles registry. The endpoint is
+        # the client-reachable origin this request actually dialed (#87),
+        # stt/tts readiness is a live probe of the audio backend (#89), and the
+        # four gateway-fronted roles' readiness comes from the background
+        # ReadinessCache snapshot (#92) — read socket-free, no probe here.
+        cfg = self.server_config
+        origin = reachable_origin(self.headers.get("Host"), cfg.public_url)
+        audio_ready = probe_audio_ready(cfg.audio_url) is True if cfg.audio_url else None
+        # Pass the cache's tri-state snapshot STRAIGHT THROUGH — no boundary
+        # coercion here. build_role_registry treats a SUPPLIED backend_ready
+        # as authoritative and collapses the cache's None (dead/unreachable)
+        # to ready=False itself (issue #92 / honesty h14): coercing the
+        # tri-state is the builder's job, not this call site's, so a dead
+        # backend can never be advertised ready=True no matter who calls the
+        # builder. (This deletes t6's _ready_iff_true bridge — see roles.py.)
+        backend_ready = self.readiness_cache.current() if self.readiness_cache is not None else None
+        self._send_json(
+            200,
+            capabilities_payload(
+                self.table,
+                cfg,
+                gateway_url=origin,
+                audio_ready=audio_ready,
+                backend_ready=backend_ready,
+            ),
+        )
 
     # --- POST: proxy /v1/* to a backend ---
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API

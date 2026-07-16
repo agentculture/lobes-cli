@@ -309,8 +309,9 @@ def test_unknown_v1_get_route_is_gated_401_before_404(auth_gateway) -> None:
     # gets 401 before learning whether a /v1 route even exists; with the key
     # the pre-auth 404 verdict is unchanged.
     _expect_401(auth_gateway.base, "/v1/does-not-exist")
+    headers = _bearer()  # hoisted: exactly one call inside the raises block (S5778)
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _request(auth_gateway.base, "/v1/does-not-exist", headers=_bearer())
+        _request(auth_gateway.base, "/v1/does-not-exist", headers=headers)
     assert exc.value.code == 404
 
 

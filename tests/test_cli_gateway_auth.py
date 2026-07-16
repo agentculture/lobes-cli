@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -304,10 +305,11 @@ def test_assess_auth_headers_context_manager_resets_after_block() -> None:
         url = f"http://127.0.0.1:{httpd.server_address[1]}"
         with A.auth_headers({"Authorization": f"Bearer {_VALID_KEY}"}):
             A._get(url, "/health")
-        # Outside the block: no header attached, so this 401s.
-        with pytest.raises(Exception):
-            status, _ = A._get(url, "/health")
-            assert status == 401  # some urllib versions raise HTTPError instead
+        # Outside the block: no header attached, so this 401s (urllib raises
+        # HTTPError for any 4xx — Sonar S5958 wants the precise type).
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            A._get(url, "/health")
+        assert excinfo.value.code == 401
     finally:
         httpd.shutdown()
         httpd.server_close()
