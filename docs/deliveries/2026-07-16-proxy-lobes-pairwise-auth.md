@@ -1,6 +1,6 @@
 # Delivery Summary — proxy-lobes + pairwise auth
 
-plan: `proxy-lobes-pairwise-auth` · run: `partial` · date: `2026-07-16`
+plan: `proxy-lobes-pairwise-auth` · run: `complete` · date: `2026-07-16`
 baseline: `devague summary skeleton`
 
 ## Intent
@@ -12,8 +12,9 @@ own referral to the hosting peer) plus pairwise gateway auth (inbound
 propagate a caller's key). Executed as the confirmed 10-task plan
 (`docs/plans/2026-07-16-proxy-lobes-pairwise-auth.md`) fanned out by
 /assign-to-workforce in waves `t1 | t2 t3 t4 t5 t7 | t6 | t8 t9`, with `t10`
-(live cross-box acceptance) operator-led post-merge. The run is `partial`
-solely because `t10` cannot run until PR #130 merges and publishes.
+(live cross-box acceptance) operator-led. All ten tasks delivered — `t10` ran
+live the same day on the PR's TestPyPI dev wheel (0.45.0.dev260, the #121
+validation precedent) instead of waiting for merge+publish; see Drift.
 
 ## Planned Work
 
@@ -43,7 +44,7 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t7` | delivered | 10 scoped `${VAR:-}` gateway env entries (never `env_file`); env.example knob docs + worked example; goldens regen = exactly the 10 inert lines; shape_render confirmed no-change-needed. Commit `9f1178a`. |
 | `t8` | delivered | Two-real-gateway socket harness: proxied chat + SSE incrementality, 401 isolation, loop guard, peer-down, peer-declines, credential-hygiene grep, byte-for-byte no-config golden wire bytes; 15 tests, zero product bugs found. Commit `bce12ec`. |
 | `t9` | delivered | gateway-fleet auth section rewritten; deployment-shapes three-state table + pairwise contract; colleague-stack/openai-api/realtime/explain/CLAUDE.md updated; 7 stale-citation clusters fixed in docs+code comments. Commit `5ef548e` (+ `812461d` for the 3 out-of-scope sites it flagged). |
-| `t10` | blocked | Cannot run until PR #130 merges and PyPI publishes 0.45.0; Thor must be re-pinned off `0.43.0.dev239` first (plan risk r1, challenge park v2). Operator-led; `ssh thor@thor` access approved. |
+| `t10` | delivered | Live cross-box acceptance ran 2026-07-16 on 0.45.0.dev260 (both gateways): proxied senses chat answered by Thor's Gemma with X-Lobes-Proxied-By, SSE relay, 401 gates both edges, probe-gated /v1/models (both directions observed), peer-down 503 observed live. Transcript: `docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt`. |
 
 ## Mid-work Decisions
 
@@ -87,7 +88,7 @@ made within task boundaries, captured directly:
 |-----------|-----------------------|----------------|
 | `t3` | Two gateway-dialing stragglers were NOT wired (audio-overlay stt/tts probes in `roles_measure.py` build their own requests; `lobes/minor/_client.py` is a separate client) — both degrade gracefully rather than traceback; filed as #129 | needs-follow-up |
 | `t7` | Touched `tests/test_tool_parser_plugin.py` (hash-pin recompute) beyond its declared file list — required by the compose edit, verified only the gateway hash moved | acceptable |
-| `t10` | Not executed in this run: sequenced after merge + publish by design (plan risk r1) | needs-follow-up |
+| `t10` | Executed PRE-merge on the PR's TestPyPI dev wheel (user-approved live testing) instead of post-merge as planned — matches the #121 validation precedent; re-pin to the release wheel remains | acceptable |
 
 All other tasks delivered to their acceptance criteria as confirmed — backed
 by the task-by-task accounting above and the per-task test suites.
@@ -120,15 +121,13 @@ by the task-by-task accounting above and the per-task test suites.
 | Capabilities/`/v1/models` stay honest: proxied state named, ids listed only on a live peer verdict | high | tests `tests/test_roles_proxied.py`, `tests/test_gateway_proxy.py` |
 | No-config deployments are wire-byte-identical to before the feature | high | golden byte-equality tests in `tests/test_proxy_integration.py` |
 | The lobes CLI works unchanged when auth is enabled | medium | test `tests/test_cli_gateway_auth.py` (21 tests; known stragglers in #129) |
-| Spark serves senses by proxy from Thor on the live pair (the announcement's end-to-end claim) | unverified | t10 not yet run — not claimed done; requires merge + publish + Thor re-pin |
+| Spark serves senses by proxy from Thor on the live pair (the announcement's end-to-end claim) | high | evidence `docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt` (0.45.0.dev260 live run: Gemma answer via Spark, marker header, 401 gates, probe-gated listing) |
 
 ## Remaining Work / Follow-up
 
-- `t10` — live cross-box acceptance: after PR #130 merges and 0.45.0
-  publishes, re-pin Thor off `0.43.0.dev239`, arm `MULTIMODAL_PEER_PROXY` +
-  pairwise keys on Spark (+ `GATEWAY_API_KEY` on Thor), run the senses
-  request against Spark's gateway, commit the transcript under
-  `docs/evidence/`. Owner: operator + main agent (`ssh thor@thor` approved).
+- Re-pin both boxes from `0.45.0.dev260`/TestPyPI to the release wheel once
+  PR #130 merges and 0.45.0 publishes (the live acceptance already ran on the
+  dev wheel — `docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt`).
 - #128 — #127 phases 2–4: fan-out execution, `lobes trace`, runtime-aware
   routing, policy plugins.
 - #129 — auth-key stragglers (stt/tts measure probes, `lobes/minor` client)
