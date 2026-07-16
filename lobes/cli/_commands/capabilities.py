@@ -268,10 +268,17 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         # (pre-t6 gateway, or a hand-built fixture) never raises.
         if info.get("feasible", True) is False:
             lines.append("          ** infeasible on this machine — never served here **")
+            # Third lobe state (proxy-lobes t6, issues #115/#127): this box
+            # FOLLOWS its own referral — requests to this gateway are forwarded
+            # to the hosting peer, so callers stay single-endpoint. Distinct
+            # wording from the referral-only case below, which remains an
+            # address the CALLER must dial directly (this box 404s).
+            if info.get("proxied") and info.get("hosted_by"):
+                lines.append(f"          proxied via this gateway from peer: {info['hosted_by']}")
             # Opt-in honest referral (mesh-brain t3): the operator-declared
             # peer origin that hosts this unhosted role, when one is set. An
             # address to dial DIRECTLY — this box never proxies to it.
-            if info.get("hosted_by"):
+            elif info.get("hosted_by"):
                 lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
     return "\n".join(lines)
