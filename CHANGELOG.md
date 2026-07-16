@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.1] - 2026-07-17
+
+### Changed
+
+- CI hardening: pin `astral-sh/setup-uv`'s `version` to `0.11.29` (was `latest`) and turn on `enable-cache: true` across both workflows (`tests.yml`, `publish.yml`, 6 usages total), so a transient GitHub release-CDN outage can no longer take down every job by failing uv's "resolve latest" step; two identical CI failures on PR #132 (2026-07-16 22:39Z/22:43Z, GitHub 503 HTML from the setup-uv download) prompted the change. The action's SHA pin, tokens, and cache-dependency-glob are unchanged
+
 ## [0.45.0] - 2026-07-16
 
 ### Added
