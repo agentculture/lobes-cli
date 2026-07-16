@@ -314,6 +314,16 @@ def _gateway_role(
     #89/#90 established for stt/tts (a caller-supplied signal can never
     override "nothing is wired" or "nothing to dial") — and now also "this
     machine can't run it at all", independent of wiring or a live health probe.
+
+    This same clamp is why a PROXIED role (issues #115/#127 t5,
+    :func:`annotate_peer_referrals`) never reports ``ready=true`` either: a
+    name in ``table.peer_proxied`` is always also in ``table.infeasible`` by
+    construction (:func:`lobes.gateway._config._peer_proxied`), so it hits the
+    ``feasible is False`` branch above and lands here regardless of what
+    ``ready_signal`` a caller passes. Nothing in this module invents a
+    "proxied and therefore reachable" exception to the clamp — a future
+    peer-health probe would have to thread a NEW live signal through
+    (mirroring ``backend_ready``/``audio_ready``) rather than relax this one.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -547,6 +557,50 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     ever forwards a request to it — no data-plane proxying (issue #115 is the
     deferred proxy-lobes follow-up). Audio roles (stt/tts) are outside the
     referral channel's scope, exactly as they are outside ``FEASIBLE_ENV``'s.
+
+    **A THIRD honesty state — PROXIED (proxy-lobes t5, issues #115/#127).**
+    Referral above says "ask the peer yourself"; a role whose backend name is
+    ALSO in ``table.peer_proxied`` (the operator's ``<PREFIX>_PEER_PROXY``
+    opt-in — :data:`lobes.gateway._config.PEER_PROXY_ENV`, t1) is one this box
+    has committed to answering ON THE PEER'S BEHALF — the gateway itself will
+    forward the request once the data-plane branch lands (a LATER task; this
+    module stays pure/offline and dials nothing). That is a materially
+    different claim from a bare referral, so it gets its own explicit marker,
+    ``"proxied": true``, added ALONGSIDE (never instead of) ``hosted_by`` — the
+    origin named there is unchanged: it is still "whoever ultimately serves
+    this", now additionally reachable by asking THIS box too.
+    ``table.peer_proxied`` is a subset of ``table.infeasible`` ∩
+    ``table.peer_origins`` by construction (:func:`lobes.gateway._config.
+    _peer_proxied`), so a proxied role always also gets ``hosted_by`` — the
+    three states are told apart by KEY PRESENCE alone, never by a sentinel
+    value:
+
+    * **hosted** (this box serves it) — neither key present.
+    * **referral-only** (dropped, no local proxy) — ``hosted_by`` present,
+      ``proxied`` ABSENT (never ``false``) — mirrors ``hosted_by``'s own
+      optional-key convention above: a key that doesn't apply is omitted, not
+      set to a falsy sentinel, so ``"proxied" in entry`` is itself the signal.
+    * **proxied** (dropped, this box forwards) — BOTH ``hosted_by`` and
+      ``proxied: true`` present.
+
+    ``feasible`` stays ``false`` for a proxied role in all cases — it remains
+    a HARDWARE/deployment fact ("this box does not itself host the model"),
+    independent of whether a request for it happens to be answerable via a
+    forward. Likewise ``ready`` is never forced ``true`` here: it is left
+    exactly as :func:`build_role_registry` already computed it, which clamps
+    ``ready`` to ``False`` whenever ``feasible`` is ``False`` (see
+    :func:`_gateway_role`) — and every name in ``peer_proxied`` is infeasible
+    by construction, so a proxied role's ``ready`` is always that same honest
+    ``False`` today. A live peer-health probe folding into that signal is a
+    later task's concern (mirroring how ``backend_ready``/``audio_ready``
+    already thread a live signal through this module) — this annotator adds
+    no readiness claim of its own.
+
+    With ``table.peer_proxied`` empty (the default — every deployment that
+    predates issues #115/#127, and every referral-only or no-peer deployment
+    today) this branch never fires, so the payload is byte-identical to the
+    pre-proxy contract, exactly as it already is byte-identical to the
+    pre-referral one when ``table.peer_origins`` is empty.
     """
     for role, backend in ROLE_BACKEND.items():
         entry = payload.get(role)
@@ -555,6 +609,8 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
         origin = table.peer_origins.get(backend)
         if origin:
             entry["hosted_by"] = origin
+            if backend in table.peer_proxied:
+                entry["proxied"] = True
     return payload
 
 
