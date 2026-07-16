@@ -138,10 +138,12 @@ The bridge proxies:
 The audio overlay is enabled with `lobes init --fleet --audio --apply`. See
 [`docs/realtime-pipeline.md`](realtime-pipeline.md) for full bring-up instructions.
 
-**Known limitation:** the fleet gateway is not auth-aware. `CULTURE_VLLM_API_KEY`
-is enforced by vLLM on the single-model serve path, but the gateway is a
-pass-through — the bearer token does not extend to any of its proxied endpoints,
-`/v1/audio/*` included. Per-endpoint gateway auth is planned for a later release.
+**Auth is opt-in.** Set `GATEWAY_API_KEY` (fallback `CULTURE_VLLM_API_KEY`) in
+the deployment `.env` to require `Authorization: Bearer <key>` on every
+data-plane request, `/v1/audio/*` included — unset (the default) leaves the
+gateway exactly as before, no header inspected. See
+[Auth and exposure](#auth-and-exposure) below for the full gated-vs-keyless
+route policy and the 401 shape.
 
 ## Endpoints in detail
 
@@ -329,8 +331,8 @@ empty (or null) for Chatterbox's built-in default voice; set it to a `.wav` path
 the sidecar for zero-shot voice cloning (passed through as `audio_prompt_path`). See
 [`docs/chatterbox-tts.md`](chatterbox-tts.md) for the voice-cloning contract.
 
-**Known limitation:** the gateway does not yet extend the `CULTURE_VLLM_API_KEY`
-bearer token to audio endpoints. Plan: per-endpoint auth in a later release.
+Audio endpoints are gated by the same opt-in bearer check as every other POST
+route — see [Auth and exposure](#auth-and-exposure) below.
 
 ### Model list (loaded)
 
@@ -436,11 +438,47 @@ enforce it.
 
 ### Fleet gateway
 
-The fleet gateway is **not yet auth-aware** — the bearer token does not yet extend
-to the gateway's proxied endpoints (including `/v1/audio/*`). Per-endpoint auth is
-planned. In the meantime, keep the gateway port off the public internet: use the
-Cloudflare Tunnel (`lobes tunnel`) on the single-model deployment, or bind the
-fleet gateway to localhost and expose only via the tunnel.
+Set `GATEWAY_API_KEY` in the fleet `.env` (fallback `CULTURE_VLLM_API_KEY` —
+the first non-blank of the two wins) to require `Authorization: Bearer <key>`
+on the gateway's own data-plane routes, `/v1/audio/*` included. Unset — the
+default — leaves the gateway exactly as before: no header is ever inspected.
+
+**Gated:** every `POST` (chat/completions, completions, embeddings, rerank,
+score, audio) and `GET /v1/models` + `GET /v1/models/supported`. **Keyless by
+design**, regardless of the key: `GET /health` (container/peer probes must
+reach it before any key is distributed), `GET /capabilities` (the
+control-plane discovery surface peers read to learn what a box hosts, before
+they hold a key), and `GET /status` (operator observability, no inference).
+
+A missing/wrong/malformed key gets `401` with an OpenAI-shaped
+`invalid_api_key` body and a `WWW-Authenticate: Bearer` header:
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"cortex","messages":[{"role":"user","content":"hi"}]}'
+```
+
+```json
+{"error": {"message": "Invalid API key. Pass this gateway's configured key as 'Authorization: Bearer <key>'.", "type": "invalid_api_key", "code": "invalid_api_key"}}
+```
+
+The message never echoes what was sent nor any part of the expected key; the
+comparison is timing-safe (`hmac.compare_digest`). Keeping the gateway port
+off the public internet — the Cloudflare Tunnel (`lobes tunnel`), Cloudflare
+Access, an IP allowlist, or binding to localhost and exposing only via the
+tunnel — remains good practice, but with `GATEWAY_API_KEY` set it is now
+**defense-in-depth on top of** the bearer gate, not the only protection.
+
+**A proxied response carries an extra header.** When this gateway forwards a
+request to a peer box for a role it dropped (proxy-lobes, opt-in — see
+[`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`](gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in)),
+the response carries `X-Lobes-Proxied-By: <peer origin>`; a locally-served
+response never does. `GET /v1/models` only lists a proxied role's id while a
+live probe of the peer's own `/v1/models` confirms it actually serves that
+id — the same "advertised implies reachable" rule (issue #92) a local backend
+is already held to, extended across the box boundary.
 
 ### Public exposure via Cloudflare Tunnel
 

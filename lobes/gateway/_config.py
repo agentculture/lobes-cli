@@ -83,11 +83,15 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 # referral, like feasibility, is a core-role fact (the audio overlay is
 # outside the Profile schema and carries no referral channel).
 #
-# A declared origin is CONTROL-PLANE metadata only: it annotates
+# A declared origin is CONTROL-PLANE metadata by default: it annotates
 # ``/capabilities`` and the 404 ``role_infeasible`` body for a role this box
-# does not host. The gateway NEVER dials it — no data-plane proxying exists
-# (proxy-lobes is deferred to issue #115). Unset everywhere (the default) ⇒
-# every response is byte-identical to the pre-referral contract.
+# does not host, and the gateway does NOT dial it on its own — origin alone
+# stays referral-only (the issue #112 contract, preserved byte-for-byte). A
+# box CAN be opted into actually dialing it — the data-plane proxy branch
+# (:data:`PEER_PROXY_ENV` below, proxy-lobes t6, issues #115/#127) — but only
+# for a name that ALSO carries the truthy ``<PREFIX>_PEER_PROXY`` knob; origin
+# without that knob never gets dialed. Unset everywhere (the default) ⇒ every
+# response is byte-identical to the pre-referral contract.
 PEER_ORIGIN_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_ORIGIN",
     "multimodal": "MULTIMODAL_PEER_ORIGIN",
@@ -116,9 +120,9 @@ PEER_ORIGIN_ENV: dict[str, str] = {
 #   knob with no origin is inert, and a knob on a locally-FEASIBLE role is
 #   equally inert (the local engine serves it — hosted behaviour unchanged).
 #
-# CONFIG ONLY in this task: build_config parses the knob into the table;
-# the data-plane branch that actually forwards a request lands in a LATER
-# task — today nothing dials a peer.
+# The data-plane branch that actually forwards a request using this knob is
+# :func:`lobes.gateway.server._proxy_to_peer` (proxy-lobes t6, issues
+# #115/#127) — this module only parses the knob into the routing table.
 PEER_PROXY_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_PROXY",
     "multimodal": "MULTIMODAL_PEER_PROXY",
@@ -175,9 +179,12 @@ def _peer_proxied(
     origin, and it is infeasible on this box. Origin without the knob stays
     referral-only (the issue #112 contract preserved); knob without an
     origin has nothing to dial; knob on a feasible role is ignored (hosted
-    behaviour unchanged). Empty (the default) everywhere no knob is set —
-    and, in this task, empty or not, nothing dials it yet (config only; the
-    data-plane branch is a later task).
+    behaviour unchanged). Empty (the default) everywhere no knob is set, so a
+    deployment that never sets ``<PREFIX>_PEER_PROXY`` is unaffected. A name
+    that DOES land here is dialed by the data-plane proxy branch
+    (:func:`lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
+    #115/#127) — this function only computes the set; it dials nothing
+    itself.
     """
     return frozenset(
         name
@@ -218,8 +225,9 @@ def _gateway_api_key(env: Mapping[str, str]) -> str | None:
     3. ``None`` — both unset/blank ⇒ auth disabled, byte-identical to
        today's no-auth behaviour (an untouched deployment is unaffected).
 
-    CONFIG ONLY in this task: nothing enforces the key yet — the inbound
-    auth check lands in a later task.
+    The inbound auth check that enforces this key is
+    :meth:`lobes.gateway.server._Handler._authorized` (proxy-lobes t2,
+    issues #115/#127) — this function only resolves the key's value.
     """
     for key in ("GATEWAY_API_KEY", "CULTURE_VLLM_API_KEY"):
         value = (env.get(key) or "").strip()
@@ -273,10 +281,11 @@ class ServerConfig:
     # ``GATEWAY_API_KEY`` if non-blank, else ``CULTURE_VLLM_API_KEY`` if
     # non-blank (the key Culture-mesh operators already hand to callers of
     # this endpoint keeps working — no second secret to mint), else ``None``
-    # ⇒ auth disabled, today's exact no-auth behaviour. CONFIG ONLY in this
-    # task: nothing enforces it yet — the inbound auth check is a later
-    # task. ``repr=False`` because the value is a SECRET: it must never
-    # appear in repr/str of this object (logs, tracebacks, debug output).
+    # ⇒ auth disabled, today's exact no-auth behaviour. Enforced by
+    # :meth:`lobes.gateway.server._Handler._authorized` (t2) on every
+    # data-plane route. ``repr=False`` because the value is a SECRET: it must
+    # never appear in repr/str of this object (logs, tracebacks, debug
+    # output).
     api_key: str | None = field(default=None, repr=False)
 
 
