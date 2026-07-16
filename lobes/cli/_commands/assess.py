@@ -142,14 +142,16 @@ def cmd_assess(args: argparse.Namespace) -> int:
         model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
     url = f"http://localhost:{port}"
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
 
-    if bool(getattr(args, "probes", False)):
-        return _cmd_assess_probes(args, url, json_mode)
-    if bool(getattr(args, "preserve_thinking", False)):
-        return _cmd_assess_preserve_thinking(url, model, json_mode)
-    if bool(getattr(args, "strict_tools", False)):
-        return _cmd_assess_strict_tools(url, model, json_mode)
-    return _cmd_assess_correctness(args, url, model, json_mode)
+    with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        if bool(getattr(args, "probes", False)):
+            return _cmd_assess_probes(args, url, json_mode)
+        if bool(getattr(args, "preserve_thinking", False)):
+            return _cmd_assess_preserve_thinking(url, model, json_mode)
+        if bool(getattr(args, "strict_tools", False)):
+            return _cmd_assess_strict_tools(url, model, json_mode)
+        return _cmd_assess_correctness(args, url, model, json_mode)
 
 
 def register(sub: argparse._SubParsersAction) -> None:
