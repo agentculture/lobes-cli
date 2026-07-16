@@ -771,6 +771,40 @@ services:
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
+      # Inbound gateway auth (OPT-IN; proxy-lobes t1, issue #115/#127): a
+      # bearer key callers of THIS gateway must present. GATEWAY_API_KEY is
+      # the explicit, gateway-scoped knob; CULTURE_VLLM_API_KEY is a fallback
+      # so an operator already distributing that key to Culture-mesh callers
+      # gets gateway auth without minting a second secret (first non-blank of
+      # the two wins — see lobes/gateway/_config.py's _gateway_api_key). Both
+      # unset (the default) = auth disabled, byte-identical to today's
+      # no-auth behaviour. CONFIG ONLY here: nothing enforces the key yet.
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}
+      - CULTURE_VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
+      # Follow-the-referral opt-in (proxy-lobes t1, #115/#127): a truthy
+      # <PREFIX>_PEER_PROXY additionally arms the gateway to itself forward a
+      # dropped role's request to its declared *_PEER_ORIGIN, rather than the
+      # origin staying honesty-only annotation. Declaring *_PEER_ORIGIN alone
+      # (above) stays referral-only — this knob is the second, deliberate
+      # opt-in step (mirrors the #112 contract: origin without the knob never
+      # silently upgrades to proxying). Inert without a matching declared
+      # origin, and inert on a role this box actually hosts. All empty by
+      # default. CONFIG ONLY here: nothing dials a peer yet.
+      - PRIMARY_PEER_PROXY=${PRIMARY_PEER_PROXY:-}
+      - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
+      - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
+      - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
+      # Outbound pairwise credential (proxy-lobes t1, #115/#127): the API key
+      # THIS box presents when dialing that role's declared peer — i.e. the
+      # PEER's own inbound GATEWAY_API_KEY, never a caller's forwarded key.
+      # Taken verbatim from the operator's env; kept only for a name with a
+      # declared peer origin. SECRET — scoped env on purpose (never env_file,
+      # per the PR #117 finding: the gateway must not inherit HF_TOKEN or any
+      # other .env secret it doesn't explicitly need). Empty by default.
+      - PRIMARY_PEER_API_KEY=${PRIMARY_PEER_API_KEY:-}
+      - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
+      - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
+      - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

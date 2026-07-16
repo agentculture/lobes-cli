@@ -55,7 +55,11 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    "gateway": "3e6c7397e397807cb0ddeea1fa28c9f67c0ea696fa7d64e514ee43297de8972e",
+    # Recomputed for t7 (#127/#115): the gateway service's environment: block
+    # deliberately gained the GATEWAY_API_KEY/CULTURE_VLLM_API_KEY inbound-auth
+    # pair and the four *_PEER_PROXY / *_PEER_API_KEY knobs, next to the
+    # existing *_PEER_ORIGIN entries — see docker-compose.yml and env.example.
+    "gateway": "701ec83c6256f5bd04e4cde8c65820cd3ef30463be758768bf21b617624a94a9",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
