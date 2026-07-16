@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
@@ -95,6 +95,56 @@ PEER_ORIGIN_ENV: dict[str, str] = {
     "rerank": "RERANK_PEER_ORIGIN",
 }
 
+# Per-backend "PROXY my dropped role to its declared peer" opt-in knob
+# (proxy-lobes t1, issues #115/#127 — the follow-up :data:`PEER_ORIGIN_ENV`
+# above explicitly deferred). Same ``<PREFIX>_<KNOB>`` backend-name prefixes
+# as :data:`FEASIBLE_ENV` / :data:`PEER_ORIGIN_ENV` — still exactly one env
+# convention to learn — and the same four-core-role scope (the audio overlay
+# is outside the Profile schema and carries no proxy channel).
+#
+# A truthy token (``1``/``true``/``yes``, case-insensitive — the same
+# :func:`_as_bool` contract every opt-in boolean knob here uses) arms the
+# knob, but it composes into :attr:`RoutingTable.peer_proxied` ONLY when
+# that backend ALSO has a declared peer origin AND is in the infeasible
+# set. The two ignored combinations are deliberate:
+#
+# * **origin without the knob** stays annotation-only referral — the issue
+#   #112 contract is preserved byte-for-byte (an operator who declared a
+#   peer for honesty's sake is never silently upgraded to proxying);
+# * **knob without an origin** has nothing to dial — a proxy target is
+#   always OPERATOR-DECLARED (the #92 lesson), never derived, so an armed
+#   knob with no origin is inert, and a knob on a locally-FEASIBLE role is
+#   equally inert (the local engine serves it — hosted behaviour unchanged).
+#
+# CONFIG ONLY in this task: build_config parses the knob into the table;
+# the data-plane branch that actually forwards a request lands in a LATER
+# task — today nothing dials a peer.
+PEER_PROXY_ENV: dict[str, str] = {
+    "primary": "PRIMARY_PEER_PROXY",
+    "multimodal": "MULTIMODAL_PEER_PROXY",
+    "embed": "EMBED_PEER_PROXY",
+    "rerank": "RERANK_PEER_PROXY",
+}
+
+# Per-backend OUTBOUND credential for the declared peer (proxy-lobes t1,
+# issues #115/#127 — the pairwise-auth half). Same prefixes/scope as the
+# other three channels above. The value is the API key this box will
+# present when dialing that role's peer origin — taken VERBATIM (stripped)
+# from the operator's env, never transformed. Parsed into
+# :attr:`RoutingTable.peer_api_keys` ONLY for a backend that ALSO has a
+# declared peer origin (a key without an origin is inert — there is no
+# peer to authenticate to); blank/unset omitted. Deliberately NOT gated on
+# :data:`PEER_PROXY_ENV`: the credential rides the origin declaration, so
+# a referral-only peer may already carry its key (harmless until the later
+# data-plane task dials it). SECRET — it must never appear in repr/str of
+# the config objects (see the ``repr=False`` on the RoutingTable field).
+PEER_API_KEY_ENV: dict[str, str] = {
+    "primary": "PRIMARY_PEER_API_KEY",
+    "multimodal": "MULTIMODAL_PEER_API_KEY",
+    "embed": "EMBED_PEER_API_KEY",
+    "rerank": "RERANK_PEER_API_KEY",
+}
+
 
 def _peer_origins(env: Mapping[str, str]) -> dict[str, str]:
     """The declared peer origins, keyed by backend name; blank/unset omitted.
@@ -111,6 +161,71 @@ def _peer_origins(env: Mapping[str, str]) -> dict[str, str]:
         if origin:
             out[name] = origin
     return out
+
+
+def _peer_proxied(
+    env: Mapping[str, str],
+    peer_origins: Mapping[str, str],
+    infeasible: frozenset[str],
+) -> frozenset[str]:
+    """Backend names whose dropped role is opted in to peer proxying.
+
+    A name lands here only when ALL THREE hold: its ``<PREFIX>_PEER_PROXY``
+    env var (see :data:`PEER_PROXY_ENV`) is truthy, it has a declared peer
+    origin, and it is infeasible on this box. Origin without the knob stays
+    referral-only (the issue #112 contract preserved); knob without an
+    origin has nothing to dial; knob on a feasible role is ignored (hosted
+    behaviour unchanged). Empty (the default) everywhere no knob is set —
+    and, in this task, empty or not, nothing dials it yet (config only; the
+    data-plane branch is a later task).
+    """
+    return frozenset(
+        name
+        for name, key in PEER_PROXY_ENV.items()
+        if _as_bool(env, key) and name in peer_origins and name in infeasible
+    )
+
+
+def _peer_api_keys(env: Mapping[str, str], peer_origins: Mapping[str, str]) -> dict[str, str]:
+    """Outbound per-peer API keys, keyed by backend name; blank/unset omitted.
+
+    Values are taken VERBATIM (stripped) from ``<PREFIX>_PEER_API_KEY``
+    (see :data:`PEER_API_KEY_ENV`), and kept only for names that ALSO have
+    a declared peer origin — a key without an origin is inert (no peer to
+    authenticate to). Not gated on the proxy knob: the credential rides
+    the origin declaration. The values are SECRETS — they flow into the
+    ``repr=False`` :attr:`RoutingTable.peer_api_keys` field and must never
+    be logged or echoed.
+    """
+    out: dict[str, str] = {}
+    for name, key in PEER_API_KEY_ENV.items():
+        value = (env.get(key) or "").strip()
+        if value and name in peer_origins:
+            out[name] = value
+    return out
+
+
+def _gateway_api_key(env: Mapping[str, str]) -> str | None:
+    """The inbound gateway API key: ``GATEWAY_API_KEY`` → ``CULTURE_VLLM_API_KEY`` → None.
+
+    Resolution order (first non-blank wins, whitespace stripped):
+
+    1. ``GATEWAY_API_KEY`` — the explicit, gateway-scoped knob;
+    2. ``CULTURE_VLLM_API_KEY`` — the key Culture-mesh operators ALREADY
+       distribute to callers of this endpoint, so an operator whose exposed
+       deployment runs on that existing key gets gateway auth without
+       minting/redistributing a second secret;
+    3. ``None`` — both unset/blank ⇒ auth disabled, byte-identical to
+       today's no-auth behaviour (an untouched deployment is unaffected).
+
+    CONFIG ONLY in this task: nothing enforces the key yet — the inbound
+    auth check lands in a later task.
+    """
+    for key in ("GATEWAY_API_KEY", "CULTURE_VLLM_API_KEY"):
+        value = (env.get(key) or "").strip()
+        if value:
+            return value
+    return None
 
 
 def _is_feasible(env: Mapping[str, str], backend_name: str) -> bool:
@@ -153,6 +268,16 @@ class ServerConfig:
     # lobes.gateway.server.inject_strict_tools / handle_post for the
     # injection + retry-without-strict-on-compile-failure behaviour.
     force_strict_tools: bool = False
+    # The INBOUND gateway API key (proxy-lobes t1, issues #115/#127 — the
+    # pairwise-auth half). Resolved by :func:`_gateway_api_key`:
+    # ``GATEWAY_API_KEY`` if non-blank, else ``CULTURE_VLLM_API_KEY`` if
+    # non-blank (the key Culture-mesh operators already hand to callers of
+    # this endpoint keeps working — no second secret to mint), else ``None``
+    # ⇒ auth disabled, today's exact no-auth behaviour. CONFIG ONLY in this
+    # task: nothing enforces it yet — the inbound auth check is a later
+    # task. ``repr=False`` because the value is a SECRET: it must never
+    # appear in repr/str of this object (logs, tracebacks, debug output).
+    api_key: str | None = field(default=None, repr=False)
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -368,14 +493,20 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # at all still lands in `infeasible` (a config/display fact, not contingent
     # on wiring). See RoutingTable.infeasible / infeasible_owner.
     infeasible = frozenset(name for name in FEASIBLE_ENV if not _is_feasible(env, name))
+    # Opt-in honest referral (mesh-brain t3): the operator-declared peer
+    # origins, empty by default — see PEER_ORIGIN_ENV above. Computed once
+    # here because the proxy-lobes channels below both gate on it.
+    peer_origins = _peer_origins(env)
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
         aliases=aliases,
         infeasible=infeasible,
-        # Opt-in honest referral (mesh-brain t3): the operator-declared peer
-        # origins, empty by default — see PEER_ORIGIN_ENV above.
-        peer_origins=_peer_origins(env),
+        peer_origins=peer_origins,
+        # Proxy-lobes config channels (t1, #115/#127) — parsed only, nothing
+        # dials them in this task; see PEER_PROXY_ENV / PEER_API_KEY_ENV above.
+        peer_proxied=_peer_proxied(env, peer_origins, infeasible),
+        peer_api_keys=_peer_api_keys(env, peer_origins),
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container
@@ -385,5 +516,6 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         audio_url=(env.get("AUDIO_URL") or "").rstrip("/") or None,
         public_url=(env.get("GATEWAY_PUBLIC_URL") or "").rstrip("/") or None,
         force_strict_tools=_as_bool(env, "GATEWAY_FORCE_STRICT_TOOLS"),
+        api_key=_gateway_api_key(env),
     )
     return table, server
