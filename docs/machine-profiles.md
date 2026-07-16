@@ -17,7 +17,8 @@ reference.
 ## How detection works
 
 When `lobes init` runs (or `lobes serve` / `lobes status` without an explicit
-`--machine`), the following steps resolve the machine name:
+profile override — `--profile` on `init`, `--machine` on `switch`), the
+following steps resolve the machine name:
 
 1. **Gather raw facts** (from `lobes/runtime/_detect.py::detect_card()`):
    - **Device name**: from `nvidia-smi --query-gpu=name,compute_cap`
@@ -51,7 +52,7 @@ When `lobes init` runs (or `lobes serve` / `lobes status` without an explicit
 
 ## How a profile is chosen
 
-Once detection (or an explicit `--machine` flag) resolves the card name, a
+Once detection (or an explicit `--profile`/`--machine` flag) resolves the card name, a
 profile is looked up via `lobes/profiles/loader.py::resolve_profile()`:
 
 1. **Explicit always wins**: if `--profile <name>` was given (or a
@@ -334,7 +335,8 @@ max_model_len = 8192
 **Rules:**
 
 - **File name is the profile name.** `profiles/my-custom-box.toml` → profile
-  name is `my-custom-box`. Use it as `lobes init --machine my-custom-box --apply`.
+  name is `my-custom-box`. Use it as `lobes init --profile my-custom-box --apply`
+  (the flag is `--profile` on `init`, `--machine` on `switch`).
 - **Inline `name` field must match the file stem.** If the file declares
   `name = "something-else"`, profile loading fails with an error (this prevents
   confusion from stale copies).
@@ -355,8 +357,8 @@ max_model_len = 8192
 To use your profile:
 
 ```bash
-# Explicit --machine or LOBES_PROFILE env var:
-lobes init --machine my-custom-box --apply
+# Explicit flag (--profile on init, --machine on switch) or LOBES_PROFILE env var:
+lobes init --profile my-custom-box --apply
 lobes switch my-model --machine my-custom-box --apply
 
 # Automatic if the detected machine name matches:
@@ -368,6 +370,11 @@ Auto-detection only works if the *detected machine name* (from
 `lobes/machines/_registry.py`) matches the profile name. If you want a custom
 profile to be auto-selected on a new card, add a new `CardStrategy` module to
 `lobes/machines/` (following the `spark.py` / `thor.py` pattern).
+
+For a complete worked example — a live-validated operator profile for the
+Jetson AGX Orin 64GB (Gemma `senses` at its full 128K context on Ampere sm_87,
+with measured knob values and the Jetson divergences found on the way) — see
+[`orin-profiles.md`](orin-profiles.md).
 
 ## The goldens contract
 

@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.2] - 2026-07-17
+
+### Added
+
+- `docs/orin-profiles.md` — Jetson AGX Orin 64GB live-validation evidence
+  (2026-07-16/17, issue #127 mesh work): the operator profile serving Gemma
+  `senses` at its full 128K context on Ampere sm_87 (measured `gpu_mem_util`
+  0.45; 0.30 refused with 2.25 GiB KV vs the 3.08 GiB that 131072 needs; KV
+  pool 802,644 tokens / 6.12x concurrency), embedder/reranker probe results,
+  why `cortex` (modelopt NVFP4 W4A4) is architecturally infeasible on Ampere,
+  three Jetson/sm_87 divergences found live (csv-mode GPU access needs
+  `runtime: nvidia`; the Parakeet base image is Spark-only — no sm_87
+  kernels; unified-memory use far exceeds the util sum), the validated #127
+  cortex proxy wiring, and the gateway→gateway audio-chaining limitation
+  (readiness probes `/v1/health/ready`, which a peer gateway 401s/404s —
+  first-class audio referral knobs are the phase-2 candidate).
+
+### Changed
+
+- `docs/machine-profiles.md` cross-links the Orin worked example from the
+  custom-profile section.
+
+### Fixed
+
+- `docs/machine-profiles.md` documented `lobes init --machine` for selecting
+  a profile; `init`'s actual flag is `--profile` (`--machine` belongs to
+  `switch`). The wrong flag made the documented custom-profile flow error out.
+
 ## [0.45.1] - 2026-07-17
 
 ### Changed
