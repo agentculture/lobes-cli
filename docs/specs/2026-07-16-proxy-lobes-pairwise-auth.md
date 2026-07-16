@@ -64,7 +64,7 @@
 
 ## Assumptions
 
-- Peers are reachable at operator-declared origins on the tailnet (e.g. <http://thor.tail0be7e0.ts.net:8000>); transport security between boxes is the tailnet's/tunnel's job at this layer — pairwise keys authenticate, TLS termination is out of scope (existing practice for CULTURE_VLLM_API_KEY over cloudflared).
+- Peers are reachable at operator-declared origins on the tailnet (e.g. <http://thor.<tailnet>.ts.net:8000>); transport security between boxes is the tailnet's/tunnel's job at this layer — pairwise keys authenticate, TLS termination is out of scope (existing practice for CULTURE_VLLM_API_KEY over cloudflared).
 - stt/tts (audio overlay) have no peer-origin channel today (outside the Profile schema, lobes/gateway/_config.py PEER_ORIGIN_ENV covers primary/multimodal/embed/rerank only) — proxy-lobes covers the four core roles first; audio-role proxying is a follow-up.
 - The forwarded body carries the RESOLVED served model id and the peer serves that same id — verified at runtime by the peer-readiness probe against the peer's /v1/models (c19), so a proxied request never asks the peer for a model it does not serve.
 
@@ -82,7 +82,7 @@
   - seeds: `c6`, `c7`
 - `s6` — `issue #127 body (agentculture/lobes-cli)`: the umbrella issue proposes lobe/node YAML config, lobes run/fanout/trace verbs, and 4 phases; its own non-goals exclude KV sharing, merged servers, reasoning policy; phases 2-4 (fanout, runtime-aware routing, policy plugins) are explicitly later phases — this delivery targets phase 1 mapped onto the existing role/shape/peer-origin machinery
   - seeds: `c9`, `c10`
-- `s7` — `~/.lobes/.env (live Spark spark-lobe deployment)`: MULTIMODAL_PEER_ORIGIN=<http://thor.tail0be7e0.ts.net:8000> and CULTURE_VLLM_API_KEY are already set live; Thor's gateway is port 8000, Spark's is 8001; the senses->Thor proxy is exactly the first real deployment of this feature
+- `s7` — `~/.lobes/.env (live Spark spark-lobe deployment)`: MULTIMODAL_PEER_ORIGIN=<http://thor.<tailnet>.ts.net:8000> and CULTURE_VLLM_API_KEY are already set live; Thor's gateway is port 8000, Spark's is 8001; the senses->Thor proxy is exactly the first real deployment of this feature
   - seeds: `c11`
 - `s8` — `lobes/profiles/shapes.py + shape_render.py (deployment shapes t1-t3)`: shapes are pure data (hosts + overrides) rendered to env; the proxy opt-in and per-peer key knobs must render through the same shape/env pipeline so lobes init --shape stays the single entry point and restore stays byte-for-byte
   - seeds: `c8`
@@ -91,7 +91,7 @@
 - `s10` — `challenge pass / concurrency lens: lobes/gateway/server.py ThreadingHTTPServer + per-request upstream connections`: clean pass — the proxy branch reuses the existing per-request connection + read1 streaming relay; no shared mutable state is added; the readiness cache is the only cross-thread structure and already exists
 - `s11` — `challenge pass / lifecycle lens: accept-shape backup/restore + image rollback`: new env keys are inert to an old gateway image (unknown env ignored) so rollback is safe; the shape re-render must round-trip the new knobs byte-for-byte like *_PEER_ORIGIN does (c8 goldens)
   - seeds: `c8`
-- `s12` — `challenge pass / cheap probe: live Thor gateway from Spark (2026-07-16)`: <http://thor.tail0be7e0.ts.net:8000/health> ok + /capabilities 200 — peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)
+- `s12` — `challenge pass / cheap probe: live Thor gateway from Spark (2026-07-16)`: <http://thor.<tailnet>.ts.net:8000/health> ok + /capabilities 200 — peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)
 - `s13` — `challenge pass / security lens: bearer handling + secret scoping`: timing-safe compare + scoped environment: entries captured as c23; replay/rate-limit/TLS parked as v1 (tailnet transport assumption c11)
   - seeds: `c23`
 - `s14` — `challenge pass / observability lens: issue #127 design principle`: the spec lacked any caller-visible signal of WHERE a proxied answer came from — c20 adds the proxied-by marker family

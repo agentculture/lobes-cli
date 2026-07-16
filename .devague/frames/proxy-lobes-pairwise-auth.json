@@ -182,7 +182,7 @@
     {
       "id": "c11",
       "kind": "assumption",
-      "text": "Peers are reachable at operator-declared origins on the tailnet (e.g. http://thor.tail0be7e0.ts.net:8000); transport security between boxes is the tailnet's/tunnel's job at this layer \u2014 pairwise keys authenticate, TLS termination is out of scope (existing practice for CULTURE_VLLM_API_KEY over cloudflared).",
+      "text": "Peers are reachable at operator-declared origins on the tailnet (e.g. http://thor.<tailnet>.ts.net:8000); transport security between boxes is the tailnet's/tunnel's job at this layer \u2014 pairwise keys authenticate, TLS termination is out of scope (existing practice for CULTURE_VLLM_API_KEY over cloudflared).",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [],
@@ -466,7 +466,7 @@
     {
       "id": "s7",
       "surface": "~/.lobes/.env (live Spark spark-lobe deployment)",
-      "finding": "MULTIMODAL_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000 and CULTURE_VLLM_API_KEY are already set live; Thor's gateway is port 8000, Spark's is 8001; the senses->Thor proxy is exactly the first real deployment of this feature",
+      "finding": "MULTIMODAL_PEER_ORIGIN=http://thor.<tailnet>.ts.net:8000 and CULTURE_VLLM_API_KEY are already set live; Thor's gateway is port 8000, Spark's is 8001; the senses->Thor proxy is exactly the first real deployment of this feature",
       "seeds": [
         "c11"
       ]
@@ -504,7 +504,7 @@
     {
       "id": "s12",
       "surface": "challenge pass / cheap probe: live Thor gateway from Spark (2026-07-16)",
-      "finding": "http://thor.tail0be7e0.ts.net:8000/health ok + /capabilities 200 \u2014 peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)",
+      "finding": "http://thor.<tailnet>.ts.net:8000/health ok + /capabilities 200 \u2014 peer reachability for the acceptance run is real today; Thor still pinned to 0.43.0.dev239 (parked v2)",
       "seeds": []
     },
     {
