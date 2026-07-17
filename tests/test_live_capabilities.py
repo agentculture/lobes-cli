@@ -138,6 +138,10 @@ class _Probe:
     retry_after: str | None
     body: bytes
     error: str | None
+    # The X-Lobes-Proxied-By response marker (proxy-lobes #115/#127) — set on
+    # every answer the gateway produced by forwarding to a declared peer;
+    # None on a locally-served answer (which never carries it).
+    proxied_by: str | None = None
 
 
 def _url(path: str) -> str:
@@ -149,9 +153,21 @@ def _http(method: str, url: str, *, headers=None, data=None, timeout: int) -> _P
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # local deployment only
-            return _Probe(resp.status, resp.headers.get("Retry-After"), resp.read(), None)
+            return _Probe(
+                resp.status,
+                resp.headers.get("Retry-After"),
+                resp.read(),
+                None,
+                resp.headers.get("X-Lobes-Proxied-By"),
+            )
     except urllib.error.HTTPError as exc:  # a real HTTP status (4xx/5xx) — reachable wire
-        return _Probe(exc.code, exc.headers.get("Retry-After"), exc.read(), None)
+        return _Probe(
+            exc.code,
+            exc.headers.get("Retry-After"),
+            exc.read(),
+            None,
+            exc.headers.get("X-Lobes-Proxied-By"),
+        )
     except (urllib.error.URLError, OSError) as exc:  # refused / DNS / timeout — no wire
         reason = getattr(exc, "reason", exc)
         return _Probe(None, None, b"", str(reason))
@@ -490,14 +506,21 @@ def test_deployed_gateway_version_matches_cli() -> None:
 # must remain discoverable, or the box serves no brain at all.
 # ---------------------------------------------------------------------------
 def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
-    """Given only the gateway origin, resolve the hosted generate lobes and get answers."""
+    """Given only the gateway origin, resolve the hosted generate lobes and get answers.
+
+    Three honest states per generate lobe (#113/#115): HOSTED (dial it, get an
+    answer), REFERRAL-ONLY dropped (404 role_infeasible), and PROXIED dropped
+    (``proxied: true`` in the contract — this box forwards to the declared
+    peer, so the honest response is an ANSWER carrying the
+    ``X-Lobes-Proxied-By`` marker naming ``hosted_by``, never a silent local
+    serve and never a bare 404).
+    """
     answers: list[str] = []
     faults: list[str] = []
     dialed = 0
-    for role in ("cortex", "senses"):
+    for role in ("cortex", "senses", "muse"):
         info = caps[role]
         if info.get("feasible") is False:
-            # Dropped by the deployment shape — honesty demands a 404 here.
             probe = _dial(
                 "POST",
                 _url("/v1/chat/completions"),
@@ -505,8 +528,44 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
                     {"model": role, "messages": [{"role": "user", "content": "hi"}]}
                 ).encode(),
                 content_type="application/json",
-                timeout=_META_TIMEOUT,
+                timeout=_GENERATE_TIMEOUT if info.get("proxied") else _META_TIMEOUT,
             )
+            if info.get("proxied") is True:
+                # The THIRD lobe state (proxy-lobes #115/#127): this box
+                # committed to answering on the peer's behalf. Honest =
+                # every response carries X-Lobes-Proxied-By naming the
+                # declared peer; a 2xx must be a usable answer. A relayed
+                # non-2xx (peer down -> 503, peer shed -> 429) is still an
+                # honest, marked relay — noted, never a local-gate fault.
+                hosted_by = info.get("hosted_by") or ""
+                if probe.proxied_by != hosted_by:
+                    faults.append(
+                        f"  {role}: flagged proxied:true but the response's "
+                        f"X-Lobes-Proxied-By is {probe.proxied_by!r}, not the declared "
+                        f"peer {hosted_by!r} (#115/#127)"
+                    )
+                elif probe.status is not None and 200 <= probe.status < 300:
+                    try:
+                        choices = json.loads(probe.body).get("choices")
+                    except ValueError:
+                        choices = None
+                    if not choices:
+                        faults.append(
+                            f"  {role}: proxied answer from {hosted_by} was {probe.status} "
+                            f"but had no 'choices'. Body: {probe.body[:200]!r}"
+                        )
+                    else:
+                        answers.append(
+                            f"  {role}: dropped by shape, PROXIED to {hosted_by} — got a "
+                            "marked answer (correct)"
+                        )
+                else:
+                    answers.append(
+                        f"  {role}: proxied to {hosted_by}, peer relayed "
+                        f"{probe.status!r} with the marker — honest relay"
+                    )
+                continue
+            # Referral-only (or bare) drop — honesty demands a 404 here.
             if probe.status == 404:
                 answers.append(f"  {role}: dropped by shape, honestly 404s — correct")
             else:

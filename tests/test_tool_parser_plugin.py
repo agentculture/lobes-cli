@@ -55,16 +55,19 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    # Recomputed for t7 (#127/#115): the gateway service's environment: block
-    # deliberately gained the GATEWAY_API_KEY/CULTURE_VLLM_API_KEY inbound-auth
-    # pair and the four *_PEER_PROXY / *_PEER_API_KEY knobs, next to the
-    # existing *_PEER_ORIGIN entries — see docker-compose.yml and env.example.
-    "gateway": "701ec83c6256f5bd04e4cde8c65820cd3ef30463be758768bf21b617624a94a9",
+    # Recomputed when the muse role landed: the gateway service's environment:
+    # block deliberately gained the MUSE_* passthroughs (BASE_URL/SERVED_NAME/
+    # MAX_MODEL_LEN/FEASIBLE + the three MUSE_PEER_* channels), and the new
+    # profile-gated vllm-muse service joined the fleet template. (Prior
+    # recompute, t7 #127/#115: the inbound-auth pair + *_PEER_PROXY /
+    # *_PEER_API_KEY knobs.) Every other service is byte-identical.
+    "gateway": "aeb3c299060117abbdd5f2d4e26c0b5b5fd7c61ce5a8002b17fe687d40f76707",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "a809b5e4fce759646a63f1cfcb9221e3b3fbfafe8cfeed8dbe161ce22ff9f8fc",
     "vllm-multimodal-coder": "460f000fdd12eddbe4e6011b3a519acc66a22b44650a4b1bfe614aa92c6c6e93",
+    "vllm-muse": "92b59e090a3db3a28eaf29b0d170dfb41393ae78b889fdc4cd639803c6b468cf",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
 }
 

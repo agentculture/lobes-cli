@@ -697,6 +697,35 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "muse": {
+        "role": "muse",
+        # The opt-in muse lobe: unwired in this no-knob deployment, so it is
+        # honestly infeasible-by-default (OPT_IN_BACKENDS) and named by its
+        # catalog default. mtp True: the catalog entry DECLARES the assistant
+        # MTP draft (unmeasured — see the entry's comment).
+        "model": "nvidia/Gemma-4-31B-IT-NVFP4",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/chat/completions",
+        "context": 262144,
+        "quant": "modelopt",
+        "mtp": True,
+        "responsibilities": [
+            "creative_generation",
+            "long_form_writing",
+            "ideation",
+            "style_variation",
+            "divergent_second_opinion",
+        ],
+        "forbidden_responsibilities": [
+            "final_decision",
+            "repo_action",
+            "security_decision",
+        ],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
     "embedder": {
         "role": "embedder",
         "model": _EMBED_ID,

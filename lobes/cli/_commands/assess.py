@@ -37,7 +37,7 @@ from lobes.runtime import _compose, _env
 # (`lobes.catalog.TIER_ROLE`, consumed by `lobes.gateway._routing.tier_aliases`
 # — "cortex"/"senses"/"main"/... , issue #81/#92) rather than requiring the
 # concrete served id. Every probe endpoint here IS the gateway (`RoleInfo.endpoint`
-# is always `gateway_url`/`server.public_url` for the four gateway-fronted roles
+# is always `gateway_url`/`server.public_url` for the five gateway-fronted roles
 # — see `lobes.roles._gateway_role`, `endpoint = gateway`), so sending the role
 # alias exercises the SAME alias-resolution lane a real caller uses, including
 # the hardware-infeasibility 404 (issue #92 t6) a concrete served name would

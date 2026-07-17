@@ -5,8 +5,10 @@ The **fleet** runs the always-warm Qwen 27B generate primary — the Colleague
 role — as a **default-on duo**, plus two tiny co-resident **embedding**
 (`embedder`) and **reranker** (`reranker`) gears, behind a single stdlib
 OpenAI-compatible gateway, managed by lobes as Docker containers. Together with
-the opt-in audio overlay's `stt`/`tts` roles, these are the SIX first-class
-Colleague-facing roles (issue #81) — see
+the opt-in audio overlay's `stt`/`tts` roles — and `muse`, the opt-in-hosted
+creative/ideation lobe (Gemma 4 31B NVFP4, served only by a muse-hosting
+deployment shape, never by the default fleet) — these are the SEVEN
+first-class Colleague-facing roles (issue #81) — see
 [`docs/colleague-stack.md`](colleague-stack.md) for the full role contract
 (`lobes capabilities`, `GET /capabilities`, `lobes up <role>`, `lobes
 measure`). This doc covers the fleet's Docker topology, tuning, and memory
@@ -16,9 +18,10 @@ The fleet is an alternative to the bare single-model deployment — scaffold it
 with `lobes init --fleet` (the single-model `lobes init` is unchanged and
 remains the default). The gateway routes by **task family** (generate / embed
 / score / rerank) and by **capability-tier alias** (`main` / `minor` /
-`multimodal`, with back-compat aliases `hard` / `cheap` / `normal`, and the
-Colleague-role aliases `cortex` / `senses` layered on top of `main` /
-`multimodal`); the 4B `minor` and the legacy 14B are opt-in (see
+`multimodal` / `muse`, with back-compat aliases `hard` / `cheap` / `normal`,
+and the Colleague-role aliases `cortex` / `senses` layered on top of `main` /
+`multimodal` — `muse`'s role name IS its tier/backend name); the 4B `minor`,
+the legacy 14B, and the 31B `muse` are opt-in (see
 "Generate-lane tier aliases").
 
 ## Why
@@ -140,27 +143,31 @@ serving details.
 
 ### Generate-lane tier aliases
 
-The gateway supports three capability-tier **aliases** for the generate lane.
-Callers send `model=main|minor|multimodal` (or the back-compat aliases
+The gateway supports four capability-tier **aliases** for the generate lane.
+Callers send `model=main|minor|multimodal|muse` (or the back-compat aliases
 `hard|cheap|normal`) instead of a full model id; the gateway resolves to the
-appropriate warm backend:
+appropriate warm backend (ascending capability order:
+`minor` < `multimodal` < `muse` < `main`):
 
 | Alias | Back-compat alias | Role | Checkpoint | Notes |
 |---|---|---|---|---|
 | `main` | `hard` | `primary` | `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` | full text capability; default-on |
 | `minor` | `cheap` | `minor` | `Qwen/Qwen3.5-4B` | fast, small-brain; opt-in (`--profile minor`) |
 | `multimodal` | `normal` | `multimodal` | `coolthor/gemma-4-12B-it-NVFP4A16` | text+image+audio, native MTP; default-on |
+| `muse` | — | `muse` | `nvidia/Gemma-4-31B-IT-NVFP4` | creative/ideation lobe (the seventh Colleague role); opt-in hosting — served only by a muse-hosting shape (`thor-muse`), never by the default fleet. DECLARED, not yet live-booted. **Inverted feasibility default** (below): unwired ⇒ 404 `role_infeasible`, never an upward fallback |
 | `multimodal-coder` | — | `candidate` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | coding-strong; opt-in `--profile multimodal-coder`, reachable via its own alias once wired (not a tier) |
 
 **Colleague-role aliases (issue #81):** `model=cortex` and `model=senses` are
 additional aliases for `main`/`hard` and `multimodal`/`normal` respectively —
 same backends, same fallback contract, just the Colleague-facing role name
 (`cortex` = the reasoning/decision authority, `senses` = perception/intake).
-`minor` has no role-name alias — it is not one of the six first-class
+`model=muse` is the first role name that IS its own tier and backend name —
+no extra alias layer. `minor` has no role-name alias — it is not one of the
+seven first-class
 Colleague roles; it is the servable floor under pressure (an explicit `minor`
 request is always served, while full tiers are shed — see "Pressure policy and
 busy backpressure" below). See [`docs/colleague-stack.md`](colleague-stack.md)
-for the full six-role contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`),
+for the full seven-role contract (`cortex`/`senses`/`muse`/`embedder`/`reranker`/`stt`/`tts`),
 their `responsibilities`/`forbidden_responsibilities`, and `GET /capabilities`.
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back
@@ -168,7 +175,19 @@ their `responsibilities`/`forbidden_responsibilities`, and `GET /capabilities`.
 gear is not started; `main` always resolves to the primary (which is always warm).
 `multimodal` falls back to `main` if the multimodal gear is not wired. Pooling gears
 (`embed` / `rerank`) are never reached via tier aliases — they are
-task-family-routed, not tier-routed.
+task-family-routed, not tier-routed. **`muse` is the deliberate exception —
+the inverted feasibility default (`OPT_IN_BACKENDS` in
+`lobes/gateway/_config.py`):** with `MUSE_FEASIBLE` unset, `muse` is feasible
+only when its backend is actually WIRED (`MUSE_BASE_URL` set by a
+muse-hosting shape render), so on every pre-muse or stale `.env` a
+`model=muse` request gets an honest `404 role_infeasible` — referable via
+`MUSE_PEER_ORIGIN` and proxyable via `MUSE_PEER_PROXY`/`MUSE_PEER_API_KEY`,
+like every core role — instead of silently upward-falling-back to `cortex`.
+Serving a creative-lobe request with the reasoning primary and telling no one
+is exactly the half-honest substitution #92 forbids; a default-feasible
+`muse` would have done that on every deployment scaffolded before the role
+existed. An explicit truthy/falsy `MUSE_FEASIBLE` always wins over this
+default.
 
 The `minor` (4B) backend and the legacy `middle` (14B) backend are opt-in compose
 profiles (`--profile minor` / `--profile middle`). Uncomment their `*_BASE_URL` in
@@ -218,9 +237,11 @@ requests when the host is under swap or I/O pressure — instead of silently
 degrading them onto a different model. The policy is side-effect-free and purely
 computed from `/proc` readings (`lobes.gateway._pressure_policy`).
 
-Under pressure a `main`/`cortex` or `multimodal`/`senses` request is shed with
+Under pressure a `main`/`cortex`, `multimodal`/`senses`, or `muse` request is
+shed with
 **HTTP 429 + `Retry-After`** ("busy, retry shortly") — the gateway never
-substitutes a cheaper or different-capability model in its place (issue #85). An
+substitutes a cheaper or different-capability model in its place (issue #85).
+`muse` is a distinct tier and is shed exactly like `cortex`/`senses`. An
 explicit `minor` request is the floor and is **always served** (served as
 requested, not a substitution). This replaced the former degrade-to-minor
 behaviour: there is no `LOBES_PRESSURE_POLICY` toggle and no silent downgrade —
@@ -229,7 +250,7 @@ Gemma when `minor` was unwired) structurally impossible.
 
 **Threshold table** (all comparisons are strictly `>` — exactly equal does not trigger):
 
-| Condition | `main` / `multimodal` request | `minor` request | Mode |
+| Condition | `main` / `multimodal` / `muse` request | `minor` request | Mode |
 |---|---|---|---|
 | swap > 75 % OR iowait > 50 % | **shed → 429 busy** | served | **busy** |
 | *(none)* | served as requested | served | warm |
@@ -274,7 +295,7 @@ streaming-safe — headers precede the body):
 
 | Header | Value |
 |---|---|
-| `X-Lobes-Tier` | The tier actually served (`main` / `minor` / `multimodal`) |
+| `X-Lobes-Tier` | The tier actually served (`main` / `minor` / `multimodal` / `muse`) |
 | `X-Lobes-Tier-Reason` | `default` \| `manual_override` |
 
 **Override header:** send `X-Lobes-Override: true` on the request to force the
@@ -523,10 +544,13 @@ deployment today — this branch never fires: every response stays
 byte-identical to the pre-proxy contract, exactly as a referral-only
 deployment is already byte-identical to the pre-referral one.
 
-**Scope.** Proxy-lobes covers the four core roles (`cortex`, `senses`,
-`embedder`, `reranker`) only — `stt`/`tts` (the audio overlay) have no
-peer-origin or peer-proxy channel at all, mirroring their exclusion from
-`<PREFIX>_FEASIBLE`. See [`docs/openai-api.md`](openai-api.md#auth-and-exposure)
+**Scope.** Proxy-lobes covers the five core roles (`cortex`, `senses`,
+`muse`, `embedder`, `reranker`) only — the peer channels
+(`<PREFIX>_PEER_ORIGIN` / `<PREFIX>_PEER_PROXY` / `<PREFIX>_PEER_API_KEY`)
+exist for the prefixes `PRIMARY_` / `MULTIMODAL_` / `MUSE_` / `EMBED_` /
+`RERANK_`, mirroring the five-name `FEASIBLE_ENV` map. `stt`/`tts` (the audio
+overlay) have no peer-origin or peer-proxy channel at all, mirroring their
+exclusion from `<PREFIX>_FEASIBLE`. See [`docs/openai-api.md`](openai-api.md#auth-and-exposure)
 for the wire-level header/401 detail.
 
 ### Supported catalog vs. warm backends
@@ -606,6 +630,15 @@ pre-migration NGC image (see "Engine" above; t8 parked):
 | `minor` (cheap, opt-in) | `Qwen/Qwen3.5-4B` | 0.10 | ~13 |
 | `middle` (legacy, opt-in) | `nvidia/Qwen3-14B-NVFP4` | 0.12 | ~15 |
 | `multimodal-coder` (opt-in) | `sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4` | 0.12 | ~15 |
+
+The 31B `muse` gear (`vllm-muse`, behind the `muse` compose profile) is
+deliberately **not** in this table: it is never added on top of the default
+duo — it only runs on a deployment shape that drops BOTH heavy default lobes
+first (`thor-muse`), where its `util 0.55` is **measured** (2026-07-17 live
+boot; the 0.40 hypothesis was refused with 0.6 GiB KV) though the full
+acceptance run is still pending. See
+[`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md) and
+[`docs/deployment-shapes.md`](deployment-shapes.md).
 
 The **primary now serves its full 128K native context**
 (`PRIMARY_MAX_MODEL_LEN=131072`, `PRIMARY_GPU_MEM_UTIL=0.30` — util-bound, not

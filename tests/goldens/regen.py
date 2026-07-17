@@ -44,7 +44,7 @@ from lobes.profiles.loader import builtin_names, resolve_profile  # noqa: E402
 from lobes.profiles.render import profile_env  # noqa: E402
 from lobes.profiles.shape_render import render_shape  # noqa: E402
 from lobes.profiles.shapes import (  # noqa: E402
-    COLLEAGUE_ROLES,
+    DEFAULT_HOSTED_ROLES,
     builtin_shape_names,
     resolve_shape,
 )
@@ -133,19 +133,21 @@ def template_defaults_text() -> str:
 def _shape_needs_goldens(shape) -> bool:
     """Whether a shape gets its own ``shapes/`` goldens.
 
-    The whole-brain identity shape (hosts every :data:`COLLEAGUE_ROLES` role
-    -- the six first-class Colleague roles, NOT the broader
+    The whole-brain identity shape (hosts every :data:`DEFAULT_HOSTED_ROLES`
+    role -- the six default-hosted Colleague roles, NOT the broader
     :data:`~lobes.profiles.shapes.SHAPE_ROLES`, which also admits the opt-in
-    `minor` gear that machine-as-brain deliberately never hosts -- with no
-    overrides) renders identically to the bare card profile, so it is
-    validated against the existing ``tests/goldens/<card>.env`` (see
-    ``tests/test_shape_goldens.py``) rather than copied into a drifting
-    duplicate. Every shape that DROPS a role, hosts `minor`, or carries an
-    override diverges from the bare profile and gets per-card goldens of its
-    own. General by construction: a future identity shape is auto-excluded, a
-    future mesh-lobe (or small-model reference shape) auto-included.
+    `minor` gear and the opt-in core `muse` lobe that machine-as-brain
+    deliberately never hosts -- with no overrides) renders identically to the
+    bare card profile (a non-hosted opt-in core role renders nothing at all,
+    see ``shape_render.compose_profile``), so it is validated against the
+    existing ``tests/goldens/<card>.env`` (see ``tests/test_shape_goldens.py``)
+    rather than copied into a drifting duplicate. Every shape that DROPS a
+    role, hosts `minor`/`muse`, or carries an override diverges from the bare
+    profile and gets per-card goldens of its own. General by construction: a
+    future identity shape is auto-excluded, a future mesh-lobe (or
+    small-model reference shape) auto-included.
     """
-    return set(shape.hosts) != set(COLLEAGUE_ROLES) or bool(shape.overrides)
+    return set(shape.hosts) != set(DEFAULT_HOSTED_ROLES) or bool(shape.overrides)
 
 
 def shape_golden_pairs() -> list[tuple[str, str]]:

@@ -28,13 +28,16 @@ from typing import Any, Mapping
 
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 
-# The per-machine-profile roles — the four gateway-fronted, generate/pooling
+# The per-machine-profile roles — the five gateway-fronted, generate/pooling
 # lanes a compose template actually parameterises per machine. Deliberately a
 # SUBSET of lobes.roles.ROLES: stt/tts are fixed audio sidecars (Parakeet /
 # Chatterbox) with no machine-dependent vLLM knobs of their own — they are out
 # of scope for this schema, matching lobes/roles.py's own
-# ROLE_MAX_MODEL_LEN_ENV, which likewise carries no stt/tts entry.
-ROLES: tuple[str, ...] = ("cortex", "senses", "embedder", "reranker")
+# ROLE_MAX_MODEL_LEN_ENV, which likewise carries no stt/tts entry. ``muse``
+# (the opt-in Gemma 4 31B creative lobe) IS in scope — it carries the full
+# per-machine knob set — but is hosted only by a muse-hosting deployment
+# shape, never by machine-as-brain (see lobes.profiles.shapes.OPT_IN_CORE_ROLES).
+ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "embedder", "reranker")
 
 # The machine knobs a compose template substitutes per role/gear. Order here
 # is the canonical field order on RoleProfile below (minus feasible/model).

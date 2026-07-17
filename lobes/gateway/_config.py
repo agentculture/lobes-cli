@@ -30,6 +30,11 @@ _DEFAULT_MULTIMODAL = "coolthor/gemma-4-12B-it-NVFP4A16"
 # _optional_backend(name="multimodal-coder", ...) below.
 _DEFAULT_MULTIMODAL_CODER = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
+# The opt-in muse gear (Gemma 4 31B IT, NVIDIA NVFP4) — the seventh Colleague
+# role's backend. Hosted only by a muse-hosting deployment shape (never
+# machine-as-brain), so its backend is wired only when MUSE_BASE_URL is set —
+# and, uniquely, it is INFEASIBLE by default when unwired (see OPT_IN_BACKENDS).
+_DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
 
 # Per-backend "this machine's per-machine profile declares it CANNOT be served
 # AT ALL" signal (issue #92's "advertised implies reachable" extended to the
@@ -47,11 +52,24 @@ _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 FEASIBLE_ENV: dict[str, str] = {
     "primary": "PRIMARY_FEASIBLE",
     "multimodal": "MULTIMODAL_FEASIBLE",
+    "muse": "MUSE_FEASIBLE",
     "embed": "EMBED_FEASIBLE",
     "rerank": "RERANK_FEASIBLE",
 }
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
+
+# Backend names that are OPT-IN heavy lobes: hosted only by an explicit
+# muse-hosting deployment shape, never by the default machine-as-brain (see
+# lobes.profiles.shapes.OPT_IN_CORE_ROLES). Their feasibility DEFAULT is
+# inverted: with no explicit ``<PREFIX>_FEASIBLE`` value in the env, an
+# opt-in name is feasible only when its backend is actually WIRED
+# (``*_BASE_URL`` set). This keeps a pre-muse ``.env`` honest without a
+# re-init — ``model=muse`` on such a box 404s ``role_infeasible`` (referable /
+# proxyable via the peer channels) instead of silently upward-falling-back to
+# the primary, the exact half-honest posture #92 forbids. An explicit
+# truthy/falsy ``MUSE_FEASIBLE`` always wins over this default.
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -79,7 +97,7 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 # network is exactly what #92 forbade). It uses the SAME
 # ``<PREFIX>_<KNOB>`` backend-name prefixes as :data:`FEASIBLE_ENV` /
 # ``ROLE_MAX_MODEL_LEN_ENV`` so there is still exactly one env convention to
-# learn, and it is scoped to the same four Profile-schema backends —
+# learn, and it is scoped to the same five Profile-schema backends —
 # referral, like feasibility, is a core-role fact (the audio overlay is
 # outside the Profile schema and carries no referral channel).
 #
@@ -95,6 +113,7 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 PEER_ORIGIN_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_ORIGIN",
     "multimodal": "MULTIMODAL_PEER_ORIGIN",
+    "muse": "MUSE_PEER_ORIGIN",
     "embed": "EMBED_PEER_ORIGIN",
     "rerank": "RERANK_PEER_ORIGIN",
 }
@@ -103,7 +122,7 @@ PEER_ORIGIN_ENV: dict[str, str] = {
 # (proxy-lobes t1, issues #115/#127 — the follow-up :data:`PEER_ORIGIN_ENV`
 # above explicitly deferred). Same ``<PREFIX>_<KNOB>`` backend-name prefixes
 # as :data:`FEASIBLE_ENV` / :data:`PEER_ORIGIN_ENV` — still exactly one env
-# convention to learn — and the same four-core-role scope (the audio overlay
+# convention to learn — and the same five-core-role scope (the audio overlay
 # is outside the Profile schema and carries no proxy channel).
 #
 # A truthy token (``1``/``true``/``yes``, case-insensitive — the same
@@ -126,6 +145,7 @@ PEER_ORIGIN_ENV: dict[str, str] = {
 PEER_PROXY_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_PROXY",
     "multimodal": "MULTIMODAL_PEER_PROXY",
+    "muse": "MUSE_PEER_PROXY",
     "embed": "EMBED_PEER_PROXY",
     "rerank": "RERANK_PEER_PROXY",
 }
@@ -145,6 +165,7 @@ PEER_PROXY_ENV: dict[str, str] = {
 PEER_API_KEY_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_API_KEY",
     "multimodal": "MULTIMODAL_PEER_API_KEY",
+    "muse": "MUSE_PEER_API_KEY",
     "embed": "EMBED_PEER_API_KEY",
     "rerank": "RERANK_PEER_API_KEY",
 }
@@ -236,7 +257,7 @@ def _gateway_api_key(env: Mapping[str, str]) -> str | None:
     return None
 
 
-def _is_feasible(env: Mapping[str, str], backend_name: str) -> bool:
+def _is_feasible(env: Mapping[str, str], backend_name: str, *, wired: bool = True) -> bool:
     """True unless ``backend_name``'s ``<PREFIX>_FEASIBLE`` env var (see
     :data:`FEASIBLE_ENV`) holds an explicit falsy token.
 
@@ -244,12 +265,23 @@ def _is_feasible(env: Mapping[str, str], backend_name: str) -> bool:
     untouched deployment (no FEASIBLE var set anywhere) is completely
     unaffected, matching every other knob's ``${VAR:-default}`` convention.
     A backend with no entry in :data:`FEASIBLE_ENV` is always feasible here
-    (out of the per-machine Profile schema's four-role scope).
+    (out of the per-machine Profile schema's core-role scope).
+
+    ONE exception (see :data:`OPT_IN_BACKENDS`): an opt-in heavy lobe whose
+    ``<PREFIX>_FEASIBLE`` is absent/blank defaults to the ``wired`` fact
+    instead of ``True`` — an unwired opt-in lobe is honestly infeasible, so a
+    request for it 404s ``role_infeasible`` rather than upward-falling-back
+    to the primary. An explicit truthy/falsy value always wins.
     """
     key = FEASIBLE_ENV.get(backend_name)
     if key is None:
         return True
-    return (env.get(key) or "").strip().lower() not in _FALSY_FEASIBLE
+    raw = (env.get(key) or "").strip().lower()
+    if raw in _FALSY_FEASIBLE:
+        return False
+    if not raw and backend_name in OPT_IN_BACKENDS:
+        return wired
+    return True
 
 
 @dataclass(frozen=True)
@@ -425,6 +457,22 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-multimodal:8000",
             default_name=_DEFAULT_MULTIMODAL,
         ),
+        # The opt-in muse generate backend (Gemma 4 31B IT, NVIDIA NVFP4 — the
+        # seventh Colleague role, the creative/ideation lobe). Wired only when
+        # MUSE_BASE_URL is present — i.e. when a muse-hosting deployment shape
+        # (thor-muse) rendered its activation env (COMPOSE_PROFILES=muse +
+        # MUSE_BASE_URL, see lobes.profiles.shape_render). Absent by default,
+        # so the routing table is unchanged on every pre-muse deployment; the
+        # unwired backend is also INFEASIBLE by default (OPT_IN_BACKENDS above)
+        # so `model=muse` 404s role_infeasible instead of falling back upward.
+        _optional_backend(
+            env,
+            name="muse",
+            url_key="MUSE_BASE_URL",
+            name_key="MUSE_SERVED_NAME",
+            default_url="http://vllm-muse:8000",
+            default_name=_DEFAULT_MUSE,
+        ),
         # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
         # role_hint="candidate" since the "support both" demotion — see
         # docs/vllm-nightly-migration.md §7). Wired only when
@@ -496,12 +544,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     if coder_backend is not None:
         aliases["multimodal-coder"] = coder_backend.served_name
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
-    # Hardware feasibility (task t6): computed over the FOUR canonical backend
+    # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually
     # WIRED in this table, so a role declared infeasible with no *_BASE_URL set
     # at all still lands in `infeasible` (a config/display fact, not contingent
-    # on wiring). See RoutingTable.infeasible / infeasible_owner.
-    infeasible = frozenset(name for name in FEASIBLE_ENV if not _is_feasible(env, name))
+    # on wiring). See RoutingTable.infeasible / infeasible_owner. The `wired`
+    # fact is passed through for the OPT_IN_BACKENDS default (muse: unwired and
+    # unflagged ⇒ infeasible — see _is_feasible).
+    wired_names = frozenset(b.name for b in backends)
+    infeasible = frozenset(
+        name for name in FEASIBLE_ENV if not _is_feasible(env, name, wired=name in wired_names)
+    )
     # Opt-in honest referral (mesh-brain t3): the operator-declared peer
     # origins, empty by default — see PEER_ORIGIN_ENV above. Computed once
     # here because the proxy-lobes channels below both gate on it.

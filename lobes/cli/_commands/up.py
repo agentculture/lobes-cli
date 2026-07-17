@@ -10,6 +10,8 @@ Roles → compose services (issue #81, t7)::
 
     cortex    → vllm-primary       (the Qwen 27B generate primary)
     senses    → vllm-multimodal    (the Gemma 4 12B multimodal gear)
+    muse      → vllm-muse          (the Gemma 4 31B creative lobe — opt-in,
+                                    hosted only by a muse-hosting shape)
     embedder  → vllm-embed         (Qwen3-Embedding-0.6B pooling gear)
     reranker  → vllm-rerank        (Qwen3-Reranker-0.6B score gear)
     stt       → stt                (Parakeet — audio overlay, opt-in)
@@ -49,6 +51,7 @@ from lobes import roles
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
+from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
 from lobes.runtime import _compose, _env
 
 # role → the compose SERVICE name (the top-level key under ``services:`` — NOT the
@@ -57,6 +60,7 @@ from lobes.runtime import _compose, _env
 ROLE_SERVICE: dict[str, str] = {
     "cortex": "vllm-primary",
     "senses": "vllm-multimodal",
+    "muse": "vllm-muse",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -67,11 +71,14 @@ ROLE_SERVICE: dict[str, str] = {
 # any target that includes one needs the ``-f`` overlay AND the file scaffolded.
 _AUDIO_ROLES: frozenset[str] = frozenset({"stt", "tts"})
 
-# The colleague-stack bundle (r4): the FULL six-role Colleague set. Not a role in
-# :data:`lobes.roles.ROLES` — it is ``up``'s own composite target, defined here.
+# The colleague-stack bundle (r4): the DEFAULT-HOSTED Colleague set — the six
+# roles machine-as-brain hosts. Deliberately NOT all of :data:`lobes.roles.ROLES`:
+# the opt-in ``muse`` lobe is hosted only by a muse-hosting shape and its service
+# is compose-profile-gated, so bundling it here would break colleague-stack on
+# every default deployment. Not a role itself — ``up``'s own composite target.
 COLLEAGUE_STACK = "colleague-stack"
 
-# Every valid ``up`` target: the six roles (canonical order) + the bundle. Keyed
+# Every valid ``up`` target: the seven roles (canonical order) + the bundle. Keyed
 # off :data:`lobes.roles.ROLES` so this and the role registry never drift.
 TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK,)
 
@@ -83,13 +90,39 @@ def _resolve(target: str) -> tuple[list[str], bool]:
     (stt/tts, or colleague-stack which always includes them, r4).
     """
     if target == COLLEAGUE_STACK:
-        return [ROLE_SERVICE[r] for r in roles.ROLES], True
+        return [ROLE_SERVICE[r] for r in DEFAULT_HOSTED_ROLES], True
     if target in ROLE_SERVICE:
         return [ROLE_SERVICE[target]], target in _AUDIO_ROLES
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=f"unknown role '{target}'",
         remediation="valid: " + ", ".join(TARGETS),
+    )
+
+
+def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
+    """Raise USER_ERROR when an opt-in core role's compose profile isn't active.
+
+    ``vllm-muse`` is parked behind the ``muse`` Docker Compose profile in the
+    base fleet template; without ``COMPOSE_PROFILES`` naming it (rendered by a
+    muse-hosting shape's activation env), ``docker compose up vllm-muse`` fails
+    with an unexplained "no such service". Name the real fix instead.
+    """
+    if target not in OPT_IN_CORE_ROLES:
+        return
+    profiles = _env.read_env(Path(deploy_dir) / _compose.ENV_FILE, "COMPOSE_PROFILES") or ""
+    if target in [p.strip() for p in profiles.split(",")]:
+        return
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"role '{target}' is opt-in and this deployment does not activate it "
+            f"(COMPOSE_PROFILES in .env does not include '{target}')"
+        ),
+        remediation=(
+            f"re-scaffold with a {target}-hosting shape "
+            f"('lobes init --shape thor-{target} --apply'), then retry"
+        ),
     )
 
 
@@ -163,6 +196,10 @@ def cmd_up(args: argparse.Namespace) -> int:
             ),
         )
 
+    # An opt-in core role (muse) needs its compose profile activated by a
+    # hosting shape — name the real fix instead of compose's "no such service".
+    _opt_in_core_activated(deploy_dir, target)
+
     # A role the deployment shape drops must not start here — name the shape
     # instead of letting compose fail with "no such service" (t4b overlay).
     shape_present = _shape_blocked_services(deploy_dir, services, target)
@@ -220,7 +257,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "role",
         metavar="ROLE",
-        help="cortex | senses | embedder | reranker | stt | tts | colleague-stack.",
+        help="cortex | senses | muse | embedder | reranker | stt | tts | colleague-stack.",
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--apply", action="store_true", help="Actually run docker compose.")

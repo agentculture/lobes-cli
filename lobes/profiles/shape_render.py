@@ -54,7 +54,7 @@ from typing import Mapping
 
 from lobes.profiles.render import profile_env
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
-from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_ROLES, Shape
+from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
 
 # The base fleet compose file every deployment runs, plus the opt-in audio
 # overlay. A Shape hosting an audio role (stt/tts) is what turns the overlay on
@@ -64,13 +64,14 @@ FLEET_COMPOSE_FILE = "docker-compose.yml"
 AUDIO_OVERLAY_FILE = "docker-compose.audio.yml"
 
 # role -> the compose SERVICE (the `services:` key the compose template
-# declares) that serves it. The four core roles and `minor` live in the base
+# declares) that serves it. The five core roles and `minor` live in the base
 # fleet; stt/tts live in the audio overlay. Kept as a constant mirroring the
 # shipped template exactly -- same design as render.ROLE_ENV_PREFIX, and
 # verified against the real compose files by tests/test_shape_goldens.py.
 ROLE_SERVICE: dict[str, str] = {
     "cortex": "vllm-primary",
     "senses": "vllm-multimodal",
+    "muse": "vllm-muse",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -107,6 +108,24 @@ OPT_IN_COMPOSE_PROFILE: dict[str, str] = {
     "minor": "minor",
 }
 
+# Opt-in CORE role (lobes.profiles.shapes.OPT_IN_CORE_ROLES) -> its activation
+# env + gating compose profile. Like `minor`, the vllm-muse service is parked
+# behind a Docker Compose profile in the base fleet template (so
+# machine-as-brain and every pre-muse deployment never start a 31B by
+# accident) and its gateway backend is wired only when MUSE_BASE_URL is
+# non-empty. UNLIKE `minor`, muse is a Profile-machinery core role: its model
+# + knobs render through profile_env from the shape's own overrides (thor-muse
+# declares model/gpu_mem_util/max_model_len/...), so the activation env here
+# carries ONLY the base-URL wiring — never a served name or budget knob.
+OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
+    "muse": {
+        "MUSE_BASE_URL": "http://vllm-muse:8000",
+    },
+}
+OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
+    "muse": "muse",
+}
+
 
 def _overlay(base: RoleProfile, override: RoleProfile) -> RoleProfile:
     """Compose a shape's per-role budget override onto the card profile's role.
@@ -137,11 +156,20 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     * a core role the shape HOSTS -> the card's
       :class:`~lobes.profiles.schema.RoleProfile`, with the shape's budget
       override (if any) overlaid (:func:`_overlay`);
-    * a core role the shape DROPS -> ``RoleProfile(feasible=False)`` -- the box
-      does not serve it, so it renders the #110 flagged-off marker
-      (``<PREFIX>_FEASIBLE=false``) and no model/knobs.
+    * a DEFAULT core role the shape DROPS -> ``RoleProfile(feasible=False)``
+      -- the box does not serve it, so it renders the #110 flagged-off marker
+      (``<PREFIX>_FEASIBLE=false``) and no model/knobs;
+    * an OPT-IN core role (:data:`OPT_IN_CORE_ROLES` -- ``muse``) the shape
+      does NOT host -> the card's own declaration passes through VERBATIM
+      (usually: undeclared -> renders nothing). No flagged-off marker is
+      forced: the gateway already treats an UNWIRED opt-in backend as
+      infeasible by default (``OPT_IN_BACKENDS`` in
+      :mod:`lobes.gateway._config`), so the marker would be redundant -- and
+      omitting it is exactly what keeps the whole-brain ``machine-as-brain``
+      rendering byte-identical to the bare card profile (the identity
+      invariant the goldens pin), muse or no muse.
 
-    Only the four Profile-machinery core roles (:data:`ROLES`) carry ``.env``
+    Only the five Profile-machinery core roles (:data:`ROLES`) carry ``.env``
     knobs; ``stt``/``tts`` are audio-overlay sidecars handled by
     :func:`shape_compose_files` / :func:`shape_services`, not here. Pure.
     """
@@ -149,6 +177,12 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     for role in ROLES:
         if shape.hosts_role(role):
             roles[role] = _overlay(profile.role(role), shape.override(role))
+        elif role in OPT_IN_CORE_ROLES:
+            # Pass the card's opt-in-role declaration through unchanged (a
+            # base.toml veto keeps its marker; an undeclared role renders
+            # nothing) -- see the docstring's third bullet.
+            if role in profile.roles:
+                roles[role] = profile.role(role)
         else:
             roles[role] = RoleProfile(feasible=False)
     return Profile(
@@ -172,13 +206,24 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     (hosts every role, no overrides, no opt-in gear), which is the invariant
     the goldens pin.
     """
-    env = profile_env(compose_profile(shape, profile))
+    composed = compose_profile(shape, profile)
+    env = profile_env(composed)
     compose_profiles = [
         OPT_IN_COMPOSE_PROFILE[role] for role in OPT_IN_ROLES if shape.hosts_role(role)
     ]
     for role in OPT_IN_ROLES:
         if shape.hosts_role(role):
             env.update(OPT_IN_ACTIVATION_ENV[role])
+    # A hosted opt-in CORE role (muse) activates the same way — its service is
+    # compose-profile-gated and its gateway backend needs the *_BASE_URL wire —
+    # but ONLY when the composed profile leaves it feasible: a card that vetoes
+    # muse (base.toml's conservative feasible=false) must not have the shape
+    # start a 31B anyway. (Its model/knobs already rendered via profile_env
+    # from the shape's own overrides — see OPT_IN_CORE_ACTIVATION_ENV.)
+    for role in OPT_IN_CORE_ROLES:
+        if shape.hosts_role(role) and composed.role(role).feasible:
+            env.update(OPT_IN_CORE_ACTIVATION_ENV[role])
+            compose_profiles.append(OPT_IN_CORE_COMPOSE_PROFILE[role])
     if compose_profiles:
         env["COMPOSE_PROFILES"] = ",".join(compose_profiles)
     return env

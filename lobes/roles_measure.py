@@ -1,6 +1,6 @@
 """Per-role RUNTIME measurement — issue #81, task t8.
 
-Probes each of the six first-class roles (:data:`lobes.roles.ROLES`) on its own
+Probes each of the seven first-class roles (:data:`lobes.roles.ROLES`) on its own
 live endpoint and reports **runtime/serving** metrics, organised BY ROLE and
 grouped by the metric family its ``runtime`` implies:
 
@@ -109,13 +109,14 @@ AUDIO_METRIC_KEYS: frozenset[str] = frozenset(
 
 ALLOWED_METRIC_KEYS: frozenset[str] = LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS
 
-_LLM_ROLES: tuple[str, ...] = ("cortex", "senses")
+_LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse")
 _EMBED_RERANK_ROLES: tuple[str, ...] = ("embedder", "reranker")
 _AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
 _FAMILY_BY_ROLE: dict[str, str] = {
     "cortex": "llm",
     "senses": "llm",
+    "muse": "llm",
     "embedder": "embed_rerank",
     "reranker": "embed_rerank",
     "stt": "audio",
@@ -381,6 +382,7 @@ def _measure_stt_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> di
 _MEASURE_FN = {
     "cortex": _measure_llm_role,
     "senses": _measure_llm_role,
+    "muse": _measure_llm_role,
     "embedder": _measure_embed_rerank_role,
     "reranker": _measure_embed_rerank_role,
     "stt": _measure_stt_role,

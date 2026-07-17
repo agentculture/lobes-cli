@@ -343,6 +343,16 @@ def test_fleet_containers_excludes_shape_dropped_service(tmp_path) -> None:
     assert _compose.FLEET_GATEWAY in containers
 
 
+def test_fleet_containers_includes_muse_only_when_activated(tmp_path) -> None:
+    """The opt-in muse gear joins the expected fleet set exactly when the
+    deployment's .env activates its compose profile (what a thor-muse shape
+    render writes) — never on a default fleet."""
+    _scaffold_fleet(tmp_path)
+    assert _compose.FLEET_MUSE not in _compose.fleet_containers(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=muse\n", encoding="utf-8")
+    assert _compose.FLEET_MUSE in _compose.fleet_containers(tmp_path)
+
+
 def test_fleet_status_excludes_dropped_container(tmp_path, capsys) -> None:
     """Acceptance 5 end-to-end: `lobes fleet status` omits the dropped gear."""
     _scaffold_fleet(tmp_path)

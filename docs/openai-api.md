@@ -20,7 +20,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/audio/speech` | POST | Chatterbox TTS via the realtime bridge | text → audio bytes (24 kHz) |
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
-| `/capabilities` | GET | gateway | the six-role Colleague contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
+| `/capabilities` | GET | gateway | the seven-role Colleague contract (`cortex`/`senses`/`muse`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
 | `/health` | GET | gateway | liveness |
 
 Embeddings, rerank, score, and audio require the **fleet overlay** — they are not
@@ -57,7 +57,7 @@ and are never failover targets for each other.
 ### Pressure backpressure (busy, `429`)
 
 When the host is under swap/iowait pressure, a full-tier generate request
-(`main`/`cortex` or `multimodal`/`senses`) is **shed** with **`429 Too Many
+(`main`/`cortex`, `multimodal`/`senses`, or `muse`) is **shed** with **`429 Too Many
 Requests`** rather than silently degraded onto a different model — under
 pressure the gateway never substitutes a cheaper or different-capability model
 (issue #85). An explicit `model=minor` request is the servable floor and is
@@ -354,16 +354,26 @@ the gateway defaults to). This is the HTTP equivalent of `lobes overview --list`
 curl -s http://localhost:8000/v1/models/supported
 ```
 
-### Capabilities (the six-role Colleague contract)
+### Capabilities (the seven-role Colleague contract)
 
-`GET /capabilities` — the SIX first-class, Colleague-facing roles (`cortex`,
-`senses`, `embedder`, `reranker`, `stt`, `tts` — issue #81), each resolved to
+`GET /capabilities` — the SEVEN first-class, Colleague-facing roles (`cortex`,
+`senses`, `muse`, `embedder`, `reranker`, `stt`, `tts` — issue #81), each
+resolved to
 live metadata: `role`, `model`, `runtime`, `endpoint`, `path`, `context`,
 `quant`, `mtp`, `responsibilities`, `forbidden_responsibilities`, `ready`, and
 `loaded`. This is the discovery contract a Colleague client uses to drive the
 fleet by capability instead of a hardcoded model id — `lobes capabilities
 --json` returns the identical shape over the CLI. Non-OpenAI (lobes-native), a
 sibling to `/status`.
+
+Generate requests are addressed by capability-tier alias — `model=main|minor|
+multimodal|muse` (back-compat `hard|cheap|normal`), or the Colleague-role
+names `model=cortex|senses|muse`. `muse` (the opt-in creative/ideation lobe,
+Gemma 4 31B NVFP4) is hosted only by a muse-hosting deployment shape: on a
+deployment that doesn't host it, `model=muse` gets an honest `404
+role_infeasible` (never a silent fallback to the primary — the inverted
+feasibility default; see
+[`docs/gateway-fleet.md`](gateway-fleet.md#generate-lane-tier-aliases)).
 
 ```bash
 curl -s http://localhost:8000/capabilities
@@ -379,6 +389,7 @@ curl -s http://localhost:8000/capabilities
     "forbidden_responsibilities": [], "ready": true, "loaded": true
   },
   "senses": { "...": "..." },
+  "muse": { "...": "..." },
   "embedder": { "...": "..." },
   "reranker": { "...": "..." },
   "stt": { "...": "..." },
@@ -386,7 +397,7 @@ curl -s http://localhost:8000/capabilities
 }
 ```
 
-**All six roles** report this **one** client-reachable gateway `endpoint` —
+**All seven roles** report this **one** client-reachable gateway `endpoint` —
 including `stt`/`tts` — because routing is by the `model` field / OpenAI `path`,
 not by distinct URLs (issue #87). The gateway advertises the origin you dialed
 (the request `Host` header; override with `GATEWAY_PUBLIC_URL` for a tunnel), so
@@ -499,12 +510,12 @@ two-step provisioning flow (`cultureflare` + `lobes tunnel`).
 
 - `lobes explain gateway` — routing semantics (name / default / failover / SSE)
 - `lobes explain fleet` — the multi-container fleet topology
-- `lobes explain roles` — the six-role Colleague contract (`GET /capabilities`)
+- `lobes explain roles` — the seven-role Colleague contract (`GET /capabilities`)
 - `lobes explain embeddings` — `/v1/embeddings` request/response detail
 - `lobes explain rerank` — `/v1/rerank` request/response detail
 - `lobes explain score` — `/v1/score` request/response detail
 - `lobes explain tunnel` — Cloudflare Tunnel bring-up
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — full fleet topology, memory guidance, live validation findings
-- [`docs/colleague-stack.md`](colleague-stack.md) — the six-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
+- [`docs/colleague-stack.md`](colleague-stack.md) — the seven-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
 - [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), health/readiness, runbooks
 - [`docs/chatterbox-tts.md`](chatterbox-tts.md) — Chatterbox TTS details, voice prompting

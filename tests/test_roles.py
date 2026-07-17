@@ -39,7 +39,8 @@ _MULTIMODAL_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 
-_EXPECTED_ROLES = {"cortex", "senses", "embedder", "reranker", "stt", "tts"}
+_EXPECTED_ROLES = {"cortex", "senses", "muse", "embedder", "reranker", "stt", "tts"}
+_MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
 
 # The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
 # GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL
@@ -97,14 +98,14 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 
 
 # ---------------------------------------------------------------------------
-# Acceptance 1 — exactly the six roles, each with the full metadata block
+# Acceptance 1 — exactly the seven roles, each with the full metadata block
 # ---------------------------------------------------------------------------
 
 
 def test_registry_returns_exactly_the_six_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 6
+    assert len(registry) == 7
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -215,9 +216,9 @@ def test_audio_roles_present_but_unloaded_when_audio_url_unset() -> None:
 
 def test_absent_pooling_and_multimodal_roles_present_but_unloaded() -> None:
     registry = _registry(_primary_only_env())
-    # All six still present even though only the primary is wired.
+    # All seven still present even though only the primary is wired.
     assert set(registry) == _EXPECTED_ROLES
-    for name in ("senses", "embedder", "reranker"):
+    for name in ("senses", "muse", "embedder", "reranker"):
         assert registry[name].loaded is False
     # An unloaded role still names the model it WOULD serve (the catalog default),
     # with that model's catalog metadata — never blank, never an error.
@@ -264,6 +265,18 @@ def test_cortex_carries_authoritative_responsibilities_and_no_forbidden() -> Non
 def test_static_responsibility_maps_cover_all_six_roles() -> None:
     assert set(ROLE_RESPONSIBILITIES) == _EXPECTED_ROLES
     assert set(ROLE_FORBIDDEN) == _EXPECTED_ROLES
+    assert ROLE_RESPONSIBILITIES["muse"] == (
+        "creative_generation",
+        "long_form_writing",
+        "ideation",
+        "style_variation",
+        "divergent_second_opinion",
+    )
+    assert ROLE_FORBIDDEN["muse"] == (
+        "final_decision",
+        "repo_action",
+        "security_decision",
+    )
     assert ROLE_RESPONSIBILITIES["stt"] == ("transcribe", "audio_input_to_text")
     assert ROLE_RESPONSIBILITIES["tts"] == ("speech_output", "synthesize")
     assert ROLE_RESPONSIBILITIES["embedder"] == ("vectorization", "memory_retrieval_input")
@@ -413,7 +426,7 @@ def test_served_context_ignores_blank_override() -> None:
 def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
     """Audio roles (stt/tts) have no *_MAX_MODEL_LEN entry — they carry no token
     context regardless of any deployment env (see _audio_role)."""
-    assert set(ROLE_MAX_MODEL_LEN_ENV) == {"cortex", "senses", "embedder", "reranker"}
+    assert set(ROLE_MAX_MODEL_LEN_ENV) == {"cortex", "senses", "muse", "embedder", "reranker"}
     assert "stt" not in ROLE_MAX_MODEL_LEN_ENV
     assert "tts" not in ROLE_MAX_MODEL_LEN_ENV
 
@@ -614,10 +627,10 @@ def test_backend_ready_never_fabricates_ready_when_endpoint_empty() -> None:
 def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
     """ROLE_BACKEND's values are exactly the backend names a caller's
     backend_ready mapping (e.g. lobes.gateway._readiness.ReadinessCache) is
-    keyed by — "primary"/"multimodal"/"embed"/"rerank" — so a caller can pass
+    keyed by — "primary"/"multimodal"/"muse"/"embed"/"rerank" — so a caller can pass
     ReadinessCache.current() straight through with no key translation."""
-    assert set(ROLE_BACKEND.values()) == {"primary", "multimodal", "embed", "rerank"}
-    assert set(ROLE_BACKEND) == {"cortex", "senses", "embedder", "reranker"}
+    assert set(ROLE_BACKEND.values()) == {"primary", "multimodal", "muse", "embed", "rerank"}
+    assert set(ROLE_BACKEND) == {"cortex", "senses", "muse", "embedder", "reranker"}
 
 
 # ---------------------------------------------------------------------------

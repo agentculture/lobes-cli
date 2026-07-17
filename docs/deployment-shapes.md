@@ -2,15 +2,16 @@
 
 A **deployment shape** answers a question the #108/#110 machine profile
 deliberately does not: not "how is each role *tuned* on this card?" but
-"which of the six Colleague roles does *this box* host **at all**?" A shape
+"which of the seven Colleague roles does *this box* host **at all**?" A shape
 is composed as pure data **over** the machine profile at render time — the
 two axes are orthogonal: **shape × card**. This document is the deep
 reference; `lobes explain shapes` is the brief in-CLI version.
 
 ## What a deployment shape is
 
-The fleet exposes six first-class Colleague roles (issue #81): `cortex`,
-`senses`, `embedder`, `reranker`, `stt`, `tts`. A shape declares the subset a
+The fleet exposes seven first-class Colleague roles (issue #81): `cortex`,
+`senses`, `muse`, `embedder`, `reranker`, `stt`, `tts` — `muse` being the
+opt-in-hosted seventh (below). A shape declares the subset a
 box **hosts** (`lobes/profiles/shapes.py`'s `Shape.hosts`) plus, optionally, a
 per-role budget **override** that re-derives `gpu_mem_util` /
 `max_model_len` for a role that no longer shares the box with a dropped one
@@ -25,14 +26,15 @@ marker and nothing else. This is a **pure function of (shape, profile,
 template)**: no GPU probe, no host read, no subprocess, so it runs
 identically on a GPU-less CI runner.
 
-Three families exist:
+Four families exist:
 
 - **machine-as-brain** (the default) — one box hosts every role its card can
   serve. This is today's behaviour, made explicit as data: a bare `lobes
   init` (no `--shape` at all) resolves this shape, and because it carries
   **zero overrides**, composing it changes nothing — the rendering is
-  byte-identical to the pre-shape behaviour. A single-box operator makes no
-  new decisions.
+  byte-identical to the pre-shape behaviour, muse or no muse: a non-hosted
+  opt-in core role renders nothing at all (see "Opt-in core roles" below).
+  A single-box operator makes no new decisions.
 - **mesh-brain shapes** (`spark-lobe`, `thor-lobe`) — a box drops one heavy
   generate lobe to a peer box in the mesh and reclaims that lobe's freed
   GPU-memory budget for the lobe(s) it keeps. Opt-in, per box, via `lobes
@@ -42,6 +44,11 @@ Three families exist:
   instead, plus the two pooling gears and the audio overlay. Declared as
   data only — **not validated on a physical Jetson AGX Orin** (the #108
   rule; see the support table below).
+- **opt-in-core-role shape** (`thor-muse`) — a box that drops BOTH heavy
+  default lobes and instead hosts `muse`, the opt-in creative/ideation lobe
+  (Gemma 4 31B NVFP4), plus the two pooling gears and the audio overlay.
+  Declared as data only — **no physical box has booted it** (the #108 rule;
+  see the support table and "Opt-in core roles" below).
 
 ## The support table
 
@@ -51,14 +58,15 @@ Three families exist:
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
+| **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) has not passed and no transcript has landed under `docs/evidence/` (#108), so it carries no live-validation row. Do not read this row as a "muse is served" claim. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
 
-Both mesh-lobe shapes are pure data over the shipped `#108` `Profile` schema
+All shipped shapes are pure data over the `#108` `Profile` schema
 — no per-shape Python branch exists anywhere in `lobes/profiles/shapes.py` or
-`shape_render.py`; the four built-in TOML files
-(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-small}.toml`)
-differ from each other only in their `hosts` role subset and (for the two
-mesh shapes) their `overrides` budget re-derivation. `orin-small` adds one
-new hostable role beyond the six first-class Colleague roles: the opt-in
+`shape_render.py`; the five built-in TOML files
+(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-small,thor-muse}.toml`)
+differ from each other only in their `hosts` role subset and their
+`overrides` budget re-derivation. `orin-small` adds one
+new hostable role beyond the seven first-class Colleague roles: the opt-in
 `minor` gear (`lobes/profiles/shapes.py`'s `OPT_IN_ROLES`), which carries no
 Profile knobs of its own — re-using the `cortex` role slot for a 4B model
 instead would mean the box advertises the 27B Colleague role while actually
@@ -71,16 +79,58 @@ scaffolded `orin-small` would start no generate lane at all (found by review
 on PR #121; pinned by `tests/test_shape_goldens.py` and the orin-small
 goldens).
 
+## Opt-in core roles: how `muse` is hosted
+
+`muse` — the seventh Colleague role, the creative/ideation lobe
+(`nvidia/Gemma-4-31B-IT-NVFP4`) — introduced a new shape concept
+(`lobes/profiles/shapes.py`'s `OPT_IN_CORE_ROLES`): a role that carries the
+**full per-machine Profile knob set** (the profile schema's core roles are now
+`cortex`/`senses`/`muse`/`embedder`/`reranker`) yet is **never hosted by
+machine-as-brain** — a 31B cannot co-reside with the default `cortex`+`senses`
+duo on a 128 GB box. Concretely:
+
+- **The machine-as-brain identity set is `DEFAULT_HOSTED_ROLES`** (the six:
+  `cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`); the Colleague
+  *contract* set capabilities reports (`COLLEAGUE_ROLES`) is seven. On every
+  non-hosting shape — machine-as-brain included — muse renders *nothing*: the
+  card's own muse declaration passes through verbatim, which is exactly what
+  keeps machine-as-brain a byte-identical no-op over the bare card profile.
+  A marker would be redundant anyway, since an unwired muse is already
+  infeasible by default at the gateway (`OPT_IN_BACKENDS`). The one card that
+  does emit `MUSE_FEASIBLE=false` is `base.toml`, through its own conservative
+  veto — a card-level fact, not something the shape layer adds.
+- **Hostable only by an explicit shape; the full declaration lives in that
+  shape's own overrides**, not in a card profile: `thor-muse`'s
+  `[overrides.muse]` carries the model, budget, quantization, and
+  attention-backend knobs. The card profiles stay silent on muse, except
+  `base.toml`, which vetoes it (`[roles.muse] feasible=false` — the
+  conservative unknown-card rule).
+- **Hosting muse renders its activation env**
+  (`shape_render.OPT_IN_CORE_ACTIVATION_ENV` /
+  `OPT_IN_CORE_COMPOSE_PROFILE`): `COMPOSE_PROFILES=muse` un-gates the
+  profile-gated `vllm-muse` service in the base fleet template (parked like
+  `vllm-minor`; same custom image as `vllm-multimodal`,
+  `Dockerfile.vllm-gemma4`) and `MUSE_BASE_URL=http://vllm-muse:8000` wires
+  the gateway backend — plus the `MUSE_*` knobs rendered from the shape's
+  overrides via the ordinary profile-env path.
+- **`MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` / `MUSE_PEER_API_KEY` exist** just
+  like every core role's referral/proxy channels, so a box that doesn't host
+  muse can honestly refer (or transparently proxy) callers to the box that
+  does.
+
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small> [TARGET]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse> [TARGET]
 ```
 
-`orin-small` resolves and renders exactly like the other three (it is pure
-data, proven by the same goldens/tests) — but as of this writing it is
-**declared, not validated**: nothing here or in `lobes capabilities` claims a
-physical Orin has run it.
+`orin-small` and `thor-muse` resolve and render exactly like the other three
+(they are pure data, proven by the same goldens/tests) — but as of this
+writing both are **declared, not validated**: nothing here or in `lobes
+capabilities` claims a physical Orin has run `orin-small`; a physical Thor's
+2026-07-17 live boot measured `thor-muse`'s budget (util 0.55 at the full
+262144 window), but nothing claims it *validated* until the acceptance
+transcript lands under `docs/evidence/` (#108).
 
 - **Dry-run by default** — prints the resolved profile, the shape and its
   `hosts` list, how many env vars would be set, and (for a mesh shape)
@@ -101,7 +151,7 @@ physical Orin has run it.
   passing `--shape` together with `--single` is a hard user error, even when
   the shape named is the default `machine-as-brain`.
 - **`--shape` × `--audio`** — independent. Every built-in shape hosts `stt`
-  and `tts` identically (see the `hosts` list in all three TOMLs above), so
+  and `tts` identically (see the `hosts` list in every built-in TOML above), so
   `--audio` is the sole switch that scaffolds the realtime audio overlay
   (`docker-compose.audio.yml`); passing both flags together is harmless and
   idempotent. A dropped core lobe never affects whether audio is scaffolded,
@@ -158,8 +208,9 @@ deployment's `.env`, mirroring the `*_FEASIBLE` flags (`PEER_ORIGIN_ENV` in
 PRIMARY_PEER_ORIGIN=http://spark.local:8001
 # spark-lobe dropped senses; the Thor hosts it:
 MULTIMODAL_PEER_ORIGIN=http://thor.local:8001
-# (EMBED_PEER_ORIGIN / RERANK_PEER_ORIGIN exist too; stt/tts are outside the
-# channel, exactly as they are outside *_FEASIBLE.)
+# (EMBED_PEER_ORIGIN / RERANK_PEER_ORIGIN — and MUSE_PEER_ORIGIN, for the
+# opt-in muse lobe — exist too; stt/tts are outside the channel, exactly as
+# they are outside *_FEASIBLE.)
 ```
 
 The origin is a full, **operator-declared** URL. It is never derived from
@@ -351,7 +402,7 @@ other dependency from real PyPI, avoids that entirely.
 ## The acceptance script
 
 ```bash
-scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-small> [--audio] \
+scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small> [--audio] \
   [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
   [--dev-index URL] [--timeout SECS]
 scripts/accept-shape.sh --restore [--deploy-dir DIR]
@@ -520,15 +571,17 @@ elsewhere:
   data-plane mechanics: marker headers, the loop guard, peer failure modes
 - `docs/machine-profiles.md` — the per-machine (card) tuning axis this
   composes with
-- `docs/colleague-stack.md` — the six-role Colleague contract, including the
+- `docs/colleague-stack.md` — the seven-role Colleague contract, including the
   proxied role state
 - `lobes/profiles/shapes.py` — the `Shape` schema + built-in loader
-  (`COLLEAGUE_ROLES` / `OPT_IN_ROLES` / `SHAPE_ROLES`)
+  (`COLLEAGUE_ROLES` / `DEFAULT_HOSTED_ROLES` / `OPT_IN_CORE_ROLES` /
+  `OPT_IN_ROLES` / `SHAPE_ROLES`)
 - `lobes/profiles/shape_render.py` — the pure `(shape, profile) → compose/.env`
   renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the four shipped shapes, with
-  provenance comments on every override (and, for `orin-small`, on why its
-  generate lane is `minor` rather than `cortex`)
+- `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes, with
+  provenance comments on every override (for `orin-small`, on why its
+  generate lane is `minor` rather than `cortex`; for `thor-muse`, on why the
+  full `muse` declaration lives in the shape rather than a card profile)
 - `lobes/cli/_commands/init.py` — the `--shape` flag + generated
   `docker-compose.shape.yml` override
 - `scripts/accept-shape.sh` — the acceptance script

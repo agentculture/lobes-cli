@@ -9,7 +9,7 @@
 # deployment back.
 #
 # Usage:
-#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-small> [OPTIONS]
+#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small> [OPTIONS]
 #   ./scripts/accept-shape.sh --restore [--deploy-dir DIR]
 #
 # Options:
@@ -63,7 +63,7 @@ _usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    machine-as-brain|spark-lobe|thor-lobe|orin-small) SHAPE="$1"; shift ;;
+    machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small) SHAPE="$1"; shift ;;
     --deploy-dir)  DEPLOY_DIR="$2"; shift 2 ;;
     --audio)       AUDIO=1; shift ;;
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
@@ -161,7 +161,7 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   exit 0
 fi
 
-[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|orin-small)\n' >&2; exit 2; }
+[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small)\n' >&2; exit 2; }
 if [[ -n "${DEV_VERSION}" && -z "${DEV_INDEX}" ]]; then DEV_INDEX="https://test.pypi.org/simple/"; fi
 
 TRANSCRIPT="${HOME}/lobes-accept-${SHAPE}-${STAMP}.log"
@@ -183,6 +183,7 @@ printf '  transcript   : %s\n\n' "${TRANSCRIPT}"
 # card exercises the shape contract only and validates nothing about Orin
 # (the #108 rule stands until a physical Orin boots it).
 MINOR_CURL=0
+MUSE_CURL=0
 case "${SHAPE}" in
   spark-lobe)
     DROPPED_ROLES=(senses); DROPPED_ALIASES=(senses multimodal normal)
@@ -192,6 +193,14 @@ case "${SHAPE}" in
     DROPPED_ROLES=(cortex); DROPPED_ALIASES=(cortex main hard)
     HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
     PROBES=(embedder reranker); SENSES_CURL=1 ;;
+  thor-muse)
+    # The muse variant drops BOTH heavy default lobes and hosts the opt-in
+    # 31B muse lobe instead (the seventh Colleague role). model=muse is the
+    # heavy lane; a known-answer curl stands in for a dedicated muse probe.
+    DROPPED_ROLES=(cortex senses)
+    DROPPED_ALIASES=(cortex main hard senses multimodal normal)
+    HEAVY_PREFIX="MUSE"; HEAVY_ALIAS="muse"
+    PROBES=(embedder reranker); SENSES_CURL=0; MUSE_CURL=1 ;;
   orin-small)
     DROPPED_ROLES=(cortex senses)
     DROPPED_ALIASES=(cortex main hard senses multimodal normal)
@@ -259,6 +268,15 @@ fi
 # Phase 3 — boot and wait
 # ---------------------------------------------------------------------------
 printf '=== phase 3: lobes fleet up --apply ===\n'
+# Unified-memory boxes (Thor/Orin/GB10): vLLM's free-at-boot check counts the
+# page cache as used, and a fresh scaffold has just read gigabytes of wheel/
+# image/model data. Drop reclaimable caches when we can do so non-interactively
+# (passwordless sudo); skipped silently otherwise — the documented operator
+# ritual for the Thor first-boot race (docs/machine-profiles.md).
+if sudo -n true 2>/dev/null; then
+  sync && sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+  printf 'dropped reclaimable page caches (passwordless sudo available)\n'
+fi
 uv run lobes fleet up --apply --compose-dir "${DEPLOY_DIR}"
 PORT="$(_port)"
 _wait_healthy "${PORT}" "${TIMEOUT}"
@@ -362,7 +380,7 @@ printf '\n'
 printf '=== phase 4b: honest referral (opt-in peer origins) ===\n'
 _role_prefix() { # role name -> env prefix
   case "$1" in
-    cortex) echo PRIMARY ;; senses) echo MULTIMODAL ;;
+    cortex) echo PRIMARY ;; senses) echo MULTIMODAL ;; muse) echo MUSE ;;
     embedder) echo EMBED ;; reranker) echo RERANK ;; *) echo "" ;;
   esac
 }
@@ -388,11 +406,22 @@ for role in "${DROPPED_ROLES[@]:-}"; do
   _check "CLI capabilities: ${role} hosted_by ${origin}" \
     _hosted_by "${WORK}/caps-cli.json" "${role}" "${origin}"
   alias_for_role="${role}"
-  _check "POST model=${alias_for_role} -> 404 body carries the referral" bash -c "
-    curl -s '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
-      -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
-      | python3 -c 'import json,sys; b=json.load(sys.stdin); e=b[\"error\"]; sys.exit(0 if e.get(\"code\")==\"role_infeasible\" and e.get(\"hosted_by\")==\"${origin}\" else 1)'
-  "
+  proxy_knob="$(_env_val "${DEPLOY_DIR}/.env" "${prefix}_PEER_PROXY" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${proxy_knob}" == "1" || "${proxy_knob}" == "true" || "${proxy_knob}" == "yes" ]]; then
+    # Proxied role (#115/#127): the referral is FOLLOWED, so the honest
+    # surface is the response marker naming the declared origin, verbatim.
+    _check "POST model=${alias_for_role} -> proxied answer marked X-Lobes-Proxied-By: ${origin}" bash -c "
+      curl -s -D - -o /dev/null '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+        -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
+        | grep -qi '^x-lobes-proxied-by: *${origin}'
+    "
+  else
+    _check "POST model=${alias_for_role} -> 404 body carries the referral" bash -c "
+      curl -s '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+        -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
+        | python3 -c 'import json,sys; b=json.load(sys.stdin); e=b[\"error\"]; sys.exit(0 if e.get(\"code\")==\"role_infeasible\" and e.get(\"hosted_by\")==\"${origin}\" else 1)'
+    "
+  fi
 done
 if [[ "${REFERRALS}" -eq 0 ]]; then
   printf '  (no <PREFIX>_PEER_ORIGIN declared for a dropped role — referral is opt-in, skipped)\n'
@@ -410,6 +439,13 @@ if [[ "${SENSES_CURL}" -eq 1 ]]; then
   _check "probe: senses text known-answer (model=multimodal)" bash -c "
     curl -fsS '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
       -d '{\"model\":\"multimodal\",\"messages\":[{\"role\":\"user\",\"content\":\"What color is a cloudless daytime sky? Answer with one word.\"}],\"max_tokens\":16}' \
+      | python3 -c 'import json,sys; body=json.load(sys.stdin); sys.exit(0 if \"blue\" in body[\"choices\"][0][\"message\"][\"content\"].lower() else 1)'
+  "
+fi
+if [[ "${MUSE_CURL}" -eq 1 ]]; then
+  _check "probe: muse text known-answer (model=muse)" bash -c "
+    curl -fsS '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+      -d '{\"model\":\"muse\",\"messages\":[{\"role\":\"user\",\"content\":\"What color is a cloudless daytime sky? Answer with one word.\"}],\"max_tokens\":16}' \
       | python3 -c 'import json,sys; body=json.load(sys.stdin); sys.exit(0 if \"blue\" in body[\"choices\"][0][\"message\"][\"content\"].lower() else 1)'
   "
 fi

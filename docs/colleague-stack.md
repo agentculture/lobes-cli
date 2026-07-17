@@ -1,9 +1,10 @@
-# The Colleague stack: six roles, one contract
+# The Colleague stack: seven roles, one contract
 
-> The six first-class, Colleague-facing roles lobes exposes over the fleet —
-> `cortex` / `senses` / `embedder` / `reranker` / `stt` / `tts` — how a caller
-> discovers them, drives them, measures them, and the before→after context
-> migration that shipped alongside this contract (issue #81).
+> The seven first-class, Colleague-facing roles lobes exposes over the fleet —
+> `cortex` / `senses` / `muse` / `embedder` / `reranker` / `stt` / `tts` — how
+> a caller discovers them, drives them, measures them, and the before→after
+> context migration that shipped alongside this contract (issue #81; `muse`
+> joined as the seventh, opt-in-hosted role).
 
 This doc is the **role contract** reference. For the fleet's Docker topology,
 tuning knobs, and memory budget, see [`docs/gateway-fleet.md`](gateway-fleet.md);
@@ -22,12 +23,13 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The six roles
+## The seven roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
 | `cortex` | `primary` (generate) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
+| `muse` | `muse` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
@@ -44,22 +46,42 @@ below.
 > /v1/audio/transcriptions`) instead — it remains first-class and is
 > unaffected by this gap.
 
-`cortex`, `senses`, `embedder`, and `reranker` are always enumerated (present
-with `loaded=false` if their gear isn't wired in this deployment); `stt`/`tts`
-require `lobes init --fleet --audio`. **`brain` is not a valid role name** —
-`cortex` is the only reasoning/decision role.
+`cortex`, `senses`, `muse`, `embedder`, and `reranker` are always enumerated
+(present with `loaded=false` if their gear isn't wired in this deployment —
+`muse` additionally reports `feasible=false` unless a muse-hosting shape
+declares it, see the note below); `stt`/`tts` require `lobes init --fleet
+--audio`. **`brain` is not a valid role name** — `cortex` is the only
+reasoning/decision role.
+
+> **`muse` is an OPT-IN CORE ROLE — machine-as-brain never hosts it.** The
+> `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` is too heavy to
+> co-reside with the default `cortex`+`senses` duo on a 128 GB box, so the
+> default shape's hosted set stays the SIX default roles (`DEFAULT_HOSTED_ROLES`
+> in `lobes/profiles/shapes.py`) while the contract set capabilities reports
+> (`COLLEAGUE_ROLES`) is seven. Only an explicit muse-hosting deployment shape
+> (`lobes init --shape thor-muse`) serves it — **DECLARED/UNVALIDATED** as of
+> this writing: a 2026-07-17 live boot measured the budget, but the
+> acceptance run/transcript is pending, #108 (see
+> [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)). On every non-hosting
+> deployment `muse` is honestly `feasible: false` (and, uniquely, an unwired
+> muse *defaults* to infeasible even on a stale pre-muse `.env` — see
+> [`docs/gateway-fleet.md`](gateway-fleet.md#generate-lane-tier-aliases)), so
+> `model=muse` 404s `role_infeasible` — referable and proxyable like every
+> core role — rather than silently falling back to `cortex`.
 
 ### Responsibilities and forbidden responsibilities
 
 Each role carries a declared division of labour — what it is expected to own,
-and (for `senses`) what it must **not** do. These are **runtime-descriptor
-tokens, not correctness claims** — lobes does not grade whether a role did its
-job well; that judgment is Colleague's (see "Runtime-only, always" below).
+and (for `senses` and `muse`) what it must **not** do. These are
+**runtime-descriptor tokens, not correctness claims** — lobes does not grade
+whether a role did its job well; that judgment is Colleague's (see
+"Runtime-only, always" below).
 
 | Role | `responsibilities` | `forbidden_responsibilities` |
 |---|---|---|
 | `cortex` | `reasoning`, `deciding`, `planning`, `tool_use`, `code_repo_actions`, `validation`, `final_authority` | *(none — cortex is the final authority)* |
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
+| `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` | *(none)* |
@@ -76,6 +98,7 @@ resolve to the same backend (`lobes/catalog.py`'s `TIER_ROLE`):
 |---|---|---|---|
 | `primary` | `main` | `hard` | `cortex` |
 | `multimodal` | `multimodal` | `normal` | `senses` |
+| `muse` | `muse` | *(none — new with the role)* | `muse` — the first role whose name IS the backend/tier name; capability order is `minor` < `multimodal` < `muse` < `primary` |
 | `minor` | `minor` | `cheap` | *(no role name — `minor` has no Colleague role; it's the servable floor under pressure, not a first-class capability)* |
 
 A caller can send `model=cortex`, `model=main`, or `model=hard` to
@@ -93,7 +116,7 @@ base URL. Everything else — which model backs a role, whether it's loaded,
 what context it's served at — comes from the contract itself.
 
 ```bash
-lobes capabilities              # human-readable table, all six roles
+lobes capabilities              # human-readable table, all seven roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # the same contract, over HTTP
@@ -115,7 +138,7 @@ by role name, each value carrying exactly these fields:
 ```text
 {
   "<role>": {
-    "role": str,                          # "cortex" | "senses" | "embedder" | "reranker" | "stt" | "tts"
+    "role": str,                          # "cortex" | "senses" | "muse" | "embedder" | "reranker" | "stt" | "tts"
     "model": str,                         # the served model id this role resolves to (never blank)
     "runtime": str,                       # "vllm" | "parakeet" | "chatterbox"
     "endpoint": str,                      # client-reachable base URL to dial ("" when not wired)
@@ -143,8 +166,8 @@ host, and only when the operator declared a peer for it — see
 three-state contract.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
-it directly (issue #87). All six roles (`cortex`/`senses`/`embedder`/`reranker`
-**and** `stt`/`tts`) report the same base URL because routing happens via the
+it directly (issue #87). All seven roles (`cortex`/`senses`/`muse`/`embedder`/
+`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
 `model` field / the OpenAI `path`, not distinct per-role URLs; the internal
 upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
 fetch `GET /capabilities`, the gateway advertises the origin **you actually
@@ -160,10 +183,10 @@ one for consumers: for `stt`/`tts` it now reports a **live** readiness probe of
 the audio backend (issue #89) — `ready: true` only when an audio round-trip
 would actually succeed (Chatterbox + Parakeet both up, no poisoned CUDA
 context), `false` while they warm — so an advertised-ready audio role is truly
-consumable. The four gateway-fronted roles still report `ready` as a
-same-cost-as-`loaded` boolean **unless the role is proxied** (below), in which
-case `ready` reflects a live probe of the *peer*, not a local boolean. No
-`ready` value is a task-quality claim.
+consumable. The gateway-fronted roles (`cortex`/`senses`/`muse`/`embedder`/
+`reranker`) still report `ready` as a same-cost-as-`loaded` boolean **unless
+the role is proxied** (below), in which case `ready` reflects a live probe of
+the *peer*, not a local boolean. No `ready` value is a task-quality claim.
 
 Example (`cortex`, fully wired, default fleet):
 
@@ -187,7 +210,8 @@ Example (`cortex`, fully wired, default fleet):
 An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
-client can always render all six roles.
+client can always render all seven roles. (An unwired `muse` additionally
+defaults to `feasible: false` — the opt-in-hosting honesty rule above.)
 
 ## A third role state: proxied
 
@@ -266,11 +290,12 @@ touching the rest of the fleet:
 ```bash
 lobes up cortex --apply             # docker compose up -d vllm-primary
 lobes up senses --apply             # docker compose up -d vllm-multimodal
+lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only)
 lobes up embedder --apply           # docker compose up -d vllm-embed
 lobes up reranker --apply           # docker compose up -d vllm-rerank
 lobes up stt --apply                # requires the --audio overlay
 lobes up tts --apply                # requires the --audio overlay
-lobes up colleague-stack --apply    # all six roles at once (requires --audio scaffolded)
+lobes up colleague-stack --apply    # the SIX default roles at once (requires --audio scaffolded)
 ```
 
 Dry-run by default (prints the exact `docker compose …` command); `--apply`
@@ -280,7 +305,12 @@ tag, because tagging the already-default-on services with a profile would
 demote them out of the default fleet (a regression). If the audio overlay
 isn't scaffolded, `colleague-stack` (and `up stt`/`up tts`) fail with a
 remediation pointing at `lobes init --fleet --audio --apply`, rather than
-silently starting only four of the six roles.
+silently starting only four of the six roles. **`colleague-stack` stays the
+six default-hosted roles — `muse` is deliberately excluded** (its `vllm-muse`
+service is compose-profile-gated, so bundling it would break the target on
+every non-muse deployment). `lobes up muse` works on a muse-hosting
+deployment and errors helpfully — naming the fix — when the deployment's
+`COMPOSE_PROFILES` doesn't include `muse`.
 
 ## Measurement: `lobes measure`
 
@@ -289,14 +319,14 @@ claim (lobes measures serving performance; whether an *answer* was good is
 Colleague's call):
 
 ```bash
-lobes measure              # all six roles, table
-lobes measure --json       # all six roles, JSON
+lobes measure              # all seven roles, table
+lobes measure --json       # all seven roles, JSON
 lobes measure --role cortex --json
 ```
 
 Metrics are grouped by the role's family:
 
-- **LLM roles** (`cortex`, `senses`): `ttft_ms`, `decode_tps`, `prefill_tps`,
+- **LLM roles** (`cortex`, `senses`, `muse`): `ttft_ms`, `decode_tps`, `prefill_tps`,
   `context`, `mem_usage_pct` (when the vLLM `/metrics` scrape is cheaply
   reachable); `restart_count`/`error_count` are always `null` (not cheaply
   available without a docker inspect, which this verb deliberately never does).
@@ -337,11 +367,11 @@ A Colleague client needs **only the fleet's base URL**. The whole discovery
 and dispatch flow:
 
 1. `GET <base_url>/capabilities` once.
-2. Read the role you want (`cortex`, `senses`, `embedder`, `reranker`, `stt`,
-   `tts`) out of the response — its `endpoint`, `model`, and `path`.
+2. Read the role you want (`cortex`, `senses`, `muse`, `embedder`, `reranker`,
+   `stt`, `tts`) out of the response — its `endpoint`, `model`, and `path`.
 3. `POST <endpoint><path>` with `"model": <model>` and the role-appropriate
-   body shape (chat messages for `cortex`/`senses`, `input` for `embedder`,
-   `query`+`documents` for `reranker`).
+   body shape (chat messages for `cortex`/`senses`/`muse`, `input` for
+   `embedder`, `query`+`documents` for `reranker`).
 
 No model id is ever hardcoded in the client. Concretely (Python, stdlib-only):
 
@@ -366,8 +396,8 @@ call_role("http://localhost:8000", "cortex",
           {"messages": [{"role": "user", "content": "ping"}]})
 ```
 
-Because `cortex` and `senses` are **gateway-fronted**, they (along with
-`embedder`/`reranker`) share the **same `endpoint`** — the gateway's base
+Because `cortex`, `senses`, and `muse` are **gateway-fronted**, they (along
+with `embedder`/`reranker`) share the **same `endpoint`** — the gateway's base
 URL — and routing between them happens purely via the `model` field the
 contract handed back. `stt`/`tts` resolve to the audio-overlay bridge URL
 instead.
@@ -425,7 +455,7 @@ and live-validation history behind this rebalance.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
-  deployment-shape axis: which of these six roles a given box hosts at all,
+  deployment-shape axis: which of these seven roles a given box hosts at all,
   the cross-box honest-referral surface for a role it doesn't, and the
   opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
   key contract, a worked example).

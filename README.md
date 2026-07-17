@@ -253,9 +253,11 @@ is kept as an opt-in `multimodal-coder` gear; see
 `0.30 + 0.14 + 0.06 + 0.06 = 0.56` on the 128 GB GB10. The 4B
 `minor` companion and the legacy 14B Qwen are opt-in compose profiles
 (`COMPOSE_PROFILES=minor` / `COMPOSE_PROFILES=middle`). Callers address the
-generate lane by role/tier alias — `model=cortex|senses` (or
-`main|minor|multimodal`; back-compat `hard|cheap|normal`); see
-[`docs/colleague-stack.md`](docs/colleague-stack.md) for the six-role contract. `lobes switch` drives the single-model deployment (it can
+generate lane by role/tier alias — `model=cortex|senses|muse` (or
+`main|minor|multimodal|muse`; back-compat `hard|cheap|normal`; `muse` — the
+opt-in-hosted 31B creative lobe, declared/unvalidated — is served only by a
+muse-hosting shape, never the default fleet); see
+[`docs/colleague-stack.md`](docs/colleague-stack.md) for the seven-role contract. `lobes switch` drives the single-model deployment (it can
 also serve an embed/score gear solo — auto-detected from the catalog, or forced
 with `--task embed|score`); change the fleet primary by editing the fleet `.env`
 and re-running `lobes fleet up --apply`. See `lobes explain fleet` / `lobes
@@ -265,7 +267,7 @@ explain gateway` for the routing semantics,
 gears, [`docs/gemma-4-12b-nvfp4.md`](docs/gemma-4-12b-nvfp4.md) for the
 multimodal gear, [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the
 full topology, and [`docs/colleague-stack.md`](docs/colleague-stack.md) for
-the six-role Colleague contract (`cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`,
+the seven-role Colleague contract (`cortex`/`senses`/`muse`/`embedder`/`reranker`/`stt`/`tts`,
 `lobes capabilities`, `GET /capabilities`).
 
 ### Per-model notes

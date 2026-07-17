@@ -77,7 +77,7 @@ def _cmd_status_pressure(json_mode: bool) -> int:
         emit_result(result, json_mode=True)
     else:
         shed_line = (
-            f"shed:    main/cortex + senses requests return 429 busy "
+            f"shed:    main/cortex + senses + muse requests return 429 busy "
             f"(retry after {retry_after}s)"
             if shed
             else "shed:    none — all tiers served"

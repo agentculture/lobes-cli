@@ -64,7 +64,8 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain tuning` (purpose + machine profiles)
 - `lobes explain fleet`
 - `lobes explain gateway`
-- `lobes explain roles` (the six-role Colleague contract: cortex/senses/embedder/reranker/stt/tts)
+- `lobes explain roles` (the seven-role Colleague contract:
+  cortex/senses/muse/embedder/reranker/stt/tts)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
 - `lobes explain backend`
@@ -311,7 +312,8 @@ container (`python -m lobes.gateway`).
 ## Pressure (busy backpressure)
 
 Under swap/iowait pressure the gateway **sheds** a full-tier request
-(`main`/`cortex` or `multimodal`/`senses`) with **HTTP 429 + `Retry-After`** and
+(`main`/`cortex`, `multimodal`/`senses`, or `muse`) with **HTTP 429 +
+`Retry-After`** and
 `X-Lobes-Tier-Reason: busy` — it never substitutes a cheaper or
 different-capability model in its place (issue #85). An explicit `model=minor`
 request is the floor and is always served. There is no silent degrade and no
@@ -688,9 +690,12 @@ _PROFILES = """\
 # lobes profiles — machine detection and per-role tuning
 
 A **machine profile** is a per-card tuning declaration: which models serve each
-role (`cortex` / `senses` / `embedder` / `reranker`), their GPU memory budget,
+core role (`cortex` / `senses` / `muse` / `embedder` / `reranker`), their GPU
+memory budget,
 context length, attention backend, and vLLM knobs the compose template
-substitutes.
+substitutes. (`muse` is the opt-in-hosted seventh Colleague role: the card
+profiles stay silent on it — the `thor-muse` SHAPE carries its declaration —
+except `base.toml`, which vetoes it on unrecognised cards.)
 
 ## Detection
 
@@ -716,13 +721,15 @@ Built-in profiles:
 
 ## Knobs per role
 
-Each of the four roles (cortex, senses, embedder, reranker) carries seven tunable
+Each of the five core roles (cortex, senses, muse, embedder, reranker) carries
+tunable
 knobs (each optional — "no opinion" = template default applies):
 `feasible`, `model`, `gpu_mem_util`, `max_model_len`, `quantization`,
 `kv_cache_dtype`, `attention_backend`, `enforce_eager`, `max_num_seqs`.
 
-Render to env vars via role→prefix (e.g., `cortex` → `PRIMARY_`), so
-`cortex.gpu_mem_util=0.30` → `PRIMARY_GPU_MEM_UTIL=0.30`.
+Render to env vars via role→prefix (`cortex` → `PRIMARY_`, `senses` →
+`MULTIMODAL_`, `muse` → `MUSE_`, `embedder` → `EMBED_`, `reranker` →
+`RERANK_`), so `cortex.gpu_mem_util=0.30` → `PRIMARY_GPU_MEM_UTIL=0.30`.
 
 ## Thor's validated divergences (2026-07-13)
 
@@ -780,16 +787,18 @@ _SHAPES = """\
 
 A **deployment shape** is the axis orthogonal to the machine profile: not
 "how is each role tuned on this card?" (that's the profile, `lobes explain
-profiles`) but "which of the six Colleague roles does this box host at
+profiles`) but "which of the seven Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
-## The four built-in shapes
+## The five built-in shapes
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
-  serve, today's behaviour made explicit. Carries zero overrides, so a bare
-  `lobes init` (no `--shape`) renders byte-identically to before this flag
-  existed.
+  serve (the six DEFAULT_HOSTED_ROLES — never the opt-in `muse`, below).
+  Carries zero overrides and renders byte-identically to the bare card
+  profile: a non-hosted opt-in core role renders nothing at all. No
+  `MUSE_FEASIBLE=false` marker is needed — the gateway already treats an
+  unwired `muse` as infeasible (`OPT_IN_BACKENDS`).
 - **`spark-lobe`** — drops `senses` (Gemma), keeps `cortex` + `embedder` +
   `reranker` + `stt`/`tts`. Reclaims the dropped budget: `cortex` rises to
   `gpu_mem_util=0.44` / `max_model_len=262144` (its full native 256K).
@@ -807,6 +816,20 @@ render time — `shape × card` — never a per-shape code fork.
   Orin has booted this shape (mirrors `base.toml`'s own conservative
   unrecognised-card fallback). No overrides (`minor` carries no Profile
   knobs to re-derive).
+- **`thor-muse`** — drops BOTH `cortex` and `senses`, hosts the opt-in
+  `muse` lobe (`vllm-muse`, Gemma 4 31B NVFP4 — the seventh Colleague
+  role) + `embedder` + `reranker` + `stt`/`tts`. `muse` is an **opt-in
+  core role** (OPT_IN_CORE_ROLES): machine-as-brain never hosts it, the
+  card profiles stay silent on it (`base.toml` vetoes it), and THIS
+  shape's own `[overrides.muse]` carries the full declaration. Hosting it
+  renders the activation env (`COMPOSE_PROFILES=muse` +
+  `MUSE_BASE_URL=http://vllm-muse:8000`) plus the MUSE_* knobs; the
+  MUSE_PEER_* referral/proxy channels exist like every core role's.
+  **Declared, UNVALIDATED** — its budget values (`gpu_mem_util=0.55`,
+  `max_model_len=262144` — the full 256K window) were measured by the
+  2026-07-17 live boot on a physical Thor (the 0.40 hypothesis was
+  refused), but the shape stays UNVALIDATED until the acceptance
+  transcript lands under `docs/evidence/` (#108).
 
 Both mesh-lobe shapes' reclaim values are **measured**, not computed: a
 naive reclaim-sum or the model's own solo default was refused by vLLM on
@@ -816,7 +839,7 @@ carries the value that fit, with a provenance comment.
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small> [--apply]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,
@@ -874,9 +897,9 @@ its own follow-up.
   co-residency tax numbers, the mesh-brain end-state decisions, the
   acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
-- `lobes explain roles` — the six-role Colleague contract
+- `lobes explain roles` — the seven-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the four shipped shapes
+- `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
 """
 
@@ -1007,7 +1030,7 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 | `/v1/audio/speech` | POST | Chatterbox TTS (audio overlay) |
 | `/v1/models` | GET | the backends loaded now (what's hot) |
 | `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
-| `/capabilities` | GET | the six-role Colleague contract (`lobes explain roles`) |
+| `/capabilities` | GET | the seven-role Colleague contract (`lobes explain roles`) |
 | `/health` | GET | gateway liveness |
 
 ## Routing
@@ -1030,20 +1053,21 @@ keyless. Unset = today's no-auth behaviour. See `lobes explain gateway`.
 
 See `lobes explain gateway` (routing), `lobes explain embeddings|rerank|score`
 (per-endpoint shapes), `lobes explain realtime` (audio), `lobes explain roles`
-(the six-role Colleague contract), and `docs/openai-api.md` for the full
+(the seven-role Colleague contract), and `docs/openai-api.md` for the full
 reference with `curl` examples and auth/exposure.
 """
 
 _ROLES = """\
-# lobes explain roles — the six-role Colleague contract
+# lobes explain roles — the seven-role Colleague contract
 
-lobes exposes the fleet as SIX first-class, Colleague-facing **roles**
+lobes exposes the fleet as SEVEN first-class, Colleague-facing **roles**
 (issue #81) — a caller addresses a *capability*, never a hardcoded model id:
 
 | Role | Backend | Endpoint path |
 |---|---|---|
 | `cortex` | `primary` (27B MTP) | `/v1/chat/completions` |
 | `senses` | `multimodal` (Gemma 4 12B) | `/v1/chat/completions` |
+| `muse` | `muse` (Gemma 4 31B NVFP4, opt-in hosting) | `/v1/chat/completions` |
 | `embedder` | `embed` (Qwen3-Embedding-0.6B) | `/v1/embeddings` |
 | `reranker` | `rerank` (Qwen3-Reranker-0.6B) | `/v1/rerank` (+ `/v1/score`) |
 | `stt` | Parakeet (audio overlay, opt-in) | `/v1/audio/transcriptions` |
@@ -1056,13 +1080,23 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
 - `senses` — intake, normalize_input, classify_intent,
   prepare_context_packet, speak_back. Forbidden: final_decision,
   repo_action, security_decision.
+- `muse` — creative_generation, long_form_writing, ideation,
+  style_variation, divergent_second_opinion. Forbidden: final_decision,
+  repo_action, security_decision (muse proposes, cortex decides).
 - `embedder` — vectorization, memory_retrieval_input. Forbidden: *(none)*.
 - `reranker` — retrieval_ordering, relevance_refinement. Forbidden: *(none)*.
 - `stt` — transcribe, audio_input_to_text. Forbidden: *(none)*.
 - `tts` — speech_output, synthesize. Forbidden: *(none)*.
 
-`cortex`/`senses`/`embedder`/`reranker` are always enumerated (present with
-`loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
+`cortex`/`senses`/`muse`/`embedder`/`reranker` are always enumerated (present
+with `loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
+**`muse` is opt-in for HOSTING** — machine-as-brain never hosts the 31B
+(it cannot co-reside with the cortex+senses duo on a 128 GB box); only a
+muse-hosting shape (`thor-muse`, DECLARED/UNVALIDATED — budget measured
+live 2026-07-17, acceptance transcript pending)
+serves it, and on a non-hosting deployment an unwired `muse` defaults to
+`feasible: false`, so `model=muse` 404s `role_infeasible` instead of
+silently falling back to cortex (see `docs/gemma-4-31b-nvfp4.md`).
 **`brain` is not a valid role** — `cortex` is the only decision authority.
 
 ## cortex/senses are layered names, not a rename
@@ -1070,12 +1104,15 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
 `cortex` == the `primary` backend == tier alias `main` (back-compat `hard`).
 `senses` == the `multimodal` backend == tier alias `multimodal` (back-compat
 `normal`). All four names resolve to the SAME warm backend — no internal
-service/container/env var was renamed; this is additive vocabulary.
+service/container/env var was renamed; this is additive vocabulary. `muse`
+is the first role whose name IS its backend and tier name (`model=muse`, no
+back-compat alias); the tier capability order is
+minor < multimodal < muse < main.
 
 ## Discovery: `lobes capabilities` / `lobes endpoint` / `GET /capabilities`
 
 ```bash
-lobes capabilities              # human table, all six roles
+lobes capabilities              # human table, all seven roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # same contract, over HTTP
@@ -1084,7 +1121,7 @@ curl -s http://localhost:8000/capabilities   # same contract, over HTTP
 Both are built by the ONE canonical registry (`lobes.roles.build_role_registry`),
 so the CLI and gateway payloads are identical in shape. Each role carries:
 `role, model, runtime, endpoint, path, context, quant, mtp, responsibilities,
-forbidden_responsibilities, ready, loaded, feasible`. All four gateway-fronted roles
+forbidden_responsibilities, ready, loaded, feasible`. All gateway-fronted roles
 share ONE `endpoint` (the gateway) — routing is by the `model` field, not
 distinct URLs. An unwired role is never omitted, only `loaded: false`.
 
@@ -1098,11 +1135,13 @@ local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
 ## Serving and measuring
 
 - `lobes up <role> [--apply]` — start (or `--down`: stop) ONE role's gear;
-  `lobes up colleague-stack --apply` brings up all six (requires the audio
-  overlay scaffolded). Dry-run by default.
+  `lobes up colleague-stack --apply` brings up the SIX default roles
+  (requires the audio overlay scaffolded; `muse` is deliberately excluded —
+  `lobes up muse` works on a muse-hosting deployment and errors helpfully
+  when COMPOSE_PROFILES doesn't include muse). Dry-run by default.
 - `lobes measure [--role <role>] [--json]` — read-only per-role RUNTIME
-  metrics (ttft/decode/prefill for cortex/senses; reqs-per-sec/latency for
-  embedder/reranker; RTF/latency for stt/tts). Never a correctness claim.
+  metrics (ttft/decode/prefill for cortex/senses/muse; reqs-per-sec/latency
+  for embedder/reranker; RTF/latency for stt/tts). Never a correctness claim.
 - `lobes benchmark --profile {cortex-only,cortex+senses,senses-direct,
   qwen-nvfp4-vs-bf16,all}` — RUNTIME-ONLY side-by-side comparison across a
   fleet profile.

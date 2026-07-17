@@ -9,8 +9,8 @@ at, leaving the rest to a peer box in the mesh (a ``mesh-brain`` shape, e.g.
 
 A Shape is composed OVER the #108 Profile schema rather than re-implementing
 it: its role vocabulary (:data:`SHAPE_ROLES`) is
-:data:`~lobes.profiles.schema.ROLES` (the four Profile-machinery core roles —
-``cortex``/``senses``/``embedder``/``reranker``) plus :data:`AUDIO_ROLES`
+:data:`~lobes.profiles.schema.ROLES` (the five Profile-machinery core roles —
+``cortex``/``senses``/``muse``/``embedder``/``reranker``) plus :data:`AUDIO_ROLES`
 (``stt``/``tts``, the opt-in audio-overlay sidecars —
 ``lobes/templates/fleet/docker-compose.audio.yml``) plus :data:`OPT_IN_ROLES`
 (``minor``, the opt-in ``vllm-minor`` compose service — added in the
@@ -27,8 +27,9 @@ fixed ``${MINOR_MODEL:-...}``/``${VLLM_MINOR_GPU_MEM_UTIL:-...}``/
 ``overrides`` — only in ``hosts``.
 
 Every built-in shape (:mod:`lobes.profiles.builtin_shapes`) is PURE DATA: the
-four shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``,
-``orin-small``) differ from each other only in their ``hosts`` role subset
+five shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``,
+``thor-muse``, ``orin-small``) differ from each other only in their ``hosts``
+role subset
 and their ``overrides`` budget re-derivation — there is no per-shape Python
 branch anywhere in this module.
 
@@ -61,15 +62,34 @@ from lobes.profiles.schema import RoleProfile
 # dependency stays lobes.profiles.schema, per the brain-shapes t1 scope.
 AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
-# The six first-class, Colleague-facing roles (issue #81): the four
+# The seven first-class, Colleague-facing roles (issue #81): the five
 # Profile-machinery core roles plus the two audio-overlay sidecars. This is
-# the "whole brain" set machine-as-brain hosts exactly -- the identity-shape
+# the Colleague CONTRACT set (`lobes capabilities` / GET /capabilities key
+# exactly these roles).
+COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
+
+# Core roles that are OPT-IN for HOSTING: they carry the full per-machine
+# Profile knob set (unlike `minor`/stt/tts) but are heavy lobes no card can
+# co-host with the default cortex+senses duo, so the default machine-as-brain
+# shape never hosts them -- only an explicit muse-hosting shape (thor-muse)
+# does. A shape's `overrides` MAY declare them (they are Profile-machinery
+# roles), and a muse-hosting shape typically carries the FULL declaration
+# (model + budget knobs) in its overrides, with the card profiles staying
+# silent -- see builtin_shapes/thor-muse.toml.
+OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse",)
+
+# The "whole brain" set machine-as-brain hosts exactly -- the identity-shape
 # invariant (see shape_render.py's module docstring and
 # tests/goldens/regen.py's `_shape_needs_goldens`) is defined against THIS
-# set, not the broader :data:`SHAPE_ROLES` below, because the opt-in `minor`
-# gear (added after this constant, for t2) is deliberately excluded from
-# "every role this card can serve" -- machine-as-brain never hosts it.
-COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
+# set, not :data:`COLLEAGUE_ROLES` or the broader :data:`SHAPE_ROLES` below:
+# the opt-in `minor` gear and the opt-in core roles (`muse`) are deliberately
+# excluded from "every role this card can serve" -- machine-as-brain never
+# hosts them, and a NON-hosted opt-in core role renders nothing at all (the
+# gateway's OPT_IN_BACKENDS unwired-by-default rule carries the honesty), so
+# machine-as-brain stays byte-identical to the bare card profile.
+DEFAULT_HOSTED_ROLES: tuple[str, ...] = tuple(
+    role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
+)
 
 # The opt-in `minor` compose service (`vllm-minor`, gated in the fleet
 # template by the "minor" Docker Compose profile -- see env.example's
@@ -93,9 +113,9 @@ OPT_IN_ROLES: tuple[str, ...] = ("minor",)
 # re-derive a budget for).
 _NO_OVERRIDE_ROLES: tuple[str, ...] = AUDIO_ROLES + OPT_IN_ROLES
 
-# Every role a Shape may declare hosted: :data:`COLLEAGUE_ROLES` (the six
+# Every role a Shape may declare hosted: :data:`COLLEAGUE_ROLES` (the seven
 # first-class, Colleague-facing roles) plus the opt-in `minor` gear
-# (:data:`OPT_IN_ROLES`) -- the one addition beyond that six-role vocabulary.
+# (:data:`OPT_IN_ROLES`) -- the one addition beyond that seven-role vocabulary.
 SHAPE_ROLES: tuple[str, ...] = COLLEAGUE_ROLES + OPT_IN_ROLES
 
 BUILTIN_SHAPES_PACKAGE = "lobes.profiles.builtin_shapes"
@@ -225,7 +245,7 @@ class Shape:
                     "carry no Profile knobs to override (the audio-overlay sidecars stt/tts, "
                     "or the opt-in 'minor' gear)"
                 ),
-                remediation="only the four Profile-machinery core roles may appear in overrides: "
+                remediation="only the Profile-machinery core roles may appear in overrides: "
                 f"{', '.join(PROFILE_ROLES)}",
             )
         overrides = {

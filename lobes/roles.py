@@ -1,14 +1,21 @@
-"""The role registry — the six first-class, Colleague-facing lobes (issue #81).
+"""The role registry — the seven first-class, Colleague-facing lobes (issue #81).
 
-lobes exposes the fleet not as a bag of model ids but as SIX discoverable
+lobes exposes the fleet not as a bag of model ids but as SEVEN discoverable
 *roles*, each resolved to a live endpoint + metadata so a caller (Colleague)
-can address a capability by role — ``cortex``, ``senses``, ``embedder``,
-``reranker``, ``stt``, ``tts`` — without hardcoding any single model endpoint:
+can address a capability by role — ``cortex``, ``senses``, ``muse``,
+``embedder``, ``reranker``, ``stt``, ``tts`` — without hardcoding any single
+model endpoint:
 
 * ``cortex``   → the ``primary`` generate backend (Qwen 3.6 27B NVFP4 MTP).
   The authoritative reasoning/action/decision layer — the final authority.
 * ``senses``   → the ``multimodal`` generate backend (Gemma 4 12B). The
   user-facing intake/perception/speak-back layer; it does NOT decide or act.
+* ``muse``     → the ``muse`` generate backend (Gemma 4 31B NVFP4). The
+  creative/ideation lobe — long-form writing, brainstorming, divergent
+  second opinions; it proposes, never decides. OPT-IN: hosted only by a
+  muse-hosting deployment shape (``lobes init --shape thor-muse``), never
+  by the default ``machine-as-brain`` (a 31B cannot co-reside with the
+  cortex+senses duo on a 128 GB box).
 * ``embedder`` → the ``embed`` pooling backend (Qwen3-Embedding-0.6B) →
   ``POST /v1/embeddings``.
 * ``reranker`` → the ``score``/rerank backend (Qwen3-Reranker-0.6B) →
@@ -43,19 +50,22 @@ from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._routing import RoutingTable
 
-# The six first-class roles, in canonical order: generate lane, pooling lane,
+# The seven first-class roles, in canonical order: generate lane, pooling lane,
 # then the opt-in audio overlay. Downstream (CLI/gateway) iterate this for a
 # stable ordering.
-ROLES: tuple[str, ...] = ("cortex", "senses", "embedder", "reranker", "stt", "tts")
+ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
 
-# role → the internal gateway :attr:`Backend.name` that serves it. Only the four
+# role → the internal gateway :attr:`Backend.name` that serves it. Only the five
 # gateway-fronted roles appear here; ``stt``/``tts`` are audio-overlay sidecars,
 # not gateway backends (they are resolved from ``ServerConfig.audio_url`` below).
 # NOTE the name↔role_hint mismatch for the pooling lane: the *backend* is named
 # ``embed``/``rerank`` while the *catalog* role_hint is ``embedding``/``reranker``.
+# ``muse`` is the first role whose backend name IS the role name — it has no
+# pre-#81 internal name to preserve.
 ROLE_BACKEND: dict[str, str] = {
     "cortex": "primary",
     "senses": "multimodal",
+    "muse": "muse",
     "embedder": "embed",
     "reranker": "rerank",
 }
@@ -66,15 +76,20 @@ ROLE_BACKEND: dict[str, str] = {
 ROLE_ROLE_HINT: dict[str, str] = {
     "cortex": "primary",
     "senses": "multimodal",
+    "muse": "muse",
     "embedder": "embedding",
     "reranker": "reranker",
 }
 
+# The chat path the three generate lobes share (SonarCloud: duplicated literal).
+_CHAT_PATH = "/v1/chat/completions"
+
 # role → the OpenAI path a caller hits. The reranker exposes both /v1/rerank and
 # /v1/score; /v1/rerank is the canonical path advertised here.
 ROLE_PATH: dict[str, str] = {
-    "cortex": "/v1/chat/completions",
-    "senses": "/v1/chat/completions",
+    "cortex": _CHAT_PATH,
+    "senses": _CHAT_PATH,
+    "muse": _CHAT_PATH,
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
@@ -111,6 +126,13 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "prepare_context_packet",
         "speak_back",
     ),
+    "muse": (
+        "creative_generation",
+        "long_form_writing",
+        "ideation",
+        "style_variation",
+        "divergent_second_opinion",
+    ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
     "stt": ("transcribe", "audio_input_to_text"),
@@ -119,10 +141,12 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
 
 # What each role must NOT do. cortex is the final authority (nothing forbidden);
 # senses is intake/perception only — it must not decide, act on the repo, or make
-# security calls. The service roles carry no forbidden list of their own.
+# security calls; muse proposes/creates but likewise never decides or acts.
+# The service roles carry no forbidden list of their own.
 ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "cortex": (),
     "senses": ("final_decision", "repo_action", "security_decision"),
+    "muse": ("final_decision", "repo_action", "security_decision"),
     "embedder": (),
     "reranker": (),
     "stt": (),
@@ -137,6 +161,7 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
 ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "cortex": "PRIMARY_MAX_MODEL_LEN",
     "senses": "MULTIMODAL_MAX_MODEL_LEN",
+    "muse": "MUSE_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
 }
@@ -486,7 +511,7 @@ def build_role_registry(
         and every deployment with no proxied roles) leaves every role's
         ``ready`` exactly as before: a proxied role without a live peer
         signal is honestly not-ready, never hardcoded true.
-    :returns: an ordered ``dict`` keyed by role name with EXACTLY the six roles.
+    :returns: an ordered ``dict`` keyed by role name with EXACTLY the seven roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
@@ -508,7 +533,7 @@ def build_role_registry(
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
     registry: dict[str, RoleInfo] = {}
 
-    for role in ("cortex", "senses", "embedder", "reranker"):
+    for role in ("cortex", "senses", "muse", "embedder", "reranker"):
         if backend_ready is None:
             # NOT SUPPLIED → back-compat: no live signal at all, so fall back to
             # the coarse `loaded` proxy (the original t4 behaviour). `None` here

@@ -596,7 +596,7 @@ def _role_infeasible_body(
 
 def _busy_body(requested_tier: str) -> bytes:
     """Return the JSON body for a 429 busy (shed) response."""
-    _LANE_LABELS = {"main": "cortex", "multimodal": "senses"}
+    _LANE_LABELS = {"main": "cortex", "multimodal": "senses", "muse": "muse"}
     label = _LANE_LABELS.get(requested_tier, requested_tier)
     return json.dumps(
         {
@@ -661,16 +661,18 @@ _PROXY_LOOP_STATUS = 508
 _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "primary": "PRIMARY_SERVED_NAME",
     "multimodal": "MULTIMODAL_SERVED_NAME",
+    "muse": "MUSE_SERVED_NAME",
     "embed": "EMBED_SERVED_NAME",
     "rerank": "RERANK_SERVED_NAME",
 }
 
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
 # fallback lobes.roles uses to NAME an unwired role's model. Scoped, like every
-# peer channel, to the four core roles (see lobes.gateway._config.PEER_PROXY_ENV).
+# peer channel, to the five core roles (see lobes.gateway._config.PEER_PROXY_ENV).
 _PEER_ROLE_HINT: dict[str, str] = {
     "primary": "primary",
     "multimodal": "multimodal",
+    "muse": "muse",
     "embed": "embedding",
     "rerank": "reranker",
 }
@@ -1717,7 +1719,7 @@ def capabilities_payload(
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict:
-    """The six first-class roles (issue #81), resolved via the shared registry.
+    """The seven first-class roles (issue #81), resolved via the shared registry.
 
     ``env`` defaults to ``os.environ``. The fleet compose passes the served
     ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` /
@@ -1734,7 +1736,7 @@ def capabilities_payload(
     unchanged). ``audio_ready`` is the live stt/tts readiness signal (issue #89)
     from :func:`probe_audio_ready`; when ``None`` the builder falls back to the
     configured ``bool(audio_url)`` (again the CLI/unit path). ``backend_ready`` is
-    the live readiness snapshot for the four gateway-fronted roles (issue #92),
+    the live readiness snapshot for the five gateway-fronted roles (issue #92),
     keyed by internal ``Backend`` name — exactly what
     :meth:`lobes.gateway._readiness.ReadinessCache.current` returns, so the HTTP
     route passes it straight through; when ``None`` each role's ``ready`` falls
@@ -1902,11 +1904,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(200, list_models_payload(self.table, ready, peer_served))
 
     def _get_capabilities(self) -> None:
-        # The #81 role→endpoint contract: SIX first-class roles resolved to
+        # The #81 role→endpoint contract: SEVEN first-class roles resolved to
         # live metadata via the shared lobes.roles registry. The endpoint is
         # the client-reachable origin this request actually dialed (#87),
         # stt/tts readiness is a live probe of the audio backend (#89), and the
-        # four gateway-fronted roles' readiness comes from the background
+        # five gateway-fronted roles' readiness comes from the background
         # ReadinessCache snapshot (#92) — read socket-free, no probe here.
         cfg = self.server_config
         origin = reachable_origin(self.headers.get("Host"), cfg.public_url)

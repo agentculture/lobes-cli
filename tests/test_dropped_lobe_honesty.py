@@ -380,6 +380,7 @@ def test_spark_cli_and_gateway_agree_on_dropped_senses() -> None:
     assert _feasible_by_role(cli) == {
         "cortex": True,
         "senses": False,
+        "muse": False,
         "embedder": True,
         "reranker": True,
         "stt": True,
@@ -396,6 +397,7 @@ def test_thor_cli_and_gateway_agree_on_dropped_cortex() -> None:
     assert _feasible_by_role(cli) == {
         "cortex": False,
         "senses": True,
+        "muse": False,
         "embedder": True,
         "reranker": True,
         "stt": True,

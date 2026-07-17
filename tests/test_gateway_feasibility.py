@@ -76,33 +76,42 @@ def _full_env(**over) -> dict[str, str]:
 
 
 def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
-    # The per-machine Profile schema only covers cortex/senses/embedder/
+    # The per-machine Profile schema covers cortex/senses/muse/embedder/
     # reranker (lobes.profiles.schema.ROLES) — mirrored 1:1 here by backend
     # name, using the SAME <PREFIX>_FEASIBLE convention as the served-context
-    # overlay's <PREFIX>_MAX_MODEL_LEN (PRIMARY/MULTIMODAL/EMBED/RERANK).
+    # overlay's <PREFIX>_MAX_MODEL_LEN (PRIMARY/MULTIMODAL/MUSE/EMBED/RERANK).
     assert FEASIBLE_ENV == {
         "primary": "PRIMARY_FEASIBLE",
         "multimodal": "MULTIMODAL_FEASIBLE",
+        "muse": "MUSE_FEASIBLE",
         "embed": "EMBED_FEASIBLE",
         "rerank": "RERANK_FEASIBLE",
     }
+
+
+# The opt-in muse lobe defaults to INFEASIBLE whenever it is unwired and
+# unflagged (OPT_IN_BACKENDS in lobes.gateway._config) — so on every env in
+# this module that doesn't wire MUSE_BASE_URL, `muse` is the honest baseline
+# member of table.infeasible. Every pre-muse expectation below composes with
+# this one deliberate delta.
+_BASELINE = frozenset({"muse"})
 
 
 def test_build_config_default_infeasible_is_empty() -> None:
     # Back-compat: no FEASIBLE var set anywhere → every existing deployment's
     # routing table is completely unaffected by this feature.
     table, _cfg = build_config(_full_env())
-    assert table.infeasible == frozenset()
+    assert table.infeasible == _BASELINE
 
 
 def test_build_config_marks_primary_infeasible() -> None:
     table, _cfg = build_config(_full_env(PRIMARY_FEASIBLE="false"))
-    assert table.infeasible == frozenset({"primary"})
+    assert table.infeasible == _BASELINE | {"primary"}
 
 
 def test_build_config_marks_multiple_backends_infeasible() -> None:
     table, _cfg = build_config(_full_env(MULTIMODAL_FEASIBLE="false", RERANK_FEASIBLE="false"))
-    assert table.infeasible == frozenset({"multimodal", "rerank"})
+    assert table.infeasible == _BASELINE | {"multimodal", "rerank"}
 
 
 @pytest.mark.parametrize("falsy", ["false", "False", "FALSE", "0", "no", "No", " false "])
@@ -114,7 +123,7 @@ def test_build_config_recognizes_falsy_tokens(falsy: str) -> None:
 @pytest.mark.parametrize("truthy", ["true", "1", "yes", "", "TRUE"])
 def test_build_config_recognizes_truthy_tokens(truthy: str) -> None:
     table, _cfg = build_config(_full_env(PRIMARY_FEASIBLE=truthy))
-    assert table.infeasible == frozenset()
+    assert table.infeasible == _BASELINE
 
 
 def test_build_config_infeasible_independent_of_wiring() -> None:

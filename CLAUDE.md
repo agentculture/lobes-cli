@@ -70,16 +70,17 @@ a retry-without-strict fallback on a grammar-compile failure. See
 `docs/qwen3.6-27b-text-nvfp4-mtp.md`, `docs/openai-api.md`, and
 `docs/gateway-fleet.md` for the mechanism, scope, and knob detail.
 
-### Colleague roles: cortex / senses / embedder / reranker / stt / tts
+### Colleague roles: cortex / senses / muse / embedder / reranker / stt / tts
 
-Beyond `cortex`, the **fleet** exposes SIX first-class, Colleague-facing
+Beyond `cortex`, the **fleet** exposes SEVEN first-class, Colleague-facing
 **roles** (issue #81) — the primary contract callers should address, not raw
 model ids: `cortex` (the 27B primary — reasoning/deciding/final authority),
 `senses` (the Gemma 4 12B multimodal gear — vision intake/perception; never
 decides or takes repo actions; the checkpoint declares audio support but it is
 **not currently served** on this vLLM path — issue #101 — so `senses` is
 vision-only in practice, and the purpose-built `stt` role, below, is the
-supported path for speech), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
+supported path for speech), `muse` (the opt-in-hosted creative/ideation lobe —
+see the paragraph below), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
 `POST /v1/embeddings`), `reranker` (`Qwen/Qwen3-Reranker-0.6B` → `POST
 /v1/rerank` + `/v1/score`), and the opt-in audio overlay's `stt`/`tts`. Roles
 are routed by **task family** (`generate` / `embed` / `score` / `rerank`) and
@@ -98,21 +99,49 @@ instead of merely co-residing it. The 4B `minor` (back-compat `cheap`,
 `COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
 (`COMPOSE_PROFILES=middle`, util 0.12) are **opt-in** gears and are not
 first-class Colleague roles. Callers address the generate lane by
-**capability-tier alias** — `model=main|minor|multimodal` (back-compat:
-`hard|cheap|normal`), or the Colleague-role names `model=cortex|senses` layered
-on top of `main`/`multimodal`; `normal`/`multimodal` maps to the Gemma gear, not
-the demoted 14B. A swap/iowait **pressure policy** degrades both `cortex` and
-`senses` requests to `minor` (swap > 75 % or iowait > 50 % → degraded, `minor`
-only — `senses` is a different capability, not a cheaper rung);
+**capability-tier alias** — `model=main|minor|multimodal|muse` (back-compat:
+`hard|cheap|normal`; capability order `minor` < `multimodal` < `muse` <
+`main`), or the Colleague-role names `model=cortex|senses` layered
+on top of `main`/`multimodal` (`muse`'s role name IS its tier/backend name);
+`normal`/`multimodal` maps to the Gemma gear, not
+the demoted 14B. A swap/iowait **pressure policy** degrades `cortex`,
+`senses`, and `muse` requests to `minor` (swap > 75 % or iowait > 50 % →
+degraded, `minor`
+only — `senses`/`muse` are different capabilities, not cheaper rungs);
 `lobes status --pressure` shows the current tier ceiling. Start/stop one role at
-a time with `lobes up <role>` (or the full six-role bundle, `lobes up
-colleague-stack`); measure per-role runtime with `lobes measure` and compare
+a time with `lobes up <role>` (or the six-default-role bundle, `lobes up
+colleague-stack` — `muse` is deliberately excluded from the bundle; `lobes up
+muse` works on a muse-hosting deployment and errors helpfully when
+`COMPOSE_PROFILES` doesn't include `muse`); measure per-role runtime with
+`lobes measure` (muse rides the llm family) and compare
 fleet profiles with `lobes benchmark --profile {cortex-only,cortex+senses,
 senses-direct,qwen-nvfp4-vs-bf16,all}`. LoRA adapter training targets the 4B
 bf16 `minor` only — the 14B NVFP4 is inference-only, and there is no `lobes
 train` verb. See `docs/qwen3-embedding-0.6b.md`, `docs/qwen3-reranker-0.6b.md`,
-`docs/gemma-4-12b-nvfp4.md`, `docs/gateway-fleet.md`, and
-`docs/colleague-stack.md` (the six-role contract).
+`docs/gemma-4-12b-nvfp4.md`, `docs/gemma-4-31b-nvfp4.md`,
+`docs/gateway-fleet.md`, and
+`docs/colleague-stack.md` (the seven-role contract).
+
+**`muse` — the seventh role (opt-in hosting).** Checkpoint:
+`nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's official modelopt
+NVFP4 export; 256K native; plain-gemma4 line, pythonic tool parser; native
+MTP declared via the `google/gemma-4-31B-it-assistant` draft — UNMEASURED on
+this target). Responsibilities: creative generation, long-form writing,
+ideation, style variation, a divergent second opinion — muse proposes,
+`cortex` decides (forbidden: final_decision / repo_action /
+security_decision). Alias `model=muse`. It is an **opt-in core role**
+(`OPT_IN_CORE_ROLES`): machine-as-brain NEVER hosts it — a 31B cannot
+co-reside with the cortex+senses duo on a 128 GB box — so only an explicit
+muse-hosting shape (`thor-muse`, below) serves it; every non-hosting shape
+renders nothing for muse — the card's own declaration passes through, so
+machine-as-brain stays a byte-identical no-op and only `base.toml`'s veto
+emits `MUSE_FEASIBLE=false` — and on a stale/pre-muse `.env` an unwired
+`muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
+`role_infeasible`, referable/proxyable, never a silent fallback to cortex).
+Under pressure `muse` degrades to `minor` exactly like cortex/senses.
+DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget (util
+0.55 at the full 262144 window); the acceptance transcript is pending
+(#108). See `docs/gemma-4-31b-nvfp4.md`.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
@@ -154,7 +183,7 @@ meanings, Thor's validated divergences, custom profiles, goldens contract);
 ## Deployment shapes
 
 Orthogonal to the machine-profile axis above (how a role is *tuned* on a
-card) is the **deployment-shape** axis (issue #113): which of the six
+card) is the **deployment-shape** axis (issue #113): which of the seven
 Colleague roles a box *hosts* at all, composed as pure data over the card
 profile at render time (`lobes/profiles/shapes.py`, `shape_render.py`).
 **machine-as-brain** (the default — bare `lobes init`, unchanged, zero new
@@ -175,14 +204,27 @@ unified-memory box in each case. A fourth built-in shape, **`orin-small`**
 opt-in `minor` gear (`vllm-minor`) instead, alongside the pooling gears and
 audio overlay — it ships as **declared, UNVALIDATED data only** (the #108
 rule: no physical Jetson AGX Orin has booted it, so no doc, support table,
-or `lobes capabilities` output may claim it validated). Select with `lobes
-init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small>` (dry-run by
+or `lobes capabilities` output may claim it validated). A fifth built-in
+shape, **`thor-muse`**, likewise drops BOTH heavy default lobes and instead
+hosts the opt-in `muse` lobe (`vllm-muse`, Gemma 4 31B) plus the pooling
+gears and audio overlay — `muse` is an **opt-in core role**
+(`OPT_IN_CORE_ROLES`): hostable only by an explicit shape, with the full
+muse declaration (model + budget knobs) in the shape's own overrides, the
+card profiles silent on it, and `base.toml` vetoing it; `thor-muse` too is
+**declared, UNVALIDATED** — its budget values (`gpu_mem_util=0.55`,
+`max_model_len=262144` — the full 256K window) were measured by the
+2026-07-17 live boot on a physical Thor (the 0.40 hypothesis was refused),
+and it stays UNVALIDATED until the acceptance transcript lands under
+`docs/evidence/` (#108). Select with `lobes
+init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse>`
+(dry-run by
 default, `--apply` to commit, byte-for-byte restorable by re-running with
 the previous shape). A dropped role is flagged `feasible:false` on both
 `lobes capabilities` and `GET /capabilities`, omitted from `/v1/models`, and
 404s `role_infeasible` on every alias — never half-served. Opt-in **honest
 referral** (issue #112, t3): declaring a peer origin per dropped role
-(`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `EMBED_PEER_ORIGIN` /
+(`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `MUSE_PEER_ORIGIN` /
+`EMBED_PEER_ORIGIN` /
 `RERANK_PEER_ORIGIN` — always operator-typed, never derived, per #92) makes
 both capabilities surfaces and the `role_infeasible` 404 body name the
 hosting peer (`hosted_by`); by default this is annotation only — the gateway

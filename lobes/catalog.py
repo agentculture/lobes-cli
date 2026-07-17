@@ -19,11 +19,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-# Shared ``context`` literal — three catalog entries (the archived Mistral
-# fallback and both Gemma 4 12B unified entries) share this exact native
-# context window; a single constant keeps them from drifting independently
-# (SonarCloud: duplicated string literal).
+# Shared ``context`` literals — several catalog entries share these exact
+# native context windows; a single constant keeps them from drifting
+# independently (SonarCloud: duplicated string literal). Same rationale for
+# the Gemma 4 unified-multimodal ``shape`` literal shared by the 12B pair and
+# the 31B muse gear.
 _CONTEXT_128K_NATIVE = "128K native"
+_CONTEXT_256K_NATIVE = "256K native"
+_SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
 
 @dataclass(frozen=True)
@@ -32,8 +35,9 @@ class SupportedModel:
 
     id: str  # OpenAI model id (== the vLLM --served-model-name)
     # The fleet's default role for this gear. One of:
-    # "primary" | "fallback" | "candidate" | "minor" | "multimodal" | "embedding" | "reranker".
-    # The generate-lane tier aliases (main/minor/multimodal + back-compat
+    # "primary" | "fallback" | "candidate" | "minor" | "multimodal" | "muse" |
+    # "embedding" | "reranker".
+    # The generate-lane tier aliases (main/minor/multimodal/muse + back-compat
     # cheap/normal/hard) resolve to a gear by this field — see TIER_ROLE / resolve_tier.
     role_hint: str
     shape: str  # architecture in a phrase, e.g. "dense" / "MoE (~3B active)"
@@ -70,7 +74,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # so this is the fallback when an image path is needed.
         role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (multimodal)",
-        context="256K native",
+        context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
@@ -207,7 +211,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # corrupt bf16 weights). See docs/qwen3.5-4b-minor.md.
         role_hint="minor",
         shape="hybrid linear-attn + ViT (multimodal)",
-        context="256K native",
+        context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="none",
@@ -241,7 +245,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # audio_token_id). Tracked as #101. See docs/gemma-4-12b-nvfp4.md
         # #live-validation-status-71 for the full evidence table.
         role_hint="multimodal",
-        shape="unified multimodal (text+image+audio)",
+        shape=_SHAPE_GEMMA4_UNIFIED,
         # Same base-model family as the coder entry — text_config.max_position_
         # embeddings=131072 confirmed for the Unified 12B IT line (#71); not
         # independently re-measured for this exact NVFP4A16 export.
@@ -297,7 +301,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # the input_audio content part rather than serving it. Tracked as #101.
         # ~15.7 GiB footprint ≈ 0.12 budget. See docs/gemma-4-12b-nvfp4.md and #71.
         role_hint="candidate",
-        shape="unified multimodal (text+image+audio)",
+        shape=_SHAPE_GEMMA4_UNIFIED,
         # Native context confirmed 128K (text_config.max_position_embeddings=131072,
         # read from the checkpoint config during #71 live validation).
         context=_CONTEXT_128K_NATIVE,
@@ -317,6 +321,49 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # (trained against the base it-model) expects. Not worth wiring by default;
         # the NVFP4 base entry above carries the wired MTP config instead. See
         # docs/vllm-nightly-migration.md §7.
+    ),
+    SupportedModel(
+        id="nvidia/Gemma-4-31B-IT-NVFP4",
+        # Gemma 4 31B IT (Google DeepMind), NVIDIA's official NVFP4 export — the
+        # `muse` gear: the fleet's OPT-IN creative/ideation generate lobe (the
+        # seventh Colleague role). NVIDIA ships only the 31B + 26B-A4B Gemma 4
+        # sizes in NVFP4 (the 12B `senses` gear is a community export) — this is
+        # the 31B. PLAIN gemma4 line (model_type "gemma4",
+        # Gemma4ForConditionalGeneration), NOT the Unified 12B family — but the
+        # checkpoint still declares vision_config + audio_config with
+        # image/audio token ids, i.e. multimodal intake like `senses`; the same
+        # vLLM audio gap (#101) is assumed to apply until measured. Weights are
+        # 30.4 GiB across 4 safetensors shards; config.json quant_method is
+        # "modelopt" (hf_quant_config.json: NVFP4, FP8 KV-cache scheme with
+        # calibrated scales — unlike the Qwen MTP re-export on Thor, #109).
+        # Tool calls use the "pythonic" parser (infer_parser: gemma-4* ids).
+        #
+        # Too heavy to co-reside with the cortex+senses duo on a 128 GB box —
+        # machine-as-brain never hosts it; a muse-hosting deployment shape
+        # (`lobes init --shape thor-muse`) is the only built-in way to serve it.
+        role_hint="muse",
+        shape=_SHAPE_GEMMA4_UNIFIED,
+        # text_config.max_position_embeddings=262144 (read from the checkpoint
+        # config, 2026-07-17); the thor-muse shape serves the FULL native
+        # window (262144 — operator decision, no box-budget trim).
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="pythonic",
+        # NVIDIA modelopt NVFP4 (config.json quant_method="modelopt" — resolves
+        # to modelopt_fp4), NOT compressed-tensors like the community 12B export.
+        quantization="modelopt",
+        status="configured",  # declared 2026-07-17; first live boot pending (Thor)
+        doc="gemma-4-31b-nvfp4.md",
+        task="generate",
+        # Native MTP via the public plain-line assistant draft
+        # (gemma4_assistant family — vLLM's hf_config_override normalizes it to
+        # gemma4_mtp with forced n_predict=1; see docs/gemma4-mtp-draft.md's
+        # family table). Same "model" key shape as the 12B entry. DECLARED, not
+        # yet measured on this 31B target — the first acceptance run gates it.
+        speculative_config=(
+            '{"method": "mtp", "model": "google/gemma-4-31B-it-assistant",'
+            ' "num_speculative_tokens": 1}'
+        ),
     ),
     SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
@@ -385,6 +432,9 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 #: — no internal service/env/container is renamed):
 #:   cortex → primary    (== main — the "thinking" primary backend)
 #:   senses → multimodal (== multimodal — the vision+audio backend)
+#:   muse   → muse       (Gemma 4 31B creative/ideation lobe — role IS the
+#:                        backend name; opt-in, hosted only by a muse-hosting
+#:                        deployment shape)
 TIER_ROLE: dict[str, str] = {
     # Primary vocabulary.
     "main": "primary",
@@ -394,12 +444,15 @@ TIER_ROLE: dict[str, str] = {
     "cheap": "minor",
     "normal": "multimodal",
     "hard": "primary",
-    # Capability-ROLE names (alias the same backends as main / multimodal).
-    # Order matters: ``tier_aliases`` derives ascending capability order from each
-    # role's *last* occurrence position here, so a multimodal-role alias must
-    # appear before a primary-role one (senses before cortex) to keep the
-    # last-occurrence sequence ascending (minor < multimodal < primary).
+    # Capability-ROLE names (alias the same backends as main / multimodal;
+    # muse is its own backend). Order matters: ``tier_aliases`` derives
+    # ascending capability order from each role's *last* occurrence position
+    # here, so a multimodal-role alias must appear before the muse one, and
+    # muse before a primary-role one (senses < muse < cortex) to keep the
+    # last-occurrence sequence ascending
+    # (minor < multimodal < muse < primary).
     "senses": "multimodal",
+    "muse": "muse",
     "cortex": "primary",
 }
 

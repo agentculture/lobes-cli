@@ -649,6 +649,111 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in muse generate backend (Gemma 4 31B IT, NVIDIA NVFP4) ---------
+  # The seventh Colleague role: the creative/ideation lobe (`muse`). An OPT-IN
+  # heavy lobe — parked behind the "muse" Docker Compose profile, so a plain
+  # `docker compose up` (machine-as-brain, and every pre-muse deployment)
+  # never starts a 31B by accident. A muse-hosting deployment shape
+  # (`lobes init --shape thor-muse --apply`) activates it: the shape render
+  # writes COMPOSE_PROFILES=muse (un-gates this service) + MUSE_BASE_URL
+  # (wires the gateway backend) + the MUSE_* knobs below into .env.
+  #
+  # GPU budget: NOT part of the default 0.56 fleet budget — muse only ever
+  # runs on a shape that drops BOTH heavy default lobes first (thor-muse).
+  # util 0.55 at the FULL 262144 native context is MEASURED on the physical
+  # Thor (2026-07-17): 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency;
+  # util 0.40 was refused live (0.6 GiB KV after the 256K profiling pass) —
+  # see lobes/profiles/builtin_shapes/thor-muse.toml.
+  #
+  # Same custom image as vllm-multimodal (Dockerfile.vllm-gemma4 — vLLM
+  # nightly + vllm[audio]): the plain-gemma4 31B line and the Unified 12B
+  # line ship in the same image; both services build the SAME Dockerfile and
+  # default to the SAME local tag, only the model args differ at runtime.
+  #
+  # --quantization=modelopt: NVIDIA's export (config.json
+  # quant_method="modelopt", resolves to modelopt_fp4) — NOT the community
+  # 12B's compressed-tensors. The checkpoint also ships calibrated FP8
+  # KV-cache scales (hf_quant_config.json kv_cache_quant_algo=FP8).
+
+  vllm-muse:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MUSE_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-muse
+    profiles:
+      - muse
+    # Boot ORDERING, not just start order (the Thor unified-memory first-boot
+    # race, docs/machine-profiles.md — measured live 2026-07-17 at 31B scale):
+    # a concurrent cold boot of the whole fleet crashed muse's CUDA-graph
+    # capture (CUBLAS_STATUS_EXECUTION_FAILED) while the pooling gears were
+    # still allocating, and every restart then failed vLLM's free-at-boot
+    # check against the dirtied page cache. Waiting for the two cheap gears
+    # to be HEALTHY first removes the concurrent-allocation window.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the
+      # same divergence the 12B senses gear carries (see vllm-multimodal).
+      - VLLM_ATTENTION_BACKEND=${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}
+      # Same vLLM 0.23 cudagraph-estimate overshoot mitigation as the 12B
+      # gear (#71) — the estimate starves the KV cache inside the util budget.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MUSE_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=muse   # → /logs/model-gear/muse-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-muse:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MUSE_MODEL:-nvidia/Gemma-4-31B-IT-NVFP4}
+      - --served-model-name=${MUSE_SERVED_NAME:-nvidia/Gemma-4-31B-IT-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MUSE_QUANTIZATION:-modelopt}
+      - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
+      - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.55}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=pythonic
+      # Native MTP via the public plain-line assistant draft (gemma4_assistant
+      # family — normalized by vLLM's hf_config_override to gemma4_mtp with
+      # forced n_predict=1; see docs/gemma4-mtp-draft.md). DECLARED, not yet
+      # measured on this 31B target — the first acceptance run gates it. MUST
+      # match lobes.catalog.SUPPORTED_MODELS' nvidia/Gemma-4-31B-IT-NVFP4
+      # entry byte for byte (tests/test_catalog.py guards the pairing).
+      - '--speculative-config={"method": "mtp", "model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 1}'
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -720,6 +825,12 @@ services:
       # "multimodal-coder" alias once wired — see lobes/gateway/_config.py.
       - MULTIMODAL_CODER_BASE_URL=${MULTIMODAL_CODER_BASE_URL:-}
       - MULTIMODAL_CODER_SERVED_NAME=${MULTIMODAL_CODER_SERVED_NAME:-}
+      # Opt-in muse gear — the seventh Colleague role (a muse-hosting shape
+      # sets MUSE_BASE_URL + COMPOSE_PROFILES=muse in .env; empty default =
+      # no backend wired, AND `model=muse` 404s role_infeasible instead of
+      # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
+      - MUSE_BASE_URL=${MUSE_BASE_URL:-}
+      - MUSE_SERVED_NAME=${MUSE_SERVED_NAME:-}
       # Empty default = follow the primary gear's served name (see _config.py's
       # `or primary.served_name` fallback) — stays correct when a profile swaps
       # the cortex model instead of routing no-model requests to an unserved id.
@@ -738,6 +849,10 @@ services:
       # so without them the gateway couldn't see the served lengths.)
       - PRIMARY_MAX_MODEL_LEN=${PRIMARY_MAX_MODEL_LEN:-131072}
       - MULTIMODAL_MAX_MODEL_LEN=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      # Empty default (NOT the vllm-muse service's 262144): muse is opt-in, so
+      # a deployment with no muse shape reports the catalog native for the
+      # sleeping lobe; a muse-hosting shape renders the served value into .env.
+      - MUSE_MAX_MODEL_LEN=${MUSE_MAX_MODEL_LEN:-}
       - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
       - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
@@ -758,6 +873,7 @@ services:
       # gateway container never inherits HF_TOKEN or any other .env secret.
       - PRIMARY_FEASIBLE=${PRIMARY_FEASIBLE:-}
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
+      - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
       # Opt-in honest referral (mesh-brain t3, issue #112; PEER_ORIGIN_ENV in
@@ -770,6 +886,7 @@ services:
       # pre-referral contract.
       - PRIMARY_PEER_ORIGIN=${PRIMARY_PEER_ORIGIN:-}
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
+      - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
       # Inbound gateway auth (OPT-IN; proxy-lobes t1, issue #115/#127): a
@@ -793,6 +910,7 @@ services:
       # default. CONFIG ONLY here: nothing dials a peer yet.
       - PRIMARY_PEER_PROXY=${PRIMARY_PEER_PROXY:-}
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
+      - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
       # Outbound pairwise credential (proxy-lobes t1, #115/#127): the API key
@@ -804,6 +922,7 @@ services:
       # other .env secret it doesn't explicitly need). Empty by default.
       - PRIMARY_PEER_API_KEY=${PRIMARY_PEER_API_KEY:-}
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
+      - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
     ports:
