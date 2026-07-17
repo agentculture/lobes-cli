@@ -489,15 +489,32 @@ _DOCTOR = """\
 Diagnoses the deployment with real checks: `docker_available` (docker + compose
 resolve), `compose_present` (a deployment is scaffolded), `env_coherence`
 (`.env` has `VLLM_SERVED_NAME` and it matches `culture.yaml`),
-`health_reachable` (`/health` responds), and `gateway_version_match` (the
-deployed gateway's own `lobes-cli` release, read from its `GET /health`
-`version` field, matches this CLI's — issue #99, catching a stale
-`MODEL_GEAR_VERSION` pin baked into `Dockerfile.gateway` at scaffold time and
-never re-pinned). A down model is a *warning*, not a failure; an unreachable
-gateway degrades the version check to a non-fatal informational result (not a
-false pass) — only missing docker, an un-scaffolded deployment, or an actual
-version *mismatch* make the run exit non-zero. JSON contract: `{"healthy",
-"checks"}`. Supports `--json`.
+`scaffold_files` (every expected scaffold file is on disk — a partial scaffold
+can serve for hours with `/health` green while one lane is simply absent),
+`profile_staleness` (the deployed `.env` carries the knobs the resolved
+machine profile requires — a pre-#110 `.env` missing its card's validated
+divergences is issue #119's silent-hang incident; a key still carrying the
+template default where the profile requires a divergence is named too, while
+a genuine operator override only downgrades to info), `health_reachable`
+(`/health` responds), and `gateway_version_match` (the deployed gateway's own
+`lobes-cli` release, read from its `GET /health` `version` field, matches this
+CLI's — issue #99, catching a stale `MODEL_GEAR_VERSION` pin baked into
+`Dockerfile.gateway` at scaffold time and never re-pinned). A down model is a
+*warning*, not a failure; an unreachable gateway degrades the version check to
+a non-fatal informational result (not a false pass) — only missing docker, an
+un-scaffolded deployment, or an actual version *mismatch* make the run exit
+non-zero.
+
+**`--fix` — the missing-only heal lane (#119).** Plain `doctor` never writes.
+`doctor --fix` prints the heal plan (absent scaffold files + absent `.env`
+keys); `doctor --fix --apply` commits it — writing only files that do not
+exist and appending only keys that are not present, so an existing `.env`
+line (gateway key, peer config, reclaim values) is never rewritten. This is
+the safe path between `lobes init`'s refuses-or-clobbers extremes; a
+present-but-stale value is reported for the operator to change by hand.
+
+JSON contract: `{"healthy", "checks"}` (+ `fix_plan` / `fix_applied` with
+`--fix`). Supports `--json`.
 """
 
 _EMBEDDINGS = """\

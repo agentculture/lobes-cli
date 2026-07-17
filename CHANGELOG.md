@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.0] - 2026-07-17
+
+### Added
+
+- `lobes doctor` gains two fleet checks (#119): `scaffold_files` (every expected scaffold file on disk — the 2026-07-17 Spark partial-audio incident served for hours with `/health` green and two Dockerfiles absent) and `profile_staleness` (the deployed `.env` carries the knobs the resolved machine profile requires — the 2026-07-14 Thor incident: a pre-#110 `.env` missing the SM_110 divergences hung its rerank lane silently). A key still carrying the template default where the profile requires a divergence is named; a genuine operator override only downgrades to info; shape-dropped roles are never demanded.
+- `lobes doctor --fix` — the missing-only heal lane (#119): `--fix` prints the plan (still read-only), `--fix --apply` writes only ABSENT scaffold files and appends only ABSENT `.env` keys, never rewriting an existing line (compose `env_file` last-duplicate-wins would let an appended default clobber an operator value). The safe path between `lobes init` refusing (any file exists) and `--force` clobbering the whole template set, `.env` included.
+
+### Changed
+
+- Doctor remediation strings for stale/partial scaffolds name `doctor --fix`, never `lobes init --apply --force` (which would wipe the gateway key, peer/proxy config, and shape reclaim values).
+
 ## [0.47.1] - 2026-07-17
 
 ### Fixed
