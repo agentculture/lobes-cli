@@ -133,8 +133,10 @@ security_decision). Alias `model=muse`. It is an **opt-in core role**
 (`OPT_IN_CORE_ROLES`): machine-as-brain NEVER hosts it — a 31B cannot
 co-reside with the cortex+senses duo on a 128 GB box — so only an explicit
 muse-hosting shape (`thor-muse`, below) serves it; every non-hosting shape
-renders an honest `MUSE_FEASIBLE=false`, and on a stale/pre-muse `.env` an
-unwired `muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
+renders nothing for muse — the card's own declaration passes through, so
+machine-as-brain stays a byte-identical no-op and only `base.toml`'s veto
+emits `MUSE_FEASIBLE=false` — and on a stale/pre-muse `.env` an unwired
+`muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
 `role_infeasible`, referable/proxyable, never a silent fallback to cortex).
 Under pressure `muse` degrades to `minor` exactly like cortex/senses.
 DECLARED/UNVALIDATED: no live boot yet. See `docs/gemma-4-31b-nvfp4.md`.

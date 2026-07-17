@@ -46,10 +46,12 @@ below.
 > /v1/audio/transcriptions`) instead — it remains first-class and is
 > unaffected by this gap.
 
-`cortex`, `senses`, `embedder`, and `reranker` are always enumerated (present
-with `loaded=false` if their gear isn't wired in this deployment); `stt`/`tts`
-require `lobes init --fleet --audio`. **`brain` is not a valid role name** —
-`cortex` is the only reasoning/decision role.
+`cortex`, `senses`, `muse`, `embedder`, and `reranker` are always enumerated
+(present with `loaded=false` if their gear isn't wired in this deployment —
+`muse` additionally reports `feasible=false` unless a muse-hosting shape
+declares it, see the note below); `stt`/`tts` require `lobes init --fleet
+--audio`. **`brain` is not a valid role name** — `cortex` is the only
+reasoning/decision role.
 
 > **`muse` is an OPT-IN CORE ROLE — machine-as-brain never hosts it.** The
 > `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` is too heavy to

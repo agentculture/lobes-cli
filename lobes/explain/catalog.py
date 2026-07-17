@@ -795,9 +795,10 @@ render time — `shape × card` — never a per-shape code fork.
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
   serve (the six DEFAULT_HOSTED_ROLES — never the opt-in `muse`, below).
-  Carries zero overrides; the one line it adds over the bare card profile
-  is the honest `MUSE_FEASIBLE=false` marker for the opt-in core role it
-  doesn't host.
+  Carries zero overrides and renders byte-identically to the bare card
+  profile: a non-hosted opt-in core role renders nothing at all. No
+  `MUSE_FEASIBLE=false` marker is needed — the gateway already treats an
+  unwired `muse` as infeasible (`OPT_IN_BACKENDS`).
 - **`spark-lobe`** — drops `senses` (Gemma), keeps `cortex` + `embedder` +
   `reranker` + `stt`/`tts`. Reclaims the dropped budget: `cortex` rises to
   `gpu_mem_util=0.44` / `max_model_len=262144` (its full native 256K).
@@ -1085,8 +1086,8 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
 - `stt` — transcribe, audio_input_to_text. Forbidden: *(none)*.
 - `tts` — speech_output, synthesize. Forbidden: *(none)*.
 
-`cortex`/`senses`/`embedder`/`reranker` are always enumerated (present with
-`loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
+`cortex`/`senses`/`muse`/`embedder`/`reranker` are always enumerated (present
+with `loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
 **`muse` is opt-in for HOSTING** — machine-as-brain never hosts the 31B
 (it cannot co-reside with the cortex+senses duo on a 128 GB box); only a
 muse-hosting shape (`thor-muse`, DECLARED/UNVALIDATED — no live boot yet)

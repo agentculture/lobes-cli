@@ -32,9 +32,9 @@ Four families exist:
   serve. This is today's behaviour, made explicit as data: a bare `lobes
   init` (no `--shape` at all) resolves this shape, and because it carries
   **zero overrides**, composing it changes nothing — the rendering is
-  byte-identical to the pre-shape behaviour, except one line: an honest
-  `MUSE_FEASIBLE=false` marker for the opt-in core role it never hosts (see
-  "Opt-in core roles" below). A single-box operator makes no new decisions.
+  byte-identical to the pre-shape behaviour, muse or no muse: a non-hosted
+  opt-in core role renders nothing at all (see "Opt-in core roles" below).
+  A single-box operator makes no new decisions.
 - **mesh-brain shapes** (`spark-lobe`, `thor-lobe`) — a box drops one heavy
   generate lobe to a peer box in the mesh and reclaims that lobe's freed
   GPU-memory budget for the lobe(s) it keeps. Opt-in, per box, via `lobes
@@ -92,9 +92,13 @@ duo on a 128 GB box. Concretely:
 - **The machine-as-brain identity set is `DEFAULT_HOSTED_ROLES`** (the six:
   `cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`); the Colleague
   *contract* set capabilities reports (`COLLEAGUE_ROLES`) is seven. On every
-  non-hosting shape — machine-as-brain included — muse renders an honest
-  `MUSE_FEASIBLE=false` marker, the one line machine-as-brain now adds over
-  the bare card profile.
+  non-hosting shape — machine-as-brain included — muse renders *nothing*: the
+  card's own muse declaration passes through verbatim, which is exactly what
+  keeps machine-as-brain a byte-identical no-op over the bare card profile.
+  A marker would be redundant anyway, since an unwired muse is already
+  infeasible by default at the gateway (`OPT_IN_BACKENDS`). The one card that
+  does emit `MUSE_FEASIBLE=false` is `base.toml`, through its own conservative
+  veto — a card-level fact, not something the shape layer adds.
 - **Hostable only by an explicit shape; the full declaration lives in that
   shape's own overrides**, not in a card profile: `thor-muse`'s
   `[overrides.muse]` carries the model, budget, quantization, and
