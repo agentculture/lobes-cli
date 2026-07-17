@@ -255,6 +255,10 @@ _FIX_REMEDIATION = (
     "existing .env line is never rewritten)"
 )
 
+# The packaged template tree every scaffold file is materialised from — the
+# same resource root `lobes init` / `lobes.runtime._compose` read.
+_TEMPLATES_PACKAGE = "lobes.templates"
+
 
 def _parse_env_text(text: str) -> dict[str, str]:
     """``KEY=VALUE`` lines from template text — same contract as
@@ -284,13 +288,13 @@ def _expected_templates(deploy_dir: Path) -> dict[str, str]:
 
 def _template_env_defaults() -> dict[str, str]:
     """The fleet ``env.example`` defaults, keyed by env var."""
-    root = _resource_files("lobes.templates")
+    root = _resource_files(_TEMPLATES_PACKAGE)
     return _parse_env_text(_compose._read_template(root, "fleet/env.example"))
 
 
 def _audio_env_defaults() -> dict[str, str]:
     """The audio overlay's ``env.audio.example`` defaults, keyed by env var."""
-    root = _resource_files("lobes.templates")
+    root = _resource_files(_TEMPLATES_PACKAGE)
     return _parse_env_text(_compose._read_template(root, _compose.AUDIO_ENV_TEMPLATE))
 
 
@@ -363,6 +367,41 @@ def _resolve_deployment_profile(deploy_dir: Path, recorded: str | None):
         )
 
 
+def _staleness_ok(profile_name: str, overridden: list[str], detail: str) -> dict:
+    """The passing verdict — operator overrides only ever annotate it."""
+    message = f"profile {profile_name}: every required .env key is present"
+    if overridden:
+        message += f" ({len(overridden)} operator-set value(s) differ — legitimate)"
+    if detail:
+        message += f" [{detail}]"
+    return _check("profile_staleness", True, "info", message)
+
+
+def _staleness_failure(
+    profile_name: str, missing: dict[str, str], stale: list[str], detail: str
+) -> dict:
+    """The warn verdict — missing keys are fixable, stale ones named for the operator."""
+    parts: list[str] = []
+    remediations: list[str] = []
+    if missing:
+        shown = ", ".join(sorted(missing)[:6])
+        more = "" if len(missing) <= 6 else f" (+{len(missing) - 6} more)"
+        parts.append(f"{len(missing)} required key(s) missing from .env: {shown}{more}")
+        remediations.append(_FIX_REMEDIATION)
+    if stale:
+        parts.append(
+            f"{len(stale)} key(s) still carry the template default where profile "
+            f"{profile_name} requires a divergence: {', '.join(stale)}"
+        )
+        remediations.append(
+            "set the divergent key(s) in .env yourself — doctor --fix never "
+            "rewrites an existing line"
+        )
+    if detail:
+        parts.append(detail)
+    return _check("profile_staleness", False, "warn", "; ".join(parts), "; ".join(remediations))
+
+
 def _staleness_verdict(
     profile_name: str,
     missing: dict[str, str],
@@ -373,32 +412,8 @@ def _staleness_verdict(
     """Fold the staleness diff into one check dict (missing/stale warn; overrides info)."""
     detail = "; ".join(notes) if notes else ""
     if not missing and not stale:
-        message = f"profile {profile_name}: every required .env key is present"
-        if overridden:
-            message += f" ({len(overridden)} operator-set value(s) differ — legitimate)"
-        if detail:
-            message += f" [{detail}]"
-        return _check("profile_staleness", True, "info", message)
-    parts: list[str] = []
-    if missing:
-        shown = ", ".join(sorted(missing)[:6])
-        more = "" if len(missing) <= 6 else f" (+{len(missing) - 6} more)"
-        parts.append(f"{len(missing)} required key(s) missing from .env: {shown}{more}")
-    if stale:
-        parts.append(
-            f"{len(stale)} key(s) still carry the template default where profile "
-            f"{profile_name} requires a divergence: {', '.join(stale)}"
-        )
-    if detail:
-        parts.append(detail)
-    remediation = _FIX_REMEDIATION if missing else ""
-    if stale:
-        stale_note = (
-            "set the divergent key(s) in .env yourself — doctor --fix never "
-            "rewrites an existing line"
-        )
-        remediation = f"{remediation}; {stale_note}" if remediation else stale_note
-    return _check("profile_staleness", False, "warn", "; ".join(parts), remediation)
+        return _staleness_ok(profile_name, overridden, detail)
+    return _staleness_failure(profile_name, missing, stale, detail)
 
 
 def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
@@ -455,35 +470,47 @@ def _apply_fix(deploy_dir: Path) -> list[str]:
     (even empty) is never touched — compose ``env_file`` last-wins semantics
     would let an appended duplicate silently clobber the operator's value.
     """
+    _files_verdict, missing_files = _scaffold_files_check(deploy_dir)
+    actions = _write_missing_files(deploy_dir, missing_files)
+    _env_verdict, missing_env = _profile_staleness_check(deploy_dir)
+    return actions + _append_missing_env(deploy_dir, missing_env)
+
+
+def _write_missing_file(deploy_dir: Path, dest: str, by_dest: dict[str, str]) -> None:
+    """Materialise ONE absent scaffold file from its packaged template."""
+    if dest == _compose.PLUGIN_DEST_NAME:
+        _compose.write_plugin_file(deploy_dir, force=False)
+        return
+    target = deploy_dir / dest
+    root = _resource_files(_TEMPLATES_PACKAGE)
+    target.write_text(_compose._read_template(root, by_dest[dest]), encoding="utf-8")
+    if dest == _compose.ENV_FILE:
+        try:
+            target.chmod(0o600)  # secrets file — owner-only, like the scaffold
+        except OSError:
+            pass
+
+
+def _write_missing_files(deploy_dir: Path, missing_files: list[str]) -> list[str]:
     actions: list[str] = []
     by_dest = {dest: name for name, dest in _expected_templates(deploy_dir).items()}
-    root = _resource_files("lobes.templates")
-    _files_verdict, missing_files = _scaffold_files_check(deploy_dir)
     for dest in missing_files:
-        target = deploy_dir / dest
-        if target.exists():  # missing-only, by construction; never overwrite
+        if (deploy_dir / dest).exists():  # missing-only, by construction; never overwrite
             continue
-        if dest == _compose.PLUGIN_DEST_NAME:
-            _compose.write_plugin_file(deploy_dir, force=False)
-        else:
-            target.write_text(_compose._read_template(root, by_dest[dest]), encoding="utf-8")
-            if dest == _compose.ENV_FILE:
-                try:
-                    target.chmod(0o600)  # secrets file — owner-only, like the scaffold
-                except OSError:
-                    pass
+        _write_missing_file(deploy_dir, dest, by_dest)
         actions.append(f"wrote {dest}")
-    _env_verdict, missing_env = _profile_staleness_check(deploy_dir)
-    if missing_env:
-        env_path = deploy_dir / _compose.ENV_FILE
-        with env_path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                "\n# --- appended by 'lobes doctor --fix --apply' (missing-only heal, #119) ---\n"
-            )
-            for key in sorted(missing_env):
-                fh.write(f"{key}={missing_env[key]}\n")
-        actions.extend(f"appended {key}" for key in sorted(missing_env))
     return actions
+
+
+def _append_missing_env(deploy_dir: Path, missing_env: dict[str, str]) -> list[str]:
+    if not missing_env:
+        return []
+    env_path = deploy_dir / _compose.ENV_FILE
+    with env_path.open("a", encoding="utf-8") as fh:
+        fh.write("\n# --- appended by 'lobes doctor --fix --apply' (missing-only heal, #119) ---\n")
+        for key in sorted(missing_env):
+            fh.write(f"{key}={missing_env[key]}\n")
+    return [f"appended {key}" for key in sorted(missing_env)]
 
 
 def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
