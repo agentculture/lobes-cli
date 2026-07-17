@@ -634,8 +634,9 @@ pre-migration NGC image (see "Engine" above; t8 parked):
 The 31B `muse` gear (`vllm-muse`, behind the `muse` compose profile) is
 deliberately **not** in this table: it is never added on top of the default
 duo — it only runs on a deployment shape that drops BOTH heavy default lobes
-first (`thor-muse`), where its declared `util 0.40` is a **hypothesis**
-pending the first live acceptance run. See
+first (`thor-muse`), where its `util 0.55` is **measured** (2026-07-17 live
+boot; the 0.40 hypothesis was refused with 0.6 GiB KV) though the full
+acceptance run is still pending. See
 [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md) and
 [`docs/deployment-shapes.md`](deployment-shapes.md).
 

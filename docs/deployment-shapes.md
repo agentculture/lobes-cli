@@ -58,7 +58,7 @@ Four families exist:
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
-| **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.40`, `max_model_len=262144` — the full 256K native window) are **hypotheses**, not measurements — **no physical Thor has booted this shape**, so it carries no live-validation row and no measured budget; an acceptance run (`scripts/accept-shape.sh`) on a physical Thor is what would validate it. Do not read this row as a "muse is served" claim. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
+| **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) has not passed and no transcript has landed under `docs/evidence/` (#108), so it carries no live-validation row. Do not read this row as a "muse is served" claim. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
 
 All shipped shapes are pure data over the `#108` `Profile` schema
 — no per-shape Python branch exists anywhere in `lobes/profiles/shapes.py` or
@@ -127,8 +127,10 @@ lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse> 
 `orin-small` and `thor-muse` resolve and render exactly like the other three
 (they are pure data, proven by the same goldens/tests) — but as of this
 writing both are **declared, not validated**: nothing here or in `lobes
-capabilities` claims a physical Orin has run `orin-small`, or that any
-physical box has booted `thor-muse`.
+capabilities` claims a physical Orin has run `orin-small`; a physical Thor's
+2026-07-17 live boot measured `thor-muse`'s budget (util 0.55 at the full
+262144 window), but nothing claims it *validated* until the acceptance
+transcript lands under `docs/evidence/` (#108).
 
 - **Dry-run by default** — prints the resolved profile, the shape and its
   `hosts` list, how many env vars would be set, and (for a mesh shape)

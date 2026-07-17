@@ -60,7 +60,8 @@ reasoning/decision role.
 > in `lobes/profiles/shapes.py`) while the contract set capabilities reports
 > (`COLLEAGUE_ROLES`) is seven. Only an explicit muse-hosting deployment shape
 > (`lobes init --shape thor-muse`) serves it — **DECLARED/UNVALIDATED** as of
-> this writing; no live boot has happened (see
+> this writing: a 2026-07-17 live boot measured the budget, but the
+> acceptance run/transcript is pending, #108 (see
 > [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)). On every non-hosting
 > deployment `muse` is honestly `feasible: false` (and, uniquely, an unwired
 > muse *defaults* to infeasible even on a stale pre-muse `.env` — see

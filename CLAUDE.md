@@ -139,7 +139,9 @@ emits `MUSE_FEASIBLE=false` — and on a stale/pre-muse `.env` an unwired
 `muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
 `role_infeasible`, referable/proxyable, never a silent fallback to cortex).
 Under pressure `muse` degrades to `minor` exactly like cortex/senses.
-DECLARED/UNVALIDATED: no live boot yet. See `docs/gemma-4-31b-nvfp4.md`.
+DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget (util
+0.55 at the full 262144 window); the acceptance transcript is pending
+(#108). See `docs/gemma-4-31b-nvfp4.md`.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
@@ -209,9 +211,11 @@ gears and audio overlay — `muse` is an **opt-in core role**
 (`OPT_IN_CORE_ROLES`): hostable only by an explicit shape, with the full
 muse declaration (model + budget knobs) in the shape's own overrides, the
 card profiles silent on it, and `base.toml` vetoing it; `thor-muse` too is
-**declared, UNVALIDATED** — its budget values (`gpu_mem_util=0.40`,
-`max_model_len=131072`) are hypotheses until a physical Thor's acceptance
-run measures them. Select with `lobes
+**declared, UNVALIDATED** — its budget values (`gpu_mem_util=0.55`,
+`max_model_len=262144` — the full 256K window) were measured by the
+2026-07-17 live boot on a physical Thor (the 0.40 hypothesis was refused),
+and it stays UNVALIDATED until the acceptance transcript lands under
+`docs/evidence/` (#108). Select with `lobes
 init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse>`
 (dry-run by
 default, `--apply` to commit, byte-for-byte restorable by re-running with

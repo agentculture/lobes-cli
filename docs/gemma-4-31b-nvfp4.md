@@ -4,14 +4,16 @@
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 >
-> **Status: DECLARED/CONFIGURED — first live boot pending.** Everything in this
-> doc is read from the checkpoint's own published config and declared as data
-> in the repo (catalog entry, `thor-muse` shape, compose template). **No
-> throughput, acceptance, or budget number here is measured** — the first
-> acceptance run (`scripts/accept-shape.sh`) on a physical Jetson
-> AGX Thor is what turns the hypotheses below into measured truths (the #108
-> rule, and the measured-truth lesson from `spark-lobe`/`thor-lobe` — see
-> ["How to host it"](#how-to-host-it-the-thor-muse-shape) below).
+> **Status: DECLARED — memory budget measured live, acceptance pending.** Most
+> of this doc is read from the checkpoint's own published config and declared
+> as data in the repo (catalog entry, `thor-muse` shape, compose template).
+> The **memory budget is measured** — a physical Jetson AGX Thor booted the
+> gear 2026-07-17 (util 0.55 at the full 262144 window; see
+> ["How to host it"](#how-to-host-it-the-thor-muse-shape) below) — but
+> throughput, MTP acceptance, and the correctness probes remain unmeasured,
+> and per the #108 rule nothing here claims *validated* until the acceptance
+> run (`scripts/accept-shape.sh`) passes and its transcript lands under
+> `docs/evidence/` (the measured-truth lesson from `spark-lobe`/`thor-lobe`).
 
 **Model id:** `nvidia/Gemma-4-31B-IT-NVFP4`
 **Tier alias:** `muse` — the role name *is* the alias (capability order:
@@ -19,8 +21,8 @@
 **Role:** `muse` — the fleet's **creative/ideation lobe**, the SEVENTH
 first-class Colleague role. **Opt-in for hosting**: `machine-as-brain` never
 hosts it; only an explicit muse-hosting shape (`thor-muse`) does.
-**Status:** `configured` (declared 2026-07-17; not load-tested — no live boot
-has happened yet).
+**Status:** `configured` (declared 2026-07-17; the first live boot 2026-07-17
+measured the memory budget — acceptance run pending, not yet validated).
 
 ## What it is
 
@@ -91,7 +93,7 @@ declaration):
 |---|---|---|
 | `MUSE_MODEL` / `MUSE_SERVED_NAME` | `nvidia/Gemma-4-31B-IT-NVFP4` | HF checkpoint id / OpenAI `model` id |
 | `MUSE_BASE_URL` | `http://vllm-muse:8000` | set by a muse-hosting shape render; wires the gateway backend |
-| `MUSE_GPU_MEM_UTIL` | `0.40` | **HYPOTHESIS** — see below |
+| `MUSE_GPU_MEM_UTIL` | `0.55` | **measured** 2026-07-17 (Thor): 26.47 GiB KV pool, 611,415 tokens, 2.33x at 262144; the 0.40 hypothesis was refused live (0.6 GiB KV) |
 | `MUSE_MAX_MODEL_LEN` | `262144` | the FULL 256K native window (operator decision — no box-budget trim) |
 | `MUSE_QUANTIZATION` | `modelopt` | the NVIDIA export's own quant_method — NOT `compressed-tensors` |
 | `MUSE_ATTENTION_BACKEND` | `TRITON_ATTN` | Gemma 4's heterogeneous per-layer head sizes — the same divergence the 12B `senses` gear carries on every card |
@@ -130,26 +132,32 @@ BOTH heavy default lobes (`cortex` and `senses`) to peer boxes — declare
 `*_PEER_PROXY` knobs) so callers get honest referrals or transparent proxying
 for the dropped roles. See [`deployment-shapes.md`](deployment-shapes.md).
 
-**The budget values are hypotheses, not measurements.** `gpu_mem_util=0.40`
-is ~49.1 GiB of the Thor's 122.82 GiB unified pool (~30.4 GiB weights + KV and
-overhead); `max_model_len=262144` trims the 256K native context because the
-31B's KV cost per token is roughly double the 12B's, so a full-native 262144
-would starve concurrency inside util 0.40. Both `spark-lobe` and `thor-lobe`
-shipped values that vLLM **refused** at their paper-derived reclaim-sums on
-the live unified-memory box — shape budgets are **measured truths, not
-arithmetic** — so treat these numbers as the acceptance run's starting point,
-not a validated configuration.
+**The budget values are measured, not yet validated.** `gpu_mem_util=0.55` is
+~67.55 GiB of the Thor's 122.82 GiB unified pool; the 2026-07-17 live boot
+measured a ~41 GiB non-KV footprint at the full window (32.06 GiB in-memory
+weights per vLLM's load report + the MTP draft + the 262144-token profiling
+pass), leaving a **26.47 GiB KV pool — 611,415 fp8 tokens, 2.33x concurrency**
+at `max_model_len=262144`, the FULL 256K native window (operator decision —
+no box-budget trim). The first hypothesis, util 0.40 (~49.1 GiB), was refused
+live: the profiling pass left only 0.6 GiB for KV. Both `spark-lobe` and
+`thor-lobe` shipped values that vLLM **refused** at their paper-derived
+reclaim-sums, and the same lesson repeated here — shape budgets are **measured
+truths, not arithmetic**. The acceptance run and its `docs/evidence/`
+transcript are still pending, so these numbers are measured but the shape is
+not validated (#108).
 
 ## Validation status
 
-**DECLARED/CONFIGURED — first live boot pending.** No physical box has booted
-this gear. Per the #108 rule, no doc, support table, or `lobes capabilities`
-output may claim it validated until an acceptance run (`scripts/accept-shape.sh`)
-passes on a physical Thor and its transcript lands under `docs/evidence/`. That run
-gates, in one pass: the serve itself (native class, `TRITON_ATTN`, `modelopt`
-quant), the real memory ceiling (vs. the 0.40 hypothesis), the MTP draft's
-acceptance rate (vs. the declared config), and whether the #101 audio gap
-applies to this plain-gemma4 line as assumed.
+**DECLARED — memory budget measured live 2026-07-17, acceptance run pending.**
+A physical Thor booted this gear (native class, `TRITON_ATTN`, `modelopt`
+quant all held) and measured the memory ceiling: util 0.55 → 26.47 GiB KV pool
+at the full 262144 window; the 0.40 hypothesis was refused with 0.6 GiB KV.
+Per the #108 rule, no doc, support table, or `lobes capabilities` output may
+claim it validated until an acceptance run (`scripts/accept-shape.sh`) passes
+on a physical Thor and its transcript lands under `docs/evidence/`. That run
+still gates: the correctness probes, the MTP draft's acceptance rate (vs. the
+declared config), and whether the #101 audio gap applies to this plain-gemma4
+line as assumed.
 
 ## Related docs
 

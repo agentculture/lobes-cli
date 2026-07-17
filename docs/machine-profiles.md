@@ -118,8 +118,10 @@ muse-hosting deployment *shape*'s own overrides — `thor-muse`, see
 shape renders nothing for muse at all, passing the card's own declaration
 through verbatim: `base.toml`'s veto marker survives, and a card that stays
 silent on muse renders no `MUSE_*` line. `thor-muse`'s
-budget values are declared **hypotheses** (no live boot has measured them);
-see [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md).
+budget values are **measured** (2026-07-17 live boot on the physical Thor:
+util 0.55 at the full 262144 window), though the shape itself stays
+UNVALIDATED until the acceptance run passes; see
+[`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md).
 
 ### Field descriptions and provenance
 

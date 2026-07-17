@@ -10,9 +10,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`muse` — the seventh first-class Colleague role**: the creative/ideation
   lobe, serving `nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's
-  official modelopt NVFP4 export; 256K native; unified multimodal
-  vision+audio configs; MTP DECLARED via `google/gemma-4-31B-it-assistant`,
-  unmeasured). Addressable as `model=muse`; capability order is now
+  official modelopt NVFP4 export; 256K native; declares vision+audio configs
+  (plain-gemma4 line, NOT the Unified family); MTP DECLARED via
+  `google/gemma-4-31B-it-assistant`, unmeasured). Addressable as `model=muse`; capability order is now
   `minor < multimodal < muse < primary`. Responsibilities:
   creative_generation / long_form_writing / ideation / style_variation /
   divergent_second_opinion; forbidden: final_decision / repo_action /
@@ -24,10 +24,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   identity set is now `DEFAULT_HOSTED_ROLES` (the six), and the
   machine-as-brain-equals-bare-card byte-identity invariant is preserved
   exactly (a non-hosted opt-in core role renders nothing).
-- **`thor-muse` built-in deployment shape** (DECLARED/UNVALIDATED, #108 rule):
+- **`thor-muse` built-in deployment shape** (DECLARED — budget measured live;
+  UNVALIDATED pending the acceptance transcript, #108 rule):
   hosts muse + embedder + reranker + audio; drops BOTH heavy default lobes
   (cortex and senses) to peer boxes. Carries the full muse declaration in its
-  `[overrides.muse]` (model, `gpu_mem_util=0.40` hypothesis,
+  `[overrides.muse]` (model, `gpu_mem_util=0.55` — measured live on the
+  physical Thor 2026-07-17 (26.47 GiB KV pool, 611,415 tokens, 2.33x
+  concurrency; the 0.40 hypothesis was refused with 0.6 GiB KV),
   `max_model_len=262144` — the full 256K native window, `quantization=modelopt`,
   `attention_backend=TRITON_ATTN`); hosting muse renders its activation env
   (`COMPOSE_PROFILES=muse` + `MUSE_BASE_URL`). `base.toml` vetoes muse on
@@ -35,6 +38,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`vllm-muse` compose service** — profile-gated behind the `muse` Docker
   Compose profile (never started by a plain `docker compose up`), same custom
   Gemma 4 image as `vllm-multimodal` (`MUSE_IMAGE` overrides the tag).
+- `scripts/accept-shape.sh`: drops reclaimable page caches before `fleet up`
+  when passwordless sudo is available (the documented Thor first-boot ritual,
+  now automated in the acceptance flow), and the referral phase is
+  proxy-aware — a dropped role with `<PREFIX>_PEER_PROXY` armed is checked
+  for a proxied answer carrying `X-Lobes-Proxied-By: <origin>` instead of
+  the referral 404.
 - Gateway: muse joins all four peer/feasibility env channels
   (`MUSE_FEASIBLE` / `MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` /
   `MUSE_PEER_API_KEY`) — referral and proxy-lobes work for muse exactly like
@@ -51,8 +60,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upward-falling-back to cortex.
 - `/capabilities` (gateway + CLI) now reports SEVEN roles; docs and the
   in-CLI explain catalog updated throughout.
+- `tests/test_live_capabilities.py`: generate-role discovery now covers muse
+  and the third lobe state — a proxied dropped role must answer with the
+  `X-Lobes-Proxied-By` marker naming `hosted_by` (a relayed non-2xx counts as
+  an honest, marked relay; referral-only drops still demand the 404).
 
 ### Fixed
+
+- `vllm-muse` boots behind `depends_on: service_healthy` on
+  `vllm-embed`/`vllm-rerank` — a concurrent cold boot at 31B scale crashed
+  CUDA-graph capture (`CUBLAS_STATUS_EXECUTION_FAILED`) and every restart then
+  failed vLLM's free-at-boot check against the dirtied page cache (measured
+  live on the physical Thor, 2026-07-17).
 
 ## [0.45.2] - 2026-07-17
 

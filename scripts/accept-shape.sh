@@ -268,6 +268,15 @@ fi
 # Phase 3 — boot and wait
 # ---------------------------------------------------------------------------
 printf '=== phase 3: lobes fleet up --apply ===\n'
+# Unified-memory boxes (Thor/Orin/GB10): vLLM's free-at-boot check counts the
+# page cache as used, and a fresh scaffold has just read gigabytes of wheel/
+# image/model data. Drop reclaimable caches when we can do so non-interactively
+# (passwordless sudo); skipped silently otherwise — the documented operator
+# ritual for the Thor first-boot race (docs/machine-profiles.md).
+if sudo -n true 2>/dev/null; then
+  sync && sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+  printf 'dropped reclaimable page caches (passwordless sudo available)\n'
+fi
 uv run lobes fleet up --apply --compose-dir "${DEPLOY_DIR}"
 PORT="$(_port)"
 _wait_healthy "${PORT}" "${TIMEOUT}"
@@ -397,11 +406,22 @@ for role in "${DROPPED_ROLES[@]:-}"; do
   _check "CLI capabilities: ${role} hosted_by ${origin}" \
     _hosted_by "${WORK}/caps-cli.json" "${role}" "${origin}"
   alias_for_role="${role}"
-  _check "POST model=${alias_for_role} -> 404 body carries the referral" bash -c "
-    curl -s '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
-      -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
-      | python3 -c 'import json,sys; b=json.load(sys.stdin); e=b[\"error\"]; sys.exit(0 if e.get(\"code\")==\"role_infeasible\" and e.get(\"hosted_by\")==\"${origin}\" else 1)'
-  "
+  proxy_knob="$(_env_val "${DEPLOY_DIR}/.env" "${prefix}_PEER_PROXY" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${proxy_knob}" == "1" || "${proxy_knob}" == "true" || "${proxy_knob}" == "yes" ]]; then
+    # Proxied role (#115/#127): the referral is FOLLOWED, so the honest
+    # surface is the response marker naming the declared origin, verbatim.
+    _check "POST model=${alias_for_role} -> proxied answer marked X-Lobes-Proxied-By: ${origin}" bash -c "
+      curl -s -D - -o /dev/null '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+        -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
+        | grep -qi '^x-lobes-proxied-by: *${origin}'
+    "
+  else
+    _check "POST model=${alias_for_role} -> 404 body carries the referral" bash -c "
+      curl -s '${BASE}/v1/chat/completions' -H 'Content-Type: application/json' \
+        -d '{\"model\":\"${alias_for_role}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":8}' \
+        | python3 -c 'import json,sys; b=json.load(sys.stdin); e=b[\"error\"]; sys.exit(0 if e.get(\"code\")==\"role_infeasible\" and e.get(\"hosted_by\")==\"${origin}\" else 1)'
+    "
+  fi
 done
 if [[ "${REFERRALS}" -eq 0 ]]; then
   printf '  (no <PREFIX>_PEER_ORIGIN declared for a dropped role — referral is opt-in, skipped)\n'

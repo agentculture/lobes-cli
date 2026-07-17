@@ -17,11 +17,10 @@
 # MUSE_BASE_URL wires the gateway backend — see
 # shape_render.OPT_IN_CORE_ACTIVATION_ENV).
 #
-# DECLARED-BUT-UNVALIDATED at authoring time (the #108 rule): the budget
-# values below are HYPOTHESES until a physical Thor boots this shape and the
-# acceptance run (scripts/accept-shape.sh) measures them — shape budgets on
-# unified-memory boxes are measured truths, not arithmetic (both spark-lobe
-# and thor-lobe shipped values vLLM refused at their declared reclaim-sums).
+# Budget values below are MEASURED on the physical Jetson AGX Thor
+# (2026-07-17 live boot) — shape budgets on unified-memory boxes are measured
+# truths, not arithmetic (the first hypothesis, util 0.40, was refused live:
+# vLLM's 262144-token profiling pass left only 0.6 GiB for KV).
 name = "thor-muse"
 summary = "Jetson AGX Thor muse-lobe -- Gemma 4 31B muse + embedder + reranker + audio, no cortex/senses"
 
@@ -29,21 +28,22 @@ hosts = ["muse", "embedder", "reranker", "stt", "tts"]
 
 [overrides.muse]
 # The full muse declaration lives HERE (not in a card profile) — see the
-# header comment. nvidia/Gemma-4-31B-IT-NVFP4: 30.4 GiB of NVFP4 weights,
-# 256K native context, config.json quant_method="modelopt" (NOT the
-# community 12B's compressed-tensors), calibrated FP8 KV-cache scales.
+# header comment. nvidia/Gemma-4-31B-IT-NVFP4: 30.4 GiB of NVFP4 weights on
+# disk (4 shards), 256K native context, config.json quant_method="modelopt"
+# (NOT the community 12B's compressed-tensors), calibrated FP8 KV-cache scales.
 model = "nvidia/Gemma-4-31B-IT-NVFP4"
-# gpu_mem_util = 0.40 — HYPOTHESIS, not a measured truth yet: 49.1 GiB of
-# the Thor's 122.82 GiB unified pool (~30.4 weights + ~18 GiB KV/overhead).
-# Thor's 2026-07-14 thor-lobe boot measured only 38.44 GiB free at startup
-# with senses still resident; THIS shape drops both heavy lobes first, so
-# more is free at boot — the acceptance run measures the real ceiling.
-gpu_mem_util = 0.40
+# gpu_mem_util = 0.55 — MEASURED on the physical Thor (2026-07-17): at the
+# full 262144 window the non-KV footprint is ~41 GiB (32.06 GiB in-memory
+# weights per vLLM's load report + the MTP draft + the 256K profiling
+# pass), so 0.40 (49.1 GiB) left only
+# 0.6 GiB of KV and vLLM refused to start; 0.55 (67.55 GiB) boots healthy
+# with a 26.47 GiB KV pool = 611,415 tokens = 2.33x concurrency at full
+# native context.
+gpu_mem_util = 0.55
 # max_model_len = 262144 — the checkpoint's FULL 256K native context
 # (operator decision: muse serves its full window, no box-budget trim).
-# Gemma 4's sliding-window layers keep long-context KV growth capped, but at
-# the 31B's per-token KV cost this trades concurrency for window inside the
-# util 0.40 pool — the acceptance run measures the real KV pool/concurrency.
+# Measured KV pool at util 0.55: 611,415 fp8 tokens (2.33x concurrency at
+# 262144) — Gemma 4's sliding-window layers keep long-context KV capped.
 max_model_len = 262144
 quantization = "modelopt"
 # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the same

@@ -259,10 +259,10 @@ def test_thor_muse_hosts_muse_pooling_and_audio_no_default_heavy_lobe() -> None:
     assert "cortex" not in thor_muse.hosts
     assert "senses" not in thor_muse.hosts
     # The FULL muse declaration lives in the shape's overrides (the card
-    # profiles stay silent): model + budget hypothesis + backend divergence.
+    # profiles stay silent): model + measured budget + backend divergence.
     muse = thor_muse.override("muse")
     assert muse.model == "nvidia/Gemma-4-31B-IT-NVFP4"
-    assert muse.gpu_mem_util == 0.40
+    assert muse.gpu_mem_util == 0.55
     assert muse.max_model_len == 262144
     assert muse.quantization == "modelopt"
     assert muse.attention_backend == "TRITON_ATTN"

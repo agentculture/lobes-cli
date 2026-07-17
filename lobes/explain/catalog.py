@@ -825,9 +825,11 @@ render time — `shape × card` — never a per-shape code fork.
   renders the activation env (`COMPOSE_PROFILES=muse` +
   `MUSE_BASE_URL=http://vllm-muse:8000`) plus the MUSE_* knobs; the
   MUSE_PEER_* referral/proxy channels exist like every core role's.
-  **Declared, UNVALIDATED** — no physical box has booted this shape; its
-  budget values (`gpu_mem_util=0.40`, `max_model_len=131072`) are
-  hypotheses until the acceptance run measures them.
+  **Declared, UNVALIDATED** — its budget values (`gpu_mem_util=0.55`,
+  `max_model_len=262144` — the full 256K window) were measured by the
+  2026-07-17 live boot on a physical Thor (the 0.40 hypothesis was
+  refused), but the shape stays UNVALIDATED until the acceptance
+  transcript lands under `docs/evidence/` (#108).
 
 Both mesh-lobe shapes' reclaim values are **measured**, not computed: a
 naive reclaim-sum or the model's own solo default was refused by vLLM on
@@ -1090,7 +1092,8 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
 with `loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
 **`muse` is opt-in for HOSTING** — machine-as-brain never hosts the 31B
 (it cannot co-reside with the cortex+senses duo on a 128 GB box); only a
-muse-hosting shape (`thor-muse`, DECLARED/UNVALIDATED — no live boot yet)
+muse-hosting shape (`thor-muse`, DECLARED/UNVALIDATED — budget measured
+live 2026-07-17, acceptance transcript pending)
 serves it, and on a non-hosting deployment an unwired `muse` defaults to
 `feasible: false`, so `model=muse` 404s `role_infeasible` instead of
 silently falling back to cortex (see `docs/gemma-4-31b-nvfp4.md`).

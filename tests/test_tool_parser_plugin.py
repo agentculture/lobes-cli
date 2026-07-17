@@ -67,7 +67,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "a809b5e4fce759646a63f1cfcb9221e3b3fbfafe8cfeed8dbe161ce22ff9f8fc",
     "vllm-multimodal-coder": "460f000fdd12eddbe4e6011b3a519acc66a22b44650a4b1bfe614aa92c6c6e93",
-    "vllm-muse": "8d3491db02d273d52847d20ac54f6ce0f5559e9ac6a7f1a3a44bf5f6e3b2ea4a",
+    "vllm-muse": "92b59e090a3db3a28eaf29b0d170dfb41393ae78b889fdc4cd639803c6b468cf",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
 }
 
