@@ -32,6 +32,8 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from lobes import assess as _assess
+
 
 def chat_completion(
     prompt: str,
@@ -119,7 +121,11 @@ def chat_completion(
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        # Merge the contextvar-scoped auth header the CLI dispatch installed
+        # via assess.auth_headers() (#129 items 1-2) — this client is another
+        # stdlib straggler that built keyless requests; with no key installed
+        # the dict is empty and the request stays byte-identical.
+        headers={"Content-Type": "application/json", **_assess._current_auth_headers()},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # local endpoint only
         return json.load(resp)
@@ -242,7 +248,8 @@ def completions_echo(
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        # Same contextvar-scoped auth as chat_completion above (#129 items 1-2).
+        headers={"Content-Type": "application/json", **_assess._current_auth_headers()},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # local endpoint only
         return json.load(resp)

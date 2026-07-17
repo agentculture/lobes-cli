@@ -627,10 +627,20 @@ def test_backend_ready_never_fabricates_ready_when_endpoint_empty() -> None:
 def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
     """ROLE_BACKEND's values are exactly the backend names a caller's
     backend_ready mapping (e.g. lobes.gateway._readiness.ReadinessCache) is
-    keyed by — "primary"/"multimodal"/"muse"/"embed"/"rerank" — so a caller can pass
-    ReadinessCache.current() straight through with no key translation."""
-    assert set(ROLE_BACKEND.values()) == {"primary", "multimodal", "muse", "embed", "rerank"}
-    assert set(ROLE_BACKEND) == {"cortex", "senses", "muse", "embedder", "reranker"}
+    keyed by, so a caller can pass ReadinessCache.current() straight through
+    with no key translation. Since issue #129 the two first-class audio roles
+    map to themselves — path-routed lanes, not model-routed backends, but the
+    same key space for feasibility/peer channels and the peer-probe snapshot."""
+    assert set(ROLE_BACKEND.values()) == {
+        "primary",
+        "multimodal",
+        "muse",
+        "embed",
+        "rerank",
+        "stt",
+        "tts",
+    }
+    assert set(ROLE_BACKEND) == {"cortex", "senses", "muse", "embedder", "reranker", "stt", "tts"}
 
 
 # ---------------------------------------------------------------------------

@@ -876,6 +876,10 @@ services:
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
+      # First-class audio lanes (issue #129): declare one off exactly like a
+      # dropped core role (absent = feasible — the sleeping-lobe default).
+      - STT_FEASIBLE=${STT_FEASIBLE:-}
+      - TTS_FEASIBLE=${TTS_FEASIBLE:-}
       # Opt-in honest referral (mesh-brain t3, issue #112; PEER_ORIGIN_ENV in
       # lobes/gateway/_config.py): the OPERATOR-DECLARED origin of the peer box
       # hosting a role this box dropped (e.g. http://spark.local:8001). On its
@@ -889,6 +893,8 @@ services:
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
+      - STT_PEER_ORIGIN=${STT_PEER_ORIGIN:-}
+      - TTS_PEER_ORIGIN=${TTS_PEER_ORIGIN:-}
       # Inbound gateway auth (OPT-IN; proxy-lobes t1, issue #115/#127): a
       # bearer key callers of THIS gateway must present. GATEWAY_API_KEY is
       # the explicit, gateway-scoped knob; CULTURE_VLLM_API_KEY is a fallback
@@ -913,6 +919,8 @@ services:
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
+      - STT_PEER_PROXY=${STT_PEER_PROXY:-}
+      - TTS_PEER_PROXY=${TTS_PEER_PROXY:-}
       # Outbound pairwise credential (proxy-lobes t1, #115/#127): the API key
       # THIS box presents when dialing that role's declared peer — i.e. the
       # PEER's own inbound GATEWAY_API_KEY, never a caller's forwarded key.
@@ -925,6 +933,8 @@ services:
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
+      - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}
+      - TTS_PEER_API_KEY=${TTS_PEER_API_KEY:-}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

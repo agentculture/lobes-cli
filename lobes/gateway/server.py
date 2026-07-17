@@ -76,6 +76,7 @@ from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
+    audio_role_for_path,
     infeasible_owner,
     is_audio_path,
     is_unknown_model,
@@ -700,6 +701,14 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
     simply never advertises ready, and a forward naming it surfaces the peer's
     own honest 404.
     """
+    if name in ("stt", "tts"):
+        # First-class audio roles (issue #129): fixed sidecar checkpoints, not
+        # catalog gears — the id is the SAME constant lobes.roles advertises on
+        # /capabilities (lazy import: matches capabilities_payload's own
+        # deferred lobes.roles import below).
+        from lobes.roles import _STT_MODEL, _TTS_MODEL
+
+        return _STT_MODEL if name == "stt" else _TTS_MODEL
     wired = next((b.served_name for b in table.backends if b.name == name), None)
     if wired:
         return wired
@@ -878,6 +887,8 @@ def _proxy_to_peer(
     req_headers: Iterable[tuple[str, str]],
     body: bytes,
     open_upstream: OpenUpstream,
+    *,
+    rewrite: bool = True,
 ) -> GatewayResponse:
     """Forward one request to its proxied role's peer and relay the outcome.
 
@@ -885,6 +896,13 @@ def _proxy_to_peer(
     :class:`Backend` (``peer:<name>`` at the operator-declared origin) lets
     the UNCHANGED :func:`open_upstream` + relay machinery carry the forward —
     buffered JSON and SSE streaming both work exactly as for a local backend.
+
+    ``rewrite`` (issue #129): the model-routed lanes rewrite the body's
+    ``model`` to the peer's served id (aliases resolved HERE must not leak a
+    name the peer doesn't serve); the AUDIO lanes are path-routed and forward
+    the body VERBATIM — multipart uploads and the caller's own TTS JSON must
+    arrive untouched, and the peer's gateway routes by path exactly as this
+    one did.
     """
     req_headers = list(req_headers)
     arriving = _arriving_hop_marker(req_headers)
@@ -899,7 +917,7 @@ def _proxy_to_peer(
             body=_proxy_loop_body(arriving, spec),
         )
     streaming = is_streaming(body)
-    fwd_body = rewrite_model(body, spec.served_name)
+    fwd_body = rewrite_model(body, spec.served_name) if rewrite else body
     # Credential swap: the caller's Authorization authenticated it to THIS box
     # (t2's inbound gate) and must be provably absent outbound; the pairwise
     # per-peer key — when declared — is the only credential that travels.
@@ -1423,6 +1441,60 @@ def handle_post(
     )
 
 
+def handle_audio_request(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    peer_specs: Mapping[str, PeerSpec] | None,
+    path: str,
+    req_headers: Iterable[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    audio_ready_probe: Callable[[], bool | None] | None = None,
+) -> GatewayResponse:
+    """Route one ``/v1/audio/*`` POST — per-ROLE since issue #129.
+
+    ``/v1/audio/speech`` is the tts lane and ``/v1/audio/transcriptions`` the
+    stt lane (:func:`lobes.gateway._routing.audio_role_for_path`), and the two
+    move between boxes independently — the live trigger was Chatterbox (tts)
+    on a peer while Parakeet (stt) stays local, which the one namespace-wide
+    ``AUDIO_URL`` cannot express. Precedence mirrors the model-routed lanes:
+
+    * **proxied** (the role is in ``table.peer_proxied`` with a built spec) —
+      forward via :func:`_proxy_to_peer` with the body VERBATIM
+      (``rewrite=False``): credential swap, single-hop guard, and
+      ``X-Lobes-Proxied-By`` attribution all apply, so the four AUDIO_URL
+      contract violations recorded on #129 are impossible on this lane;
+    * **declared off** (``STT_/TTS_FEASIBLE=false`` → ``table.infeasible``)
+      and not proxied — the honest 404 ``role_infeasible`` with ``hosted_by``
+      when a peer origin is declared, never half-served;
+    * **otherwise** — the legacy local ``AUDIO_URL`` route
+      (:func:`handle_audio_post`), byte-identical to pre-#129 behaviour;
+      ``audio_ready_probe`` is called only on this branch (a proxied or
+      refused lane never pays for a local readiness probe).
+    """
+    role = audio_role_for_path(path)
+    spec = (peer_specs or {}).get(role) if role else None
+    if role is not None and role in table.peer_proxied and spec is not None:
+        return _proxy_to_peer(
+            cfg,
+            spec,
+            path,
+            req_headers,
+            body,
+            open_upstream,
+            rewrite=False,  # path-routed lane: multipart/TTS JSON verbatim
+        )
+    if role is not None and role in table.infeasible:
+        return GatewayResponse(
+            status=404,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_role_infeasible_body(role, role, table.peer_origins.get(role)),
+        )
+    audio_ready = audio_ready_probe() if audio_ready_probe is not None else None
+    return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
+
+
 def handle_audio_post(
     cfg: ServerConfig,
     path: str,
@@ -1517,8 +1589,14 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
         eps.append("POST /v1/embeddings")
     if "score" in tasks:
         eps += ["POST /v1/rerank", "POST /v1/score"]
-    if audio:
-        eps += ["POST /v1/audio/transcriptions", "POST /v1/audio/speech"]
+    # Per-role audio honesty (issue #129): each lane is advertised iff it is
+    # answerable HERE — served by the local overlay (and not declared off) or
+    # forwarded to a declared peer. A declared-off, unproxied lane 404s
+    # role_infeasible and must not be advertised.
+    if (audio and "stt" not in table.infeasible) or "stt" in table.peer_proxied:
+        eps.append("POST /v1/audio/transcriptions")
+    if (audio and "tts" not in table.infeasible) or "tts" in table.peer_proxied:
+        eps.append("POST /v1/audio/speech")
     return eps
 
 
@@ -1897,7 +1975,16 @@ class _Handler(BaseHTTPRequestHandler):
         # it — listed iff the peer verifiably serves it right now.
         ready = self.readiness_cache.current() if self.readiness_cache is not None else None
         peer_served = (
-            {name: spec.served_name for name, spec in self.peer_specs.items()}
+            # Audio peers are excluded here (issue #129): stt/tts are
+            # path-routed lanes — their fixed sidecar ids are not requestable
+            # via a `model` field, so listing them on /v1/models would invite
+            # requests that cannot route. Their honesty surface is
+            # /capabilities (hosted_by + proxied + peer-probed ready).
+            {
+                name: spec.served_name
+                for name, spec in self.peer_specs.items()
+                if name not in ("stt", "tts")
+            }
             if self.peer_specs
             else None
         )
@@ -1945,18 +2032,22 @@ class _Handler(BaseHTTPRequestHandler):
             return
         body = self._read_body()
         if is_audio_path(self.path):
-            # /v1/audio/* → the audio backend, path-routed (no model rewrite/failover).
-            # Probe readiness first so a warming backend gets a clear 503, not a
-            # bare relayed 502 (#89). audio_url unset → 404 inside handle_audio_post.
+            # /v1/audio/* → path-routed, per-ROLE since issue #129 — see
+            # handle_audio_request: proxied lane / declared-off referral 404 /
+            # the legacy local AUDIO_URL route. The readiness probe (#89) runs
+            # only when the LOCAL branch is taken.
             cfg = self.server_config
-            audio_ready = probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
-            resp = handle_audio_post(
+            resp = handle_audio_request(
+                self.table,
                 cfg,
+                self.peer_specs,
                 self.path,
                 list(self.headers.items()),
                 body,
                 open_upstream,
-                audio_ready=audio_ready,
+                audio_ready_probe=lambda: (
+                    probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
+                ),
             )
         else:
             # Read pressure from the cache (O(1), never samples here) and the

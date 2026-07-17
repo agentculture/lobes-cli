@@ -55,6 +55,15 @@ FEASIBLE_ENV: dict[str, str] = {
     "muse": "MUSE_FEASIBLE",
     "embed": "EMBED_FEASIBLE",
     "rerank": "RERANK_FEASIBLE",
+    # First-class audio roles (issue #129): stt/tts joined the same channel so
+    # a box that deliberately does not serve one audio lane (e.g. Parakeet
+    # local, Chatterbox on a peer) declares it exactly like a dropped core
+    # role. ABSENT/blank stays feasible — the operator direction that dropped/
+    # undeployed models remain DECLARED sleeping lobes (feasible:true,
+    # ready:false) holds, so every existing deployment renders byte-identically
+    # until an operator explicitly sets STT_FEASIBLE/TTS_FEASIBLE=false.
+    "stt": "STT_FEASIBLE",
+    "tts": "TTS_FEASIBLE",
 }
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
@@ -97,9 +106,9 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 # network is exactly what #92 forbade). It uses the SAME
 # ``<PREFIX>_<KNOB>`` backend-name prefixes as :data:`FEASIBLE_ENV` /
 # ``ROLE_MAX_MODEL_LEN_ENV`` so there is still exactly one env convention to
-# learn, and it is scoped to the same five Profile-schema backends —
-# referral, like feasibility, is a core-role fact (the audio overlay is
-# outside the Profile schema and carries no referral channel).
+# learn. Scoped to the five Profile-schema backends PLUS the two first-class
+# audio roles (stt/tts — issue #129; they stay outside the Profile TUNING
+# schema but ride the same referral/feasibility/proxy channels).
 #
 # A declared origin is CONTROL-PLANE metadata by default: it annotates
 # ``/capabilities`` and the 404 ``role_infeasible`` body for a role this box
@@ -116,14 +125,20 @@ PEER_ORIGIN_ENV: dict[str, str] = {
     "muse": "MUSE_PEER_ORIGIN",
     "embed": "EMBED_PEER_ORIGIN",
     "rerank": "RERANK_PEER_ORIGIN",
+    # First-class audio roles (issue #129 item 3): the referral/proxy channels
+    # now cover stt/tts with the same one env convention — the trigger was a
+    # real deployment (Spark GB10) wanting Chatterbox served from the Thor
+    # while Parakeet stays local, which AUDIO_URL alone cannot express.
+    "stt": "STT_PEER_ORIGIN",
+    "tts": "TTS_PEER_ORIGIN",
 }
 
 # Per-backend "PROXY my dropped role to its declared peer" opt-in knob
 # (proxy-lobes t1, issues #115/#127 — the follow-up :data:`PEER_ORIGIN_ENV`
 # above explicitly deferred). Same ``<PREFIX>_<KNOB>`` backend-name prefixes
 # as :data:`FEASIBLE_ENV` / :data:`PEER_ORIGIN_ENV` — still exactly one env
-# convention to learn — and the same five-core-role scope (the audio overlay
-# is outside the Profile schema and carries no proxy channel).
+# convention to learn — over the same seven-name scope (the five core
+# backends + the first-class stt/tts audio roles, issue #129).
 #
 # A truthy token (``1``/``true``/``yes``, case-insensitive — the same
 # :func:`_as_bool` contract every opt-in boolean knob here uses) arms the
@@ -148,6 +163,10 @@ PEER_PROXY_ENV: dict[str, str] = {
     "muse": "MUSE_PEER_PROXY",
     "embed": "EMBED_PEER_PROXY",
     "rerank": "RERANK_PEER_PROXY",
+    # Audio roles (issue #129): same three-condition arming as every other
+    # name — truthy knob + declared origin + declared infeasible here.
+    "stt": "STT_PEER_PROXY",
+    "tts": "TTS_PEER_PROXY",
 }
 
 # Per-backend OUTBOUND credential for the declared peer (proxy-lobes t1,
@@ -168,6 +187,11 @@ PEER_API_KEY_ENV: dict[str, str] = {
     "muse": "MUSE_PEER_API_KEY",
     "embed": "EMBED_PEER_API_KEY",
     "rerank": "RERANK_PEER_API_KEY",
+    # Audio roles (issue #129): the O(machines) rule holds — the value is a
+    # copy of the peer box's own inbound GATEWAY_API_KEY, never minted per
+    # pairing.
+    "stt": "STT_PEER_API_KEY",
+    "tts": "TTS_PEER_API_KEY",
 }
 
 

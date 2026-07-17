@@ -66,8 +66,9 @@ def _spark_lobe_env(**over: str) -> dict[str, str]:
 
 
 def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
-    # Channels scoped to the five core roles: the proxy knob names exactly
-    # the backends the feasibility / peer-origin channels name.
+    # One channel vocabulary: the proxy knob names exactly the backends the
+    # feasibility / peer-origin channels name — the five core roles plus the
+    # first-class stt/tts audio roles (issue #129).
     assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) == set(PEER_ORIGIN_ENV)
     assert PEER_PROXY_ENV == {
         "primary": "PRIMARY_PEER_PROXY",
@@ -75,6 +76,8 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
         "muse": "MUSE_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
+        "stt": "STT_PEER_PROXY",
+        "tts": "TTS_PEER_PROXY",
     }
 
 
@@ -86,6 +89,8 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
         "muse": "MUSE_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
+        "stt": "STT_PEER_API_KEY",
+        "tts": "TTS_PEER_API_KEY",
     }
 
 

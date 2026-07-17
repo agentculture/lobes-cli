@@ -277,7 +277,12 @@ def _measure_tts_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> di
     req = urllib.request.Request(
         info.endpoint.rstrip("/") + "/v1/audio/speech",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        # The audio probes build their own Request (raw-audio response — can't
+        # reuse assess._post), so they merge the SAME contextvar-scoped auth
+        # header assess's primitives attach (#129 items 1-2): with inbound
+        # gateway auth on, the probe authenticates like every other verb; with
+        # no key installed the dict is empty and the request is byte-identical.
+        headers={"Content-Type": "application/json", **_assess._current_auth_headers()},
     )
     try:
         t0 = time.monotonic()
@@ -357,7 +362,12 @@ def _measure_stt_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> di
     req = urllib.request.Request(
         info.endpoint.rstrip("/") + "/v1/audio/transcriptions",
         data=body,
-        headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        # Same contextvar-scoped auth as the tts probe above (#129 items 1-2).
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            **_assess._current_auth_headers(),
+        },
     )
     try:
         t0 = time.monotonic()

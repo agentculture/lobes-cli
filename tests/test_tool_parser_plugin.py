@@ -55,13 +55,13 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    # Recomputed when the muse role landed: the gateway service's environment:
-    # block deliberately gained the MUSE_* passthroughs (BASE_URL/SERVED_NAME/
-    # MAX_MODEL_LEN/FEASIBLE + the three MUSE_PEER_* channels), and the new
-    # profile-gated vllm-muse service joined the fleet template. (Prior
-    # recompute, t7 #127/#115: the inbound-auth pair + *_PEER_PROXY /
+    # Recomputed for the first-class audio lanes (issue #129): the gateway
+    # service's environment: block deliberately gained the STT_/TTS_ FEASIBLE
+    # + PEER_ORIGIN/PEER_PROXY/PEER_API_KEY passthroughs. (Prior recompute:
+    # the muse role's MUSE_* passthroughs + the profile-gated vllm-muse
+    # service; before that, t7 #127/#115's inbound-auth pair + *_PEER_PROXY /
     # *_PEER_API_KEY knobs.) Every other service is byte-identical.
-    "gateway": "aeb3c299060117abbdd5f2d4e26c0b5b5fd7c61ce5a8002b17fe687d40f76707",
+    "gateway": "6a6c65ab2ae357939537c61a5d144bb7cadb1888c3daffce13ce70f40399a3a9",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",

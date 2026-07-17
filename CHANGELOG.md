@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.49.0] - 2026-07-17
+
+### Added
+
+- First-class stt/tts (#129): the audio roles joined the feasibility + peer referral/proxy channels — `STT_/TTS_FEASIBLE` (absent = feasible, the sleeping-lobe default; every pre-#129 deployment renders byte-identically), `STT_/TTS_PEER_ORIGIN` / `_PEER_PROXY` / `_PEER_API_KEY` with the same three-condition arming, `hosted_by`/`proxied` capabilities annotations via the one shared annotator, and a capabilities-based peer readiness probe (audio roles never appear on a peer `/v1/models`).
+- Per-endpoint audio routing (#129): `/v1/audio/speech` (tts) and `/v1/audio/transcriptions` (stt) route independently — a declared-off lane proxies to its peer through the same data-plane machinery as core roles (caller `Authorization` stripped + pairwise key injected, body forwarded VERBATIM, `X-Lobes-Proxied` single-hop guard with 508 `proxy_loop`, `X-Lobes-Proxied-By` attribution) or 404s `role_infeasible` with the honest referral; `AUDIO_URL` stays the local-bridge lane. The live trigger: Chatterbox on the Thor, Parakeet local on the Spark. DECLARED/UNVALIDATED until the live acceptance transcript lands (#108).
+
+### Fixed
+
+- Auth stragglers (#129 items 1-2): the stt/tts measure probes (`roles_measure.py`) and the minor client (`minor/_client.py`, used by `benchmark --all-lobes` and `lobes route`) now merge the same contextvar-scoped gateway auth header every assess-backed verb attaches; `lobes route` resolves and installs the deployment key like its sibling verbs. With no key configured every request is byte-identical.
+
 ## [0.48.0] - 2026-07-17
 
 ### Added

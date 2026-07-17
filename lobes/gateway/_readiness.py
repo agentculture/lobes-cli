@@ -266,6 +266,41 @@ def probe_peer_ready(
     return served_name in ids
 
 
+def probe_audio_peer_ready(
+    origin: str,
+    role: str,
+    *,
+    timeout: float = _PEER_PROBE_TIMEOUT,
+    api_key: str | None = None,
+    opener: PeerOpener | None = None,
+) -> bool:
+    """Live-probe a proxied AUDIO role's peer (issue #129) — the stt/tts twin
+    of :func:`probe_peer_ready`.
+
+    Audio roles never appear on a gateway's ``/v1/models`` (they are
+    path-routed, not model-routed), so the honesty surface to check is the
+    peer's ``GET /capabilities``: ``True`` iff it answers 200 AND its
+    ``roles[role]`` entry reports ``ready: true`` — the peer's own
+    live-probed claim that the lane is consumable right now. Same plain-bool
+    contract, same opener injection, same never-raise degradation as the
+    model-routed probe.
+    """
+    get_caps = opener or _default_peer_opener
+    try:
+        status, body = get_caps(origin.rstrip("/") + "/capabilities", timeout, api_key)
+    except (OSError, http.client.HTTPException, ValueError):
+        return False
+    if status != 200:
+        return False
+    try:
+        payload = json.loads(body)
+        roles = payload.get("roles", payload)
+        entry = roles.get(role)
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return isinstance(entry, dict) and entry.get("ready") is True
+
+
 @dataclass(frozen=True)
 class PeerSpec:
     """One proxied role's peer probe target.
@@ -416,7 +451,16 @@ class ReadinessCache:
         ``peer_timeout`` — deliberately never ``self._timeout`` (the local
         backend probe's budget); see the module docstring's "Peer probing"
         section and :func:`probe_peer_ready`'s own docstring.
+
+        Audio roles (``stt``/``tts``, issue #129) probe the peer's
+        ``/capabilities`` instead — they are path-routed and never appear on a
+        gateway's ``/v1/models``, so the model-listing check would
+        false-negative every audio peer; see :func:`probe_audio_peer_ready`.
         """
+        if spec.name in ("stt", "tts"):
+            return probe_audio_peer_ready(
+                spec.origin, spec.name, timeout=self._peer_timeout, api_key=spec.api_key
+            )
         return probe_peer_ready(
             spec.origin, spec.served_name, timeout=self._peer_timeout, api_key=spec.api_key
         )

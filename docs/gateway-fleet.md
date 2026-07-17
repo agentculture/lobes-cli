@@ -497,6 +497,32 @@ pairwise keys and payloads in transit is the tailnet/tunnel's job at this
 layer, not the gateway's; the gateway's own contribution is authenticating
 *which* box is calling, not encrypting the call.
 
+**First-class audio lanes (issue #129).** `stt`/`tts` ride the same channels
+— `STT_`/`TTS_FEASIBLE` (absent = feasible, the sleeping-lobe default, so
+every pre-#129 deployment is byte-identical), `*_PEER_ORIGIN`, `*_PEER_PROXY`,
+`*_PEER_API_KEY` — with three audio-specific mechanics, because the audio
+namespace is **path-routed, not model-routed**:
+
+- **Per-endpoint routing.** `/v1/audio/speech` is the tts lane and
+  `/v1/audio/transcriptions` the stt lane, and they move between boxes
+  independently — the live ask this shipped for is Chatterbox (tts) on a peer
+  while Parakeet (stt) stays local, which the one namespace-wide `AUDIO_URL`
+  cannot express. `AUDIO_URL` remains the local-bridge lane for whatever this
+  box serves itself; a proxied lane takes precedence for its endpoint only.
+- **Verbatim forward.** An audio forward carries the caller's body untouched
+  (multipart upload or TTS JSON — no model rewrite); everything else matches
+  the core-role forward exactly: caller `Authorization` stripped, pairwise key
+  attached, `X-Lobes-Proxied` single-hop guard (508 `proxy_loop`),
+  `X-Lobes-Proxied-By` attribution.
+- **Capabilities-probed readiness.** Audio roles never appear on a gateway's
+  `/v1/models` (nothing to request by `model` name), so the peer probe reads
+  the peer's `GET /capabilities` and requires the role's own `ready: true`.
+  A declared-off, unproxied lane 404s `role_infeasible` (with `hosted_by`
+  when a peer is declared) and is not advertised in `/status` endpoints.
+
+Cross-box audio is **DECLARED/UNVALIDATED** until the live Spark→Thor
+acceptance transcript lands under `docs/evidence/` (the #108 rule).
+
 **Marker headers.** Every proxied departure carries `X-Lobes-Proxied:
 <backend name>` (the hop marker, consulted only by the loop guard below);
 every response the branch produces — a relayed 2xx/4xx, the peer-down 503,

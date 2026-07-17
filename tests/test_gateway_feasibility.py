@@ -80,12 +80,19 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
     # reranker (lobes.profiles.schema.ROLES) — mirrored 1:1 here by backend
     # name, using the SAME <PREFIX>_FEASIBLE convention as the served-context
     # overlay's <PREFIX>_MAX_MODEL_LEN (PRIMARY/MULTIMODAL/MUSE/EMBED/RERANK).
+    # Since issue #129 the first-class audio roles ride the same channel —
+    # they stay OUTSIDE the Profile TUNING schema (no per-card knobs), but an
+    # operator can declare a lane off with STT_/TTS_FEASIBLE=false exactly
+    # like a dropped core role; absent, both stay feasible (the sleeping-lobe
+    # default), so every pre-#129 deployment renders byte-identically.
     assert FEASIBLE_ENV == {
         "primary": "PRIMARY_FEASIBLE",
         "multimodal": "MULTIMODAL_FEASIBLE",
         "muse": "MUSE_FEASIBLE",
         "embed": "EMBED_FEASIBLE",
         "rerank": "RERANK_FEASIBLE",
+        "stt": "STT_FEASIBLE",
+        "tts": "TTS_FEASIBLE",
     }
 
 

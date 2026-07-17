@@ -55,19 +55,23 @@ from lobes.gateway._routing import RoutingTable
 # stable ordering.
 ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
 
-# role → the internal gateway :attr:`Backend.name` that serves it. Only the five
-# gateway-fronted roles appear here; ``stt``/``tts`` are audio-overlay sidecars,
-# not gateway backends (they are resolved from ``ServerConfig.audio_url`` below).
+# role → the internal gateway backend NAME that serves it — the key space the
+# RoutingTable's feasibility/peer channels use. The five gateway-fronted roles
+# map to their vLLM backends; ``stt``/``tts`` (first-class since issue #129)
+# map to themselves — they are path-routed audio lanes, not model-routed
+# backends (still resolved from ``ServerConfig.audio_url`` below), but their
+# names now ride the SAME ``FEASIBLE_ENV`` / peer origin/proxy/key channels,
+# so :func:`annotate_peer_referrals` covers all seven roles uniformly.
 # NOTE the name↔role_hint mismatch for the pooling lane: the *backend* is named
 # ``embed``/``rerank`` while the *catalog* role_hint is ``embedding``/``reranker``.
-# ``muse`` is the first role whose backend name IS the role name — it has no
-# pre-#81 internal name to preserve.
 ROLE_BACKEND: dict[str, str] = {
     "cortex": "primary",
     "senses": "multimodal",
     "muse": "muse",
     "embedder": "embed",
     "reranker": "rerank",
+    "stt": "stt",
+    "tts": "tts",
 }
 
 # role → the catalog ``role_hint`` of its canonical model. Used to (a) look up
@@ -195,10 +199,12 @@ class RoleInfo:
     # RoutingTable named this role's backend in `table.infeasible` (from
     # `<PREFIX>_FEASIBLE=false`, see lobes.gateway._config.FEASIBLE_ENV) — a
     # fact about the MACHINE, independent of `loaded` (is a backend wired) and
-    # `ready` (is it live right now). Always `True` for stt/tts: audio-overlay
-    # feasibility is out of the per-machine Profile schema's scope
-    # (lobes.profiles.schema.ROLES covers only cortex/senses/embedder/
-    # reranker), so it never varies for those two.
+    # `ready` (is it live right now). Since issue #129 this varies for stt/tts
+    # too: an operator declares an audio lane off with STT_/TTS_FEASIBLE=false
+    # (the audio roles stay outside the per-machine Profile TUNING schema, but
+    # ride the same feasibility/peer channels); absent, the audio roles keep
+    # their sleeping-lobe default — feasible:true, ready:false — so every
+    # pre-#129 deployment renders byte-identically.
     feasible: bool = True
     # Runtime readiness — a caller-supplied LIVE signal, folded in by
     # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
@@ -406,8 +412,16 @@ def _audio_role(
     loaded: bool,
     *,
     ready: bool | None = None,
+    feasible: bool = True,
 ) -> RoleInfo:
-    """Resolve an audio-overlay role (stt/tts). No catalog entry → 0/""/False."""
+    """Resolve an audio-overlay role (stt/tts). No catalog entry → 0/""/False.
+
+    ``feasible`` is the #129 first-class channel: ``False`` when the operator
+    declared the lane off (``STT_/TTS_FEASIBLE=false`` →
+    ``table.infeasible``), which is what lets
+    :func:`annotate_peer_referrals` attach ``hosted_by``/``proxied`` to an
+    audio role exactly as it does to a dropped core role.
+    """
     if ready is None:
         ready = loaded
     return RoleInfo(
@@ -421,6 +435,7 @@ def _audio_role(
         mtp=False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
+        feasible=feasible,
         ready=ready,
         loaded=loaded,
     )
@@ -590,12 +605,30 @@ def build_role_registry(
         and bool(audio_endpoint)
         and (audio_ready if audio_ready is not None else True)
     )
-    registry["stt"] = _audio_role(
-        "stt", _STT_MODEL, _STT_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
-    )
-    registry["tts"] = _audio_role(
-        "tts", _TTS_MODEL, _TTS_RUNTIME, audio_endpoint, audio_configured, ready=audio_ready_signal
-    )
+    for role, model, runtime in (
+        ("stt", _STT_MODEL, _STT_RUNTIME),
+        ("tts", _TTS_MODEL, _TTS_RUNTIME),
+    ):
+        # First-class per-role feasibility (issue #129): an operator declares
+        # an audio lane off with STT_/TTS_FEASIBLE=false — same channel as a
+        # dropped core role. Absent (every pre-#129 deployment) both lanes
+        # stay feasible, so the sleeping-lobe contract renders byte-identically.
+        if role not in table.infeasible:
+            registry[role] = _audio_role(
+                role, model, runtime, audio_endpoint, audio_configured, ready=audio_ready_signal
+            )
+            continue
+        # Declared-off lane: flagged (feasible:false), never hidden — loaded is
+        # honestly False and `ready` follows the PEER probe when the role is
+        # proxied and a live peer signal was supplied (the same h14
+        # missing-key/None/False discipline the core roles use); a healthy
+        # LOCAL bridge is not evidence the peer serves the lane.
+        peer_signal = False
+        if peer_ready is not None and role in table.peer_proxied:
+            peer_signal = peer_ready.get(role) is True
+        registry[role] = _audio_role(
+            role, model, runtime, "", False, ready=peer_signal, feasible=False
+        )
     return registry
 
 
@@ -623,8 +656,10 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     the data-plane proxy branch in :mod:`lobes.gateway.server`
     (:func:`~lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
     #115/#127), never by this pure/offline annotator. Audio roles (stt/tts)
-    are outside the referral channel's scope, exactly as they are outside
-    ``FEASIBLE_ENV``'s.
+    joined the channel in issue #129 — first-class entries in
+    ``ROLE_BACKEND`` and ``FEASIBLE_ENV``/``PEER_*_ENV`` — so a declared-off
+    audio lane with a declared peer gets the same ``hosted_by``/``proxied``
+    annotations as any dropped core role.
 
     **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127).**
     Referral above says "ask the peer yourself"; a role whose backend name is
