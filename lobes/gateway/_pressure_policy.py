@@ -23,14 +23,18 @@ Return keys from :func:`decide`:
     servable_tier: str               — "minor" under pressure, else normalized tier
     requested_tier: str              — normalize_tier(requested_tier)
 
-Tier vocabulary (main / minor / multimodal)
--------------------------------------------
+Tier vocabulary (main / minor / multimodal / muse)
+--------------------------------------------------
 Issue #69 reframed the generate-lane capability tiers to **main / minor /
-multimodal** (mirroring ``catalog.TIER_ROLE``):
+multimodal**, and the seventh Colleague role added **muse** (mirroring
+``catalog.TIER_ROLE``; capability order ``minor < multimodal < muse < main``):
 
     main        → 27B primary   (full text capability, the former "hard" tier)
     minor       → 4B minor       (fast, low memory, the former "cheap" tier)
     multimodal  → 12B multimodal (text+image+audio — a *different* capability)
+    muse        → 31B muse       (opt-in creative/ideation lobe — its role name
+                                  IS its tier; sheds to ``minor`` under
+                                  pressure exactly like main/multimodal)
 
 Back-compat input tiers (``cheap`` / ``normal`` / ``hard``) are still accepted
 and normalize to the new vocabulary on output (``cheap``→``minor``,
@@ -179,7 +183,8 @@ def normalize_tier(tier: str) -> str:
     """Normalize a tier alias (either vocabulary) to its new-vocabulary name.
 
     ``main``/``hard`` → ``"main"``; ``minor``/``cheap`` → ``"minor"``;
-    ``multimodal``/``normal`` → ``"multimodal"``.
+    ``multimodal``/``normal`` → ``"multimodal"``; ``muse`` → ``"muse"``
+    (its role name IS its tier — no back-compat alias).
 
     Raises
     ------
@@ -214,8 +219,8 @@ def decide(
         CPU iowait percentage over the last sample interval, 0–100.
     requested_tier:
         The capability tier the caller asked for.  One of the new-vocabulary
-        tiers (``"main"`` / ``"minor"`` / ``"multimodal"``) or a back-compat
-        alias (``"cheap"`` / ``"normal"`` / ``"hard"``).
+        tiers (``"main"`` / ``"minor"`` / ``"multimodal"`` / ``"muse"``) or a
+        back-compat alias (``"cheap"`` / ``"normal"`` / ``"hard"``).
 
     Returns
     -------
