@@ -41,15 +41,17 @@ from lobes.runtime import _parser
         # A bare mixtral/ministral basename (no mistralai prefix) stays unknown.
         ("Mixtral-8x7B", None),
         ("some/ministral-8b", None),
-        # Gemma 4 — Google's Python-style function-call format → pythonic
-        # (chosen parser value: "pythonic"; t2 catalog task must use the same string)
-        # TODO(risk r2): confirm against the served checkpoint during t7 live
-        # validation on the Spark.
-        ("sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4", "pythonic"),
+        # Gemma 4 → the purpose-built "gemma4" parser (Gemma4EngineToolParser).
+        # NOT "pythonic": risk r2 is now CLOSED against the served checkpoint
+        # (2026-07-17, live 31B on Thor) and the pythonic guess was disproven —
+        # Gemma 4 emits `<|tool_call>call:name{...}<tool_call|>` with special-token
+        # delimiters that pythonic (skip_special_tokens=True) never sees, so it
+        # parsed nothing and the call leaked out as assistant content.
+        ("sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4", "gemma4"),
         # NVFP4 base gear (§7 "support both" — the new default multimodal gear).
-        ("coolthor/gemma-4-12B-it-NVFP4A16", "pythonic"),
-        ("some/gemma-4-27b-it", "pythonic"),
-        ("some/gemma4-9b", "pythonic"),
+        ("coolthor/gemma-4-12B-it-NVFP4A16", "gemma4"),
+        ("some/gemma-4-27b-it", "gemma4"),
+        ("some/gemma4-9b", "gemma4"),
     ],
 )
 def test_infer_parser(model, expected) -> None:

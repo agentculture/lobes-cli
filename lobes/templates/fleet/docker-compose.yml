@@ -459,7 +459,10 @@ services:
   # disable the ViT/audio tower and defeat the headline capability).
   #
   # Native MTP draft head for speculative decoding (like the 27B primary's
-  # qwen3_5_mtp config). Tool calls use the Python-style "pythonic" parser.
+  # qwen3_5_mtp config). Tool calls use Gemma 4's own `<|tool_call>call:...`
+  # syntax via the "gemma4" parser PAIR (tool + reasoning) — NOT the generic
+  # "pythonic" parser, which cannot see its special-token delimiters (disproven
+  # live 2026-07-17; see docs/gemma-4-31b-nvfp4.md#tool-calling).
   # NVFP4 (modelopt_fp4). NO --profiles key — starts with the default fleet.
   #
   # GPU budget: util 0.14 (~18 GiB, 32K context) alongside the 27B primary
@@ -553,7 +556,14 @@ services:
       # note there).
       - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.14}
       - --enable-auto-tool-choice
-      - --tool-call-parser=pythonic
+      - --tool-call-parser=gemma4
+      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
+      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
+      # markers — the tool parser has no business stripping those, so without the
+      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
+      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
+      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+      - --reasoning-parser=gemma4
       # Native MTP, default-on (docs/vllm-nightly-migration.md §7, measured
       # 2026-07-02): the public google/gemma-4-12B-it-assistant draft against this
       # NVFP4 base target — 57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6
@@ -637,7 +647,14 @@ services:
       - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
       - --enable-auto-tool-choice
-      - --tool-call-parser=pythonic
+      - --tool-call-parser=gemma4
+      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
+      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
+      # markers — the tool parser has no business stripping those, so without the
+      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
+      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
+      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+      - --reasoning-parser=gemma4
       # No speculative-decoding flag here: native MTP measured only 30.8% draft
       # acceptance on this coder fine-tune (§6/§7) — not worth wiring. See the
       # catalog entry's comment (role_hint="candidate", speculative_config="").
@@ -738,7 +755,14 @@ services:
       - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
       - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.55}
       - --enable-auto-tool-choice
-      - --tool-call-parser=pythonic
+      - --tool-call-parser=gemma4
+      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
+      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
+      # markers — the tool parser has no business stripping those, so without the
+      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
+      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
+      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+      - --reasoning-parser=gemma4
       # Native MTP via the public plain-line assistant draft (gemma4_assistant
       # family — normalized by vLLM's hf_config_override to gemma4_mtp with
       # forced n_predict=1; see docs/gemma4-mtp-draft.md). DECLARED, not yet

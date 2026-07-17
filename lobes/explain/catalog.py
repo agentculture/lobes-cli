@@ -335,8 +335,13 @@ to the **cortex/primary** lane and carries a non-empty `tools` array — arming
 xgrammar structural-tag constrained decoding so a malformed tool call is
 impossible by construction. A caller-supplied `strict` (either value) always
 wins over the injection; every other lane/endpoint (`multimodal`/`senses`,
-embed, rerank, audio, `/v1/completions`) is untouched, and the knob off is a
-byte-identical passthrough. On an upstream schema/grammar-compile failure the
+`muse`, embed, rerank, audio, `/v1/completions`) is untouched, and the knob off
+is a byte-identical passthrough. `muse` is excluded deliberately despite serving
+tool calls: measured live on the 31B, `strict` never engages xgrammar on that
+lane (a schema xgrammar cannot compile is still served 200, and output matches
+`strict: false`), so injecting it would advertise a grammar-constrained lane
+that isn't one (see `docs/gemma-4-31b-nvfp4.md#tool-calling`).
+On an upstream schema/grammar-compile failure the
 gateway retries the same request exactly once with `strict` stripped back out
 and relays whatever that retry returns. Pairs with, but is independent of, the
 `qwen3_coder_thinking` tool-parser plugin (a served-vLLM-side fix for the same

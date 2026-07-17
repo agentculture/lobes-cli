@@ -1,0 +1,185 @@
+=== lobes — Gemma 4 tool calling: pythonic DISPROVEN, gemma4 validated, live on the physical Jetson AGX Thor ===
+  utc          : 2026-07-17T05:38Z - 2026-07-17T06:05Z
+  host         : thor (Jetson AGX Thor 128GB, sm_110, unified memory)
+  repo rev     : 62ad73c (base) -> branch fix/gemma4-tool-parser-and-tools-capability
+  deployment   : ~/.lobes, `thor-muse` shape — muse (Gemma 4 31B) + embedder + reranker;
+                 cortex REFERRED to the Spark, senses PROXIED to the Orin (neither hosted here).
+  vllm         : 0.23.1rc1.dev672+g93d8f834d (image lobes/vllm-gemma4:local)
+  model        : nvidia/Gemma-4-31B-IT-NVFP4 @ util 0.55, max_model_len 262144, MTP draft on
+  scope        : closes risk r2 (#71) — "confirm the Gemma tool-call parser against the served
+                 checkpoint during live validation", open since the value was first guessed.
+                 Validated on the 31B ONLY. The 12B senses/coder lanes inherit the same family
+                 rule but are NOT booted here (this box does not host senses) — they remain
+                 UNVALIDATED per #108.
+
+  headline     : the shipped `--tool-call-parser=pythonic` did not merely underperform — it made
+                 muse's tool calling SILENTLY BROKEN. Fixed by `--tool-call-parser=gemma4`.
+                 A second, paired gap (`--reasoning-parser=gemma4`) was found by this run.
+
+=== check 1: BEFORE — the shipped `pythonic` parser, auto tool choice ===
+
+  $ docker inspect model-gear-vllm-muse --format '{{join .Config.Cmd " "}}' | tr ' ' '\n' | grep parser
+  --tool-call-parser=pythonic
+
+  request: POST /v1/chat/completions
+    messages: [{"role":"user","content":"What is the weather in Paris? Use the tool."}]
+    tools:    [get_weather(city: string)]
+
+  response (HTTP 200):
+    "content"       : "call:get_weather{city:Paris}"      <-- the tool call, leaked as PROSE
+    "tool_calls"    : null                                <-- nothing callable
+    "finish_reason" : "stop"                              <-- not "tool_calls"
+
+  VERDICT: broken, and SILENTLY so. No error, no warning. A caller passing `tools` to muse
+  receives text that looks like a tool call and gets no callable one. Every muse tool call
+  since the role landed behaved this way.
+
+=== check 2: ROOT CAUSE — the model is fine; the parser cannot see its delimiters ===
+
+  Same request + "skip_special_tokens": false, to reveal what the model actually emitted:
+
+    "content": "<|tool_call>call:get_weather{city:<|\"|>Paris<|\"|>}<tool_call|>"
+
+  The model's output is PERFECTLY well-formed Gemma 4. Compare vLLM's own
+  gemma4_utils standard pattern:
+
+    _TOOL_CALL_START_TAG = "<|tool_call>"
+    _TOOL_CALL_END_TAG   = "<tool_call|>"
+    standard_pattern = r"<\|tool_call\>call:(\w+)\{(.*?)\}(?:<tool_call\|>|<turn\|>)"
+
+  Those delimiters are SPECIAL TOKENS (ids 48/49). `pythonic` is served with the default
+  skip_special_tokens=True, so they are stripped BEFORE it runs; it then sees a bare
+  `call:get_weather{city:Paris}`, which matches no Python-style call syntax, so it parses
+  nothing and vLLM relays the text as content. vLLM ships a purpose-built parser that
+  decodes with skip_special_tokens=False precisely to avoid this:
+
+    ToolParserManager.lazy_parsers['gemma4']
+      -> ('vllm.tool_parsers.gemma4_engine_tool_parser', 'Gemma4EngineToolParser')
+
+  `pythonic` was never evidence-backed. lobes' own runtime/_parser.py carried the caveat
+  from day one: "Risk r2 (pending #71): confirm against the served checkpoint during live
+  validation on the Spark (blocked until a gemma4_unified-capable image lands)." That
+  confirmation had never run. It ran here, and the guess was wrong.
+
+=== check 3: AFTER — `--tool-call-parser=gemma4`, identical request ===
+
+  $ docker inspect model-gear-vllm-muse --format '{{join .Config.Cmd " "}}' | tr ' ' '\n' | grep parser
+  --tool-call-parser=gemma4
+
+  response (HTTP 200):
+    "content"       : null
+    "tool_calls"    : [{"id":"chatcmpl-tool-b04ce88679e36b72","type":"function",
+                        "function":{"name":"get_weather","arguments":"{\"city\": \"Paris\"}"}}]
+    "finish_reason" : "tool_calls"
+
+  VERDICT: FIXED. A real tool_calls array, correct name, correctly parsed JSON arguments,
+  correct finish_reason. Same prompt, same model, same weights — only the parser changed.
+
+  Boot was unaffected by the change: GPU KV cache size 610,231 tokens, maximum concurrency
+  2.33x @ 262144 — consistent with the pre-existing thor-muse budget measurement.
+
+=== check 4: the SECOND gap this run exposed — the missing paired reasoning parser ===
+
+  With `gemma4` tool parsing live, a full round-trip (feed the tool result back, WITH the
+  `tools` array resent, as a real agent loop does) returned:
+
+    "content": "<|channel>thought\n<channel|>The weather in Paris is currently 11C with drizzle."
+
+  The answer is correct, but Gemma 4's CHANNEL markers leak into content. Cause: the gemma4
+  tool parser forces skip_special_tokens=False (that is how it sees <|tool_call>), which also
+  exposes <|channel> markers that the TOOL parser has no business stripping. vLLM ships the
+  matching half, which lobes was not wiring on any Gemma lane:
+
+    ReasoningParserManager.lazy_parsers['gemma4']
+      -> ('vllm.reasoning.gemma4_engine_reasoning_parser', 'Gemma4ParserReasoningAdapter')
+
+  i.e. Gemma 4 needs a PAIR — `--tool-call-parser=gemma4` + `--reasoning-parser=gemma4` —
+  exactly as the cortex lane already pairs `--tool-call-parser=qwen3_coder(_thinking)` with
+  `--reasoning-parser=qwen3`. lobes shipped neither half for Gemma. Booted with the pair:
+
+    --tool-call-parser=gemma4
+    --reasoning-parser=gemma4
+
+  GPU KV cache size 614,517 tokens, maximum concurrency 2.34x @ 262144 (budget unaffected).
+
+=== check 5: AFTER the pair — tool call still parses AND content is clean ===
+
+  $ docker inspect model-gear-vllm-muse --format '{{join .Config.Cmd " "}}' | tr ' ' '\n' | grep parser
+  --tool-call-parser=gemma4
+  --reasoning-parser=gemma4
+
+  (A) tool call, auto choice — unchanged by adding the reasoning parser:
+    "content"       : null
+    "tool_calls"    : [{"id":"chatcmpl-tool-b18249536b2657c0","type":"function",
+                        "function":{"name":"get_weather","arguments":"{\"city\": \"Paris\"}"}}]
+    "finish_reason" : "tool_calls"
+
+  (B) full round-trip (tool result fed back, `tools` resent — the real agent loop):
+    "content"       : "The current weather in Paris is 11C with drizzle."
+    "finish_reason" : "stop"
+
+  VERDICT: the <|channel>thought leak from check 4 is GONE. The pair is the complete fix:
+  tool calls parse, and content is clean prose. Compare the three states measured here:
+
+    parser config                      | tool calls          | content
+    -----------------------------------+---------------------+---------------------------
+    pythonic (as shipped)              | BROKEN (leak->text) | clean
+    gemma4 tool only                   | works               | <|channel>thought leaks
+    gemma4 tool + gemma4 reasoning     | works               | clean          <-- shipped
+
+=== check 6: strict tool calling on the muse lane (GATEWAY_FORCE_STRICT_TOOLS) ===
+
+  Question: should `muse` join `primary` in lobes.gateway.server._STRICT_TOOL_LANES?
+  Answer: NO — on this lane the knob is INERT. Measured, not assumed:
+
+  (A) strict:true is served normally, engine survives:
+        HTTP 200; tool_calls correct; GET /health = 200 afterwards.
+        => the "crashes EngineCore under speculative decoding" risk (from
+           Gemma4EngineToolParser.adjust_request's docstring) did NOT reproduce via this
+           knob. It is real for the structured-outputs path that parser deliberately
+           SKIPS, but that path is not what `strict` drives. HYPOTHETICAL, not measured.
+
+  (B) strict:true vs strict:false are indistinguishable:
+        schema constraining city to enum ["Tokyo"] while asking about Paris ->
+          strict=true  -> no tool call; "I can only provide weather information for Tokyo"
+          strict=false -> no tool call; "I can only provide the weather for Tokyo"
+        (the model reasons over the enum SEMANTICALLY; identical either way.)
+
+  (C) DECISIVE — a schema xgrammar cannot compile is accepted anyway:
+        tool schema with an unsupported lookahead regex `(?=lookahead-unsupported)`
+        + "strict": true  ->  HTTP 200.
+        If xgrammar were engaging, this must have raised a grammar-compile failure.
+        And: `docker logs --since 6m | grep -iE "structural|xgrammar|grammar|guided"`
+        returns NOTHING for these requests.
+
+  VERDICT: `strict` never engages xgrammar on the muse lane. Arming it would advertise a
+  grammar-constrained lane that is not one — the advertise-what-you-cannot-serve failure
+  #92 exists to prevent. _STRICT_TOOL_LANES stays {"primary"}.
+
+  Two rationales an earlier draft of this work gave for excluding muse are DISPROVEN and
+  are recorded here so they are not reinstated:
+    * "Gemma4EngineToolParser declares supports_required_and_named = False" — checked
+      live: Qwen3EngineToolParser (the primary lane's own parser, which IS armed)
+      declares the same. The flag does not distinguish the lanes.
+    * "forcing structured output crashes EngineCore under MTP" — see (A): did not
+      reproduce through this knob.
+
+  SCOPE: cortex is not hosted on this box (referred to the Spark), so no comparative
+  strict measurement on the primary lane was taken here; the primary lane's arming rests
+  on its own prior evidence (docs/evidence/2026-07-14-strict-tools-spark-lobe-spark.txt).
+
+=== notes / operational ===
+
+  * Thor boot memory race (pre-existing, NOT caused by this change): recreating vllm-muse
+    without first dropping caches failed twice with
+      ValueError: Free memory on device cuda:0 (32.23/122.82 GiB) on startup is less than
+      desired GPU memory utilization (0.55, 67.55 GiB)
+    and the restart policy simply looped it. MemAvailable is misleading here: it read
+    ~36 GB while `sync; echo 3 > /proc/sys/vm/drop_caches` then freed ~93 GB
+    (MemFree 9.9 -> 102.8 GB) even though `Cached` showed only 27 GB — most of the pool is
+    GPU-side page cache the kernel never reports as reclaimable, and vLLM's free-at-boot
+    check tracks MemAvailable. tegrastats is the honest signal:
+      before: RAM 89328/125772MB (lfb 199x4MB)
+      after : RAM 24354/125772MB (lfb 864x4MB)
+    docker stats / RSS are useless for this (summed ~9 GB against 89 GB used); nvidia-smi
+    memory fields are [N/A] on this integrated GPU. Drop caches BEFORE any muse recreate.

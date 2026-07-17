@@ -115,6 +115,7 @@ def _role_info(role: str, *, endpoint: str, loaded: bool = True, model: str = "m
         context=4096,
         quant="",
         mtp=False,
+        tools=False,
         responsibilities=(),
         forbidden_responsibilities=(),
         ready=None,

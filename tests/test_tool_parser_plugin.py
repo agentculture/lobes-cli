@@ -55,19 +55,34 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    # Recomputed for the first-class audio lanes (issue #129): the gateway
-    # service's environment: block deliberately gained the STT_/TTS_ FEASIBLE
-    # + PEER_ORIGIN/PEER_PROXY/PEER_API_KEY passthroughs. (Prior recompute:
-    # the muse role's MUSE_* passthroughs + the profile-gated vllm-muse
-    # service; before that, t7 #127/#115's inbound-auth pair + *_PEER_PROXY /
-    # *_PEER_API_KEY knobs.) Every other service is byte-identical.
-    "gateway": "6a6c65ab2ae357939537c61a5d144bb7cadb1888c3daffce13ce70f40399a3a9",
+    # Recomputed 2026-07-17 for the Gemma 4 parser-pair correction, on top of
+    # the first-class audio lanes (#129). TWO deliberate changes are folded in
+    # here — this recompute rebased one onto the other, so both stories matter:
+    #
+    #  * the three GEMMA lanes (vllm-multimodal, vllm-multimodal-coder,
+    #    vllm-muse) moved from `--tool-call-parser=pythonic` to the `=gemma4`
+    #    PAIR (tool + reasoning). Pythonic was a never-validated guess (its own
+    #    comment said so) and the live 31B run disproved it — Gemma 4 emits
+    #    `<|tool_call>call:name{...}` with special-token delimiters pythonic
+    #    cannot see, so tool calls leaked out as plain content; and the tool
+    #    parser alone then leaks `<|channel>` markers into content without its
+    #    paired reasoning parser.
+    #  * the GATEWAY service's environment: block gained the STT_/TTS_ FEASIBLE
+    #    + PEER_ORIGIN/PEER_PROXY/PEER_API_KEY passthroughs (#129).
+    #
+    # (Prior recomputes: the muse role's MUSE_* passthroughs + the
+    # profile-gated vllm-muse service; before that, t7 #127/#115's inbound-auth
+    # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
+    # byte-identical — this tripwire firing on exactly the Gemma three plus the
+    # gateway, and NOTHING else, is itself the proof of each change's blast
+    # radius.
+    "gateway": "PLACEHOLDER",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
-    "vllm-multimodal": "a809b5e4fce759646a63f1cfcb9221e3b3fbfafe8cfeed8dbe161ce22ff9f8fc",
-    "vllm-multimodal-coder": "460f000fdd12eddbe4e6011b3a519acc66a22b44650a4b1bfe614aa92c6c6e93",
-    "vllm-muse": "92b59e090a3db3a28eaf29b0d170dfb41393ae78b889fdc4cd639803c6b468cf",
+    "vllm-multimodal": "31cd10820f2411c6401a97ba84c54603ecde5434b5a7be6e309390047d847e11",
+    "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
+    "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
 }
 
@@ -144,3 +159,45 @@ class TestOtherServicesUntouched:
         assert _PLUGIN_PARSER_NAME not in text
         assert "tool-parser-plugin" not in text
         assert "qwen3_thinking_tool_parser" not in text
+
+
+class TestGemma4ParserPair:
+    """Gemma 4 lanes must wire the tool parser and the reasoning parser TOGETHER.
+
+    vLLM ships Gemma 4 support as a matched pair, and half of it is worse than a
+    clean miss (both halves measured live on the 31B muse lane, 2026-07-17 —
+    docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt):
+
+    * WITHOUT `--tool-call-parser=gemma4` (the old `pythonic` default): Gemma 4's
+      `<|tool_call>call:name{...}<tool_call|>` delimiters are special tokens that
+      pythonic — served with skip_special_tokens=True — never sees. It matches
+      nothing, and the model's well-formed call is relayed as assistant CONTENT
+      with tool_calls=null. Tool calling is silently, totally broken.
+    * WITHOUT `--reasoning-parser=gemma4`: the tool parser forces
+      skip_special_tokens=False (that is how it sees <|tool_call>), which also
+      exposes Gemma's `<|channel>thought` markers. The tool parser does not strip
+      those, so they leak into `content`.
+
+    So neither flag is independently correct on a Gemma lane; this pins them as a
+    unit, per-service, rather than as a global substring count.
+    """
+
+    GEMMA_SERVICES = ("vllm-multimodal", "vllm-multimodal-coder", "vllm-muse")
+
+    def test_every_gemma_lane_wires_both_halves_of_the_pair(self) -> None:
+        services = _load_fleet()["services"]
+        for name in self.GEMMA_SERVICES:
+            command = services[name]["command"]
+            assert "--tool-call-parser=gemma4" in command, f"{name}: missing tool parser"
+            assert "--reasoning-parser=gemma4" in command, f"{name}: missing reasoning parser"
+
+    def test_no_gemma_lane_still_uses_the_disproven_pythonic_parser(self) -> None:
+        """`pythonic` was a guess that a live 31B run disproved. It must not come
+        back on any Gemma lane — the failure it causes is silent, so nothing else
+        in CI would notice."""
+        services = _load_fleet()["services"]
+        for name in self.GEMMA_SERVICES:
+            assert "--tool-call-parser=pythonic" not in services[name]["command"], (
+                f"{name}: pythonic cannot parse Gemma 4's special-token tool-call "
+                "delimiters — see docs/gemma-4-31b-nvfp4.md#tool-calling"
+            )

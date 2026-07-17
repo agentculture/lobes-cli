@@ -130,12 +130,22 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "prepare_context_packet",
         "speak_back",
     ),
+    # `tool_use` alongside the creative tokens is NOT a widening of muse's
+    # authority: the forbidden list below still bars final_decision /
+    # repo_action / security_decision, so muse calls tools to RESEARCH a
+    # proposal (read a file, search, fetch), never to enact one — cortex
+    # remains the only lobe that acts. It is declared because muse's lane
+    # genuinely serves tool calls (the fleet template's vllm-muse carries
+    # --enable-auto-tool-choice --tool-call-parser=gemma4), and a
+    # division-of-labour list silent on a capability the lane actually serves
+    # tells a Colleague less than the truth.
     "muse": (
         "creative_generation",
         "long_form_writing",
         "ideation",
         "style_variation",
         "divergent_second_opinion",
+        "tool_use",
     ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
@@ -191,6 +201,25 @@ class RoleInfo:
     context: int
     quant: str  # vLLM quantization for the model; "" when n/a (pooling/audio)
     mtp: bool  # speculative decoding (MTP draft head) active for this model
+    # Does this role's endpoint accept OpenAI `tools` on a request? Derived from
+    # the catalog entry's `tool_parser` being non-empty — the SAME field the
+    # fleet template's `--enable-auto-tool-choice --tool-call-parser=<p>` pair is
+    # built from (runtime._parser.infer_parser), so it cannot drift from what is
+    # served without `tests/test_catalog.py`'s pairing guard failing first.
+    # `False` for the pooling roles (embedder/reranker serve no chat lane) and
+    # for stt/tts (no catalog entry at all).
+    #
+    # Deliberately a BOOL, not the parser name: the served parser can diverge
+    # from the catalog's (the primary lane defaults to the `qwen3_coder_thinking`
+    # PLUGIN over the catalog's base `qwen3_coder`, and `PRIMARY_TOOL_CALL_PARSER`
+    # /`MIDDLE_TOOL_CALL_PARSER` can override it), so naming a parser here would
+    # be a claim this module cannot honestly make. Whether tools are accepted
+    # does not vary under that divergence; which parser produced them is an
+    # implementation detail the OpenAI surface already abstracts away.
+    #
+    # NOT a claim about tool-call QUALITY or success — same runtime-only contract
+    # as every other field here (see the module docstring's provisional wording).
+    tools: bool
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
     # Is this role even SERVABLE on this machine at all — the HARDWARE
@@ -396,6 +425,7 @@ def _gateway_role(
         context=_served_context(role, env, native_context),
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
+        tools=bool(entry.tool_parser) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
         feasible=feasible,
@@ -421,6 +451,9 @@ def _audio_role(
     ``table.infeasible``), which is what lets
     :func:`annotate_peer_referrals` attach ``hosted_by``/``proxied`` to an
     audio role exactly as it does to a dropped core role.
+
+    ``tools=False`` is a fact, not a fallback: the audio sidecars serve
+    transcription/synthesis, not a chat lane that could accept ``tools``.
     """
     if ready is None:
         ready = loaded
@@ -433,6 +466,7 @@ def _audio_role(
         context=0,
         quant="",
         mtp=False,
+        tools=False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
         feasible=feasible,

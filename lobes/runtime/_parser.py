@@ -48,14 +48,31 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     ),
     (("qwen3", "qwen-3"), "hermes"),
     (("mistral",), "mistral"),
-    # Gemma 4 (Google DeepMind) uses a Python-style function-call syntax; vLLM's
-    # Gemma 4 recipe prescribes --tool-call-parser pythonic.  Markers are scoped to
-    # "gemma-4" / "gemma4" so they don't match older Gemma 1/2/3 checkpoints whose
-    # tool-call story is less clear.
-    # chosen parser value: "pythonic"
-    # Risk r2 (pending #71): confirm against the served checkpoint during live
-    # validation on the Spark (blocked until a gemma4_unified-capable image lands).
-    (("gemma-4", "gemma4"), "pythonic"),
+    # Gemma 4 (Google DeepMind) does NOT emit Python-style calls: it emits its own
+    # native `<|tool_call>call:name{args}<tool_call|>` syntax, whose delimiters are
+    # SPECIAL TOKENS (ids 48/49). vLLM ships a purpose-built parser for it —
+    # `gemma4` -> vllm.tool_parsers.gemma4_engine_tool_parser.Gemma4EngineToolParser,
+    # which decodes with skip_special_tokens=False so it can see those delimiters.
+    #
+    # This rule USED to say "pythonic", carrying an explicit caveat that the value
+    # was unconfirmed ("Risk r2 (pending #71): confirm against the served
+    # checkpoint during live validation"). That live check finally ran against the
+    # 31B muse lane on a physical Thor (2026-07-17) and the guess was WRONG:
+    # `pythonic` is served with skip_special_tokens=True, so the delimiters are
+    # stripped before it ever runs, it matches nothing, and the model's perfectly
+    # well-formed call is silently relayed as assistant CONTENT with
+    # tool_calls=null / finish_reason="stop" — a caller sees prose shaped like a
+    # tool call and no callable one. Evidence:
+    # docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt.
+    #
+    # Markers stay scoped to "gemma-4"/"gemma4" so they never match older Gemma
+    # 1/2/3 checkpoints, whose tool-call story is different and unvalidated here.
+    # VALIDATION SCOPE (#108): measured on the 31B (nvidia/Gemma-4-31B-IT-NVFP4).
+    # The 12B senses/coder lanes inherit this family rule — the syntax is a Gemma 4
+    # family trait and `gemma4_utils` is family-generic, not size-specific — but
+    # have NOT been booted against it; they were on a parser proven wrong for the
+    # family, so this is a strictly better default, not a validated claim.
+    (("gemma-4", "gemma4"), "gemma4"),
 ]
 
 

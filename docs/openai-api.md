@@ -101,6 +101,19 @@ the served build's structural-tag call site also needed a request-aware
 - **Scope.** Only `/v1/chat/completions`, and only when the resolved backend
   is the primary (cortex) lane. `/v1/completions`, embeddings, rerank, and
   audio are never touched; a `multimodal`/`senses` request is unaffected.
+  **`muse` is excluded too**, even though it serves tool calls and declares
+  `tool_use` — that omission is deliberate, not an oversight: on the muse lane
+  the knob is **inert**. Measured live on the 31B (2026-07-17), `strict: true`
+  never engages xgrammar there — a schema with a regex xgrammar cannot compile
+  is accepted with HTTP 200 rather than failing, no grammar log line is emitted,
+  and the output matches `strict: false`. Injecting `strict` would advertise a
+  grammar-constrained lane that isn't one. See
+  [`docs/gemma-4-31b-nvfp4.md#tool-calling`](gemma-4-31b-nvfp4.md#tool-calling),
+  which also records the two *disproven* rationales an earlier draft gave (the
+  `supports_required_and_named` flag, which cortex's own parser shares; and an
+  EngineCore-crash risk that did not reproduce). The lane set is
+  `lobes.gateway.server._STRICT_TOOL_LANES`; widen it only with a live
+  transcript showing strict decoding actually constrains decoding there.
 - **Retry-without-strict fallback.** If the injected request comes back with
   a 4xx/5xx whose body matches a schema/grammar-compile-failure signature
   (a heuristic substring list — `structural_tag`, `xgrammar`, `grammar`,
