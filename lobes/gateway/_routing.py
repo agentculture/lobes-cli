@@ -95,6 +95,27 @@ class RoutingTable:
     peer_api_keys: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
+# The per-endpoint audio ROLE map (issue #129): /v1/audio/speech is the tts
+# lane, /v1/audio/transcriptions the stt lane. Path-keyed because the audio
+# namespace is path-routed, not model-routed — and per-ENDPOINT (not one
+# namespace-wide backend) because the two roles move between boxes
+# independently: the live trigger was Chatterbox (tts) on a peer while
+# Parakeet (stt) stays local, which a single AUDIO_URL cannot express.
+_AUDIO_ROLE_BY_PATH: dict[str, str] = {
+    "/v1/audio/speech": "tts",
+    "/v1/audio/transcriptions": "stt",
+}
+
+
+def audio_role_for_path(path: str) -> str | None:
+    """The first-class audio role (``stt``/``tts``) an audio path addresses.
+
+    ``None`` for any other ``/v1/audio/*`` path — those stay on the legacy
+    whole-namespace ``AUDIO_URL`` route, exactly as before #129.
+    """
+    return _AUDIO_ROLE_BY_PATH.get(path.split("?", 1)[0])
+
+
 def is_audio_path(path: str) -> bool:
     """True for the OpenAI audio endpoints (``/v1/audio/...``).
 

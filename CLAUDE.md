@@ -224,8 +224,10 @@ the previous shape). A dropped role is flagged `feasible:false` on both
 404s `role_infeasible` on every alias — never half-served. Opt-in **honest
 referral** (issue #112, t3): declaring a peer origin per dropped role
 (`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `MUSE_PEER_ORIGIN` /
-`EMBED_PEER_ORIGIN` /
-`RERANK_PEER_ORIGIN` — always operator-typed, never derived, per #92) makes
+`EMBED_PEER_ORIGIN` / `RERANK_PEER_ORIGIN` — plus, since #129, the
+first-class audio lanes `STT_PEER_ORIGIN` / `TTS_PEER_ORIGIN`, declared off
+per-lane with `STT_FEASIBLE`/`TTS_FEASIBLE=false` — always operator-typed,
+never derived, per #92) makes
 both capabilities surfaces and the `role_infeasible` 404 body name the
 hosting peer (`hosted_by`); by default this is annotation only — the gateway
 does not forward a request to a peer on the origin declaration alone, and

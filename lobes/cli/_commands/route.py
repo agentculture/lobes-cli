@@ -39,10 +39,13 @@ import argparse
 import json
 import re
 
+from lobes import assess as _assess
 from lobes.catalog import supported_models
+from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
 from lobes.minor import chat_completion, decide
+from lobes.runtime import _compose
 
 _DEFAULT_BASE_URL = "http://localhost:8000/v1"
 
@@ -197,15 +200,26 @@ def cmd_route(args: argparse.Namespace) -> int:
     model_id = _resolve_model(args)
     base_url: str = getattr(args, "base_url", None) or _DEFAULT_BASE_URL
 
+    # Attach the deployment's opt-in gateway key (#129 items 1-2): the minor
+    # client merges the contextvar-scoped header, same as every assess-backed
+    # verb. Soft resolution — an unscaffolded/keyless deployment installs {}
+    # and the request stays byte-identical to today.
+    try:
+        deploy_dir = _compose.resolve_deployment_dir(getattr(args, "compose_dir", None))
+    except ModelGearError:
+        deploy_dir = None
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
+
     # Ask the minor model to classify the task.
-    completion = chat_completion(
-        args.text,
-        base_url=base_url,
-        model=model_id,
-        system=_ROUTE_SYSTEM,
-        max_tokens=_ROUTE_MAX_TOKENS,
-        extra_body=_ROUTE_EXTRA_BODY,
-    )
+    with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        completion = chat_completion(
+            args.text,
+            base_url=base_url,
+            model=model_id,
+            system=_ROUTE_SYSTEM,
+            max_tokens=_ROUTE_MAX_TOKENS,
+            extra_body=_ROUTE_EXTRA_BODY,
+        )
     content: str = completion["choices"][0]["message"]["content"]
     parsed = _parse_model_response(content)
 

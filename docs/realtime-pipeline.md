@@ -70,6 +70,19 @@ services:
 Both STT and TTS share the GPU with the two LLM backends.
 ```
 
+**Per-lane cross-box routing (issue #129).** The gateway routes the two audio
+endpoints per-ROLE, not as one namespace: `/v1/audio/speech` is the `tts` lane
+and `/v1/audio/transcriptions` the `stt` lane, and each can independently be
+declared off (`STT_FEASIBLE`/`TTS_FEASIBLE=false`) and proxied to a peer box
+(`*_PEER_ORIGIN` + `*_PEER_PROXY` + `*_PEER_API_KEY` — the same proxy-lobes
+channels and guarantees as every other role; see
+`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`). `AUDIO_URL`
+stays exactly what the diagram shows: the LOCAL bridge lane for the lanes this
+box serves itself. With no audio peer knob set anywhere (every pre-#129
+deployment), routing is byte-identical to the diagram. Cross-box audio is
+DECLARED/UNVALIDATED until a live acceptance transcript lands under
+`docs/evidence/` (#108).
+
 ## Bring-up
 
 ### Prerequisites
