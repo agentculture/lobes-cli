@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.47.1] - 2026-07-17
+
+### Fixed
+
+- `accept-shape.sh` and `validate-tiers.sh` now consume the compose `-f` chain from `lobes fleet files` instead of re-implementing it in bash (#138): `--restore` no longer boots the very lobe a mesh-shape backup dropped (and no longer re-introduces the gateway `depends_on` edge the shape resets), and validate-tiers gateway recreates keep the shape overlay so results describe the topology the operator actually runs. The restore path fails loudly if the chain cannot be resolved; the best-effort `_compose_down` degrades to a bare `down --remove-orphans`. A drift-proofing test pins both scripts to the CLI authority.
+
 ## [0.47.0] - 2026-07-17
 
 ### Added

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import types
+from pathlib import Path
 
 import pytest
 
@@ -159,3 +160,28 @@ def test_targeted_audio_semantics_still_differ_by_design(tmp_path) -> None:
         _compose.SHAPE_OVERLAY,
     ]
     assert _compose._compose_files(deploy, audio=True) == _compose._compose_files(deploy)
+
+
+# --- the scripts consume the chain, never re-implement it (#138) ------------
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+
+# The acceptance/validation scripts that once carried hand-rolled -f chains —
+# accept-shape.sh's --restore booted a shape-dropped lobe, and
+# validate-tiers.sh recreated the gateway off-topology on a shape deployment.
+_CHAIN_CONSUMER_SCRIPTS = ("accept-shape.sh", "validate-tiers.sh")
+
+
+@pytest.mark.parametrize("script", _CHAIN_CONSUMER_SCRIPTS)
+def test_scripts_consume_the_chain_from_the_cli(script: str) -> None:
+    """Drift-proofing by construction (#138): the scripts mapfile the chain
+    from `lobes fleet files` and never name a lobes-authored overlay in a
+    hand-rolled ``-f`` append again (the tell-tale is the audio overlay's
+    filename, which only a re-implemented chain would need to spell out —
+    the run-local threshold override in validate-tiers.sh is not one)."""
+    text = (_SCRIPTS_DIR / script).read_text(encoding="utf-8")
+    assert "lobes fleet files" in text, f"{script} must consume the CLI chain authority"
+    assert _compose.AUDIO_OVERLAY not in text, (
+        f"{script} names {_compose.AUDIO_OVERLAY} — a hand-rolled -f chain is back; "
+        "consume `lobes fleet files` instead (#137/#138)"
+    )
