@@ -609,27 +609,47 @@ def build_role_registry(
         ("stt", _STT_MODEL, _STT_RUNTIME),
         ("tts", _TTS_MODEL, _TTS_RUNTIME),
     ):
-        # First-class per-role feasibility (issue #129): an operator declares
-        # an audio lane off with STT_/TTS_FEASIBLE=false — same channel as a
-        # dropped core role. Absent (every pre-#129 deployment) both lanes
-        # stay feasible, so the sleeping-lobe contract renders byte-identically.
-        if role not in table.infeasible:
-            registry[role] = _audio_role(
-                role, model, runtime, audio_endpoint, audio_configured, ready=audio_ready_signal
-            )
-            continue
-        # Declared-off lane: flagged (feasible:false), never hidden — loaded is
-        # honestly False and `ready` follows the PEER probe when the role is
-        # proxied and a live peer signal was supplied (the same h14
-        # missing-key/None/False discipline the core roles use); a healthy
-        # LOCAL bridge is not evidence the peer serves the lane.
-        peer_signal = False
-        if peer_ready is not None and role in table.peer_proxied:
-            peer_signal = peer_ready.get(role) is True
-        registry[role] = _audio_role(
-            role, model, runtime, "", False, ready=peer_signal, feasible=False
+        registry[role] = _resolve_audio_role(
+            role,
+            model,
+            runtime,
+            table,
+            endpoint=audio_endpoint,
+            configured=audio_configured,
+            ready_signal=audio_ready_signal,
+            peer_ready=peer_ready,
         )
     return registry
+
+
+def _resolve_audio_role(
+    role: str,
+    model: str,
+    runtime: str,
+    table: RoutingTable,
+    *,
+    endpoint: str,
+    configured: bool,
+    ready_signal: bool,
+    peer_ready: Mapping[str, bool | None] | None,
+) -> RoleInfo:
+    """One audio lane's :class:`RoleInfo`, with first-class feasibility (#129).
+
+    An operator declares a lane off with ``STT_/TTS_FEASIBLE=false`` — the
+    same channel as a dropped core role; absent (every pre-#129 deployment)
+    the lane stays feasible, so the sleeping-lobe contract renders
+    byte-identically. A declared-off lane is flagged (``feasible:false``),
+    never hidden — ``loaded`` is honestly ``False`` and ``ready`` follows the
+    PEER probe when the role is proxied and a live peer signal was supplied
+    (the same h14 missing-key/None/False discipline the core roles use); a
+    healthy LOCAL bridge is not evidence the peer serves the lane.
+    """
+    if role not in table.infeasible:
+        return _audio_role(role, model, runtime, endpoint, configured, ready=ready_signal)
+    peer_signal = False
+    if peer_ready is not None and role in table.peer_proxied:
+        peer_signal = peer_ready.get(role) is True
+    return _audio_role(role, model, runtime, "", False, ready=peer_signal, feasible=False)
 
 
 def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> dict[str, dict]:
