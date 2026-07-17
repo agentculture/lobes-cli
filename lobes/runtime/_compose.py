@@ -461,10 +461,14 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     return containers
 
 
-def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
-    """``-f`` args: the base file plus whichever overlays are present.
+def compose_file_args(*, audio: bool, shape: bool, local: bool) -> list[str]:
+    """The ``-f`` chain for a deployment made of the given overlays — THE single
+    composition authority (issue #137). Every ``-f`` list lobes hands to
+    ``docker compose`` — whole-deployment verbs via :func:`_compose_files`, the
+    role-targeted ``lobes up``, and the script-facing ``lobes fleet files`` —
+    is built here and nowhere else, so no two callers can drift.
 
-    Returns ``[]`` whenever no LOBES overlay is present — regardless of whether an
+    Returns ``[]`` whenever no LOBES overlay is included — regardless of whether an
     operator override exists. On that path ``docker compose`` resolves the project
     itself and its own convention already layers docker-compose.yml +
     docker-compose.override.yml, so naming either here would gain nothing and a
@@ -484,9 +488,6 @@ def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
     that re-introduces a dropped service's ``depends_on`` edge is the operator's own
     doing, and compose fails loudly rather than lobes ignoring their file.
     """
-    audio = audio_overlay_present(deploy_dir)
-    shape = shape_overlay_present(deploy_dir)
-    local = local_override_present(deploy_dir)
     if not audio and not shape:
         # No lobes overlay: compose's own resolution already layers base + override.
         # Passing -f here would change nothing except to break that convention.
@@ -499,6 +500,25 @@ def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
     if local:
         files += ["-f", LOCAL_OVERRIDE]
     return files
+
+
+def _compose_files(deploy_dir: os.PathLike | str, *, audio: bool | None = None) -> list[str]:
+    """``-f`` args for ``deploy_dir``: the base file plus whichever overlays apply.
+
+    Probes the deployment dir and delegates the composition to
+    :func:`compose_file_args` (the single authority). ``audio=None`` — the
+    whole-deployment default (fleet up/down, serve, stop, switch) — includes the
+    audio overlay iff it is scaffolded. An explicit bool is the role-targeted
+    ``lobes up`` semantics ("only the overlays the TARGETED services need",
+    issue #137): ``False`` excludes a scaffolded overlay whose services the
+    target never touches; ``True`` includes it (the caller has already
+    validated it is scaffolded).
+    """
+    return compose_file_args(
+        audio=audio_overlay_present(deploy_dir) if audio is None else audio,
+        shape=shape_overlay_present(deploy_dir),
+        local=local_override_present(deploy_dir),
+    )
 
 
 def _run(argv: list[str], *, cwd: str | None = None, timeout: int | None = None):
@@ -530,7 +550,18 @@ def compose_down(deploy_dir: os.PathLike | str):
 
 
 def compose_up_detached(deploy_dir: os.PathLike | str):
-    return _run(["docker", "compose", "up", "-d"], cwd=str(deploy_dir))
+    """``docker compose up -d`` with the deployment's full ``-f`` chain.
+
+    Resolves through :func:`_compose_files` so up can never disagree with
+    :func:`compose_down` about which files a deployment is made of (#137 —
+    ``switch`` used to tear down with the full chain and bring up with none,
+    and ``lobes serve --apply`` on a shape deployment booted the dropped
+    lobe). A plain deployment resolves ``[]``, keeping the bare argv
+    byte-identical to the pre-#137 behaviour.
+    """
+    return _run(
+        ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d"], cwd=str(deploy_dir)
+    )
 
 
 def compose_up_build(deploy_dir: os.PathLike | str):

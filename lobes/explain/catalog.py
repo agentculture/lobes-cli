@@ -274,6 +274,10 @@ with `lobes init --fleet` (writes the fleet `docker-compose.yml`, `.env`, and
 - `lobes fleet down` — `docker compose down`.
 - `lobes fleet status` — read-only: each container's state, the gateway `/health`,
   and the routed model list (`/v1/models`).
+- `lobes fleet files` — read-only: the resolved `docker compose -f` chain (base +
+  audio overlay + shape override + operator override, one argv token per line;
+  empty for a plain deployment). The single chain authority (#137) — scripts
+  consume this instead of re-implementing the file list.
 
 `up`/`down` are **dry-run by default**; pass `--apply` to commit. `--compose-dir`
 overrides the deployment dir. There is **one generate backend** by default, so the

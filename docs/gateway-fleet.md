@@ -581,6 +581,7 @@ Mnemonic: the catalog is *what's on the menu (and which dishes we've cooked)*;
 lobes init --fleet --apply        # scaffold compose + .env + Dockerfile.gateway
 lobes fleet up --apply            # docker compose up -d --build, wait for gateway /health
 lobes fleet status                # each container's state + gateway /health + /v1/models
+lobes fleet files                 # the resolved docker compose -f chain (read-only)
 lobes overview --live             # live dashboard: online / offered / busy + usage + endpoints
 lobes fleet down --apply          # docker compose down
 ```
@@ -590,6 +591,15 @@ lobes fleet down --apply          # docker compose down
 `$HOME/.lobes`). `lobes fleet status` is read-only — it reports the *warm*
 backend(s) (`/v1/models`); for the full set you can switch to, use
 `lobes overview --list` / `/v1/models/supported` (see above).
+
+`lobes fleet files` is the read-only **chain authority surface** (#137): it
+prints exactly the `-f` argv tokens every lobes verb hands to `docker compose`
+(base + audio overlay + shape override + the operator's own
+`docker-compose.override.yml`, in that order), one token per line — empty for a
+plain deployment, where compose's own base+override auto-discovery is the
+faithful chain. Shell scripts consume it (`mapfile -t files < <(lobes fleet
+files --compose-dir "$dir")`) instead of re-implementing the chain, so they
+cannot drift from the CLI by construction.
 
 `lobes overview --live` is the read-only **live dashboard**: it reads the gateway
 `/status` (or, against a bare single-model server, that server's `/metrics` +

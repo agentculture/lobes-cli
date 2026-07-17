@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.47.0] - 2026-07-17
+
+### Added
+
+- lobes fleet files - read-only verb printing the resolved docker compose -f chain (one argv token per line; empty for a plain deployment), so scripts consume the chain from the CLI instead of re-implementing it (#137)
+
+### Changed
+
+- One compose -f chain authority (#137): compose_file_args in lobes/runtime/_compose.py builds every -f list; _compose_files delegates to it, up.py delegates its targeted-services semantics as a parameter, and compose_up_detached now resolves the full chain - fixing switch tearing down with the full chain but bringing up with none, and lobes serve --apply booting a shape-dropped lobe on a shape deployment
+- Deleted the dead shape_render.py::shape_compose_files and ShapeRender.compose_files (never consumed by init; a latent duplicate chain builder)
+
 ## [0.46.1] - 2026-07-17
 
 ### Fixed
