@@ -39,10 +39,12 @@ model = "nvidia/Gemma-4-31B-IT-NVFP4"
 # with senses still resident; THIS shape drops both heavy lobes first, so
 # more is free at boot — the acceptance run measures the real ceiling.
 gpu_mem_util = 0.40
-# max_model_len = 131072 — the checkpoint is 256K native, trimmed to the box
-# budget: the 31B's KV cost per token is roughly double the 12B's, so a
-# full-native 262144 muse would starve concurrency inside util 0.40.
-max_model_len = 131072
+# max_model_len = 262144 — the checkpoint's FULL 256K native context
+# (operator decision: muse serves its full window, no box-budget trim).
+# Gemma 4's sliding-window layers keep long-context KV growth capped, but at
+# the 31B's per-token KV cost this trades concurrency for window inside the
+# util 0.40 pool — the acceptance run measures the real KV pool/concurrency.
+max_model_len = 262144
 quantization = "modelopt"
 # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the same
 # divergence the 12B senses gear carries on both spark and thor cards.

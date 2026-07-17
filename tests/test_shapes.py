@@ -263,7 +263,7 @@ def test_thor_muse_hosts_muse_pooling_and_audio_no_default_heavy_lobe() -> None:
     muse = thor_muse.override("muse")
     assert muse.model == "nvidia/Gemma-4-31B-IT-NVFP4"
     assert muse.gpu_mem_util == 0.40
-    assert muse.max_model_len == 131072
+    assert muse.max_model_len == 262144
     assert muse.quantization == "modelopt"
     assert muse.attention_backend == "TRITON_ATTN"
 

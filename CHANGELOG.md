@@ -28,7 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hosts muse + embedder + reranker + audio; drops BOTH heavy default lobes
   (cortex and senses) to peer boxes. Carries the full muse declaration in its
   `[overrides.muse]` (model, `gpu_mem_util=0.40` hypothesis,
-  `max_model_len=131072`, `quantization=modelopt`,
+  `max_model_len=262144` — the full 256K native window, `quantization=modelopt`,
   `attention_backend=TRITON_ATTN`); hosting muse renders its activation env
   (`COMPOSE_PROFILES=muse` + `MUSE_BASE_URL`). `base.toml` vetoes muse on
   unrecognised cards.

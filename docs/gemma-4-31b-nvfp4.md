@@ -92,7 +92,7 @@ declaration):
 | `MUSE_MODEL` / `MUSE_SERVED_NAME` | `nvidia/Gemma-4-31B-IT-NVFP4` | HF checkpoint id / OpenAI `model` id |
 | `MUSE_BASE_URL` | `http://vllm-muse:8000` | set by a muse-hosting shape render; wires the gateway backend |
 | `MUSE_GPU_MEM_UTIL` | `0.40` | **HYPOTHESIS** — see below |
-| `MUSE_MAX_MODEL_LEN` | `131072` | 256K native, trimmed to the box budget |
+| `MUSE_MAX_MODEL_LEN` | `262144` | the FULL 256K native window (operator decision — no box-budget trim) |
 | `MUSE_QUANTIZATION` | `modelopt` | the NVIDIA export's own quant_method — NOT `compressed-tensors` |
 | `MUSE_ATTENTION_BACKEND` | `TRITON_ATTN` | Gemma 4's heterogeneous per-layer head sizes — the same divergence the 12B `senses` gear carries on every card |
 
@@ -132,7 +132,7 @@ for the dropped roles. See [`deployment-shapes.md`](deployment-shapes.md).
 
 **The budget values are hypotheses, not measurements.** `gpu_mem_util=0.40`
 is ~49.1 GiB of the Thor's 122.82 GiB unified pool (~30.4 GiB weights + KV and
-overhead); `max_model_len=131072` trims the 256K native context because the
+overhead); `max_model_len=262144` trims the 256K native context because the
 31B's KV cost per token is roughly double the 12B's, so a full-native 262144
 would starve concurrency inside util 0.40. Both `spark-lobe` and `thor-lobe`
 shipped values that vLLM **refused** at their paper-derived reclaim-sums on

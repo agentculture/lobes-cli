@@ -660,7 +660,8 @@ services:
   #
   # GPU budget: NOT part of the default 0.56 fleet budget — muse only ever
   # runs on a shape that drops BOTH heavy default lobes first (thor-muse).
-  # util 0.40 / 131072 context are the thor-muse shape's DECLARED HYPOTHESIS
+  # util 0.40 at the FULL 262144 native context is the thor-muse shape's
+  # DECLARED HYPOTHESIS
   # (weights alone are 30.4 GiB); the acceptance run measures the real
   # ceiling — see lobes/profiles/builtin_shapes/thor-muse.toml.
   #
@@ -722,7 +723,7 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --quantization=${MUSE_QUANTIZATION:-modelopt}
-      - --max-model-len=${MUSE_MAX_MODEL_LEN:-131072}
+      - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
       - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.40}
       - --enable-auto-tool-choice
       - --tool-call-parser=pythonic
@@ -836,7 +837,7 @@ services:
       # so without them the gateway couldn't see the served lengths.)
       - PRIMARY_MAX_MODEL_LEN=${PRIMARY_MAX_MODEL_LEN:-131072}
       - MULTIMODAL_MAX_MODEL_LEN=${MULTIMODAL_MAX_MODEL_LEN:-32768}
-      # Empty default (NOT the vllm-muse service's 131072): muse is opt-in, so
+      # Empty default (NOT the vllm-muse service's 262144): muse is opt-in, so
       # a deployment with no muse shape reports the catalog native for the
       # sleeping lobe; a muse-hosting shape renders the served value into .env.
       - MUSE_MAX_MODEL_LEN=${MUSE_MAX_MODEL_LEN:-}

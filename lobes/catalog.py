@@ -344,8 +344,8 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         role_hint="muse",
         shape=_SHAPE_GEMMA4_UNIFIED,
         # text_config.max_position_embeddings=262144 (read from the checkpoint
-        # config, 2026-07-17); a muse-hosting shape trims the SERVED context to
-        # its box budget (thor-muse: 131072).
+        # config, 2026-07-17); the thor-muse shape serves the FULL native
+        # window (262144 — operator decision, no box-budget trim).
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="pythonic",
