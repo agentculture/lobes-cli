@@ -464,9 +464,11 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
 def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
     """``-f`` args: the base file plus whichever overlays are present.
 
-    Returns ``[]`` when NO overlay AND no operator override (``docker compose``
-    finds docker-compose.yml — and, by its own convention, docker-compose.override.yml
-    — on its own), so a plain fleet keeps its current argv unchanged.
+    Returns ``[]`` whenever no LOBES overlay is present — regardless of whether an
+    operator override exists. On that path ``docker compose`` resolves the project
+    itself and its own convention already layers docker-compose.yml +
+    docker-compose.override.yml, so naming either here would gain nothing and a
+    plain fleet keeps its current argv unchanged.
 
     The shape override is placed LAST of the LOBES-AUTHORED files — its compose
     ``!reset`` on the gateway ``depends_on`` clears the dangling edge to a
