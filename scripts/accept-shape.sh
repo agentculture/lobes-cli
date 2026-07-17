@@ -108,6 +108,11 @@ _compose_down() { # best-effort down of whatever compose lives in $1
   [[ -f "${dir}/docker-compose.yml" ]] || return 0
   local files=(-f "${dir}/docker-compose.yml")
   [[ -f "${dir}/docker-compose.audio.yml" ]] && files+=(-f "${dir}/docker-compose.audio.yml")
+  # Operator's own file last — "last wins" is what an override means to compose
+  # (mirrors lobes.runtime._compose._compose_files). Any explicit -f suppresses
+  # compose's auto-discovery of it, so an explicit chain MUST name it (#135) or
+  # this down misses containers their override renamed or added.
+  [[ -f "${dir}/docker-compose.override.yml" ]] && files+=(-f "${dir}/docker-compose.override.yml")
   (cd "${dir}" && docker compose "${files[@]}" down --remove-orphans) || true
 }
 
@@ -155,6 +160,9 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   mv "${BACKUP}" "${DEPLOY_DIR}"
   files=(-f "${DEPLOY_DIR}/docker-compose.yml")
   [[ -f "${DEPLOY_DIR}/docker-compose.audio.yml" ]] && files+=(-f "${DEPLOY_DIR}/docker-compose.audio.yml")
+  # Same as _compose_down: the restored deployment is the operator's, so bring it
+  # back up with their override merged last, not without it (#135).
+  [[ -f "${DEPLOY_DIR}/docker-compose.override.yml" ]] && files+=(-f "${DEPLOY_DIR}/docker-compose.override.yml")
   (cd "${DEPLOY_DIR}" && docker compose "${files[@]}" up -d)
   _wait_healthy "$(_port)" "${TIMEOUT}"
   printf '=== restore complete (shape run kept at %s.accepted-%s) ===\n' "${DEPLOY_DIR}" "${STAMP}"
