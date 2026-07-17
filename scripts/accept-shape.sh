@@ -103,16 +103,28 @@ _env_val() { # _env_val <file> <KEY> — last assignment wins, strip comment/quo
 
 _port() { local p; p="$(_env_val "${DEPLOY_DIR}/.env" VLLM_PORT)"; echo "${p:-8000}"; }
 
+_compose_files() { # emit the resolved -f chain for $1, one argv token per line
+  # The chain comes from the CLI's single authority (`lobes fleet files`,
+  # #137): base + audio + shape + the operator's docker-compose.override.yml,
+  # in order — and NOTHING for a plain deployment, where compose's own
+  # base+override auto-discovery is the faithful chain. This script's previous
+  # hand-rolled copies omitted the shape override, so --restore booted the
+  # very lobe a mesh-shape backup had dropped (#138) — consume the chain,
+  # never re-implement it. Relative filenames by design: every consumer here
+  # cds into the deployment dir first, exactly like the CLI (cwd=deploy dir).
+  uv run lobes fleet files --compose-dir "$1"
+}
+
 _compose_down() { # best-effort down of whatever compose lives in $1
   local dir="$1"
   [[ -f "${dir}/docker-compose.yml" ]] || return 0
-  local files=(-f "${dir}/docker-compose.yml")
-  [[ -f "${dir}/docker-compose.audio.yml" ]] && files+=(-f "${dir}/docker-compose.audio.yml")
-  # Operator's own file last — "last wins" is what an override means to compose
-  # (mirrors lobes.runtime._compose._compose_files). Any explicit -f suppresses
-  # compose's auto-discovery of it, so an explicit chain MUST name it (#135) or
-  # this down misses containers their override renamed or added.
-  [[ -f "${dir}/docker-compose.override.yml" ]] && files+=(-f "${dir}/docker-compose.override.yml")
+  local -a files=()
+  local out
+  # Best-effort like the down itself: an unresolvable chain (e.g. a pre-fleet
+  # dir) degrades to a bare `docker compose down`, whose --remove-orphans
+  # still sweeps overlay containers — removing MORE, never less.
+  out="$(_compose_files "${dir}" 2>/dev/null)" || out=""
+  [[ -n "${out}" ]] && mapfile -t files <<<"${out}"
   (cd "${dir}" && docker compose "${files[@]}" down --remove-orphans) || true
 }
 
@@ -158,11 +170,15 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   rm -rf "${DEPLOY_DIR}.accepted-${STAMP}"
   [[ -d "${DEPLOY_DIR}" ]] && mv "${DEPLOY_DIR}" "${DEPLOY_DIR}.accepted-${STAMP}"
   mv "${BACKUP}" "${DEPLOY_DIR}"
-  files=(-f "${DEPLOY_DIR}/docker-compose.yml")
-  [[ -f "${DEPLOY_DIR}/docker-compose.audio.yml" ]] && files+=(-f "${DEPLOY_DIR}/docker-compose.audio.yml")
-  # Same as _compose_down: the restored deployment is the operator's, so bring it
-  # back up with their override merged last, not without it (#135).
-  [[ -f "${DEPLOY_DIR}/docker-compose.override.yml" ]] && files+=(-f "${DEPLOY_DIR}/docker-compose.override.yml")
+  # Restore is the RECOVERY path — the chain must be exact, so this one fails
+  # loudly rather than degrading: without the shape override a restored
+  # spark-lobe/thor-lobe/thor-muse backup boots the very lobe its shape
+  # dropped, on a box whose remaining lobe already reclaimed that GPU budget,
+  # and the gateway keeps a dangling depends_on edge the shape !resets (#138).
+  files_out="$(_compose_files "${DEPLOY_DIR}")" \
+    || { printf 'error: could not resolve the compose chain (lobes fleet files) for %s\n' "${DEPLOY_DIR}" >&2; exit 2; }
+  files=()
+  [[ -n "${files_out}" ]] && mapfile -t files <<<"${files_out}"
   (cd "${DEPLOY_DIR}" && docker compose "${files[@]}" up -d)
   _wait_healthy "$(_port)" "${TIMEOUT}"
   printf '=== restore complete (shape run kept at %s.accepted-%s) ===\n' "${DEPLOY_DIR}" "${STAMP}"
