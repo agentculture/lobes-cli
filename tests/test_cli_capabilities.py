@@ -467,6 +467,67 @@ def test_capabilities_non_json_table_marks_gateway_source(fake_gateway, capsys) 
     assert known_payload["cortex"]["model"] in out
 
 
+# --- version skew: a NEWER CLI against an OLDER gateway ---------------------
+
+
+def test_older_gateway_payload_missing_additive_fields_is_still_authoritative(
+    monkeypatch, capsys
+) -> None:
+    """A newer CLI must not demote an older gateway to "unreachable".
+
+    The CLI and the gateway are separately-versioned processes, and on a mesh of
+    mixed-version boxes a newer CLI routinely probes an older gateway whose
+    payload predates a field. Requiring every CURRENT RoleInfo field would read
+    that as "a foreign daemon", silently swap the gateway's authoritative answer
+    for offline .env guesses, and print "gateway unreachable" — false, since it
+    answered. That is #92's dishonesty inverted, so it is pinned here.
+    """
+    payload = _known_capabilities_payload()
+    for role in payload:  # simulate a pre-`tools`, pre-`feasible` gateway
+        payload[role].pop("tools", None)
+        payload[role].pop("feasible", None)
+    handler = type("_OldGatewayHandler", (_FakeGatewayHandler,), {"payload": payload})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(
+        capabilities_module, "_fetch_gateway_capabilities", _REAL_FETCH_GATEWAY_CAPABILITIES
+    )
+    try:
+        rc = main(["capabilities", "--port", str(httpd.server_address[1])])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "live GET /capabilities" in out  # trusted, not demoted to offline
+        assert "offline" not in out
+        # The old gateway's own answer is what got rendered — not a local guess.
+        assert payload["cortex"]["model"] in out
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_payload_missing_a_CORE_field_is_still_rejected(monkeypatch, capsys) -> None:
+    """The flip side: tolerating additive fields must not blunt the check's real
+    job — telling a real gateway from a stray daemon answering on a guessed port
+    (a live hazard on this rig, see lobes.roles._gateway_base_url). A body
+    missing a CORE field is still malformed => fall back to offline."""
+    payload = _known_capabilities_payload()
+    for role in payload:
+        payload[role].pop("endpoint")  # a core field no real gateway omits
+    handler = type("_ForeignDaemonHandler", (_FakeGatewayHandler,), {"payload": payload})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(
+        capabilities_module, "_fetch_gateway_capabilities", _REAL_FETCH_GATEWAY_CAPABILITIES
+    )
+    try:
+        rc = main(["capabilities", "--port", str(httpd.server_address[1])])
+        assert rc == 0
+        assert "offline" in capsys.readouterr().out  # not trusted
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_endpoint_gateway_mode_uses_live_payload_not_offline_guess(fake_gateway, capsys) -> None:
     """`lobes endpoint` also asks the gateway first (Job 1: both verbs)."""
     port, known_payload = fake_gateway

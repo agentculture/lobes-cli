@@ -40,6 +40,14 @@ def _cfg(**over):
     return build_config(env)
 
 
+# muse is opt-in (OPT_IN_BACKENDS): its backend only exists once MUSE_BASE_URL is
+# set, so the muse-lane tests must wire it explicitly rather than rely on _cfg().
+_MUSE_ENV = {
+    "MUSE_BASE_URL": "http://vllm-muse:8000",
+    "MUSE_SERVED_NAME": "U",
+}
+
+
 class _FakeUpstream:
     """Duck-typed stand-in for server._Upstream (no socket)."""
 
@@ -278,6 +286,46 @@ def test_knob_on_multimodal_alias_lane_unaffected() -> None:
     fwd = json.loads(calls[0][1])
     assert fwd["model"] == "M"  # alias resolved
     assert "strict" not in fwd["tools"][0]["function"]  # not the primary lane
+
+
+def test_knob_on_muse_lane_is_not_armed() -> None:
+    """muse serves tool calls and declares `tool_use`, yet is deliberately NOT a
+    strict lane, because on that lane the knob is INERT: measured live on the 31B
+    (2026-07-17), `strict: true` never engages xgrammar at all — a schema xgrammar
+    cannot compile is still served 200, no grammar log line is emitted, and output
+    matches `strict: false`. Injecting it would advertise a grammar-constrained
+    lane that isn't one. `_STRICT_TOOL_LANES` carries the full evidence, including
+    two rationales that were investigated and DISPROVEN.
+
+    Pinned as a test because "muse serves tools, so arm it" is the intuitive and
+    WRONG inference; a future reader needs the omission to be load-bearing rather
+    than look like an oversight.
+    """
+    table, cfg = _cfg(GATEWAY_FORCE_STRICT_TOOLS="1", **_MUSE_ENV)
+    opener, calls = _opener({"muse": 200})
+    body = _tools_body(model="U")
+    resp = S.handle_post(table, cfg, "/v1/chat/completions", [], body, opener)
+    assert resp.status == 200
+    assert calls[0][0] == "muse"
+    assert calls[0][1] == S.rewrite_model(body, "U")  # untouched — no injection
+
+
+def test_knob_on_muse_alias_lane_is_not_armed() -> None:
+    """`model=muse` (the role/tier alias) is not armed either — the gate keys off
+    the resolved BACKEND, never the caller's spelling of the model."""
+    table, cfg = _cfg(GATEWAY_FORCE_STRICT_TOOLS="1", **_MUSE_ENV)
+    opener, calls = _opener({"muse": 200})
+    S.handle_post(table, cfg, "/v1/chat/completions", [], _tools_body(model="muse"), opener)
+    assert calls[0][0] == "muse"
+    fwd = json.loads(calls[0][1])
+    assert fwd["model"] == "U"  # alias resolved
+    assert "strict" not in fwd["tools"][0]["function"]  # not a strict lane
+
+
+def test_strict_tool_lanes_is_primary_only() -> None:
+    """`_STRICT_TOOL_LANES` is the knob's whole blast radius; pin it explicitly so
+    widening it is always a deliberate edit with a live transcript behind it."""
+    assert set(S._STRICT_TOOL_LANES) == {"primary"}
 
 
 def test_knob_on_embeddings_endpoint_unaffected() -> None:

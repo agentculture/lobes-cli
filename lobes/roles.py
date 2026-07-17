@@ -130,12 +130,22 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "prepare_context_packet",
         "speak_back",
     ),
+    # `tool_use` alongside the creative tokens is NOT a widening of muse's
+    # authority: the forbidden list below still bars final_decision /
+    # repo_action / security_decision, so muse calls tools to RESEARCH a
+    # proposal (read a file, search, fetch), never to enact one — cortex
+    # remains the only lobe that acts. It is declared because muse's lane
+    # genuinely serves tool calls (the fleet template's vllm-muse carries
+    # --enable-auto-tool-choice --tool-call-parser=gemma4), and a
+    # division-of-labour list silent on a capability the lane actually serves
+    # tells a Colleague less than the truth.
     "muse": (
         "creative_generation",
         "long_form_writing",
         "ideation",
         "style_variation",
         "divergent_second_opinion",
+        "tool_use",
     ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
@@ -191,6 +201,25 @@ class RoleInfo:
     context: int
     quant: str  # vLLM quantization for the model; "" when n/a (pooling/audio)
     mtp: bool  # speculative decoding (MTP draft head) active for this model
+    # Does this role's endpoint accept OpenAI `tools` on a request? Derived from
+    # the catalog entry's `tool_parser` being non-empty — the SAME field the
+    # fleet template's `--enable-auto-tool-choice --tool-call-parser=<p>` pair is
+    # built from (runtime._parser.infer_parser), so it cannot drift from what is
+    # served without `tests/test_catalog.py`'s pairing guard failing first.
+    # `False` for the pooling roles (embedder/reranker serve no chat lane) and
+    # for stt/tts (no catalog entry at all).
+    #
+    # Deliberately a BOOL, not the parser name: the served parser can diverge
+    # from the catalog's (the primary lane defaults to the `qwen3_coder_thinking`
+    # PLUGIN over the catalog's base `qwen3_coder`, and `PRIMARY_TOOL_CALL_PARSER`
+    # /`MIDDLE_TOOL_CALL_PARSER` can override it), so naming a parser here would
+    # be a claim this module cannot honestly make. Whether tools are accepted
+    # does not vary under that divergence; which parser produced them is an
+    # implementation detail the OpenAI surface already abstracts away.
+    #
+    # NOT a claim about tool-call QUALITY or success — same runtime-only contract
+    # as every other field here (see the module docstring's provisional wording).
+    tools: bool
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
     # Is this role even SERVABLE on this machine at all — the HARDWARE
@@ -307,6 +336,64 @@ def _served_context(role: str, env: Mapping[str, str], native: int) -> int:
         return native
 
 
+def _resolve_ready(
+    loaded: bool,
+    feasible: bool,
+    endpoint: str,
+    ready_signal: bool | None,
+    peer_signal: bool | None,
+) -> bool:
+    """Resolve ``RoleInfo.ready`` for a gateway-fronted role — the #92/#115 clamp.
+
+    This is the structural enforcement :func:`_gateway_role`'s docstring
+    promises: a caller passing a stale/wrong ``ready_signal`` (or ``peer_signal``)
+    can never fabricate ``ready=True`` for a role with nothing to dial, nothing
+    wired, or no hardware feasibility — the clamp is applied HERE, not left to
+    caller discipline.
+
+    ``ready`` is CLAMPED to ``False`` whenever the backend is not wired
+    (``loaded is False``), the resolved ``endpoint`` is empty (see
+    :func:`_gateway_base_url`), OR this machine's ``table.infeasible`` names
+    this role's backend (``feasible is False`` — task t6, the HARDWARE
+    dimension of the same invariant). This generalises, to all four
+    gateway-fronted roles, the same clamp issue #89/#90 established for
+    stt/tts (a caller-supplied signal can never override "nothing is wired"
+    or "nothing to dial") — and now also "this machine can't run it at all",
+    independent of wiring or a live health probe.
+
+    When the role IS wired, feasible, and dialable: ``ready`` takes
+    ``ready_signal`` directly when it is not ``None`` (an AUTHORITATIVE
+    verdict — see :func:`_gateway_role`'s docstring for what produces one),
+    else it falls back to ``loaded`` (the original t4 behaviour).
+
+    ``peer_signal`` is the NEW live signal t5's clamp docstring demanded
+    (proxy-lobes t6, issues #115/#127): the live PEER-probe verdict for a
+    PROXIED role, threaded through by :func:`build_role_registry` from its
+    ``peer_ready`` mapping — mirroring how ``backend_ready``/``audio_ready``
+    thread their signals — and ``None`` for every other role and every caller
+    without one. It is a SEPARATE channel from ``ready_signal``,
+    deliberately: ``backend_ready`` (the LOCAL probe, folded into
+    ``ready_signal`` upstream) still NEVER unclamps a proxied role — a
+    healthy local process is not evidence the peer serves the model — while
+    ``peer_signal`` reports a probe of the actual proxied path
+    (:func:`lobes.gateway._readiness.probe_peer_ready`: the peer answered 200
+    AND its own ``/v1/models`` lists the served id), so a proxied role's
+    ``ready`` honestly reflects it (honesty h2 — a live proxied-path probe or
+    ``False``, never hardcoded true). It is still clamped on an empty
+    ``endpoint`` (nothing for a caller to dial — unchanged from every other
+    role), and ``feasible`` stays ``False`` regardless: hosting is a hardware
+    fact a forward does not change.
+    """
+    if loaded and feasible and endpoint:
+        return ready_signal if ready_signal is not None else loaded
+    if peer_signal is not None and endpoint:
+        # PROXIED role with a live peer probe (t6): ready reflects the peer's
+        # verified state — never `loaded` (it isn't, here) and never a local
+        # backend_ready signal (see the two-channel rationale above).
+        return peer_signal
+    return False
+
+
 def _gateway_role(
     role: str,
     table: RoutingTable,
@@ -324,7 +411,7 @@ def _gateway_role(
       The builder passes a concrete bool whenever a ``backend_ready`` mapping was
       supplied, having already collapsed a present ``None``, a present ``False``,
       and a missing key all to ``False`` (issue #92 / honesty h14). ``ready``
-      takes this value directly (subject to the clamp below).
+      takes this value directly (subject to the clamp in :func:`_resolve_ready`).
     * ``None`` — NO live signal at all (``backend_ready`` was omitted entirely),
       in which case ``ready`` falls back to the coarse ``loaded`` proxy — the
       original t4 behaviour.
@@ -335,34 +422,11 @@ def _gateway_role(
     loaded=True") is the #92 defect. The builder resolves the cache's ``None`` to
     a concrete ``False`` on the supplied path so this function can never see it.
 
-    Either way, ``ready`` is CLAMPED to ``False`` whenever the backend is not
-    wired (``loaded is False``), the resolved ``endpoint`` is empty (see
-    :func:`_gateway_base_url`), OR this machine's ``table.infeasible`` names
-    this role's backend (``feasible is False`` — task t6, the HARDWARE
-    dimension of the same invariant) — enforced HERE, structurally, so a
-    caller passing a stale/wrong ``ready_signal`` for an unwired, undialable,
-    OR hardware-infeasible role can never fabricate ``ready=True``. This
-    generalises, to all four gateway-fronted roles, the same clamp issue
-    #89/#90 established for stt/tts (a caller-supplied signal can never
-    override "nothing is wired" or "nothing to dial") — and now also "this
-    machine can't run it at all", independent of wiring or a live health probe.
-
-    ``peer_signal`` is exactly that NEW live signal t5's clamp docstring
-    demanded (proxy-lobes t6, issues #115/#127): the live PEER-probe verdict
-    for a PROXIED role, threaded through by :func:`build_role_registry` from
-    its ``peer_ready`` mapping — mirroring how ``backend_ready``/
-    ``audio_ready`` thread their signals — and ``None`` for every other role
-    and every caller without one. It is a SEPARATE channel from
-    ``ready_signal``, deliberately: ``backend_ready`` (the LOCAL probe) still
-    NEVER unclamps a proxied role — a healthy local process is not evidence
-    the peer serves the model — while ``peer_signal`` reports a probe of the
-    actual proxied path (:func:`lobes.gateway._readiness.probe_peer_ready`:
-    the peer answered 200 AND its own ``/v1/models`` lists the served id), so
-    a proxied role's ``ready`` honestly reflects it (honesty h2 — a live
-    proxied-path probe or ``False``, never hardcoded true). It is still
-    clamped on an empty ``endpoint`` (nothing for a caller to dial —
-    unchanged from every other role), and ``feasible`` stays ``False``
-    regardless: hosting is a hardware fact a forward does not change.
+    ``ready`` itself — the clamp that makes a stale/wrong ``ready_signal`` (or
+    ``peer_signal``) unable to fabricate ``ready=True`` for an unwired,
+    undialable, or hardware-infeasible role, plus the separate proxied-role
+    ``peer_signal`` channel — is computed by :func:`_resolve_ready`; see its
+    docstring for the full rationale (issues #92, #115/#127).
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -378,15 +442,7 @@ def _gateway_role(
     entry = _catalog_by_id(model_id) or _catalog_by_role_hint(ROLE_ROLE_HINT[role])
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
-    if loaded and feasible and endpoint:
-        ready = ready_signal if ready_signal is not None else loaded
-    elif peer_signal is not None and endpoint:
-        # PROXIED role with a live peer probe (t6): ready reflects the peer's
-        # verified state — never `loaded` (it isn't, here) and never a local
-        # backend_ready signal (see the docstring's two-channel rationale).
-        ready = peer_signal
-    else:
-        ready = False
+    ready = _resolve_ready(loaded, feasible, endpoint, ready_signal, peer_signal)
     return RoleInfo(
         role=role,
         model=model_id,
@@ -396,6 +452,7 @@ def _gateway_role(
         context=_served_context(role, env, native_context),
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
+        tools=bool(entry.tool_parser) if entry else False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
         feasible=feasible,
@@ -421,6 +478,9 @@ def _audio_role(
     ``table.infeasible``), which is what lets
     :func:`annotate_peer_referrals` attach ``hosted_by``/``proxied`` to an
     audio role exactly as it does to a dropped core role.
+
+    ``tools=False`` is a fact, not a fallback: the audio sidecars serve
+    transcription/synthesis, not a chat lane that could accept ``tools``.
     """
     if ready is None:
         ready = loaded
@@ -433,6 +493,7 @@ def _audio_role(
         context=0,
         quant="",
         mtp=False,
+        tools=False,
         responsibilities=ROLE_RESPONSIBILITIES[role],
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
         feasible=feasible,

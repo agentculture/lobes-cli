@@ -337,7 +337,7 @@ def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
     assert gemma is not None, f"{_GEMMA_BASE_ID} not found in catalog"
     assert gemma.role_hint == "multimodal"
     assert gemma.task == "generate"
-    assert gemma.tool_parser == "pythonic"
+    assert gemma.tool_parser == "gemma4"  # not "pythonic" — see test_parser.py
     # NVFP4 in compressed-tensors format (config.json quant_method), NOT modelopt —
     # matches the coder entry's quantization path; verified live on the Spark
     # (#71) for the same checkpoint family; modelopt_fp4 fails with a method
@@ -357,11 +357,13 @@ def test_gemma_multimodal_gear_exists_with_correct_fields() -> None:
 
 
 def test_gemma_tool_parser_matches_infer_parser() -> None:
-    # The catalog's pythonic parser must agree with the runtime's inference (t1),
-    # for BOTH Gemma gears (base default + demoted coder candidate).
+    # The catalog's parser must agree with the runtime's inference (t1), for BOTH
+    # Gemma gears (base default + demoted coder candidate). "gemma4" — Gemma 4's
+    # native tool-call syntax needs Gemma4EngineToolParser, not the generic
+    # pythonic parser (disproven live 2026-07-17; see test_parser.py).
     for gemma_id in (_GEMMA_BASE_ID, _GEMMA_CODER_ID):
         gemma = next(m for m in SUPPORTED_MODELS if m.id == gemma_id)
-        assert infer_parser(gemma.id) == "pythonic"
+        assert infer_parser(gemma.id) == "gemma4"
         assert gemma.tool_parser == infer_parser(gemma.id)
 
 

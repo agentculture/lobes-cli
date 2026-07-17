@@ -81,11 +81,19 @@ whether a role did its job well; that judgment is Colleague's (see
 |---|---|---|
 | `cortex` | `reasoning`, `deciding`, `planning`, `tool_use`, `code_repo_actions`, `validation`, `final_authority` | *(none — cortex is the final authority)* |
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
-| `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
+| `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` | *(none)* |
 | `tts` | `speech_output`, `synthesize` | *(none)* |
+
+Two roles carry `tool_use`: `cortex` and `muse`. They are not equivalent, and the
+`forbidden_responsibilities` column is what separates them — `cortex` may act on a
+tool result (`repo_action`, `final_authority`); `muse` may only *research* with
+one. muse calling `read_file` to ground a proposal is in-contract; muse calling
+anything that writes is not. `senses` has no `tool_use` at all: it is
+intake/perception, even though its Gemma lane *can* serve tool calls (see `tools`,
+below — a capability of the lane, not a licence for the role).
 
 ## cortex/senses ↔ primary/multimodal — one mapping, three vocabularies
 
@@ -146,6 +154,7 @@ by role name, each value carrying exactly these fields:
     "context": int,                       # SERVED context in tokens (deployment override, else catalog native)
     "quant": str,                         # vLLM quantization; "" for pooling/audio roles
     "mtp": bool,                          # speculative decoding (MTP draft head) active
+    "tools": bool,                        # does this endpoint accept OpenAI `tools`? see the note below
     "responsibilities": [str, ...],
     "forbidden_responsibilities": [str, ...],
     "ready": bool | null,                 # see the note below
@@ -164,6 +173,27 @@ by role name, each value carrying exactly these fields:
 host, and only when the operator declared a peer for it — see
 [A third role state: proxied](#a-third-role-state-proxied) below for the full
 three-state contract.
+
+**`tools`** answers "can I put an OpenAI `tools` array on a request to this
+role?" — `true` for the three generate lobes (`cortex`/`senses`/`muse`), `false`
+for `embedder`/`reranker` (pooling lanes, no chat endpoint) and `stt`/`tts`. It
+is a fact about the MODEL the role resolves to, derived from the catalog's
+`tool_parser` — the same field the served `--tool-call-parser` flag is built
+from — so it reports `true` for a role this box does not host, exactly like
+`model`/`context`/`quant`/`mtp` do; `feasible`/`ready` are what tell you whether
+you can reach it. It is deliberately a bool rather than the parser's name: the
+served parser can legitimately diverge from the catalog's (the primary lane
+defaults to the `qwen3_coder_thinking` *plugin* over the catalog's base
+`qwen3_coder`, and `PRIMARY_TOOL_CALL_PARSER` can override it), so naming one
+here would be a claim `lobes.roles` cannot honestly make — while *whether* tools
+are accepted does not vary under that divergence. Like every field in this
+contract it is runtime-only: it says the endpoint accepts `tools`, never that a
+given call will be correct or succeed.
+
+Note `tools` and `tool_use` are different questions, and a role can have one
+without the other. `tools` is a CAPABILITY of the lane; `tool_use` is a
+RESPONSIBILITY of the role. `senses` has `tools: true` and no `tool_use`: its
+Gemma lane can serve tool calls, but the division of labour doesn't ask it to.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
 it directly (issue #87). All seven roles (`cortex`/`senses`/`muse`/`embedder`/
@@ -200,6 +230,7 @@ Example (`cortex`, fully wired, default fleet):
   "context": 131072,
   "quant": "modelopt",
   "mtp": true,
+  "tools": true,
   "responsibilities": ["reasoning", "deciding", "planning", "tool_use", "code_repo_actions", "validation", "final_authority"],
   "forbidden_responsibilities": [],
   "ready": true,

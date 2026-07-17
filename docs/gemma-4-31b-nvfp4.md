@@ -52,8 +52,101 @@ Checkpoint facts (read from the published config, 2026-07-17):
   this vLLM serving path silently drops `input_audio` content parts, and we
   assume the same gap here until a live probe says otherwise. Treat `muse` as
   text+vision intake at most; for speech use the purpose-built `stt` role.
-- **Pythonic tool calls** (`--tool-call-parser pythonic`, like the 12B).
+- **Native Gemma 4 tool calls** (`--tool-call-parser gemma4` **paired with**
+  `--reasoning-parser gemma4`, like the 12B) — see [Tool calling](#tool-calling)
+  below. This said `pythonic` (and no reasoning parser) until 2026-07-17; that
+  value was a never-validated guess and it was **wrong**.
 - **Native MTP DECLARED, not measured** — see next section.
+
+## Tool calling
+
+`muse` serves tool calls on a **matched pair** of parsers, with
+`--enable-auto-tool-choice`:
+
+```text
+--tool-call-parser=gemma4     # Gemma4EngineToolParser
+--reasoning-parser=gemma4     # Gemma4ParserReasoningAdapter
+```
+
+**VALIDATED live on a physical Jetson AGX Thor, 2026-07-17** — transcript:
+`docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt`. Both halves are
+load-bearing; the measured behaviour of each configuration:
+
+| parser config | tool calls | content |
+|---|---|---|
+| `pythonic` (as shipped) | **broken** — leaks as text, `tool_calls: null` | clean |
+| `gemma4` tool only | works | `<\|channel>thought` leaks in |
+| `gemma4` tool **+** `gemma4` reasoning | works | clean ← **shipped** |
+
+**What was wrong before.** From the day `muse` landed until 2026-07-17 the lane
+was served with `--tool-call-parser pythonic`, and tool calling was **broken in
+a silent, caller-visible way**. Gemma 4 does not emit Python-style calls; it
+emits its own syntax, whose delimiters are **special tokens** (ids 48/49):
+
+```text
+<|tool_call>call:get_weather{city:<|"|>Paris<|"|>}<tool_call|>
+```
+
+`pythonic` is served with `skip_special_tokens=True`, so those delimiters were
+stripped before it ever ran. It then matched nothing, and vLLM relayed the
+model's perfectly well-formed call as ordinary assistant **content**, with
+`tool_calls: null` and `finish_reason: "stop"`. A caller passing `tools` to
+`muse` got prose that *looked* like a tool call and no callable one — no error,
+no warning. `gemma4` is the purpose-built parser for this format: it decodes
+with `skip_special_tokens=False`, sees the delimiters, and emits a real
+`tool_calls` array with `finish_reason: "tool_calls"`.
+
+The `pythonic` value was never evidence-backed. `runtime/_parser.py` carried its
+own caveat from the start — *"Risk r2 (pending #71): confirm against the served
+checkpoint during live validation"* — and that confirmation never ran until now.
+Risk r2 is closed by this entry; the answer was that the guess was wrong.
+
+**Why the reasoning parser is not optional.** `Gemma4EngineToolParser` forces
+`skip_special_tokens=False` — that is *how* it sees `<|tool_call>`. The same
+setting also exposes Gemma 4's **channel** markers, which a tool parser has no
+business stripping. Wire the tool parser alone and a plain answer comes back as:
+
+```text
+<|channel>thought
+<channel|>The weather in Paris is currently 11°C with drizzle.
+```
+
+`--reasoning-parser=gemma4` (`Gemma4ParserReasoningAdapter`) is the half that
+consumes those markers, restoring clean `content`. This mirrors the cortex lane,
+which has always paired `--reasoning-parser=qwen3` with its `qwen3_coder` tool
+parser (see `docs/qwen3.6-27b-text-nvfp4-mtp.md`); lobes simply never wired
+either half for Gemma. Do not enable one without the other.
+
+**Strict tool calling is NOT armed for muse**, deliberately — unlike `cortex`
+(see `docs/qwen3.6-27b-text-nvfp4-mtp.md`). `GATEWAY_FORCE_STRICT_TOOLS` skips
+this lane for one measured reason: **on muse the knob is inert.** Live on the
+31B (2026-07-17, `--tool-call-parser=gemma4` + MTP), `strict: true` never
+engages xgrammar at all —
+
+- a tool schema carrying a regex xgrammar cannot compile (a lookahead) is
+  accepted with **HTTP 200** instead of raising a grammar-compile failure;
+- the server logs no `structural_tag` / `xgrammar` / `grammar` line for such a
+  request;
+- output is byte-comparable with `strict: false`.
+
+Injecting `strict` here would advertise "this lane is grammar-constrained" when
+it isn't — the advertise-what-you-cannot-serve failure #92 exists to prevent.
+
+Two rationales are **disproven** and should not be reinstated (both were in an
+earlier draft of this doc):
+
+- *"`Gemma4EngineToolParser` declares `supports_required_and_named = False`"* —
+  so does `Qwen3EngineToolParser`, the cortex lane's parser, which **is** armed.
+  The flag does not distinguish the lanes.
+- *"forcing structured output crashes EngineCore under speculative decoding"*
+  (from that parser's `adjust_request` docstring) — real for the
+  structured-outputs path the parser deliberately skips, but **not reachable via
+  this knob**: strict requests were served repeatedly with the engine healthy
+  afterwards. The crash risk was hypothetical, never measured.
+
+Widen `lobes.gateway.server._STRICT_TOOL_LANES` only with a live transcript
+showing strict decoding actually *constrains* decoding on the target lane — a
+no-op is not a benefit.
 
 ## Speculative decoding — declared, unmeasured
 

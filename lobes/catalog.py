@@ -232,8 +232,12 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # Gemma config measured (beats the coder's 24 tok/s no-spec/+MTP, and the bf16
         # base+MTP's 14.6 tok/s — bf16 has higher 93.9% acceptance but a much slower
         # no-spec floor). "Less coder, more MTP" — see §7 for the full comparison
-        # table. Tool calls use the Python-style "pythonic" parser (matches
-        # runtime._parser.infer_parser, which returns "pythonic" for gemma-4* ids).
+        # table. Tool calls use Gemma 4's native `<|tool_call>call:name{...}` syntax
+        # via the purpose-built "gemma4" parser (matches runtime._parser.infer_parser,
+        # which returns "gemma4" for gemma-4* ids). This was "pythonic" until the
+        # 2026-07-17 live check proved that parser cannot see Gemma 4's
+        # special-token delimiters; see the _parser.py rule for the evidence.
+        # UNVALIDATED on THIS 12B checkpoint (#108) — it inherits the family rule.
         #
         # Content-correctness, live on THIS checkpoint via model=multimodal: image+text
         # VERIFIED against ground truth with a negative control (replies "Red"/"Blue"
@@ -251,7 +255,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # independently re-measured for this exact NVFP4A16 export.
         context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
-        tool_parser="pythonic",
+        tool_parser="gemma4",
         # quantization matches the coder entry's compressed-tensors NVFP4 path
         # (config.json quant_method="compressed-tensors"); modelopt_fp4 fails with a
         # quant-method mismatch on this checkpoint family (verified #71).
@@ -283,8 +287,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         #
         # A UNIFIED multimodal model: a single Gemma4UnifiedForConditionalGeneration
         # serves text + image + AUDIO in one checkpoint (no separate sidecars). Tool
-        # calls use the Python-style "pythonic" parser (matches runtime._parser.
-        # infer_parser, which returns "pythonic" for gemma-4* ids — set in t1).
+        # calls use Gemma 4's native `<|tool_call>call:name{...}` syntax via the
+        # purpose-built "gemma4" parser (matches runtime._parser.infer_parser, which
+        # returns "gemma4" for gemma-4* ids). Was "pythonic" until the 2026-07-17
+        # live check disproved it; see the _parser.py rule. UNVALIDATED on THIS
+        # coder checkpoint (#108) — it inherits the family rule.
         #
         # status="load-tested". Serve-enablement RESOLVED on the Spark GB10 (#71/#73,
         # 2026-07-01): the gear SERVES on the custom image (Dockerfile.vllm-gemma4 =
@@ -306,7 +313,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # read from the checkpoint config during #71 live validation).
         context=_CONTEXT_128K_NATIVE,
         native_max_model_len=131072,
-        tool_parser="pythonic",
+        tool_parser="gemma4",
         # This checkpoint is NVFP4 in compressed-tensors format (config.json
         # quant_method="compressed-tensors", format "nvfp4-pack-quantized") — NOT
         # nvidia modelopt. vLLM must be told --quantization=compressed-tensors;
@@ -336,7 +343,14 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # 30.4 GiB across 4 safetensors shards; config.json quant_method is
         # "modelopt" (hf_quant_config.json: NVFP4, FP8 KV-cache scheme with
         # calibrated scales — unlike the Qwen MTP re-export on Thor, #109).
-        # Tool calls use the "pythonic" parser (infer_parser: gemma-4* ids).
+        # Tool calls use the "gemma4" parser (infer_parser: gemma-4* ids) — Gemma 4
+        # emits native `<|tool_call>call:name{...}<tool_call|>`, whose delimiters are
+        # SPECIAL TOKENS that only Gemma4EngineToolParser (skip_special_tokens=False)
+        # can see. VALIDATED live on this checkpoint, 2026-07-17 on a physical Thor:
+        # under the old "pythonic" value the delimiters were stripped and the call
+        # was relayed as content (tool_calls=null); under "gemma4" it parses into a
+        # real tool_calls array. Evidence:
+        # docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt.
         #
         # Too heavy to co-reside with the cortex+senses duo on a 128 GB box —
         # machine-as-brain never hosts it; a muse-hosting deployment shape
@@ -348,7 +362,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # window (262144 — operator decision, no box-budget trim).
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
-        tool_parser="pythonic",
+        tool_parser="gemma4",
         # NVIDIA modelopt NVFP4 (config.json quant_method="modelopt" — resolves
         # to modelopt_fp4), NOT compressed-tensors like the community 12B export.
         quantization="modelopt",

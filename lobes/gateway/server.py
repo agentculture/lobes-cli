@@ -279,6 +279,39 @@ def _invalid_api_key_body() -> bytes:
 
 _CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
+# The generate lanes force-strict-tools may arm, by internal Backend name.
+#
+# `primary` (cortex) ONLY, deliberately — this knob exists for a defect measured
+# on exactly that lane: the qwen3_coder structural-tag call site hardcoding
+# `reasoning=False` (colleague#320), fixed by the qwen3_coder_thinking plugin.
+#
+# WHY MUSE IS NOT HERE, despite serving tool calls and declaring `tool_use`:
+# because on that lane the knob is INERT. Measured live on the 31B (Thor,
+# 2026-07-17, `--tool-call-parser=gemma4` + MTP), `strict: true` never engages
+# xgrammar at all:
+#   * a tool schema carrying a regex xgrammar cannot compile (a lookahead) is
+#     accepted with HTTP 200 instead of raising a grammar-compile failure;
+#   * the server logs no structural_tag/xgrammar/grammar line for such a request;
+#   * output is byte-comparable with `strict: false`.
+# Injecting `strict` here would therefore add a claim ("this lane is
+# grammar-constrained") that the lane does not honour — the exact
+# advertise-what-you-cannot-serve failure #92 exists to prevent.
+#
+# Two rationales an earlier draft of this comment gave, BOTH disproven live on
+# 2026-07-17 — do not reinstate them:
+#   * "Gemma4EngineToolParser declares supports_required_and_named = False" —
+#     so does Qwen3EngineToolParser, the primary lane's own parser, which IS
+#     armed here. The flag does not distinguish the two lanes.
+#   * "forcing structured output crashes EngineCore under speculative decoding"
+#     (from Gemma4EngineToolParser.adjust_request's docstring) — real for the
+#     structured-outputs path that parser deliberately skips, but NOT reachable
+#     via this knob: strict requests were served repeatedly with the engine
+#     healthy afterwards. The crash risk was hypothetical, not measured.
+#
+# Widen this only with a live transcript showing strict decoding actually
+# CONSTRAINS decoding on the target lane (#108) — a no-op is not a benefit.
+_STRICT_TOOL_LANES: frozenset[str] = frozenset({"primary"})
+
 
 def _is_chat_completions_request(path: str) -> bool:
     """True for the one endpoint force-strict-tools may touch — the chat
@@ -1105,7 +1138,7 @@ def _try_backends(
     return None, attempts
 
 
-def _try_primary_with_strict_retry(
+def _try_backend_with_strict_retry(
     backend: Backend,
     cfg: ServerConfig,
     path: str,
@@ -1227,8 +1260,10 @@ def _dial_owner(
 ) -> tuple[GatewayResponse | None, list[str]]:
     """Dial the resolved owner once, via the strict-tools lane when armed.
 
-    Force-strict-tools (opt-in, colleague#320): only the primary/cortex lane,
-    only chat-completions, only a body an injection actually changed. Every
+    Force-strict-tools (opt-in, colleague#320): only a lane in
+    :data:`_STRICT_TOOL_LANES` (currently the primary/cortex lane only — see
+    that constant for why muse is excluded), only chat-completions, only a
+    body an injection actually changed. Every
     other request takes the untouched :func:`_try_backends` call below — this
     is the byte-identical-passthrough guarantee when the knob is off (or
     simply inapplicable to this request). Extracted from :func:`handle_post`
@@ -1238,14 +1273,14 @@ def _dial_owner(
     strict_injection = None
     if (
         cfg.force_strict_tools
-        and ordered[0].name == "primary"
+        and ordered[0].name in _STRICT_TOOL_LANES
         and _is_chat_completions_request(path)
     ):
         strict_injection = inject_strict_tools(fwd_body)
 
     if strict_injection is not None:
         injected_body, tool_names = strict_injection
-        return _try_primary_with_strict_retry(
+        return _try_backend_with_strict_retry(
             ordered[0],
             cfg,
             path,
@@ -1334,7 +1369,7 @@ def handle_post(
     ``primary`` (cortex) backend and whose body carries a non-empty ``tools``
     array is passed through :func:`inject_strict_tools`. When that ACTUALLY
     modifies the body (at least one ``tools[i].function`` lacked ``strict``),
-    dialing is handed to :func:`_try_primary_with_strict_retry` instead of
+    dialing is handed to :func:`_try_backend_with_strict_retry` instead of
     :func:`_try_backends` — it dials with the injected body, and on a 4xx/5xx
     matching a compile-failure signature retries once with the ORIGINAL
     un-injected body, relaying whichever response resulted. Every other
@@ -1855,6 +1890,49 @@ def capabilities_payload(
     return annotate_peer_referrals(payload, table)
 
 
+# --- the unmatched-route 404 body (SonarCloud S5131, companion to
+# reachable_origin/_is_valid_host_header above) -----------------------------
+
+# do_GET's fallback branch names the route it couldn't match — useful for a
+# caller who mistyped a path or hit a route this deployment doesn't serve.
+# But ``route`` comes straight off the request line (``self.path``, split
+# before the query string) with NO decoding or validation, so echoing it
+# verbatim reflects fully attacker-controlled bytes back into the response —
+# the same taint shape SonarCloud rule ``pythonsecurity:S5131`` flagged for
+# the Host header above, and the same remediation applies: constrain the
+# tainted value to a strict allowlist before it can reach the response,
+# rather than trying to escape or deny individual dangerous characters. A
+# legitimate unmatched route is always a short, plain path
+# (letters/digits/``/``/``-``/``_``/``.``) — nothing in that shape needs
+# ``<``/``>``/quotes/backslashes/whitespace/control characters, so a route
+# outside this allowlist, or one long enough to be a flood/log-noise attempt
+# rather than a typo, was never one a genuine caller needed named back to
+# it. ``_MAX_ECHOED_ROUTE_LEN`` is a defensive cap only — HTTP sets no limit
+# here — chosen well above any real route this server declares.
+_MAX_ECHOED_ROUTE_LEN = 200
+_VALID_ROUTE_ECHO_RE = re.compile(r"/[A-Za-z0-9/_.-]*")
+
+
+def _not_found_body(route: str) -> dict:
+    """The ``{"error": {...}}`` 404 payload for a GET route that matched none
+    of the handled endpoints.
+
+    Echoes ``route`` only when it passes the allowlist above; otherwise the
+    message falls back to a route-free ``"not found"`` — exactly as if the
+    caller had sent no path detail at all, never a "sanitised" rewrite of
+    attacker-supplied input. Either way the contract shape (``error.message``
+    + ``error.type == "not_found"``) is unchanged, so callers that only
+    branch on ``type`` (never on the message text) are unaffected.
+    """
+    safe_route = (
+        route
+        if len(route) <= _MAX_ECHOED_ROUTE_LEN and _VALID_ROUTE_ECHO_RE.fullmatch(route)
+        else None
+    )
+    message = f"not found: {safe_route}" if safe_route is not None else "not found"
+    return {"error": {"message": message, "type": "not_found"}}
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -1962,7 +2040,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif route == "/capabilities":
             self._get_capabilities()
         else:
-            self._send_json(404, {"error": {"message": f"not found: {route}", "type": "not_found"}})
+            self._send_json(404, _not_found_body(route))
 
     def _get_v1_models(self) -> None:
         # Advertise only backends the live readiness snapshot marks ready

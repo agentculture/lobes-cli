@@ -137,6 +137,7 @@ def _measure_catalog_variant(entry: SupportedModel, endpoint: str, *, timeout: f
         context=entry.native_max_model_len,
         quant=entry.quantization,
         mtp=bool(entry.speculative_config),
+        tools=bool(entry.tool_parser),
         responsibilities=(),
         forbidden_responsibilities=(),
         ready=bool(endpoint),

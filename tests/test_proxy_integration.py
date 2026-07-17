@@ -658,6 +658,7 @@ _GOLDEN_CAPABILITIES = {
         "context": 262144,
         "quant": "modelopt",
         "mtp": True,
+        "tools": True,
         "responsibilities": [
             "reasoning",
             "deciding",
@@ -681,6 +682,10 @@ _GOLDEN_CAPABILITIES = {
         "context": 131072,
         "quant": "compressed-tensors",
         "mtp": True,
+        # senses serves `pythonic` tool calls (the 12B Gemma gear) — `tools` is
+        # a CAPABILITY of the lane, independent of `tool_use` being absent from
+        # its responsibilities (a division-of-labour statement, not a wiring one).
+        "tools": True,
         "responsibilities": [
             "intake",
             "normalize_input",
@@ -710,12 +715,18 @@ _GOLDEN_CAPABILITIES = {
         "context": 262144,
         "quant": "modelopt",
         "mtp": True,
+        # True even though this deployment does not HOST muse: `tools` is a fact
+        # about the model the role would serve (the catalog's `pythonic` parser),
+        # exactly like `model`/`context`/`quant`/`mtp` above it. `feasible: false`
+        # is what tells a caller it is unreachable here.
+        "tools": True,
         "responsibilities": [
             "creative_generation",
             "long_form_writing",
             "ideation",
             "style_variation",
             "divergent_second_opinion",
+            "tool_use",
         ],
         "forbidden_responsibilities": [
             "final_decision",
@@ -735,6 +746,7 @@ _GOLDEN_CAPABILITIES = {
         "context": 32768,
         "quant": "",
         "mtp": False,
+        "tools": False,  # pooling lane — no chat endpoint to accept `tools`
         "responsibilities": ["vectorization", "memory_retrieval_input"],
         "forbidden_responsibilities": [],
         "feasible": True,
@@ -750,6 +762,7 @@ _GOLDEN_CAPABILITIES = {
         "context": 32768,
         "quant": "",
         "mtp": False,
+        "tools": False,  # pooling lane — no chat endpoint to accept `tools`
         "responsibilities": ["retrieval_ordering", "relevance_refinement"],
         "forbidden_responsibilities": [],
         "feasible": True,
@@ -765,6 +778,7 @@ _GOLDEN_CAPABILITIES = {
         "context": 0,
         "quant": "",
         "mtp": False,
+        "tools": False,  # audio sidecar — transcription, not a chat lane
         "responsibilities": ["transcribe", "audio_input_to_text"],
         "forbidden_responsibilities": [],
         "feasible": True,
@@ -780,6 +794,7 @@ _GOLDEN_CAPABILITIES = {
         "context": 0,
         "quant": "",
         "mtp": False,
+        "tools": False,  # audio sidecar — synthesis, not a chat lane
         "responsibilities": ["speech_output", "synthesize"],
         "forbidden_responsibilities": [],
         "feasible": True,

@@ -70,6 +70,40 @@ a retry-without-strict fallback on a grammar-compile failure. See
 `docs/qwen3.6-27b-text-nvfp4-mtp.md`, `docs/openai-api.md`, and
 `docs/gateway-fleet.md` for the mechanism, scope, and knob detail.
 
+**Gemma 4 tool calling — the `gemma4` parser PAIR (2026-07-17).** All three
+Gemma 4 lanes (`senses`, the opt-in coder candidate, and `muse`) serve tool
+calls with a **matched pair**: **`--tool-call-parser=gemma4`**
+(`Gemma4EngineToolParser`) **plus `--reasoning-parser=gemma4`**
+(`Gemma4ParserReasoningAdapter`) — mirroring how the cortex lane has always
+paired `--reasoning-parser=qwen3` with its `qwen3_coder` tool parser. lobes
+previously wired **neither** half, and both failures were silent:
+
+- *Wrong tool parser.* Gemma 4 emits `<|tool_call>call:name{...}<tool_call|>`,
+  whose delimiters are **special tokens**. The generic `pythonic` parser runs
+  with `skip_special_tokens=True`, never sees them, matches nothing, and vLLM
+  relays the model's well-formed call as ordinary assistant **content** with
+  `tool_calls: null` / `finish_reason: "stop"` — callers get prose shaped like
+  a tool call and no callable one. `pythonic` was a never-validated guess (its
+  own `_parser.py` comment flagged it "risk r2, pending live validation"); the
+  check finally ran on the live 31B and disproved it.
+- *Missing reasoning parser.* The tool parser forces
+  `skip_special_tokens=False` (that is how it sees `<|tool_call>`), which also
+  exposes Gemma's `<|channel>thought` markers — so the tool parser **alone**
+  leaks them into `content`. The reasoning parser is what consumes them.
+  Enable both or neither.
+
+**Validated on the 31B `muse` lane only** (physical Thor,
+`docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt`); the 12B lanes
+inherit the family rule and are UNVALIDATED (#108). Note
+`GATEWAY_FORCE_STRICT_TOOLS` deliberately does **not** arm the muse lane —
+measured live, `strict` never engages xgrammar there at all (a schema xgrammar
+cannot compile is still served 200), so arming it would advertise a
+grammar-constrained lane that isn't one. See
+`docs/gemma-4-31b-nvfp4.md#tool-calling`, which also records two rationales for
+that exclusion that turned out to be **wrong** (the `supports_required_and_named`
+flag, which cortex's own parser shares; and an EngineCore-crash risk that did
+not reproduce).
+
 ### Colleague roles: cortex / senses / muse / embedder / reranker / stt / tts
 
 Beyond `cortex`, the **fleet** exposes SEVEN first-class, Colleague-facing
@@ -124,12 +158,13 @@ train` verb. See `docs/qwen3-embedding-0.6b.md`, `docs/qwen3-reranker-0.6b.md`,
 
 **`muse` — the seventh role (opt-in hosting).** Checkpoint:
 `nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's official modelopt
-NVFP4 export; 256K native; plain-gemma4 line, pythonic tool parser; native
+NVFP4 export; 256K native; plain-gemma4 line, **`gemma4` tool parser**; native
 MTP declared via the `google/gemma-4-31B-it-assistant` draft — UNMEASURED on
 this target). Responsibilities: creative generation, long-form writing,
-ideation, style variation, a divergent second opinion — muse proposes,
-`cortex` decides (forbidden: final_decision / repo_action /
-security_decision). Alias `model=muse`. It is an **opt-in core role**
+ideation, style variation, a divergent second opinion, **`tool_use`** — muse
+proposes, `cortex` decides (forbidden: final_decision / repo_action /
+security_decision, so muse calls tools to RESEARCH a proposal, never to enact
+one). Alias `model=muse`. It is an **opt-in core role**
 (`OPT_IN_CORE_ROLES`): machine-as-brain NEVER hosts it — a 31B cannot
 co-reside with the cortex+senses duo on a 128 GB box — so only an explicit
 muse-hosting shape (`thor-muse`, below) serves it; every non-hosting shape

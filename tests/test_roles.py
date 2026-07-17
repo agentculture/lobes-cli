@@ -262,6 +262,52 @@ def test_cortex_carries_authoritative_responsibilities_and_no_forbidden() -> Non
     assert cortex.forbidden_responsibilities == ()  # the final authority
 
 
+# --- `tools`: does this role's endpoint accept OpenAI `tools`? --------------
+
+
+def test_generate_lobes_report_tools_true_and_service_roles_false() -> None:
+    """The three generate lobes serve a chat lane with a tool parser; the pooling
+    and audio roles have no chat lane at all."""
+    registry = _registry(_full_env())
+    for role in ("cortex", "senses", "muse"):
+        assert registry[role].tools is True, f"{role} serves tool calls"
+    for role in ("embedder", "reranker", "stt", "tts"):
+        assert registry[role].tools is False, f"{role} has no chat lane"
+
+
+def test_tools_is_derived_from_the_catalog_tool_parser_not_hardcoded() -> None:
+    """`tools` must track the catalog field the served `--tool-call-parser` flag
+    is built from, so the contract cannot claim tool support the deployment does
+    not actually wire (or vice versa)."""
+    registry = _registry(_full_env())
+    for role in ("cortex", "senses", "muse", "embedder", "reranker"):
+        entry = next(m for m in SUPPORTED_MODELS if m.id == registry[role].model)
+        assert registry[role].tools is bool(entry.tool_parser)
+
+
+def test_muse_reports_tools_true_even_when_this_box_does_not_host_it() -> None:
+    """`tools` is a fact about the MODEL a role resolves to — like model/context/
+    quant/mtp — not about local reachability. An unhosted muse still honestly
+    reports that its endpoint takes tools; `feasible`/`ready` carry the "you
+    can't get it here" part of the truth (issue #92: those are separate claims).
+    """
+    env = _full_env()
+    env.pop("MUSE_BASE_URL", None)  # opt-in backend: unwired => infeasible
+    muse = _registry(env)["muse"]
+    assert muse.loaded is False
+    assert muse.feasible is False
+    assert muse.tools is True  # still names what the model would accept
+
+
+def test_senses_has_tools_but_not_the_tool_use_responsibility() -> None:
+    """A capability and a responsibility are different claims: the Gemma senses
+    lane CAN serve tool calls, but the #81 division of labour doesn't ask it to.
+    Pinned so nobody "fixes" the apparent inconsistency by conflating them."""
+    senses = _registry(_full_env())["senses"]
+    assert senses.tools is True
+    assert "tool_use" not in senses.responsibilities
+
+
 def test_static_responsibility_maps_cover_all_six_roles() -> None:
     assert set(ROLE_RESPONSIBILITIES) == _EXPECTED_ROLES
     assert set(ROLE_FORBIDDEN) == _EXPECTED_ROLES
@@ -271,7 +317,11 @@ def test_static_responsibility_maps_cover_all_six_roles() -> None:
         "ideation",
         "style_variation",
         "divergent_second_opinion",
+        "tool_use",
     )
+    # `tool_use` did NOT widen muse's authority: the forbidden list is the
+    # invariant that keeps muse a proposer. muse calls tools to research a
+    # proposal; only cortex acts on one.
     assert ROLE_FORBIDDEN["muse"] == (
         "final_decision",
         "repo_action",

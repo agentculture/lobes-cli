@@ -61,7 +61,24 @@ Architecture highlights (shared by both gears):
   ["Speculative decoding"](#speculative-decoding-support-both-7) below: the
   **base** gear has it wired ON by default (57.9% acceptance); the **coder**
   gear does not (measured 30.8%, not worth it).
-- **Pythonic tool calls** (`--tool-call-parser pythonic`).
+- **Native Gemma 4 tool calls** — a **matched pair**, `--tool-call-parser gemma4`
+  (`Gemma4EngineToolParser`) **plus** `--reasoning-parser gemma4`
+  (`Gemma4ParserReasoningAdapter`). This was `pythonic` with no reasoning parser
+  until 2026-07-17, when a live run on the **31B** `muse` gear disproved that for
+  the Gemma 4 family: Gemma 4 emits `<|tool_call>call:name{...}<tool_call|>`,
+  whose delimiters are special tokens that `pythonic` (served with
+  `skip_special_tokens=True`) never sees — so it parsed nothing and tool calls
+  leaked out as assistant content with `tool_calls: null`. The tool parser alone
+  then leaks Gemma's `<|channel>` markers into content, which is what the paired
+  reasoning parser consumes. Enable both or neither. See
+  `docs/gemma-4-31b-nvfp4.md#tool-calling` for the full mechanism and evidence.
+
+  **UNVALIDATED on this 12B checkpoint (#108).** The fix is inherited from the
+  family rule in `runtime/_parser.py` (the syntax is a Gemma 4 family trait and
+  vLLM's `gemma4_utils` is family-generic, not size-specific), but no 12B has
+  been booted against it — this box hosts `muse`, not `senses`. It is a strictly
+  better default than a parser proven wrong for the family, **not** a measured
+  claim. A live `senses` tool-call probe on a senses-hosting box would close it.
 - **128K native context** — confirmed from `text_config.max_position_embeddings =
   131072` in the checkpoint config (#71); the base checkpoint shares this family
   config (not independently re-measured for the exact NVFP4A16 export).
@@ -101,7 +118,8 @@ Compose flags used by the `vllm-multimodal` service:
 --quantization ${MULTIMODAL_QUANTIZATION:-compressed-tensors}
 --max-model-len ${MULTIMODAL_MAX_MODEL_LEN:-131072}
 --gpu-memory-utilization ${MULTIMODAL_GPU_MEM_UTIL:-0.22}
---tool-call-parser=pythonic
+--tool-call-parser=gemma4
+--reasoning-parser=gemma4
 --speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}
 --trust-remote-code
 # env: VLLM_ATTENTION_BACKEND=TRITON_ATTN

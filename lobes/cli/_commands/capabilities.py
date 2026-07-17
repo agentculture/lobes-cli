@@ -132,6 +132,28 @@ _GATEWAY_TIMEOUT_SECONDS = 2.0
 # authoritative (see _fetch_gateway_capabilities).
 _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 
+# Fields added AFTER the original #81 contract shape. They are deliberately NOT
+# required by that sanity check, because this CLI and the gateway it probes are
+# separately-versioned processes: on a mesh of mixed-version boxes a NEWER CLI
+# routinely talks to an OLDER gateway, whose payload predates these keys.
+#
+# Requiring them would read "an older lobes gateway" as "a foreign daemon" and
+# silently swap that gateway's AUTHORITATIVE answer for offline .env guesses —
+# under a "gateway unreachable" banner that is simply false, since the gateway
+# answered. That is the #92 dishonesty (stale config presented as observed
+# truth), inverted: the probe worked and we'd claim it didn't.
+#
+# The core field set below is already conclusive for the check's ACTUAL job —
+# telling a real gateway from a stray daemon on a guessed port (see the
+# lobes.roles._gateway_base_url docstring for why that hazard is real on this
+# rig). Nothing that answers with every core field, keyed by all seven role
+# names, is a stray uvicorn. `_render_table` already `.get`s both keys with
+# safe defaults, so an older payload renders without fabricating either.
+_ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible"})
+
+# What a body must carry to be trusted as a real gateway response.
+_ROLE_INFO_REQUIRED_FIELDS = _ROLE_INFO_FIELDS - _ADDITIVE_ROLE_FIELDS
+
 
 def _fetch_gateway_capabilities(
     port: int,
@@ -146,10 +168,14 @@ def _fetch_gateway_capabilities(
     Returns ``None`` on ANY failure to get an authoritative answer:
     connection refused (nothing listening), a DNS/socket error, a timeout, a
     non-2xx status, an undecodable body, or a 200 whose body doesn't have the
-    expected shape (missing a role, or a role missing an expected field — a
+    expected shape (missing a role, or a role missing a REQUIRED field — a
     stale/foreign process happens to be answering on this port; see the
     ``lobes.roles._gateway_base_url`` docstring for why a foreign daemon on a
     guessed port is a real hazard on this rig, not a hypothetical one).
+    "Required" is :data:`_ROLE_INFO_REQUIRED_FIELDS`, NOT every current
+    ``RoleInfo`` field: an older gateway that predates an additive key
+    (:data:`_ADDITIVE_ROLE_FIELDS`) is still authoritative, and must not be
+    demoted to a false "unreachable" + offline guesses.
 
     ``None`` is not an error to the caller: it means "fall back to the
     offline registry", exactly like every other read-only probe in this CLI
@@ -185,7 +211,7 @@ def _fetch_gateway_capabilities(
         return None
     for role in ROLES:
         entry = data.get(role)
-        if not isinstance(entry, dict) or not _ROLE_INFO_FIELDS <= set(entry):
+        if not isinstance(entry, dict) or not _ROLE_INFO_REQUIRED_FIELDS <= set(entry):
             return None
     return data
 

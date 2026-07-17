@@ -257,6 +257,80 @@ def test_integration_unknown_get_404(gateway) -> None:
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(gateway + "/nope", timeout=5)
     assert exc.value.code == 404
+    # A well-formed, merely-unmatched route stays fully debuggable: the
+    # documented {"error": {"message", "type": "not_found"}} shape, with the
+    # route named back so a caller can see what it actually dialed.
+    body = json.loads(exc.value.read())
+    assert body["error"]["type"] == "not_found"
+    assert body["error"]["message"] == "not found: /nope"
+
+
+# --- S5131: an unmatched GET route is attacker-controlled (self.path, no
+# decoding/validation) and must not be reflected unsanitized into the 404
+# body (SonarCloud BLOCKER). Same remediation shape as the Host-header fix
+# in test_gateway_capabilities.py: a strict allowlist gates the echo. -------
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/nope",
+        "/v1/unknown",
+        "/foo/bar-baz.json",
+        "/",
+    ],
+)
+def test_not_found_body_echoes_well_formed_unknown_routes(route: str) -> None:
+    body = S._not_found_body(route)
+    assert body == {"error": {"message": f"not found: {route}", "type": "not_found"}}
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/<script>alert(1)</script>",
+        '/foo"bar',
+        "/foo\r\nInjected: x",
+        "/foo bar",
+        "/foo@evil.example",
+        "/" + "a" * (S._MAX_ECHOED_ROUTE_LEN + 1),  # over the length cap
+    ],
+)
+def test_not_found_body_rejects_malicious_routes(route: str) -> None:
+    # A route outside the strict allowlist (or too long to be a genuine typo)
+    # must NEVER be reflected — the body degrades to a route-free generic
+    # message, exactly as if no path detail had been sent, while the 404
+    # contract shape (type == "not_found") is unchanged.
+    body = S._not_found_body(route)
+    assert body == {"error": {"message": "not found", "type": "not_found"}}
+    assert route not in body["error"]["message"]
+
+
+def test_integration_malicious_get_404_does_not_reflect_path(gateway) -> None:
+    """S5131 end to end (GET-route companion to
+    test_integration_capabilities_endpoint_rejects_malicious_host in
+    test_gateway_capabilities.py): a request path that never matched any
+    route must not come back stitched into the 404 body. http.client (not
+    urllib) because urllib percent-encodes reserved characters before
+    sending; http.client.putrequest sends the given target close to
+    verbatim (it only rejects control characters, CVE-2019-9740), so this
+    reaches the handler with the same raw bytes an attacker would send."""
+    import http.client
+
+    host_port = gateway.removeprefix("http://")
+    conn = http.client.HTTPConnection(host_port, timeout=5)
+    conn.putrequest("GET", '/<script>alert(1)</script>"payload', skip_host=True)
+    conn.putheader("Host", "x")
+    conn.endheaders()
+    resp = conn.getresponse()
+    status = resp.status
+    payload = json.load(resp)
+    conn.close()
+    assert status == 404
+    assert payload["error"]["type"] == "not_found"
+    assert payload["error"]["message"] == "not found"  # never echoed
+    assert "<script>" not in payload["error"]["message"]
+    assert "alert" not in payload["error"]["message"]
 
 
 def test_integration_buffered_post(gateway) -> None:

@@ -158,6 +158,7 @@ def _role_info(
         context=context,
         quant="",
         mtp=False,
+        tools=False,
         responsibilities=("x",),
         forbidden_responsibilities=(),
         ready=None,
