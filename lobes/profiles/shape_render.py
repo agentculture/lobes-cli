@@ -56,13 +56,6 @@ from lobes.profiles.render import profile_env
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
 
-# The base fleet compose file every deployment runs, plus the opt-in audio
-# overlay. A Shape hosting an audio role (stt/tts) is what turns the overlay on
-# -- mirrors `lobes init --fleet --audio` / `lobes fleet up` auto-including
-# docker-compose.audio.yml when it is present (lobes/templates/fleet/).
-FLEET_COMPOSE_FILE = "docker-compose.yml"
-AUDIO_OVERLAY_FILE = "docker-compose.audio.yml"
-
 # role -> the compose SERVICE (the `services:` key the compose template
 # declares) that serves it. The five core roles and `minor` live in the base
 # fleet; stt/tts live in the audio overlay. Kept as a constant mirroring the
@@ -171,7 +164,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
 
     Only the five Profile-machinery core roles (:data:`ROLES`) carry ``.env``
     knobs; ``stt``/``tts`` are audio-overlay sidecars handled by
-    :func:`shape_compose_files` / :func:`shape_services`, not here. Pure.
+    :func:`shape_services`, not here. Pure.
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -229,19 +222,6 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     return env
 
 
-def shape_compose_files(shape: Shape) -> tuple[str, ...]:
-    """The ordered docker-compose files this shape runs.
-
-    Always the base fleet (:data:`FLEET_COMPOSE_FILE`); the audio overlay
-    (:data:`AUDIO_OVERLAY_FILE`) is appended iff the shape hosts an audio role
-    (``stt``/``tts``). Pure function of the shape alone.
-    """
-    files = [FLEET_COMPOSE_FILE]
-    if any(shape.hosts_role(role) for role in AUDIO_ROLES):
-        files.append(AUDIO_OVERLAY_FILE)
-    return tuple(files)
-
-
 def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
     """The compose services a (shape, card) pair actually brings up, sorted.
 
@@ -274,16 +254,17 @@ def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
 class ShapeRender:
     """The concrete artifacts a (shape, card) pair renders to -- the "compose/.env".
 
-    ``env`` is the ``.env`` projection (core roles); ``compose_files`` is the
-    ordered ``docker compose -f ...`` file list; ``services`` is the sorted set
-    of services that will run. This is the read-only result ``lobes init
-    --shape`` (t4) consumes.
+    ``env`` is the ``.env`` projection (core roles); ``services`` is the sorted
+    set of services that will run. This is the read-only result ``lobes init
+    --shape`` (t4) consumes. (The compose ``-f`` file list is deliberately NOT
+    rendered here: the single chain authority is
+    :func:`lobes.runtime._compose.compose_file_args` (issue #137) — a second
+    file-list builder in this module drifted and was removed.)
     """
 
     shape: str
     card: str
     env: Mapping[str, str]
-    compose_files: tuple[str, ...]
     services: tuple[str, ...]
 
     def env_text(self) -> str:
@@ -309,6 +290,5 @@ def render_shape(shape: Shape, profile: Profile) -> ShapeRender:
         shape=shape.name,
         card=profile.name,
         env=shape_env(shape, profile),
-        compose_files=shape_compose_files(shape),
         services=shape_services(shape, profile),
     )

@@ -49,15 +49,12 @@ from lobes.profiles.loader import builtin_names, resolve_profile
 from lobes.profiles.render import ROLE_ENV_PREFIX, profile_env
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 from lobes.profiles.shape_render import (
-    AUDIO_OVERLAY_FILE,
-    FLEET_COMPOSE_FILE,
     GATEWAY_SERVICE,
     OPT_IN_ACTIVATION_ENV,
     REALTIME_SERVICE,
     ROLE_SERVICE,
     compose_profile,
     render_shape,
-    shape_compose_files,
     shape_env,
     shape_services,
 )
@@ -70,6 +67,7 @@ from lobes.profiles.shapes import (
     builtin_shape_names,
     resolve_shape,
 )
+from lobes.runtime import _compose
 from tests.goldens.regen import (
     FLEET_COMPOSE,
     shape_env_text,
@@ -378,16 +376,6 @@ def test_override_does_not_flip_feasibility() -> None:
 # --- the compose side of "compose/.env" -------------------------------------
 
 
-def test_audio_overlay_included_iff_audio_role_hosted() -> None:
-    """The audio overlay compose file is present exactly when the shape hosts stt/tts."""
-    for shape_name in builtin_shape_names():
-        shape = resolve_shape(shape_name)
-        files = shape_compose_files(shape)
-        assert files[0] == FLEET_COMPOSE_FILE
-        hosts_audio = any(shape.hosts_role(r) for r in AUDIO_ROLES)
-        assert (AUDIO_OVERLAY_FILE in files) == hosts_audio
-
-
 def test_gateway_always_serves_and_realtime_rides_the_overlay() -> None:
     """The gateway fronts every shape; the realtime bridge is up iff the overlay is."""
     for shape_name in builtin_shape_names():
@@ -425,7 +413,7 @@ def test_role_service_constants_exist_in_compose_templates() -> None:
     combined = (
         FLEET_COMPOSE.read_text(encoding="utf-8")
         + "\n"
-        + (fleet_dir / AUDIO_OVERLAY_FILE).read_text(encoding="utf-8")
+        + (fleet_dir / _compose.AUDIO_OVERLAY).read_text(encoding="utf-8")
     )
     service_keys = set(re.findall(r"^  ([a-z][a-z0-9-]*):\s*$", combined, re.MULTILINE))
     for role, service in ROLE_SERVICE.items():
@@ -497,5 +485,4 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
         for card in builtin_names():
             rendered = render_shape(shape, resolve_profile(card))
             assert rendered.env, f"{shape_name}/{card} rendered no env"
-            assert rendered.compose_files
             assert rendered.services

@@ -174,7 +174,10 @@ half-served, never silently rerouted:
    `docker compose up` skips it — and clears the gateway's `depends_on` with
    the compose `!reset` merge tag (list *replacement* is `!override`; `!reset`
    is what removes the now-dangling edge to a profile-disabled service).
-   **Requires Docker Compose v2.24+** (the `!reset` tag).
+   **Requires Docker Compose v2.24+** (the `!reset` tag). The resolved `-f`
+   chain comes from one builder (#137) and is printable read-only via
+   `lobes fleet files` — anything driving `docker compose` by hand (scripts,
+   operators) should consume that instead of re-deriving the file list.
 2. **Capabilities flag it, on both surfaces.** The dropped role reports
    `feasible: false` in `lobes capabilities` **and** the gateway's `GET
    /capabilities` — verified to agree live in the acceptance runs.

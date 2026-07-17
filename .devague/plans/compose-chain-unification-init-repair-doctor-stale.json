@@ -1,0 +1,563 @@
+{
+  "slug": "compose-chain-unification-init-repair-doctor-stale",
+  "title": "compose-chain unification, init repair, doctor staleness, audio peer-proxy (#137/#138/#119/#129)",
+  "frame_slug": "compose-chain-unification-init-repair-doctor-stale",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-17T05:51:36Z",
+  "updated": "2026-07-17T05:58:28Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes closes the four post-#127 gaps in one sweep: every compose invocation \u2014 CLI verb or acceptance script \u2014 resolves the same overlay chain from one shared builder, so switch/serve/restore can never boot a shape-dropped lobe; lobes init heals a partial scaffold missing-only without touching operator state; lobes doctor flags a deployment predating its card profile's required knobs; and stt/tts join the honest-referral/proxy contract, so the Spark serves tts by proxying to the Thor Chatterbox under the same auth, loop-guard, and attribution guarantees as every other lobe"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "every announced behavior is demonstrated by a committed test or live transcript: the equivalence test, the shape-faithful restore, the doctor --fix heal of a partial scaffold, and the Spark-to-Thor TTS round-trip under docs/evidence/ \u2014 and all four issues close with merged PRs"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "#137: one parameterised -f chain builder \u2014 runtime/_compose.py::_compose_files stays the single source of truth (base + audio + shape + operator override; [] for a plain fleet), and up.py::_compose_file_args folds in as a parameter for its genuinely different semantics (needs_audio = the TARGETED services need audio, not merely overlay-exists) instead of remaining a parallel copy"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "after the change no second -f chain construction exists in Python \u2014 up.py delegates to the parameterised builder and its targeted-services semantics survive its existing #136 tests"
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "#137: every mutating caller resolves through the shared builder \u2014 compose_up_detached (hardcoded bare docker compose up -d, runtime/_compose.py:532) goes through it, fixing switch.py:412-413 (down with the full chain, up with none) AND serve.py:48, which since #69 runs fleet deployments, so lobes serve --apply on a shape deployment boots the dropped lobe today (new finding, not in the #137 inventory)"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "compose_up_detached resolves the same file set as compose_down for every overlay combination, and a shape deployment brought up via lobes serve --apply starts no shape-dropped service"
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#137/#138: scripts consume the chain from the CLI \u2014 a read-only helper emits the resolved -f list so accept-shape.sh (_compose_down line 106, --restore line 161) and validate-tiers.sh (_compose_args line 94) cannot drift again by construction"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "accept-shape.sh and validate-tiers.sh contain no hand-rolled -f list: they consume the helper output and fail loudly when it is unavailable"
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#138: accept-shape.sh --restore includes docker-compose.shape.yml, so restoring a spark-lobe/thor-lobe/thor-muse backup no longer boots the very lobe the shape dropped (restore is the recovery path); validate-tiers.sh _recreate_gateway likewise recreates the gateway with the shape overlay so results describe the topology the operator actually runs"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "a restored spark-lobe/thor-lobe/thor-muse backup starts no dropped service and the recreated gateway carries no dangling depends_on \u2014 asserted by a test on the emitted chain and verified in the next live accept-shape run"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "#137 (the #136 lesson): one test asserts that every caller \u2014 _compose_files, the up.py parameterisation, compose_up_detached / compose_up_build / compose_down, and the script-facing helper \u2014 resolves the identical file set for the same deployment; _compose_file_args drifted precisely because it had no tests"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "one test enumerates every caller \u2014 _compose_files, the up.py parameterisation, compose_up_detached/compose_up_build/compose_down argv, the script-facing helper \u2014 and asserts identical file sets across the overlay matrix: none, audio, shape, audio+shape, each with and without the operator override"
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "#119: the repair env append skips keys already present \u2014 docker compose env_file semantics let the LAST duplicate key win, so appending a blank key (e.g. HF_CACHE=) over a set one silently clobbers it (the 2026-07-17 Spark repair gotcha)"
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "re-running the heal on an already-complete .env is a byte-identical no-op, and a set key (e.g. HF_CACHE) survives a heal that appends other keys"
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#119: lobes doctor gains a profile-staleness check \u2014 resolves the machine profile exactly as lobes init does, renders it pure, and diffs required divergence knobs AND missing scaffold files against the deployment (the Spark failure mode was files silently absent with /health green); remediation names the repair mode, never lobes init --apply --force; operator-set lines downgrade to info; read-only like the existing docker/compose_present/env_coherence/health/version_skew checks (doctor.py:229-247)"
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "the check resolves the profile via the SAME code path init uses (no forked render); it flags missing required knobs and missing scaffold files; an operator-set differing value downgrades to info; the 2026-07-14 Thor stale .env and the 2026-07-17 Spark partial scaffold are reproduced as fixtures and both caught"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "#129 items 1-2: the auth stragglers route through the shared header helper (cli/_runtime_ops.py:80 gateway_auth_headers) \u2014 roles_measure.py audio probes (lines 277, 357) and minor/_client.py (lines 119, 242) build keyless urllib requests today and degrade opaquely when inbound gateway auth is enabled"
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "with an inbound gateway key set, the stt/tts measure probes and the minor-client calls succeed with the bearer attached; with no key configured their requests are byte-identical to today"
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "#129 item 3: stt/tts gain peer channels \u2014 STT_/TTS_PEER_ORIGIN / _PEER_PROXY / _PEER_API_KEY with the same three-condition arming (truthy knob + declared origin + not locally served) and hosted_by annotation on lobes capabilities, GET /capabilities, and the audio 404 body; today PEER_*_ENV (gateway/_config.py:113-171) covers only the five core backends, ROLE_BACKEND (roles.py:65) has no stt/tts, and _audio_role (roles.py:401) takes no peer argument"
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "STT_/TTS_ peer channels behave identically to the five core prefixes \u2014 same _as_bool parsing, same three-condition arming, same repr=False secrecy \u2014 and capabilities plus the audio-role 404 body name hosted_by for a declared audio peer"
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "#129: audio peer routing is per-endpoint \u2014 /v1/audio/speech (tts) and /v1/audio/transcriptions (stt) move independently, unlike AUDIO_URL which path-routes the whole /v1/audio/* namespace to one backend (_routing.py:98-105); the live ask is exactly the split case: Chatterbox on the Thor, Parakeet staying local on the Spark"
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "tts-remote + stt-local is expressible and tested: /v1/audio/speech forwards to the declared tts peer while /v1/audio/transcriptions serves locally in the same deployment, and vice versa"
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "#129: audio forwards reuse the proxy-lobes data-plane guarantees \u2014 strip the caller Authorization and inject the peer key (server.py:906 already does this for core roles; handle_audio_post filter_headers at server.py:1467 leaks it today), single-hop X-Lobes-Proxied guard with 508 proxy_loop, and X-Lobes-Proxied-By attribution \u2014 so the four AUDIO_URL contract violations recorded on #129 become impossible on the new lane"
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "on the audio forward path the caller Authorization never reaches the peer; a request already marked X-Lobes-Proxied is refused 508 proxy_loop; every proxied audio answer carries X-Lobes-Proxied-By \u2014 each asserted by a test"
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "a plain fleet (no lobes overlay) keeps resolving [] \u2014 compose resolves the project itself and its own convention layers base + docker-compose.override.yml (the documented _compose_files contract, runtime/_compose.py:464-501); machine-as-brain stays a zero-new-decisions byte-identical no-op"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the no-overlay argv is byte-identical before and after the change for every verb, preserving compose auto-discovery of the operator override"
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "q3 decision: the heal path belongs to doctor, not init \u2014 no init --repair. lobes doctor gains --fix: missing-only repair that writes only absent scaffold files and appends only absent .env keys, never rewriting an existing line. Per the repo mutation-safety rule the fix lane is dry-run by default \u2014 doctor --fix prints the fix plan, doctor --fix --apply commits it (agents call CLIs in loops; safe-by-default is mandatory)"
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "doctor --fix without --apply mutates nothing (asserted by test); --fix --apply writes only files and keys absent beforehand; the reproduced Spark case (missing Dockerfile.chatterbox + Dockerfile.realtime + all audio env keys) heals to a working overlay with every pre-existing .env line untouched"
+    },
+    {
+      "id": "c22",
+      "kind": "boundary",
+      "text": "plain lobes doctor and the chain-emitting helper stay read-only; doctor --fix is the single write lane on doctor and follows the repo write-verb convention (dry-run by default, --apply to commit); lobes init keeps exactly its current refuse/--force contract \u2014 no new init modes"
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "plain doctor performs zero writes even when findings exist, and the --fix dry-run names every file and key it would touch before --apply commits"
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "q2 decision: delete shape_render.py::shape_compose_files and the ShapeRender.compose_files field (dead \u2014 computed by render_shape but read only by tests); the shared builder in runtime/_compose.py is the only chain authority, and the tests that read the dead field are updated or removed with it"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "shape_render exports no compose-files API afterwards; the ShapeRender dataclass loses the field; grep finds no remaining reference outside git history"
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "q1 decision: stt/tts are promoted to FIRST-CLASS backends \u2014 they join the Profile/RoutingTable backend schema alongside primary/multimodal/muse/embed/rerank, so feasibility, the STT_/TTS_PEER_ORIGIN / _PEER_PROXY / _PEER_API_KEY channels, hosted_by annotation, and /capabilities honesty all ride the one existing mechanism (ROLE_BACKEND gains stt/tts; _audio_role gains the peer argument)"
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "stt/tts appear in the routing/peer schema with feasibility and peer channels, while machine-as-brain and every existing no-audio deployment render byte-identically \u2014 the shape goldens and capabilities output for existing deployments are unchanged"
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "q4 decision: delivery is four sequential PRs in dependency order #137 -> #138 -> #119 -> #129; for each PR Claude tracks Qodo, Copilot, and SonarCloud, fixes valid findings, pushes back on invalid ones with reasoning, resolves every thread, and merges before the next PR branch starts (every PR version-bumped per the every-PR-bumps rule)"
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "PR N+1 branches only after PR N is merged; every Qodo/Copilot/Sonar thread on each PR is resolved before its merge; every PR bumps the version (CI version-check green)"
+    },
+    {
+      "id": "c27",
+      "kind": "audience",
+      "text": "operators of the live mesh boxes (Spark GB10, Thor, Orin) running lobes init/doctor/fleet/accept-shape; agents (Claude and the colleague backend) that call the lobes CLI in loops and rely on dry-run safety; OpenAI-compatible clients of the gateway audio lanes (reachy-mini-cli, Culture agents)"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the named consumers exercise the delivered surfaces directly: operators via init/doctor/fleet/accept-shape, agents via the dry-run-default verbs, clients via an unchanged OpenAI audio API"
+    },
+    {
+      "id": "c28",
+      "kind": "after_state",
+      "text": "one builder decides the compose chain everywhere \u2014 CLI verbs and acceptance scripts agree by construction; the recovery paths are shape-faithful; a partial or stale scaffold is detected AND healed by doctor (--fix, missing-only, never touching operator state); stt/tts are first-class roles with honest referral and proxy, so the Spark serves tts from the Thor with attribution, loop guard, and pairwise auth; every lobes-shipped client attaches the gateway bearer when inbound auth is on"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "each after-state clause maps to a merged PR in the four-PR sequence; none is aspirational at close"
+    },
+    {
+      "id": "c29",
+      "kind": "why_it_matters",
+      "text": "three of the four gaps were found live on the deployed pair: restore \u2014 the recovery path \u2014 boots the very lobe a shape dropped; a partial scaffold serves for hours with /health green and no heal path short of clobbering the operator .env (gateway key, peer config, reclaim values); and pointing AUDIO_URL at a peer leaks the caller credential \u2014 the trust (#127) and honesty (#92/#112) properties already shipped for the five core roles do not yet cover audio or the operational tooling"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the three live incidents cited are real and reproduced as fixtures/tests before being fixed (Thor rerank hang 2026-07-14; Spark partial scaffold 2026-07-17; AUDIO_URL credential-leak mechanics confirmed in code)"
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "the cross-caller equivalence test is green across the overlay matrix; accept-shape.sh --restore on a mesh-shape backup boots zero dropped services; lobes doctor detects and --fix --apply heals a reproduction of the 2026-07-17 Spark partial scaffold; a live Spark-to-Thor /v1/audio/speech round-trip returns audio with X-Lobes-Proxied-By naming the Thor while /v1/audio/transcriptions stays local (evidence under docs/evidence/); four sequential PRs merged with every review thread resolved"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "the success signals are observable artifacts (tests, transcripts, merged PRs with resolved threads), not self-assessments"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "PR#137 t1: parameterise _compose_files as the single chain builder and route every runtime caller (compose_up_detached / compose_up_build / compose_down) through it",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_compose_files gains an audio-inclusion mode (overlay-present vs targeted-services-need-audio); shape-last then operator-override-last ordering preserved and documented in the builder docstring",
+        "compose_up_detached resolves via the builder; a plain no-overlay fleet keeps its bare docker compose up -d argv byte-identical",
+        "regression test: lobes serve --apply and lobes switch --apply on a shape deployment resolve the same file set as compose_down and start no shape-dropped service"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "c3",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "PR#137 t2: up.py::_compose_file_args delegates to the parameterised builder",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no second -f chain construction remains in up.py; the existing #136 targeted-services tests in test_cli_up.py stay green unchanged"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "PR#137 t3: read-only CLI surface that emits the resolved -f list for a deployment dir",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "prints one -f arg per line, resolved by the shared builder; a read verb that mutates nothing; documented in docs/deployment-shapes.md or docs/gateway-fleet.md and in lobes explain"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "PR#137 t4: cross-caller equivalence test over the overlay matrix",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one parametrised test asserts _compose_files, the up.py delegation, compose_up_detached / compose_up_build / compose_down argv, and the script-facing helper resolve identical file sets for: none, audio, shape, audio+shape \u2014 each with and without docker-compose.override.yml",
+        "asserts [] for the plain fleet, preserving compose auto-discovery of the operator override"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c6",
+        "h10",
+        "c16",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "PR#137 t5: delete shape_render.py::shape_compose_files and the ShapeRender.compose_files field",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the function, the dataclass field, and the tests that read them are gone; grep finds no remaining reference outside git history"
+      ],
+      "deps": [],
+      "covers": [
+        "c23",
+        "h12"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "PR#137 t6 wrap: version bump, changelog, serve.py:48 finding noted on issue #137, PR opened and driven through Qodo/Copilot/SonarCloud to merge",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped per the every-PR-bumps rule; every review thread resolved; PR merged to main before any #138 work starts"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t4",
+        "t5"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "PR#138 t7: accept-shape.sh consumes the CLI-emitted chain (_compose_down and --restore)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no hand-rolled -f list remains in the script; --restore on a mesh-shape backup includes docker-compose.shape.yml so no dropped service boots and the gateway keeps no dangling depends_on edge"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c5",
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "PR#138 t8: validate-tiers.sh consumes the CLI-emitted chain (run-local threshold override still merged last)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_compose_args builds from the helper output; _recreate_gateway recreates the gateway WITH the shape overlay on a shape deployment; the temporary threshold override stays last in the chain"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "PR#138 t9 wrap: version bump, PR through review to merge",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped; every review thread resolved; PR merged before any #119 work starts"
+      ],
+      "deps": [
+        "t7",
+        "t8"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "PR#119 t10: doctor profile-staleness + missing-scaffold checks (read-only)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "resolves the profile via the SAME resolve_init_profile / render_shape path init uses (no forked render); flags missing required knobs and missing scaffold files as warnings; an operator-set differing value downgrades to info; remediation text names doctor --fix, never init --force",
+        "fixtures reproduce the 2026-07-14 Thor stale .env and the 2026-07-17 Spark partial scaffold; both are caught"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c9",
+        "h14",
+        "c29",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "PR#119 t11: doctor --fix heal lane (missing-only; dry-run by default, --apply commits)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "--fix without --apply mutates nothing (test-asserted) and names every file and key it would touch; --fix --apply writes only absent files and appends only absent env keys \u2014 the reproduced Spark case heals with every pre-existing .env line untouched",
+        "the append parses existing keys first; a set HF_CACHE survives a heal that appends other keys; re-running the heal on a complete deployment is a byte-identical no-op"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c21",
+        "h15",
+        "c22",
+        "h16",
+        "c8",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "PR#119 t12 wrap: version bump, PR through review to merge",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped; every review thread resolved; PR merged before any #129 work starts"
+      ],
+      "deps": [
+        "t10",
+        "t11"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "PR#129 t13: auth stragglers through gateway_auth_headers (roles_measure audio probes + minor client)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with an inbound gateway key set, the stt/tts measure probes and the minor-client calls attach the bearer (one auth-on test each); with no key configured their requests are byte-identical to today"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c10",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "PR#129 t14: stt/tts first-class in the routing/peer schema (ROLE_BACKEND entries, _audio_role peer argument, STT_/TTS_ peer env channels)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "STT_/TTS_PEER_ORIGIN / _PEER_PROXY / _PEER_API_KEY parse with the same _as_bool, three-condition arming, and repr=False secrecy as the five core prefixes; lobes capabilities, GET /capabilities, and the audio 404 body carry hosted_by for a declared audio peer",
+        "no catalog change and no per-card audio knobs in profile TOMLs; shape goldens and existing no-audio capabilities output stay byte-identical"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c11",
+        "h18",
+        "c24",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t15",
+      "summary": "PR#129 t15: per-endpoint audio forwarding through the proxy-lobes machinery",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "/v1/audio/speech and /v1/audio/transcriptions route per-role: tts-remote + stt-local is expressible and tested, and vice versa; AUDIO_URL stays the local default for both",
+        "on the forward path the caller Authorization never reaches the peer; a request arriving with X-Lobes-Proxied is refused 508 proxy_loop; every proxied answer carries X-Lobes-Proxied-By \u2014 each test-asserted"
+      ],
+      "deps": [
+        "t14"
+      ],
+      "covers": [
+        "c12",
+        "h19",
+        "c13",
+        "h20"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t16",
+      "summary": "PR#129 t16: live cross-box acceptance \u2014 the Spark serves tts from the Thor; evidence committed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a live Spark-to-Thor /v1/audio/speech round-trip returns audio with X-Lobes-Proxied-By naming the Thor while /v1/audio/transcriptions serves locally; the transcript lands under docs/evidence/ and docs claim validated only after it lands (#108)",
+        "the same live session verifies accept-shape.sh --restore boots zero dropped services on a mesh-shape backup (the live half of the restore honesty condition)"
+      ],
+      "deps": [
+        "t15",
+        "t13"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c30",
+        "h5",
+        "c27",
+        "h2",
+        "c28",
+        "h3",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t17",
+      "summary": "PR#129 t17 wrap + sequence close: version bump, review-to-merge, four-PR sequence proven",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PR N+1 branched only after PR N merged across all four PRs; every Qodo/Copilot/SonarCloud thread resolved pre-merge; every PR version-bumped (CI version-check green)"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c26",
+        "h22"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "physical validation depends on the live pair: the Thor currently runs hand-tuned muse values (util 0.55 / 262144) diverging from the shipped thor-muse.toml, and hosting Chatterbox alongside muse changes its memory budget \u2014 reconcile the Thor shape/budget during t16",
+      "kind": "unknown_nonblocking",
+      "task_id": "t16"
+    },
+    {
+      "id": "r2",
+      "text": "first-class stt/tts touches the Profile/RoutingTable schema whose goldens must stay byte-identical for existing deployments; if the schema resists a no-op extension, fall back to peer channels outside the Profile schema and surface the deviation before building t14",
+      "kind": "unknown_nonblocking",
+      "task_id": "t14"
+    },
+    {
+      "id": "r3",
+      "text": "live boxes pin the gateway image to a released lobes-cli via MODEL_GEAR_VERSION, so #129 gateway behavior reaches the pair only after a PyPI release + image rebuild; PyPI CDN propagation lag bit the 0.44.0 acceptance (retry minutes later)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t16"
+    }
+  ]
+}

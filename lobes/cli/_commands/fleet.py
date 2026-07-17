@@ -136,6 +136,27 @@ def cmd_fleet_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fleet_files(args: argparse.Namespace) -> int:
+    """``lobes fleet files`` — print the resolved ``docker compose -f`` chain.
+
+    Read-only (#137): emits exactly the argv tokens every lobes verb passes to
+    ``docker compose`` (one token per line, relative to the deployment dir), so
+    shell scripts consume the chain from the CLI instead of re-implementing it —
+    ``mapfile -t files < <(lobes fleet files --compose-dir "$dir")``. A plain
+    deployment (no lobes overlay) prints NOTHING: compose resolves the project
+    itself and its own convention layers base + operator override, so an empty
+    mapfile array — a bare ``docker compose`` call — is the faithful chain.
+    """
+    json_mode = bool(getattr(args, "json", False))
+    deploy_dir = _runtime_ops.deployment_dir(args)
+    files = _compose._compose_files(deploy_dir)
+    if json_mode:
+        emit_result({"deployment_dir": str(deploy_dir), "files": files}, json_mode=True)
+    elif files:
+        emit_result("\n".join(files), json_mode=False)
+    return 0
+
+
 def _no_verb(args: argparse.Namespace) -> int:
     # Bare `lobes fleet` → the read-only status (safe default).
     return cmd_fleet_status(args)
@@ -179,3 +200,14 @@ def register(sub: argparse._SubParsersAction) -> None:
     st.add_argument("--port", type=int, help=_PORT_HELP)
     st.add_argument("--json", action="store_true", help=_JSON_HELP)
     st.set_defaults(func=cmd_fleet_status)
+
+    files_p = noun.add_parser(
+        "files",
+        help="Read-only: print the resolved docker compose -f chain, one argv "
+        "token per line (empty for a plain deployment — compose's own "
+        "base+override resolution applies). For scripts: mapfile -t files "
+        "< <(lobes fleet files).",
+    )
+    _add_compose_dir(files_p)
+    files_p.add_argument("--json", action="store_true", help=_JSON_HELP)
+    files_p.set_defaults(func=cmd_fleet_files)

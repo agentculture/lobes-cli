@@ -155,32 +155,18 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
 
 
 def _compose_file_args(needs_audio: bool, shape_present: bool, local_override: bool) -> list[str]:
-    """The ``-f`` chain for the compose invocation.
-
-    Shape overlay goes LAST of the lobes-authored files (same rationale as
-    _compose_files: its !reset on gateway.depends_on must be applied after every
-    other lobes file), and the operator's ``docker-compose.override.yml`` after
-    even that (#135 — "last wins" is what an override file means to compose).
-
-    ``local_override`` is passed in rather than probed here so this stays a pure
-    argv builder, like the flags either side of it.
-
-    Returns ``[]`` when this invocation needs no lobes overlay: compose then
-    resolves the project itself and its OWN convention layers base + override, so
-    naming files here would gain nothing. That mirrors _compose_files exactly —
-    the two must agree, or `lobes up <role>` and `lobes fleet up` would disagree
+    """The ``-f`` chain for the compose invocation — delegates to the single
+    composition authority (:func:`lobes.runtime._compose.compose_file_args`,
+    issue #137), so ``lobes up <role>`` and ``lobes fleet up`` cannot disagree
     about which files a deployment is made of.
+
+    ``needs_audio`` is this verb's own semantics — "only the overlays the
+    TARGETED services need", not "the overlay exists" — which is why the
+    booleans are passed in rather than probed from the deployment dir. This
+    used to be a parallel hand-rolled builder; it drifted from
+    ``_compose_files`` exactly once (#135/#136) before being folded in.
     """
-    if not (needs_audio or shape_present):
-        return []
-    compose_files = ["-f", _compose.COMPOSE_FILE]
-    if needs_audio:
-        compose_files += ["-f", _compose.AUDIO_OVERLAY]
-    if shape_present:
-        compose_files += ["-f", _compose.SHAPE_OVERLAY]
-    if local_override:
-        compose_files += ["-f", _compose.LOCAL_OVERRIDE]
-    return compose_files
+    return _compose.compose_file_args(audio=needs_audio, shape=shape_present, local=local_override)
 
 
 def cmd_up(args: argparse.Namespace) -> int:
