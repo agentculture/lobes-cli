@@ -290,9 +290,12 @@ def test_knob_on_multimodal_alias_lane_unaffected() -> None:
 
 def test_knob_on_muse_lane_is_not_armed() -> None:
     """muse serves tool calls and declares `tool_use`, yet is deliberately NOT a
-    strict lane — see `_STRICT_TOOL_LANES` for the live-measured rationale
-    (Gemma4EngineToolParser: supports_required_and_named=False, and forcing
-    structured output crashes EngineCore under muse's MTP speculative decoding).
+    strict lane, because on that lane the knob is INERT: measured live on the 31B
+    (2026-07-17), `strict: true` never engages xgrammar at all — a schema xgrammar
+    cannot compile is still served 200, no grammar log line is emitted, and output
+    matches `strict: false`. Injecting it would advertise a grammar-constrained
+    lane that isn't one. `_STRICT_TOOL_LANES` carries the full evidence, including
+    two rationales that were investigated and DISPROVEN.
 
     Pinned as a test because "muse serves tools, so arm it" is the intuitive and
     WRONG inference; a future reader needs the omission to be load-bearing rather

@@ -325,15 +325,17 @@ class ServerConfig:
     # set GATEWAY_PUBLIC_URL to override for a tunnel / Host-rewriting proxy.
     public_url: str | None = None
     # Opt-in (colleague#320): force `"strict": true` onto every tool schema of
-    # a chat-completions request routed to a TOOL_USE-declaring generate lane
-    # (lobes.gateway.server._STRICT_TOOL_LANES: primary/cortex and muse), so
-    # xgrammar's structural-tag constrained decoding makes a malformed tool
-    # call impossible. False (default) is a byte-identical passthrough — this
-    # knob touches NOTHING unless explicitly turned on. See
+    # a chat-completions request routed to a backend in
+    # lobes.gateway.server._STRICT_TOOL_LANES — currently `primary` (cortex)
+    # ONLY — so xgrammar's structural-tag constrained decoding makes a
+    # malformed tool call impossible. False (default) is a byte-identical
+    # passthrough — this knob touches NOTHING unless explicitly turned on. See
     # lobes.gateway.server.inject_strict_tools / handle_post for the
     # injection + retry-without-strict-on-compile-failure behaviour.
-    # The muse lane is armed but UNVALIDATED (#108) — the defect this knob
-    # works around is qwen3_coder-specific; see _STRICT_TOOL_LANES.
+    # `muse` is DELIBERATELY excluded despite serving tool calls: measured live
+    # on the 31B, strict never engages xgrammar on that lane at all, so arming
+    # it would advertise a grammar-constrained lane that isn't one. That lane
+    # set is the single authority — see _STRICT_TOOL_LANES for the evidence.
     force_strict_tools: bool = False
     # The INBOUND gateway API key (proxy-lobes t1, issues #115/#127 — the
     # pairwise-auth half). Resolved by :func:`_gateway_api_key`:

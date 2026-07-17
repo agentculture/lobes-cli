@@ -1261,8 +1261,9 @@ def _dial_owner(
     """Dial the resolved owner once, via the strict-tools lane when armed.
 
     Force-strict-tools (opt-in, colleague#320): only a lane in
-    :data:`_STRICT_TOOL_LANES` (the tool_use-declaring lanes — primary/cortex
-    and muse), only chat-completions, only a body an injection changed. Every
+    :data:`_STRICT_TOOL_LANES` (currently the primary/cortex lane only — see
+    that constant for why muse is excluded), only chat-completions, only a
+    body an injection actually changed. Every
     other request takes the untouched :func:`_try_backends` call below — this
     is the byte-identical-passthrough guarantee when the knob is off (or
     simply inapplicable to this request). Extracted from :func:`handle_post`
