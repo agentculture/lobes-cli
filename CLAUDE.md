@@ -318,7 +318,10 @@ fleet down`. `lobes switch <model>` is a down+up with a model swap. `lobes statu
 `fleet down`, `tunnel`) default to **dry-run**; require `--apply` to commit. Agents
 call CLIs in loops, so safe-by-default is mandatory. The read-only verbs (`status`,
 `assess`, `benchmark`, `logs`, `overview`, `whoami`, `explain`, `doctor`) never
-change the world.
+change the world — with one opt-in exception: `doctor --fix` is doctor's write
+lane (#119), and it follows the same convention (`--fix` alone prints the
+missing-only heal plan; `--fix --apply` writes absent files/keys, never
+rewriting an existing `.env` line).
 
 ## Build / test / publish
 
