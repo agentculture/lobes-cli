@@ -15,6 +15,32 @@ The overlay compose file is **`lobes/templates/fleet/docker-compose.audio.yml`**
 It is layered on top of the base fleet automatically when present during `model
 fleet up`.
 
+### Local operator overrides
+
+To change the overlay for one box — publishing a port, pinning a device, adding a
+mount — put it in a **`docker-compose.override.yml`** in the deployment dir.
+`lobes fleet up`/`down` append it to the `-f` chain **last**, so it wins over the
+base fleet and every lobes-authored overlay. lobes never scaffolds or writes this
+file; it is yours.
+
+Use exactly that name. `docker compose` auto-discovers `docker-compose.override.yml`
+only when it resolves the project itself, and any explicit `-f` — which lobes passes
+as soon as the audio or shape overlay exists — suppresses that discovery. lobes names
+the file explicitly to keep the convention true, but only under its conventional name;
+a differently-named file (`docker-compose.mine.yml`) is invisible to lobes and its
+edits will silently vanish on the next `fleet up`.
+
+A worked example — publishing the STT container on loopback so `reachy-mini-cli`'s
+default `REACHY_STT_URL=http://localhost:9002` resolves without per-container-IP wiring:
+
+```yaml
+# <deploy-dir>/docker-compose.override.yml
+services:
+  stt:
+    ports:
+      - "127.0.0.1:9002:9002"
+```
+
 ## Topology
 
 ```text

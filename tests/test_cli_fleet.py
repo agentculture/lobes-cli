@@ -284,6 +284,71 @@ def test_compose_files_orders_shape_after_audio(tmp_path) -> None:
     ]
 
 
+def _write_local_override(path) -> None:
+    """An operator-authored docker-compose.override.yml (lobes never scaffolds one)."""
+    (path / _compose.LOCAL_OVERRIDE).write_text(
+        "services:\n  stt:\n    ports:\n      - '127.0.0.1:9002:9002'\n",
+        encoding="utf-8",
+    )
+
+
+def test_local_override_present_detects_operator_file(tmp_path) -> None:
+    _scaffold_fleet(tmp_path)
+    assert _compose.local_override_present(tmp_path) is False
+    _write_local_override(tmp_path)
+    assert _compose.local_override_present(tmp_path) is True
+
+
+def test_compose_files_keeps_empty_argv_for_plain_fleet_with_local_override(tmp_path) -> None:
+    """No lobes overlay → still []. Compose resolves the project itself and its OWN
+    convention already layers docker-compose.override.yml on the base; passing -f
+    here would gain nothing and break that discovery."""
+    _scaffold_fleet(tmp_path)
+    _write_local_override(tmp_path)
+    assert _compose._compose_files(tmp_path) == []
+
+
+def test_compose_files_appends_local_override_last(tmp_path) -> None:
+    """REGRESSION: an explicit -f chain suppresses compose's auto-discovery of
+    docker-compose.override.yml, so scaffolding an unrelated overlay used to silently
+    stop honouring the operator's file (on the live GB10 that dropped the loopback
+    port publish reachy-mini-cli depends on). It must be named explicitly, and LAST —
+    an override file means "last wins", including over the shape overlay."""
+    _scaffold_fleet_audio(tmp_path)
+    _write_shape_override(tmp_path, ["vllm-multimodal"])
+    _write_local_override(tmp_path)
+    assert _compose._compose_files(tmp_path) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+        "-f",
+        _compose.SHAPE_OVERLAY,
+        "-f",
+        _compose.LOCAL_OVERRIDE,
+    ]
+
+
+def test_compose_files_appends_local_override_with_audio_only(tmp_path) -> None:
+    """The audio-overlay-only combination — the exact shape of the live regression."""
+    _scaffold_fleet_audio(tmp_path)
+    _write_local_override(tmp_path)
+    assert _compose._compose_files(tmp_path) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+        "-f",
+        _compose.LOCAL_OVERRIDE,
+    ]
+
+
+def test_compose_files_omits_local_override_when_absent(tmp_path) -> None:
+    """No operator file → the argv is byte-identical to the pre-change contract."""
+    _scaffold_fleet_audio(tmp_path)
+    assert _compose.LOCAL_OVERRIDE not in _compose._compose_files(tmp_path)
+
+
 def test_compose_up_build_includes_shape_overlay_argv(tmp_path, monkeypatch) -> None:
     _scaffold_fleet(tmp_path)
     _write_shape_override(tmp_path, ["vllm-multimodal"])
