@@ -77,19 +77,26 @@ GATEWAY_URL="${BASE_URL%/v1*}"
 GATEWAY_URL="${GATEWAY_URL%/v1}"
 
 # ---------------------------------------------------------------------------
-# Compose invocation — mirror lobes.runtime._compose._compose_files so a gateway
-# recreate keeps the live gateway's full config: the base compose file + the
-# audio overlay when scaffolded (it extends the gateway service to route
-# /v1/audio/*), plus our temporary threshold override (when present) merged last.
-# The override uses a non-auto-discovered name and is ALWAYS passed explicitly,
-# so a leftover copy (e.g. after a crash) can never silently merge into a later
-# `lobes fleet up`.
+# Compose invocation — mirror lobes.runtime._compose._compose_files's override
+# ordering so a gateway recreate keeps the live gateway's full config: the base
+# compose file + the audio overlay when scaffolded (it extends the gateway
+# service to route /v1/audio/*) + the operator's own docker-compose.override.yml
+# when present, plus our temporary threshold override merged last.
+# Any explicit -f suppresses compose's auto-discovery of the operator's file, so
+# an explicit chain MUST name it or their config silently vanishes from the
+# recreated gateway (#135).
+# Our own override uses a non-auto-discovered name and is ALWAYS passed
+# explicitly, so a leftover copy (e.g. after a crash) can never silently merge
+# into a later `lobes fleet up`.
 # ---------------------------------------------------------------------------
 _OVERRIDE_FILE=""     # temporary threshold override written in check D (see below)
 
 _compose_args() {
   local -a _f=(-f "${COMPOSE_DIR}/docker-compose.yml")
   [[ -f "${COMPOSE_DIR}/docker-compose.audio.yml" ]] && _f+=(-f "${COMPOSE_DIR}/docker-compose.audio.yml")
+  [[ -f "${COMPOSE_DIR}/docker-compose.override.yml" ]] && _f+=(-f "${COMPOSE_DIR}/docker-compose.override.yml")
+  # Ours last: it forces the threshold this run asserts on, so it must beat an
+  # operator override that happens to set the same key.
   [[ -n "${_OVERRIDE_FILE}" && -f "${_OVERRIDE_FILE}" ]] && _f+=(-f "${_OVERRIDE_FILE}")
   printf '%s\n' "${_f[@]}"
 }

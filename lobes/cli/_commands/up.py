@@ -154,11 +154,22 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
     return True
 
 
-def _compose_file_args(needs_audio: bool, shape_present: bool) -> list[str]:
+def _compose_file_args(needs_audio: bool, shape_present: bool, local_override: bool) -> list[str]:
     """The ``-f`` chain for the compose invocation.
 
-    Shape overlay goes LAST (same rationale as _compose_files: its !reset on
-    gateway.depends_on must be applied after every other file).
+    Shape overlay goes LAST of the lobes-authored files (same rationale as
+    _compose_files: its !reset on gateway.depends_on must be applied after every
+    other lobes file), and the operator's ``docker-compose.override.yml`` after
+    even that (#135 — "last wins" is what an override file means to compose).
+
+    ``local_override`` is passed in rather than probed here so this stays a pure
+    argv builder, like the flags either side of it.
+
+    Returns ``[]`` when this invocation needs no lobes overlay: compose then
+    resolves the project itself and its OWN convention layers base + override, so
+    naming files here would gain nothing. That mirrors _compose_files exactly —
+    the two must agree, or `lobes up <role>` and `lobes fleet up` would disagree
+    about which files a deployment is made of.
     """
     if not (needs_audio or shape_present):
         return []
@@ -167,6 +178,8 @@ def _compose_file_args(needs_audio: bool, shape_present: bool) -> list[str]:
         compose_files += ["-f", _compose.AUDIO_OVERLAY]
     if shape_present:
         compose_files += ["-f", _compose.SHAPE_OVERLAY]
+    if local_override:
+        compose_files += ["-f", _compose.LOCAL_OVERRIDE]
     return compose_files
 
 
@@ -204,7 +217,9 @@ def cmd_up(args: argparse.Namespace) -> int:
     # instead of letting compose fail with "no such service" (t4b overlay).
     shape_present = _shape_blocked_services(deploy_dir, services, target)
 
-    compose_files = _compose_file_args(needs_audio, shape_present)
+    compose_files = _compose_file_args(
+        needs_audio, shape_present, _compose.local_override_present(deploy_dir)
+    )
     argv = _compose.compose_service_argv(action, compose_files, services)
     command = " ".join(argv)
 

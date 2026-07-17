@@ -351,3 +351,75 @@ def test_up_colleague_stack_on_mesh_lobe_scaffold_errors(tmp_path, capsys) -> No
     assert rc != 0
     err = capsys.readouterr().err
     assert "vllm-multimodal" in err
+
+
+# --- operator override (#135) ---------------------------------------------
+
+
+def _write_local_override(path):
+    """An operator-authored docker-compose.override.yml (lobes never scaffolds one)."""
+    (path / _compose.LOCAL_OVERRIDE).write_text(
+        "services:\n  stt:\n    ports:\n      - '127.0.0.1:9002:9002'\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_compose_file_args_appends_local_override_last() -> None:
+    """The pure argv builder mirrors _compose_files: override LAST, after the shape."""
+    assert up_cmd._compose_file_args(True, True, True) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+        "-f",
+        _compose.SHAPE_OVERLAY,
+        "-f",
+        _compose.LOCAL_OVERRIDE,
+    ]
+
+
+def test_compose_file_args_omits_local_override_when_absent() -> None:
+    """No operator file → argv byte-identical to the pre-#135 contract."""
+    assert up_cmd._compose_file_args(True, False, False) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+    ]
+
+
+def test_compose_file_args_stays_empty_without_lobes_overlay() -> None:
+    """No lobes overlay → [] even with an override present, so compose's own
+    resolution layers base + override. Must agree with _compose_files, or
+    `lobes up <role>` and `lobes fleet up` would disagree about the file set."""
+    assert up_cmd._compose_file_args(False, False, True) == []
+
+
+def test_up_tts_dry_run_includes_operator_override(tmp_path, capsys) -> None:
+    """REGRESSION (#135): `lobes up <audio role>` builds an explicit -f chain, which
+    suppresses compose's auto-discovery of docker-compose.override.yml. Without naming
+    it, the operator's file is silently dropped — on the live GB10 that would recreate
+    the stt container without the loopback publish reachy-mini-cli depends on. The
+    sibling fleet-up path honours it; this one must too (a fix in one path only is a
+    bug in the other)."""
+    _scaffold_fleet_audio(tmp_path)
+    _write_local_override(tmp_path)
+    rc = main(["up", "tts", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"-f {_compose.LOCAL_OVERRIDE}" in out
+    # LAST — after the audio overlay, so the operator's file wins.
+    assert out.index(_compose.AUDIO_OVERLAY) < out.index(_compose.LOCAL_OVERRIDE)
+
+
+def test_up_fleet_role_without_overlays_omits_override(tmp_path, capsys) -> None:
+    """A plain fleet role needs no -f chain at all, so compose auto-discovers the
+    override itself — the argv stays bare."""
+    _scaffold_fleet(tmp_path)
+    _write_local_override(tmp_path)
+    rc = main(["up", "cortex", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "docker compose up -d vllm-primary" in out
+    assert "-f" not in out

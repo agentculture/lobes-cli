@@ -64,6 +64,14 @@ FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 # the GB10: spark-lobe still booted model-gear-vllm-multimodal). machine-as-brain /
 # bare init drop nothing, so no such file is written.
 SHAPE_OVERLAY = "docker-compose.shape.yml"
+# Operator-authored local override — `docker compose`'s OWN convention, never
+# scaffolded or written by lobes. Compose auto-discovers it only when it resolves
+# the project files itself (no `-f`); ANY explicit `-f` suppresses that discovery.
+# `_compose_files` returns [] for a plain fleet, so such a deployment silently
+# HONOURED this file — and scaffolding an unrelated overlay (audio or a shape)
+# just as silently STOPPED honouring it. Naming it in the explicit list keeps the
+# convention true regardless of which overlays happen to be present.
+LOCAL_OVERRIDE = "docker-compose.override.yml"
 # Core compose SERVICE name -> its container. A shape-dropped core service is read
 # back out of the override file (see `shape_dropped_containers`) to exclude its
 # container from the expected fleet set. Mirrors the base fleet's four core gears;
@@ -363,6 +371,15 @@ def audio_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / AUDIO_OVERLAY).is_file()
 
 
+def local_override_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when an operator-authored ``docker-compose.override.yml`` sits in the deploy dir.
+
+    Never scaffolded by lobes — it is purely the operator's file, honoured because
+    ``docker compose`` honours it. See :data:`LOCAL_OVERRIDE`.
+    """
+    return (Path(deploy_dir) / LOCAL_OVERRIDE).is_file()
+
+
 def shape_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     """True when the deployment-shape override (``docker-compose.shape.yml``) is scaffolded.
 
@@ -447,22 +464,40 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
 def _compose_files(deploy_dir: os.PathLike | str) -> list[str]:
     """``-f`` args: the base file plus whichever overlays are present.
 
-    Returns ``[]`` when NO overlay (``docker compose`` finds docker-compose.yml on
-    its own), so a plain fleet keeps its current argv unchanged. The shape override
-    is placed LAST — its compose ``!reset`` on the gateway ``depends_on`` clears the
-    dangling edge to a profile-disabled dropped service, and applying it after the
-    audio overlay (which never touches ``depends_on``, only ``environment``)
-    guarantees no later file re-introduces that edge.
+    Returns ``[]`` whenever no LOBES overlay is present — regardless of whether an
+    operator override exists. On that path ``docker compose`` resolves the project
+    itself and its own convention already layers docker-compose.yml +
+    docker-compose.override.yml, so naming either here would gain nothing and a
+    plain fleet keeps its current argv unchanged.
+
+    The shape override is placed LAST of the LOBES-AUTHORED files — its compose
+    ``!reset`` on the gateway ``depends_on`` clears the dangling edge to a
+    profile-disabled dropped service, and applying it after the audio overlay
+    (which never touches ``depends_on``, only ``environment``) guarantees no later
+    lobes file re-introduces that edge.
+
+    :data:`LOCAL_OVERRIDE` comes after even the shape override, because that is what
+    an override file MEANS to compose: last wins. Compose only auto-discovers it when
+    it resolves the project itself, so passing ANY explicit ``-f`` used to drop it —
+    silently, and only once an unrelated overlay happened to be scaffolded. Naming it
+    here restores the convention for every overlay combination. An operator override
+    that re-introduces a dropped service's ``depends_on`` edge is the operator's own
+    doing, and compose fails loudly rather than lobes ignoring their file.
     """
     audio = audio_overlay_present(deploy_dir)
     shape = shape_overlay_present(deploy_dir)
+    local = local_override_present(deploy_dir)
     if not audio and not shape:
+        # No lobes overlay: compose's own resolution already layers base + override.
+        # Passing -f here would change nothing except to break that convention.
         return []
     files = ["-f", COMPOSE_FILE]
     if audio:
         files += ["-f", AUDIO_OVERLAY]
     if shape:
         files += ["-f", SHAPE_OVERLAY]
+    if local:
+        files += ["-f", LOCAL_OVERRIDE]
     return files
 
 

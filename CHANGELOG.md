@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.1] - 2026-07-17
+
+### Fixed
+
+- `lobes fleet up`/`down` **and `lobes up <role>`** now honour an operator-authored `docker-compose.override.yml`. `docker compose` auto-discovers that file only when it resolves the project itself; ANY explicit `-f` suppresses it. `_compose_files` returns `[]` for a plain fleet (so the override applied), but scaffolding an unrelated overlay — the `--audio` overlay or a deployment-shape override — switched it to an explicit `-f` chain that silently STOPPED applying the operator's file. Behaviour thus flipped on unrelated state, with no warning. Found live on the DGX Spark GB10, where the operator override publishes the Parakeet STT container on `127.0.0.1:9002`: a `lobes fleet up --apply` would have recreated the container without that publish and broken `reachy-mini-cli`'s default `REACHY_STT_URL`. The override is now named explicitly in the `-f` chain, LAST — after even the shape overlay — because that is what an override file means to compose: last wins. Deployments without the file are byte-identical to before.
+
 ## [0.46.0] - 2026-07-17
 
 ### Added
