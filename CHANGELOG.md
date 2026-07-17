@@ -4,6 +4,74 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.50.0] - 2026-07-17
+
+### Added
+
+- **`tools` on the role contract** — every role in `lobes capabilities --json`
+  and gateway `GET /capabilities` now reports whether its endpoint accepts
+  OpenAI `tools` on a request. Derived from the catalog's `tool_parser` (the
+  same field the served `--tool-call-parser` flag is built from, so it cannot
+  drift from reality without `tests/test_catalog.py`'s pairing guard failing
+  first): `true` for cortex/senses/muse, `false` for the pooling roles
+  (embedder/reranker serve no chat lane) and stt/tts. Previously NO role
+  advertised tool support anywhere, so a Colleague could not discover it.
+  Deliberately a bool, not a parser name — the served parser can diverge from
+  the catalog's (`PRIMARY_TOOL_CALL_PARSER`, the `qwen3_coder_thinking`
+  plugin), so naming one would be a claim `lobes.roles` cannot honestly make.
+- **`tool_use` in `muse`'s declared responsibilities.** Not a widening of its
+  authority: `final_decision` / `repo_action` / `security_decision` stay
+  forbidden, so muse calls tools to RESEARCH a proposal, never to enact one —
+  `cortex` remains the only lobe that acts.
+
+### Changed
+
+- **Gemma 4 lanes now serve the `gemma4` parser PAIR** (`senses`, the opt-in
+  coder candidate, and `muse`): `--tool-call-parser=gemma4`
+  (`Gemma4EngineToolParser`, replacing the generic `pythonic`) **plus**
+  `--reasoning-parser=gemma4` (`Gemma4ParserReasoningAdapter`, previously absent
+  entirely). This mirrors the cortex lane's long-standing
+  `--reasoning-parser=qwen3` + `qwen3_coder` pairing. See Fixed, below, for why
+  each half is load-bearing. Operators on an existing scaffold must re-run
+  `lobes init` (or edit the deployed `docker-compose.yml`) to pick this up; a
+  running container keeps its old flags until recreated.
+
+### Fixed
+
+- **Gemma 4 tool calling was silently broken on every Gemma lane.** Gemma 4 does
+  not emit Python-style calls — it emits `<|tool_call>call:name{...}<tool_call|>`,
+  whose delimiters are **special tokens**. The `pythonic` parser is served with
+  `skip_special_tokens=True`, so those delimiters were stripped before it ran; it
+  then matched nothing and vLLM relayed the model's perfectly well-formed call as
+  ordinary assistant **content**, with `tool_calls: null` and
+  `finish_reason: "stop"`. A caller passing `tools` got prose shaped like a tool
+  call and no callable one — no error, no warning. `pythonic` was never
+  evidence-backed: `runtime/_parser.py` carried its own "risk r2, pending live
+  validation" caveat from the start, and that check had never run. It ran on
+  2026-07-17 against the live 31B on a physical Jetson AGX Thor and disproved the
+  guess. **Validated on the 31B `muse` lane only**
+  (`docs/evidence/2026-07-17-accept-muse-tool-calling-thor.txt`); the 12B lanes
+  inherit the family rule and remain UNVALIDATED (#108) — a strictly better
+  default than a parser proven wrong for the family, not a measured claim.
+- **Gemma 4 channel markers leaked into `content`.** The correct tool parser
+  forces `skip_special_tokens=False` (that is how it sees `<|tool_call>`), which
+  also exposes Gemma's `<|channel>thought` markers — which a *tool* parser has no
+  business stripping. A plain answer came back as
+  `"<|channel>thought\n<channel|>The weather in Paris is..."`. vLLM ships the
+  matching half (`--reasoning-parser=gemma4`) and lobes wired it on no Gemma lane;
+  it is now paired on all three. Enable both or neither: the tool parser alone
+  trades a broken tool call for dirty content.
+- **`lobes capabilities` no longer misreports an older gateway as unreachable.**
+  Its gateway sanity-check required every current `RoleInfo` field, so a NEWER
+  CLI probing an OLDER gateway (routine on a mixed-version mesh) judged a
+  perfectly good response malformed, fell back to `.env` guesses, and printed
+  "gateway unreachable" — false, since the gateway had answered, and the exact
+  #92 dishonesty inverted. Fields added after the original #81 contract shape
+  (`tools`, `feasible`) are now tolerated when absent; the stable core is already
+  conclusive for that check's real job (telling a lobes gateway from a stray
+  daemon on a guessed port). `_render_table` already `.get`-ed both with safe
+  defaults, so an older payload renders without fabricating either.
+
 ## [0.49.0] - 2026-07-17
 
 ### Added

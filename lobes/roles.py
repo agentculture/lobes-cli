@@ -336,6 +336,64 @@ def _served_context(role: str, env: Mapping[str, str], native: int) -> int:
         return native
 
 
+def _resolve_ready(
+    loaded: bool,
+    feasible: bool,
+    endpoint: str,
+    ready_signal: bool | None,
+    peer_signal: bool | None,
+) -> bool:
+    """Resolve ``RoleInfo.ready`` for a gateway-fronted role — the #92/#115 clamp.
+
+    This is the structural enforcement :func:`_gateway_role`'s docstring
+    promises: a caller passing a stale/wrong ``ready_signal`` (or ``peer_signal``)
+    can never fabricate ``ready=True`` for a role with nothing to dial, nothing
+    wired, or no hardware feasibility — the clamp is applied HERE, not left to
+    caller discipline.
+
+    ``ready`` is CLAMPED to ``False`` whenever the backend is not wired
+    (``loaded is False``), the resolved ``endpoint`` is empty (see
+    :func:`_gateway_base_url`), OR this machine's ``table.infeasible`` names
+    this role's backend (``feasible is False`` — task t6, the HARDWARE
+    dimension of the same invariant). This generalises, to all four
+    gateway-fronted roles, the same clamp issue #89/#90 established for
+    stt/tts (a caller-supplied signal can never override "nothing is wired"
+    or "nothing to dial") — and now also "this machine can't run it at all",
+    independent of wiring or a live health probe.
+
+    When the role IS wired, feasible, and dialable: ``ready`` takes
+    ``ready_signal`` directly when it is not ``None`` (an AUTHORITATIVE
+    verdict — see :func:`_gateway_role`'s docstring for what produces one),
+    else it falls back to ``loaded`` (the original t4 behaviour).
+
+    ``peer_signal`` is the NEW live signal t5's clamp docstring demanded
+    (proxy-lobes t6, issues #115/#127): the live PEER-probe verdict for a
+    PROXIED role, threaded through by :func:`build_role_registry` from its
+    ``peer_ready`` mapping — mirroring how ``backend_ready``/``audio_ready``
+    thread their signals — and ``None`` for every other role and every caller
+    without one. It is a SEPARATE channel from ``ready_signal``,
+    deliberately: ``backend_ready`` (the LOCAL probe, folded into
+    ``ready_signal`` upstream) still NEVER unclamps a proxied role — a
+    healthy local process is not evidence the peer serves the model — while
+    ``peer_signal`` reports a probe of the actual proxied path
+    (:func:`lobes.gateway._readiness.probe_peer_ready`: the peer answered 200
+    AND its own ``/v1/models`` lists the served id), so a proxied role's
+    ``ready`` honestly reflects it (honesty h2 — a live proxied-path probe or
+    ``False``, never hardcoded true). It is still clamped on an empty
+    ``endpoint`` (nothing for a caller to dial — unchanged from every other
+    role), and ``feasible`` stays ``False`` regardless: hosting is a hardware
+    fact a forward does not change.
+    """
+    if loaded and feasible and endpoint:
+        return ready_signal if ready_signal is not None else loaded
+    if peer_signal is not None and endpoint:
+        # PROXIED role with a live peer probe (t6): ready reflects the peer's
+        # verified state — never `loaded` (it isn't, here) and never a local
+        # backend_ready signal (see the two-channel rationale above).
+        return peer_signal
+    return False
+
+
 def _gateway_role(
     role: str,
     table: RoutingTable,
@@ -353,7 +411,7 @@ def _gateway_role(
       The builder passes a concrete bool whenever a ``backend_ready`` mapping was
       supplied, having already collapsed a present ``None``, a present ``False``,
       and a missing key all to ``False`` (issue #92 / honesty h14). ``ready``
-      takes this value directly (subject to the clamp below).
+      takes this value directly (subject to the clamp in :func:`_resolve_ready`).
     * ``None`` — NO live signal at all (``backend_ready`` was omitted entirely),
       in which case ``ready`` falls back to the coarse ``loaded`` proxy — the
       original t4 behaviour.
@@ -364,34 +422,11 @@ def _gateway_role(
     loaded=True") is the #92 defect. The builder resolves the cache's ``None`` to
     a concrete ``False`` on the supplied path so this function can never see it.
 
-    Either way, ``ready`` is CLAMPED to ``False`` whenever the backend is not
-    wired (``loaded is False``), the resolved ``endpoint`` is empty (see
-    :func:`_gateway_base_url`), OR this machine's ``table.infeasible`` names
-    this role's backend (``feasible is False`` — task t6, the HARDWARE
-    dimension of the same invariant) — enforced HERE, structurally, so a
-    caller passing a stale/wrong ``ready_signal`` for an unwired, undialable,
-    OR hardware-infeasible role can never fabricate ``ready=True``. This
-    generalises, to all four gateway-fronted roles, the same clamp issue
-    #89/#90 established for stt/tts (a caller-supplied signal can never
-    override "nothing is wired" or "nothing to dial") — and now also "this
-    machine can't run it at all", independent of wiring or a live health probe.
-
-    ``peer_signal`` is exactly that NEW live signal t5's clamp docstring
-    demanded (proxy-lobes t6, issues #115/#127): the live PEER-probe verdict
-    for a PROXIED role, threaded through by :func:`build_role_registry` from
-    its ``peer_ready`` mapping — mirroring how ``backend_ready``/
-    ``audio_ready`` thread their signals — and ``None`` for every other role
-    and every caller without one. It is a SEPARATE channel from
-    ``ready_signal``, deliberately: ``backend_ready`` (the LOCAL probe) still
-    NEVER unclamps a proxied role — a healthy local process is not evidence
-    the peer serves the model — while ``peer_signal`` reports a probe of the
-    actual proxied path (:func:`lobes.gateway._readiness.probe_peer_ready`:
-    the peer answered 200 AND its own ``/v1/models`` lists the served id), so
-    a proxied role's ``ready`` honestly reflects it (honesty h2 — a live
-    proxied-path probe or ``False``, never hardcoded true). It is still
-    clamped on an empty ``endpoint`` (nothing for a caller to dial —
-    unchanged from every other role), and ``feasible`` stays ``False``
-    regardless: hosting is a hardware fact a forward does not change.
+    ``ready`` itself — the clamp that makes a stale/wrong ``ready_signal`` (or
+    ``peer_signal``) unable to fabricate ``ready=True`` for an unwired,
+    undialable, or hardware-infeasible role, plus the separate proxied-role
+    ``peer_signal`` channel — is computed by :func:`_resolve_ready`; see its
+    docstring for the full rationale (issues #92, #115/#127).
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -407,15 +442,7 @@ def _gateway_role(
     entry = _catalog_by_id(model_id) or _catalog_by_role_hint(ROLE_ROLE_HINT[role])
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
-    if loaded and feasible and endpoint:
-        ready = ready_signal if ready_signal is not None else loaded
-    elif peer_signal is not None and endpoint:
-        # PROXIED role with a live peer probe (t6): ready reflects the peer's
-        # verified state — never `loaded` (it isn't, here) and never a local
-        # backend_ready signal (see the docstring's two-channel rationale).
-        ready = peer_signal
-    else:
-        ready = False
+    ready = _resolve_ready(loaded, feasible, endpoint, ready_signal, peer_signal)
     return RoleInfo(
         role=role,
         model=model_id,

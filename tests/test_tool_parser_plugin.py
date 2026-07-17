@@ -76,7 +76,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # byte-identical — this tripwire firing on exactly the Gemma three plus the
     # gateway, and NOTHING else, is itself the proof of each change's blast
     # radius.
-    "gateway": "PLACEHOLDER",
+    "gateway": "6a6c65ab2ae357939537c61a5d144bb7cadb1888c3daffce13ce70f40399a3a9",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
