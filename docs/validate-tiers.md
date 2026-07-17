@@ -113,9 +113,13 @@ This check simulates an overloaded host **without actually stressing memory**:
 
 3. Force-recreate **only the gateway** (`--no-deps --force-recreate gateway`).
    The recreate mirrors how `lobes` itself composes the fleet — base
-   `docker-compose.yml` **plus the audio overlay when scaffolded** — with the
-   override merged on top via explicit `-f`, so the gateway keeps its full
-   config (including `/v1/audio/*` routing) and only the threshold changes.
+   `docker-compose.yml`, **plus the audio overlay when scaffolded**, plus your
+   own `docker-compose.override.yml` when present — with the threshold override
+   merged on top of all of them via explicit `-f`, so the gateway keeps its full
+   config (including `/v1/audio/*` routing and your local customisations) and
+   only the threshold changes. The threshold override is merged **last** on
+   purpose: it must win over an operator override that sets the same key, or
+   this check would assert against your value instead of the lowered one.
    The vLLM backends are untouched. The gateway re-imports
    `lobes.gateway._pressure_policy` at container start, picking up the lowered
    threshold.
@@ -215,14 +219,20 @@ before the `--force-recreate` call and that `docker compose up` picked it up
 
 **Gateway not restored after failure:** if the script crashes before the trap
 can run, delete the override file and recreate the gateway. Include the audio
-overlay if your deployment uses it, matching how `lobes` composes the fleet:
+overlay and your own override if your deployment uses them, matching how `lobes`
+composes the fleet — any explicit `-f` stops compose from auto-discovering
+`docker-compose.override.yml`, so it must be named here or your local config is
+dropped from the recreated gateway:
 
 ```bash
 rm ~/.model-gear/docker-compose.validate-tiers.override.yml
 docker compose --project-directory ~/.model-gear \
   -f ~/.model-gear/docker-compose.yml \
   -f ~/.model-gear/docker-compose.audio.yml \
+  -f ~/.model-gear/docker-compose.override.yml \
   up -d --no-deps --force-recreate gateway
-# Omit the audio -f line if you did not init with --audio. Simplest of all:
-# `lobes fleet up --apply` recreates the fleet with the correct compose files.
+# Omit any -f line whose file your deployment does not have (the audio overlay
+# needs --audio; docker-compose.override.yml exists only if you wrote one).
+# Simplest of all: `lobes fleet up --apply` recreates the fleet with the
+# correct compose files.
 ```
