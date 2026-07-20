@@ -8,8 +8,10 @@ description: >
   dedups by content hash) — re-remembering updates in place, never duplicates.
   Stamps a `created` date on every record at ingest time. Accepts `supersedes`
   (id of the record this one replaces, for within-scope shadowing via `sweep`)
-  and `links` (list of related-memory ids). The store lives at
-  ~/.eidetic/memory (a home-dir path outside any git worktree), and the wrapper
+  and `links` (list of related-memory ids). Records land in one of TWO stores by
+  visibility: PUBLIC records inside a git repo go to <repo-root>/.eidetic/memory
+  (committed, shared with the team), private ones to $HOME/.eidetic/memory (never
+  committed); `EIDETIC_DATA_DIR` overrides both. The wrapper
   defaults records to this agent's PERSONAL, PRIVATE scope (`--scope lobes
   --visibility private`, suffix read from culture.yaml) so they don't leak to a
   default/other-scope recall — Claude and the colleague backend still share them
@@ -25,7 +27,7 @@ description: >
 `remember` drives **`eidetic remember`**, the write half of the memory surface
 (the read half is the sibling **/recall** skill). Records you store here are
 recallable later by *any* agent on this machine — Claude or the colleague
-backend — because the default store is one shared `~/.eidetic/memory` path.
+backend — because both resolve the same store paths via this skill.
 
 ## How to run
 
@@ -97,15 +99,24 @@ eidetic sweep             # apply transitions
   steer to a different scope (which then uses the plain CLI default visibility),
   or `--visibility public` to keep the personal scope but make it shared. A wheel
   install with no `culture.yaml` falls back to the CLI default `default`/`public`.
-- `--backend files|mongo|neo4j` — default `files` (the shared home-dir store);
+- `--backend files|mongo|neo4j` — default `files` (the in-repo + home file stores);
   use `mongo`/`neo4j` (with `EIDETIC_MONGO_URI` / `NEO4J_URI`) for a server store.
 
 ## Notes
 
-- The embed endpoint defaults to the local model-gear embed gear
-  (`http://localhost:8002/v1`); override with `EIDETIC_EMBED_URL` /
-  `EIDETIC_EMBED_MODEL`. Ingest still works offline (embeddings are recomputed at
-  recall time).
+- The embed endpoint defaults to the local **lobes gateway**
+  (`http://localhost:8001/v1`, model `Qwen/Qwen3-Embedding-0.6B`); override with
+  `EIDETIC_EMBED_URL` / `EIDETIC_EMBED_MODEL`. **Auth (eidetic >= 0.12):** against
+  a key-armed gateway the client sends `Authorization: Bearer …` from
+  `EIDETIC_EMBED_API_KEY`, else borrows `COLLEAGUE_API_KEY` /
+  `CULTURE_VLLM_API_KEY`.
+- **Ingest never needs the embedder.** No vectors are persisted — a record stores
+  only content/hash/id/metadata/scope, and both query and candidates are embedded
+  fresh at recall time. So ingest works fully offline, and changing the embed
+  model needs **no re-index**. The corollary lives on the recall side: an
+  unreachable endpoint silently degrades *recall* to a 128-dim lexical hash
+  (upstream eidetic-cli#34), so verify the embedder is reachable before trusting
+  a semantic result.
 - **Use the wrapper, not a bare `eidetic`.** The console script may not be on
   `PATH` (in a dev checkout it isn't); the wrapper resolves it (`PATH` first, else
   `uv run eidetic`). For the docs, run `eidetic explain remember` if installed,
