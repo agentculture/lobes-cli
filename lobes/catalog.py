@@ -174,6 +174,39 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         ),
     ),
     SupportedModel(
+        id="Qwen/Qwen3-Embedding-4B",
+        # The "deep" embedding slot: the higher-fidelity companion to the 0.6B hot-path
+        # gear above, wired as the opt-in `embed-deep` backend (gateway alias
+        # "embed-deep", COMPOSE_PROFILES=embed-deep). 2560-dim Matryoshka, MTEB
+        # multilingual mean 69.45 vs the 0.6B's ~64.3 — bought with ~8 GiB of weights
+        # and a much slower forward pass, which is why it is opt-in and NOT the
+        # embedder role's default.
+        #
+        # role_hint is "candidate", NOT "embedding": roles.ROLE_ROLE_HINT maps the
+        # `embedder` role to role_hint "embedding" and _catalog_by_role_hint takes the
+        # FIRST match, so a second "embedding" entry would silently hijack the role's
+        # reported model. The deep slot is a switchable gear, not a role default.
+        #
+        # NON-INTEROPERABLE with the 0.6B: embeddings from the two models live in
+        # different vector spaces, so a corpus indexed by one can only be queried by
+        # the same one. Truncating this model to 1024 dims via Matryoshka does NOT
+        # make it compatible with the 0.6B's 1024. See docs/qwen3-embedding-4b.md.
+        role_hint="candidate",
+        shape="dense embedding (text)",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="qwen3-embedding-4b.md",
+        task="embed",
+        dimension=2560,
+        hf_overrides=(
+            '{"is_matryoshka": true,'
+            ' "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024, 1536, 2048, 2560]}'
+        ),
+    ),
+    SupportedModel(
         id="nvidia/Qwen3-14B-NVFP4",
         # 14B dense NVFP4 — a LEGACY CANDIDATE, KEPT but DEMOTED. It was the
         # fleet's "middle"/normal tier between the 4B minor and the 27B primary;

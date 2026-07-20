@@ -17,6 +17,14 @@ from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 _DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
+# The opt-in "deep" embedding slot — the higher-fidelity companion to _DEFAULT_EMBED,
+# reachable via the "embed-deep" alias when its own backend is wired (mirrors the
+# multimodal-coder opt-in alias below). Deliberately a SECOND embed-task backend
+# rather than a replacement: the 0.6B keeps the latency-sensitive hot path.
+# The slot is named for its job, not its model — swapping this default to a larger
+# checkpoint later keeps the alias stable (but invalidates any index built with the
+# previous one; the two vector spaces are not interoperable).
+_DEFAULT_EMBED_DEEP = "Qwen/Qwen3-Embedding-4B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
 # "support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the NVFP4 base +
@@ -545,6 +553,22 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_name=_DEFAULT_EMBED,
             task="embed",
         ),
+        # The opt-in "deep" embedding gear — a SECOND task="embed" backend beside
+        # the 0.6B one above. Wired only when EMBED_DEEP_BASE_URL is set (the
+        # *_BASE_URL convention every opt-in backend uses; only the original
+        # primary/embed/rerank trio uses the older *_URL spelling), so an
+        # existing deployment renders byte-identically until an operator opts in.
+        # Task-family routing is already generic over N backends — resolve_model /
+        # order_backends match on served_name, not on a one-per-task assumption.
+        _optional_backend(
+            env,
+            name="embed-deep",
+            url_key="EMBED_DEEP_BASE_URL",
+            name_key="EMBED_DEEP_SERVED_NAME",
+            default_url="http://vllm-embed-deep:8000",
+            default_name=_DEFAULT_EMBED_DEEP,
+            task="embed",
+        ),
         _optional_backend(
             env,
             name="rerank",
@@ -569,9 +593,15 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # tier-fallback contract — an alias never points at a served name nothing
     # actually serves). Computed before the GATEWAY_ALIASES merge so an operator
     # override still wins if they explicitly set "multimodal-coder=..." themselves.
-    coder_backend = next((b for b in backends if b.name == "multimodal-coder"), None)
-    if coder_backend is not None:
-        aliases["multimodal-coder"] = coder_backend.served_name
+    # Opt-in backends whose alias is simply their own backend name. "embed-deep"
+    # joins on the same contract: it is NOT a generate-lane capability tier (it
+    # serves task="embed", and tier_aliases is generate-only), so it gets no
+    # upward fallback — an absent deep gear means the alias is absent, never a
+    # silent downgrade to the 0.6B, which would answer in the WRONG VECTOR SPACE.
+    for _opt_in in ("multimodal-coder", "embed-deep"):
+        _opt_in_backend = next((b for b in backends if b.name == _opt_in), None)
+        if _opt_in_backend is not None:
+            aliases[_opt_in] = _opt_in_backend.served_name
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually

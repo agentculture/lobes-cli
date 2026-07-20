@@ -160,14 +160,34 @@ def test_task_values_are_valid() -> None:
         assert model.task in _VALID_TASKS, f"{model.id}: unknown task {model.task!r}"
 
 
-def test_exactly_one_embed_and_one_score_model() -> None:
-    # The catalog must contain exactly one embedder and exactly one reranker so that
-    # fleet routing is unambiguous — two embed/score entries would require a tiebreaker
-    # that doesn't exist yet.
-    embed_ids = [m.id for m in SUPPORTED_MODELS if m.task == "embed"]
+def test_exactly_one_score_model() -> None:
+    # One reranker keeps score routing unambiguous — a second entry would need a
+    # tiebreaker that doesn't exist for the score lane.
     score_ids = [m.id for m in SUPPORTED_MODELS if m.task == "score"]
-    assert embed_ids == [_EMBEDDER_ID], f"embed models: {embed_ids}"
     assert score_ids == [_RERANKER_ID], f"score models: {score_ids}"
+
+
+def test_exactly_one_embed_model_carries_the_embedding_role_hint() -> None:
+    # The embed lane now holds MORE than one entry (the 0.6B hot-path gear plus the
+    # opt-in `embed-deep` slot), which is fine: they are wired as separate backends
+    # with distinct served names and disambiguated by the "embed-deep" alias.
+    #
+    # What must stay singular is the ROLE DEFAULT. roles.ROLE_ROLE_HINT maps the
+    # `embedder` role to role_hint "embedding" and _catalog_by_role_hint takes the
+    # FIRST match, so a second "embedding" entry would silently hijack which model
+    # `lobes capabilities` reports for the role. Additional embed gears must carry a
+    # non-"embedding" role_hint (e.g. "candidate").
+    embedding_hinted = [m.id for m in SUPPORTED_MODELS if m.role_hint == "embedding"]
+    assert embedding_hinted == [_EMBEDDER_ID], f"role_hint='embedding' models: {embedding_hinted}"
+
+
+def test_every_embed_model_has_a_distinct_id() -> None:
+    # Served-name routing (resolve_model / order_backends) matches on the served
+    # name, which defaults to the catalog id — duplicates would make the owning
+    # backend for a request ambiguous.
+    embed_ids = [m.id for m in SUPPORTED_MODELS if m.task == "embed"]
+    assert len(embed_ids) == len(set(embed_ids)), f"duplicate embed ids: {embed_ids}"
+    assert _EMBEDDER_ID in embed_ids
 
 
 def test_embed_models_have_positive_dimension() -> None:

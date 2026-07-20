@@ -55,10 +55,15 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    # Recomputed 2026-07-17 for the Gemma 4 parser-pair correction, on top of
-    # the first-class audio lanes (#129). TWO deliberate changes are folded in
-    # here — this recompute rebased one onto the other, so both stories matter:
+    # Recomputed for the opt-in `embed-deep` gear, on top of the 2026-07-17 Gemma 4
+    # parser-pair correction. THREE deliberate stories are folded in here — this
+    # recompute rebased the newest onto the other two, so all three matter:
     #
+    #  * `embed-deep` (newest): the GATEWAY service's environment: block gained
+    #    EMBED_DEEP_BASE_URL (empty default) + EMBED_DEEP_SERVED_NAME, and the
+    #    profile-gated vllm-embed-deep service joined the set. vllm-embed itself is
+    #    BYTE-IDENTICAL — the deep slot is a second gear beside the 0.6B, never an
+    #    edit to it.
     #  * the three GEMMA lanes (vllm-multimodal, vllm-multimodal-coder,
     #    vllm-muse) moved from `--tool-call-parser=pythonic` to the `=gemma4`
     #    PAIR (tool + reasoning). Pythonic was a never-validated guess (its own
@@ -73,11 +78,11 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (Prior recomputes: the muse role's MUSE_* passthroughs + the
     # profile-gated vllm-muse service; before that, t7 #127/#115's inbound-auth
     # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
-    # byte-identical — this tripwire firing on exactly the Gemma three plus the
-    # gateway, and NOTHING else, is itself the proof of each change's blast
-    # radius.
-    "gateway": "6a6c65ab2ae357939537c61a5d144bb7cadb1888c3daffce13ce70f40399a3a9",
+    # byte-identical — this tripwire firing on exactly the intended services, and
+    # NOTHING else, is itself the proof of each change's blast radius.
+    "gateway": "3a029e22a7fbc7628215216a157caf434a133ecec0d249cc8801ff63a8c3157d",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
+    "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "31cd10820f2411c6401a97ba84c54603ecde5434b5a7be6e309390047d847e11",

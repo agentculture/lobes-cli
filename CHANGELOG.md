@@ -4,6 +4,70 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.51.0] - 2026-07-20
+
+### Added
+
+- **`embed-deep` — an opt-in second embedding gear** (`Qwen/Qwen3-Embedding-4B`,
+  2560-dim Matryoshka, MTEB multilingual 69.45 vs the 0.6B's ~64.3) beside the
+  always-on hot-path embedder, addressed through the gateway as
+  `model=embed-deep`. Opt-in on **both** axes — the `vllm-embed-deep` service is
+  `COMPOSE_PROFILES=embed-deep`-gated and the gateway route is wired only when
+  `EMBED_DEEP_BASE_URL` is set — so every existing deployment renders
+  byte-identically (no shape golden changed; `vllm-embed`'s service hash is
+  unchanged). Structurally it follows the `multimodal-coder` precedent: an opt-in
+  backend plus a wired-only alias whose name is its backend name.
+- `EMBED_DEEP_*` env block (`MODEL`, `SERVED_NAME`, `BASE_URL`, `MAX_MODEL_LEN`,
+  `GPU_MEM_UTIL`, `ATTENTION_BACKEND`) and `docs/qwen3-embedding-4b.md`.
+- **GB10 acceptance transcript** (`docs/evidence/2026-07-20-accept-embed-deep-gb10.txt`):
+  booted live on `spark-f8a9` alongside the running spark-lobe fleet (zero fleet
+  mutation) and **serves 2560 dim** — previously declared from `config.json` only.
+  Matryoshka honoured at all 6 probed ladder points; paraphrase probe 0.7362 vs
+  0.2818 unrelated; boots at `gpu_mem_util=0.11` (weights 7.56 GiB, KV 11.34 GiB /
+  82,592 tokens, CUDA graph pool 0.84 GiB); 42.4 ms median vs the 0.6B's 11.5 ms.
+- **Pooling-lane attention-backend documentation** (`docs/tuning-profiles.md`,
+  `docs/machine-profiles.md`, `docs/qwen3-embedding-4b.md`): the `SM_110` trait
+  keys its knobs by PROFILE ROLE name, so it **cannot reach the `embed-deep`
+  GEAR** — a Thor operator must set `EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN` by
+  hand or the forward pass hangs while `/health` stays green (#105). This is the
+  first place the gear-vs-role tradeoff costs something sharp.
+
+### Changed
+
+- The gateway's opt-in alias wiring now covers both `multimodal-coder` and
+  `embed-deep` (same wired-only contract). `embed-deep` deliberately gets **no
+  fallback** to the 0.6B: the two embedders occupy different vector spaces, so a
+  silent downgrade would return meaningless similarity instead of an honest
+  unknown-model failure. `tier_aliases` falls back *upward*, which is right for
+  generation and wrong for embeddings.
+- `Qwen/Qwen3-Embedding-4B` catalog status `configured` -> `load-tested` (GB10
+  only; sm_110 remains UNVALIDATED per #108). `EMBED_DEEP_GPU_MEM_UTIL=0.11` is
+  documented as MEASURED — with the caveat that vLLM's actual allocation (19.74
+  GiB) does not reconcile with `util x total` (13.39 GiB) on this unified-memory
+  card, so the knob is empirical, as it was for spark-lobe's 0.44.
+- The catalog's `test_exactly_one_embed_and_one_score_model` invariant split: the
+  score lane still pins exactly one model, while the embed lane now pins the
+  property that actually matters — exactly one entry carries
+  `role_hint="embedding"`, so the `embedder` role's reported model stays
+  unambiguous under `_catalog_by_role_hint`'s first-match lookup.
+- Corrected the `recall`/`remember` skill docs: the embed endpoint is the lobes
+  gateway on `localhost:8001/v1` (not `:8002`), eidetic >= 0.12 sends
+  `Authorization` from `EIDETIC_EMBED_API_KEY` or a borrowed
+  `COLLEAGUE_API_KEY`/`CULTURE_VLLM_API_KEY`, and records live in TWO stores —
+  public in the COMMITTED `<repo-root>/.eidetic/memory`, private in `$HOME` —
+  which `recall.sh`'s own header already documented correctly while `SKILL.md`
+  contradicted it. Filed the silent hash-fallback bug upstream as
+  `agentculture/eidetic-cli#34`.
+
+### Fixed
+
+- **`lobes switch` on an embed-task model always named the `vllm-embed`
+  service**, so switching to the 4B told operators to replace the hot-path 0.6B
+  in place — silently invalidating any index built with it, precisely the hazard
+  this design exists to prevent. `_pooling_notice` hardcoded one service for the
+  whole embed task; it now resolves per model via `role_hint`. Found by an
+  independent colleague review.
+
 ## [0.50.0] - 2026-07-17
 
 ### Added
