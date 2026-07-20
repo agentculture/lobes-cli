@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 # independently (SonarCloud: duplicated string literal). Same rationale for
 # the Gemma 4 unified-multimodal ``shape`` literal shared by the 12B pair and
 # the 31B muse gear.
+_CONTEXT_32K_NATIVE = "32K native"
 _CONTEXT_128K_NATIVE = "128K native"
 _CONTEXT_256K_NATIVE = "256K native"
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
@@ -62,6 +63,12 @@ class SupportedModel:
     task: str = "generate"  # "generate" | "embed" | "score"
     dimension: int = 0  # embedding output dimension; 0 for non-embedding models
     hf_overrides: str = ""  # vLLM --hf-overrides JSON string
+    # Per-model pooling budget override. 0.0 = "use the shared embed/score default"
+    # (0.06, sized for the ~0.6B gears). A LARGER pooling model must declare its own,
+    # or `lobes switch` would hand it a budget its weights do not fit in — measured:
+    # the 4B's weights alone are 7.56 GiB, while 0.06 x 121.69 GiB = 7.30 GiB, so the
+    # shared default cannot load it at all. See docs/qwen3-embedding-4b.md.
+    default_gpu_mem_util: float = 0.0
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -160,7 +167,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # truncation so consumers can request sub-1024 dimensions without re-serving.
         role_hint="embedding",
         shape="dense embedding (text)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="",
         quantization="",
@@ -171,6 +178,46 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         hf_overrides=(
             '{"is_matryoshka": true,'
             ' "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
+        ),
+    ),
+    SupportedModel(
+        id="Qwen/Qwen3-Embedding-4B",
+        # The "deep" embedding slot: the higher-fidelity companion to the 0.6B hot-path
+        # gear above, wired as the opt-in `embed-deep` backend (gateway alias
+        # "embed-deep", COMPOSE_PROFILES=embed-deep). 2560-dim Matryoshka, MTEB
+        # multilingual mean 69.45 vs the 0.6B's ~64.3 — bought with ~8 GiB of weights
+        # and a much slower forward pass, which is why it is opt-in and NOT the
+        # embedder role's default.
+        #
+        # role_hint is "candidate", NOT "embedding": roles.ROLE_ROLE_HINT maps the
+        # `embedder` role to role_hint "embedding" and _catalog_by_role_hint takes the
+        # FIRST match, so a second "embedding" entry would silently hijack the role's
+        # reported model. The deep slot is a switchable gear, not a role default.
+        #
+        # NON-INTEROPERABLE with the 0.6B: embeddings from the two models live in
+        # different vector spaces, so a corpus indexed by one can only be queried by
+        # the same one. Truncating this model to 1024 dims via Matryoshka does NOT
+        # make it compatible with the 0.6B's 1024. See docs/qwen3-embedding-4b.md.
+        role_hint="candidate",
+        shape="dense embedding (text)",
+        context=_CONTEXT_32K_NATIVE,
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        # GB10 2026-07-20: serves 2560 dim, matryoshka ladder honoured at all 6 probed
+        # points, paraphrase probe 0.74 vs 0.28 unrelated, boots at util 0.11 co-resident
+        # with the full spark-lobe fleet (weights 7.56 GiB, KV 11.34 GiB / 82,592 tokens),
+        # 42.4 ms median vs the 0.6B's 11.5 ms. sm_110 remains UNVALIDATED — see the doc.
+        status="load-tested",
+        doc="qwen3-embedding-4b.md",
+        task="embed",
+        dimension=2560,
+        # MEASURED on the GB10 2026-07-20 — the shared 0.06 pooling default is
+        # SMALLER than this model's weights (7.56 GiB vs a 7.30 GiB budget).
+        default_gpu_mem_util=0.11,
+        hf_overrides=(
+            '{"is_matryoshka": true,'
+            ' "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024, 1536, 2048, 2560]}'
         ),
     ),
     SupportedModel(
@@ -388,7 +435,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # load the head correctly. Zero tool-parser and quantization (score-only model).
         role_hint="reranker",
         shape="dense cross-encoder (Qwen3ForSequenceClassification)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="",
         quantization="",

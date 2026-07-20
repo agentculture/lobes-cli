@@ -157,7 +157,7 @@ if ! has_flag --scope "$@"; then
     fi
 fi
 
-: "${EIDETIC_EMBED_URL:=http://localhost:8002/v1}"
+: "${EIDETIC_EMBED_URL:=http://localhost:8001/v1}"
 : "${EIDETIC_EMBED_MODEL:=Qwen/Qwen3-Embedding-0.6B}"
 export EIDETIC_EMBED_URL EIDETIC_EMBED_MODEL
 

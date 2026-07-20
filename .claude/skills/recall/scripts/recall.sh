@@ -153,10 +153,20 @@ if ! has_flag --scope "$@"; then
     fi
 fi
 
-# Default the embedding endpoint to the local model-gear embed gear. eidetic
-# falls back to a deterministic offline embedding if it's unreachable, so this
-# is safe even when the gear is down. Override by exporting these yourself.
-: "${EIDETIC_EMBED_URL:=http://localhost:8002/v1}"
+# Default the embedding endpoint to the local lobes GATEWAY (:8001), which
+# fronts the Qwen3-Embedding-0.6B gear. This matches eidetic >= 0.12's own
+# default; the previous :8002 predates the gateway and points at nothing, so it
+# silently forced every semantic query onto the offline 128-dim lexical-hash
+# fallback. That fallback is NOT "safe when the gear is down" for `approximate`
+# — it returns confident-looking cosine scores with no warning and no flag
+# (upstream agentculture/eidetic-cli#34); only `hybrid` degrades honestly, by
+# collapsing to keyword-only. If the gateway has an inbound key armed, eidetic
+# >= 0.12 sends it from EIDETIC_EMBED_API_KEY, else borrows COLLEAGUE_API_KEY /
+# CULTURE_VLLM_API_KEY. Verify with:
+#   python -c "from eidetic.memory.embed import EmbedClient; \
+#              print(EmbedClient().embed_detect(['x'])[1])"   # must print True
+# Override by exporting these yourself.
+: "${EIDETIC_EMBED_URL:=http://localhost:8001/v1}"
 : "${EIDETIC_EMBED_MODEL:=Qwen/Qwen3-Embedding-0.6B}"
 export EIDETIC_EMBED_URL EIDETIC_EMBED_MODEL
 

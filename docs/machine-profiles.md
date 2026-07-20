@@ -512,6 +512,33 @@ Thor-only — a future sm_110 board inherits it) in
 symptoms; issue #106 tracks checking rerank ordering on the GB10 (still
 open).
 
+> **The trait does NOT cover the opt-in `embed-deep` gear — set it by hand on
+> sm_110.**
+>
+> `SM_110` keys its knobs by **profile role name** (`"embedder"`,
+> `"reranker"` — `lobes/machines/_traits.py:22,28`). `embed-deep` is a *gear*,
+> not a role: it is deliberately outside
+> `lobes.profiles.schema.ROLES`, so it has no `RoleProfile` and **no trait can
+> reach it**. Its `EMBED_DEEP_ATTENTION_BACKEND` therefore stays at the
+> template default `auto` on every machine, including sm_110 — where `auto`
+> resolves to the broken FLASH_ATTN pooling path.
+>
+> A third pooling lane is subject to the identical bug, and it fails the same
+> insidious way: **the forward pass hangs while `/health` stays green.** An
+> operator hosting `embed-deep` on Thor (or any future sm_110 board) MUST set
+> it explicitly in `.env`:
+>
+> ```bash
+> EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN
+> ```
+>
+> This is the known, accepted cost of `embed-deep` being a gear rather than an
+> eighth role — every opt-in gear (`minor`, `middle`, `multimodal-coder`)
+> shares it; `embed-deep` is the first where the consequence is a silent hang
+> rather than a suboptimal knob. UNVALIDATED on sm_110 either way: no Thor has
+> booted `embed-deep`, so the TRITON_ATTN workaround is *inferred* from the
+> embedder's measured behaviour, not measured for this gear (#108).
+
 ### 3. `reranker enforce_eager=true` (CUDA graph capture disabled)
 
 **The problem:** On sm_110, even with Triton attention, the reranker's CUDA

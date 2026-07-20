@@ -9,8 +9,10 @@ description: >
   text, full metadata, a relevance `score`, and a freshness `signal`. Recall
   passively reinforces matched records (bumps last_recall + recall_count).
   Shadowed and archived records are excluded by default; use
-  --include-shadowed / --include-archived to retrieve them. The store lives at
-  ~/.eidetic/memory (a home-dir path outside any git worktree); the wrapper
+  --include-shadowed / --include-archived to retrieve them. Records live in TWO
+  stores and recall reads both and merges: PUBLIC records inside a git repo go to
+  <repo-root>/.eidetic/memory (committed, shared with the team), private ones to
+  $HOME/.eidetic/memory (never committed); the wrapper
   defaults queries to this agent's PERSONAL, PRIVATE scope (`--scope lobes
   --visibility private`, suffix read from culture.yaml) — matching where
   /remember writes — so a no-flag recall returns this agent's own private records
@@ -31,7 +33,7 @@ surface; the write half is the sibling **/remember** skill.
 
 The point of a *shared* store is that memory is a **team faculty**, not a
 per-agent silo: a record Claude wrote is recallable by the colleague backend
-(and vice versa), because both resolve the same `~/.eidetic/memory` path.
+(and vice versa), because both resolve the same store paths via this skill.
 
 ## How to run
 
@@ -126,7 +128,7 @@ compete on score/signal just like active ones when included.
   stay invisible to a `default`/other-scope recall. Pass `--scope`/`--visibility`
   to query elsewhere; a wheel install with no `culture.yaml` falls back to the
   CLI default `default`/`public`.
-- `--backend files|mongo|neo4j` — default `files` (the shared home-dir store).
+- `--backend files|mongo|neo4j` — default `files` (the in-repo + home file stores).
 - `--include-shadowed` — include shadowed records in results (excluded by default).
 - `--include-archived` — include archived records in results (excluded by default).
 - `--json` — structured list to stdout (use this when an agent parses the result).
@@ -154,9 +156,23 @@ bash .claude/skills/recall/scripts/recall.sh "power" --include-archived --includ
 ## Notes
 
 - **Provenance is mandatory** on every hit — recall is for *cited* answers.
-- The embed endpoint defaults to the local model-gear embed gear
-  (`http://localhost:8002/v1`, model `Qwen/Qwen3-Embedding-0.6B`); override with
-  `EIDETIC_EMBED_URL` / `EIDETIC_EMBED_MODEL`. `exact`/`keyword` ignore it.
+- The embed endpoint defaults to the local **lobes gateway**
+  (`http://localhost:8001/v1`, model `Qwen/Qwen3-Embedding-0.6B` → 1024-dim);
+  override with `EIDETIC_EMBED_URL` / `EIDETIC_EMBED_MODEL`. `exact`/`keyword`
+  ignore it. **Auth (eidetic >= 0.12):** when the gateway has an inbound key
+  armed, the embed client sends `Authorization: Bearer …` from
+  `EIDETIC_EMBED_API_KEY`, else borrows `COLLEAGUE_API_KEY` /
+  `CULTURE_VLLM_API_KEY`. Without a usable key the request 401s and eidetic
+  falls back to a 128-dim deterministic lexical hash — which is *honest*
+  (`embed_detect` returns `online=False` and `hybrid` refuses to fuse fallback
+  cosine, collapsing to keyword-only) but means **no semantic recall at all**.
+  Verify with:
+  `python -c "from eidetic.memory.embed import EmbedClient; print(EmbedClient().embed_detect(['x'])[1])"`
+  — it must print `True`.
+- **No vectors are persisted.** Records store only content/hash/id/metadata/scope;
+  query *and* candidates are embedded fresh on every recall. So switching embed
+  models needs **no re-embed migration** — but every recall costs live embed
+  calls, and two different models must never be mixed within one recall.
 - **Use the wrapper, not a bare `eidetic`.** The console script may not be on
   `PATH` (in a dev checkout it isn't) — the wrapper resolves it for you (`PATH`
   first, else `uv run eidetic`). For the docs, run `eidetic explain recall` if
@@ -168,11 +184,14 @@ bash .claude/skills/recall/scripts/recall.sh "power" --include-archived --includ
   matches. `approximate` keeps every candidate ranked by raw cosine, so it can
   return low/near-zero scores when the store is small — lower `--top-k` to trim.
   A `--min-score` threshold is a tracked follow-up.
-- **Sharing scope = one OS user.** The default store is `~/.eidetic/memory`, so
-  every agent/process running as the *same* OS user shares it (that is the point —
-  Claude + colleague). It is not isolated between OS users by anything but file
-  permissions; keep genuinely private data in a `--visibility private` scope and
-  treat the host as the trust boundary.
+- **Two sharing scopes, two blast radii.** The PUBLIC store is
+  `<repo-root>/.eidetic/memory` — **committed**, so it travels to anyone who
+  clones or pulls the repo, not just this machine. The PRIVATE store is
+  `$HOME/.eidetic/memory`, shared by every agent/process running as the *same* OS
+  user (that is the point — Claude + colleague), isolated between OS users by
+  nothing but file permissions. So: treat the host as the trust boundary for
+  private records, and treat `--visibility public` as *publishing to the repo* —
+  keep credentials and anything host-specific out of it.
 
 ## Provenance
 

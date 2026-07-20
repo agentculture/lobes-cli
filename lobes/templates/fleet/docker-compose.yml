@@ -228,6 +228,80 @@ services:
       retries: 5
       start_period: 600s
 
+  vllm-embed-deep:
+    # The opt-in "deep" embedding gear (Qwen3-Embedding-4B) — the higher-fidelity
+    # companion to vllm-embed above. PROFILE-GATED: it does not start unless the
+    # operator opts in, so every existing deployment's GPU budget is unchanged.
+    #
+    #   docker compose --profile embed-deep up -d
+    #   # OR: add "embed-deep" to COMPOSE_PROFILES in .env
+    #
+    # Then set EMBED_DEEP_BASE_URL in .env so the gateway wires the backend and
+    # publishes the "embed-deep" alias. Without that var the container can run but
+    # the gateway will not route to it (the *_BASE_URL opt-in contract).
+    #
+    # BUDGET MEASURED on the GB10 2026-07-20 — boots and serves at 0.11 co-resident
+    # with the full spark-lobe fleet (weights 7.56 GiB, KV 11.34 GiB / 82,592 tokens,
+    # CUDA graph pool 0.84 GiB, 42.4 ms median vs the 0.6B's 11.5 ms). Transcript:
+    # docs/evidence/2026-07-20-accept-embed-deep-gb10.txt. Note vLLM's allocation
+    # (19.74 GiB) does NOT reconcile with util x total (13.39 GiB) on this
+    # unified-memory card — treat the knob as empirical, exactly as spark-lobe's
+    # 0.44 and thor-lobe's 0.30 had to be. sm_110/Thor is UNVALIDATED and additionally
+    # needs EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN set by hand (no trait reaches a
+    # gear — see docs/machine-profiles.md).
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
+    container_name: model-gear-vllm-embed-deep
+    profiles: ["embed-deep"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=embed-deep   # → /logs/model-gear/embed-deep-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${EMBED_DEEP_MODEL:-Qwen/Qwen3-Embedding-4B}
+      - --served-model-name=${EMBED_DEEP_SERVED_NAME:-Qwen/Qwen3-Embedding-4B}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=embed
+      # Same sm_110/Thor caveat as vllm-embed — see that service's comment.
+      - '--attention-config={"backend": "${EMBED_DEEP_ATTENTION_BACKEND:-auto}"}'
+      # 2560-dim Matryoshka (the 4B's full width) — a SUPERSET of the 0.6B's ladder
+      # in dimension count only. Truncating this model to 1024 does NOT yield a
+      # vector comparable to the 0.6B's 1024: different model, different space.
+      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024, 1536, 2048, 2560]}'
+      - --max-model-len=${EMBED_DEEP_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${EMBED_DEEP_GPU_MEM_UTIL:-0.11}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   vllm-rerank:
     # Same nightly digest as vllm-primary — see the comment above vllm-primary
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
@@ -865,6 +939,14 @@ services:
       - EMBED_SERVED_NAME=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
       - RERANK_URL=${RERANK_URL:-http://vllm-rerank:8000}
       - RERANK_SERVED_NAME=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      # The opt-in "deep" embedding gear. EMPTY default on purpose: the gateway
+      # wires this backend (and publishes the "embed-deep" alias) only when the
+      # operator sets EMBED_DEEP_BASE_URL, matching the vllm-embed-deep service's
+      # own COMPOSE_PROFILES gate. Unset ⇒ no backend, no alias, and a request for
+      # "embed-deep" is an unknown model — never a silent fallback to the 0.6B,
+      # which would answer from a different vector space.
+      - EMBED_DEEP_BASE_URL=${EMBED_DEEP_BASE_URL:-}
+      - EMBED_DEEP_SERVED_NAME=${EMBED_DEEP_SERVED_NAME:-Qwen/Qwen3-Embedding-4B}
       # Served context lengths — the gateway reads these so GET /capabilities and
       # 'lobes capabilities' report each role's SERVED --max-model-len (issue #81),
       # not the catalog native. Kept in sync with the gear services' own

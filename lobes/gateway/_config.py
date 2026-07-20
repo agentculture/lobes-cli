@@ -8,6 +8,7 @@ the ``gateway`` service's ``environment:`` block in the fleet compose template.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -17,6 +18,14 @@ from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 _DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
+# The opt-in "deep" embedding slot — the higher-fidelity companion to _DEFAULT_EMBED,
+# reachable via the "embed-deep" alias when its own backend is wired (mirrors the
+# multimodal-coder opt-in alias below). Deliberately a SECOND embed-task backend
+# rather than a replacement: the 0.6B keeps the latency-sensitive hot path.
+# The slot is named for its job, not its model — swapping this default to a larger
+# checkpoint later keeps the alias stable (but invalidates any index built with the
+# previous one; the two vector spaces are not interoperable).
+_DEFAULT_EMBED_DEEP = "Qwen/Qwen3-Embedding-4B"
 _DEFAULT_RERANK = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_MINOR = "Qwen/Qwen3.5-4B"
 # "support both" (docs/vllm-nightly-migration.md §7, 2026-07-02): the NVFP4 base +
@@ -436,6 +445,30 @@ def _optional_backend(
     )
 
 
+def _warn_on_served_name_collisions(backends: list[Backend]) -> None:
+    """Emit a stderr warning for any served name claimed by more than one backend."""
+    by_name: dict[str, list[Backend]] = {}
+    for backend in backends:
+        by_name.setdefault(backend.served_name, []).append(backend)
+    for served, owners in sorted(by_name.items()):
+        if len(owners) < 2:
+            continue
+        names = ", ".join(sorted(b.name for b in owners))
+        tasks = {b.task for b in owners}
+        detail = (
+            " Both serve task=embed, so requests may be answered from the WRONG "
+            "VECTOR SPACE — embeddings from different models are not comparable."
+            if tasks == {"embed"}
+            else ""
+        )
+        sys.stderr.write(
+            f"[gateway] WARNING: served name {served!r} is claimed by {len(owners)} "
+            f"backends ({names}); routing resolves it to the first match, so "
+            f"ownership is order-dependent.{detail} Give each backend a distinct "
+            f"*_SERVED_NAME.\n"
+        )
+
+
 def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, ServerConfig]:
     """Construct the routing table and server config from environment variables."""
     env = os.environ if env is None else env
@@ -545,6 +578,22 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_name=_DEFAULT_EMBED,
             task="embed",
         ),
+        # The opt-in "deep" embedding gear — a SECOND task="embed" backend beside
+        # the 0.6B one above. Wired only when EMBED_DEEP_BASE_URL is set (the
+        # *_BASE_URL convention every opt-in backend uses; only the original
+        # primary/embed/rerank trio uses the older *_URL spelling), so an
+        # existing deployment renders byte-identically until an operator opts in.
+        # Task-family routing is already generic over N backends — resolve_model /
+        # order_backends match on served_name, not on a one-per-task assumption.
+        _optional_backend(
+            env,
+            name="embed-deep",
+            url_key="EMBED_DEEP_BASE_URL",
+            name_key="EMBED_DEEP_SERVED_NAME",
+            default_url="http://vllm-embed-deep:8000",
+            default_name=_DEFAULT_EMBED_DEEP,
+            task="embed",
+        ),
         _optional_backend(
             env,
             name="rerank",
@@ -569,9 +618,15 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # tier-fallback contract — an alias never points at a served name nothing
     # actually serves). Computed before the GATEWAY_ALIASES merge so an operator
     # override still wins if they explicitly set "multimodal-coder=..." themselves.
-    coder_backend = next((b for b in backends if b.name == "multimodal-coder"), None)
-    if coder_backend is not None:
-        aliases["multimodal-coder"] = coder_backend.served_name
+    # Opt-in backends whose alias is simply their own backend name. "embed-deep"
+    # joins on the same contract: it is NOT a generate-lane capability tier (it
+    # serves task="embed", and tier_aliases is generate-only), so it gets no
+    # upward fallback — an absent deep gear means the alias is absent, never a
+    # silent downgrade to the 0.6B, which would answer in the WRONG VECTOR SPACE.
+    for _opt_in in ("multimodal-coder", "embed-deep"):
+        _opt_in_backend = next((b for b in backends if b.name == _opt_in), None)
+        if _opt_in_backend is not None:
+            aliases[_opt_in] = _opt_in_backend.served_name
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually
@@ -580,6 +635,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # on wiring). See RoutingTable.infeasible / infeasible_owner. The `wired`
     # fact is passed through for the OPT_IN_BACKENDS default (muse: unwired and
     # unflagged ⇒ infeasible — see _is_feasible).
+    # Served-name collision guard. resolve_model / order_backends match on
+    # served_name and return the FIRST hit, so two wired backends sharing one
+    # served name make ownership silently order-dependent. Harmless for a
+    # duplicated generate gear (same family, same answer shape); NOT harmless on
+    # the embed lane, where the two gears occupy different VECTOR SPACES — the
+    # wrong owner returns confident, meaningless similarity instead of an error,
+    # defeating the whole reason embed-deep has no fallback. Only an operator can
+    # cause this (by pointing EMBED_DEEP_SERVED_NAME at another gear's id), so we
+    # do not refuse to start — taking the fleet down over a name clash is worse
+    # than serving it — but it must never be SILENT.
+    _warn_on_served_name_collisions(backends)
     wired_names = frozenset(b.name for b in backends)
     infeasible = frozenset(
         name for name in FEASIBLE_ENV if not _is_feasible(env, name, wired=name in wired_names)

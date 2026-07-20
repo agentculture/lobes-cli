@@ -157,11 +157,27 @@ def _pooling_notice(model) -> str | None:
     ``--runner pooling`` + ``--convert {embed,classify}`` (the old ``--task`` is
     rejected). ``--hf-overrides`` is single-quoted because its JSON value has
     ``: ``/``{``/``[`` (unquoted, ``docker compose`` fails to parse it).
+
+    The embed lane holds MORE than one gear, so the service name is resolved per
+    model, not per task. Naming ``vllm-embed`` for every embed model would point
+    an operator switching to the deep gear at the HOT-PATH service — i.e. tell
+    them to replace the 0.6B in place, silently invalidating every vector in an
+    index built with it (the two models occupy different vector spaces; see
+    docs/qwen3-embedding-4b.md). ``role_hint == "embedding"`` IS the definition of
+    the role-default gear — pinned by
+    tests/test_catalog.py::test_exactly_one_embed_model_carries_the_embedding_role_hint
+    — so any other embed-task entry is by construction a non-default gear and
+    belongs to the deep slot.
     """
     if model.task not in ("embed", "score"):
         return None
     convert = "embed" if model.task == "embed" else "classify"
-    service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
+    if model.task == "score":
+        service = "vllm-rerank"
+    elif model.role_hint == "embedding":
+        service = "vllm-embed"
+    else:
+        service = "vllm-embed-deep"
     return (
         "embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` "
         f"+ `lobes fleet up` serves it via the dedicated {service} service "
@@ -237,16 +253,37 @@ def _resolve_machine_name(machine_arg: str) -> str:
     return profiles.resolve_machine(machine_arg, gpu_name=gpu, hostname=socket.gethostname())
 
 
+POOLING_DEFAULT_UTIL = 0.06
+"""Shared embed/score budget — sized for the ~0.6B gears, NOT for every pooling model.
+
+A larger pooling gear declares its own via ``SupportedModel.default_gpu_mem_util``;
+this value is only the fallback for models that don't. Handing the 4B embedder this
+default would under-provision it below its own weights (7.56 GiB of weights against a
+0.06 x 121.69 = 7.30 GiB budget — it cannot load), which is exactly why the per-model
+override exists.
+"""
+
+
+def _pooling_default_util(model_id: str) -> float:
+    """The pooling budget for ``model_id`` — its own if catalogued, else the shared one."""
+    catalogued = next((m for m in supported_models() if m.id == model_id), None)
+    if catalogued is not None and catalogued.default_gpu_mem_util > 0:
+        return catalogued.default_gpu_mem_util
+    return POOLING_DEFAULT_UTIL
+
+
 def _serve_cfg(args: argparse.Namespace, machine: str, is_pooling: bool) -> dict:
     """Resolve the ``VLLM_*`` serve config from the purpose/machine profiles.
 
-    Embed/score gears default to a tiny KV cache (8192 context, util 0.06 — no
-    prefill/decode headroom needed for a pooling model); an explicit
-    ``--max-model-len`` / ``--gpu-mem-util`` still wins. A chat model passes
-    ``None`` so the machine profile's own defaults apply.
+    Embed/score gears default to a tiny KV cache (8192 context) and a per-model
+    pooling budget (:func:`_pooling_default_util` — the catalogued
+    ``default_gpu_mem_util`` when the model declares one, else
+    :data:`POOLING_DEFAULT_UTIL`); an explicit ``--max-model-len`` /
+    ``--gpu-mem-util`` still wins. A chat model passes ``None`` so the machine
+    profile's own defaults apply.
     """
     default_mml = 8192 if is_pooling else None
-    default_util = 0.06 if is_pooling else None
+    default_util = _pooling_default_util(args.model) if is_pooling else None
     max_model_len = args.max_model_len if args.max_model_len is not None else default_mml
     gpu_mem_util = args.gpu_mem_util if args.gpu_mem_util is not None else default_util
     return profiles.resolve_serve_config(
@@ -316,7 +353,9 @@ def _context_messages(plan: dict, args: argparse.Namespace, is_pooling: bool) ->
         if args.max_model_len is None:
             messages.append("max-model-len (embed/score default): 8192")
         if args.gpu_mem_util is None:
-            messages.append("gpu-mem-util (embed/score default): 0.06")
+            messages.append(
+                f"gpu-mem-util (embed/score default): {_pooling_default_util(args.model)}"
+            )
         return messages
     if args.max_model_len is not None:
         return []
