@@ -60,6 +60,33 @@ to `Qwen3.6-35B-A3B` (MoE) alone and would break the dense/hybrid models, so the
 are **not** in the default template. `lobes switch` to the MoE prints them for a
 manual compose edit; see [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
 
+### Pooling gears: the attention backend is machine-dependent
+
+The `--attention-backend` column above is the **generate**-lane story. The
+pooling gears (`embedder`, `reranker`, and the opt-in `embed-deep`) have their
+own, and it diverges by compute capability:
+
+| machine | pooling attention backend | how it is set |
+|---|---|---|
+| **spark** (GB10, sm_121) | `auto` → resolves to **FLASH_ATTN** | template default |
+| **thor** (sm_110) | **`TRITON_ATTN`** — mandatory | `SM_110` trait, for `embedder`/`reranker` only |
+
+On sm_110 the auto-picked FLASH_ATTN pooling path is broken: it **hangs the
+embedder's forward pass** (requests accepted, never answered, `/health` stays
+green) and yields **NaN rerank scores** (#105). The `SM_110` trait forces
+`TRITON_ATTN` for the two pooling *roles* automatically.
+
+**It does not cover `embed-deep`.** That gear sits outside
+`lobes.profiles.schema.ROLES`, so no trait reaches it — an operator hosting it on
+sm_110 must set `EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN` by hand or it will
+hang exactly like the embedder. See
+[`machine-profiles.md`](machine-profiles.md#2-embedder--reranker-use-triton_attn-an-sm_110-divergence).
+
+**Read every pooling measurement below as machine-scoped.** A pooling number
+taken on the Spark rides FLASH_ATTN and does **not** transfer to Thor, which runs
+a different kernel — the two are not comparable, and neither is a substitute for
+validating the other (#106 tracks GB10 re-verification of the TRITON_ATTN knobs).
+
 ## Reference benchmark (shahizat)
 
 The throughput flags lobes adopts (the flashinfer attention backend, chunked

@@ -1,0 +1,84 @@
+=== lobes embed-deep acceptance — Qwen3-Embedding-4B, live on the DGX Spark GB10 ===
+  utc          : 2026-07-20T17:24:20Z
+  host         : spark-f8a9 (DGX Spark GB10, sm_121, 121.69 GiB unified, torch-reported)
+  repo rev     : 0e4cc13 (branch feat/embed-deep-4b)
+  scope        : validate the SERVED embedding dimension + the declared gpu_mem_util 0.11
+                 for the opt-in embed-deep gear (docs/qwen3-embedding-4b.md).
+  method       : standalone `docker run` on a free host port (8103), alongside the RUNNING
+                 spark-lobe fleet (cortex 0.44 + embed 0.06 + rerank 0.06 + audio). Zero fleet
+                 mutation — the fleet was never stopped, reconfigured, or restarted.
+                 Image: the same pinned nightly digest the compose template uses
+                 (vllm/vllm-openai@sha256:7c5a10e9...). Flags identical to the shipped
+                 vllm-embed-deep service: --runner pooling --convert embed,
+                 --max-model-len 8192, --gpu-memory-utilization 0.11, the 10-point
+                 matryoshka --hf-overrides, VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+
+=== check 1: served embedding dimension (THE question) ===
+  POST /v1/embeddings {"model":"Qwen/Qwen3-Embedding-4B","input":["hello world"]}
+  served dim   : 2560
+  model echoed : Qwen/Qwen3-Embedding-4B
+  PASS  serves 2560 — matches config.json hidden_size and the catalog dimension=2560.
+        (Previously DECLARED from the HF config only; now MEASURED on this stack.)
+
+=== check 2: Matryoshka ladder — every declared truncation point ===
+  request  32 -> 32    OK
+  request 256 -> 256   OK
+  request1024 -> 1024  OK
+  request1536 -> 1536  OK
+  request2048 -> 2048  OK
+  request2560 -> 2560  OK
+  PASS  all 6 probed points of the shipped 10-point ladder honour "dimensions".
+
+=== check 3: semantic correctness (mirrors the embedder paraphrase probe) ===
+  anchor     : "The cat sat on the mat."
+  paraphrase : "A feline was resting on the rug."
+  unrelated  : "Quarterly revenue exceeded analyst expectations."
+  cos(anchor, paraphrase) = 0.7362
+  cos(anchor, unrelated)  = 0.2818
+  PASS  paraphrase ranks above unrelated by a wide margin; no hang, no NaN.
+
+=== check 4: budget — boots and serves at the declared util 0.11 ===
+  boot to /health       : ~320 s (incl. ~8 GB first-time HF download)
+  model weights         : 7.56 GiB
+  available KV cache    : 11.34 GiB
+  GPU KV cache size     : 82,592 tokens
+  CUDA graph pool       : 0.84 GiB actual (0.3 GiB estimated)
+  init engine           : 23.11 s (compilation 14.69 s)
+  host mem before/after : 89 GiB used -> 104 GiB used (~+15 GiB)
+  cuda free after boot  : 3.01 GiB of 121.69 GiB
+  PASS  boots, loads, and serves correctly at 0.11 WHILE co-resident with the full
+        spark-lobe fleet. The declared 0.11 is now MEASURED-as-workable on this card.
+
+  CAVEAT (do not skip): vLLM's own numbers do not reconcile with util x total.
+    util 0.11 x 121.69 GiB = 13.39 GiB budget, yet weights 7.56 + KV 11.34 + graphs
+    0.84 = 19.74 GiB actually allocated. This is the same unified-memory behaviour
+    that forced spark-lobe's 0.44 and thor-lobe's 0.30 to be MEASURED reclaims
+    rather than computed ones. Treat the util knob on this card as empirical.
+
+  CAVEAT: with VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 (which the shipped
+    vllm-embed/vllm-embed-deep services both set), vLLM warns that CUDA graph
+    memory is NOT accounted for during KV allocation and recommends 0.1125 if the
+    profiler is re-enabled. The measured graph pool is 0.84 GiB. 0.11 is retained
+    as the default because it demonstrably works here; an operator running the deep
+    gear under memory pressure should watch for OOM rather than trust the arithmetic.
+
+=== check 5: latency vs the hot-path 0.6B ===
+  embed-deep (4B, 2560d, direct :8103) : median 42.4 ms  (min 41.4 / max 44.1)
+  embedder   (0.6B, 1024d, via gateway): median 11.5 ms  (min 10.4 / max 12.5)
+  ratio                                 : 3.69x slower
+  NOTE  this ratio is a LOWER BOUND on the model-only slowdown: the 0.6B figure
+        includes a gateway hop the 4B figure does not. It confirms the design
+        premise — the 0.6B keeps the latency-sensitive hot path, the deep gear is
+        for when fidelity outranks speed.
+
+=== NOT validated by this run ===
+  - sm_110 / Jetson AGX Thor. This run picked FLASH_ATTN (logged:
+    "Using FLASH_ATTN attention backend"), which is exactly the pooling path that
+    HANGS on sm_110 (#105). No trait can set EMBED_DEEP_ATTENTION_BACKEND because
+    embed-deep is a gear, not a profile role — a Thor operator must set
+    TRITON_ATTN by hand. UNVALIDATED there (#108).
+  - Sustained/concurrent load. All figures are single-stream, n=10 after 2 warmups.
+  - Retrieval quality. MTEB 69.45 is the upstream model card's number, not ours.
+
+=== teardown ===
+  container removed; the spark-lobe fleet was never touched and remains up.

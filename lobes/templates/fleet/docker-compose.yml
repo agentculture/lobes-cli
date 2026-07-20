@@ -240,10 +240,15 @@ services:
     # publishes the "embed-deep" alias. Without that var the container can run but
     # the gateway will not route to it (the *_BASE_URL opt-in contract).
     #
-    # BUDGET IS DECLARED, NOT MEASURED (the #108 rule): 0.11 is derived from ~8 GiB
-    # of bf16 weights plus the same pooling cache-block overhead the 0.6B needs at
-    # 0.06 — no physical boot has confirmed it. Verify before trusting it in a
-    # co-residency budget, and correct this default if vLLM refuses it.
+    # BUDGET MEASURED on the GB10 2026-07-20 — boots and serves at 0.11 co-resident
+    # with the full spark-lobe fleet (weights 7.56 GiB, KV 11.34 GiB / 82,592 tokens,
+    # CUDA graph pool 0.84 GiB, 42.4 ms median vs the 0.6B's 11.5 ms). Transcript:
+    # docs/evidence/2026-07-20-accept-embed-deep-gb10.txt. Note vLLM's allocation
+    # (19.74 GiB) does NOT reconcile with util x total (13.39 GiB) on this
+    # unified-memory card — treat the knob as empirical, exactly as spark-lobe's
+    # 0.44 and thor-lobe's 0.30 had to be. sm_110/Thor is UNVALIDATED and additionally
+    # needs EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN set by hand (no trait reaches a
+    # gear — see docs/machine-profiles.md).
     image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
     container_name: model-gear-vllm-embed-deep
     profiles: ["embed-deep"]

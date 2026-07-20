@@ -197,7 +197,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=32768,
         tool_parser="",
         quantization="",
-        status="configured",
+        # GB10 2026-07-20: serves 2560 dim, matryoshka ladder honoured at all 6 probed
+        # points, paraphrase probe 0.74 vs 0.28 unrelated, boots at util 0.11 co-resident
+        # with the full spark-lobe fleet (weights 7.56 GiB, KV 11.34 GiB / 82,592 tokens),
+        # 42.4 ms median vs the 0.6B's 11.5 ms. sm_110 remains UNVALIDATED — see the doc.
+        status="load-tested",
         doc="qwen3-embedding-4b.md",
         task="embed",
         dimension=2560,
