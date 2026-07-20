@@ -179,3 +179,84 @@ def test_switch_notice_unchanged_for_the_reranker() -> None:
     notice = _pooling_notice(rr)
     assert notice is not None
     assert "vllm-rerank" in notice
+
+
+# --- review findings (PR #148) ----------------------------------------------
+
+
+def test_switch_gives_the_deep_gear_its_own_pooling_budget() -> None:
+    """The shared 0.06 pooling default is SMALLER than the 4B's own weights.
+
+    Measured on the GB10: weights 7.56 GiB vs a 0.06 x 121.69 = 7.30 GiB budget, so
+    `lobes switch Qwen/Qwen3-Embedding-4B` under the shared default could not load
+    the model at all. Raised by Qodo on PR #148.
+    """
+    from lobes.cli._commands.switch import POOLING_DEFAULT_UTIL, _pooling_default_util
+
+    assert _pooling_default_util("Qwen/Qwen3-Embedding-4B") == 0.11
+    # the hot-path gear and anything uncatalogued keep the shared default
+    assert _pooling_default_util("Qwen/Qwen3-Embedding-0.6B") == POOLING_DEFAULT_UTIL
+    assert _pooling_default_util("some/uncatalogued-embedder") == POOLING_DEFAULT_UTIL
+
+
+def test_catalogued_pooling_budget_covers_the_model_weights() -> None:
+    """Any pooling gear's budget must exceed its own weights, or it cannot boot."""
+    from lobes.catalog import SUPPORTED_MODELS
+    from lobes.cli._commands.switch import _pooling_default_util
+
+    gb10_total_gib = 121.69  # torch-reported on the reference card
+    # (model id, measured weight GiB) for pooling gears we have booted
+    measured = {"Qwen/Qwen3-Embedding-4B": 7.56}
+    for model in SUPPORTED_MODELS:
+        if model.task not in ("embed", "score") or model.id not in measured:
+            continue
+        budget = _pooling_default_util(model.id) * gb10_total_gib
+        assert budget > measured[model.id], (
+            f"{model.id}: pooling budget {budget:.2f} GiB does not cover its "
+            f"{measured[model.id]} GiB of weights"
+        )
+
+
+def test_colliding_served_names_warn_on_stderr(capsys) -> None:
+    """Two backends sharing a served name make routing order-dependent.
+
+    Only an operator can cause it, so the gateway still starts — but silence here
+    would defeat embed-deep's whole no-fallback guarantee, because the wrong owner
+    answers from a different vector space. Raised by Qodo on PR #148.
+    """
+    build_config(
+        {
+            "EMBED_URL": _EMBED_URL,
+            "EMBED_DEEP_BASE_URL": _DEEP_URL,
+            "EMBED_DEEP_SERVED_NAME": _DEFAULT_EMBED,  # collides with the 0.6B
+        }
+    )
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert _DEFAULT_EMBED in err
+    assert "embed-deep" in err
+    assert "VECTOR SPACE" in err
+
+
+def test_distinct_served_names_warn_nothing(capsys) -> None:
+    build_config({"EMBED_URL": _EMBED_URL, "EMBED_DEEP_BASE_URL": _DEEP_URL})
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_memory_skill_wrappers_point_at_the_gateway_not_the_dead_port() -> None:
+    """The wrappers forced EIDETIC_EMBED_URL to :8002 — a port nothing listens on.
+
+    That silently forced every semantic recall onto eidetic's 128-dim lexical-hash
+    fallback while the SKILL.md docs claimed otherwise. Raised by Qodo on PR #148
+    as a doc-vs-script mismatch; it was really a live functional break.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        ".claude/skills/recall/scripts/recall.sh",
+        ".claude/skills/remember/scripts/remember.sh",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "http://localhost:8002/v1" not in text, f"{rel}: still on the dead port"
+        assert "${EIDETIC_EMBED_URL:=http://localhost:8001/v1}" in text, rel

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.51.1] - 2026-07-20
+
+### Added
+
+- `SupportedModel.default_gpu_mem_util` — a per-model pooling budget override. The shared embed/score default (0.06) is sized for the ~0.6B gears and is SMALLER than the 4B embedder's own weights (7.56 GiB measured, vs a 0.06 x 121.69 = 7.30 GiB budget), so `lobes switch Qwen/Qwen3-Embedding-4B` previously wrote a budget the model could not load in. The 4B declares 0.11; every other model keeps the shared default.
+- Served-name collision guard in the gateway: two wired backends claiming one `served_name` make `resolve_model`/`order_backends` ownership order-dependent, which on the embed lane means answering from the WRONG VECTOR SPACE. The gateway still starts (a name clash must not take the fleet down) but now warns loudly on stderr, naming the colliding backends.
+
+### Fixed
+
+- **The `/recall` and `/remember` wrappers forced `EIDETIC_EMBED_URL=http://localhost:8002/v1`** — a port nothing listens on — so every semantic query silently ran on eidetic's 128-dim lexical-hash fallback while the docs claimed a live embedder. Both now default to the lobes gateway (`http://localhost:8001/v1`), matching eidetic >= 0.12's own default; verified `online=True` at 1024 dim. The previous docs-only correction fixed the prose and left the scripts broken.
+- Sonar `python:S1192`: extracted `_CONTEXT_32K_NATIVE` for the `"32K native"` literal, now shared by three catalog entries.
+
 ## [0.51.0] - 2026-07-20
 
 ### Added

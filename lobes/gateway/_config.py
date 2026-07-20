@@ -8,6 +8,7 @@ the ``gateway`` service's ``environment:`` block in the fleet compose template.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -444,6 +445,30 @@ def _optional_backend(
     )
 
 
+def _warn_on_served_name_collisions(backends: list[Backend]) -> None:
+    """Emit a stderr warning for any served name claimed by more than one backend."""
+    by_name: dict[str, list[Backend]] = {}
+    for backend in backends:
+        by_name.setdefault(backend.served_name, []).append(backend)
+    for served, owners in sorted(by_name.items()):
+        if len(owners) < 2:
+            continue
+        names = ", ".join(sorted(b.name for b in owners))
+        tasks = {b.task for b in owners}
+        detail = (
+            " Both serve task=embed, so requests may be answered from the WRONG "
+            "VECTOR SPACE — embeddings from different models are not comparable."
+            if tasks == {"embed"}
+            else ""
+        )
+        sys.stderr.write(
+            f"[gateway] WARNING: served name {served!r} is claimed by {len(owners)} "
+            f"backends ({names}); routing resolves it to the first match, so "
+            f"ownership is order-dependent.{detail} Give each backend a distinct "
+            f"*_SERVED_NAME.\n"
+        )
+
+
 def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, ServerConfig]:
     """Construct the routing table and server config from environment variables."""
     env = os.environ if env is None else env
@@ -610,6 +635,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # on wiring). See RoutingTable.infeasible / infeasible_owner. The `wired`
     # fact is passed through for the OPT_IN_BACKENDS default (muse: unwired and
     # unflagged ⇒ infeasible — see _is_feasible).
+    # Served-name collision guard. resolve_model / order_backends match on
+    # served_name and return the FIRST hit, so two wired backends sharing one
+    # served name make ownership silently order-dependent. Harmless for a
+    # duplicated generate gear (same family, same answer shape); NOT harmless on
+    # the embed lane, where the two gears occupy different VECTOR SPACES — the
+    # wrong owner returns confident, meaningless similarity instead of an error,
+    # defeating the whole reason embed-deep has no fallback. Only an operator can
+    # cause this (by pointing EMBED_DEEP_SERVED_NAME at another gear's id), so we
+    # do not refuse to start — taking the fleet down over a name clash is worse
+    # than serving it — but it must never be SILENT.
+    _warn_on_served_name_collisions(backends)
     wired_names = frozenset(b.name for b in backends)
     infeasible = frozenset(
         name for name in FEASIBLE_ENV if not _is_feasible(env, name, wired=name in wired_names)
