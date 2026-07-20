@@ -157,11 +157,27 @@ def _pooling_notice(model) -> str | None:
     ``--runner pooling`` + ``--convert {embed,classify}`` (the old ``--task`` is
     rejected). ``--hf-overrides`` is single-quoted because its JSON value has
     ``: ``/``{``/``[`` (unquoted, ``docker compose`` fails to parse it).
+
+    The embed lane holds MORE than one gear, so the service name is resolved per
+    model, not per task. Naming ``vllm-embed`` for every embed model would point
+    an operator switching to the deep gear at the HOT-PATH service — i.e. tell
+    them to replace the 0.6B in place, silently invalidating every vector in an
+    index built with it (the two models occupy different vector spaces; see
+    docs/qwen3-embedding-4b.md). ``role_hint == "embedding"`` IS the definition of
+    the role-default gear — pinned by
+    tests/test_catalog.py::test_exactly_one_embed_model_carries_the_embedding_role_hint
+    — so any other embed-task entry is by construction a non-default gear and
+    belongs to the deep slot.
     """
     if model.task not in ("embed", "score"):
         return None
     convert = "embed" if model.task == "embed" else "classify"
-    service = "vllm-embed" if model.task == "embed" else "vllm-rerank"
+    if model.task == "score":
+        service = "vllm-rerank"
+    elif model.role_hint == "embedding":
+        service = "vllm-embed"
+    else:
+        service = "vllm-embed-deep"
     return (
         "embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` "
         f"+ `lobes fleet up` serves it via the dedicated {service} service "

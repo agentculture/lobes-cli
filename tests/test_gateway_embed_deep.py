@@ -138,3 +138,44 @@ def test_deep_gear_has_no_feasibility_or_peer_channel() -> None:
 
     table, _ = build_config({"EMBED_URL": _EMBED_URL, "EMBED_DEEP_BASE_URL": _DEEP_URL})
     assert "embed-deep" not in table.infeasible
+
+
+# --- `lobes switch` must not misdirect the deep gear at the hot path --------
+
+
+def test_switch_notice_names_the_deep_service_for_the_deep_gear() -> None:
+    """A switch notice naming ``vllm-embed`` for the 4B would tell an operator to
+    replace the 0.6B IN PLACE — silently invalidating every vector in an index
+    built with it. Found by an independent review pass; see the docstring on
+    ``_pooling_notice``.
+    """
+    from lobes.catalog import SUPPORTED_MODELS
+    from lobes.cli._commands.switch import _pooling_notice
+
+    deep = next(m for m in SUPPORTED_MODELS if m.id == "Qwen/Qwen3-Embedding-4B")
+    notice = _pooling_notice(deep)
+    assert notice is not None
+    assert "vllm-embed-deep" in notice
+    # The bare hot-path service name must not appear as a standalone word.
+    assert "vllm-embed service" not in notice
+
+
+def test_switch_notice_still_names_the_hot_path_service_for_the_0_6b() -> None:
+    from lobes.catalog import SUPPORTED_MODELS
+    from lobes.cli._commands.switch import _pooling_notice
+
+    hot = next(m for m in SUPPORTED_MODELS if m.id == "Qwen/Qwen3-Embedding-0.6B")
+    notice = _pooling_notice(hot)
+    assert notice is not None
+    assert "vllm-embed service" in notice
+    assert "vllm-embed-deep" not in notice
+
+
+def test_switch_notice_unchanged_for_the_reranker() -> None:
+    from lobes.catalog import SUPPORTED_MODELS
+    from lobes.cli._commands.switch import _pooling_notice
+
+    rr = next(m for m in SUPPORTED_MODELS if m.task == "score")
+    notice = _pooling_notice(rr)
+    assert notice is not None
+    assert "vllm-rerank" in notice
