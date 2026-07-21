@@ -1,0 +1,48 @@
+=== VOICE-TO-VOICE ACCEPTANCE — DGX Spark GB10, 2026-07-21T15:30:23Z ===
+lobes-cli 0.53.0 · production gateway :8001 · Reachy Mini mic (16 kHz native,
+stereo downmixed) · replies via Gemma 4 12B (model=multimodal) · Chatterbox TTS
+to the HDMI sink. Full loop: ears -> brain -> mouth, one WebSocket for the ears.
+
+--- transcript (operator speaking, unscripted) ---
+YOU:  We're going to grab it up to fancy.
+MACHINE: That sounds like a great plan. Where are we headed for our fancy meal?
+YOU:  Can you hear me now?
+MACHINE: Yes, I can hear you loud and clear. How can I help you today?
+YOU:  Examples.
+MACHINE: I can provide examples for many different topics. What specific subject would you like me to give examples for?
+YOU:  I want you to talk with me about Hebrew, examples, and see if you can understand Hebrew.
+MACHINE: I can certainly understand and discuss Hebrew with you. Please feel free to type some examples in Hebrew so we can get started.
+YOU:  We are in voice chat, so it's voice to voice.
+MACHINE: That makes sense. Since we are speaking, you can just say some phrases in Hebrew and I will do my best to understand and respond.
+YOU:  Can you say a sentence in Hebrew?
+MACHINE: Yes, I can. Shalom, ma shlomcha?
+YOU:  Okay, that's not bad.
+MACHINE: I'm glad to hear that. Would you like to practice more phrases or talk about something else?
+YOU:  Could you hear my Hebrew when I said it?
+MACHINE: Yes, I can hear your Hebrew perfectly fine. Please go ahead and say something else so we can continue practicing.
+YOU:  I'm not sure if I can do it.
+
+WHAT THIS ESTABLISHES: a spoken conversation held across many consecutive turns
+over MINUTES on a single /v1/realtime session. Every pre-fix run died within tens
+of seconds; see the keepalive note below. Long sentences transcribed verbatim
+("Can you hear me now?", "I want you to talk with me about Hebrew, examples, and
+see if you can understand Hebrew.").
+
+THE BUG THIS RUN FIXED — client-side, not in the shipped route: a /v1/realtime
+client MUST answer WebSocket PING with PONG. uvicorn pings ~every 20s and closes
+a peer that never pongs, so a duplex client that ignores them dies after tens of
+seconds with no error on either side (the bridge logs a clean client_disconnect;
+the client sees BrokenPipe). A one-shot smoke run finishes inside a single ping
+interval and never sees it. Isolated by bypassing the gateway entirely and
+reproducing the same death — which cleared the tunnel of suspicion.
+
+LIMITS OBSERVED, not defects in this PR:
+  - STT is English-only (nvidia/parakeet-tdt-0.6b-v2); spoken Hebrew is not
+    transcribable on this stack. The model worked around it by TRANSLITERATING
+    ("Shalom, ma shlomcha?"), which the English TTS could voice.
+  - The model claimed abilities the pipeline lacks (offering to accept TYPED
+    Hebrew in a voice-only session): nothing tells it its own constraints.
+    Worth a system-prompt fix — noted on #151.
+  - Transcription accuracy varies with mic distance/gain; endpointing (this
+    feature's job) was correct throughout — every turn arrived whole.
+  - No barge-in: the mic is muted while speaking. Needs AEC (#151).
