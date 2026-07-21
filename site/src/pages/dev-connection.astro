@@ -1,0 +1,78 @@
+---
+// Isolated harness for the connection panel — issue #151 t13.
+//
+// The real page is src/pages/index.astro, which reserves
+// `#connection-mount` for this component; but three wave-2 tasks build
+// inside site/ in parallel and all three would collide editing that one
+// file, so index.astro is wired by the coordinator after they merge. This
+// page exists so the panel can be run, seen and driven on its own in the
+// meantime — and it stays useful afterwards: it is the smallest page that
+// reproduces a proxy or credential problem with nothing else on it.
+//
+// It is not linked from the site nav. Open it directly at /dev-connection.
+import Layout from "../layouts/Layout.astro";
+import ConnectionPanel from "../components/ConnectionPanel.astro";
+---
+
+<Layout
+  title="Connection — lobes realtime test harness"
+  description="Isolated harness for the /v1/realtime connection controls: open and close a session through the local credential-injecting proxy."
+>
+  <section class="section">
+    <div class="container">
+      <span class="eyebrow">t13 · dev harness</span>
+      <h1>Connection</h1>
+      <p class="lede muted">
+        One <code>/v1/realtime</code> session, opened and closed by hand,
+        through the local proxy that holds the credential. This page carries
+        nothing else — no mic, no event log — so a failure here is a failure
+        of the connection path and nothing more.
+      </p>
+
+      <div class="card panel-host">
+        <ConnectionPanel />
+      </div>
+
+      <div class="prose notes">
+        <h2>If it will not connect</h2>
+        <ul>
+          <li>
+            <strong>Is this page served by <code>npm run dev</code>?</strong> The
+            proxy lives in the dev server. A built site served any other way has
+            no route to the gateway at all — by design.
+          </li>
+          <li>
+            <strong>Is the gateway reachable at <code>LOBES_GATEWAY_URL</code>?</strong>
+            Off-box, that means an <code>ssh -L</code> forward is up — see the
+            README.
+          </li>
+          <li>
+            <strong>Does the credential match?</strong> Press <em>Check gateway</em>.
+            A failed WebSocket handshake looks identical for every cause; the
+            check sees the HTTP status the socket cannot.
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .panel-host {
+    margin-top: 2rem;
+  }
+
+  .notes {
+    margin-top: 2.5rem;
+  }
+
+  .notes ul {
+    padding-left: 1.2rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .notes li {
+    line-height: 1.65;
+  }
+</style>
