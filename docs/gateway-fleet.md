@@ -363,6 +363,8 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   `/v1/embeddings` (the embedding gear), `/v1/rerank` + `/v1/score` (the reranker
   gear), `/v1/audio/transcriptions` + `/v1/audio/speech` (the `--audio` overlay
   only — fanned to the realtime bridge → Parakeet STT / Chatterbox TTS),
+  `/v1/realtime` (the same overlay's WebSocket session — see
+  [Realtime lane](#realtime-lane-the-one-websocket-route) below),
   `/v1/models` (OpenAI-standard, lists the loaded backend(s)),
   `/v1/models/supported` (the full supported-model catalog — every gear you can
   change to, each flagged `loaded` / `default`), `/health` (gateway liveness), and
@@ -393,6 +395,44 @@ docker: `lobes doctor`'s `gateway_version_match` check compares it against the
 CLI's own version and fails the run on a real mismatch (remediation: bump
 `MODEL_GEAR_VERSION` in `.env` and `docker compose up -d --build gateway`) —
 see [Verbs](#verbs) below.
+
+### Realtime lane: the one WebSocket route
+
+Every other data-plane route the gateway serves is an HTTP forward.
+`/v1/realtime` is not: it is a **101-upgrade handshake plus an opaque
+bidirectional byte tunnel** to the local `realtime` bridge
+(`lobes/gateway/_realtime.py`). The gateway relays the handshake, relays the
+bridge's `101` back, then pumps bytes both ways until either side closes — it
+never parses the WebSocket protocol, and therefore never parses the session's
+events either.
+
+That opacity is why the lane needed **no gateway change** when issue #151
+turned the session from listen-only into a full conversation. The wire moved
+to base64 JSON events in both directions and the bridge began streaming
+spoken replies back over the same socket; the tunnel already pumped both
+directions in parallel, so it relayed the new traffic without knowing it
+existed. The session contract lives in
+[`docs/realtime-pipeline.md`](realtime-pipeline.md#the-v1realtime-websocket-session-issues-149-151)
+and [`docs/openai-api.md`](openai-api.md#realtime-session-v1realtime-websocket);
+what belongs *here* is what the gateway itself guarantees:
+
+- **Same auth, checked first.** The opt-in `GATEWAY_API_KEY` bearer gate (see
+  below) is applied to the handshake before any tunnel or upstream socket is
+  allocated — a rejected handshake costs nothing. Header-only `Authorization`,
+  as everywhere else: there is no query-parameter or WebSocket-subprotocol
+  token path, deliberately, since session config already travels as query
+  params and a token there would reach the bridge and its logs.
+- **Same feasibility contract.** A declared-off `stt` lane
+  (`STT_FEASIBLE=false`) 404s the handshake `role_infeasible`, naming
+  `hosted_by` when a peer origin is declared — identical to the batch STT
+  route. A plain `GET` without `Upgrade: websocket` gets **426**, not a 404:
+  the route exists, it was just not asked for correctly.
+- **Never proxied cross-box.** Even with `STT_PEER_PROXY` armed, this lane
+  refuses to forward: the #129 proxy-lobes forwarder is POST-only, and a
+  half-served WebSocket crossing a box boundary would break the loop-guard
+  (`X-Lobes-Proxied`) and attribution (`X-Lobes-Proxied-By`) guarantees the
+  POST lane provides. Voice-to-voice added traffic *on* the session, not new
+  session transport.
 
 ### Auth (opt-in bearer gate)
 

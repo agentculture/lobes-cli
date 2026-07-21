@@ -216,9 +216,12 @@ Watch `nvidia-smi` to confirm memory is freed before the STT container restarts.
 
 Root cause diagnosis is open; see issues #39 and #40 if this resurfaces.
 
-## The `/v1/realtime` WebSocket session (issue #149)
+## The `/v1/realtime` WebSocket session (issues #149, #151)
 
-**Status: VALIDATED on the DGX Spark GB10, 2026-07-21** — transcript:
+**Two releases, two very different validation states. Read this first.**
+
+**The session mechanism (#149) is VALIDATED** on the DGX Spark GB10,
+2026-07-21 — transcript:
 [`docs/evidence/2026-07-21-accept-realtime-spark.txt`](evidence/2026-07-21-accept-realtime-spark.txt).
 A live run drove a full session through the gateway tunnel against the real
 Silero model and the real Parakeet and Chatterbox sidecars: `session.created`
@@ -226,15 +229,30 @@ Silero model and the real Parakeet and Chatterbox sidecars: `session.created`
 at **both** wire rates (24000 Hz and the 16000 Hz passthrough), plus the 401
 on an unauthenticated handshake and the 426 on a plain GET.
 
-Four things stay **UNVALIDATED** and must not be claimed: a real
-**microphone** (every live run used synthesized Chatterbox audio, so
-reachy-mini-cli's mic path is still unproven end to end), the
-**VAD-unavailable** error path, **concurrent** sessions, and the
-**max-turn** force-commit — the last three are covered offline only. The
-live smoke procedure that will produce one — connect, stream, boundaries,
-transcript, all over one connection, plain-`websocket-client`-level like
-`scripts/audio-smoke.py` — is issue #149's task t8. Until that transcript
-lands, treat every claim below as offline-proven, not live-validated.
+**Everything issue #151 adds is DECLARED, not validated.** The base64 event
+wire, the opt-in conversation surface (server-side generate + TTS streamed
+back on the same socket), barge-in, the per-stage deadlines and the browser
+harness under `site/` are **offline-proven only**: every decision lives in
+stdlib modules the offline suite covers end to end
+(`lobes/realtime/_wire.py`, `_floor.py`, `_turn.py`, `_conversation.py`,
+`_session.py`), and `app.py` stays the `pragma: no cover` shell that pumps
+them. Per the **#108 evidence rule**, nothing here says *validated* until a
+live acceptance transcript lands under `docs/evidence/` — the run that would
+produce one (speak, hear the reply, interrupt it mid-playback, through the
+documented `ssh -L` flow with a real microphone) is issue #151's task t17.
+Note too that the #149 transcript above was recorded against the **raw-binary
+input wire #151 has since replaced**: it proves the gateway tunnel, Silero
+segmentation and the Parakeet forward, *not* the wire the server speaks
+today.
+
+Four things #149 left **UNVALIDATED** stay that way — this work retires none
+of them: a real **microphone** (every live run so far used synthesized
+Chatterbox audio, so reachy-mini-cli's mic path is still unproven end to
+end), the **VAD-unavailable** error path, **concurrent** sessions, and the
+**max-turn** force-commit. The `site/` harness is the real-microphone test
+vehicle by construction, so t17's run is the one that could retire *that*
+item; concurrency stays open regardless (a single-operator browser cannot
+prove it), which is also why `TTS_VOICE_CONCURRENCY` ships defaulted to `1`.
 
 ### The IOUs this redeems
 
@@ -251,6 +269,22 @@ lands, treat every claim below as offline-proven, not live-validated.
   had to endpoint client-side with an energy threshold (measured failure: a
   five-word question arriving as the fragment "Ready, she"). The route below
   redeems that IOU; the Boundary section states only what is still true.
+- This doc used to carry a second, narrower IOU naming **issue #151** by
+  number: "It is half-duplex — no barge-in… Real barge-in needs AEC and is
+  tracked in #151." That described `scripts/realtime-voice-loop.py` as
+  shipped in commit `f1e6ffa`, and its own docstring said the same in the
+  same words — a client-side stitch of three endpoints that muted its
+  microphone for the whole synthesize-and-play window, because without echo
+  cancellation the session transcribed the machine talking to itself. The
+  server side matched: **#149's spec recorded no-`response.create` /
+  no-LLM-turn / no-TTS-out as non-goal c15**, with the `barge_in_*` and
+  response-id machinery shipped but deliberately dormant. #151 is the planned
+  lift of exactly that non-goal — it moves the loop **server-side** and makes
+  the interruption a first-class session event; see
+  [Conversation is opt-in](#conversation-is-opt-in-responsecreate) and
+  [Barge-in](#barge-in-speaking-over-the-machine) below. The half-duplex
+  framing survives here only as *history* — the script itself is unchanged in
+  that respect and remains the pre-#151 fallback.
 
 ### Reachability
 
@@ -284,24 +318,74 @@ wss://<gateway>/v1/realtime?input_sample_rate=16000
 | `input_channels` | `1` | `1` (mono) only |
 | `turn_detection` | `server_vad` | `server_vad` only |
 | `aec_mode` | `none` | `none` or `aec` |
+| `system_prompt` | *(env `DEFAULT_SYSTEM_PROMPT`, else the built-in)* | any string (issue #151) |
 
-Wire format is **PCM16 mono little-endian**, streamed as **binary** WebSocket
-frames at whatever chunking granularity the client sends — the server
-reassembles the stream; a frame need not align to a whole sample, let alone a
-whole 32 ms VAD chunk (`lobes/realtime/_pcm.py::take_aligned_samples`).
-`input_sample_rate` defaults to **24000 Hz** (OpenAI-Realtime-compatible);
-**16000 Hz is also accepted** (Parakeet/Silero's native rate — the server
-skips resampling entirely in that case, see `_pcm.py::needs_resample`). Any
-other rate is rejected as an invalid session config, and the socket is
-closed (WS code 1008) before any audio is accepted — no session is allocated
-for a rejected config. The server resamples 24 kHz down to 16 kHz itself,
-server-side, via scipy (`lobes/realtime/app.py::_resample_to_16k`) — the
-client never resamples.
+Audio is still **PCM16 mono little-endian**, and `input_sample_rate` still
+defaults to **24000 Hz** with **16000 Hz also accepted** (Parakeet/Silero's
+native rate — the server skips resampling entirely in that case, see
+`_pcm.py::needs_resample`). Any other rate is rejected as an invalid session
+config, and the socket is closed (WS code 1008) before any audio is accepted
+— no session is allocated for a rejected config. The server resamples 24 kHz
+down to 16 kHz itself, server-side, via scipy
+(`lobes/realtime/app.py::_resample_to_16k`) — the client never resamples.
 
-### Event flow
+What changed in #151 is how those bytes are *framed*. See next.
+
+### The wire is base64 JSON events, in both directions (issue #151)
+
+**This is a breaking change, deliberately taken.** #149 shipped raw **binary**
+WebSocket frames as the input wire. #151 supersedes it: the wire is
+OpenAI-Realtime-shaped **JSON text events carrying base64 audio**, in both
+directions.
+
+| direction | event | payload |
+|---|---|---|
+| client → server | `input_audio_buffer.append` | `{"type": ..., "audio": "<base64 PCM16>"}` |
+| server → client | `response.audio.delta` | `{"type": ..., "response_id": ..., "delta": "<base64 PCM16>"}` |
+
+Chunking granularity is still the client's choice — an append event's audio
+need not align to a whole sample, let alone a whole 32 ms VAD chunk; the
+server reassembles the stream (`lobes/realtime/_pcm.py::take_aligned_samples`).
+Outbound deltas are 100 ms frames (`_wire.py::DEFAULT_DELTA_CHUNK_BYTES` —
+4800 bytes at 24 kHz, the single source of truth for outbound chunk size in
+the tree), small enough that the reply starts quickly and an interruption
+discards only a bounded remainder.
+
+A raw binary frame is **no longer read as audio**. One arriving now yields
+the named `error` / `invalid_wire_event` event
+(`_wire.py::WireErrorCode.UNSUPPORTED_FRAME_TYPE` in the message text) and
+the session stays open — never a silent misread, and never a compatibility
+path the codec preserves. The codec is `lobes/realtime/_wire.py`
+(`decide_inbound_message` is the single classification point `app.py` calls
+per received message), and it is stdlib-only, so the framing arithmetic is
+unit-tested with none of the `[realtime]` extra installed.
+
+**Migrating a client.** Where you sent `ws.send_binary(pcm)`, send
+`ws.send(json.dumps({"type": "input_audio_buffer.append", "audio":
+base64.b64encode(pcm).decode()}))` instead; where you read binary frames
+back, read `response.audio.delta` events and base64-decode `delta`. The
+in-repo clients (`scripts/realtime-smoke.py`, `scripts/realtime-voice-loop.py`)
+already speak this wire and are the worked reference — including the duplex
+survival rules a non-browser client still needs (pong uvicorn's pings, use
+`select()`-based read deadlines, guard writes with a lock).
+
+**The coordinated break with reachy-mini-cli.** The deployed robot streams
+the #149 binary wire and **cannot stream against this server until it
+adapts** —
+tracked as **reachy-mini-cli#115**. This is a recorded, operator-accepted
+decision (issue #151, frame decision c40), not a regression discovered after
+the fact: sequencing the reachy commit against the lobes deploy is the
+operator's call, and the window where an un-updated robot is mute is the
+accepted cost of having exactly one wire instead of two. What reachy does
+*not* have to change is its behaviour — see the ears-only default below.
+
+### Event flow — the default (listening) sequence
 
 Events come back as JSON **text** frames (schema: `lobes/realtime/_session.py`,
-`EventType`):
+`EventType`). A session that never opts into conversation emits exactly this
+sequence and nothing else — that is the contract reachy-mini-cli depends on,
+and it is a structural property of `_conversation.py`, not a promise: every
+floor call in that module sits behind an `if self.armed` guard.
 
 1. `session.created` — sent immediately after the handshake, confirming the
    negotiated config including the resolved `input_sample_rate`. A client
@@ -310,11 +394,11 @@ Events come back as JSON **text** frames (schema: `lobes/realtime/_session.py`,
 2. `input_audio_buffer.speech_started` — server-side Silero VAD crossed
    `VAD_THRESHOLD` on a chunk; the turn's audio begins with up to
    `VAD_PREFIX_PADDING_MS` of pre-roll so the syllable before detection is
-   never lost.
+   never lost. Carries **`at_ms`** (see below).
 3. `input_audio_buffer.speech_stopped` — the turn committed, either because
    `VAD_SILENCE_MS` of continuous non-speech confirmed the stop
    (`reason="silence"`), or the max-turn cap fired (`reason="max_turn"` —
-   see below).
+   see below). Carries **`at_ms`** and **`reason`**.
 4. `conversation.item.input_audio_transcription.completed` — the committed
    turn's audio was forwarded to `settings.stt_url` (Parakeet — the exact
    same backend and WAV-wrapping the batch `/v1/audio/transcriptions` route
@@ -324,14 +408,175 @@ Events come back as JSON **text** frames (schema: `lobes/realtime/_session.py`,
    `invalid_session_config` (bad config, rejected before any session
    exists), `vad_unavailable` (Silero failed to load, or a later VAD call
    raised — **distinct from ordinary silence, which emits no event at
-   all**), `stt_forward_failed` (the committed turn's Parakeet forward
+   all**), `invalid_wire_event` (a malformed client frame — bad JSON, a bad
+   base64 `audio` field, or a raw binary frame; the specific
+   `WireErrorCode` reason is named in the message text and the session stays
+   open), `stt_forward_failed` (the committed turn's Parakeet forward
    failed: unreachable backend, non-2xx, non-JSON, or a body missing
    `text` — **a turn is never silently dropped**).
 
-This is audio-in only: the route never sends audio back over `/v1/realtime`
-— no `response.create`, no LLM turns, no TTS-out on this connection (the
-full OpenAI Realtime conversation surface is an explicit non-goal; TTS stays
-the batch `/v1/audio/speech` route).
+**Boundary events now carry `at_ms` and `reason` (issue #151).** Both are the
+segmenter's own values, and both were computed and then dropped before the
+wire until #151 threaded them through. `at_ms` is elapsed, 32 ms-quantised
+**audio-stream** time — a different clock from the event's `timestamp_ms`
+(a monotonic process clock), never mixed with it. Two things follow, and both
+are the point:
+
+- **VAD tuning becomes observable against a live session.** The effect of
+  `VAD_THRESHOLD` / `VAD_SILENCE_MS` / `VAD_PREFIX_PADDING_MS` was previously
+  visible only in offline fixture replay; an operator now reads boundary
+  timings straight off the live event stream (the `site/` harness renders
+  exactly this).
+- **A client can finally distinguish a force-commit from a silence-confirmed
+  stop.** This doc has always described the `max_turn` force-commit as "a
+  normal boundary event, not an error" — true of the server's *behaviour*
+  all along, but until `reason` reached the wire **no client could actually
+  observe the difference**. The distinction was a server-side fact the
+  protocol did not express. Now it does.
+
+### Conversation is opt-in (`response.create`)
+
+**Ears-only is the default and stays the default.** A session is *listening
+only* until the client sends a `response.create` event; one that never sends
+it gets the sequence above and nothing more. Arming is session-level and
+idempotent — send it once at connect and every committed turn thereafter is
+answered, or send it after each transcript, OpenAI-style. A transcript the
+floor did not take is remembered as *pending* and answered by the next
+trigger, and cleared once answered, so a duplicate trigger cannot produce two
+replies to one turn.
+
+Once armed, a committed turn becomes a spoken reply **on the same
+connection**, with no second HTTP call from the client:
+
+1. `response.created` — the machine took the floor.
+2. the transcript plus the session's history and system prompt are POSTed to
+   the generate lane at `OPENAI_BASE_URL` (default `http://gateway:8000`,
+   i.e. the fleet's own gateway — no extra vLLM), with
+   `chat_template_kwargs {"enable_thinking": false}`.
+3. `response.text.done` — the reply text, verbatim.
+4. `response.audio.delta` × N — Chatterbox's PCM16, base64, 100 ms per event.
+   Chatterbox emits **24 kHz**, which `protocol.py` pins equal to the client
+   wire rate, so **audio-out never resamples**: the bytes are a passthrough
+   plus one base64 encode.
+5. `response.done` — the reply was delivered in full; the floor returns to
+   the caller.
+
+**The voice lane defaults to `multimodal`**, not `cortex` — the same measured
+reason `scripts/realtime-voice-loop.py` records in-tree: the Gemma 4 12B lane
+answers a short spoken turn in about a second, where the 27B thinking lane
+spends that budget on a reasoning trace nobody hears. In a spoken turn,
+latency *is* dead air. Override with `OPENAI_MODEL` (e.g. `cortex` for full
+reasoning at the cost of latency). If the configured lane is not hosted on
+this box, the gateway's `404 role_infeasible` becomes the named
+`generate_failed` error event **carrying the `hosted_by` peer hint** — never
+a silent fallback to another lane, which is the whole point of honest
+referral.
+
+**History and the system prompt live on the server now** (they used to live
+in the voice-loop client). Both are per-session and in-memory only: no disk,
+no module state, and `Session.teardown()` drops them with everything else —
+consistent with the ephemeral-session contract below. The prompt resolves in
+three layers: the connect-URL `system_prompt` param wins, else the
+operator's `DEFAULT_SYSTEM_PROMPT` env value, else the built-in spoken-style
+default in `_session.py`. That default is load-bearing, not decoration:
+Chatterbox reads the reply **verbatim**, so a prompt that lets the model
+revert to its written register comes back as literal asterisks and list
+markers read aloud.
+
+**Every stage has a deadline.** `transcribe`, `generate` and `tts` each get a
+bounded wait (60 s each, mirroring `app.py`'s own forward timeouts and
+`tts_client`'s httpx read timeout). On expiry the floor **returns to the
+caller** with the named `response_timeout` error — with the stage named in
+the message text, since one code covers all three — rather than leaving the
+session wedged mid-response. Deadlines expire in a watchdog tick, so an
+answer that arrives first simply wins; a completion belonging to a turn the
+floor has already left is ignored rather than spoken over a later turn.
+
+**Voice TTS no longer queues behind batch TTS.** `tts_client.py` used to gate
+every Chatterbox request behind one shared semaphore, so a spoken reply could
+wait on unrelated `POST /v1/audio/speech` work — dead air, in a conversation.
+The lanes are now two independent pools: `TTS_CONCURRENCY` gates the batch
+lane only (unchanged), `TTS_VOICE_CONCURRENCY` gates the voice lane only.
+Splitting the pool is a structural guarantee; raising a shared ceiling would
+only have been a probabilistic one. Both default to `1` — the voice lane
+deliberately claims lane *isolation*, which is proven, and not multi-session
+throughput, which is not (concurrent sessions remain unvalidated).
+
+### Barge-in: speaking over the machine
+
+Speech detected while the machine holds the floor is a **barge-in**, and it
+cancels the reply in flight:
+
+- both abandonment hooks fire — `cancel_generate()` **and** `cancel_tts()`,
+  from every state. The floor cannot know whether the route had already handed
+  off to TTS when the onset landed, and both hooks are idempotent, so
+  cancelling both closes that race by construction rather than by timing;
+- the **undelivered remainder is never sent** — that is what pumped,
+  chunk-at-a-time delivery buys. A single blocking "send it all" would leave
+  nothing to interrupt;
+- exactly one `response.interrupted` event goes out, carrying the truncation
+  marker `truncated: true`. The client stops its own local playback of
+  already-delivered frames when it sees it; both halves — server-side
+  truncation and client-side stop — are required for an interruption to feel
+  instant;
+- the floor returns to the user.
+
+**Only what was plausibly heard enters history.** The server estimates the
+spoken prefix from how much audio actually went out and records *that*, not
+the whole reply (`_floor.py::estimate_spoken_prefix`). Recording the full
+text would be the worse lie: the next turn's context would claim the machine
+said things the user cut off before hearing. Nothing delivered means nothing
+heard, and history records nothing. It is an estimate, not an alignment —
+Chatterbox returns audio with no word timings.
+
+The segmenter needed **zero changes** for this: it is a floor-agnostic pure
+state machine that never stops segmenting, and has no idea a response is in
+flight. A speech onset during playback *is* the trigger; consuming it is the
+new floor machine's job (`lobes/realtime/_floor.py`).
+
+`BARGE_IN_WINDOW_MS` (default 750) is armed as a **guard window**, not a
+delay: an onset landing less than that long after the machine took the floor
+is ignored — no event, no cancel — because the likeliest source of speech in
+that instant is the tail of the user's own turn or an echo blip as playback
+starts, not a deliberate interruption. It is deliberately wider than
+`VAD_SILENCE_MS`'s own 600 ms so ordinary boundary noise inside a reply
+cannot double as an accidental interrupt. A **committed turn** arriving while
+the machine holds the floor also interrupts (once past the guard) — a turn
+that survived the VAD's own silence confirmation is far stronger evidence
+than a bare onset, and dropping it would silently discard something the user
+said.
+
+`BARGE_IN_MODEL` is read from env and threaded end to end but **consumed by
+nothing** — window-only barge-in is what ships. The knob stays declared and
+unconsumed until a live run shows the window alone is insufficient; that is
+the recorded mitigation, not a shipped feature.
+
+### Muting: a narrowed ban, not a lifted one (deviation d1)
+
+The old half-duplex loop muted its microphone whenever it spoke. That was an
+**AEC substitute**, and it is exactly why barge-in was impossible: you cannot
+interrupt a machine that has stopped listening. So the rule is not "no
+muting" — it is sharper than that, and the distinction is the whole design:
+
+- **Automatic mute-during-playback remains FORBIDDEN.** No client of this
+  session may mute, gain-zero, or otherwise deafen its capture path *in
+  reaction to* a playback or response event. The `site/` harness enforces
+  this as a build-time grep gate over an explicitly marked forbidden zone
+  (`site/src/scripts/no-mic-mute.test.ts`), not as a convention.
+- **User-initiated mute and mic-off are ALLOWED** (approved deviation `d1`,
+  recorded in `.devague/deliveries/`). Real hardware exists now: the Reachy
+  Mini microphone cancels echo in firmware, the browser gets echo
+  cancellation from `getUserMedia({audio: {echoCancellation: true}})`, and
+  playback lands on Reachy's own speaker or an HDMI monitor. **AEC is
+  genuinely owned at the client edge**, so a human pressing mute is a
+  privacy and control affordance that does not reintroduce the failure mode
+  the ban existed to prevent.
+
+The ban narrowed *because the reason for it moved*, not because it stopped
+mattering. A muted stretch must also stay honest in the event stream: the
+harness renders a client-origin mute row explicitly, so **muted, silence and
+disconnected read as three different nothings** rather than one ambiguous
+gap.
 
 ### Max-turn cap: force-commit, not an error
 
@@ -344,7 +589,10 @@ ordinary `input_audio_buffer.speech_stopped` event with `reason="max_turn"`
 — **this is not an error and never raises** — and the session proceeds
 straight to the transcription forward, same as a silence-committed turn. A
 consumer must not expect an `error` event on this path; inspect `reason` if
-you want error-like handling of an unusually long turn.
+you want error-like handling of an unusually long turn — and since #151 put
+`reason` on the wire, that inspection is finally something a client can
+actually do. The cap itself is still **UNVALIDATED** live (covered offline
+only).
 
 ### Ephemeral sessions — the restart contract
 
@@ -360,11 +608,27 @@ client unwinds both tunnel pump threads on the gateway side,
 reconnect and restart the turn you were mid-way through — there is no
 partial-turn recovery across a disconnect.
 
-### Talking to it: `scripts/realtime-voice-loop.py`
+### Talking to it: the browser harness, and the terminal fallback
 
-`/v1/realtime` is **ears only** — audio in, boundaries and transcripts out. A
-spoken *conversation* is therefore a client-side composition of three
-endpoints this fleet already serves:
+Two clients drive this surface from the repo.
+
+**`site/` — the local-only Astro harness (issue #151).** A browser page that
+opens the session with a real microphone, renders every event type as it
+arrives (boundaries with their `at_ms` timings, transcripts, reply text,
+audio out, interruptions, and each named error code distinctly), and plays
+the reply back. It exists so the surface can be *experienced* rather than
+inferred from terminal prints, and it is the real-microphone test vehicle the
+acceptance run needs. It is **never deployed** — no workflow publishes it;
+CI only builds it so a broken site fails a PR. Because `getUserMedia`
+requires a secure context, the browser must reach both the site and the
+gateway as `localhost`: the documented flow is `ssh -L` port forwarding from
+the operator laptop, with the API key held only by a local
+credential-injecting WebSocket proxy and never sent to the browser. See
+[`site/README.md`](../site/README.md).
+
+**`scripts/realtime-voice-loop.py` — the pre-#151 terminal fallback.** Before
+the conversation surface existed, a spoken conversation had to be a
+*client-side* composition of three endpoints this fleet already serves:
 
 | role | endpoint | backend |
 |---|---|---|
@@ -372,9 +636,11 @@ endpoints this fleet already serves:
 | brain | `POST /v1/chat/completions` | any generate lane |
 | mouth | `POST /v1/audio/speech` | Chatterbox |
 
-`scripts/realtime-voice-loop.py` is that composition, and doubles as the
-richest live test of the realtime surface — it exercises a long-lived duplex
-session in a way the one-shot `realtime-smoke.py` cannot.
+That is what this script is (commit `f1e6ffa`), and it still works: its
+loop is obsolete-by-default now that the server can run it, but it stays the
+non-browser live test and the fallback for a client that has not adopted the
+conversation surface. It has been migrated to the base64 event wire like
+every other in-repo client; `brain`/`mouth` stay plain HTTP POSTs.
 
 ```bash
 export LOBES_API_KEY=...        # never pass a key in argv: /proc is world-readable
@@ -391,15 +657,22 @@ hardware:
   after tens of seconds for no visible reason; a one-shot smoke run finishes
   inside a single ping interval and never notices. If you write your own
   client, handle `OPCODE_PING`.
-- **It is half-duplex — no barge-in.** The mic is muted (silence is streamed
-  in its place) for the whole synthesize-and-play window, because without
-  echo cancellation the mic hears the speakers and the session transcribes the
-  machine talking to itself. Real barge-in needs AEC and is tracked in
-  [#151](https://github.com/agentculture/lobes-cli/issues/151).
+- **It is half-duplex, and that is now HISTORY — the reason it is worth
+  keeping.** This script mutes its own microphone (streaming silence in its
+  place) for the whole synthesize-and-play window, because without echo
+  cancellation the mic hears the speakers and the session transcribes the
+  machine talking to itself. That mute is why the loop can never be
+  interrupted: you cannot barge in on a machine that has stopped listening.
+  The server-side surface above does not work this way, and the ban on
+  *automatic* mute-during-playback is what keeps it that way — see
+  [Muting](#muting-a-narrowed-ban-not-a-lifted-one-deviation-d1). This doc
+  used to close that bullet with "real barge-in needs AEC and is tracked in
+  #151"; #151 is what you are reading.
 - **It defaults to the Gemma 4 12B lane** (`--model multimodal`), not
   `cortex`. Measured on the DGX Spark: ~1 s to a short reply with no reasoning
   trace. In a spoken turn latency *is* dead air, so speed beats depth; a
-  thinking model spends its budget on a trace nobody hears.
+  thinking model spends its budget on a trace nobody hears. The server-side
+  voice lane inherits exactly this default and this reasoning.
 
 `--sink` matters on a box where something else owns the audio device: on the
 Spark, `reachy-mini-dae` holds the Reachy speaker exclusively and PipeWire
@@ -416,12 +689,26 @@ The audio surface **does not**:
   handshake `role_infeasible` (naming `hosted_by` when a peer origin is
   declared) rather than tunneling the WebSocket to a peer.
 - Enable AEC by default. `aec_mode` defaults to `none` and stays off unless a
-  session's connect-URL explicitly requests `aec_mode=aec` — Reachy Mini's
-  mic array cancels echo in firmware, so server-side AEC is opt-in, never
-  assumed.
-- Expose a full OpenAI Realtime conversation surface. `/v1/realtime` is
-  audio-in, boundaries, and transcription only — no `response.create`, no
-  LLM turns, no TTS-out on the session (see [Event flow](#event-flow) above).
+  session's connect-URL explicitly requests `aec_mode=aec`, and there is no
+  server-side DSP behind it — **AEC is owned at the client edge**: Reachy
+  Mini's mic array cancels echo in firmware, the browser gets it from
+  `getUserMedia` constraints, and a mic-speaker unit may do it in hardware.
+  Both known consumers cover it, so the server's `AECMode` stays a declared
+  passthrough. That client-edge ownership is precisely what makes barge-in
+  possible at all, and what narrowed the mute ban (see
+  [Muting](#muting-a-narrowed-ban-not-a-lifted-one-deviation-d1) above).
+- Force conversation on anyone. `/v1/realtime` answers only after an explicit
+  `response.create`; a session that never sends one is transcription-only,
+  byte-for-byte the #149 sequence on the new wire.
+- Expose the **full** OpenAI Realtime API. This session adopts the
+  **audio-path event shapes only** — `input_audio_buffer.append`,
+  `response.audio.delta`, `response.create`, and the transcription events.
+  `session.update` semantics, the complete `conversation.item.*` schema, the
+  full response lifecycle, tool calls over the session and ephemeral tokens
+  are a **named follow-up**, not a gap to read as almost-done: claiming more
+  would over-advertise. Nothing here even reads `response.create`'s body.
+- Resume anything. Sessions stay ephemeral (below) — an interrupted or
+  in-flight response is simply gone on disconnect; there is no replay.
 - Swap the STT engine — Parakeet (NeMo ASR) remains the hardcoded STT backend.
   TTS has been migrated from Magpie (NVIDIA NIM, proprietary) to Chatterbox
   (Resemble AI, open-weights, Apache-2.0). Silero VAD is likewise hardcoded —
