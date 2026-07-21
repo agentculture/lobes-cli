@@ -22,6 +22,7 @@ import importlib.util
 import io
 import socket
 import struct
+import threading
 import sys
 from pathlib import Path
 
@@ -364,41 +365,88 @@ def test_classify_event_or_timeout_flags_an_unexpected_event_type() -> None:
 # --- mid-frame timeout must not desync the reader --------------------------
 
 
-class _StutteringSock:
-    """Delivers a frame's header, then times out, then delivers the rest.
-
-    Models the real hazard: a frame split across TCP segments with a gap
-    longer than the per-read timeout, landing between the base header and the
-    payload.
-    """
-
-    def __init__(self, payload: bytes) -> None:
-        header = struct.pack("!BB", 0x81, len(payload))
-        self._script = [header, socket.timeout("timed out"), payload]
-
-    def settimeout(self, _t) -> None:
-        pass
-
-    def recv(self, _n: int) -> bytes:
-        if not self._script:
-            return b""
-        item = self._script.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-
 def test_a_timeout_between_header_and_payload_does_not_corrupt_the_next_read() -> None:
-    text = b'{"type":"session.created"}'
-    client = realtime_smoke.WebSocketClient.__new__(realtime_smoke.WebSocketClient)
-    client._sock = _StutteringSock(text)
-    client._buf = bytearray()
+    """A frame split across TCP segments with a gap longer than the timeout.
 
-    with pytest.raises(socket.timeout):
-        client.read_frame(timeout=0.01)  # dies after consuming the header
+    The reader must resume at the true frame boundary; if the consumed header
+    were dropped, the retry would read the payload bytes as a new header and
+    mis-parse everything after it. Uses a REAL socketpair — since the client
+    waits with select(), a fake without a fileno() cannot model this.
+    """
+    client_sock, peer = socket.socketpair()
+    try:
+        client = realtime_smoke.WebSocketClient(client_sock)
+        text = b'{"type":"session.created"}'
+        frame = realtime_smoke.build_frame(realtime_smoke.OPCODE_TEXT, text, mask=False)
+        peer.sendall(frame[:2])  # header only, then a gap
+        with pytest.raises(socket.timeout):
+            client.read_frame(timeout=0.05)
+        peer.sendall(frame[2:])  # the rest arrives late
+        fin, opcode, payload = client.read_frame(timeout=2.0)
+        assert fin is True
+        assert opcode == realtime_smoke.OPCODE_TEXT
+        assert payload == text  # NOT garbage from a mis-read header
+    finally:
+        client_sock.close()
+        peer.close()
 
-    # The retry must see the SAME frame, not the payload mis-read as a header.
-    fin, opcode, payload = client.read_frame(timeout=0.01)
-    assert fin is True
-    assert opcode == realtime_smoke.OPCODE_TEXT
-    assert payload == text
+
+# --- duplex safety: a reader must not mutate shared socket state -------------
+
+
+def test_read_timeout_never_puts_a_deadline_on_the_shared_socket() -> None:
+    """A reader's timeout must not leak onto a concurrent writer.
+
+    ``settimeout`` is a property of the SOCKET, not of one call, so a reader
+    that sets it hands its deadline to any other thread writing on the same
+    socket. A large-enough ``sendall`` can then time out part-sent, and a
+    partially written frame desynchronises the peer until it closes the
+    connection. Found live: a voice loop that listens while it talks dies with
+    BrokenPipeError after a few turns, while the one-shot smoke run (stream,
+    then read) never trips it.
+    """
+    client_sock, peer = socket.socketpair()
+    try:
+        client = realtime_smoke.WebSocketClient(client_sock)
+        assert client_sock.gettimeout() is None  # blocking to begin with
+        with pytest.raises(socket.timeout):
+            client.read_frame(timeout=0.05)  # nothing to read → times out
+        # The socket must be exactly as we found it: no deadline inherited by
+        # whichever thread writes next.
+        assert client_sock.gettimeout() is None
+    finally:
+        client_sock.close()
+        peer.close()
+
+
+def test_a_writer_survives_a_concurrent_reader_waiting_on_a_timeout() -> None:
+    """Write while another thread is blocked in read_frame — the real shape."""
+    client_sock, peer = socket.socketpair()
+    try:
+        client = realtime_smoke.WebSocketClient(client_sock)
+        errors: list[BaseException] = []
+
+        def reader() -> None:
+            for _ in range(3):
+                try:
+                    client.read_frame(timeout=0.2)
+                except socket.timeout:
+                    pass
+                except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+                    errors.append(exc)
+
+        t = threading.Thread(target=reader)
+        t.start()
+        for _ in range(20):  # keep writing while the reader waits
+            client.send_binary(b"\x00" * 1024)
+        t.join(timeout=5)
+
+        assert not errors, f"reader raised while a writer was active: {errors}"
+        # Every frame arrived intact and in order — no partial/torn writes.
+        got = peer.recv(1 << 20)
+        # 1024 > 125, so the frame carries a 16-bit extended length:
+        # 2 base + 2 length + 4 mask = 8 bytes of overhead per frame.
+        assert len(got) == 20 * (1024 + 8)
+    finally:
+        client_sock.close()
+        peer.close()
