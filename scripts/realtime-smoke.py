@@ -12,6 +12,15 @@ This is NOT an offline CI test — it requires a live GPU box with
 ``lobes fleet up --apply`` (the ``--audio`` overlay) already running, exactly
 like ``scripts/audio-smoke.py``.
 
+Audio-in wire format (issue #151): each PCM16 chunk streams as a base64
+``input_audio_buffer.append`` JSON text event (see :func:`build_append_event`
+below), not a raw BINARY WebSocket frame — #149 shipped the raw-binary wire,
+and #151 supersedes it with the OpenAI-Realtime-shaped base64 event wire in
+both directions (``response.audio.delta`` outbound, decoded here by
+:func:`decode_audio_delta_event` for a future conversational caller). See the
+"Base64 event wire" section below for why this script inlines that codec
+instead of importing the server's own ``lobes.realtime._wire``.
+
 Why a hand-rolled WebSocket client and not a library
 ------------------------------------------------------
 Issue #149 exists to move ``server_vad`` endpointing OFF the ``reachy-mini-cli``
@@ -29,12 +38,12 @@ The wire contract itself is documented in ``lobes/realtime/app.py``'s
 schema — this script drives exactly that contract, nothing assumed.
 
 The pure pieces (handshake framing, the accept-key computation, frame
-build/parse, PCM chunking, phrase matching) are unit-tested offline in
-``tests/test_realtime_smoke_helpers.py`` with no socket and no live
-deployment. The socket-owning glue in this file is not unit-tested — it
-mirrors the rest of this codebase's convention (e.g. ``app.py``'s
-``# pragma: no cover`` WebSocket route) of thin, live-only glue over tested
-pure modules.
+build/parse, the base64 append/delta event codec, PCM chunking, phrase
+matching) are unit-tested offline in ``tests/test_realtime_smoke_helpers.py``
+with no socket and no live deployment. The socket-owning glue in this file is
+not unit-tested — it mirrors the rest of this codebase's convention (e.g.
+``app.py``'s ``# pragma: no cover`` WebSocket route) of thin, live-only glue
+over tested pure modules.
 
 Acceptance-evidence procedure (issue #108's rule)
 ---------------------------------------------------
@@ -276,6 +285,70 @@ def bytes_per_chunk_for_rate(sample_rate: int, chunk_ms: int = CHUNK_MS) -> int:
     return int(round(sample_rate * chunk_ms / 1000)) * BYTES_PER_SAMPLE
 
 
+# ---------------------------------------------------------------------------
+# Base64 event wire (issue #151) — replaces the #149 raw-binary-frame wire.
+#
+# #149 shipped audio-in as a raw BINARY WebSocket frame per PCM chunk. #151
+# supersedes that with the OpenAI-shaped base64 JSON wire in both directions:
+# ``input_audio_buffer.append`` (audio in) and ``response.audio.delta``
+# (audio out, sent by the server once a session opts into a conversational
+# reply — see docs/specs/2026-07-21-realtime-voice-to-voice-astro-test-site-151.md).
+# These two functions are the client-side codec for that wire.
+#
+# ``lobes/realtime/_wire.py`` already ships this exact codec server-side
+# (``parse_append_event``/``serialize_audio_delta``) and is itself
+# stdlib-only — but this script deliberately does NOT import it. This file
+# already reimplements RFC 6455 by hand instead of pulling in a WebSocket
+# library, specifically so it stays a single droppable file with zero
+# repo-context dependencies: copyable to another machine, or even another
+# project's tree, and runnable with nothing but ``python3`` (see this
+# module's own docstring). Importing ``lobes.realtime._wire`` would require
+# the whole ``lobes`` package tree — or a pip-installed ``lobes-cli`` — to be
+# importable from wherever this script lands, which breaks exactly that
+# property; the base64-event arithmetic below is a few lines around
+# ``base64.b64encode``/``b64decode``, small enough that inlining it costs
+# nothing. ``tests/test_realtime_smoke_helpers.py`` proves wire compatibility
+# offline anyway, by round-tripping this script's encode/decode against the
+# REAL ``lobes.realtime._wire`` functions (the test file may import
+# ``lobes``; this script never does).
+# ---------------------------------------------------------------------------
+
+
+def build_append_event(pcm: bytes) -> EventDict:
+    """Wrap one PCM16 chunk as an ``input_audio_buffer.append`` event.
+
+    Mirrors ``lobes.realtime._wire.serialize_audio_delta``'s shape on the
+    inbound side: base64-encode the raw bytes into a JSON-serializable dict.
+    An empty ``pcm`` is valid (encodes to ``""``) — never an error.
+    """
+    return {
+        "type": "input_audio_buffer.append",
+        "audio": base64.b64encode(pcm).decode("ascii"),
+    }
+
+
+def decode_audio_delta_event(event: EventDict) -> bytes:
+    """Decode a ``response.audio.delta`` event's base64 ``delta`` field to raw PCM16 bytes.
+
+    The outbound-direction counterpart of :func:`build_append_event`. Neither
+    in-repo client currently triggers ``response.create`` (both stay
+    ears-only, opting out of the #151 conversation surface), so no call site
+    consumes this yet — it exists so the wire's OUTBOUND arithmetic is
+    offline-tested symmetrically with the inbound append encode, and so a
+    future opt-in caller (or the live acceptance script) has a ready decode
+    path. Raises ``ValueError`` — a malformed server event is not expected
+    from a trusted first-party server, so this mirrors the plain
+    ``ValueError`` style :func:`mask_payload`/:func:`chunk_pcm` already use
+    in this file, rather than inventing a new exception type for one script.
+    """
+    delta = event.get("delta")
+    if not isinstance(delta, str):
+        raise ValueError(
+            f"response.audio.delta requires a base64 string 'delta' field, got {delta!r}"
+        )
+    return base64.b64decode(delta)
+
+
 def normalize_text(text: str) -> str:
     """Lowercase and strip everything but alphanumerics/spaces, for loose matching."""
     return re.sub(r"[^a-z0-9 ]", "", text.lower())
@@ -483,6 +556,17 @@ class WebSocketClient:
 
     def send_binary(self, payload: bytes) -> None:
         self.send_frame(OPCODE_BINARY, payload)
+
+    def send_json_event(self, event: EventDict) -> None:
+        """Send *event* as one masked WebSocket TEXT frame, JSON-encoded.
+
+        The issue #151 wire: audio-in now travels as
+        ``input_audio_buffer.append`` JSON text events (see
+        :func:`build_append_event`), not a raw BINARY frame — this is the
+        one call site both this script and ``realtime-voice-loop.py`` (which
+        imports this module) use to send one.
+        """
+        self.send_frame(OPCODE_TEXT, json.dumps(event).encode("utf-8"))
 
     def send_close(self, code: int = 1000) -> None:
         try:
@@ -701,13 +785,15 @@ def run_smoke(args: argparse.Namespace) -> list[SmokeResult]:
         return results
 
     # Step 3: stream the PCM in real-time-ish 32ms chunks, then trailing
-    # silence so server_vad's vad_silence_ms confirms the turn ended.
+    # silence so server_vad's vad_silence_ms confirms the turn ended. Each
+    # chunk goes out as one input_audio_buffer.append JSON text event
+    # (issue #151's base64 wire), not a raw BINARY frame.
     chunk_bytes = bytes_per_chunk_for_rate(args.input_sample_rate)
     silence = silence_bytes(args.trailing_silence_ms, args.input_sample_rate)
     stream = bytes(pcm) + silence
     try:
         for chunk in chunk_pcm(stream, chunk_bytes):
-            client.send_binary(chunk)
+            client.send_json_event(build_append_event(chunk))
             time.sleep(CHUNK_MS / 1000.0)
     except OSError as exc:
         record("audio-stream", False, f"send failed mid-stream: {exc}")
@@ -715,7 +801,11 @@ def run_smoke(args: argparse.Namespace) -> list[SmokeResult]:
         reader.join(timeout=2.0)
         _print_summary(results)
         return results
-    record("audio-stream", True, f"streamed {len(stream)} bytes + trailing silence")
+    record(
+        "audio-stream",
+        True,
+        f"streamed {len(stream)} bytes as input_audio_buffer.append events + trailing silence",
+    )
 
     event, idx = wait_for_event(reader, idx, "input_audio_buffer.speech_started", deadline)
     ok, detail = classify_event_or_timeout(event, "input_audio_buffer.speech_started")

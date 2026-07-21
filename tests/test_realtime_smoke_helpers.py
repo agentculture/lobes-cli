@@ -18,6 +18,7 @@ has to be imported in Python.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import io
 import socket
@@ -66,6 +67,32 @@ def test_module_imports_without_torch_or_third_party_ws_client() -> None:
     assert not offenders, f"realtime-smoke.py imports a forbidden dep: {offenders}"
 
 
+def test_module_does_not_import_the_lobes_package_either() -> None:
+    """Issue #151's wire migration deliberately does NOT import
+    ``lobes.realtime._wire`` even though that module is itself stdlib-only.
+
+    This script already reimplements RFC 6455 by hand instead of importing
+    any WebSocket library, specifically so it stays a single droppable file
+    with zero repo-context dependencies — copyable to another machine or
+    even another project's tree and runnable with nothing but ``python3``.
+    Importing ``lobes.realtime._wire`` would require the whole ``lobes``
+    package tree (or a pip-installed ``lobes-cli``) to be importable from
+    wherever this script lands, breaking exactly that property. The
+    base64-event codec this file needs is a few lines of
+    ``base64.b64encode``/``b64decode`` around a JSON dict — small enough
+    that inlining it costs nothing, so the "no repo-context import" rule
+    wins. See ``test_build_append_event_round_trips_through_the_real_server_side_decoder``
+    and its delta-side counterpart below for the offline proof that the
+    inlined encode/decode stays wire-compatible with the real
+    ``lobes.realtime._wire`` codec despite not importing it.
+    """
+    src = _SCRIPT_PATH.read_text(encoding="utf-8")
+    offenders = [
+        line for line in src.splitlines() if line.strip().startswith(("import lobes", "from lobes"))
+    ]
+    assert not offenders, f"realtime-smoke.py imports the lobes package: {offenders}"
+
+
 # --- Sec-WebSocket-Key / Sec-WebSocket-Accept -------------------------------
 
 
@@ -77,8 +104,6 @@ def test_compute_accept_key_matches_the_rfc6455_worked_example() -> None:
 
 
 def test_make_sec_websocket_key_is_16_random_bytes_base64_encoded() -> None:
-    import base64
-
     key = realtime_smoke.make_sec_websocket_key()
     decoded = base64.b64decode(key)
     assert len(decoded) == 16
@@ -249,6 +274,74 @@ def test_bytes_per_chunk_for_rate_matches_the_segmenters_own_framing_constant() 
 def test_bytes_per_chunk_for_rate_at_the_tts_native_24k_rate() -> None:
     # 24000 Hz * 32ms = 768 samples * 2 bytes/sample = 1536 bytes.
     assert realtime_smoke.bytes_per_chunk_for_rate(24000) == 1536
+
+
+# --- base64 event wire (issue #151): input_audio_buffer.append / response.audio.delta ----
+#
+# #149 shipped audio-in as raw BINARY WebSocket frames; #151 supersedes that with the
+# OpenAI-shaped base64 JSON wire in both directions. These are the pure encode/decode
+# helpers this script and scripts/realtime-voice-loop.py (which imports this module)
+# now send/receive instead of a raw binary frame.
+
+
+def test_build_append_event_wraps_pcm_as_base64_input_audio_buffer_append() -> None:
+    pcm = b"\x01\x02\x03\x04\x05\x06"
+    event = realtime_smoke.build_append_event(pcm)
+    assert event["type"] == "input_audio_buffer.append"
+    assert base64.b64decode(event["audio"]) == pcm
+
+
+def test_build_append_event_round_trips_empty_audio() -> None:
+    # Zero bytes of audio is a valid (if odd) chunk — never an error.
+    event = realtime_smoke.build_append_event(b"")
+    assert event["audio"] == ""
+    assert base64.b64decode(event["audio"]) == b""
+
+
+def test_build_append_event_round_trips_through_the_real_server_side_decoder() -> None:
+    """Cross-checks this script's own encode against the REAL server-side
+    decoder (``lobes.realtime._wire.parse_append_event``) — proof that the
+    inlined encode (see ``test_module_does_not_import_the_lobes_package_either``)
+    stays byte-exact wire-compatible with the server without this script
+    ever importing ``lobes`` itself. Only the TEST imports ``lobes``.
+    """
+    from lobes.realtime._wire import parse_append_event
+
+    pcm = bytes(range(256)) * 4  # 1024 bytes, exercises every byte value
+    event = realtime_smoke.build_append_event(pcm)
+    assert parse_append_event(event) == pcm
+
+
+def test_decode_audio_delta_event_extracts_the_base64_delta_field() -> None:
+    pcm = b"\x10\x20" * 50
+    event = {
+        "type": "response.audio.delta",
+        "event_id": "evt_1",
+        "delta": base64.b64encode(pcm).decode("ascii"),
+    }
+    assert realtime_smoke.decode_audio_delta_event(event) == pcm
+
+
+def test_decode_audio_delta_event_rejects_a_missing_delta_field() -> None:
+    with pytest.raises(ValueError):
+        realtime_smoke.decode_audio_delta_event({"type": "response.audio.delta"})
+
+
+def test_decode_audio_delta_event_rejects_a_non_string_delta_field() -> None:
+    with pytest.raises(ValueError):
+        realtime_smoke.decode_audio_delta_event({"type": "response.audio.delta", "delta": 123})
+
+
+def test_decode_audio_delta_event_round_trips_the_real_server_side_serializer() -> None:
+    """Cross-checks this script's decode against the REAL server-side
+    serializer (``lobes.realtime._wire.serialize_audio_delta``) — the
+    outbound-direction counterpart of the append round-trip test above.
+    """
+    from lobes.realtime._wire import serialize_audio_delta
+
+    pcm = bytes(range(256)) * 3
+    event = serialize_audio_delta(pcm, response_id="resp_1", item_id="item_1")
+    assert realtime_smoke.decode_audio_delta_event(event) == pcm
 
 
 # --- phrase / keyword matching ------------------------------------------------
@@ -463,3 +556,27 @@ def test_a_writer_survives_a_concurrent_reader_waiting_on_a_timeout() -> None:
     finally:
         client_sock.close()
         peer.close()
+
+
+# --- acceptance grep gate (issue #151 t9): no in-repo client sends raw binary audio --
+
+
+def test_no_in_repo_client_calls_send_binary_for_audio() -> None:
+    """Issue #151's honesty condition: "after the PR, grep finds no in-repo
+    client sending raw binary audio frames." #149 shipped audio-in as raw
+    BINARY WebSocket frames; #151 supersedes that with the base64
+    ``input_audio_buffer.append`` JSON event wire (:func:`build_append_event`
+    / :meth:`WebSocketClient.send_json_event`).
+
+    ``send_binary``/``OPCODE_BINARY`` stay defined in this script as a
+    generic RFC 6455 primitive (frame-level tests above still exercise them
+    directly), so this checks for an actual CALL SITE — ``.send_binary(`` —
+    in either in-repo client's source, not the method's mere existence.
+    """
+    voice_loop_path = _SCRIPT_PATH.parent / "realtime-voice-loop.py"
+    for path in (_SCRIPT_PATH, voice_loop_path):
+        src = path.read_text(encoding="utf-8")
+        call_sites = [
+            line for line in src.splitlines() if ".send_binary(" in line and "def " not in line
+        ]
+        assert not call_sites, f"{path.name} still sends raw binary audio: {call_sites}"
