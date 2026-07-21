@@ -246,9 +246,17 @@ Once armed, a committed turn is generated through the gateway's own
 reply; `OPENAI_MODEL` overrides; a lane this box does not host surfaces as
 `generate_failed` with `hosted_by`, never a silent fallback), synthesized by
 Chatterbox and streamed back as 24 kHz deltas that never resample. Speaking
-during playback **interrupts**: generate and TTS are both cancelled, the
-undelivered remainder is never sent, and `response.interrupted` goes out —
-only the plausibly-heard prefix enters history. New machinery:
+during playback is *meant to* **interrupt**: generate and TTS are both
+cancelled, the undelivered remainder is never sent, and
+`response.interrupted` goes out — only the plausibly-heard prefix enters
+history. That contract is implemented in `_floor.py` and offline-proven,
+but the 2026-07-22 live run found it **inert**: the route delivered audio
+as fast as the socket drained (measured 2–4 ms for 7.5–8.5 s of speech),
+so the floor left `SPEAKING` before the user had heard two words and a
+barge-in landed while it was already `LISTENING` — a new turn opened and
+`response.interrupted` never fired. 0.54.1 paces delivery to the playhead
+(`delivery_pause_ms`, ≤ 400 ms lead) to close that gap; barge-in itself
+is still UNVALIDATED live (#108). New machinery:
 `_floor.py` (explicit floor/turn state machine, per-stage 60 s deadlines →
 `response_timeout` rather than a wedged session), `_turn.py` (generate
 payload shaping), per-session in-memory history + system prompt, and
@@ -259,11 +267,19 @@ knobs: `BARGE_IN_WINDOW_MS` (750; a guard window, not a delay),
 carry `at_ms` and `reason`, so VAD tuning is observable live. A **local-only**
 Astro harness under `site/` drives all of it from a browser (real mic, live
 event stream, audio out) through a local credential-injecting WebSocket proxy
-reached via `ssh -L` — never deployed; CI only builds it. **DECLARED and
-offline-proven, NOT validated (#108):** every decision lives in stdlib
-modules the offline suite covers and `app.py` stays a `pragma: no cover`
-shell, but no live acceptance transcript for this work has landed under
-`docs/evidence/` yet. On muting, note the deliberately narrow rule
+reached via `ssh -L` — never deployed; CI only builds it. **PARTIALLY
+validated (#108):** every decision lives in stdlib modules the offline
+suite covers and `app.py` stays a `pragma: no cover` shell. The live
+acceptance transcript has now landed
+(`docs/evidence/2026-07-22-accept-realtime-voice-to-voice-spark.txt`,
+2026-07-22, DGX Spark GB10) and it is **split** — voice-to-voice works
+end-to-end (armed session → generate → Chatterbox reply streamed back as
+deltas), and **barge-in does not**, for the delivery-pacing reason above.
+Treat that transcript as evidence for the conversation loop only; it
+predates the 0.54.1 pacing fix, so it is not evidence for barge-in either
+way. Still UNVALIDATED: barge-in (re-run needed against 0.54.1), a real
+microphone (the run used synthesized audio), concurrent sessions, and the
+VAD-unavailable path. On muting, note the deliberately narrow rule
 (deviation `d1`): **automatic** mute-during-playback stays FORBIDDEN — it is
 the AEC substitute that makes barge-in impossible, since you cannot interrupt
 a machine that has stopped listening — while **user-initiated** mute/mic-off
