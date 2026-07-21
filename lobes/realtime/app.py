@@ -439,27 +439,6 @@ def _build_bridge(  # pragma: no cover
     )
 
 
-def _self_cancelled() -> bool:  # pragma: no cover
-    """True when THIS task is the one being cancelled, not just its child.
-
-    ``_drive_response`` awaits two child tasks that barge-in deliberately
-    cancels, so a :class:`asyncio.CancelledError` there is usually an ordinary,
-    already-handled interruption. But the coroutine also runs inside a tracked
-    ``_run_response`` task that session teardown cancels — and at teardown BOTH
-    are true at once, because the floor's ``close()`` fires the same cancel
-    hooks barge-in does.
-
-    Without this distinction the teardown case silently loses: the driver would
-    catch its own cancellation, return normally, and carry on to flush a socket
-    that is going away — and the task would report itself completed rather than
-    cancelled to whoever cancelled it. ``Task.cancelling()`` is what separates
-    the two (non-zero only when cancellation was requested on this task);
-    ``requires-python = ">=3.12"`` guarantees it exists.
-    """
-    task = asyncio.current_task()
-    return task is not None and task.cancelling() > 0
-
-
 class _ActiveResponse:  # pragma: no cover
     """The two in-flight calls of ONE response, and the hooks that kill them.
 
@@ -646,15 +625,18 @@ async def _drive_response(  # pragma: no cover
     if request is None:
         return  # the turn was interrupted or failed before we got here
     active.generate_task = asyncio.create_task(_post_generate(request))
+    # asyncio.wait(), not `await task`. Barge-in cancels the CHILD, and wait()
+    # reports that as ``task.cancelled()`` rather than raising CancelledError
+    # here — while OUR OWN cancellation (session teardown cancels the tracked
+    # _run_response task this runs inside) still propagates straight out of
+    # wait(), with no handler that could swallow it. Awaiting the task directly
+    # makes both arrive as the same exception, and telling them apart after the
+    # fact is exactly the mistake that lets a torn-down session keep running.
+    await asyncio.wait({active.generate_task})
+    if active.generate_task.cancelled():
+        return  # barge-in or teardown; the floor already emitted
     try:
-        status_code, body = await active.generate_task
-    except asyncio.CancelledError:
-        # Barge-in cancelled the CHILD and the floor already emitted the
-        # interruption, so there is nothing left to do — but only swallow that
-        # when this task is not itself being cancelled (see _self_cancelled).
-        if active.cancelled and not _self_cancelled():
-            return
-        raise
+        status_code, body = active.generate_task.result()
     except httpx.TimeoutException as exc:
         bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
         return
@@ -677,14 +659,15 @@ async def _drive_response(  # pragma: no cover
             lane=VOICE_LANE,
         )
     )
+    # Same shape as the generate stage above, for the same reason: a cancelled
+    # synthesis is barge-in's business, our own cancellation is teardown's, and
+    # wait() keeps them distinguishable instead of collapsing both into one
+    # CancelledError this coroutine would have to sort out by hand.
+    await asyncio.wait({active.tts_task})
+    if active.tts_task.cancelled():
+        return
     try:
-        pcm = await active.tts_task
-    except asyncio.CancelledError:
-        # Same rule as the generate stage above: a cancelled synthesis is
-        # barge-in's business, our own cancellation is teardown's.
-        if active.cancelled and not _self_cancelled():
-            return
-        raise
+        pcm = active.tts_task.result()
     except httpx.TimeoutException as exc:
         bridge.fail_tts(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
         return

@@ -1392,19 +1392,21 @@ def test_a_trigger_arriving_inside_the_guard_window_answers_nothing() -> None:
 
 
 def test_app_py_never_swallows_its_own_cancellation() -> None:
-    """Every ``except asyncio.CancelledError`` in app.py must re-raise unless it
-    has proven the cancellation belongs to a CHILD task.
+    """No ``except asyncio.CancelledError`` in app.py may return instead of re-raising.
 
     ``_drive_response`` runs inside a tracked ``_run_response`` task that session
-    teardown cancels, while barge-in cancels the two child tasks it awaits. At
-    teardown both are true at once, so an unguarded ``return`` would let the
-    driver ignore its own cancellation, flush a socket that is going away, and
-    report itself completed to whoever cancelled it.
+    teardown cancels, while barge-in cancels the two child tasks it awaits.
+    Catching both as one exception and sorting them out afterwards is how a
+    torn-down session keeps running: the driver returns normally, flushes a
+    socket that is going away, and reports itself COMPLETED to whoever cancelled
+    it. So the route does not await those children directly at all — it uses
+    ``asyncio.wait()``, which surfaces a cancelled child as ``task.cancelled()``
+    while letting this task's own cancellation propagate untouched.
 
-    Structural (AST) rather than behavioural because app.py imports fastapi and
-    is never executed by the offline suite — the same reason its routes carry
-    ``pragma: no cover``. A grep would not do: the guard is a condition, not a
-    token.
+    That leaves every remaining handler free to re-raise unconditionally, which
+    is what this asserts. Structural (AST) because app.py imports fastapi and is
+    never executed by the offline suite — the same reason its routes carry
+    ``pragma: no cover``.
     """
     tree = ast.parse(_app_source())
 
@@ -1421,14 +1423,41 @@ def test_app_py_never_swallows_its_own_cancellation() -> None:
     for handler in handlers:
         returns = [node for node in ast.walk(handler) if isinstance(node, ast.Return)]
         raises = [node for node in ast.walk(handler) if isinstance(node, ast.Raise)]
-        if not returns:
-            assert raises, "a CancelledError handler that neither returns nor re-raises"
-            continue
-        # It returns on some path, so it MUST also re-raise on another, and the
-        # returning path must be guarded by the self-cancellation check.
-        assert raises, f"CancelledError handler at line {handler.lineno} never re-raises"
-        guard = ast.dump(ast.Module(body=handler.body, type_ignores=[]))
-        assert "_self_cancelled" in guard, (
-            f"CancelledError handler at line {handler.lineno} returns without "
-            "checking _self_cancelled() — it can swallow this task's own cancellation"
+        assert not returns, (
+            f"CancelledError handler at line {handler.lineno} returns — it can swallow "
+            "this task's own cancellation. Use asyncio.wait() and check "
+            "task.cancelled() instead of catching the child's cancellation here."
         )
+        assert raises, f"CancelledError handler at line {handler.lineno} never re-raises"
+
+
+def test_app_py_waits_on_its_child_tasks_instead_of_awaiting_them() -> None:
+    """The generate and TTS stages must go through ``asyncio.wait()``.
+
+    This is the mechanism the test above depends on: awaiting a child directly
+    collapses "my child was cancelled by barge-in" and "I was cancelled by
+    teardown" into one indistinguishable CancelledError.
+    """
+    node, _src = _function("_drive_response")
+    waits = [
+        child
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "wait"
+    ]
+    assert len(waits) >= 2, (
+        "_drive_response should await its generate and TTS tasks via asyncio.wait(), "
+        f"found {len(waits)} wait() call(s)"
+    )
+    cancelled_checks = [
+        child
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "cancelled"
+    ]
+    assert len(cancelled_checks) >= 2, (
+        "each waited task must be checked with task.cancelled() before its result "
+        f"is read, found {len(cancelled_checks)} check(s)"
+    )

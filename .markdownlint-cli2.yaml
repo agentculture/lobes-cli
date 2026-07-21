@@ -15,8 +15,18 @@ config:
     siblings_only: true
 
 ignores:
-  - "node_modules/**"
+  # Nested, not just top-level: the Astro harness (issue #151) installs its own
+  # site/node_modules, whose third-party READMEs are not ours to reformat. A
+  # bare "node_modules/**" matches only the repo root and let thousands of
+  # vendored-README violations into the lint job the moment site/ existed.
+  - "**/node_modules/**"
   - ".local/**"
+  # Astro build output — generated, and gitignored inside site/ anyway.
+  - "**/dist/**"
+  # devague working state (review/question artifacts). Gitignored, so CI never
+  # sees them, but they exist locally and would otherwise make a local lint run
+  # disagree with CI — the same generated-not-authored rationale as docs/specs.
+  - ".devague/**"
   # Internal planning artifacts (design specs, implementation plans) embed nested
   # fenced code blocks that trigger markdownlint violations not worth reformatting.
   - "docs/superpowers/**"
