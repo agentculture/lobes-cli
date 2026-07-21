@@ -28,6 +28,7 @@ import importlib.util
 import json
 import os
 import queue
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,10 @@ _spec = importlib.util.spec_from_file_location("realtime_smoke", SMOKE)
 rs = importlib.util.module_from_spec(_spec)
 sys.modules["realtime_smoke"] = rs
 _spec.loader.exec_module(rs)
+
+# Generous enough for a long spoken reply, short enough that a wedged audio
+# backend cannot strand the conversation.
+PLAYBACK_TIMEOUT_S = 60
 
 RATE = 16000
 CHUNK_BYTES = RATE * 2 * 32 // 1000  # 32 ms of PCM16 mono = 1024 bytes
@@ -107,7 +112,14 @@ def speak(base_url: str, api_key: str | None, text: str, sink: str | None = None
     players = [["paplay", f"--device={sink}", str(tmp)]] if sink else []
     players += [["paplay", str(tmp)], ["pw-play", str(tmp)], ["aplay", "-q", str(tmp)]]
     for player in players:
-        r = subprocess.run(player, capture_output=True)
+        # Timeout is mandatory, not defensive: paplay was OBSERVED hanging on a
+        # sink whose ALSA device another process held exclusively. With the mic
+        # muted for the duration, a hang here deafens the session forever.
+        try:
+            r = subprocess.run(player, capture_output=True, timeout=PLAYBACK_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            print(f"  [playback timed out via {player[0]} — trying the next backend]", flush=True)
+            continue
         if r.returncode == 0:
             tmp.unlink(missing_ok=True)
             return
@@ -171,8 +183,16 @@ def main() -> int:
         while not stop.is_set():
             try:
                 _fin, opcode, payload = client.read_frame(timeout=1.0)
-            except Exception:
-                continue
+            except socket.timeout:
+                continue  # just a quiet second — keep listening
+            except Exception as exc:
+                # EOF / FrameReadError means the session is GONE. Retrying would
+                # spin forever and leave the main loop waiting out its idle
+                # timeout, which reads as "nobody spoke" rather than "the
+                # connection died".
+                print(f"  [session ended: {type(exc).__name__}: {exc}]", flush=True)
+                stop.set()
+                return
             if opcode == rs.OPCODE_PING:
                 # MUST answer, or the server closes the session. uvicorn pings
                 # every ~20s and drops a peer that never pongs — which is why a
@@ -220,6 +240,7 @@ def main() -> int:
             "-q",
         ],
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     read_bytes = CHUNK_BYTES * args.channels  # stereo delivers 2x per mono chunk
 
@@ -266,7 +287,9 @@ def main() -> int:
             else:
                 raw = mic.stdout.read(read_bytes)
             if not raw:
-                break
+                print("  [mic stopped producing audio — ending session]", flush=True)
+                stop.set()
+                return
             chunk = to_mono(raw)
             # While speaking, send silence instead of mic audio: without AEC the
             # mic hears the speakers and the machine transcribes itself.

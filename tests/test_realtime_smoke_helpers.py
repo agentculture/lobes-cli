@@ -440,13 +440,26 @@ def test_a_writer_survives_a_concurrent_reader_waiting_on_a_timeout() -> None:
         for _ in range(20):  # keep writing while the reader waits
             client.send_binary(b"\x00" * 1024)
         t.join(timeout=5)
+        # Assert the join actually completed: if the reader ever deadlocks,
+        # this is the line that should say so.
+        assert not t.is_alive(), "reader thread did not finish — possible deadlock"
 
         assert not errors, f"reader raised while a writer was active: {errors}"
+        # 1024 > 125, so each frame carries a 16-bit extended length:
+        # 2 base + 2 length + 4 mask = 8 bytes of overhead.
+        expected = 20 * (1024 + 8)
+        # Drain until the full total arrives: a stream socket may return fewer
+        # bytes than asked for even when more are queued, so a single recv()
+        # would be flaky rather than wrong.
+        got = bytearray()
+        peer.settimeout(5)
+        while len(got) < expected:
+            chunk = peer.recv(expected - len(got))
+            if not chunk:
+                break
+            got.extend(chunk)
         # Every frame arrived intact and in order — no partial/torn writes.
-        got = peer.recv(1 << 20)
-        # 1024 > 125, so the frame carries a 16-bit extended length:
-        # 2 base + 2 length + 4 mask = 8 bytes of overhead per frame.
-        assert len(got) == 20 * (1024 + 8)
+        assert len(got) == expected
     finally:
         client_sock.close()
         peer.close()

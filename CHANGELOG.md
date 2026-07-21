@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.53.1] - 2026-07-21
+
+### Fixed
+
+- Six defects in the voice loop and its tests, all found by review (Qodo) and all accepted: the event reader swallowed EVERY exception from `read_frame` and retried, so an EOF after a disconnect became an endless spin and the main loop waited out its idle timeout — a dead session reading as 'nobody spoke' (timeouts now continue, anything else ends the session and says why); `speak()` ran the audio player with no timeout, which is not hypothetical — paplay was OBSERVED hanging on a sink whose ALSA device another process held, and with the mic muted for the duration that hang deafens the session permanently (now a bounded 60s per backend, falling through to the next); a mid-session mic EOF broke the feeder loop without stopping the session, faking silence again; `arecord`'s stderr was never piped, so the 'no audio' failure message could not actually quote the ALSA error it promised to; and two test weaknesses — a single `recv()` asserting an exact byte count where a stream socket may legitimately return less (now drains to the expected total, verified stable over 12 consecutive runs), and a `join(timeout=...)` that never asserted the thread finished, which is precisely where a deadlock should be reported.
+
 ## [0.53.0] - 2026-07-21
 
 ### Added
