@@ -340,6 +340,184 @@ describe("the inbound half", () => {
   });
 });
 
+describe("mute (issue #151 t18, deviation d1)", () => {
+  it("disables the mute control before the mic is armed", () => {
+    const scene = island();
+    const muteButton = scene.root.querySelector<HTMLButtonElement>(".mic-mute-button");
+    expect(muteButton?.disabled).toBe(true);
+    expect(muteButton?.textContent).toBe("Mute mic");
+  });
+
+  it("mutes and unmutes from its own control, independent of start/stop", async () => {
+    const scene = island();
+    await scene.handle.start();
+    const muteButton = scene.root.querySelector<HTMLButtonElement>(".mic-mute-button");
+    expect(muteButton?.disabled).toBe(false);
+
+    muteButton?.click();
+    expect(scene.state()).toBe("muted");
+    expect(scene.text(".mic-chip-label")).toBe("Muted");
+    expect(muteButton?.textContent).toBe("Unmute mic");
+    expect(muteButton?.getAttribute("aria-pressed")).toBe("true");
+    // The start/stop control reads exactly as it did while listening —
+    // muting never looks like stopping.
+    expect(scene.text(".mic-button")).toBe("Stop mic & playback");
+
+    muteButton?.click();
+    expect(scene.state()).toBe("listening");
+    expect(muteButton?.textContent).toBe("Mute mic");
+    expect(muteButton?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("keeps the device held while muted: no track released, capture keeps running", async () => {
+    const scene = island();
+    await scene.handle.start();
+    scene.handle.setMuted(true);
+
+    expect(scene.state()).toBe("muted");
+    expect(scene.stream.tracks[0].stopped).toBe(false);
+    // The worklet keeps emitting — mic-capture.ts never learns it is muted
+    // (see its own module doc): "frames captured" still climbs.
+    scene.node.emit(micBlock(1920));
+    expect(scene.text(".mic-fact:nth-child(3) dd")).toBe("1");
+  });
+
+  it("withholds outbound frames while muted and resumes them on unmute", async () => {
+    const sent: AppendEvent[] = [];
+    const scene = island({}, { send: (event) => sent.push(event) });
+    await scene.handle.start();
+
+    scene.node.emit(micBlock(1920));
+    expect(sent).toHaveLength(1);
+    expect(scene.text(".mic-fact:nth-child(4) dd")).toBe("1"); // frames sent
+
+    scene.handle.setMuted(true);
+    scene.node.emit(micBlock(1920));
+    expect(sent).toHaveLength(1); // nothing new left the tab
+    expect(scene.text(".mic-fact:nth-child(3) dd")).toBe("2"); // captured keeps counting
+    expect(scene.text(".mic-fact:nth-child(4) dd")).toBe("1"); // sent stays frozen
+
+    scene.handle.setMuted(false);
+    scene.node.emit(micBlock(1920));
+    expect(sent).toHaveLength(2);
+    expect(scene.text(".mic-fact:nth-child(4) dd")).toBe("2");
+  });
+
+  it("does not interrupt playback when the human mutes mid-reply (plan risk r8)", async () => {
+    const scene = island();
+    await scene.handle.start();
+    scene.serve({ type: "response.audio.delta", delta: replyDelta(1000) });
+    expect(scene.state()).toBe("speaking");
+
+    scene.handle.setMuted(true);
+
+    // Muting is not barge-in: nothing scheduled is stopped, and the chip
+    // reads "Muted", never an interruption.
+    expect(scene.context.sources.every((source) => source.stopped)).toBe(false);
+    expect(scene.state()).toBe("muted");
+    expect(scene.text(".mic-playback")).not.toContain("interrupted");
+
+    // Reply audio keeps arriving and keeps playing normally while muted.
+    scene.serve({ type: "response.audio.delta", delta: replyDelta(200) });
+    expect(scene.context.sources).toHaveLength(2);
+    expect(scene.context.sources.every((source) => source.stopped)).toBe(false);
+    expect(scene.state()).toBe("muted");
+  });
+
+  it("dispatches an honest client-side marker on window, never a server wire event shape", async () => {
+    const scene = island();
+    await scene.handle.start();
+
+    const seen: unknown[] = [];
+    const onWindowEvent = (event: Event) => seen.push((event as CustomEvent).detail);
+    window.addEventListener("lobes:realtime-event", onWindowEvent);
+    try {
+      scene.handle.setMuted(true);
+      scene.handle.setMuted(false);
+    } finally {
+      window.removeEventListener("lobes:realtime-event", onWindowEvent);
+    }
+
+    expect(seen).toEqual([
+      expect.objectContaining({ type: "client.mic_muted", origin: "client" }),
+      expect.objectContaining({ type: "client.mic_unmuted", origin: "client" }),
+    ]);
+    for (const detail of seen) {
+      const type = (detail as { type: string }).type;
+      expect(type).toMatch(/^client\.mic_/);
+      // Never one of the real /v1/realtime wire event names this same
+      // window feed carries once t13 is wired up (see realtime-events.ts).
+      expect(type).not.toBe("error");
+      expect(type.startsWith("response.")).toBe(false);
+      expect(type.startsWith("session.")).toBe(false);
+    }
+  });
+
+  it("is a no-op when not armed, and never fires the window event", () => {
+    const scene = island();
+    const seen: unknown[] = [];
+    const onWindowEvent = (event: Event) => seen.push((event as CustomEvent).detail);
+    window.addEventListener("lobes:realtime-event", onWindowEvent);
+    try {
+      scene.handle.setMuted(true);
+    } finally {
+      window.removeEventListener("lobes:realtime-event", onWindowEvent);
+    }
+    expect(scene.handle.isMuted()).toBe(false);
+    expect(seen).toEqual([]);
+  });
+
+  it("resets to unmuted on a fresh start after mic off — the same gesture path as the first start", async () => {
+    const scene = island();
+    await scene.handle.start();
+    scene.handle.setMuted(true);
+    expect(scene.state()).toBe("muted");
+
+    await scene.handle.stop();
+    expect(scene.stream.tracks[0].stopped).toBe(true); // mic off: genuinely released
+    expect(scene.handle.isMuted()).toBe(false);
+
+    await scene.handle.start();
+    expect(scene.state()).toBe("listening");
+    expect(scene.text(".mic-mute-button")).toBe("Mute mic");
+  });
+
+  it("mic off (stop) still fully releases the device even while muted", async () => {
+    const scene = island();
+    await scene.handle.start();
+    scene.handle.setMuted(true);
+
+    await scene.handle.stop();
+
+    expect(scene.state()).toBe("stopped");
+    expect(scene.stream.tracks[0].stopped).toBe(true);
+    expect(scene.context.closed).toBe(true);
+  });
+
+  it("keeps muted, listening, and mic-off as three mutually distinct words and data-states", async () => {
+    const scene = island();
+    await scene.handle.start();
+    const listeningLabel = scene.text(".mic-chip-label");
+    const listeningDataState = scene.state();
+
+    scene.handle.setMuted(true);
+    const mutedLabel = scene.text(".mic-chip-label");
+    const mutedDataState = scene.state();
+
+    await scene.handle.stop();
+    const stoppedLabel = scene.text(".mic-chip-label");
+    const stoppedDataState = scene.state();
+
+    // Three different words in the chip...
+    expect(new Set([listeningLabel, mutedLabel, stoppedLabel]).size).toBe(3);
+    // ...backing three different `data-state` values, which is what drives
+    // the three distinct dot-shape rules (circle / ring / square) in
+    // MicIsland.astro's stylesheet — jsdom does not compute CSS, so the
+    // shape rule itself is a visual/manual check, not asserted here.
+    expect(new Set([listeningDataState, mutedDataState, stoppedDataState]).size).toBe(3);
+  });
+});
+
 describe("mounting", () => {
   let root: HTMLElement;
 

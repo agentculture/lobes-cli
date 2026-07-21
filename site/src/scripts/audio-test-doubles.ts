@@ -16,6 +16,18 @@
  * a live mic track is the one thing this island must never do (it is what
  * barge-in forecloses), so the double makes an attempt a loud test failure
  * rather than something a reviewer has to notice.
+ *
+ * Revisited for issue #151 t18 (deviation d1) and left AS-IS, deliberately.
+ * d1 allows a genuinely new thing — a user clicking a mute control — but the
+ * mute this repo built for it (`mic-island.ts`'s outbound relay) never
+ * assigns this property at all: it withholds an already-encoded frame one
+ * layer above the device, not by gating the device. Nothing legitimate ever
+ * needs this setter to accept a value, so the tripwire keeps throwing
+ * unconditionally — the same hard stop it has always been, for both the
+ * automatic mute d1 still forbids and any accidental use of this specific
+ * property by a future change. If a later task DOES choose this mechanism
+ * for a user-triggered mute, this is the setter that would need to learn the
+ * difference between a click and a reaction — narrower, not deleted.
  */
 
 import type {
