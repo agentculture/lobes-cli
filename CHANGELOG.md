@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.3] - 2026-07-21
+
+### Changed
+
+- The `/v1/realtime` route is split into `_open_session`, `_arm_segmenter`, `_to_pcm16k`, `_emit_turn_events`, `_transcribe_turn`, and `_pump_session` (SonarCloud S3776: cognitive complexity 30 against a limit of 15). Behaviour is unchanged and, since the route carries no unit coverage by design, the refactor was gated on a fresh live run at both wire rates rather than on the offline suite alone.
+
+### Fixed
+
+- The `/v1/realtime` handshake forwarded the caller's `Authorization` (and `Cookie`) to the realtime bridge. The credential is spent the moment the gateway's own inbound gate validates it and the bridge has no auth of its own, so forwarding it only widened a gateway key's blast radius to the bridge's logs and telemetry. Both headers are now dropped from the forwarded handshake (Qodo).
+- A dead realtime bridge could strand a gateway handler thread. When the upstream pump ended it half-closed the client (`SHUT_WR`), which does NOT wake a `recv` blocked on that same socket — so an idle client left the thread parked until it happened to speak or hang up, leaking one thread per open session on every bridge restart. Each pump now shuts its peer down in both directions on exit. The unit test missed it because its fake socket returned EOF the moment its script ran dry; a fake that genuinely blocks is now the regression guard (Qodo).
+- `VAD_MAX_TURN_MS` was read unvalidated, so `0` or a negative value made the segmenter force-commit on the first chunk of every turn and keep committing — an event storm plus one STT forward per 32 ms chunk from a single typo in `.env`. Clamped to a 1000 ms floor, matching the existing `tts_speed`/`tts_concurrency` treatment (Qodo).
+
+## [0.52.2] - 2026-07-21
+
+### Changed
+
+- `/v1/realtime` is VALIDATED live on the DGX Spark GB10 (2026-07-21, `docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full session ran through the gateway tunnel against the real Silero model and the real Parakeet/Chatterbox sidecars — `session.created` through transcription on one connection, at 24000 Hz and the 16000 Hz passthrough, plus the 401 on an unauthenticated handshake and the 426 on a plain GET. The #149 motivating case (a five-word question that a client-side energy threshold shattered into "Ready, she") now arrives as one whole utterance with a single speech boundary pair. Four things stay UNVALIDATED and are documented as such: a real microphone (the live runs used synthesized audio), the VAD-unavailable path, concurrent sessions, and the max-turn force-commit.
+
+### Fixed
+
+- The gateway tunnel sent the bridge's FIRST FRAME back upstream instead of to the client. `read_head` returns any bytes the upstream packed into the same TCP segment as its 101, and `run_tunnel` wrote them to `upstream` — so `session.created` never reached the caller, and an unmasked server frame arrived at the bridge, which RFC 6455 §5.1 requires it to close on. Every session died the instant it opened. Caught by the first live run on a DGX Spark GB10, NOT by the unit suite, whose test had asserted the wrong direction as correct — the test is now inverted and joined by a regression test naming the failure.
+
+## [0.52.1] - 2026-07-21
+
+### Fixed
+
+- Pre-merge review of the realtime work caught three defects, all reproduced before fixing: the gateway's `/v1/realtime` handshake hung on every real connection (`BufferedReader.read(n)` waits to fill its buffer on a blocking socket, and a bridge that just accepted a session sends nothing more — now `read1()`, guarded by real-socketpair tests instead of a fake that returned early); Silero inference and scipy resampling ran on the bridge's single asyncio event loop, so one talking session starved every other session and every batch `/v1/audio/*` request (both now offloaded via `anyio.to_thread.run_sync`, matching the Chatterbox sidecar's convention, with the 16 kHz no-op passthrough left inline); and `scripts/realtime-smoke.py` desynced its frame parser if a read timed out between a frame's header and its payload.
+
+## [0.52.0] - 2026-07-21
+
+### Added
+
+- `/v1/realtime` — the server_vad WebSocket session the realtime bridge has promised since it shipped (issue #149). One connection replaces a WS-plus-batch-POST dance: stream PCM16 mono little-endian in (24000 Hz default, 16000 Hz accepted; the server resamples to 16 kHz itself) and receive `session.created` / `input_audio_buffer.speech_started` / `...speech_stopped` / `conversation.item.input_audio_transcription.completed` / `error` events back on the SAME connection, with committed turns transcribed by Parakeet. This redeems two in-tree IOUs — `app.py`'s own "PR2 adds the /v1/realtime WebSocket route" docstring and `realtime-pipeline.md`'s "planned for a later release" boundary claim — against the #149 baseline probe, where the deployed facade served four batch routes and no WebSocket, forcing reachy-mini-cli to endpoint from a client-side energy threshold that shattered sentences at inter-word dips.
+- `lobes/realtime/_segmenter.py` — the server_vad turn segmenter as a pure state machine over 512-sample / 32 ms chunks, with Silero injected as a callable so the offline suite tests segmentation with a fake VAD (no torch, no GPU). A never-silent turn force-commits at `VAD_MAX_TURN_MS` (default 30 s) with `reason="max_turn"` — a normal boundary event, never an error — so a stuck stream cannot grow bridge memory without bound.
+- `lobes/realtime/_session.py` — the session event schema, config parsing, teardown bookkeeping, and session-id-scoped logging (stdlib-only, so it is unit-tested without the `[realtime]` extra). A single `error` event type discriminated by `ErrorCode` is what makes VAD-down distinguishable from silence by event type alone; credential-shaped config fields are redacted before any log line.
+- `lobes/gateway/_realtime.py` — WebSocket passthrough in the stdlib gateway: a 101-upgrade and bidirectional byte relay fronting the bridge, so the session is reached through the same origin and the same opt-in `GATEWAY_API_KEY` bearer gate as every other `/v1/*` route. The handshake is relayed verbatim rather than reimplemented, both pump directions unwind on either side's close, and the session legs drop the HTTP read timeout that would otherwise kill a listening session mid-silence.
+- The `stt` role advertises `realtime_vad_session` on `lobes capabilities` and gateway `GET /capabilities`, so a client discovers the session surface instead of probing for it. Advertised only when the audio overlay is wired AND the lane is feasible — a text-only fleet or a `STT_FEASIBLE=false` deployment withholds the claim.
+- `scripts/realtime-smoke.py` — a live end-to-end session check (synthesize a known phrase, stream it, assert the boundary and transcript events arrive on one connection) written against a hand-rolled RFC 6455 client with no torch, no OpenAI SDK, and no WebSocket dependency, because keeping those out of a robot CLI's dependency tree is the point of server-side VAD. `docs/evidence/README-realtime-acceptance.md` documents the acceptance-evidence procedure.
+
+### Changed
+
+- `/v1/realtime` is DECLARED/UNVALIDATED live (#108): the offline suite proves the session, VAD, and config logic with a scripted fake VAD, but nothing has run against real Silero, real Parakeet, or hardware yet — no `docs/evidence/` transcript exists for issue #149. A plain GET to the route answers 426 Upgrade Required, and a declared-off `stt` lane answers 404 `role_infeasible` naming its peer; a session is never proxied cross-box, since the #129 proxy-lobes forwarder is POST-only.
+
+### Fixed
+
+- The realtime container never received its own VAD knobs: `_settings.py` read `VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_PREFIX_PADDING_MS`, `DEFAULT_TURN_DETECTION`, and `DEFAULT_AEC_MODE`, but neither `env.audio.example` nor the compose `environment:` block passed any of them, so every value silently pinned to its code default and no operator could tune them. All six (plus the new `VAD_MAX_TURN_MS`) are now wired with compose defaults identical to the code's, and `doctor --fix` heals a pre-existing deployment append-only, never rewriting an operator-customised line.
+
 ## [0.51.1] - 2026-07-20
 
 ### Added

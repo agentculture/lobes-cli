@@ -185,10 +185,46 @@ fixed GPU sidecars: **Parakeet** STT (`nvidia/parakeet-tdt-0.6b-v2`, NeMo ASR �
 `POST /v1/audio/transcriptions`) and **Chatterbox** TTS (Resemble AI, 0.5B,
 Apache-2.0 → `POST /v1/audio/speech`, 24 kHz, zero-shot voice cloning; it replaced
 the retired Magpie NIM — no NGC key). These two are hardcoded, **not** in the
-switchable catalog (`lobes/catalog.py`). See `docs/realtime-pipeline.md`,
-`docs/parakeet-stt.md`, `docs/chatterbox-tts.md`, and `docs/openai-api.md` (the full
-OpenAI-compatible endpoint surface). `lobes explain realtime` / `api` are the
-in-CLI versions.
+switchable catalog (`lobes/catalog.py`).
+
+**`GET /v1/realtime` — the server_vad WebSocket session (issue #149).**
+Beyond the batch facade, one WebSocket connection replaces separate STT
+calls with a persistent session: stream PCM16 mono little-endian in
+(**24000 Hz default, 16000 Hz accepted** — the server resamples down to
+16 kHz itself) and receive `session.created` /
+`input_audio_buffer.speech_started`/`...speech_stopped` /
+`conversation.item.input_audio_transcription.completed` / `error` events
+back on the SAME connection (event schema + config parsing in
+`lobes/realtime/_session.py`; the server_vad segmenter — a pure state
+machine, Silero injected as a callable — in `lobes/realtime/_segmenter.py`;
+the thin FastAPI route wiring both to real Silero + scipy in
+`lobes/realtime/app.py`). A never-silent turn force-commits at
+`VAD_MAX_TURN_MS` (default 30s) with `reason="max_turn"` — a normal
+boundary event, never an `error`. Sessions are ephemeral (no resume; any
+disconnect tears the session down and a reconnect gets a brand-new session
+id) and reached **through the gateway** (101-upgrade + byte tunnel,
+`lobes/gateway/_realtime.py`) under the same opt-in `GATEWAY_API_KEY`
+bearer gate; a declared-off `stt` lane 404s `role_infeasible` and the
+session is **never** proxied cross-box (the #129 proxy-lobes forwarder is
+POST-only). This redeems two in-tree IOUs — `app.py`'s own "PR2 adds the
+`/v1/realtime` WebSocket route" docstring promise, and
+`realtime-pipeline.md`'s former "planned for a later release" boundary
+claim — against the #149 baseline probe (the deployed facade served four
+batch routes and no WebSocket, forcing reachy-mini-cli's client-side
+energy-threshold endpointing). VALIDATED live on the DGX Spark GB10,
+2026-07-21 (`docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full
+session through the gateway tunnel against real Silero + Parakeet, at both
+24000 Hz and the 16000 Hz passthrough. The live run is also what caught the
+tunnel's leftover-direction bug — the bridge's first frame was being sent
+back upstream, killing every session the instant it opened, and the unit
+test had asserted that wrong direction as correct. Still UNVALIDATED: a real
+microphone (the runs used synthesized audio), the VAD-unavailable path,
+concurrent sessions, and the max-turn cap.
+
+See `docs/realtime-pipeline.md`, `docs/parakeet-stt.md`,
+`docs/chatterbox-tts.md`, and `docs/openai-api.md` (the full
+OpenAI-compatible endpoint surface, including `/v1/realtime`). `lobes
+explain realtime` / `api` are the in-CLI versions.
 
 ## Machine profiles and supported hardware
 

@@ -211,6 +211,66 @@ def test_fix_apply_heals_missing_only_and_never_touches_existing_lines(
     assert _tree_bytes(tmp_path) == snapshot
 
 
+def test_fix_apply_heals_missing_vad_keys_and_preserves_a_customised_one(
+    tmp_path, monkeypatch, capsys
+):
+    """issue #149 (task t5): env.audio.example now documents VAD_THRESHOLD,
+    VAD_SILENCE_MS, VAD_PREFIX_PADDING_MS, VAD_MAX_TURN_MS,
+    DEFAULT_TURN_DETECTION, DEFAULT_AEC_MODE. A pre-PR2 scaffold predates all
+    six — doctor --fix --apply must append the missing ones, and MUST NEVER
+    touch an operator-customised VAD_THRESHOLD already sitting in .env (the
+    append-only contract: a duplicate appended key would win under compose's
+    env_file last-wins semantics and silently clobber the real value)."""
+    _scaffold_fleet(tmp_path, audio=True)
+    _drop_env_keys(
+        tmp_path / ".env",
+        "VAD_THRESHOLD",
+        "VAD_SILENCE_MS",
+        "VAD_PREFIX_PADDING_MS",
+        "VAD_MAX_TURN_MS",
+        "DEFAULT_TURN_DETECTION",
+        "DEFAULT_AEC_MODE",
+    )
+    env_path = tmp_path / ".env"
+    # Simulate an operator who already tuned VAD_THRESHOLD away from the
+    # template default (0.5) before this heal ever existed — replacing the
+    # scaffolded line in place (not a duplicate) is what a hand-edited .env
+    # looks like.
+    with env_path.open("a", encoding="utf-8") as fh:
+        fh.write("VAD_THRESHOLD=0.7\n")
+    env_before = env_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    monkeypatch.setattr(_detect, "detect_card", lambda: _card("spark"))
+
+    payload = _doctor_json(capsys, "--fix", "--apply")
+    applied = payload["fix_applied"]
+    for key in (
+        "VAD_SILENCE_MS",
+        "VAD_PREFIX_PADDING_MS",
+        "VAD_MAX_TURN_MS",
+        "DEFAULT_TURN_DETECTION",
+        "DEFAULT_AEC_MODE",
+    ):
+        assert f"appended {key}" in applied, f"expected {key} to be healed, got {applied}"
+    # The customised key was already present — never re-appended, never healed.
+    assert not any("VAD_THRESHOLD" in a for a in applied)
+
+    env_after = env_path.read_text(encoding="utf-8")
+    assert env_after.startswith(env_before)  # every pre-existing line survives verbatim
+    appended = env_after[len(env_before) :]
+    assert "VAD_THRESHOLD" not in appended
+    assert env_after.count("VAD_THRESHOLD=") == 1
+    assert "VAD_THRESHOLD=0.7" in env_after  # the operator's value, untouched
+
+    # Healed keys carry env.audio.example's documented defaults.
+    assert "VAD_SILENCE_MS=600" in appended
+    assert "VAD_PREFIX_PADDING_MS=300" in appended
+    assert "VAD_MAX_TURN_MS=30000" in appended
+    assert "DEFAULT_TURN_DETECTION=server_vad" in appended
+    assert "DEFAULT_AEC_MODE=none" in appended
+
+
 def test_apply_without_fix_is_a_user_error(tmp_path, monkeypatch, capsys):
     _scaffold_fleet(tmp_path)
     monkeypatch.setenv("LOBES_DIR", str(tmp_path))

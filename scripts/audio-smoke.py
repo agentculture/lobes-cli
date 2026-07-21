@@ -260,7 +260,7 @@ def check_round_trip(chatterbox_url: str, stt_url: str) -> bool:
         wav_buf = io.BytesIO()
         with wave.open(wav_buf, "wb") as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)   # 16-bit
+            wf.setsampwidth(2)  # 16-bit
             wf.setframerate(24000)
             wf.writeframes(pcm)
         wav_data = wav_buf.getvalue()
@@ -268,23 +268,18 @@ def check_round_trip(chatterbox_url: str, stt_url: str) -> bool:
         # Step 3: transcribe WAV → text
         body = io.BytesIO()
         body.write(f"--{boundary}\r\n".encode())
-        body.write(
-            b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
-        )
+        body.write(b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n')
         body.write(b"Content-Type: audio/wav\r\n\r\n")
         body.write(wav_data)
         body.write(f"\r\n--{boundary}--\r\n".encode())
 
         req_trans = urllib.request.Request(trans_url, data=body.getvalue(), method="POST")
-        req_trans.add_header(
-            "Content-Type", f"multipart/form-data; boundary={boundary}"
-        )
+        req_trans.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         try:
             with urllib.request.urlopen(req_trans, timeout=60) as resp:
                 if resp.status != 200:
                     print(
-                        f"FAIL round-trip: transcriptions returned {resp.status} "
-                        f"for {text!r}"
+                        f"FAIL round-trip: transcriptions returned {resp.status} " f"for {text!r}"
                     )
                     all_ok = False
                     continue
@@ -318,9 +313,7 @@ def main() -> int:
     Returns:
         0 if all tests pass; 1 if any fail.
     """
-    parser = argparse.ArgumentParser(
-        description="Smoke test the lobes audio realtime surface."
-    )
+    parser = argparse.ArgumentParser(description="Smoke test the lobes audio realtime surface.")
     parser.add_argument(
         "--base-url",
         default="http://localhost:8080",
@@ -371,9 +364,7 @@ def main() -> int:
         print(f"\nTesting Chatterbox→Parakeet round-trip")
         print(f"  Chatterbox: {args.chatterbox_url}")
         print(f"  STT:        {args.stt_url}")
-        results.append(
-            ("round-trip", check_round_trip(args.chatterbox_url, args.stt_url))
-        )
+        results.append(("round-trip", check_round_trip(args.chatterbox_url, args.stt_url)))
     else:
         print(
             f"\nSKIP: Chatterbox sidecar not reachable at {args.chatterbox_url} "

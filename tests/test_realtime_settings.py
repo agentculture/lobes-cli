@@ -16,6 +16,7 @@ def test_defaults_point_at_the_fleet_compose_network() -> None:
     assert s.tts_speed == 125
     assert s.tts_concurrency == 1
     assert s.default_voice == ""  # Chatterbox default voice (empty = built-in)
+    assert s.vad_max_turn_ms == 30_000
 
 
 def test_overrides_and_trailing_slash_stripped() -> None:
@@ -46,6 +47,17 @@ def test_bad_numbers_fall_back_to_defaults() -> None:
     assert s.vad_threshold == 0.5
 
 
+def test_vad_max_turn_ms_default_and_override() -> None:
+    # Default mirrors _segmenter.py's DEFAULT_MAX_TURN_MS (30_000) — the two
+    # modules agree on the same number without importing each other (#149 t6).
+    assert build_settings({}).vad_max_turn_ms == 30_000
+    assert build_settings({"VAD_MAX_TURN_MS": "15000"}).vad_max_turn_ms == 15000
+
+
+def test_vad_max_turn_ms_bad_value_falls_back_to_default() -> None:
+    assert build_settings({"VAD_MAX_TURN_MS": "not-a-number"}).vad_max_turn_ms == 30_000
+
+
 def test_tts_concurrency_is_clamped_to_at_least_one() -> None:
     # Semaphore(0)/Semaphore(<0) would block every TTS request forever.
     assert build_settings({"TTS_CONCURRENCY": "0"}).tts_concurrency == 1
@@ -58,3 +70,18 @@ def test_tts_speed_is_clamped_to_at_least_one() -> None:
     assert build_settings({"TTS_SPEED": "0"}).tts_speed == 1
     assert build_settings({"TTS_SPEED": "-100"}).tts_speed == 1
     assert build_settings({"TTS_SPEED": "150"}).tts_speed == 150
+
+
+def test_vad_max_turn_ms_is_clamped_to_a_sane_floor() -> None:
+    """A non-positive cap would force-commit every chunk forever.
+
+    The segmenter commits once a turn reaches ``max_turn_ms``, so 0 or a
+    negative value turns every single 32 ms chunk into a boundary pair plus an
+    STT forward — an event storm from one typo in `.env`.
+    """
+    for bad in ("0", "-1", "-30000"):
+        assert build_settings({"VAD_MAX_TURN_MS": bad}).vad_max_turn_ms == 1_000
+    # Garbage falls back to the default, then clamps like anything else.
+    assert build_settings({"VAD_MAX_TURN_MS": "not-a-number"}).vad_max_turn_ms == 30_000
+    # A legitimate operator value passes through untouched.
+    assert build_settings({"VAD_MAX_TURN_MS": "45000"}).vad_max_turn_ms == 45_000

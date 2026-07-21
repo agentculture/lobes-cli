@@ -25,6 +25,7 @@ from lobes.roles import (
     ROLE_MAX_MODEL_LEN_ENV,
     ROLE_RESPONSIBILITIES,
     ROLES,
+    STT_REALTIME_RESPONSIBILITY,
     RoleInfo,
     build_role_registry,
     role_registry_from_env,
@@ -238,6 +239,54 @@ def test_audio_roles_loaded_when_audio_url_set() -> None:
         # Audio roles report the SAME gateway origin as the other roles (issue #87).
         assert info.endpoint == "http://localhost:8000"
         assert info.runtime  # a named audio runtime
+
+
+# ---------------------------------------------------------------------------
+# stt realtime/VAD session capability (issue #149, task t4)
+# ---------------------------------------------------------------------------
+
+
+def test_stt_advertises_realtime_capability_when_audio_overlay_configured() -> None:
+    """Positive: an audio-enabled fleet (AUDIO_URL wired, stt feasible) claims
+    the realtime/VAD session capability as an ADDITIVE token on stt's
+    responsibilities — the base tokens stay present too."""
+    registry = _registry(_full_env())
+    assert STT_REALTIME_RESPONSIBILITY in registry["stt"].responsibilities
+    assert "transcribe" in registry["stt"].responsibilities
+    assert "audio_input_to_text" in registry["stt"].responsibilities
+    # tts never claims it — the capability is stt-only.
+    assert STT_REALTIME_RESPONSIBILITY not in registry["tts"].responsibilities
+
+
+def test_stt_no_realtime_claim_on_text_only_fleet() -> None:
+    """Negative control for the test above: a text-only fleet (no `--audio`
+    overlay, AUDIO_URL unset) must not claim the realtime capability either —
+    without this, the positive assertion would be vacuous."""
+    registry = _registry(_primary_only_env())
+    assert registry["stt"].loaded is False
+    assert registry["stt"].responsibilities == ("transcribe", "audio_input_to_text")
+    assert STT_REALTIME_RESPONSIBILITY not in registry["stt"].responsibilities
+
+
+def test_stt_no_realtime_claim_when_lane_declared_infeasible() -> None:
+    """Honesty: even with AUDIO_URL configured, an operator-declared-off stt
+    lane (STT_FEASIBLE=false) must not claim a capability this machine
+    cannot serve — the existing feasible/loaded discipline, not a new
+    signal."""
+    env = _full_env()
+    env["STT_FEASIBLE"] = "false"
+    registry = _registry(env)
+    assert registry["stt"].feasible is False
+    assert registry["stt"].responsibilities == ("transcribe", "audio_input_to_text")
+    assert STT_REALTIME_RESPONSIBILITY not in registry["stt"].responsibilities
+
+
+def test_role_responsibilities_base_dict_never_carries_the_conditional_token() -> None:
+    """ROLE_RESPONSIBILITIES itself must stay a static, unconditional
+    description (test_static_responsibility_maps_cover_all_six_roles already
+    pins its exact stt value) — the realtime addition is applied only at
+    build time, never baked into the module-level dict."""
+    assert STT_REALTIME_RESPONSIBILITY not in ROLE_RESPONSIBILITIES["stt"]
 
 
 # ---------------------------------------------------------------------------

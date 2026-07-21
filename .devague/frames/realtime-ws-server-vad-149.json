@@ -1,0 +1,697 @@
+{
+  "slug": "realtime-ws-server-vad-149",
+  "title": "realtime WS server_vad (#149)",
+  "schema_version": 3,
+  "status": "exported",
+  "created": "2026-07-21T09:21:49Z",
+  "updated": "2026-07-21T10:09:22Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves /v1/realtime WebSocket sessions on the audio overlay: a client streams PCM over one connection, server-side Silero VAD (turn_detection: server_vad) emits speech-start/speech-stop boundary events, committed turns return as Parakeet transcription events on the same session, VAD failure is a named session error distinct from silence, and the stt role advertises the realtime capability \u2014 reachy-mini-cli deletes its client-side energy-threshold endpointing (issue #149, the PR2 app.py already promises)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "every announced behavior is demonstrated: WS session + boundary events + in-session transcripts by committed offline tests, the deployed-robot claim by a live acceptance transcript under docs/evidence/ before any validated wording (#108 rule)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "implement as ONE PR (PR2) on lobes/realtime + gateway + templates + docs; verify with the offline suite plus scripts-level live WS smoke against a deployed audio overlay"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/realtime/app.py gains the /v1/realtime WebSocket route its own docstring (line 11) promises; per the established split the route stays a thin shell and the session/VAD logic lands in a stdlib-only module mirroring audio_facade.py, importable without the [realtime] extra",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the offline unit suite imports and tests the session/VAD logic module with the [realtime] extra ABSENT; app.py stays a thin pragma-no-cover shell like the existing routes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the server_vad segmenter is a pure state machine over 512-sample/32ms PCM chunks (protocol.py's declared framing) with the Silero model injected as a callable, so the offline suite unit-tests segmentation with a fake VAD \u2014 no torch, no GPU (issue criterion 7)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "tests drive the segmenter with a scripted fake VAD through silence-speech-silence and assert boundary events, prefix padding, and silence-ms commit timing \u2014 no torch import anywhere in the test path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "committed turns are transcribed over the same session by forwarding to settings.stt_url (Parakeet), reusing the batch transcriptions forward pattern \u2014 one connection replaces WS-plus-separate-batch-POST (criterion 4)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "a committed turn yields a transcription event on the SAME connection carrying Parakeet's text; an STT backend failure surfaces as a named error event on the session, never a silently dropped turn",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "a session with server_vad armed emits a NAMED error event when the Silero model fails to load or is unavailable, so a consumer can tell no-speech from VAD-down (criterion 5); the /v1/health/ready aggregate stays a probe of the two HTTP backends",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "with Silero load forced to fail, a server_vad session receives a documented, named error event and no boundary events; a healthy-VAD silent session emits neither \u2014 the two are distinguishable by event type alone",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "the stt role advertises the realtime/VAD capability on both lobes capabilities and gateway GET /capabilities (criterion 6) \u2014 additive via ROLE_RESPONSIBILITIES beats a new RoleInfo schema field; either way test_cli_capabilities.py / test_colleague_contract.py and docs/colleague-stack.md move with it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "on an audio-enabled deployment both lobes capabilities and GET /capabilities show the realtime capability under stt; on a text-only fleet neither claims it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "the VAD knobs _settings.py already reads (VAD_THRESHOLD, VAD_SILENCE_MS, VAD_PREFIX_PADDING_MS, DEFAULT_TURN_DETECTION, DEFAULT_AEC_MODE) get wired through docker-compose.audio.yml's environment block and env.audio.example \u2014 today NEITHER carries them, so container settings silently pin to defaults; doctor --fix missing-only heal covers existing deployments",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "a fresh scaffold's compose passes every VAD_/AEC_/TURN_ key and env.audio.example documents each; doctor --fix on a pre-PR2 deployment heals the missing keys append-only, never rewriting an existing .env line",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "the WS handshake honors the same opt-in GATEWAY_API_KEY bearer gate as every /v1/* data-plane route, whichever reachability path is chosen",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "with GATEWAY_API_KEY set an unauthenticated /v1/realtime handshake is rejected before session allocation; with it unset behavior is byte-identical to the keyless contract",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "docs flip together: realtime-pipeline.md's Boundary section (which today records the WS as planned-for-a-later-release), openai-api.md's endpoint table, and the lobes explain realtime entry all gain /v1/realtime with the explicit dtype/channel/framing statement criterion 2 demands",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "after PR2 no doc records the WS as future work, openai-api.md lists /v1/realtime with dtype/channels/rate stated explicitly, and lobes explain realtime names the session surface \u2014 all flipped in the same PR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c10",
+      "kind": "assumption",
+      "text": "no new dependencies: the [realtime] extra and Dockerfile.realtime already ship fastapi, uvicorn, httpx, numpy, scipy, silero-vad, torch \u2014 the deployed image contains everything PR2 needs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "PR1 already landed PR2's config surface: _settings.py's VAD/turn-detection block (default_turn_detection=server_vad, default_aec_mode=none \u2014 AEC off by default, matching the issue's firmware-AEC note) is consumed by PR2, not invented",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "the batch routes /v1/audio/speech and /v1/audio/transcriptions stay byte-identical \u2014 reachy's measured-working links (gateway TTS, WAV to Parakeet) must not regress",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the existing batch-route tests (gateway audio routing/peer, facade parsers) pass unchanged and no PR2 hunk touches the speech/transcriptions request or response shapes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "no WebSocket peer-proxying in PR2: the #129 stt-lane proxy-lobes forwarder is POST-only; a declared-off stt lane 404s the /v1/realtime handshake role_infeasible with referral annotation (hosted_by) only",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "with the stt lane declared off, the /v1/realtime handshake gets the role_infeasible 404 naming hosted_by; no code path forwards a WebSocket across boxes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "server-side AEC stays optional and default-off in the session handshake \u2014 Reachy Mini's mic array cancels echo in firmware (issue note); AECMode plus default_aec_mode=none already encode this",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "a session that omits AEC config runs with aec none; enabling AEC is an explicit per-session opt-in and its absence changes nothing",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c15",
+      "kind": "non_goal",
+      "text": "no full OpenAI Realtime conversation surface: no response.create, no LLM turns, no TTS-out over the session \u2014 PR2 scope is audio-in, server_vad boundaries, transcription events (the issue's criteria stop there); the in-tree barge_in_/response-id machinery stays dormant",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c16",
+      "kind": "non_goal",
+      "text": "no reachy-mini-cli changes from here \u2014 their endpointing root-cause investigation (reachy-mini-cli#108) is theirs, and the issue states this ask does not depend on its outcome",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c17",
+      "kind": "non_goal",
+      "text": "silero-vad is not a switchable gear: catalog.py untouched; Parakeet and Chatterbox stay hardcoded sidecars (the established audio-overlay rule)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c18",
+      "kind": "audience",
+      "text": "reachy-mini-cli (the robot hearing path measured in #149) first; any OpenAI-Realtime-style consumer of the lobes audio overlay second",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "reachy-mini-cli can consume the session with plain websocket-client-level code \u2014 no torch, no OpenAI SDK requirement on the robot",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "the realtime container serves four batch routes and no WebSocket; consumers endpoint client-side \u2014 reachy's energy threshold shatters sentences at inter-word dips (measured: a five-word question arrives as 'Ready, she')",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the spec cites the #149 live probe (four batch routes, no WS) and the measured fragment transcripts as the baseline, not a generic problem statement",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c20",
+      "kind": "after_state",
+      "text": "a consumer opens ONE WebSocket to /v1/realtime, streams PCM, and receives server-side speech-start/speech-stop boundaries plus Parakeet transcripts for committed turns \u2014 client-side endpointing deleted",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "one connection suffices end-to-end \u2014 audio in, boundary events, transcript events \u2014 demonstrated by the live smoke script against a deployed overlay",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c21",
+      "kind": "why_it_matters",
+      "text": "a batch-only endpoint named realtime misleads every next consumer; server-side VAD is lobes' own recorded design (server_vad in protocol.py, the app.py PR2 IOU), and consuming it over WS keeps torch out of robot CLIs and their CI",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the spec cites the in-tree IOUs (app.py PR2 docstring, realtime-pipeline.md boundary section) rather than generic motivation",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c22",
+      "kind": "success_signal",
+      "text": "offline: the suite exercises VAD segmentation and session events with a fake VAD, no GPU; live: reachy's live-mic five-word question transcribes whole on the deployed fleet, recorded as an acceptance transcript under docs/evidence/ (#108)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "the offline suite runs green with no GPU and no [realtime] extra installed, and any validated wording lands only with the docs/evidence/ transcript (#108 rule)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c23",
+      "kind": "decision",
+      "text": "reachability (q1): /v1/realtime is served THROUGH the gateway \u2014 server.py gains WebSocket passthrough (101 upgrade + bidirectional socket relay); the bearer gate covers the handshake; the facade port stays unpublished",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "wire format (q2): the session accepts PCM16 mono little-endian at a session-declared input rate \u2014 24000 Hz default per protocol.py, 16000 Hz accepted; the server owns all resampling (scipy is already in the [realtime] extra)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "offline test depth (q3): keep the established split \u2014 stdlib-only session/VAD logic fully unit-tested offline with a fake VAD, route shells pragma-no-cover, live WS smoke via scripts/ \u2014 no fastapi in the dev env",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "session teardown is leak-free: a client disconnect in ANY state (idle, mid-speech, mid-transcription) closes the upstream leg, unwinds the gateway tunnel threads, and frees session buffers; close propagates in both directions \u2014 a dropped robot never strands a bridge session or a gateway thread",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "an offline test drives a session through connect-stream-disconnect at each state and asserts no leaked task/thread/buffer bookkeeping; the gateway tunnel unwinds both pump directions on either side's close",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "per-turn audio buffering is bounded: a documented max-turn length force-commits (or errors) with a named event when exceeded \u2014 a never-silent stream cannot grow bridge memory without limit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "the max-turn cap is a documented, env-tunable value; an offline test streams past it with a never-silent fake VAD and receives the documented commit-or-error event",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "session lifecycle is observable: session open/close, VAD arm/fail, and STT forward failures are logged with session ids in the bridge, and tunnel open/close in the gateway \u2014 lobes logs tells a session's story",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "grepping bridge logs for one session id reconstructs its lifecycle: open, VAD state, commits, errors, close",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "VAD state is per-session: concurrent sessions get isolated segmentation state (shared model, per-session iterator state or equivalent) \u2014 interleaved sessions never corrupt each other's boundaries",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "an offline test interleaves two sessions with different scripted fake-VAD patterns and asserts each gets exactly its own boundary events",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c30",
+      "kind": "assumption",
+      "text": "PROBED 2026-07-21: the silero-vad wheel bundles its model weights (silero_vad/data/silero_vad.jit + onnx variants, inspected in silero_vad-6.2.1-py3-none-any.whl) \u2014 VAD arms with no network egress at boot or session start",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the deployed container starts a server_vad session with egress blocked; if the >=5.1 float ever breaks the VADIterator API the image build pins tighter, never vendors the model",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "sessions are ephemeral: no resume across bridge/gateway restarts and no session state on disk \u2014 a dropped connection means the client reconnects and starts fresh",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "restart behavior is documented; no code path persists or restores session state, and reconnect-and-restart is stated as the client contract",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "live acceptance sequencing: the deployed facade installs lobes-cli[realtime]==MODEL_GEAR_VERSION from PyPI, so validating on the robot needs release then re-init/rebuild (PyPI CDN-lag gotcha), and the #108 rule wants an evidence transcript under docs/evidence/ before any validated claim",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "whether PR2 needs a concurrent-session cap on the gateway tunnel (ThreadingHTTPServer is thread-per-session; the expected consumer population is ~one robot) \u2014 default unbounded-but-documented, decide at implementation",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/realtime/app.py",
+      "finding": "docstring line 11 already promises PR2 adds the /v1/realtime WebSocket route to this same app; routes are thin pragma-no-cover shells over stdlib-tested helpers, and the batch transcriptions handler is the existing Parakeet forward to reuse for committed turns",
+      "seeds": [
+        "c2",
+        "c4"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/realtime/protocol.py + tests/test_realtime_protocol.py",
+      "finding": "TurnDetectionType.SERVER_VAD, AECMode, and the Silero framing contract (16 kHz, 512 samples, 32 ms) are shipped and unit-tested \u2014 but CLIENT_SAMPLE_RATE=24000 is also pinned and test-asserted as the OpenAI Realtime wire format, so the issue's 16 kHz streaming ask conflicts with the in-tree wire contract",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/realtime/_settings.py",
+      "finding": "the full VAD/turn-detection settings block already exists (vad_threshold 0.5, vad_silence_ms 600, vad_prefix_padding_ms 300, default_turn_detection server_vad, default_aec_mode none, barge_in_*) with a docstring saying it is for the realtime WS pipeline \u2014 PR1 landed PR2's config surface",
+      "seeds": [
+        "c11",
+        "c14"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/templates/fleet/env.audio.example + docker-compose.audio.yml environment block",
+      "finding": "grep finds NO VAD_/AEC_/TURN_ keys in either file \u2014 the settings module reads knobs the deployment never passes, so they silently pin to defaults inside the container; the passthrough plus doctor-heal coverage is real PR2 work",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "pyproject.toml [realtime] extra + lobes/templates/fleet/Dockerfile.realtime",
+      "finding": "fastapi, uvicorn, httpx, numpy, scipy, python-multipart, silero-vad, torch are all in the extra the image installs (lobes-cli[realtime]==MODEL_GEAR_VERSION from PyPI) \u2014 no dependency work, but live validation requires a published release first",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/gateway/server.py",
+      "finding": "stdlib ThreadingHTTPServer reverse proxy: _HOP_BY_HOP strips Upgrade, do_GET serves only health/status/capabilities/models, relay is buffered-or-SSE-rechunked \u2014 NO WebSocket passthrough exists, so criterion 1 (reachable through the gateway) is new tunnel machinery or a published-port decision; the opt-in GATEWAY_API_KEY bearer gate covers every /v1/* data-plane route and must cover the WS handshake too",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/gateway/_routing.py + _config.py",
+      "finding": "_config.py:328 already reserves audio_url for /v1/audio/* plus /v1/realtime in PR2; but is_audio_path matches only /v1/audio/* and the per-role map (#129) is POST-path-keyed, so /v1/realtime needs its own explicit routing branch; the stt-lane peer-proxy forwarder is POST-only \u2014 WS proxying would be new, unscoped machinery",
+      "seeds": [
+        "c12",
+        "c13"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/roles.py",
+      "finding": "stt role: ROLE_RESPONSIBILITIES ('transcribe', 'audio_input_to_text') is an additive tuple, while _audio_role builds a fixed RoleInfo schema (role/model/runtime/endpoint/path/context/quant/mtp/tools/...) \u2014 advertising realtime via a responsibility string is contract-compatible; a new RoleInfo field is a schema bump rippling into CLI, gateway, tests, and docs/colleague-stack.md",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/realtime-pipeline.md + docs/openai-api.md + lobes/explain/catalog.py",
+      "finding": "realtime-pipeline.md's Boundary section explicitly records the /v1/realtime WebSocket protocol as planned for a later release \u2014 PR2 redeems an in-tree IOU; openai-api.md's endpoint table and the explain catalog name the audio surface and must flip in the same PR",
+      "seeds": [
+        "c9",
+        "c15"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "pyproject.toml coverage omit list",
+      "finding": "app.py/__main__.py/tts_client.py/chatterbox_server.py are excluded because the offline CI env installs no [realtime] extra \u2014 the established policy is stdlib-only logic modules fully tested, route shells live-tested; criterion 7's offline WS smoke test either respects that split or changes the dev-env dependency policy",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "lobes/catalog.py (rule, via CLAUDE.md + realtime-pipeline.md)",
+      "finding": "Parakeet and Chatterbox are hardcoded sidecars, deliberately NOT in the switchable catalog \u2014 Silero VAD follows the same rule; no catalog entry",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "eidetic recall: spark-lobe go-live + audio-overlay repair + stt/tts referral (#129)",
+      "finding": "the Spark box dropped the audio overlay on 2026-07-14 but it was repaired/live by 2026-07-17 and the issue probed it live on 2026-07-21; stt/tts joined the referral/proxy contract in #129 \u2014 cross-box audio is declared/unvalidated, reinforcing that WS peer-proxying stays out",
+      "seeds": [
+        "c13",
+        "c16"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / adjacent-systems lens: gateway ThreadingHTTPServer threading + timeouts",
+      "finding": "a WS tunnel holds its handler thread for the session lifetime and must exempt the session socket from the request/read timeouts the relay applies to HTTP; thread-per-session is why the session-cap question exists \u2014 seeded the teardown requirement and the cap park",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / concurrency lens: silero VAD iterator state x concurrent sessions",
+      "finding": "the Silero model is shareable but segmentation state is per-stream; nothing in the spec said so until now \u2014 seeded the per-session-state requirement",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / failure-mode lens: never-silent stream, unbounded buffer",
+      "finding": "with VAD armed but silence never detected, per-turn PCM accumulates without bound in the bridge \u2014 seeded the max-turn cap requirement",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / observability lens: bridge + gateway logging",
+      "finding": "the batch routes log per-request via uvicorn; nothing specified session-scoped logging for long-lived WS state \u2014 seeded the session-id logging requirement",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / hidden-dependency lens: silero-vad model packaging (PROBED)",
+      "finding": "pip download silero-vad + wheel inspection in scratch: model weights ship inside the wheel (silero_vad/data/*.jit/.onnx) \u2014 no torch.hub or network fetch at load; NOTE pyproject floats silero-vad>=5.1 while PyPI is at 6.2.1, an unpinned major the image build absorbs",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / security lens: WS handshake auth + post-upgrade relay",
+      "finding": "CLEAN: the bearer gate covers the handshake (c8); post-upgrade bytes are opaque payload the gateway relays without interpretation; the facade stays authless inside the compose network \u2014 the existing trust model, unchanged; residual: key material never appears in session logs (folded into the logging requirement)",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / reversibility + migration lens: additive surface",
+      "finding": "CLEAN: no store or schema migration; rollback is the standing ops path (re-pin MODEL_GEAR_VERSION + rebuild); the batch routes are untouched (c12) so reverting PR2 restores the exact pre-PR2 surface",
+      "seeds": []
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / lifecycle lens: restart behavior",
+      "finding": "bridge/gateway restarts drop live sessions; nothing resumes them \u2014 made explicit as the ephemeral-sessions boundary instead of staying unstated",
+      "seeds": [
+        "c31"
+      ]
+    }
+  ]
+}
