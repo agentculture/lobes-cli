@@ -271,6 +271,72 @@ def test_fix_apply_heals_missing_vad_keys_and_preserves_a_customised_one(
     assert "DEFAULT_AEC_MODE=none" in appended
 
 
+def test_fix_apply_heals_missing_voice_turn_keys_and_preserves_a_customised_one(
+    tmp_path, monkeypatch, capsys
+):
+    """issue #151 (task t8): BARGE_IN_WINDOW_MS/BARGE_IN_MODEL were read by
+    _settings.py since #149 but never passed by docker-compose.audio.yml nor
+    documented in env.audio.example — dead knobs, permanently pinned to their
+    in-code default (the #149 s4 lesson recurring). TTS_CONCURRENCY had the
+    same gap (only ever referenced IN A COMMENT, never actually defined).
+    TTS_VOICE_CONCURRENCY (#151 t7) and DEFAULT_SYSTEM_PROMPT (#151 t8, new)
+    are wired the same way. doctor --fix --apply must append every missing
+    one, and MUST NEVER touch an operator-customised BARGE_IN_WINDOW_MS
+    already sitting in .env (append-only: a duplicate appended key would win
+    under compose's env_file last-wins semantics and silently clobber the
+    real value)."""
+    _scaffold_fleet(tmp_path, audio=True)
+    _drop_env_keys(
+        tmp_path / ".env",
+        "BARGE_IN_WINDOW_MS",
+        "BARGE_IN_MODEL",
+        "TTS_VOICE_CONCURRENCY",
+        "TTS_CONCURRENCY",
+        "DEFAULT_SYSTEM_PROMPT",
+    )
+    env_path = tmp_path / ".env"
+    # An operator who already tuned BARGE_IN_WINDOW_MS away from the template
+    # default (750) before this heal ever existed — replacing the scaffolded
+    # line in place (not a duplicate), same as a hand-edited .env looks like.
+    with env_path.open("a", encoding="utf-8") as fh:
+        fh.write("BARGE_IN_WINDOW_MS=1200\n")
+    env_before = env_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    monkeypatch.setattr(_detect, "detect_card", lambda: _card("spark"))
+
+    payload = _doctor_json(capsys, "--fix", "--apply")
+    applied = payload["fix_applied"]
+    for key in (
+        "BARGE_IN_MODEL",
+        "TTS_VOICE_CONCURRENCY",
+        "TTS_CONCURRENCY",
+        "DEFAULT_SYSTEM_PROMPT",
+    ):
+        assert f"appended {key}" in applied, f"expected {key} to be healed, got {applied}"
+    # The customised key was already present — never re-appended, never healed.
+    assert not any("BARGE_IN_WINDOW_MS" in a for a in applied)
+
+    env_after = env_path.read_text(encoding="utf-8")
+    assert env_after.startswith(env_before)  # every pre-existing line survives verbatim
+    appended = env_after[len(env_before) :]
+    assert "BARGE_IN_WINDOW_MS" not in appended
+    assert env_after.count("BARGE_IN_WINDOW_MS=") == 1
+    assert "BARGE_IN_WINDOW_MS=1200" in env_after  # the operator's value, untouched
+
+    # Healed keys carry env.audio.example's documented defaults.
+    assert "BARGE_IN_MODEL=" in appended
+    assert "TTS_VOICE_CONCURRENCY=1" in appended
+    assert "TTS_CONCURRENCY=1" in appended
+    assert "DEFAULT_SYSTEM_PROMPT=" in appended
+
+    # Idempotent: a second heal is a byte-identical no-op.
+    snapshot = _tree_bytes(tmp_path)
+    payload2 = _doctor_json(capsys, "--fix", "--apply")
+    assert payload2["fix_applied"] == []
+    assert _tree_bytes(tmp_path) == snapshot
+
+
 def test_apply_without_fix_is_a_user_error(tmp_path, monkeypatch, capsys):
     _scaffold_fleet(tmp_path)
     monkeypatch.setenv("LOBES_DIR", str(tmp_path))

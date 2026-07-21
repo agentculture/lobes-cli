@@ -973,21 +973,68 @@ lobes fleet status
 python3 scripts/audio-smoke.py       # live smoke test (+ TTS→STT round-trip)
 ```
 
-## Realtime session (`GET /v1/realtime`, WebSocket, issue #149)
+## Realtime session (`GET /v1/realtime`, WebSocket, issues #149, #151)
 
 Beyond the two batch REST routes, `/v1/realtime` (a WebSocket upgrade) opens
-a persistent `server_vad` session on ONE connection: stream PCM16 mono
-little-endian audio in — **24000 Hz default, 16000 Hz accepted**, the server
-resamples down to 16 kHz itself (scipy) — and receive `session.created` /
-`input_audio_buffer.speech_started` / `...speech_stopped` /
-`conversation.item.input_audio_transcription.completed` / `error` events
-back, all on that same connection. Session config rides connect-URL query
-params (e.g. `?input_sample_rate=16000`), not a first message. A never-silent
-turn force-commits at `VAD_MAX_TURN_MS` (default 30s) with
-`reason: "max_turn"` — that is a normal boundary event, **not** an `error`.
-Sessions are ephemeral: any disconnect (idle, mid-speech, mid-transcription)
-tears the session down completely; there is no resume, and a reconnecting
-client always gets a brand-new session id.
+a persistent `server_vad` session on ONE connection. Session config rides
+connect-URL query params (e.g. `?input_sample_rate=16000`), not a first
+message. Sessions are ephemeral: any disconnect (idle, mid-speech,
+mid-transcription, mid-response) tears the session down completely; there is
+no resume, and a reconnecting client always gets a brand-new session id.
+
+### The wire: base64 JSON events, both directions (issue #151)
+
+Audio in is `input_audio_buffer.append` with base64 PCM16 mono
+little-endian — **24000 Hz default, 16000 Hz accepted**, the server resamples
+down to 16 kHz itself (scipy). Audio out is `response.audio.delta`, same
+encoding, 24 kHz (Chatterbox's rate IS the client rate, so audio-out never
+resamples).
+
+**Breaking change.** #149 shipped raw BINARY frames as the input wire; they
+are no longer accepted — one now yields the named `error` /
+`invalid_wire_event` event instead of being read as audio. Migration:
+replace `send_binary(pcm)` with a text frame
+`{"type": "input_audio_buffer.append", "audio": base64(pcm)}`. The deployed
+reachy-mini-cli must adapt (tracked in reachy-mini-cli#115) — a recorded,
+operator-accepted break, not a regression.
+
+### Listening by default, conversation on request
+
+A session emits `session.created` / `input_audio_buffer.speech_started` /
+`...speech_stopped` / `conversation.item.input_audio_transcription.completed`
+/ `error` and NOTHING else until the client sends `response.create`. That
+transcription-only default is the contract reachy-mini-cli depends on, and
+#151 leaves its behaviour unchanged.
+
+Boundary events now carry `at_ms` (audio-stream time) and `speech_stopped`
+carries `reason` — so VAD knob effects are observable on a live session, and
+a client can finally tell the `VAD_MAX_TURN_MS` force-commit
+(`reason: "max_turn"` — a normal boundary event, **not** an `error`) from a
+silence-confirmed stop. Both were computed and dropped before the wire until
+#151.
+
+Once armed, a committed turn is answered on the same socket:
+`response.created` → `response.text.done` → `response.audio.delta` × N →
+`response.done`. Generation goes through the gateway's own
+`/v1/chat/completions` (`OPENAI_BASE_URL`), defaulting to the `multimodal`
+lane (~1 s to a short reply; a thinking lane spends that on a trace nobody
+hears) and overridable with `OPENAI_MODEL`. Per-session history and system
+prompt live on the server, in memory, and die with the session.
+
+**Barge-in:** speaking during playback cancels generate AND TTS, drops the
+undelivered audio, and emits `response.interrupted` (`truncated: true`).
+`BARGE_IN_WINDOW_MS` (default 750) guards the instant just after the machine
+takes the floor; `BARGE_IN_MODEL` is threaded but unconsumed — window-only
+barge-in ships. Automatic mute-during-playback is FORBIDDEN in clients (it is
+the AEC substitute that makes barge-in impossible); a USER-initiated mute is
+allowed, since AEC is owned at the client edge.
+
+Error codes: `invalid_session_config`, `vad_unavailable`,
+`invalid_wire_event`, `stt_forward_failed`, `generate_failed`, `tts_failed`,
+`response_timeout` (every stage is deadlined; the floor returns to the caller
+rather than wedging).
+
+### Reachability and status
 
 Reached through the gateway (101-upgrade + byte tunnel, not a parsed HTTP
 forward) under the same opt-in `GATEWAY_API_KEY` bearer gate as every other
@@ -995,17 +1042,23 @@ route; a plain `GET` gets 426, a declared-off `stt` lane 404s
 `role_infeasible` naming `hosted_by`, and the session is **never** proxied
 cross-box (the #129 proxy-lobes forwarder is POST-only).
 
-**VALIDATED live** on the DGX Spark GB10, 2026-07-21 (transcript:
-`docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full session ran
-through the gateway tunnel against real Silero + Parakeet at both wire
-rates. Still unvalidated: a real microphone (the runs used synthesized
-audio), the VAD-unavailable path, concurrent sessions, the max-turn cap.
+The #149 **session mechanism is VALIDATED** live on the DGX Spark GB10,
+2026-07-21 (transcript: `docs/evidence/2026-07-21-accept-realtime-spark.txt`)
+— a full session through the gateway tunnel against real Silero + Parakeet at
+both wire rates. That run predates the #151 wire change, so it proves the
+tunnel, the VAD and the STT forward, not today's wire. Everything #151 adds
+— the base64 wire, the conversation surface, barge-in, the deadlines — is
+**DECLARED and offline-proven, NOT validated**: no transcript for it has
+landed under `docs/evidence/` yet (#108). Still unvalidated from #149 and not
+retired by this work: a real microphone (the runs used synthesized audio),
+the VAD-unavailable path, concurrent sessions, the max-turn cap.
 
 Audio POST routes and the `/v1/realtime` handshake are gated by the same
 opt-in `GATEWAY_API_KEY` bearer check — `lobes explain gateway`. Full
 topology, the session's event/config/teardown contract, runbooks, and
 memory guidance: `docs/realtime-pipeline.md`; wire-format detail:
-`docs/openai-api.md`.
+`docs/openai-api.md`. The local-only browser harness that drives all of it
+lives in `site/` (never deployed; `ssh -L` dev flow in `site/README.md`).
 """
 
 _STT = """\
@@ -1082,6 +1135,7 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 | `/v1/rerank`, `/v1/score` | POST | Qwen3-Reranker-0.6B gear |
 | `/v1/audio/transcriptions` | POST | Parakeet STT (audio overlay) |
 | `/v1/audio/speech` | POST | Chatterbox TTS (audio overlay) |
+| `/v1/realtime` | GET (WS upgrade) | the realtime bridge, tunneled (audio overlay) |
 | `/v1/models` | GET | the backends loaded now (what's hot) |
 | `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
 | `/capabilities` | GET | the seven-role Colleague contract (`lobes explain roles`) |
@@ -1096,7 +1150,9 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 - **Failover** — a generate backend that refuses or 5xx's *before any body* is
   retried against the other generate backend (4xx is verbatim; no retry once a 2xx
   body streams). SSE (`"stream": true`) is relayed chunk-by-chunk.
-- **Audio** is fanned to the realtime bridge (`AUDIO_URL`).
+- **Audio** POSTs are fanned to the realtime bridge (`AUDIO_URL`);
+  `/v1/realtime` reaches the same bridge as a 101-upgrade + opaque byte
+  tunnel instead, and is never proxied cross-box. `lobes explain realtime`.
 
 ## Auth (opt-in)
 

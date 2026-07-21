@@ -1,0 +1,141 @@
+---
+// Standalone dev harness for EventStream.astro (issue #151 t12) — renders
+// the component against event-fixtures.ts with NO server, NO WebSocket,
+// and no other wave-2 island required. `npm run dev` and open
+// /dev-events to review the whole event vocabulary rendering, or drive it
+// by hand with the controls below.
+//
+// This page also doubles as the worked example for "how to mount
+// EventStream" — the replay buttons below talk to the component through
+// the exact same `window` CustomEvent contract documented in
+// EventStream.astro's header comment, so wiring a real WebSocket later is
+// a copy of the `pushEvent`/`setConnectionState` calls in the <script>
+// block, not a new integration to invent.
+import Layout from "../layouts/Layout.astro";
+import EventStream from "../components/EventStream.astro";
+---
+
+<Layout
+  title="dev: event stream — lobes realtime test harness"
+  description="Standalone fixture-driven preview of the live /v1/realtime event-stream log (issue #151 t12). Local dev only."
+>
+  <section class="section">
+    <div class="container">
+      <span class="eyebrow">dev harness — not part of the real page</span>
+      <h1>Event stream, replayed from fixtures</h1>
+      <p class="muted">
+        No server or WebSocket here — every row below comes from
+        <code>src/scripts/event-fixtures.ts</code>, dispatched through the
+        same <code>window</code> CustomEvent contract a real connection
+        island would use. It is the whole
+        <code>EventType</code>/<code>ErrorCode</code> vocabulary, once each,
+        plus a connection-state story (connect → connected → disconnect)
+        and a separate transport-error scenario.
+      </p>
+
+      <div class="dev-controls" data-reveal>
+        <button type="button" data-replay-story>Replay the full story</button>
+        <button type="button" data-replay-error>Replay: transport error (not a server error)</button>
+        <button type="button" data-replay-silence>Do nothing for 3s (silence)</button>
+      </div>
+
+      <div class="dev-mount" data-reveal style="--reveal-delay: 0.05s">
+        <EventStream />
+      </div>
+
+      <p class="muted dev-note">
+        "Do nothing" pushes zero events on purpose — the log should stay
+        exactly as it was, proving silence renders nothing (contrast this
+        with the <code>vad_unavailable</code> row the full story includes,
+        which fires immediately and looks nothing like silence).
+      </p>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .dev-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin: 1.2rem 0 1.6rem;
+  }
+
+  .dev-controls button {
+    appearance: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .dev-controls button:hover {
+    border-color: var(--accent);
+  }
+
+  .dev-mount {
+    max-width: 44rem;
+  }
+
+  .dev-note {
+    max-width: 42rem;
+    margin-top: 1.2rem;
+    font-size: 0.88rem;
+  }
+</style>
+
+<script>
+  import { replayFixtures, CONNECTION_ERROR_FIXTURE } from "../scripts/event-fixtures";
+  import type { ConnectionState } from "../scripts/realtime-events";
+
+  // The SAME decoupled contract EventStream.astro documents for a real
+  // connection island — no direct import of the controller here on
+  // purpose, to keep this page an honest demonstration of the public
+  // mounting contract rather than a shortcut around it.
+  const dispatchTarget = {
+    pushEvent(raw: unknown) {
+      window.dispatchEvent(new CustomEvent("lobes:realtime-event", { detail: raw }));
+    },
+    setConnectionState(state: ConnectionState, detail?: string) {
+      window.dispatchEvent(
+        new CustomEvent("lobes:connection-state", { detail: { state, detail } })
+      );
+    },
+  };
+
+  let active: { cancel(): void } | null = null;
+
+  function replayStory() {
+    active?.cancel();
+    active = replayFixtures(dispatchTarget);
+  }
+
+  function replayTransportError() {
+    active?.cancel();
+    let step = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const transition of CONNECTION_ERROR_FIXTURE) {
+      timers.push(
+        setTimeout(() => dispatchTarget.setConnectionState(transition.state, transition.detail), step * 500)
+      );
+      step += 1;
+    }
+    active = { cancel: () => timers.forEach(clearTimeout) };
+  }
+
+  document.querySelector("[data-replay-story]")?.addEventListener("click", replayStory);
+  document
+    .querySelector("[data-replay-error]")
+    ?.addEventListener("click", replayTransportError);
+  document.querySelector("[data-replay-silence]")?.addEventListener("click", () => {
+    active?.cancel();
+    // Deliberately a no-op beyond the click itself: no event is pushed, no
+    // connection-state change fires. The log must not move.
+  });
+
+  // Auto-play once on load so `npm run dev` shows something immediately.
+  replayStory();
+</script>

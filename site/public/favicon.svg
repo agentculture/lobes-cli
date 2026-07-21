@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64">
+  <!-- lobes realtime harness: two nodes, one thread — you and lobes, on
+       one live connection. Same mark language as org's favicon.svg
+       (three agents, two threads), reduced to this page's one exchange. -->
+  <path class="thread" d="M14 40 Q 32 16 50 40" stroke-width="3" stroke-linecap="round"/>
+  <circle class="node" cx="14" cy="40" r="6"/>
+  <circle class="node" cx="50" cy="40" r="7.5"/>
+  <style>
+    .thread { stroke: #4d546f; }
+    .node { fill: #0b655c; }
+    @media (prefers-color-scheme: dark) {
+      .thread { stroke: #a9b0cf; }
+      .node { fill: #7fdcc9; }
+    }
+  </style>
+</svg>

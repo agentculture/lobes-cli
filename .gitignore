@@ -169,7 +169,9 @@ venv.bak/
 .ropeproject
 
 # mkdocs documentation
-/site
+# (was `/site` — stock Python-template boilerplate for mkdocs' build output. This
+# repo has no mkdocs, and `site/` is now the Astro realtime test harness (#151),
+# whose sources MUST be tracked. Its own site/.gitignore covers node_modules/dist.)
 
 # mypy
 .mypy_cache/

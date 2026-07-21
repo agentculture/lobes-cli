@@ -1,0 +1,111 @@
+---
+// dev-mic.astro — the mic island on its own, with a fake server (issue #151 t11).
+//
+// A standalone page so the island can be built and looked at without waiting
+// on the connection task, the gateway, or a booked slot on the Spark. The
+// harness below dispatches the same `lobes:server-event` DOM events a real
+// connection layer will, so everything the island does with inbound audio —
+// queueing deltas, stopping dead on an interruption, rendering a named server
+// error — is exercisable here, offline.
+//
+// What this page CANNOT prove, and does not pretend to: a real microphone, a
+// real permission prompt, and whether the browser's echo cancellation actually
+// keeps the speakers out of the mic at volume. Those are the live acceptance
+// run's, not this page's.
+//
+// It is not linked from anywhere. It is reachable at /dev-mic in `astro dev`
+// and in the built output, on a site that is local-only by decision.
+import Layout from "../layouts/Layout.astro";
+import MicIsland from "../components/MicIsland.astro";
+---
+
+<Layout
+  title="mic island — dev harness"
+  description="The lobes realtime mic capture and playback island, driven by synthetic server events."
+>
+  <section class="section">
+    <div class="container prose">
+      <span class="eyebrow">t11 · dev only</span>
+      <h1>Mic island, standalone.</h1>
+      <p class="lede muted">
+        The island below is the real one. The buttons underneath are a fake
+        server: they dispatch the same events the gateway sends, so playback,
+        barge-in, and named errors can be seen without a live session.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="island-heading">
+    <div class="container">
+      <h2 id="island-heading">The island</h2>
+      <div class="card mount-card">
+        <MicIsland />
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="harness-heading">
+    <div class="container">
+      <h2 id="harness-heading">Fake server</h2>
+      <p class="muted">
+        Each button dispatches one <code>lobes:server-event</code> (or a burst
+        of them) on <code>document</code>. Press <em>reply — 4 s of audio</em>
+        with the island armed, then <em>response.interrupted</em> partway
+        through: playback should stop mid-tone, and the mic should still be
+        open.
+      </p>
+      <div class="card mount-card" id="harness" data-dev-harness></div>
+    </div>
+  </section>
+</Layout>
+
+<script>
+  import { mountDevHarness } from "../scripts/dev-mic-harness";
+
+  const root = document.querySelector<HTMLElement>("[data-dev-harness]");
+  if (root) mountDevHarness(root);
+</script>
+
+<style is:global>
+  .mount-card {
+    margin-top: 1.5rem;
+  }
+
+  .harness-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .harness-button {
+    appearance: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    background: transparent;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+
+  .harness-button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .harness-readout {
+    margin: 1.1rem 0 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .harness-button {
+      transition:
+        border-color 0.3s var(--ease-gentle),
+        color 0.3s var(--ease-gentle);
+    }
+  }
+</style>

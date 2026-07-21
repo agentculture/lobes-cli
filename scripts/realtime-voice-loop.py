@@ -14,8 +14,15 @@ No barge-in: the loop stops listening while it speaks, because without echo
 cancellation the mic would hear the speakers and transcribe the machine
 talking to itself.
 
-Scratch tool. Reuses the SHIPPED smoke script's WebSocket client so the
-protocol path exercised here is the committed one.
+Audio-in wire format (issue #151): each mic chunk streams as a base64
+``input_audio_buffer.append`` JSON text event over ``ears``, not a raw
+BINARY WebSocket frame — #149 shipped the raw-binary wire, #151 supersedes
+it with the OpenAI-Realtime-shaped base64 event wire. ``brain``/``mouth``
+stay plain HTTP POST, unaffected.
+
+Scratch tool. Reuses the SHIPPED smoke script's WebSocket client (and its
+``build_append_event``/``send_json_event`` wire codec) so the protocol path
+exercised here is the committed one.
 
   python3 voice-loop.py --device hw:2,0 --api-key "$KEY"
 """
@@ -293,7 +300,12 @@ def main() -> int:
             chunk = to_mono(raw)
             # While speaking, send silence instead of mic audio: without AEC the
             # mic hears the speakers and the machine transcribes itself.
-            client.send_binary(b"\x00" * len(chunk) if muted.is_set() else chunk)
+            payload = b"\x00" * len(chunk) if muted.is_set() else chunk
+            # issue #151: audio-in travels as a base64 input_audio_buffer.append
+            # JSON text event now, not a raw BINARY frame — build_append_event/
+            # send_json_event are the shared smoke-script client's codec, reused
+            # here exactly like the WebSocket client itself (see module docstring).
+            client.send_json_event(rs.build_append_event(payload))
 
     threading.Thread(target=feed, daemon=True).start()
 

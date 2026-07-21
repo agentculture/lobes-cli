@@ -34,6 +34,7 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -402,3 +403,45 @@ def test_401_never_echoes_key_material(auth_gateway) -> None:
     for secret in (_KEY, _WRONG_KEY):
         assert secret not in raw_body
         assert secret not in raw_headers
+
+
+# --- boundary guard: header-only Bearer stays the ONLY auth surface -----------
+
+
+def test_gateway_source_has_no_query_param_or_subprotocol_auth() -> None:
+    """Boundary guard (issue #151 scope): query-param/subprotocol auth is OUT.
+
+    The #151 spec/scope explicitly decided this: public realtime clients
+    (robots, native apps) can all set a normal ``Authorization: Bearer``
+    header on the WS handshake, so the public gateway stays header-only —
+    no ``?token=``/``?access_token=`` query param and no
+    ``Sec-WebSocket-Protocol`` token smuggling, both classic browser-auth
+    workarounds and both leak-prone (query strings land in access logs and
+    browser history; a chosen subprotocol can round-trip into logs too).
+
+    This walks ``lobes/gateway/``'s own source rather than re-asserting the
+    header path works (test_gateway_realtime_ws.py and the tests above
+    already do that exhaustively) — the point is to fail the moment a
+    FUTURE contributor adds either fallback, even before anyone thinks to
+    write a behavioral test for it. A plain grep would work but would not
+    explain in the failure message which term regressed; this pins its own
+    list to keep the failure legible.
+    """
+    gw_dir = Path(S.__file__).parent
+    forbidden = (
+        "sec-websocket-protocol",
+        "Sec-WebSocket-Protocol",
+        "parse_qs",
+        "access_token",
+        "?token=",
+    )
+    offenders = {}
+    for py in gw_dir.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        hits = [term for term in forbidden if term in text]
+        if hits:
+            offenders[py.name] = hits
+    assert not offenders, (
+        "lobes/gateway/ must stay header-only Bearer auth (#151 scope) — "
+        f"found query-param/subprotocol auth vocabulary: {offenders}"
+    )

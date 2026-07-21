@@ -6,6 +6,20 @@ bytes at 24 kHz mono.
 
 Imports httpx at module top, so it loads only in the ``realtime`` container
 (the ``[realtime]`` extra) — never in the base wheel or the gateway.
+
+**TTS concurrency lanes (issue #151 t7).** ``synthesize()`` takes an
+optional ``lane`` — ``"batch"`` (the default, unchanged behavior) for
+``POST /v1/audio/speech``, or ``"voice"`` for a live ``/v1/realtime``
+session's own spoken reply. The two lanes gate on SEPARATE
+``asyncio.Semaphore`` pools (built by
+:func:`lobes.realtime._settings.new_tts_lane_semaphores`) so a saturated
+batch lane can never make a voice reply queue behind it. Each lane also gets
+its OWN ``httpx.AsyncClient`` — not one shared client — because the retry
+loop in :func:`_synthesize_single` resets the client it used while still
+holding that lane's semaphore, specifically so ``_reset_client()`` cannot
+race another request sharing the SAME client; splitting the semaphore
+without also splitting the client would silently reopen that exact race
+across lanes. See ``lobes/realtime/_settings.py`` for the full rationale.
 """
 
 from __future__ import annotations
@@ -17,7 +31,7 @@ import time
 
 import httpx
 
-from ._settings import settings
+from ._settings import BATCH_LANE, VOICE_LANE, new_tts_lane_semaphores, normalize_tts_lane, settings
 from .protocol import TTS_SAMPLE_RATE, resolve_voice
 
 log = logging.getLogger(__name__)
@@ -83,36 +97,64 @@ def _split_for_tts(text: str, max_chars: int = _MAX_CLEAN_CHARS) -> list[str]:
     return chunks
 
 
-# Module-level client — reused across requests for connection pooling
-_client: httpx.AsyncClient | None = None
+# Module-level clients — ONE PER LANE (issue #151 t7), reused across requests
+# in that lane for connection pooling. Deliberately not a single shared
+# client: _synthesize_single's retry loop resets the client it used while
+# still holding that lane's own semaphore, so a reset on one lane can never
+# race a request in flight on the OTHER lane's client. See the module
+# docstring above for the full rationale.
+_clients: dict[str, httpx.AsyncClient | None] = {BATCH_LANE: None, VOICE_LANE: None}
 
-# Concurrency gate — limits parallel TTS requests across all sessions
-_tts_semaphore: asyncio.Semaphore | None = None
-
-
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=60.0))
-    return _client
-
-
-def _reset_client() -> httpx.AsyncClient:
-    """Close the existing client and create a fresh one (stale-connection recovery)."""
-    global _client
-    if _client is not None and not _client.is_closed:
-        log.info("[TTS] resetting HTTP client (stale connection recovery)")
-        asyncio.get_event_loop().create_task(_client.aclose())
-    _client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=60.0))
-    return _client
+# Concurrency gates — one asyncio.Semaphore per lane, built once from
+# _settings.new_tts_lane_semaphores(). "batch" gates POST /v1/audio/speech
+# (today's TTS_CONCURRENCY, unchanged); "voice" gates a live /v1/realtime
+# session's own spoken replies on a SEPARATE pool (TTS_VOICE_CONCURRENCY) —
+# see lobes/realtime/_settings.py for why the two are independent objects.
+_tts_semaphores: dict[str, asyncio.Semaphore] | None = None
 
 
-def _get_semaphore() -> asyncio.Semaphore:
-    global _tts_semaphore
-    if _tts_semaphore is None:
-        _tts_semaphore = asyncio.Semaphore(settings.tts_concurrency)
-        log.info("[TTS] concurrency gate: max %d parallel requests", settings.tts_concurrency)
-    return _tts_semaphore
+def _get_client(lane: str) -> httpx.AsyncClient:
+    # Normalized on the way in, exactly like _get_semaphore below: `_clients`
+    # must only ever be keyed by BATCH_LANE/VOICE_LANE. Keying it by the raw
+    # string would let an unknown lane take the batch SEMAPHORE (which
+    # normalizes) while opening its own third connection pool — a long-lived
+    # httpx.AsyncClient nothing ever closes, and the opposite of the
+    # "unknown lane -> batch lane" contract normalize_tts_lane documents.
+    lane = normalize_tts_lane(lane)
+    client = _clients.get(lane)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=60.0))
+        _clients[lane] = client
+    return client
+
+
+def _reset_client(lane: str) -> httpx.AsyncClient:
+    """Close *lane*'s client and create a fresh one (stale-connection recovery).
+
+    Scoped to *lane* only — the other lane's client, and any request in
+    flight on it, is untouched. *lane* is normalized first, for the same
+    reason :func:`_get_client` normalizes.
+    """
+    lane = normalize_tts_lane(lane)
+    existing = _clients.get(lane)
+    if existing is not None and not existing.is_closed:
+        log.info("[TTS] resetting HTTP client for lane=%s (stale connection recovery)", lane)
+        asyncio.get_event_loop().create_task(existing.aclose())
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=60.0))
+    _clients[lane] = client
+    return client
+
+
+def _get_semaphore(lane: str) -> asyncio.Semaphore:
+    global _tts_semaphores
+    if _tts_semaphores is None:
+        _tts_semaphores = new_tts_lane_semaphores(settings)
+        log.info(
+            "[TTS] concurrency gates: batch=%d voice=%d parallel requests",
+            settings.tts_concurrency,
+            settings.tts_voice_concurrency,
+        )
+    return _tts_semaphores[normalize_tts_lane(lane)]
 
 
 def _clean_for_tts(text: str) -> str:
@@ -179,22 +221,35 @@ async def _synthesize_single(
     voice: str,
     speed: int,
     cancel_event: asyncio.Event | None = None,
+    lane: str = BATCH_LANE,
 ) -> bytes:
     """Synthesize a single chunk of cleaned text via the Chatterbox TTS sidecar.
 
     Sends a plain JSON POST to the sidecar (no SSML — Chatterbox does not support
     SSML).  The retry loop runs INSIDE the semaphore so that ``_reset_client()``
-    cannot race with other requests that share the same ``httpx.AsyncClient``.
+    cannot race with other requests that share the same ``httpx.AsyncClient`` —
+    *lane* pins BOTH the semaphore and the client to the same pool (issue
+    #151 t7), so that guarantee holds within a lane and a reset on one lane
+    can never race a request on the other.
 
     ``speed`` is accepted for API compatibility with callers but is not forwarded
     (Chatterbox has no speed control in the sidecar contract).
 
+    ``lane`` defaults to ``BATCH_LANE`` — an existing caller that passes
+    nothing behaves exactly as before this task. Pass ``VOICE_LANE`` for a
+    live ``/v1/realtime`` session's own spoken reply so it never queues
+    behind unrelated batch TTS work.
+
     Returns raw PCM16 bytes at 24 kHz (empty on error).
     """
+    # Normalize once, up front, so the log tag names the lane actually used.
+    # Tagging the raw value would print `lane=voise` on a request served by the
+    # batch pool — the one place this module talks to a human, lying.
+    lane = normalize_tts_lane(lane)
     global _req_counter
     _req_counter += 1
     req_id = _req_counter
-    tag = f"[TTS req={req_id}]"
+    tag = f"[TTS req={req_id} lane={lane}]"
 
     if cancel_event and cancel_event.is_set():
         return b""
@@ -206,7 +261,7 @@ async def _synthesize_single(
         clean[:120],
     )
 
-    sem = _get_semaphore()
+    sem = _get_semaphore(lane)
     t_wait = time.monotonic()
 
     async with sem:
@@ -216,7 +271,7 @@ async def _synthesize_single(
 
         for attempt in range(2):  # at most 1 retry
             try:
-                client = _get_client()
+                client = _get_client(lane)
                 t0 = time.monotonic()
                 resp = await client.post(
                     url,
@@ -250,7 +305,7 @@ async def _synthesize_single(
                     )
                     if attempt == 0:
                         log.info("%s resetting client for retry", tag)
-                        _reset_client()
+                        _reset_client(lane)
                         continue
                     return b""
 
@@ -277,7 +332,7 @@ async def _synthesize_single(
                             min_expected,
                             clean[:80],
                         )
-                        _reset_client()
+                        _reset_client(lane)
                         continue  # retry within same semaphore hold
                     else:
                         log.warning(
@@ -295,7 +350,7 @@ async def _synthesize_single(
             except httpx.ConnectError:
                 log.error("%s connect error to %s (attempt %d)", tag, url, attempt + 1)
                 if attempt == 0:
-                    _reset_client()
+                    _reset_client(lane)
                     continue
                 return b""
             except httpx.ReadTimeout:
@@ -307,7 +362,7 @@ async def _synthesize_single(
                     clean[:80],
                 )
                 if attempt == 0:
-                    _reset_client()
+                    _reset_client(lane)
                     continue
                 return b""
             except (
@@ -325,6 +380,7 @@ async def synthesize(
     speed: int | None = None,
     tts_url: str | None = None,
     cancel_event: asyncio.Event | None = None,
+    lane: str = BATCH_LANE,
 ) -> bytes:
     """Synthesize text via the Chatterbox TTS sidecar, returning PCM16 audio at 24000Hz.
 
@@ -333,6 +389,13 @@ async def synthesize(
 
     ``speed`` is accepted for API compatibility with callers but is not forwarded
     to Chatterbox (the sidecar has no speed control).
+
+    ``lane`` (issue #151 t7) selects which concurrency pool gates this call —
+    ``BATCH_LANE`` (the default) for the batch ``POST /v1/audio/speech``
+    route, unchanged from before this task, or ``VOICE_LANE`` for a live
+    ``/v1/realtime`` session's own spoken reply, on its own SEPARATE pool so
+    it never queues behind unrelated batch TTS work. An existing caller that
+    passes nothing gets exactly today's behavior.
 
     Returns:
         Raw PCM16 bytes at 24000Hz (empty bytes if nothing to synthesize).
@@ -359,7 +422,7 @@ async def synthesize(
     for i, chunk in enumerate(chunks):
         if len(chunks) > 1:
             log.info("[TTS] chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
-        pcm = await _synthesize_single(chunk, url, full_voice, spd, cancel_event)
+        pcm = await _synthesize_single(chunk, url, full_voice, spd, cancel_event, lane=lane)
         if pcm:
             pcm_parts.append(pcm)
     return b"".join(pcm_parts)
@@ -372,10 +435,16 @@ async def synthesize_stream(
     speed: int | None = None,
     tts_url: str | None = None,
     cancel_event: asyncio.Event | None = None,
+    lane: str = BATCH_LANE,
 ):
     """Compatibility wrapper — calls synthesize() and yields the result as a single chunk."""
     data = await synthesize(
-        text, voice=voice, speed=speed, tts_url=tts_url, cancel_event=cancel_event
+        text,
+        voice=voice,
+        speed=speed,
+        tts_url=tts_url,
+        cancel_event=cancel_event,
+        lane=lane,
     )
     if data:
         yield data

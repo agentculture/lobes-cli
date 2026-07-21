@@ -1,0 +1,30 @@
+# build output
+dist/
+
+# generated types
+.astro/
+
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment variables — the local WS-proxy fallback (t13) reads its
+# gateway API key from env; never commit it
+.env
+.env.local
+.env.production
+
+# macOS-specific files
+.DS_Store
+
+# jetbrains setting folder
+.idea/
+
+# editor
+.vscode/*
+!.vscode/extensions.json

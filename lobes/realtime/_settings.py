@@ -12,9 +12,12 @@ from ``os.environ`` at import (the container's env); tests call
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -27,11 +30,31 @@ class Settings:
     openai_base_url: str  # the fleet LLM front, e.g. http://gateway:8000
     openai_api_key: str
     openai_model: str  # may be "" → the gateway default-routes
+    # Operator-set DEFAULT system prompt for a session's generate calls (issue
+    # #151 t8) — the OPERATOR half of "an operator-set default system prompt
+    # via env and a per-session override in the connect config" (spec c34).
+    # The per-session override half already exists as
+    # SessionConfig.system_prompt / parse_session_config's own
+    # ``system_prompt`` payload key, which always wins over this value when a
+    # client sets one (see _session.parse_session_config's docstring). Never
+    # blank: an unset env mirrors _session.DEFAULT_SYSTEM_PROMPT, so a
+    # deployment that never sets DEFAULT_SYSTEM_PROMPT behaves exactly like
+    # the pre-#151 in-code fallback. A genuinely blank system prompt is
+    # actively harmful here, not merely useless — Chatterbox reads the reply
+    # aloud verbatim, so a reply that reverts to the model's normal WRITTEN
+    # register (markdown, bullet lists, code fences) comes back as spoken
+    # nonsense ("asterisk asterisk", literal list markers) instead of a
+    # sentence a listener can follow.
+    default_system_prompt: str
 
     # TTS defaults.
     default_voice: str  # "" → Chatterbox default voice; or a .wav path for zero-shot cloning
     tts_speed: int
-    tts_concurrency: int  # max parallel TTS requests (1 = serial)
+    tts_concurrency: int  # max parallel BATCH-lane TTS requests (POST /v1/audio/speech; 1 = serial)
+    # max parallel VOICE-lane TTS requests (a live /v1/realtime session's own
+    # spoken replies) — a SEPARATE pool from tts_concurrency, not a shared
+    # one. See "TTS concurrency lanes" below for why.
+    tts_voice_concurrency: int
 
     # VAD / turn detection (used by the realtime WS pipeline).
     vad_threshold: float
@@ -76,12 +99,24 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_base_url=(env.get("OPENAI_BASE_URL") or "http://gateway:8000").rstrip("/"),
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
+        # Empty/unset → the mirrored code-level fallback, same "or default"
+        # idiom as every other string field above (an operator who blanks the
+        # line in .env gets the safe spoken-style prompt back, not silence).
+        default_system_prompt=env.get("DEFAULT_SYSTEM_PROMPT") or _SESSION_DEFAULT_SYSTEM_PROMPT,
         default_voice=env.get("DEFAULT_VOICE") or "",
         # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
         # (or negative) blocks every TTS request forever; tts_speed is a percentage,
         # where 0/negative would emit nonsensical SSML rate="0%" → backend 502s.
         tts_speed=max(1, _as_int(env, "TTS_SPEED", 125)),
         tts_concurrency=max(1, _as_int(env, "TTS_CONCURRENCY", 1)),
+        # Same clamp, same reason (Semaphore(0)/negative blocks forever) — this
+        # is the VOICE lane's own independent pool, see "TTS concurrency
+        # lanes" below. Defaults to 1, matching tts_concurrency's own
+        # historical default: concurrent /v1/realtime sessions are not yet
+        # validated (issue #149's follow-up), so this stays conservative
+        # rather than assuming untested multi-session headroom — the fix
+        # here is ISOLATION from the batch lane, not a throughput increase.
+        tts_voice_concurrency=max(1, _as_int(env, "TTS_VOICE_CONCURRENCY", 1)),
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
@@ -107,3 +142,68 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
 
 # The container's live settings (env set by the realtime compose service).
 settings = build_settings()
+
+
+# ---------------------------------------------------------------------------
+# TTS concurrency lanes (issue #151 t7)
+# ---------------------------------------------------------------------------
+#
+# tts_client.py used to gate every Chatterbox request behind ONE
+# module-global asyncio.Semaphore, shared by both the batch
+# POST /v1/audio/speech route and a live /v1/realtime session's own spoken
+# replies. Once a session can speak (issue #151), that shared gate means a
+# voice reply can queue behind unrelated batch TTS work already in flight —
+# and in a spoken turn, latency IS dead air.
+#
+# The fix is two INDEPENDENT semaphore pools, not one raised number: raising
+# a shared ceiling only reduces how OFTEN batch traffic blocks a voice
+# reply, it cannot guarantee a voice reply never waits behind a batch caller
+# that fully saturates the pool (e.g. several long-running batch
+# transcriptions). Splitting the pool is a structural guarantee; a bigger
+# shared pool is only a probabilistic one. The batch lane's own default
+# (tts_concurrency=1) is UNCHANGED — the batch route stays byte-identical.
+#
+# These helpers build the real semaphore objects (not a duplicate/test-only
+# stand-in) — tts_client.py's own lazily-built per-lane registry calls
+# straight into new_tts_lane_semaphores(). They live here, in the
+# stdlib-only settings module, rather than in tts_client.py, specifically so
+# the isolation guarantee is provable by an OFFLINE test:
+# asyncio.Semaphore needs no running event loop to construct (true since
+# Python 3.10), but tts_client.py imports httpx at module top and is
+# therefore excluded from offline coverage (see pyproject.toml's
+# [tool.coverage.run] omit list) — no CI lane installs the [realtime] extra.
+# See tests/test_realtime_tts_gate.py for the acceptance proof.
+
+BATCH_LANE = "batch"
+VOICE_LANE = "voice"
+
+
+def normalize_tts_lane(lane: str | None) -> str:
+    """Map any *lane* value to a known lane, defaulting unknowns to BATCH_LANE.
+
+    An existing caller of ``tts_client.synthesize()`` that passes no lane at
+    all (today's every caller) — or a future typo — MUST degrade to the
+    long-serving, conservative batch behavior, never silently open a
+    brand-new, unbounded pool. Only the exact string ``"voice"`` opts into
+    the separate voice-lane gate.
+    """
+    return VOICE_LANE if lane == VOICE_LANE else BATCH_LANE
+
+
+def tts_concurrency_for_lane(s: Settings, lane: str | None) -> int:
+    """Return the semaphore ceiling *lane* should use, read from *s*."""
+    return s.tts_voice_concurrency if normalize_tts_lane(lane) == VOICE_LANE else s.tts_concurrency
+
+
+def new_tts_lane_semaphores(s: Settings) -> dict[str, asyncio.Semaphore]:
+    """Build the two independent TTS concurrency gates, fresh, from *s*.
+
+    Two DISTINCT ``asyncio.Semaphore`` objects — not one shared Semaphore
+    sized to the sum of both ceilings — is the point: a batch caller can
+    hold every batch-lane permit without touching the voice lane's permits
+    at all, and vice versa.
+    """
+    return {
+        BATCH_LANE: asyncio.Semaphore(s.tts_concurrency),
+        VOICE_LANE: asyncio.Semaphore(s.tts_voice_concurrency),
+    }

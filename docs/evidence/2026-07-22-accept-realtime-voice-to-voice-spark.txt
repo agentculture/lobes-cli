@@ -1,0 +1,154 @@
+# Live acceptance — /v1/realtime voice-to-voice (issue #151)
+
+date:    2026-07-22
+box:     DGX Spark GB10 (spark), shape=spark-lobe, COMPOSE_PROFILES=embed-deep
+bridge:  lobes-cli 0.54.0 built from branch spec/151-realtime-voice-to-voice
+         (local wheel layered over the deployed image — 0.54.0 is not on PyPI yet)
+gateway: http://localhost:8001 (unchanged, 0.52.3 — this work has a zero-line gateway diff)
+voice lane: OPENAI_MODEL empty -> resolves to 'multimodal', served via MULTIMODAL_PEER_PROXY
+            to http://orin.tail0be7e0.ts.net:8000 (senses is dropped on this shape)
+
+## 0. Preconditions
+
+bridge lobes version: 0.54.0
+_wire present: True
+_conversation present: True
+
+cortex     feasible=True ready=True
+senses     feasible=False ready=True
+muse       feasible=False ready=True
+embedder   feasible=True ready=True
+reranker   feasible=True ready=True
+stt        feasible=True ready=True
+tts        feasible=True ready=True
+
+## 1. Ears-only over the NEW base64 wire (scripts/realtime-smoke.py)
+
+This run sends NO response.create, so it also demonstrates the ears-only
+default: the transcription-only sequence, with no response.* events.
+
+Testing /v1/realtime at http://localhost:8001
+Known phrase: 'The quick brown fox jumps over the lazy dog.'
+
+PASS: tts-source — 115200 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — 101 Switching Protocols, Sec-WebSocket-Accept verified
+PASS: session-created — received 'session.created'
+PASS: audio-stream — streamed 172800 bytes as input_audio_buffer.append events + trailing silence
+PASS: speech-started — received 'input_audio_buffer.speech_started'
+PASS: speech-stopped — received 'input_audio_buffer.speech_stopped'
+PASS: transcription — transcript='The quick brown fox jumps over the lazy dog.' contains every expected keyword ('quick', 'brown', 'fox', 'lazy', 'dog')
+
+============================================================
+Results: 7/7 checks passed
+SUCCESS: all realtime checks passed
+
+## 2. Voice-to-voice on ONE socket (opt-in via response.create)
+
+PASS: tts-source — 153600 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — HTTP 101
+PASS: session-created — received 'session.created'
+  [armed: sent response.create]
+PASS: audio-stream — streamed 153600 bytes as append events + silence
+PASS: transcription — transcript='In one short sentence, what is the capital of France?'
+PASS: boundary-at_ms-reason — at_ms=3680 reason='silence'
+PASS: response-created — received 'response.created'
+PASS: reply-text — reply='The capital of France is Paris.'
+PASS: audio-out — 19 response.audio.delta frames, 88320 bytes PCM16
+PASS: response-done — received 'response.done'
+PASS: no-errors — 0 error events
+  [reply audio saved: /home/spark/.claude/jobs/33835ee7/tmp/reply.pcm — 1.84s]
+
+============================================================
+Results: 11/11 checks passed
+event sequence: session.created -> input_audio_buffer.speech_started -> input_audio_buffer.speech_stopped -> conversation.item.input_audio_transcription.completed -> response.created -> response.text.done -> response.audio.delta -> response.done
+
+The reply audio was played out of the HDMI monitor speakers with:
+    aplay -D plughw:0,3 -f S16_LE -r 24000 -c 1 reply.pcm
+and CONFIRMED AUDIBLE BY THE OPERATOR, who reported hearing "France is Paris".
+(The Reachy Mini speaker, card 1, is held exclusively by reachy-mini-dae:
+ 'audio open error: Device or resource busy' — the same condition
+ scripts/realtime-voice-loop.py documents.)
+
+## 3. Barge-in — DID NOT WORK. The criterion is NOT met.
+
+PASS: tts-source — question=186240B interrupt=74880B
+PASS: ws-handshake — HTTP 101
+PASS: reply-started — first response.audio.delta arrived
+  [machine is speaking — 9 frames out; interrupting now]
+FAIL: interrupted-event — response.interrupted={}
+FAIL: truncation-marker — truncated=None
+FAIL: audio-out-stopped — -1 delta frames after the interruption (must be 0)
+FAIL: floor-returned — a new turn transcribed after the interruption
+
+============================================================
+Results: 3/7 checks passed
+event sequence: session.created -> input_audio_buffer.speech_started -> input_audio_buffer.speech_stopped -> conversation.item.input_audio_transcription.completed -> response.created -> response.text.done -> response.audio.delta -> response.done
+
+### Why, measured
+
+delta frames: 75
+first delta -> response.done: 0.002s  (the ENTIRE server-side SPEAKING window)
+audio duration delivered:     7.50s  (100ms per frame)
+=> the client plays for 7.5s while the server thinks it is speaking for 0.002s
+
+### The finding
+
+The floor state machine's barge-in logic is correct in isolation (62 offline
+tests, including an interrupt arriving in every responding/speaking state).
+What the live run disproves is the ASSUMPTION connecting it to reality:
+
+  the server's SPEAKING state does NOT correspond to the window in which a
+  human is hearing audio.
+
+`_drive_response` pumps `deliver_next()` with only `await sender.flush()`
+between chunks, so all 75-85 `response.audio.delta` frames leave as fast as the
+socket drains — 2-4 MILLISECONDS — and `response.done` fires immediately after.
+The client then plays that buffer for 7.5-8.5 SECONDS. A user speaking two
+seconds into the reply is, from the server's point of view, speaking while the
+floor is LISTENING: it is treated as a fresh turn, not a barge-in, and no
+`response.interrupted` is ever emitted.
+
+The spec's own truncation model assumed the opposite — "an interruption stops
+the UNDELIVERED remainder" — but by the time a human could react there is no
+undelivered remainder left to stop.
+
+This is not a regression and not a bug in `_floor.py`; it is a missing piece of
+the wiring, invisible to every offline test because offline tests drive the
+floor directly rather than through a socket that drains instantly.
+
+Two candidate fixes, neither attempted here:
+
+  (a) Pace delivery at playback rate — the route sleeps between chunks so the
+      SPEAKING state lasts as long as the audio does. This makes the spec's
+      undelivered-remainder truncation model literally true. It also gives the
+      server a timing responsibility it does not have today.
+
+  (b) Let the client drive it — the client, which knows when playback actually
+      ends, sends an explicit cancel/truncate when it detects local barge-in.
+      This is closer to what OpenAI does (`conversation.item.truncate` carries a
+      client-supplied `audio_end_ms`).
+
+## Status after this run
+
+VALIDATED live:
+  - the base64 event wire, both directions
+  - the ears-only default (a session that never arms gets the transcription-only
+    sequence — section 1 sends no response.create)
+  - voice-to-voice on ONE socket: spoken question in, spoken reply out, no
+    second HTTP call
+  - audio-out is audible: confirmed by the operator through HDMI speakers
+  - boundary events carry at_ms and reason on the wire (at_ms=3520,
+    reason='silence') — the #149-era drop is fixed
+  - the voice lane resolving to `multimodal` and being served cross-box through
+    the peer proxy
+
+NOT VALIDATED, and NOT claimed:
+  - BARGE-IN. Measured not to work end-to-end; see section 3. This is the
+    headline gap from this run.
+  - a real microphone (every run above used synthesized speech)
+  - speakers-at-volume AEC (no acoustic path was exercised; the mic was never
+    open)
+  - the browser harness driving any of this (site/ was not used in this run)
+  - the OpenAI realtime A/B exchange
+  - concurrent sessions, the VAD-unavailable path, the max-turn cap
+    (carried forward from #149, still open)

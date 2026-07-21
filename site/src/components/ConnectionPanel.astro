@@ -1,0 +1,459 @@
+---
+// The connection panel — issue #151 t13.
+//
+// Opens and closes ONE /v1/realtime session and shows what state it is in.
+// There is no key field here and there never will be: the browser holds no
+// credential. It dials its own origin and the dev server's proxy
+// (site/proxy/gateway-proxy.mjs) attaches `Authorization: Bearer <key>` on
+// the way to the gateway.
+//
+// MOUNTING THIS (for whoever wires src/pages/index.astro after the wave-2
+// tasks merge): import it and drop it inside the reserved
+// `#connection-mount` / `[data-mount="connection"]` container, replacing the
+// placeholder paragraph — `<ConnectionPanel />`, no props. The script block
+// below is hoisted and bundled by Astro once per page, finds every
+// `[data-connection-panel]` root, and publishes the live connection two ways
+// so the mic island (t11) and event log (t12) can share this one socket
+// regardless of which island's script runs first:
+//
+//   1. `document.addEventListener("lobes:realtime-ready", (e) =>
+//        e.detail.connection)`            — for an island that loads FIRST
+//   2. `window.lobesRealtime`             — for an island that loads LATER
+//
+// and every notice (state changes, parsed server events, malformed frames)
+// is re-dispatched on `document` as a `lobes:realtime` CustomEvent whose
+// `detail` is the ConnectionNotice. See site/README.md, "Mounting the
+// connection panel".
+import { AEC_MODES, DEFAULT_ENDPOINT, SAMPLE_RATES } from "../scripts/realtime-connection.ts";
+---
+
+<div class="connection-panel" data-connection-panel>
+  <div class="state" data-connection-state data-state="disconnected" role="status" aria-live="polite">
+    <span class="glyph" data-connection-glyph aria-hidden="true">○</span>
+    <span class="state-text">
+      <strong data-connection-label>Disconnected</strong>
+      <span class="detail" data-connection-detail>not connected yet</span>
+    </span>
+  </div>
+
+  <dl class="facts">
+    <dt>Session URL</dt>
+    <dd><code data-connection-url>—</code></dd>
+  </dl>
+
+  <div class="controls">
+    <p class="field field-wide">
+      <label for="connection-endpoint">Proxy endpoint</label>
+      <input
+        id="connection-endpoint"
+        type="text"
+        inputmode="url"
+        spellcheck="false"
+        autocomplete="off"
+        value={DEFAULT_ENDPOINT}
+        data-connection-endpoint
+      />
+      <span class="hint">
+        A path resolves against this page's origin, so the request is
+        same-origin and therefore proxied. Pointing this straight at the
+        gateway cannot work — the browser has no credential to send.
+      </span>
+    </p>
+
+    <p class="field">
+      <label for="connection-rate">Input sample rate</label>
+      <select id="connection-rate" data-connection-rate>
+        {SAMPLE_RATES.map((rate) => <option value={rate}>{rate} Hz</option>)}
+      </select>
+      <span class="hint">24000 is the default; 16000 skips the server-side resample.</span>
+    </p>
+
+    <p class="field">
+      <label for="connection-aec">Server AEC</label>
+      <select id="connection-aec" data-connection-aec>
+        {AEC_MODES.map((mode) => <option value={mode}>{mode}</option>)}
+      </select>
+      <span class="hint">Leave at <code>none</code> — the browser cancels echo itself.</span>
+    </p>
+
+    <!--
+      Issue #151 t19 — the conversation-arming toggle. OFF is the shipped
+      default (unchecked, no `checked` attribute) so a no-JS or not-yet-
+      mounted visit renders the ears-only contract, not a silent opt-in.
+      Arming is session-scoped and connect-time-only: the checkbox itself
+      only ever records INTENT, `connection-panel.ts` reads it once when
+      Connect is pressed, and `data-conversation-state` below is the
+      always-visible, text-plus-glyph answer to "will this session talk
+      back" — checked before dialling, then a second confirmation once the
+      socket actually opens and `response.create` is sent (see that
+      module's `renderConversationState`).
+    -->
+    <p class="field field-wide field-conversation">
+      <label class="checkbox-field" for="connection-conversation">
+        <input id="connection-conversation" type="checkbox" data-connection-conversation />
+        <span>Conversation (talks back)</span>
+      </label>
+      <span
+        class="conversation-state"
+        data-conversation-state
+        data-armed="false"
+        data-live="false"
+        role="status"
+        aria-live="polite"
+      >
+        Ears-only (default) — this session will not reply
+      </span>
+      <span class="hint">
+        Off: byte-identical to the ears-only #149 contract — nothing ever
+        replies. On: sends <code>response.create</code> right after
+        connecting, so every committed turn on this session gets a spoken
+        reply back over the same socket. Applies at connect time — locked
+        while a session is open, so flip it before pressing Connect.
+      </span>
+    </p>
+  </div>
+
+  <div class="actions">
+    <!-- Disabled in the markup on purpose: without the script running, these
+         controls genuinely do nothing, and looking inert is the honest state. -->
+    <button type="button" class="primary" data-connection-connect disabled>Connect</button>
+    <button type="button" data-connection-disconnect disabled>Disconnect</button>
+    <button type="button" data-connection-check disabled>Check gateway</button>
+  </div>
+
+  <p class="check" data-connection-check-result data-verdict="idle">
+    The check asks the gateway two questions the socket cannot: does the
+    injected credential work, and is the <code>stt</code> lane feasible here.
+  </p>
+</div>
+
+<script>
+  import { mountConnectionPanel } from "../scripts/connection-panel.ts";
+
+  for (const root of document.querySelectorAll<HTMLElement>("[data-connection-panel]")) {
+    mountConnectionPanel(root);
+  }
+</script>
+
+<style>
+  .connection-panel {
+    display: grid;
+    gap: 1.4rem;
+    width: 100%;
+    text-align: left;
+
+    /* Scoped, not added to global.css: three wave-2 islands are being built
+       in parallel against that shared file and each needs a failure colour,
+       so a shared token would have been three colliding edits. Both values
+       are verified >= 4.5:1 (WCAG AA) against their theme's --surface:
+       #8c2f39 on #ffffff = 8.1:1, #ff9aa6 on #161b36 = 8.7:1. */
+    --state-danger: #8c2f39;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .connection-panel {
+      --state-danger: #ff9aa6;
+    }
+  }
+
+  /* ---------- state ---------- */
+
+  .state {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 0.9rem 1.1rem;
+    border-radius: 0.9rem;
+    /* Border STYLE carries the state as well as colour — dashed, solid,
+       dotted and double read apart on a monochrome screen, and the glyph and
+       word do too. Colour alone would fail WCAG 1.4.1. */
+    border: 2px dashed var(--line);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
+  }
+
+  .state[data-state="connecting"] {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  }
+
+  .state[data-state="open"] {
+    border-style: solid;
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .state[data-state="closing"] {
+    border-style: dotted;
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  }
+
+  .state[data-state="failed"] {
+    border-style: double;
+    border-width: 4px;
+    border-color: var(--state-danger);
+    background: color-mix(in srgb, var(--state-danger) 8%, transparent);
+  }
+
+  .glyph {
+    font-size: 1.35rem;
+    line-height: 1.25;
+    color: var(--ink-soft);
+  }
+
+  .state[data-state="connecting"] .glyph,
+  .state[data-state="open"] .glyph {
+    color: var(--accent);
+  }
+
+  .state[data-state="failed"] .glyph {
+    color: var(--state-danger);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .state[data-state="connecting"] .glyph,
+    .state[data-state="closing"] .glyph {
+      animation: node-breathe 1.1s var(--ease-gentle) infinite alternate;
+    }
+
+    .state[data-state="open"] .glyph {
+      animation: node-breathe 2.6s var(--ease-gentle) infinite alternate;
+    }
+  }
+
+  .state-text {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  .state-text strong {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .detail {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  /* ---------- facts ---------- */
+
+  .facts {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.35rem 0.9rem;
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .facts dt {
+    color: var(--ink-soft);
+  }
+
+  .facts dd {
+    margin: 0;
+    min-width: 0;
+  }
+
+  .facts code {
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- controls ---------- */
+
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1rem 1.2rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .field-wide {
+    grid-column: 1 / -1;
+  }
+
+  label {
+    font-size: 0.78rem;
+    font-weight: 640;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  input,
+  select {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    min-width: 0;
+  }
+
+  input:disabled,
+  select:disabled {
+    opacity: 0.65;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- conversation arming (issue #151 t19) ---------- */
+
+  .field-conversation {
+    gap: 0.55rem;
+  }
+
+  .checkbox-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    /* Overrides the uppercase/tracked label style above — this reads as a
+       sentence, not a field caption, because it IS the control, not a
+       heading over one. */
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--ink);
+    cursor: pointer;
+    width: fit-content;
+  }
+
+  .checkbox-field input[type="checkbox"] {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--accent-strong);
+    cursor: pointer;
+  }
+
+  .checkbox-field input:disabled {
+    cursor: not-allowed;
+  }
+
+  /* The at-a-glance answer to "will this session talk back" — text AND a
+     glyph, never colour alone (WCAG 1.4.1), same convention as the
+     connection-state banner above. Two independent axes: data-armed (will
+     it reply) and data-live (is that a promise or a fact about an open
+     session right now). */
+  .conversation-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: fit-content;
+    font-size: 0.82rem;
+    font-weight: 640;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    border: 1px dashed var(--line);
+    color: var(--ink-soft);
+  }
+
+  .conversation-state::before {
+    content: "○";
+    font-family: var(--font-mono);
+  }
+
+  .conversation-state[data-armed="true"] {
+    border-style: solid;
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .conversation-state[data-armed="true"]::before {
+    content: "●";
+  }
+
+  /* A LIVE armed session (response.create has actually been sent) gets the
+     boldest treatment of the three states — staged-but-not-connected reads
+     one notch quieter, so "will reply" and "is replying" never look
+     identical. */
+  .conversation-state[data-live="true"][data-armed="true"] {
+    border-width: 2px;
+    font-weight: 700;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+  }
+
+  button {
+    font-size: 0.9rem;
+    font-weight: 560;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.55rem 1.25rem;
+    cursor: pointer;
+  }
+
+  button.primary {
+    color: var(--on-accent);
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /* ---------- gateway check ---------- */
+
+  .check {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    padding-left: 1.6rem;
+    position: relative;
+  }
+
+  /* A symbol, not just a colour: each verdict is legible in monochrome. */
+  .check::before {
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: var(--font-mono);
+    content: "·";
+  }
+
+  .check[data-verdict="pending"]::before {
+    content: "…";
+  }
+
+  .check[data-verdict="ok"]::before {
+    content: "✓";
+    color: var(--accent);
+  }
+
+  .check[data-verdict="rejected"]::before {
+    content: "✕";
+    color: var(--state-danger);
+  }
+
+  .check[data-verdict="unreachable"]::before {
+    content: "?";
+  }
+
+  .check[data-verdict="rejected"] {
+    color: var(--state-danger);
+  }
+</style>

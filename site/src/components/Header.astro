@@ -1,0 +1,71 @@
+---
+// Minimal brand bar. No primary navigation: this is a single-page tool
+// (issue #151), not a multi-page marketing site, so org's Header nav list
+// is dropped rather than ported unused.
+---
+
+<header class="site-header">
+  <div class="container bar">
+    <span class="wordmark">
+      <span class="mark" aria-hidden="true"></span>
+      lobes <span class="muted">realtime test harness</span>
+    </span>
+    <span class="local-badge" title="Never deployed — runs only against a local gateway">
+      local-only
+    </span>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    padding-block: 1.4rem;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+  }
+
+  .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--ink);
+    font-family: var(--font-display);
+    font-variation-settings: "SOFT" 75, "WONK" 0;
+    font-weight: 520;
+    font-size: 1.18rem;
+    letter-spacing: -0.01em;
+  }
+
+  .wordmark .muted {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 0.85em;
+  }
+
+  .mark {
+    flex: none;
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 50%;
+    background: var(--mesh-node);
+  }
+
+  .local-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+</style>
