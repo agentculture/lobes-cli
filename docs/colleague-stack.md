@@ -84,8 +84,25 @@ whether a role did its job well; that judgment is Colleague's (see
 | `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
-| `stt` | `transcribe`, `audio_input_to_text` | *(none)* |
+| `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
 | `tts` | `speech_output`, `synthesize` | *(none)* |
+
+**`stt`'s `realtime_vad_session` responsibility is additive and
+honesty-gated (issue #149).** It names the `/v1/realtime` WebSocket
+server-side-VAD session surface — one connection streams PCM in and
+receives speech-start/speech-stop boundary events plus committed-turn
+transcriptions, replacing client-side energy-threshold endpointing. Unlike
+the rest of this table, it is **not** a static entry in
+`ROLE_RESPONSIBILITIES` — `lobes.roles._resolve_audio_role` appends it to
+`stt`'s `responsibilities` tuple only when the audio overlay is actually
+wired on this deployment (`AUDIO_URL` configured, i.e. `lobes init --fleet
+--audio`) **and** the lane hasn't been declared off (`STT_FEASIBLE=false`).
+A text-only fleet (no audio overlay) or a declared-off `stt` lane reports the
+base two-token tuple only, on both `lobes capabilities` and `GET
+/capabilities` — the same `loaded`/`feasible` honesty discipline every other
+field in this contract already follows, not a new signal. See
+`tests/test_cli_capabilities.py` and `tests/test_colleague_contract.py` for
+the positive (audio-enabled) and negative (text-only) proof.
 
 Two roles carry `tool_use`: `cortex` and `muse`. They are not equivalent, and the
 `forbidden_responsibilities` column is what separates them — `cortex` may act on a

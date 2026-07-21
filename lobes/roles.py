@@ -22,6 +22,9 @@ model endpoint:
   ``POST /v1/rerank`` (+ ``/v1/score``).
 * ``stt``      → the Parakeet sidecar behind the audio overlay →
   ``POST /v1/audio/transcriptions``. Opt-in (``lobes init --fleet --audio``).
+  When the overlay is actually wired and not declared off, ``stt`` also
+  advertises the ``/v1/realtime`` WebSocket server-VAD session capability
+  (issue #149) — see :data:`STT_REALTIME_RESPONSIBILITY`.
 * ``tts``      → the Chatterbox sidecar behind the audio overlay →
   ``POST /v1/audio/speech``. Opt-in.
 
@@ -149,9 +152,29 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
     ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
+    # NOTE: this base tuple deliberately does NOT list the realtime/VAD
+    # session capability (issue #149) — see STT_REALTIME_RESPONSIBILITY
+    # below. It stays static and unconditional so this dict remains a stable,
+    # always-true description of what stt COULD serve; the honesty-gated
+    # addition is applied at build time by _resolve_audio_role, never here.
     "stt": ("transcribe", "audio_input_to_text"),
     "tts": ("speech_output", "synthesize"),
 }
+
+# The /v1/realtime WebSocket server-VAD session capability (issue #149, task
+# t4). Deliberately NOT a static member of ROLE_RESPONSIBILITIES["stt"]
+# above — the honesty rule this repo already enforces for `loaded`/
+# `feasible`/`ready` applies here too: a role must not claim a capability it
+# cannot serve. A text-only fleet (no `lobes init --fleet --audio` overlay)
+# or an operator-declared-off stt lane (`STT_FEASIBLE=false`) must not
+# advertise it. _resolve_audio_role appends this token to stt's
+# `responsibilities` tuple ONLY when the audio overlay is actually wired on
+# THIS deployment (`AUDIO_URL` configured) AND the lane is feasible (not
+# declared off) — never a new RoleInfo schema field, per the #149 t4 design
+# (a new field would ripple into the CLI, gateway, tests, and
+# docs/colleague-stack.md; an additive responsibilities token is
+# contract-compatible).
+STT_REALTIME_RESPONSIBILITY = "realtime_vad_session"
 
 # What each role must NOT do. cortex is the final authority (nothing forbidden);
 # senses is intake/perception only — it must not decide, act on the repo, or make
@@ -470,6 +493,7 @@ def _audio_role(
     *,
     ready: bool | None = None,
     feasible: bool = True,
+    responsibilities: tuple[str, ...] | None = None,
 ) -> RoleInfo:
     """Resolve an audio-overlay role (stt/tts). No catalog entry → 0/""/False.
 
@@ -478,6 +502,12 @@ def _audio_role(
     ``table.infeasible``), which is what lets
     :func:`annotate_peer_referrals` attach ``hosted_by``/``proxied`` to an
     audio role exactly as it does to a dropped core role.
+
+    ``responsibilities`` defaults to the static :data:`ROLE_RESPONSIBILITIES`
+    entry for ``role`` when omitted; :func:`_resolve_audio_role` passes an
+    explicit, honesty-gated tuple for ``stt`` (issue #149 t4 — see
+    :data:`STT_REALTIME_RESPONSIBILITY`) so this function itself never has to
+    know about the conditional.
 
     ``tools=False`` is a fact, not a fallback: the audio sidecars serve
     transcription/synthesis, not a chat lane that could accept ``tools``.
@@ -494,7 +524,9 @@ def _audio_role(
         quant="",
         mtp=False,
         tools=False,
-        responsibilities=ROLE_RESPONSIBILITIES[role],
+        responsibilities=(
+            responsibilities if responsibilities is not None else ROLE_RESPONSIBILITIES[role]
+        ),
         forbidden_responsibilities=ROLE_FORBIDDEN[role],
         feasible=feasible,
         ready=ready,
@@ -704,9 +736,30 @@ def _resolve_audio_role(
     PEER probe when the role is proxied and a live peer signal was supplied
     (the same h14 missing-key/None/False discipline the core roles use); a
     healthy LOCAL bridge is not evidence the peer serves the lane.
+
+    The realtime/VAD session capability (issue #149 t4, see
+    :data:`STT_REALTIME_RESPONSIBILITY`) is folded into ``stt``'s
+    ``responsibilities`` HERE, and only on this — the feasible — branch,
+    ``configured`` (an actually-wired audio overlay, i.e. ``AUDIO_URL`` is
+    set) is ALSO required: a text-only fleet (no ``--audio`` overlay) leaves
+    ``configured=False`` and gets the static, unconditional base tuple
+    unchanged, exactly like an operator-declared-off lane does on the other
+    branch below. Neither ``tts`` nor a declared-off ``stt`` ever sees the
+    extra token.
     """
     if role not in table.infeasible:
-        return _audio_role(role, model, runtime, endpoint, configured, ready=ready_signal)
+        responsibilities = ROLE_RESPONSIBILITIES[role]
+        if role == "stt" and configured:
+            responsibilities = responsibilities + (STT_REALTIME_RESPONSIBILITY,)
+        return _audio_role(
+            role,
+            model,
+            runtime,
+            endpoint,
+            configured,
+            ready=ready_signal,
+            responsibilities=responsibilities,
+        )
     peer_signal = False
     if peer_ready is not None and role in table.peer_proxied:
         peer_signal = peer_ready.get(role) is True
