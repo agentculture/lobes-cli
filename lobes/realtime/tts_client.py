@@ -114,6 +114,13 @@ _tts_semaphores: dict[str, asyncio.Semaphore] | None = None
 
 
 def _get_client(lane: str) -> httpx.AsyncClient:
+    # Normalized on the way in, exactly like _get_semaphore below: `_clients`
+    # must only ever be keyed by BATCH_LANE/VOICE_LANE. Keying it by the raw
+    # string would let an unknown lane take the batch SEMAPHORE (which
+    # normalizes) while opening its own third connection pool — a long-lived
+    # httpx.AsyncClient nothing ever closes, and the opposite of the
+    # "unknown lane -> batch lane" contract normalize_tts_lane documents.
+    lane = normalize_tts_lane(lane)
     client = _clients.get(lane)
     if client is None or client.is_closed:
         client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=60.0))
@@ -125,8 +132,10 @@ def _reset_client(lane: str) -> httpx.AsyncClient:
     """Close *lane*'s client and create a fresh one (stale-connection recovery).
 
     Scoped to *lane* only — the other lane's client, and any request in
-    flight on it, is untouched.
+    flight on it, is untouched. *lane* is normalized first, for the same
+    reason :func:`_get_client` normalizes.
     """
+    lane = normalize_tts_lane(lane)
     existing = _clients.get(lane)
     if existing is not None and not existing.is_closed:
         log.info("[TTS] resetting HTTP client for lane=%s (stale connection recovery)", lane)
@@ -233,6 +242,10 @@ async def _synthesize_single(
 
     Returns raw PCM16 bytes at 24 kHz (empty on error).
     """
+    # Normalize once, up front, so the log tag names the lane actually used.
+    # Tagging the raw value would print `lane=voise` on a request served by the
+    # batch pool — the one place this module talks to a human, lying.
+    lane = normalize_tts_lane(lane)
     global _req_counter
     _req_counter += 1
     req_id = _req_counter

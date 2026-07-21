@@ -21,10 +21,13 @@ so this is provable fully offline.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+from pathlib import Path
 
 import pytest
 
+import lobes.realtime._settings as _settings
 from lobes.realtime._settings import (
     BATCH_LANE,
     VOICE_LANE,
@@ -125,3 +128,41 @@ def test_lane_semaphore_sizes_follow_their_own_env_override() -> None:
         voice_sem.release()
 
     asyncio.run(_run())
+
+
+def test_the_client_pool_is_only_ever_keyed_by_a_normalized_lane() -> None:
+    """``_get_client``/``_reset_client`` must normalize before touching ``_clients``.
+
+    ``_get_semaphore`` normalizes its lane, so an unknown value is gated by the
+    BATCH semaphore. If the client pool were keyed by the raw string instead,
+    that same request would be gated as batch while talking over a third,
+    never-closed ``httpx.AsyncClient`` — a leaked connection pool per typo, and
+    the exact opposite of the "unknown lane -> batch lane" contract
+    ``normalize_tts_lane`` documents.
+
+    Structural (AST) rather than behavioural on purpose: ``tts_client`` imports
+    httpx at module top and no CI workflow installs the ``[realtime]`` extra, so
+    an ``importorskip`` version of this test would skip in CI and gate nothing
+    (the same trap this module's lane-selection logic was moved into
+    ``_settings`` to avoid).
+    """
+    source = Path(_settings.__file__).parent.joinpath("tts_client.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    guarded = {"_get_client", "_reset_client"}
+    seen: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name not in guarded:
+            continue
+        seen.add(node.name)
+        calls = [
+            child.func.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+        ]
+        assert "normalize_tts_lane" in calls, (
+            f"{node.name} indexes _clients without normalizing its lane — an unknown "
+            "lane would open a third, never-closed connection pool"
+        )
+
+    assert seen == guarded, f"expected to find {guarded} in tts_client.py, found {seen}"
