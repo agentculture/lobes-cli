@@ -27,7 +27,7 @@ import {
 import type { AppendEvent } from "./pcm-wire";
 import { TTS_OUTPUT_SAMPLE_RATE, encodeAudioPayload } from "./pcm-wire";
 import type { MicIslandHandle, MicIslandOptions } from "./mic-island";
-import { CLIENT_EVENT_NAME, SERVER_EVENT_NAME, mountMicIsland } from "./mic-island";
+import { CLIENT_EVENT_NAME, SERVER_EVENT_NAME, mountMicIsland, secureContextHint } from "./mic-island";
 
 interface Island {
   handle: MicIslandHandle;
@@ -554,5 +554,27 @@ describe("mounting", () => {
     );
 
     expect(root.querySelector(".mic-server-error")?.textContent).toContain("response_timeout");
+  });
+});
+
+describe("secureContextHint — the remedy must be copy-pasteable", () => {
+  it("names the exact forwarding command and URL for a remote origin", () => {
+    const hint = secureContextHint({ hostname: "spark", port: "4321" });
+    expect(hint).toContain("ssh -L 4321:localhost:4321 spark");
+    expect(hint).toContain("http://localhost:4321/");
+  });
+
+  it("uses the page's own port, not a hardcoded one", () => {
+    expect(secureContextHint({ hostname: "box", port: "8080" })).toContain(
+      "ssh -L 8080:localhost:8080 box"
+    );
+  });
+
+  it("does not send a localhost page chasing its origin", () => {
+    // Already secure: blaming the origin here would be a wrong steer, so the
+    // message says so and points at the browser instead.
+    const hint = secureContextHint({ hostname: "localhost", port: "4321" });
+    expect(hint).toContain("IS on localhost");
+    expect(hint).not.toContain("ssh -L");
   });
 });

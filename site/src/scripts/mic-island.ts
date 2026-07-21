@@ -116,6 +116,31 @@ interface StateCopy {
   message: string;
 }
 
+/**
+ * A copy-pasteable remedy for an insecure origin, derived from the current URL.
+ *
+ * `getUserMedia` gives a page NO microphone outside a secure context, and the
+ * symptom points anywhere but the address bar — so the message names the exact
+ * URL and the exact forwarding command for THIS page rather than describing the
+ * rule and leaving the reader to apply it.
+ */
+export function secureContextHint(location?: { hostname: string; port: string }): string {
+  const loc =
+    location ??
+    (typeof window !== "undefined"
+      ? { hostname: window.location.hostname, port: window.location.port }
+      : { hostname: "localhost", port: "4321" });
+  const port = loc.port || "4321";
+  const base =
+    "This page cannot capture audio from this origin. getUserMedia needs a secure context — https:// or a localhost origin, and nothing else.";
+  if (loc.hostname === "localhost" || loc.hostname === "127.0.0.1" || loc.hostname === "::1") {
+    // Already on localhost: the origin is not the problem, so do not send the
+    // reader chasing it. Something else removed the API.
+    return `${base} This page IS on localhost, so the origin is not the problem — the browser or an extension has removed getUserMedia.`;
+  }
+  return `${base} From another machine: ssh -L ${port}:localhost:${port} ${loc.hostname} — then open http://localhost:${port}/ . On this box: open http://localhost:${port}/ directly.`;
+}
+
 const STATE_COPY: Record<MicIslandState, StateCopy> = {
   idle: {
     label: "Not armed",
@@ -151,12 +176,14 @@ const STATE_COPY: Record<MicIslandState, StateCopy> = {
   "no-device": {
     label: "No microphone",
     message:
-      "The browser found no audio input device. Connect a microphone and start again — this is not a permission problem.",
+      "The browser found no audio input device. This is not a permission problem — and a mic being physically plugged in is not enough: the OS has to expose it as an INPUT. On PipeWire/PulseAudio a card can sit in an output-only profile, which shows a working device to `arecord` and nothing at all to the browser. Check `pactl list sources short` for a non-monitor source; if there is none, switch the card to a duplex profile (`pactl set-card-profile <card> output:analog-stereo+input:stereo-fallback`) and start again.",
   },
   unsupported: {
     label: "Capture unavailable",
-    message:
-      "This page cannot capture audio from this origin. getUserMedia needs a secure context — serve the site over localhost (the ssh -L flow) or https://.",
+    // The remedy is built from where the page is ACTUALLY running, so it can be
+    // copy-pasted rather than translated. An abstract "use a secure context"
+    // leaves the reader to work out which host and which port they need.
+    message: secureContextHint(),
   },
   failed: {
     label: "Capture failed",
