@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.1] - 2026-07-21
+
+### Fixed
+
+- Pre-merge review of the realtime work caught three defects, all reproduced before fixing: the gateway's `/v1/realtime` handshake hung on every real connection (`BufferedReader.read(n)` waits to fill its buffer on a blocking socket, and a bridge that just accepted a session sends nothing more — now `read1()`, guarded by real-socketpair tests instead of a fake that returned early); Silero inference and scipy resampling ran on the bridge's single asyncio event loop, so one talking session starved every other session and every batch `/v1/audio/*` request (both now offloaded via `anyio.to_thread.run_sync`, matching the Chatterbox sidecar's convention, with the 16 kHz no-op passthrough left inline); and `scripts/realtime-smoke.py` desynced its frame parser if a read timed out between a frame's header and its payload.
+
 ## [0.52.0] - 2026-07-21
 
 ### Added
