@@ -19,6 +19,9 @@
 // IntersectionObserver), which predate any island and stay that way.
 import Layout from "../layouts/Layout.astro";
 import SignalMesh from "../components/SignalMesh.astro";
+import ConnectionPanel from "../components/ConnectionPanel.astro";
+import MicIsland from "../components/MicIsland.astro";
+import EventStream from "../components/EventStream.astro";
 ---
 
 <Layout
@@ -60,10 +63,7 @@ import SignalMesh from "../components/SignalMesh.astro";
         process, never in this page.
       </p>
       <div class="mount card" id="connection-mount" data-mount="connection">
-        <!-- t13 attaches its connect/disconnect controls and auth status here. -->
-        <p class="muted placeholder-note">
-          Connection controls mount here (t13).
-        </p>
+        <ConnectionPanel />
       </div>
     </div>
   </section>
@@ -86,11 +86,7 @@ import SignalMesh from "../components/SignalMesh.astro";
         interrupts it — echo cancellation only, no mic muting.
       </p>
       <div class="mount card" id="mic-mount" data-mount="mic">
-        <!-- t11 attaches its start control, mic level meter, and audio
-             player here. -->
-        <p class="muted placeholder-note">
-          Mic capture and audio playback controls mount here (t11).
-        </p>
+        <MicIsland />
       </div>
     </div>
   </section>
@@ -111,14 +107,112 @@ import SignalMesh from "../components/SignalMesh.astro";
         exists to make visible.
       </p>
       <div class="mount card" id="events-mount" data-mount="events">
-        <!-- t12 attaches its live event log here. -->
-        <p class="muted placeholder-note">
-          The live event-stream log mounts here (t12).
-        </p>
+        <EventStream />
       </div>
     </div>
   </section>
 </Layout>
+
+<script>
+  // The island bridge (coordinator wiring, issue #151).
+  //
+  // t11, t12 and t13 were built in parallel, blind to each other, and each
+  // named its own DOM seam. Their contracts are compatible in substance and
+  // incompatible in spelling, so this is the one place that translates —
+  // rather than editing three merged, independently-tested islands to agree
+  // after the fact. Each island keeps the API its own tests pin.
+  //
+  //   t13 (transport, owns the socket)
+  //     publishes  document "lobes:realtime-ready" -> { connection }
+  //                window.lobesRealtime
+  //     emits      document "lobes:realtime"       -> ConnectionNotice
+  //                  { kind: "state", state, url, detail }
+  //                  { kind: "event", event, raw }
+  //                  { kind: "malformed" | "binary", ... }
+  //     accepts    connection.sendEvent(event)
+  //
+  //   t11 (mic + playback)
+  //     emits      document "lobes:client-event"   -> an append event to send
+  //     consumes   document "lobes:server-event"   -> one parsed server event
+  //     also       window.lobesMic.notifyDisconnected(reason)
+  //
+  //   t12 (event log)
+  //     consumes   window "lobes:realtime-event"   -> one parsed server event
+  //                window "lobes:connection-state" -> { state, detail }
+  //
+  // Sample rate needs no bridging: t13's panel owns the connect URL, and t11
+  // adopts whatever `session.created` echoes back — the server's echo is the
+  // authority, so the two converge without this file arbitrating.
+  import type { ConnectionState } from "../scripts/realtime-connection";
+
+  // t13 has five transport states; t12 renders four. "closing" folds into
+  // "disconnected" (the socket is going away and the following "disconnected"
+  // notice confirms it) and "failed" is the only one that reads as an error.
+  // t13's own `detail` string rides along, so the nuance the fold drops is
+  // still shown to the operator rather than lost.
+  const STATE_TO_LOG: Record<ConnectionState, string> = {
+    disconnected: "disconnected",
+    connecting: "connecting",
+    open: "connected",
+    closing: "disconnected",
+    failed: "error",
+  };
+
+  function bridge(connection: { sendEvent(event: Record<string, unknown>): boolean }) {
+    // t11 -> t13: outbound audio.
+    document.addEventListener("lobes:client-event", (evt) => {
+      const detail = (evt as CustomEvent).detail;
+      if (detail) connection.sendEvent(detail);
+    });
+  }
+
+  // t13 -> t11 + t12: inbound events and transport state. Registered
+  // immediately (not inside bridge()) so a notice that arrives before the
+  // ready event — a connection opened from a restored form state, say — is
+  // still relayed rather than dropped.
+  document.addEventListener("lobes:realtime", (evt) => {
+    const notice = (evt as CustomEvent).detail;
+    if (!notice) return;
+
+    if (notice.kind === "event") {
+      document.dispatchEvent(
+        new CustomEvent("lobes:server-event", { detail: notice.event }),
+      );
+      window.dispatchEvent(
+        new CustomEvent("lobes:realtime-event", { detail: notice.event }),
+      );
+      return;
+    }
+
+    if (notice.kind === "state") {
+      const state = STATE_TO_LOG[notice.state as ConnectionState] ?? "disconnected";
+      window.dispatchEvent(
+        new CustomEvent("lobes:connection-state", {
+          detail: { state, detail: notice.detail },
+        }),
+      );
+      // Tell the mic island the floor is gone, so it stops playback and
+      // releases the device instead of waiting on a reply that cannot arrive.
+      if (notice.state === "disconnected" || notice.state === "failed") {
+        (window as { lobesMic?: { notifyDisconnected(reason: string): void } })
+          .lobesMic?.notifyDisconnected(notice.detail ?? notice.state);
+      }
+    }
+  });
+
+  // The connection may publish before or after this module runs; handle both.
+  const existing = (window as { lobesRealtime?: Parameters<typeof bridge>[0] })
+    .lobesRealtime;
+  if (existing) {
+    bridge(existing);
+  } else {
+    document.addEventListener(
+      "lobes:realtime-ready",
+      (evt) => bridge((evt as CustomEvent).detail.connection),
+      { once: true },
+    );
+  }
+</script>
 
 <style>
   .hero-grid {
@@ -139,13 +233,6 @@ import SignalMesh from "../components/SignalMesh.astro";
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .placeholder-note {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    text-align: center;
-    margin: 0;
   }
 
   @media (max-width: 42rem) {
