@@ -37,6 +37,7 @@ class Settings:
     vad_threshold: float
     vad_silence_ms: int
     vad_prefix_padding_ms: int
+    vad_max_turn_ms: int
     default_turn_detection: str
     default_aec_mode: str
     barge_in_window_ms: int
@@ -79,6 +80,12 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
+        # VAD_MAX_TURN_MS: hard cap on one uninterrupted turn before the
+        # segmenter force-commits it (lobes.realtime._segmenter's
+        # DEFAULT_MAX_TURN_MS=30_000 — same default, now env-tunable). Wired
+        # through docker-compose.audio.yml / env.audio.example in #149 t5;
+        # this is the settings-side read t5 left for t6 to add.
+        vad_max_turn_ms=_as_int(env, "VAD_MAX_TURN_MS", 30_000),
         default_turn_detection=env.get("DEFAULT_TURN_DETECTION") or "server_vad",
         default_aec_mode=env.get("DEFAULT_AEC_MODE") or "none",
         barge_in_window_ms=_as_int(env, "BARGE_IN_WINDOW_MS", 750),
