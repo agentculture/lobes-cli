@@ -216,19 +216,168 @@ Watch `nvidia-smi` to confirm memory is freed before the STT container restarts.
 
 Root cause diagnosis is open; see issues #39 and #40 if this resurfaces.
 
+## The `/v1/realtime` WebSocket session (issue #149)
+
+**Status: DECLARED/UNVALIDATED live, pending acceptance evidence (#108).**
+Everything in this section is proven by the offline unit suite — a scripted
+fake VAD drives `lobes/realtime/_segmenter.py` and `_session.py` with no
+torch, no GPU, and no `[realtime]` extra installed. Nothing here has been
+exercised against a real Silero model, a real Parakeet forward, or actual
+hardware yet: there is no `docs/evidence/` transcript for issue #149. The
+live smoke procedure that will produce one — connect, stream, boundaries,
+transcript, all over one connection, plain-`websocket-client`-level like
+`scripts/audio-smoke.py` — is issue #149's task t8. Until that transcript
+lands, treat every claim below as offline-proven, not live-validated.
+
+### The IOUs this redeems
+
+- `lobes/realtime/app.py`'s own module docstring used to read "PR2 adds the
+  `/v1/realtime` WebSocket route" as a forward promise. The route now exists
+  (`@app.websocket("/v1/realtime")`), wiring the stdlib-tested
+  `_session.py` / `_segmenter.py` / `_pcm.py` modules to a real Silero model
+  and real scipy resampling.
+- This doc's own Boundary section (below) used to say the WebSocket protocol
+  "does not change... that is planned for a later release." That was the
+  **#149 baseline probe**: the deployed realtime container served four batch
+  routes (`/health`, `/v1/health/ready`, `/v1/audio/transcriptions`,
+  `/v1/audio/speech`) and no WebSocket at all — which is why reachy-mini-cli
+  had to endpoint client-side with an energy threshold (measured failure: a
+  five-word question arriving as the fragment "Ready, she"). The route below
+  redeems that IOU; the Boundary section states only what is still true.
+
+### Reachability
+
+Served **through the gateway**, not the bridge port directly. The gateway's
+`GET /v1/realtime` handler (`lobes/gateway/server.py::_handle_realtime`, via
+`lobes/gateway/_realtime.py::plan_realtime_upgrade`) relays the WebSocket
+101-upgrade handshake to the local `realtime` bridge, then pumps opaque bytes
+both directions until either side closes (`run_tunnel` / `pump`) — the
+gateway never parses the WebSocket protocol itself, only the HTTP handshake.
+The same opt-in `GATEWAY_API_KEY` bearer check gates the handshake exactly
+like every other `/v1/*` data-plane route: a missing or wrong key is
+rejected before any tunnel or session is allocated. A plain `GET
+/v1/realtime` (no `Upgrade: websocket` header) gets **426** ("send an
+Upgrade: websocket handshake"), not a 404 — the route exists, it just was not
+asked for correctly. A declared-off `stt` lane (`STT_FEASIBLE=false`) gets
+the same **404 `role_infeasible`** the batch STT route gets, naming
+`hosted_by` when a peer origin is declared.
+
+### Connect URL and session config
+
+Session config is **connect-URL query parameters**, not a first WS message:
+
+```text
+wss://<gateway>/v1/realtime?input_sample_rate=16000
+```
+
+| Param | Default | Accepted |
+|---|---|---|
+| `input_audio_format` | `pcm16` | `pcm16` only |
+| `input_sample_rate` | `24000` | `24000` or `16000` |
+| `input_channels` | `1` | `1` (mono) only |
+| `turn_detection` | `server_vad` | `server_vad` only |
+| `aec_mode` | `none` | `none` or `aec` |
+
+Wire format is **PCM16 mono little-endian**, streamed as **binary** WebSocket
+frames at whatever chunking granularity the client sends — the server
+reassembles the stream; a frame need not align to a whole sample, let alone a
+whole 32 ms VAD chunk (`lobes/realtime/_pcm.py::take_aligned_samples`).
+`input_sample_rate` defaults to **24000 Hz** (OpenAI-Realtime-compatible);
+**16000 Hz is also accepted** (Parakeet/Silero's native rate — the server
+skips resampling entirely in that case, see `_pcm.py::needs_resample`). Any
+other rate is rejected as an invalid session config, and the socket is
+closed (WS code 1008) before any audio is accepted — no session is allocated
+for a rejected config. The server resamples 24 kHz down to 16 kHz itself,
+server-side, via scipy (`lobes/realtime/app.py::_resample_to_16k`) — the
+client never resamples.
+
+### Event flow
+
+Events come back as JSON **text** frames (schema: `lobes/realtime/_session.py`,
+`EventType`):
+
+1. `session.created` — sent immediately after the handshake, confirming the
+   negotiated config including the resolved `input_sample_rate`. A client
+   that sent no query params at all can read the effective defaults off
+   this event.
+2. `input_audio_buffer.speech_started` — server-side Silero VAD crossed
+   `VAD_THRESHOLD` on a chunk; the turn's audio begins with up to
+   `VAD_PREFIX_PADDING_MS` of pre-roll so the syllable before detection is
+   never lost.
+3. `input_audio_buffer.speech_stopped` — the turn committed, either because
+   `VAD_SILENCE_MS` of continuous non-speech confirmed the stop
+   (`reason="silence"`), or the max-turn cap fired (`reason="max_turn"` —
+   see below).
+4. `conversation.item.input_audio_transcription.completed` — the committed
+   turn's audio was forwarded to `settings.stt_url` (Parakeet — the exact
+   same backend and WAV-wrapping the batch `/v1/audio/transcriptions` route
+   uses) and transcribed, **on the same connection** — no separate batch
+   call.
+5. `error` — a documented `ErrorCode`, never a bare exception string:
+   `invalid_session_config` (bad config, rejected before any session
+   exists), `vad_unavailable` (Silero failed to load, or a later VAD call
+   raised — **distinct from ordinary silence, which emits no event at
+   all**), `stt_forward_failed` (the committed turn's Parakeet forward
+   failed: unreachable backend, non-2xx, non-JSON, or a body missing
+   `text` — **a turn is never silently dropped**).
+
+This is audio-in only: the route never sends audio back over `/v1/realtime`
+— no `response.create`, no LLM turns, no TTS-out on this connection (the
+full OpenAI Realtime conversation surface is an explicit non-goal; TTS stays
+the batch `/v1/audio/speech` route).
+
+### Max-turn cap: force-commit, not an error
+
+A stream that never falls silent (a stuck mic, an uninterrupted monologue)
+would otherwise grow one turn's buffered audio without bound.
+`VAD_MAX_TURN_MS` (default 30000 ms; env-tunable — see
+`docker-compose.audio.yml` / `env.audio.example`) bounds it: once a turn's
+accumulated audio reaches the cap, the segmenter **force-commits** it as an
+ordinary `input_audio_buffer.speech_stopped` event with `reason="max_turn"`
+— **this is not an error and never raises** — and the session proceeds
+straight to the transcription forward, same as a silence-committed turn. A
+consumer must not expect an `error` event on this path; inspect `reason` if
+you want error-like handling of an unusually long turn.
+
+### Ephemeral sessions — the restart contract
+
+There is no resume. `Session.teardown()` (`lobes/realtime/_session.py`)
+releases every session's bookkeeping from **any** state (idle, mid-speech,
+mid-transcription) on a disconnect for **any** reason — client close,
+network drop, or the server closing the connection itself after a
+`vad_unavailable` error. Nothing here persists to disk. A reconnecting
+client always starts a **brand-new session with a brand-new session id** —
+there is no state to restore, on either the bridge or the gateway (a dropped
+client unwinds both tunnel pump threads on the gateway side,
+`lobes/gateway/_realtime.py::pump` / `run_tunnel`). The client contract is:
+reconnect and restart the turn you were mid-way through — there is no
+partial-turn recovery across a disconnect.
+
 ## Boundary / non-goals
 
 The audio surface **does not**:
 
-- Change the `/v1/realtime` WebSocket protocol (that is planned for a later
-  release; the current surface is REST only: `/v1/audio/transcriptions` and
-  `/v1/audio/speech`).
+- Proxy the `/v1/realtime` WebSocket cross-box. The session ships (see
+  above) and is served through the gateway on this box only — the #129
+  proxy-lobes forwarder is POST-only, so a declared-off `stt` lane 404s the
+  handshake `role_infeasible` (naming `hosted_by` when a peer origin is
+  declared) rather than tunneling the WebSocket to a peer.
+- Enable AEC by default. `aec_mode` defaults to `none` and stays off unless a
+  session's connect-URL explicitly requests `aec_mode=aec` — Reachy Mini's
+  mic array cancels echo in firmware, so server-side AEC is opt-in, never
+  assumed.
+- Expose a full OpenAI Realtime conversation surface. `/v1/realtime` is
+  audio-in, boundaries, and transcription only — no `response.create`, no
+  LLM turns, no TTS-out on the session (see [Event flow](#event-flow) above).
 - Swap the STT engine — Parakeet (NeMo ASR) remains the hardcoded STT backend.
   TTS has been migrated from Magpie (NVIDIA NIM, proprietary) to Chatterbox
-  (Resemble AI, open-weights, Apache-2.0).
-- Add an audio-specific auth scheme. Audio endpoints are gated by the same
-  opt-in `GATEWAY_API_KEY` bearer check as every other gateway POST route —
-  see [`docs/gateway-fleet.md#auth-opt-in-bearer-gate`](gateway-fleet.md#auth-opt-in-bearer-gate)
+  (Resemble AI, open-weights, Apache-2.0). Silero VAD is likewise hardcoded —
+  none of the three (Parakeet, Chatterbox, Silero) is in the switchable
+  catalog (`lobes/catalog.py`).
+- Add an audio-specific auth scheme. Both the batch routes and the
+  `/v1/realtime` handshake are gated by the same opt-in `GATEWAY_API_KEY`
+  bearer check as every other gateway data-plane route — see
+  [`docs/gateway-fleet.md#auth-opt-in-bearer-gate`](gateway-fleet.md#auth-opt-in-bearer-gate)
   and [`docs/openai-api.md#fleet-gateway`](openai-api.md#fleet-gateway).
 
 ## Memory (co-residence risk)
