@@ -18,14 +18,16 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/score` | POST | `Qwen/Qwen3-Reranker-0.6B` (same backend as rerank) | raw cross-encoder scores, input order |
 | `/v1/audio/transcriptions` | POST | Parakeet STT via the realtime bridge | multipart `file` upload → `{"text": ...}` |
 | `/v1/audio/speech` | POST | Chatterbox TTS via the realtime bridge | text → audio bytes (24 kHz) |
+| `/v1/realtime` | GET (WebSocket upgrade) | realtime bridge, tunneled through the gateway | server_vad session; PCM16 mono LE, 24000 Hz default / 16000 Hz accepted (issue #149) — see below |
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
 | `/capabilities` | GET | gateway | the seven-role Colleague contract (`cortex`/`senses`/`muse`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
 | `/health` | GET | gateway | liveness |
 
-Embeddings, rerank, score, and audio require the **fleet overlay** — they are not
-available when running the raw vLLM container in single-model mode. The generate
-endpoints (`/v1/chat/completions`, `/v1/completions`) and `/v1/models` work in both
+Embeddings, rerank, score, and audio (including the `/v1/realtime` WebSocket
+session) require the **fleet overlay** — they are not available when running
+the raw vLLM container in single-model mode. The generate endpoints
+(`/v1/chat/completions`, `/v1/completions`) and `/v1/models` work in both
 modes.
 
 ## How routing works
@@ -150,6 +152,21 @@ The bridge proxies:
 
 The audio overlay is enabled with `lobes init --fleet --audio --apply`. See
 [`docs/realtime-pipeline.md`](realtime-pipeline.md) for full bring-up instructions.
+
+### Realtime WebSocket tunnel (issue #149)
+
+`/v1/realtime` reaches the same bridge a different way: not an HTTP forward,
+but a **101-upgrade + bidirectional byte tunnel**
+(`lobes/gateway/_realtime.py`). The gateway relays the client's WebSocket
+handshake to the local `realtime` bridge verbatim, relays the bridge's `101`
+back, and then pumps opaque bytes both directions until either side closes —
+it never parses the WebSocket protocol itself. A plain `GET` with no
+`Upgrade: websocket` header gets **426**; a declared-off `stt` lane gets the
+same **404 `role_infeasible`** (naming `hosted_by`) the batch STT route
+gets. Unlike the batch audio routes, this tunnel is **never proxied
+cross-box** even when `STT_PEER_PROXY` is armed — the #129 proxy-lobes
+forwarder is POST-only. See [Realtime session](#realtime-session-v1realtime-websocket)
+below for the session contract.
 
 **Auth is opt-in.** Set `GATEWAY_API_KEY` (fallback `CULTURE_VLLM_API_KEY`) in
 the deployment `.env` to require `Authorization: Bearer <key>` on every
@@ -347,6 +364,81 @@ the sidecar for zero-shot voice cloning (passed through as `audio_prompt_path`).
 Audio endpoints are gated by the same opt-in bearer check as every other POST
 route — see [Auth and exposure](#auth-and-exposure) below.
 
+### Realtime session (`/v1/realtime` WebSocket)
+
+`GET /v1/realtime` with an `Upgrade: websocket` handshake — a persistent
+`server_vad` session that replaces separate STT batch calls with one
+connection: stream PCM audio in, receive VAD boundary and transcription
+events back on the same socket. Requires the `--audio` fleet overlay
+(issue #149).
+
+**Wire format: PCM16 mono little-endian**, streamed as binary WebSocket
+frames. `input_sample_rate` defaults to **24000 Hz**; **16000 Hz is also
+accepted** — the server resamples 24 kHz down to 16 kHz itself before
+feeding Silero VAD and Parakeet (both native at 16 kHz), so a client never
+needs to know or match that rate. Any other rate is rejected as an invalid
+session config before any audio is accepted.
+
+Session config is set via **connect-URL query parameters**, not a first
+message:
+
+```text
+ws://localhost:8000/v1/realtime?input_sample_rate=16000
+```
+
+| Param | Default | Accepted |
+|---|---|---|
+| `input_audio_format` | `pcm16` | `pcm16` only |
+| `input_sample_rate` | `24000` | `24000` or `16000` |
+| `input_channels` | `1` | `1` (mono) only |
+| `turn_detection` | `server_vad` | `server_vad` only |
+| `aec_mode` | `none` | `none` or `aec` |
+
+```python
+import websocket  # pip install websocket-client
+
+ws = websocket.create_connection("ws://localhost:8000/v1/realtime?input_sample_rate=16000")
+print(ws.recv())           # {"type": "session.created", ...} — confirms negotiated config
+ws.send_binary(pcm_chunk)  # PCM16 mono LE; any chunk size, the server reassembles the stream
+print(ws.recv())           # speech_started / speech_stopped / transcription.completed / error
+```
+
+Events come back as JSON text frames:
+
+- `session.created` — sent immediately after the handshake; confirms the
+  negotiated config (read effective defaults off it if you sent none).
+- `input_audio_buffer.speech_started` / `...speech_stopped` — server-side
+  Silero VAD boundaries. A stopped turn carries `reason: "silence"` (normal)
+  or `reason: "max_turn"` — the max-turn cap (`VAD_MAX_TURN_MS`, default
+  30000 ms) force-committing an unusually long, never-silent turn.
+  **`max_turn` is not an error** — no `error` event fires on this path.
+- `conversation.item.input_audio_transcription.completed` — the committed
+  turn's Parakeet transcript, on the same connection.
+- `error` — a named `code`: `invalid_session_config` (rejected before any
+  session exists), `vad_unavailable` (Silero down — distinct from ordinary
+  silence, which emits nothing), `stt_forward_failed` (the Parakeet forward
+  failed; a turn is never silently dropped).
+
+**Sessions are ephemeral.** There is no resume: a disconnect for any reason
+(idle, mid-speech, mid-transcription) tears the session down completely, and
+a reconnecting client gets a brand-new session id — reconnect-and-restart is
+the client contract, not a bug to work around.
+
+Reached the same way as the batch audio routes — through the gateway,
+tunneled to the realtime bridge (101 upgrade + byte relay, see
+[Realtime WebSocket tunnel](#realtime-websocket-tunnel-issue-149) above) —
+gated by the same opt-in bearer check (a missing/wrong key is rejected
+before any tunnel is opened); see [Auth and exposure](#auth-and-exposure)
+below.
+
+**Live status: DECLARED/UNVALIDATED.** The session/VAD logic is proven by
+the offline unit suite with a scripted fake VAD; nothing here has been
+exercised on real hardware yet — no `docs/evidence/` transcript exists for
+issue #149. See
+[`docs/realtime-pipeline.md`](realtime-pipeline.md#the-v1realtime-websocket-session-issue-149)
+for the full contract, the ephemeral-session restart contract in detail, and
+the #149 baseline this redeems.
+
 ### Model list (loaded)
 
 `GET /v1/models` — OpenAI-standard list of backends currently loaded in GPU memory.
@@ -528,7 +620,8 @@ two-step provisioning flow (`cultureflare` + `lobes tunnel`).
 - `lobes explain rerank` — `/v1/rerank` request/response detail
 - `lobes explain score` — `/v1/score` request/response detail
 - `lobes explain tunnel` — Cloudflare Tunnel bring-up
+- `lobes explain realtime` — the `/v1/realtime` session surface, in-CLI
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — full fleet topology, memory guidance, live validation findings
 - [`docs/colleague-stack.md`](colleague-stack.md) — the seven-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
-- [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), health/readiness, runbooks
+- [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), the `/v1/realtime` session contract, health/readiness, runbooks
 - [`docs/chatterbox-tts.md`](chatterbox-tts.md) — Chatterbox TTS details, voice prompting

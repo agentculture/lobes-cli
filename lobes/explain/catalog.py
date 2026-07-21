@@ -973,11 +973,38 @@ lobes fleet status
 python3 scripts/audio-smoke.py       # live smoke test (+ TTS→STT round-trip)
 ```
 
-REST only today (`/v1/audio/transcriptions` + `/v1/audio/speech`); the
-`/v1/realtime` WebSocket is planned. Audio POST routes are gated by the same
-opt-in `GATEWAY_API_KEY` bearer check as every other route — `lobes explain
-gateway`. Full topology, runbooks, and memory guidance:
-`docs/realtime-pipeline.md`.
+## Realtime session (`GET /v1/realtime`, WebSocket, issue #149)
+
+Beyond the two batch REST routes, `/v1/realtime` (a WebSocket upgrade) opens
+a persistent `server_vad` session on ONE connection: stream PCM16 mono
+little-endian audio in — **24000 Hz default, 16000 Hz accepted**, the server
+resamples down to 16 kHz itself (scipy) — and receive `session.created` /
+`input_audio_buffer.speech_started` / `...speech_stopped` /
+`conversation.item.input_audio_transcription.completed` / `error` events
+back, all on that same connection. Session config rides connect-URL query
+params (e.g. `?input_sample_rate=16000`), not a first message. A never-silent
+turn force-commits at `VAD_MAX_TURN_MS` (default 30s) with
+`reason: "max_turn"` — that is a normal boundary event, **not** an `error`.
+Sessions are ephemeral: any disconnect (idle, mid-speech, mid-transcription)
+tears the session down completely; there is no resume, and a reconnecting
+client always gets a brand-new session id.
+
+Reached through the gateway (101-upgrade + byte tunnel, not a parsed HTTP
+forward) under the same opt-in `GATEWAY_API_KEY` bearer gate as every other
+route; a plain `GET` gets 426, a declared-off `stt` lane 404s
+`role_infeasible` naming `hosted_by`, and the session is **never** proxied
+cross-box (the #129 proxy-lobes forwarder is POST-only).
+
+**DECLARED/UNVALIDATED live** (#108): the offline suite proves the
+session/VAD logic with a scripted fake VAD; nothing above has been
+exercised against real hardware yet, and no `docs/evidence/` transcript
+exists for issue #149.
+
+Audio POST routes and the `/v1/realtime` handshake are gated by the same
+opt-in `GATEWAY_API_KEY` bearer check — `lobes explain gateway`. Full
+topology, the session's event/config/teardown contract, runbooks, and
+memory guidance: `docs/realtime-pipeline.md`; wire-format detail:
+`docs/openai-api.md`.
 """
 
 _STT = """\
