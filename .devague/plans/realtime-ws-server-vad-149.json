@@ -3,9 +3,9 @@
   "title": "realtime WS server_vad (#149)",
   "frame_slug": "realtime-ws-server-vad-149",
   "schema_version": 3,
-  "status": "drafting",
+  "status": "exported",
   "created": "2026-07-21T09:48:29Z",
-  "updated": "2026-07-21T09:48:29Z",
+  "updated": "2026-07-21T11:31:14Z",
   "targets": [
     {
       "id": "c1",
@@ -176,8 +176,274 @@
       "id": "h17",
       "kind": "honesty",
       "text": "the offline suite runs green with no GPU and no [realtime] extra installed, and any validated wording lands only with the docs/evidence/ transcript (#108 rule)"
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "session teardown is leak-free: a client disconnect in ANY state (idle, mid-speech, mid-transcription) closes the upstream leg, unwinds the gateway tunnel threads, and frees session buffers; close propagates in both directions \u2014 a dropped robot never strands a bridge session or a gateway thread"
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "an offline test drives a session through connect-stream-disconnect at each state and asserts no leaked task/thread/buffer bookkeeping; the gateway tunnel unwinds both pump directions on either side's close"
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "per-turn audio buffering is bounded: a documented max-turn length force-commits (or errors) with a named event when exceeded \u2014 a never-silent stream cannot grow bridge memory without limit"
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "the max-turn cap is a documented, env-tunable value; an offline test streams past it with a never-silent fake VAD and receives the documented commit-or-error event"
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "session lifecycle is observable: session open/close, VAD arm/fail, and STT forward failures are logged with session ids in the bridge, and tunnel open/close in the gateway \u2014 lobes logs tells a session's story"
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "grepping bridge logs for one session id reconstructs its lifecycle: open, VAD state, commits, errors, close"
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "VAD state is per-session: concurrent sessions get isolated segmentation state (shared model, per-session iterator state or equivalent) \u2014 interleaved sessions never corrupt each other's boundaries"
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "an offline test interleaves two sessions with different scripted fake-VAD patterns and asserts each gets exactly its own boundary events"
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "sessions are ephemeral: no resume across bridge/gateway restarts and no session state on disk \u2014 a dropped connection means the client reconnects and starts fresh"
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "restart behavior is documented; no code path persists or restores session state, and reconnect-and-restart is stated as the client contract"
     }
   ],
-  "tasks": [],
-  "risks": []
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "VAD segmenter: pure state machine in a new stdlib module lobes/realtime/_segmenter.py over 512-sample/32ms PCM chunks, Silero injected as a callable",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_realtime_segmenter.py passes offline with no torch and no [realtime] extra installed",
+        "a scripted fake-VAD silence-speech-silence sequence yields speech_started at the padded onset and speech_stopped after vad_silence_ms",
+        "a never-silent stream hits the documented max-turn cap and receives the documented force-commit-or-error outcome",
+        "two interleaved segmenter instances with different scripted patterns each produce exactly their own boundary events"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h3",
+        "c27",
+        "h19",
+        "c29",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Session engine: stdlib module lobes/realtime/_session.py \u2014 event schema, session config parsing (rate/AEC/turn_detection), teardown bookkeeping, session-id logging",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "config parse accepts PCM16 mono at 24000 (default) and 16000, rejecting others with a named error",
+        "AEC defaults to none and stays off unless the session explicitly enables it",
+        "VAD-unavailable yields the documented named error event and no boundary events; a silent healthy session yields neither \u2014 distinguishable by event type alone",
+        "teardown from every state (idle, mid-speech, mid-transcription) releases all session bookkeeping, asserted by test",
+        "every event and log record carries the session id; no key material appears in any log line; no code path persists session state"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h5",
+        "c14",
+        "h12",
+        "c26",
+        "h18",
+        "c28",
+        "h20",
+        "c31",
+        "h23"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Gateway WS tunnel: 101-upgrade + bidirectional socket relay in gateway/server.py, /v1/realtime routing branch, bearer gate on handshake, role_infeasible 404 for declared-off stt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with GATEWAY_API_KEY set, an upgrade request with a missing or wrong bearer is rejected before any tunnel or session allocation (offline fake-socket test)",
+        "the 101 handshake is relayed and bytes pump both directions until either side closes; both pump threads unwind on either close (offline fake-socket test)",
+        "with STT_FEASIBLE=false the handshake receives the role_infeasible 404, carrying hosted_by when a peer origin is declared",
+        "the session socket is exempt from the HTTP read timeout; existing gateway audio routing and peer tests pass unchanged"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h8",
+        "c13",
+        "h11",
+        "c12",
+        "h10",
+        "c26",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Capabilities: stt role advertises realtime via ROLE_RESPONSIBILITIES in lobes/roles.py; CLI + gateway surfaces + contract doc follow",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "on an audio-enabled registry, lobes capabilities and GET /capabilities both show the realtime capability under stt (asserted in test_cli_capabilities.py)",
+        "a text-only fleet shows no realtime claim; test_colleague_contract.py and docs/colleague-stack.md updated and green"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Templates + env passthrough: VAD_/AEC_/TURN_ keys (plus the max-turn cap key) into docker-compose.audio.yml environment block and env.audio.example; doctor heal covers them",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a fresh scaffold's realtime service receives VAD_THRESHOLD, VAD_SILENCE_MS, VAD_PREFIX_PADDING_MS, DEFAULT_TURN_DETECTION, DEFAULT_AEC_MODE and the max-turn cap; env.audio.example documents each",
+        "doctor --fix on a pre-PR2 scaffold heals the missing keys append-only, never rewriting an existing .env line (test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "The /v1/realtime route: thin WS shell in app.py wiring real Silero + scipy resample (24k to 16k) into the stdlib session engine; committed turns forward to Parakeet",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the route registers on the same FastAPI app as the batch routes, stays a thin pragma-no-cover shell, and imports the stdlib session/segmenter modules for all logic",
+        "a committed turn forwards to settings.stt_url and emits a transcription event on the SAME connection; an STT failure emits the named error event, never a silent drop",
+        "session config declares input rate: 24000 default, 16000 accepted, PCM16 mono little-endian stated in the route docs"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c2",
+        "h2",
+        "c4",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Docs flip: realtime-pipeline.md boundary section, openai-api.md endpoint table, explain catalog \u2014 wire format, cap, restart contract, baseline citation",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no doc records the WS as future work; openai-api.md lists /v1/realtime with PCM16 mono LE, 24000 default / 16000 accepted stated explicitly; lobes explain realtime names the session surface",
+        "the ephemeral-session restart contract and the max-turn cap are documented; the #149 baseline probe and the in-tree IOUs are cited"
+      ],
+      "deps": [
+        "t3",
+        "t6"
+      ],
+      "covers": [
+        "c9",
+        "h9",
+        "c19",
+        "h14",
+        "c21",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Live smoke + acceptance evidence procedure: a plain-websocket-client script drives connect, stream, boundaries, transcript over ONE connection against a deployed overlay",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the script uses plain websocket-client-level code (no torch, no OpenAI SDK) and prints PASS/FAIL per step like scripts/audio-smoke.py",
+        "the script documents the acceptance-evidence procedure: transcript lands under docs/evidence/ before any validated wording (#108)"
+      ],
+      "deps": [
+        "t3",
+        "t6"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c18",
+        "h13",
+        "c20",
+        "h15",
+        "c22",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Release chores: minor version bump + CHANGELOG entry; full offline suite green",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped minor via the bump script with a CHANGELOG entry; uv run pytest -n auto green with no [realtime] extra installed"
+      ],
+      "deps": [
+        "t7",
+        "t8"
+      ],
+      "covers": [],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "concurrent-session cap undecided (frame park v2): ThreadingHTTPServer is thread-per-session and the expected consumer population is about one robot \u2014 implement unbounded-but-documented unless review demands a cap",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "silero-vad floats from >=5.1 to 6.x at image build time; if the VADIterator API drifts across the major, the image build pins tighter \u2014 never vendors the model",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "live acceptance is post-merge sequencing: the deployed facade installs lobes-cli[realtime]==MODEL_GEAR_VERSION from PyPI (CDN-lag gotcha), so the docs/evidence/ transcript lands after release + rebuild on an audio-hosting box",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
 }
