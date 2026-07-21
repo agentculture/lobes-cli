@@ -22,8 +22,8 @@ import importlib.util
 import io
 import socket
 import struct
-import threading
 import sys
+import threading
 from pathlib import Path
 
 import pytest
