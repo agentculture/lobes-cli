@@ -5,7 +5,7 @@
   "schema_version": 3,
   "status": "exported",
   "created": "2026-07-21T18:00:04Z",
-  "updated": "2026-07-21T18:33:17Z",
+  "updated": "2026-07-21T19:58:58Z",
   "targets": [
     {
       "id": "c1",
@@ -639,6 +639,20 @@
         "h32"
       ],
       "instruction": ""
+    },
+    {
+      "id": "t18",
+      "summary": "User mute / mic-off control: an explicit operator affordance on the site (mute mic, mic off/release device), distinct from and never triggered by playback; the no-mic-mute gate narrows to forbidding AUTOMATIC mute-during-playback (deviation d1)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a user can mute the mic and turn it off from the UI; state is visible and distinguishable by more than colour, and the device is genuinely released on mic-off",
+        "the narrowed gate still fails if any code path mutes the mic in response to a playback/response event \u2014 asserted by test, with the deviation d1 rationale cited in the test",
+        "muted state is honest in the event stream: the operator can tell \"muted\" from \"silence\" from \"disconnected\""
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": ""
     }
   ],
   "risks": [
@@ -695,6 +709,14 @@
       "text": "full OpenAI Realtime API parity is a named follow-up: this plan adopts the audio-path event shapes only (frame park v5)",
       "kind": "follow_up",
       "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "a user-initiated mute during an active response is a new interaction the floor machine never modelled: muting is not barge-in, so it must NOT interrupt the reply \u2014 verify the two paths stay distinct (deviation d1)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t18",
       "resolved": false,
       "resolution": ""
     }

@@ -1,0 +1,24 @@
+{
+  "plan_slug": "realtime-voice-to-voice-astro-test-site-151",
+  "schema_version": 1,
+  "created": "2026-07-21T19:58:40Z",
+  "updated": "2026-07-21T19:58:40Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "allow user-initiated mute and mic-off as an explicit control on the site and future clients; the blanket 'no mic muting anywhere in site code' gate narrows to forbidding AUTOMATIC mute-during-playback only",
+      "task_ref": "t11",
+      "reason": "real hardware now exists: the Reachy Mini mic cancels echo in firmware and audio plays out via Reachy or the HDMI monitor. h6's blanket ban was protecting against muting used as an AEC SUBSTITUTE (the f1e6ffa half-duplex hack that makes barge-in impossible). With AEC owned at the client edge, a user-initiated mute is an orthogonal privacy/control affordance that does not reintroduce that failure mode. Operator instruction, 2026-07-21.",
+      "affects": [
+        "h6",
+        "c9",
+        "c26",
+        "t16",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

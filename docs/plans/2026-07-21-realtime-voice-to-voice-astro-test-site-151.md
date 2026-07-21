@@ -144,6 +144,13 @@ slug: `realtime-voice-to-voice-astro-test-site-151` · status: `exported` · fro
   - the run goes through the documented ssh -L flow from the operator laptop with a real microphone
   - the transcript lands under docs/evidence/ before any doc, README, or CLAUDE.md says validated (#108)
 
+### t18 — User mute / mic-off control: an explicit operator affordance on the site (mute mic, mic off/release device), distinct from and never triggered by playback; the no-mic-mute gate narrows to forbidding AUTOMATIC mute-during-playback (deviation d1)
+
+- acceptance:
+  - a user can mute the mic and turn it off from the UI; state is visible and distinguishable by more than colour, and the device is genuinely released on mic-off
+  - the narrowed gate still fails if any code path mutes the mic in response to a playback/response event — asserted by test, with the deviation d1 rationale cited in the test
+  - muted state is honest in the event stream: the operator can tell "muted" from "silence" from "disconnected"
+
 ## Risks
 
 - [unknown_nonblocking] barge_in_model semantics are undefined in-tree — window-only barge-in ships; the knob stays declared/unconsumed-beyond-threading until the live run shows window-only is insufficient (frame park v3) (task t2)
@@ -153,3 +160,4 @@ slug: `realtime-voice-to-voice-astro-test-site-151` · status: `exported` · fro
 - [unknown_nonblocking] full-read TTS synthesis delays the first delta for long replies — if live latency disappoints, sentence-split pipelining (synthesize chunk 1 while speaking it) is the lever; not built preemptively (task t6)
 - [follow_up] concurrent sessions stay unvalidated by this acceptance run (single-operator site) — the #149 debt item is retired only for the real microphone; concurrency validation folds into the gateway-hardening sibling issue (frame parks v2/v5 lineage)
 - [follow_up] full OpenAI Realtime API parity is a named follow-up: this plan adopts the audio-path event shapes only (frame park v5)
+- [unknown_nonblocking] a user-initiated mute during an active response is a new interaction the floor machine never modelled: muting is not barge-in, so it must NOT interrupt the reply — verify the two paths stay distinct (deviation d1) (task t18)
