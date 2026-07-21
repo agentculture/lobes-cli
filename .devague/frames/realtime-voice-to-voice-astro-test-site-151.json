@@ -4,7 +4,7 @@
   "schema_version": 3,
   "status": "exported",
   "created": "2026-07-21T16:01:52Z",
-  "updated": "2026-07-21T16:51:54Z",
+  "updated": "2026-07-21T17:56:37Z",
   "claims": [
     {
       "id": "c1",
@@ -34,6 +34,12 @@
         {
           "id": "h2",
           "text": "a session that never opts into conversation emits a byte-identical #149 event stream (offline-asserted), and the opt-in turn flow commit-generate-TTS-out is a scripted offline test against fake backends",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h30",
+          "text": "a session that never opts into conversation emits the transcription-only event sequence on the new base64 wire (offline-asserted with the UPDATED #149 tests), and the opt-in turn flow commit-generate-TTS-out is a scripted offline test against fake backends",
           "status": "confirmed",
           "instruction": ""
         }
@@ -159,7 +165,7 @@
       "kind": "boundary",
       "text": "ears-only stays intact and DEFAULT: reachy-mini-cli consumes transcription events and must not be forced into a conversation surface \u2014 a session that never sends response.create (or equivalent) behaves byte-identically to the #149 contract",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h13",
@@ -477,11 +483,206 @@
       "kind": "success_signal",
       "text": "the #151 acceptance criteria hold: a spoken reply with no second HTTP call; barge-in visible in the event stream; ears-only consumers see a byte-identical #149 contract; the site drives a full conversation rendering every event type including each named error code distinctly; the turn-taking machine is fully offline-tested; a live transcript lands under docs/evidence/ before any validated wording (#108)",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h22",
           "text": "each acceptance criterion maps to a named offline test or to the evidence transcript, and the mapping is explicit in the exported spec",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "the audio-out DELIVERY model is pinned: synthesize() is full-read (its own docstring; the Chatterbox sidecar has no streaming route), so the bridge holds the complete reply PCM \u2014 audio-out is sent as sequential chunked WS frames, an interruption stops the UNDELIVERED remainder server-side, and the client stops LOCAL playback of already-delivered frames on the interruption event; both halves are required for barge-in to feel instant",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "an offline test interrupts mid-delivery and asserts the undelivered remainder is never sent and the truncation event follows in-order; the site stops local playback on the interruption event in the acceptance run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c32",
+      "kind": "assumption",
+      "text": "the cancellation plumbing partially exists: tts_client.synthesize and _synthesize_single already thread a cancel_event asyncio.Event (checked before each request) \u2014 barge-in truncation arms an existing hook rather than inventing one",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "the TTS concurrency gate is sized for conversation: _tts_semaphore is module-GLOBAL with default TTS_CONCURRENCY=1, shared by every session AND the batch /v1/audio/speech route \u2014 a voice reply serializes behind any unrelated TTS work, which is dead air; the spec must either raise the default or scope the gate per-lane, and say which",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the chosen concurrency default is stated in env.audio.example with its rationale, and an offline test proves a voice turn does not queue behind the batch lane at that default",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "the server keeps in-session conversation history: the voice loop proves a coherent conversation needs history + a system prompt (its client-side history list + SYSTEM_PROMPT), so the bridge holds per-session, in-memory history that dies with the session (consistent with the ephemeral non-goal), with an operator-set default system prompt via env and a per-session override in the connect config",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "history lives only on the Session object \u2014 no disk, no module state; teardown drops it; an offline test drives a two-turn conversation and asserts the second generate request carries the first exchange",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "every response stage has a timeout with a named error event: generate and TTS forwards get bounded waits (precedents: app.py _STT_FORWARD_TIMEOUT=60, the voice loop PLAYBACK_TIMEOUT_S=60 whose comment records a wedged backend stranding the conversation, tts_client httpx 120/read-60) \u2014 on expiry the floor RETURNS TO THE USER with a named error, never a session stuck in a responding state",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "offline tests expire each stage against a hanging fake backend and assert the named error event arrives and the floor returns to listening within the configured bound",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "the site dev flow survives a headless Spark: the browser runs on the operator laptop, and getUserMedia requires a secure context (HTTPS or localhost) \u2014 plain http://<box>:<port> has NO microphone; the documented flow is ssh -L port-forwarding (site + gateway both reached as localhost on the laptop), with mkcert HTTPS as the alternative if forwarding is unacceptable",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "the site README documents the ssh -L flow as the primary path, and the live acceptance run is itself performed through it (laptop browser, forwarded localhost)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "the site gates audio behind a user gesture and renders permission failure as a first-class state: AudioContext starts suspended until a gesture and mic access prompts \u2014 a start button arms mic + playback together, and NotAllowedError/NotFoundError render visually distinct from silence, disconnect, and the named server error codes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "mic + playback arm only from the start control; a denied mic permission renders its own distinct state, verified manually during the acceptance run (permission prompts are not automatable offline)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c38",
+      "kind": "assumption",
+      "text": "the segmenter needs ZERO changes for barge-in: it is a floor-agnostic pure state machine that keeps segmenting whatever audio arrives \u2014 a SpeechStarted while the machine speaks IS the barge-in trigger, consumed by the new floor machine sitting above it; per-session isolation is already documented and tested",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c39",
+      "kind": "boundary",
+      "text": "ears-only stays the DEFAULT MODE, on a new wire: a session that never sends response.create still gets exactly the transcription-only event sequence (created, boundaries, transcripts, named errors) and is never forced into conversation \u2014 but the wire format is now OpenAI-shaped base64 JSON events in BOTH directions (input_audio_buffer.append in, response.audio.delta out); the #149 raw-binary input contract is superseded, its removal coordinated with reachy-mini-cli",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "an offline test asserts the non-opt-in session emits the transcription-only event sequence 1:1 in the new wire format, and no code path accepts or emits raw binary audio frames after the change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c40",
+      "kind": "decision",
+      "text": "the wire break is coordinated, not hidden: reachy-mini-cli adapts to the base64 event format in its next commit; the window where an un-updated deployed reachy cannot stream is accepted by the operator \u2014 a deliberate, recorded break, not a regression",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c41",
+      "kind": "success_signal",
+      "text": "the #151 acceptance criteria hold on the new wire: a spoken reply with no second HTTP call; barge-in visible in the event stream; ears-only consumers keep the transcription-only event sequence (OpenAI-shaped, base64); the site drives a full conversation rendering every event type including each named error code distinctly; the turn-taking machine is fully offline-tested; a live transcript lands under docs/evidence/ before any validated wording (#108); an A/B smoke of the same client against the OpenAI realtime service is possible for the audio path",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "each acceptance criterion maps to a named offline test or to the evidence transcript, the mapping is explicit in the exported spec, and the A/B criterion is demonstrated by pointing the same client at the OpenAI realtime service for one audio exchange (or recording precisely why not in the transcript)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "every in-repo client flips to the base64 event wire in the same PR series: scripts/realtime-smoke.py and scripts/realtime-voice-loop.py speak raw binary frames today and are the acceptance tooling \u2014 they migrate to input_audio_buffer.append/response.audio.delta (the f1e6ffa duplex rules \u2014 pong the pings, select-based reads, lock-guarded writes \u2014 carry over unchanged), and the #149 binary-input offline tests are UPDATED to the event format, not deleted",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "after the PR series, grep finds no in-repo client sending raw binary audio frames; the smoke script passes live against the deployed base64 wire, and the updated offline helper tests cover the append/delta framing arithmetic",
           "status": "confirmed",
           "instruction": ""
         }
@@ -504,6 +705,33 @@
     {
       "id": "v2",
       "text": "gateway realtime hardening \u2014 per-client session limits, credential isolation, timeouts, resource-budget enforcement for the internet-exposed service \u2014 ships as a sibling issue the exported spec cites by name; the #149 session-cap park folds into that issue",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "barge_in_model semantics are undefined anywhere in-tree (_settings.py names it, nothing else does): plausibly a confirmation classifier distinguishing real user speech from residual echo/noise during playback \u2014 window-only barge-in ships without it; define it only when the live run shows window-only is insufficient",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "client-AEC quality is a residual risk: browser echoCancellation against room speakers at volume/distance is unproven here \u2014 if it underperforms, the session transcribes the machine during playback exactly as the voice-loop docstring warns; the live acceptance run must include a speakers-at-volume barge-in test, and the parked barge_in_model machinery is the named mitigation if it fails",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "full OpenAI Realtime API parity \u2014 session.update semantics, conversation.item.* schemas, the full response lifecycle, tool calls over the session, ephemeral tokens \u2014 stays a named follow-up: this work adopts the AUDIO-PATH event shapes only (append, audio.delta, response.create, transcription events); claiming more would over-advertise",
       "kind": "follow_up",
       "claim_id": null,
       "resolved": false,
@@ -647,6 +875,85 @@
       "finding": "the duplex-safe WebSocket client lives in realtime-smoke.py and is reused by the voice loop; its hard-won rules (pong uvicorn pings within ~20s, select()-based read deadlines, lock-guarded writes) are the survival contract for ANY non-browser client of the richer session \u2014 the browser WebSocket gets ping/pong for free",
       "seeds": [
         "c21"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / process lens: frame state (.devague questions q3)",
+      "finding": "q3 text asked barge-in cancellation semantics but was resolved with the AEC-ownership decision \u2014 a real undecided decision was wearing a resolved flag; re-raised as q5",
+      "seeds": []
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / adjacent-systems + concurrency lens: lobes/realtime/tts_client.py",
+      "finding": "synthesize threads a cancel_event (existing cancellation hook) BUT _tts_semaphore is module-global, default TTS_CONCURRENCY=1, shared by all sessions and the batch speech route \u2014 one hook to arm, one contention default to fix",
+      "seeds": [
+        "c32",
+        "c33"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / failure-mode lens: tts_client.py (full-read) + chatterbox_server.py (no streaming route)",
+      "finding": "the sidecar synthesizes whole requests (raw PCM16 response, no streaming endpoint) \u2014 the bridge holds the complete reply before the first out-frame, so chunked send + server-side truncation of the undelivered remainder is the only workable interruption model; also grounds per-stage timeouts",
+      "seeds": [
+        "c31",
+        "c35"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / data-flow lens: scripts/realtime-voice-loop.py (history + SYSTEM_PROMPT client-side)",
+      "finding": "the working conversation keeps history and the system prompt in the CLIENT; moving the loop server-side moves both \u2014 unstated in the pre-challenge spec, now an explicit requirement",
+      "seeds": [
+        "c34"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / overlooked-actors lens: the operator laptop browser vs the headless DGX Spark",
+      "finding": "the browser is NOT on the box: getUserMedia demands a secure context, so http://spark:port has no mic at all \u2014 the ssh -L localhost flow (or mkcert) is a shipping requirement, not a nice-to-have; autoplay/permission gating is the same actor overlooked",
+      "seeds": [
+        "c36",
+        "c37"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / concurrency lens: lobes/realtime/_segmenter.py",
+      "finding": "floor-agnostic pure state machine, per-session isolation documented and tested, keeps segmenting during playback \u2014 SpeechStarted during a response IS the barge-in trigger; no segmenter changes needed. Clean pass on the segmenter itself",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / security lens: gateway auth strip + local proxy key path",
+      "finding": "clean pass: the caller credential is stripped before the bridge (gateway _DROP_FROM_HANDSHAKE), the local proxy holds the only key and h12/h17 already pin never-in-browser and header-only; residual exposure is the operator laptop itself, out of scope",
+      "seeds": []
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / migration + reversibility lens: event schema evolution",
+      "finding": "clean pass: the conversation surface is additive and opt-in per session \u2014 a #149-era client never opts in and h13 asserts byte-identity by unmodified tests; rollback is not sending response.create; no store, schema version, or on-disk state exists to migrate (ephemeral non-goal)",
+      "seeds": []
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / observability + containment lens: session logging + event stream",
+      "finding": "the event stream is the observability surface (h19) and get_session_logger stamps ids into every record; the gap found was containment on wedged backends \u2014 routed as the per-stage-timeout requirement, floor returns to user",
+      "seeds": [
+        "c35"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / adjacent-systems lens (reopened by q6): the wire-format decision vs reachy-mini-cli + in-repo clients",
+      "finding": "strict base64 both ways supersedes the live-validated #149 binary input: the deployed reachy client and BOTH in-repo scripts (smoke, voice loop) speak binary today \u2014 the break is recorded as a coordinated decision (c40), the in-repo migration as a requirement (c42), and full OpenAI parity is parked (v5), scoped to the audio-path shapes",
+      "seeds": [
+        "c39",
+        "c40",
+        "c42"
       ]
     }
   ]

@@ -16,7 +16,7 @@
 
 - a committed turn optionally triggers a server-side generate + TTS reply streamed back over the SAME WebSocket — the extension point exists: app.py _pump_session currently IGNORES text/control frames, citing the #149 spec non-goal (no response.create, no mid-session session.update), and protocol.py already ships dormant gen_response_id/gen_content_part_id for exactly this
   - instruction: the turn machinery lands in stdlib-only modules beside _session.py/_segmenter.py; app.py stays a pragma-no-cover shell wiring them to real httpx/TTS
-  - honesty: a session that never opts into conversation emits a byte-identical #149 event stream (offline-asserted), and the opt-in turn flow commit-generate-TTS-out is a scripted offline test against fake backends
+  - honesty: a session that never opts into conversation emits the transcription-only event sequence on the new base64 wire (offline-asserted with the UPDATED #149 tests), and the opt-in turn flow commit-generate-TTS-out is a scripted offline test against fake backends
 - audio-out over the session needs NO resample and NO gateway change: protocol.py pins TTS_SAMPLE_RATE=24000 == CLIENT_SAMPLE_RATE ("matches, no resample"), tts_client.synthesize already runs in the bridge container, and the gateway tunnel is already full-duplex (run_tunnel pumps both directions in parallel threads)
   - instruction: assert by unit test that the TTS-out path calls no resampler — audio-out frames reuse tts_client.synthesize PCM verbatim; the gateway tunnel diff must be zero lines
   - honesty: no resample call exists in the TTS-out path (24 kHz end to end) and the gateway diff for audio-out is zero lines — the tunnel already relays both directions
@@ -47,11 +47,24 @@
 - the local Astro test site connects through a LOCAL server-side WebSocket proxy that injects the Authorization: Bearer credential before forwarding to the gateway — the browser never holds or sends the key; the concrete mechanism (Astro/Vite dev-server proxy with an upgrade-header hook vs a tiny standalone local proxy) is a plan-time choice
   - instruction: prefer the Astro/Vite dev-server proxy (server.proxy, ws:true, upgrade-header hook) so no extra process is needed; a tiny standalone local proxy is the fallback if Vite cannot inject upgrade headers
   - honesty: the API key never reaches the browser: not in served JS/HTML or any config response; the proxy injects Authorization server-side; with the proxy down the site cannot connect at all
+- the audio-out DELIVERY model is pinned: synthesize() is full-read (its own docstring; the Chatterbox sidecar has no streaming route), so the bridge holds the complete reply PCM — audio-out is sent as sequential chunked WS frames, an interruption stops the UNDELIVERED remainder server-side, and the client stops LOCAL playback of already-delivered frames on the interruption event; both halves are required for barge-in to feel instant
+  - honesty: an offline test interrupts mid-delivery and asserts the undelivered remainder is never sent and the truncation event follows in-order; the site stops local playback on the interruption event in the acceptance run
+- the TTS concurrency gate is sized for conversation: _tts_semaphore is module-GLOBAL with default TTS_CONCURRENCY=1, shared by every session AND the batch /v1/audio/speech route — a voice reply serializes behind any unrelated TTS work, which is dead air; the spec must either raise the default or scope the gate per-lane, and say which
+  - honesty: the chosen concurrency default is stated in env.audio.example with its rationale, and an offline test proves a voice turn does not queue behind the batch lane at that default
+- the server keeps in-session conversation history: the voice loop proves a coherent conversation needs history + a system prompt (its client-side history list + SYSTEM_PROMPT), so the bridge holds per-session, in-memory history that dies with the session (consistent with the ephemeral non-goal), with an operator-set default system prompt via env and a per-session override in the connect config
+  - honesty: history lives only on the Session object — no disk, no module state; teardown drops it; an offline test drives a two-turn conversation and asserts the second generate request carries the first exchange
+- every response stage has a timeout with a named error event: generate and TTS forwards get bounded waits (precedents: app.py _STT_FORWARD_TIMEOUT=60, the voice loop PLAYBACK_TIMEOUT_S=60 whose comment records a wedged backend stranding the conversation, tts_client httpx 120/read-60) — on expiry the floor RETURNS TO THE USER with a named error, never a session stuck in a responding state
+  - honesty: offline tests expire each stage against a hanging fake backend and assert the named error event arrives and the floor returns to listening within the configured bound
+- the site dev flow survives a headless Spark: the browser runs on the operator laptop, and getUserMedia requires a secure context (HTTPS or localhost) — plain http://<box>:<port> has NO microphone; the documented flow is ssh -L port-forwarding (site + gateway both reached as localhost on the laptop), with mkcert HTTPS as the alternative if forwarding is unacceptable
+  - honesty: the site README documents the ssh -L flow as the primary path, and the live acceptance run is itself performed through it (laptop browser, forwarded localhost)
+- the site gates audio behind a user gesture and renders permission failure as a first-class state: AudioContext starts suspended until a gesture and mic access prompts — a start button arms mic + playback together, and NotAllowedError/NotFoundError render visually distinct from silence, disconnect, and the named server error codes
+  - honesty: mic + playback arm only from the start control; a denied mic permission renders its own distinct state, verified manually during the acceptance run (permission prompts are not automatable offline)
+- every in-repo client flips to the base64 event wire in the same PR series: scripts/realtime-smoke.py and scripts/realtime-voice-loop.py speak raw binary frames today and are the acceptance tooling — they migrate to input_audio_buffer.append/response.audio.delta (the f1e6ffa duplex rules — pong the pings, select-based reads, lock-guarded writes — carry over unchanged), and the #149 binary-input offline tests are UPDATED to the event format, not deleted
+  - honesty: after the PR series, grep finds no in-repo client sending raw binary audio frames; the smoke script passes live against the deployed base64 wire, and the updated offline helper tests cover the append/delta framing arithmetic
 
 ## Honesty conditions
 
 - a live Spark GB10 run through the production gateway: speak, hear the reply, interrupt it mid-playback, and the recorded event transcript shows the interruption — committed under docs/evidence/ before any doc says validated
-- the #149 offline event-sequence tests keep passing unmodified against the new code — the non-opt-in stream is byte-identical by test, not by intention
 - the tunnel refusal test for an armed STT_PEER_PROXY still asserts refusal after the change; no new WS egress to peers exists anywhere in the diff
 - the batch /v1/audio/* handlers and catalog.py show a zero diff in the PR
 - the gateway do_GET dispatcher gains no static/file-serving branch in the PR diff
@@ -60,20 +73,21 @@
 - each named audience has a concrete shipped surface: reachy an unchanged ears-only contract, the terminal client a still-working voice loop, the site developer a running site, the operator a live event stream that shows VAD boundaries and timings
 - the before-state is cited from in-tree evidence, not memory: the f1e6ffa commit message, the voice-loop docstring (half-duplex, muted mic), and #149 spec non-goal c15
 - the live acceptance run demonstrates every element of the after-state: a spoken reply on one connection, an interruption mid-playback, and the site rendering boundaries, transcripts, reply text, audio and named errors
-- each acceptance criterion maps to a named offline test or to the evidence transcript, and the mapping is explicit in the exported spec
+- an offline test asserts the non-opt-in session emits the transcription-only event sequence 1:1 in the new wire format, and no code path accepts or emits raw binary audio frames after the change
+- each acceptance criterion maps to a named offline test or to the evidence transcript, the mapping is explicit in the exported spec, and the A/B criterion is demonstrated by pointing the same client at the OpenAI realtime service for one audio exchange (or recording precisely why not in the transcript)
 
 ## Success signals
 
-- the #151 acceptance criteria hold: a spoken reply with no second HTTP call; barge-in visible in the event stream; ears-only consumers see a byte-identical #149 contract; the site drives a full conversation rendering every event type including each named error code distinctly; the turn-taking machine is fully offline-tested; a live transcript lands under docs/evidence/ before any validated wording (#108)
+- the #151 acceptance criteria hold on the new wire: a spoken reply with no second HTTP call; barge-in visible in the event stream; ears-only consumers keep the transcription-only event sequence (OpenAI-shaped, base64); the site drives a full conversation rendering every event type including each named error code distinctly; the turn-taking machine is fully offline-tested; a live transcript lands under docs/evidence/ before any validated wording (#108); an A/B smoke of the same client against the OpenAI realtime service is possible for the audio path
 
 ## Scope / boundaries
 
-- ears-only stays intact and DEFAULT: reachy-mini-cli consumes transcription events and must not be forced into a conversation surface — a session that never sends response.create (or equivalent) behaves byte-identically to the #149 contract
 - no cross-box WebSocket, still: the #129 proxy-lobes forwarder is POST-only and the tunnel refuses WS proxying even when STT_PEER_PROXY is armed (spec boundary c13, restated in _realtime.py docstring) — voice-to-voice adds traffic ON the session, not new session transport
 - the batch routes /v1/audio/speech and /v1/audio/transcriptions stay byte-identical (the #149 boundary carries forward — reachy measured-working links must not regress), and Parakeet/Chatterbox/Silero stay hardcoded sidecars outside catalog.py (the established audio-overlay rule)
 - the gateway does not become a static file host: do_GET is a fixed dispatcher (health/status/capabilities/models/realtime, else 404) — the site is served by Astro dev/preview (or Pages, per the deployment question), never by the gateway process
 - query-parameter and WebSocket-subprotocol authentication are OUT of scope: public realtime clients are robots and native applications capable of setting the existing Authorization: Bearer header on the handshake — the public gateway remains header-authenticated
 - no public site: the Astro site is local-only — testing, experiencing, and exemplifying the realtime surface against a local gateway; no Cloudflare Pages lane, no deploy workflow (the site-build CI job keeps it compiling, nothing publishes it)
+- ears-only stays the DEFAULT MODE, on a new wire: a session that never sends response.create still gets exactly the transcription-only event sequence (created, boundaries, transcripts, named errors) and is never forced into conversation — but the wire format is now OpenAI-shaped base64 JSON events in BOTH directions (input_audio_buffer.append in, response.audio.delta out); the #149 raw-binary input contract is superseded, its removal coordinated with reachy-mini-cli
 
 ## Non-goals
 
@@ -86,6 +100,8 @@
 - the #108 evidence rule governs every validated claim: a live acceptance transcript under docs/evidence/ must land before any doc claims voice-to-voice or the site validated — and #149 left four items explicitly UNVALIDATED (real microphone, vad_unavailable path, concurrent sessions, max-turn cap); the browser site IS the real-microphone test vehicle, so its acceptance run can retire that debt
 - scripts/realtime-voice-loop.py stays the terminal-side reference client: scripts/ is repo-only (hatch packages only lobes/), the script calls itself a scratch tool, and its client-side three-endpoint stitch becomes obsolete-by-default once the loop moves server-side — it is not deleted, it is the pre-#151 fallback and the non-browser live test
 - AEC ownership sits at the client edge, whoever that is: Reachy Mini cancels echo in firmware, the browser site gets it from getUserMedia echoCancellation, and a mic-speaker unit may do it in hardware — server-side AEC stays the declared-off AECMode passthrough with no DSP machinery
+- the cancellation plumbing partially exists: tts_client.synthesize and _synthesize_single already thread a cancel_event asyncio.Event (checked before each request) — barge-in truncation arms an existing hook rather than inventing one
+- the segmenter needs ZERO changes for barge-in: it is a floor-agnostic pure state machine that keeps segmenting whatever audio arrives — a SpeechStarted while the machine speaks IS the barge-in trigger, consumed by the new floor machine sitting above it; per-session isolation is already documented and tested
 
 ## Scope exploration
 
@@ -123,7 +139,29 @@
   - seeds: `c20`
 - `s17` — `scripts/realtime-voice-loop.py + scripts/realtime-smoke.py (the shared duplex WS client) + pyproject packaging`: the duplex-safe WebSocket client lives in realtime-smoke.py and is reused by the voice loop; its hard-won rules (pong uvicorn pings within ~20s, select()-based read deadlines, lock-guarded writes) are the survival contract for ANY non-browser client of the richer session — the browser WebSocket gets ping/pong for free
   - seeds: `c21`
+- `s18` — `challenge pass / process lens: frame state (.devague questions q3)`: q3 text asked barge-in cancellation semantics but was resolved with the AEC-ownership decision — a real undecided decision was wearing a resolved flag; re-raised as q5
+- `s19` — `challenge pass / adjacent-systems + concurrency lens: lobes/realtime/tts_client.py`: synthesize threads a cancel_event (existing cancellation hook) BUT _tts_semaphore is module-global, default TTS_CONCURRENCY=1, shared by all sessions and the batch speech route — one hook to arm, one contention default to fix
+  - seeds: `c32`, `c33`
+- `s20` — `challenge pass / failure-mode lens: tts_client.py (full-read) + chatterbox_server.py (no streaming route)`: the sidecar synthesizes whole requests (raw PCM16 response, no streaming endpoint) — the bridge holds the complete reply before the first out-frame, so chunked send + server-side truncation of the undelivered remainder is the only workable interruption model; also grounds per-stage timeouts
+  - seeds: `c31`, `c35`
+- `s21` — `challenge pass / data-flow lens: scripts/realtime-voice-loop.py (history + SYSTEM_PROMPT client-side)`: the working conversation keeps history and the system prompt in the CLIENT; moving the loop server-side moves both — unstated in the pre-challenge spec, now an explicit requirement
+  - seeds: `c34`
+- `s22` — `challenge pass / overlooked-actors lens: the operator laptop browser vs the headless DGX Spark`: the browser is NOT on the box: getUserMedia demands a secure context, so <http://spark:port> has no mic at all — the ssh -L localhost flow (or mkcert) is a shipping requirement, not a nice-to-have; autoplay/permission gating is the same actor overlooked
+  - seeds: `c36`, `c37`
+- `s23` — `challenge pass / concurrency lens: lobes/realtime/_segmenter.py`: floor-agnostic pure state machine, per-session isolation documented and tested, keeps segmenting during playback — SpeechStarted during a response IS the barge-in trigger; no segmenter changes needed. Clean pass on the segmenter itself
+  - seeds: `c38`
+- `s24` — `challenge pass / security lens: gateway auth strip + local proxy key path`: clean pass: the caller credential is stripped before the bridge (gateway _DROP_FROM_HANDSHAKE), the local proxy holds the only key and h12/h17 already pin never-in-browser and header-only; residual exposure is the operator laptop itself, out of scope
+- `s25` — `challenge pass / migration + reversibility lens: event schema evolution`: clean pass: the conversation surface is additive and opt-in per session — a #149-era client never opts in and h13 asserts byte-identity by unmodified tests; rollback is not sending response.create; no store, schema version, or on-disk state exists to migrate (ephemeral non-goal)
+- `s26` — `challenge pass / observability + containment lens: session logging + event stream`: the event stream is the observability surface (h19) and get_session_logger stamps ids into every record; the gap found was containment on wedged backends — routed as the per-stage-timeout requirement, floor returns to user
+  - seeds: `c35`
+- `s27` — `challenge pass / adjacent-systems lens (reopened by q6): the wire-format decision vs reachy-mini-cli + in-repo clients`: strict base64 both ways supersedes the live-validated #149 binary input: the deployed reachy client and BOTH in-repo scripts (smoke, voice loop) speak binary today — the break is recorded as a coordinated decision (c40), the in-repo migration as a requirement (c42), and full OpenAI parity is parked (v5), scoped to the audio-path shapes
+  - seeds: `c39`, `c40`, `c42`
+
+## Decisions
+
+- the wire break is coordinated, not hidden: reachy-mini-cli adapts to the base64 event format in its next commit; the window where an un-updated deployed reachy cannot stream is accepted by the operator — a deliberate, recorded break, not a regression
 
 ## Open / follow-up
 
 - gateway realtime hardening — per-client session limits, credential isolation, timeouts, resource-budget enforcement for the internet-exposed service — ships as a sibling issue the exported spec cites by name; the #149 session-cap park folds into that issue
+- full OpenAI Realtime API parity — session.update semantics, conversation.item.* schemas, the full response lifecycle, tool calls over the session, ephemeral tokens — stays a named follow-up: this work adopts the AUDIO-PATH event shapes only (append, audio.delta, response.create, transcription events); claiming more would over-advertise
