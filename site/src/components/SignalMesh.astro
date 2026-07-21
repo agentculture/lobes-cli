@@ -1,0 +1,77 @@
+---
+// A small decorative "two nodes, one thread" scene — the mesh motif from
+// org's HeroMesh/LobesDiagram, reduced to the minimum that fits this
+// single-purpose page: you, and lobes, joined by one live thread. Purely
+// decorative and aria-hidden in t10; it is NOT wired to real connection
+// state here (t13 owns connection/auth, t11 owns mic capture) — but it
+// exercises the ported node-breathe/halo-breathe keyframes so the port is
+// proven live on the page, not just declared unused in global.css.
+//
+// A later task is free to toggle a `data-state` attribute on `.signal`
+// (e.g. "connected" / "listening" / "speaking") and add state-specific
+// styling on top of this scene; that is a design decision left to
+// whichever task actually owns connection/turn state, not decided here.
+---
+
+<svg
+  class="signal"
+  viewBox="0 0 240 80"
+  fill="none"
+  preserveAspectRatio="xMidYMid meet"
+  aria-hidden="true"
+>
+  <defs>
+    <radialGradient id="signal-halo">
+      <stop offset="0%" style="stop-color: var(--mesh-halo)"></stop>
+      <stop offset="100%" style="stop-color: var(--mesh-halo); stop-opacity: 0"></stop>
+    </radialGradient>
+  </defs>
+
+  <path class="signal-thread" d="M46 40 Q120 8 194 40"></path>
+
+  <circle class="signal-halo" style="--bd: -2s" cx="194" cy="40" r="26" fill="url(#signal-halo)"></circle>
+
+  <circle class="signal-node" style="--bd: 0s" cx="46" cy="40" r="7"></circle>
+  <circle class="signal-node" style="--bd: -4s" cx="194" cy="40" r="9"></circle>
+</svg>
+
+<style is:global>
+  /* Global (not scoped) so the shared keyframes in global.css resolve
+     without Astro's per-component keyframe scoping getting between them —
+     same convention org's HeroMesh/LobesDiagram use. */
+  .signal {
+    width: 100%;
+    max-width: 15rem;
+    height: auto;
+  }
+
+  .signal-thread {
+    stroke: var(--mesh-thread);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
+
+  .signal-node {
+    fill: var(--mesh-node);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .signal-halo {
+    transform-box: fill-box;
+    transform-origin: center;
+    opacity: 0.7;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .signal-node {
+      animation: node-breathe 9s var(--ease-gentle) infinite alternate;
+      animation-delay: var(--bd, 0s);
+    }
+
+    .signal-halo {
+      animation: halo-breathe 13s var(--ease-gentle) infinite alternate;
+      animation-delay: var(--bd, 0s);
+    }
+  }
+</style>
