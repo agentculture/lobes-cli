@@ -563,3 +563,62 @@ def test_app_py_route_docstring_no_longer_advertises_binary_input() -> None:
     assert "streamed as BINARY WebSocket" not in src
     assert "unsupported_frame_type" in src
     assert "input_audio_buffer.append" in src
+
+
+# ---------------------------------------------------------------------------
+# Issue #151 t6 additions: the ignored-event payload, and the shared encoder.
+# ---------------------------------------------------------------------------
+
+
+def test_decide_inbound_message_hands_back_an_ignored_events_payload() -> None:
+    # t6 needs to act on ONE control event (response.create) without
+    # re-parsing the frame — and without this module growing an opinion on
+    # turn state. It hands the already-decoded object back instead; the
+    # decision KIND is unchanged, which is what keeps the transcription-only
+    # reassembly test above passing untouched.
+    message = {
+        "type": "websocket.receive",
+        "text": json.dumps({"type": "response.create", "response": {"modalities": ["audio"]}}),
+    }
+    decision = decide_inbound_message(message)
+
+    assert decision.kind is InboundKind.IGNORED
+    assert decision.payload == {"type": "response.create", "response": {"modalities": ["audio"]}}
+
+
+def test_decide_inbound_message_payload_is_absent_on_audio_and_error_decisions() -> None:
+    # payload is populated for IGNORED only — an AUDIO decision would
+    # otherwise hold a live reference to the whole base64 audio string long
+    # after the PCM was decoded out of it.
+    assert decide_inbound_message(_append_message(b"\x01\x02")).payload is None
+    assert decide_inbound_message({"type": "websocket.receive", "text": "{{{"}).payload is None
+    assert decide_inbound_message({"type": "websocket.receive", "bytes": b"\x00"}).payload is None
+
+
+def test_encode_audio_chunk_round_trips_against_the_inbound_decoder() -> None:
+    from lobes.realtime._wire import encode_audio_chunk, parse_append_event
+
+    pcm = os.urandom(4800)
+    assert parse_append_event({"audio": encode_audio_chunk(pcm)}) == pcm
+    assert encode_audio_chunk(b"") == ""
+
+
+def test_serialize_audio_delta_uses_the_one_shared_encoder() -> None:
+    # One base64 encode in the module, shared by the standalone OpenAI-shaped
+    # event here and by the session-schema delta the live route emits — so
+    # the two can never disagree about what "the delta field" contains.
+    from lobes.realtime._wire import encode_audio_chunk
+
+    pcm = os.urandom(1024)
+    event = serialize_audio_delta(pcm, response_id="resp_1", item_id="item_1")
+    assert event["delta"] == encode_audio_chunk(pcm)
+
+
+def test_the_delta_chunk_size_is_the_only_one_in_the_tree() -> None:
+    # The chunk-size reconciliation (issue #151 t6): _floor.py's competing
+    # DEFAULT_CHUNK_MS/DEFAULT_CHUNK_BYTES are gone and its `chunk_bytes` is
+    # a required constructor argument, so this is the single source of truth.
+    import lobes.realtime._floor as floor_module
+
+    assert not hasattr(floor_module, "DEFAULT_CHUNK_BYTES")
+    assert DEFAULT_DELTA_CHUNK_BYTES == 4800  # 100 ms at 24 kHz PCM16

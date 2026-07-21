@@ -8,15 +8,27 @@ lives in stdlib-only modules that ARE tested directly:
 :mod:`lobes.realtime.audio_facade` (codec + request parsing),
 :mod:`lobes.realtime.tts_client`, :mod:`lobes.realtime._segmenter` (the
 server_vad state machine), :mod:`lobes.realtime._session` (event schema +
-session bookkeeping), and :mod:`lobes.realtime._pcm` (resample-decision +
-frame-alignment arithmetic for ``/v1/realtime``). The routes here are thin
-shells (``# pragma: no cover``) that wire those modules to a real WebSocket,
-real Silero VAD, and real scipy resampling; the live stack is exercised by
-the curl/WS smoke tests documented in ``docs/realtime-pipeline.md``.
+session bookkeeping), :mod:`lobes.realtime._pcm` (resample-decision +
+frame-alignment arithmetic for ``/v1/realtime``), :mod:`lobes.realtime._wire`
+(the base64 event codec), :mod:`lobes.realtime._floor` (who holds the
+conversational floor), :mod:`lobes.realtime._turn` (the generate call's
+shape), and :mod:`lobes.realtime._conversation` (the bridge that wires those
+five into one turn). The routes here are thin shells (``# pragma: no cover``)
+that wire those modules to a real WebSocket, real Silero VAD, real scipy
+resampling, and real HTTP; the live stack is exercised by the curl/WS smoke
+tests documented in ``docs/realtime-pipeline.md``.
+
+What this file is allowed to own (issue #151 t6): sockets, threads, HTTP,
+asyncio tasks, and time. Not decisions. Every error code, every default,
+every state transition and every piece of turn bookkeeping lives in the
+stdlib modules above, so that the parts of voice-to-voice that can be wrong
+are the parts CI can prove right.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 import anyio
@@ -27,18 +39,19 @@ from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSock
 from fastapi.responses import JSONResponse, Response
 from scipy.signal import resample as scipy_resample
 
+from ._conversation import WATCHDOG_INTERVAL_MS, ConversationBridge, resolve_voice_model
 from ._pcm import needs_resample, resampled_frame_count, take_aligned_samples
 from ._segmenter import Segmenter, SpeechStarted, SpeechStopped
-from ._session import ErrorEvent, Session, SessionConfigError, event_to_dict, parse_session_config
-from ._settings import settings
-from ._wire import InboundKind, WireFormatError, decide_inbound_message
+from ._session import Session, SessionConfigError, event_to_dict, parse_session_config
+from ._settings import VOICE_LANE, settings
+from ._wire import DEFAULT_DELTA_CHUNK_BYTES, InboundKind, decide_inbound_message
 from .audio_facade import (
     SpeechRequestError,
     aggregate_audio_ready,
     parse_speech_request,
     pcm_to_container,
 )
-from .protocol import BYTES_PER_SAMPLE, VAD_SAMPLE_RATE, gen_event_id, gen_session_id, timestamp_ms
+from .protocol import BYTES_PER_SAMPLE, VAD_SAMPLE_RATE, gen_session_id
 from .tts_client import synthesize
 
 log = logging.getLogger(__name__)
@@ -134,16 +147,23 @@ def _error(status: int, message: str) -> JSONResponse:  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
-# /v1/realtime — one server_vad session per WebSocket (issue #149 t6).
+# /v1/realtime — one server_vad session per WebSocket (issue #149 t6), plus
+# the opt-in voice-to-voice conversation surface (issue #151 t6).
 #
 # All decisions live in stdlib modules tested offline: _session.py owns the
 # event schema/config parsing/teardown, _segmenter.py owns VAD segmentation,
-# _pcm.py owns the resample-needed decision and frame alignment. This block
-# is the thin, pragma-no-cover glue that wires them to a real WebSocket, a
-# real Silero model, and real scipy resampling.
+# _pcm.py owns the resample-needed decision and frame alignment, _wire.py owns
+# the base64 codec and delta sizing, _floor.py owns the floor state machine,
+# _turn.py owns the generate call's shape, and _conversation.py owns the
+# translation between all of them. This block is the thin, pragma-no-cover
+# glue that wires them to a real WebSocket, a real Silero model, real scipy
+# resampling, and real HTTP calls.
 # ---------------------------------------------------------------------------
 
 _STT_FORWARD_TIMEOUT = 60.0
+# Mirrors _STT_FORWARD_TIMEOUT, and is threaded into the floor's own generate
+# deadline below so the two agree by construction rather than by coincidence.
+_GENERATE_FORWARD_TIMEOUT = 60.0
 
 
 class _STTForwardError(RuntimeError):
@@ -271,30 +291,55 @@ async def realtime(websocket: WebSocket) -> None:
       accepted (issue #151 — a deliberate, coordinated break with
       reachy-mini-cli, tracked in reachy-mini-cli#115, not a compatibility
       path this route preserves): one arriving now yields the named
-      ``error``/``unsupported_frame_type`` event instead of being read as
-      audio. A well-formed JSON event whose ``type`` is not
-      ``input_audio_buffer.append`` (e.g. a future ``response.create``) is
-      silently ignored — out of scope for THIS route (see the #151 spec's
-      t4/t6 split) — never mistaken for a boundary/audio frame. A malformed
-      frame (invalid JSON, or a missing/invalid base64 ``audio`` field) is
-      never a silent drop either: it becomes the named ``error`` event
+      ``error``/``invalid_wire_event`` event instead of being read as
+      audio. A well-formed JSON event whose ``type`` is neither
+      ``input_audio_buffer.append`` nor ``response.create`` is silently
+      ignored — this route adopts the audio-path event shapes only — never
+      mistaken for a boundary/audio frame. A malformed frame (invalid JSON,
+      or a missing/invalid base64 ``audio`` field) is never a silent drop
+      either: it becomes the named ``error``/``invalid_wire_event`` event,
+      whose message names which wire-level reason applied
       (``invalid_json`` / ``invalid_append_event`` / ``unsupported_frame_type``,
-      per :class:`~lobes.realtime._wire.WireErrorCode`) and the session
+      per :class:`~lobes.realtime._wire.WireErrorCode`), and the session
       stays open to keep receiving. ``input_sample_rate`` defaults to
       **24000 Hz** (OpenAI-Realtime-compatible) — **16000 Hz is also
       accepted** (Parakeet/Silero's native rate; the server skips resampling
       entirely in that case). Any other rate is rejected as an invalid
       session config. The server resamples 24 kHz to 16 kHz itself
       (server-side, via scipy) — the client never resamples.
-    - **Events** (session/boundary/transcription/error) are sent back as JSON
-      TEXT frames using the schema in :mod:`lobes.realtime._session`
-      (:func:`event_to_dict`). This route never sends audio back on this
-      connection — audio-in only; no TTS-out over ``/v1/realtime`` (see the
-      spec's Non-goals).
+    - **Events** (session/boundary/transcription/response/error) are sent
+      back as JSON TEXT frames using the schema in
+      :mod:`lobes.realtime._session` (:func:`event_to_dict`). Boundary events
+      carry the segmenter's own ``at_ms`` (32ms-quantised audio-stream time,
+      a different clock from ``timestamp_ms``) and ``speech_stopped`` also
+      carries ``reason`` — ``"silence"`` or the ``"max_turn"`` force-commit.
     - The server sends ``session.created`` immediately after the handshake,
       confirming the negotiated config (including the resolved
       ``input_sample_rate``) — a client that omitted every config query
       param can read the effective defaults off this event.
+
+    Conversation is OPT-IN (issue #151)
+    ------------------------------------
+    A session is ears-only until the client sends a ``response.create``
+    event, and a session that never sends one gets exactly the #149
+    transcription-only sequence — that is the contract reachy-mini-cli
+    depends on. After the trigger (idempotent; send it once at connect, or
+    once per turn OpenAI-style), each committed turn's transcript is
+    answered: the generate lane is called through
+    ``settings.openai_base_url``, the reply text comes back as
+    ``response.created``/``response.text.done``, Chatterbox synthesizes it,
+    and the audio streams back on THIS connection as sequential
+    ``response.audio.delta`` events (base64 PCM16 at 24 kHz — the same rate
+    the client sends, so audio-out never resamples), ending in
+    ``response.done``.
+
+    Speaking during playback interrupts it: the undelivered remainder is
+    never sent, the generate/TTS calls in flight are both cancelled, and
+    ``response.interrupted`` goes out with its truncation marker. Every
+    response stage has a deadline; on expiry the floor returns to the caller
+    with a named error rather than wedging. All of that is decided in
+    :mod:`lobes.realtime._floor`/:mod:`lobes.realtime._conversation` — this
+    route only pumps it.
 
     Turn flow
     ---------
@@ -325,20 +370,31 @@ async def realtime(websocket: WebSocket) -> None:
     await websocket.accept()
     session: Session | None = None
     segmenter: Segmenter | None = None
+    bridge: ConversationBridge | None = None
+    tasks = _SessionTasks()
     try:
         opened = await _open_session(websocket)
         if opened is None:
             return  # the config was rejected; the named error is already sent
         session, input_rate = opened
+        cancels = _ResponseCancels()
+        bridge = _build_bridge(session, cancels)
+        sender = _Sender(websocket, bridge)
         segmenter = await _arm_segmenter(websocket, session)
         if segmenter is None:
             return  # VAD is down; the named error is already sent
-        await _pump_session(websocket, session, segmenter, input_rate)
+        await _pump_session(websocket, bridge, sender, cancels, segmenter, input_rate, tasks)
     except WebSocketDisconnect:
         pass
     except Exception:
         log.exception("unhandled error in /v1/realtime session")
     finally:
+        await tasks.cancel_all()
+        if bridge is not None:
+            # Cancels whatever generate/TTS call was in flight and drops the
+            # undelivered audio. Emits nothing: a client that is already gone
+            # cannot act on an interruption event.
+            bridge.close(reason="client_disconnect")
         if segmenter is not None and segmenter.speaking:
             # Best-effort: the client is already gone by the time we get
             # here on most paths, so the flushed turn is discarded rather
@@ -347,6 +403,272 @@ async def realtime(websocket: WebSocket) -> None:
             segmenter.flush(reason="closed")
         if session is not None:
             session.teardown(reason="client_disconnect")
+
+
+# ---------------------------------------------------------------------------
+# Conversation wiring (issue #151 t6): sockets, tasks, HTTP. No decisions.
+# ---------------------------------------------------------------------------
+
+
+def _build_bridge(  # pragma: no cover
+    session: Session, cancels: "_ResponseCancels"
+) -> ConversationBridge:
+    """Construct this session's conversation bridge from the live settings.
+
+    Every value here is either read straight off ``settings`` or derived by a
+    stdlib module — ``resolve_voice_model`` applies the voice lane's
+    ``multimodal`` default policy (which ``_turn.py`` deliberately refuses to
+    hardcode), ``DEFAULT_DELTA_CHUNK_BYTES`` is the wire codec's own delta
+    size (the single source of truth for outbound chunking), and the two
+    stage deadlines mirror this module's own forward timeouts so the floor
+    and the HTTP client can never disagree about how long is too long. The
+    TTS deadline is left at the floor's default (60s), which is
+    ``tts_client``'s own httpx read timeout.
+    """
+    return ConversationBridge(
+        session,
+        cancel_generate=cancels.generate,
+        cancel_tts=cancels.tts,
+        base_url=settings.openai_base_url,
+        api_key=settings.openai_api_key,
+        model=resolve_voice_model(settings.openai_model),
+        barge_in_window_ms=settings.barge_in_window_ms,
+        transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
+        generate_timeout_ms=int(_GENERATE_FORWARD_TIMEOUT * 1000),
+        chunk_bytes=DEFAULT_DELTA_CHUNK_BYTES,
+    )
+
+
+class _ActiveResponse:  # pragma: no cover
+    """The two in-flight calls of ONE response, and the hooks that kill them.
+
+    Per-response, not per-session: the floor's ``cancel_generate``/
+    ``cancel_tts`` hooks are fixed at construction, so they route through
+    :class:`_ResponseCancels` to whichever response is currently live. A
+    response that is still unwinding after an interruption therefore cannot
+    have the NEXT turn's calls cancelled out from under it.
+
+    ``cancel_tts`` both sets ``tts_client``'s own ``cancel_event`` (checked
+    before each chunk request, so a queued retry stops) AND cancels the task
+    (so a synthesis already blocked on the socket stops too). Both, because
+    the floor cancels both hooks from every state and cannot know which
+    applies.
+    """
+
+    def __init__(self, turn_id: int) -> None:
+        self.turn_id = turn_id
+        self.cancelled = False
+        self.generate_task: asyncio.Task | None = None
+        self.tts_task: asyncio.Task | None = None
+        self.tts_cancel = asyncio.Event()
+
+    def cancel_generate(self) -> None:
+        self.cancelled = True
+        if self.generate_task is not None:
+            self.generate_task.cancel()
+
+    def cancel_tts(self) -> None:
+        self.cancelled = True
+        self.tts_cancel.set()
+        if self.tts_task is not None:
+            self.tts_task.cancel()
+
+
+class _ResponseCancels:  # pragma: no cover
+    """Indirection from the floor's fixed cancel hooks to the live response.
+
+    The floor takes its two cancel callables once, at construction, but the
+    thing they must cancel changes every turn. One of these per SESSION (a
+    local, not a registry keyed by session id) holds the indirection: no
+    module-level mutable state, so concurrent sessions cannot reach each
+    other's calls and an abandoned entry cannot outlive its socket.
+    """
+
+    def __init__(self) -> None:
+        self.active: _ActiveResponse | None = None
+
+    def clear(self, response: _ActiveResponse) -> None:
+        if self.active is response:
+            self.active = None
+
+    def generate(self) -> None:
+        if self.active is not None:
+            self.active.cancel_generate()
+
+    def tts(self) -> None:
+        if self.active is not None:
+            self.active.cancel_tts()
+
+
+class _Sender:  # pragma: no cover
+    """Drains the bridge's outbox onto the socket, under one lock.
+
+    The receive loop, the response task and the watchdog all produce events.
+    Draining INSIDE the lock (not just sending inside it) is what keeps their
+    payloads globally ordered: a second flusher waits, then drains what is
+    there, so an interruption event can never overtake the delta that
+    preceded it.
+    """
+
+    def __init__(self, websocket: WebSocket, bridge: ConversationBridge) -> None:
+        self._websocket = websocket
+        self._bridge = bridge
+        self._lock = asyncio.Lock()
+
+    async def flush(self) -> None:
+        async with self._lock:
+            for payload in self._bridge.drain():
+                await self._websocket.send_json(payload)
+
+
+class _SessionTasks:  # pragma: no cover
+    """This session's background tasks — the watchdog and any live response."""
+
+    def __init__(self) -> None:
+        self.watchdog: asyncio.Task | None = None
+        self.responses: set[asyncio.Task] = set()
+
+    def ensure_watchdog(self, bridge: ConversationBridge, sender: _Sender) -> None:
+        """Start the deadline watchdog once, when the session first arms.
+
+        Lazy on purpose: an ears-only session that never opts into
+        conversation spawns no extra task at all.
+        """
+        if self.watchdog is None:
+            self.watchdog = asyncio.create_task(_watchdog(bridge, sender))
+
+    def track(self, task: asyncio.Task) -> None:
+        self.responses.add(task)
+        task.add_done_callback(self.responses.discard)
+
+    async def cancel_all(self) -> None:
+        pending = [task for task in (self.watchdog, *self.responses) if task is not None]
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+
+async def _watchdog(bridge: ConversationBridge, sender: _Sender) -> None:  # pragma: no cover
+    """Drive ``bridge.tick()`` so per-stage deadlines can actually expire.
+
+    Deadlines expire ONLY inside ``tick``; a wedged backend is by definition
+    not calling anything else, so without this loop a stuck generate or TTS
+    call would strand the floor forever and the named-timeout guarantee would
+    be inert.
+    """
+    interval_s = WATCHDOG_INTERVAL_MS / 1000
+    while True:
+        await asyncio.sleep(interval_s)
+        if bridge.tick():
+            await sender.flush()
+
+
+async def _post_generate(request) -> tuple[int, bytes]:  # pragma: no cover
+    """The one HTTP call of the generate stage. Shape decided by ``_turn.py``."""
+    async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
+        resp = await client.post(request.url, headers=request.headers, json=request.body)
+    return resp.status_code, resp.content
+
+
+def _start_pending_response(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    cancels: _ResponseCancels,
+    tasks: _SessionTasks,
+) -> None:
+    """Launch a response task if the bridge says one is due.
+
+    A background task, not an inline await, precisely so the receive loop
+    keeps running while the machine thinks and speaks — that is what makes a
+    barge-in possible at all.
+    """
+    turn_id = bridge.take_pending_response()
+    if turn_id is None:
+        return
+    active = _ActiveResponse(turn_id)
+    cancels.active = active
+    tasks.track(asyncio.create_task(_run_response(bridge, sender, cancels, active)))
+
+
+async def _run_response(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    cancels: _ResponseCancels,
+    active: _ActiveResponse,
+) -> None:
+    """Run one response to completion, interruption, or a named failure."""
+    try:
+        await _drive_response(bridge, sender, active)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("unhandled error in /v1/realtime response")
+    finally:
+        cancels.clear(active)
+    await sender.flush()
+
+
+async def _drive_response(  # pragma: no cover
+    bridge: ConversationBridge, sender: _Sender, active: _ActiveResponse
+) -> None:
+    """generate -> TTS -> pumped audio-out, each stage handed back to the bridge.
+
+    Delivery is a PUMP: one chunk per iteration with an ``await`` on the
+    socket between them, so the receive loop gets a turn and an interruption
+    lands on the undelivered remainder instead of arriving after every byte
+    is already gone.
+    """
+    turn_id = active.turn_id
+    request = bridge.build_generate_request(turn_id)
+    if request is None:
+        return  # the turn was interrupted or failed before we got here
+    active.generate_task = asyncio.create_task(_post_generate(request))
+    try:
+        status_code, body = await active.generate_task
+    except asyncio.CancelledError:
+        if active.cancelled:
+            return  # barge-in or teardown; the floor already emitted
+        raise
+    except httpx.TimeoutException as exc:
+        bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+        return
+    except httpx.HTTPError as exc:
+        bridge.fail_generate(f"generate backend unreachable: {exc}", turn_id=turn_id)
+        return
+    bridge.on_generate_response(status_code, body, turn_id=turn_id)
+    await sender.flush()
+
+    pending = bridge.take_pending_synthesis()
+    if pending is None:
+        return  # empty reply, stale turn, or a named failure — already emitted
+    _, reply_text = pending
+    active.tts_task = asyncio.create_task(
+        synthesize(
+            reply_text,
+            voice=settings.default_voice,
+            tts_url=settings.tts_url,
+            cancel_event=active.tts_cancel,
+            lane=VOICE_LANE,
+        )
+    )
+    try:
+        pcm = await active.tts_task
+    except asyncio.CancelledError:
+        if active.cancelled:
+            return
+        raise
+    except httpx.TimeoutException as exc:
+        bridge.fail_tts(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+        return
+    # No resample: Chatterbox's PCM16 is already the client's 24 kHz wire
+    # rate, so these bytes reach the socket exactly as synthesize() returned
+    # them, base64 and nothing else.
+    bridge.on_tts_audio(pcm, turn_id=turn_id)
+    await sender.flush()
+    while bridge.deliver_next(turn_id=turn_id):
+        await sender.flush()
 
 
 async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # pragma: no cover
@@ -362,6 +684,9 @@ async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # 
             raw_config,
             default_turn_detection=settings.default_turn_detection,
             default_aec_mode=settings.default_aec_mode,
+            # The operator half of the system-prompt contract; a client's own
+            # `system_prompt` connect-config key always overrides it.
+            default_system_prompt=settings.default_system_prompt,
         )
     except SessionConfigError as exc:
         await websocket.send_json(event_to_dict(exc.to_error_event(gen_session_id())))
@@ -412,72 +737,64 @@ async def _to_pcm16k(aligned: bytes, input_rate: int) -> bytes:  # pragma: no co
 
 
 async def _emit_turn_events(  # pragma: no cover
-    websocket: WebSocket, session: Session, events: list
+    bridge: ConversationBridge, sender: _Sender, events: list
 ) -> None:
     """Relay the segmenter's boundaries, transcribing each committed turn.
 
     A committed turn goes to Parakeet on this same connection; a failed
     forward becomes the named ``stt_forward_failed`` error, never a silently
-    dropped turn.
+    dropped turn. The STT forward stays INLINE (not a task): it is the
+    #149 behaviour verbatim, and nothing is speaking yet for a barge-in to
+    interrupt. Flushing after every boundary keeps the client's event stream
+    live across a slow forward.
+
+    Both segmenter timings reach the wire here — ``at_ms`` on each boundary
+    and ``reason`` on the commit — and neither is passed into the floor's
+    clock: they are audio-stream time, not wall-clock.
     """
     for event in events:
         if isinstance(event, SpeechStarted):
-            await websocket.send_json(event_to_dict(session.begin_speech()))
+            bridge.on_speech_started(at_ms=event.at_ms)
+            await sender.flush()
         elif isinstance(event, SpeechStopped):
-            await websocket.send_json(event_to_dict(session.end_speech()))
-            await _transcribe_turn(websocket, session, event.audio)
+            bridge.on_speech_stopped(at_ms=event.at_ms, reason=event.reason)
+            await sender.flush()
+            await _transcribe_turn(bridge, sender, event.audio)
 
 
 async def _transcribe_turn(  # pragma: no cover
-    websocket: WebSocket, session: Session, audio: bytes
+    bridge: ConversationBridge, sender: _Sender, audio: bytes
 ) -> None:
     try:
         text = await _forward_turn_to_stt(audio)
     except _STTForwardError as exc:
-        await websocket.send_json(event_to_dict(session.fail_transcription(str(exc))))
+        bridge.on_transcription_failed(str(exc))
     else:
-        await websocket.send_json(event_to_dict(session.complete_transcription(text)))
-
-
-def _wire_error_event(session: Session, exc: WireFormatError) -> ErrorEvent:  # pragma: no cover
-    """Turn one malformed-frame :class:`~lobes.realtime._wire.WireFormatError`
-    into this session's named ``error`` event.
-
-    ``_wire.py`` deliberately never imports ``_session`` (a sibling module
-    owns the event schema — see both modules' docstrings), so this route
-    layer is the one place allowed to depend on both: it is what turns a
-    wire-level failure into a schema-level event. ``exc.code`` (a
-    :class:`~lobes.realtime._wire.WireErrorCode`) is carried through as the
-    event's ``code`` verbatim rather than mapped onto
-    :class:`~lobes.realtime._session.ErrorCode` — both are ``str``-valued
-    ``Enum`` classes, so the wire-visible JSON ``code`` string serializes
-    identically either way (a client discriminates on that string, never on
-    the Python enum class it came from), and _wire.py's own
-    :class:`~lobes.realtime._wire.WireErrorCode` docstring is what documents
-    these particular values.
-    """
-    return ErrorEvent(
-        session_id=session.session_id,
-        event_id=gen_event_id(),
-        timestamp_ms=timestamp_ms(),
-        code=exc.code,
-        message=str(exc),
-    )
+        bridge.on_transcript(text)
+    await sender.flush()
 
 
 async def _pump_session(  # pragma: no cover
-    websocket: WebSocket, session: Session, segmenter: Segmenter, input_rate: int
+    websocket: WebSocket,
+    bridge: ConversationBridge,
+    sender: _Sender,
+    cancels: _ResponseCancels,
+    segmenter: Segmenter,
+    input_rate: int,
+    tasks: _SessionTasks,
 ) -> None:
     """Receive audio until the client goes away, segmenting as it arrives.
 
     Every received message is classified by
     :func:`~lobes.realtime._wire.decide_inbound_message` — audio (a valid
     ``input_audio_buffer.append`` event), ignorable (a well-formed event
-    this route does not act on yet, e.g. a future ``response.create`` — see
-    the #151 spec's t4/t6 split), or malformed (a named ``error`` event via
-    :func:`_wire_error_event`, never a silent drop). This loop is a thin
-    dispatch over that one decision; the classification itself is tested
-    offline in ``tests/test_realtime_wire.py``, since this route (like every
+    that is not audio), or malformed (a named ``error`` event, never a silent
+    drop). An ignorable event's decoded payload is offered to
+    :meth:`~lobes.realtime._conversation.ConversationBridge.on_control_event`,
+    which is where ``response.create`` — and only ``response.create`` — is
+    acted on. This loop is a thin dispatch over those two pure decisions;
+    both are tested offline in ``tests/test_realtime_wire.py`` and
+    ``tests/test_realtime_conversation.py``, since this route (like every
     route in this module) is never imported by the offline suite.
     """
     pending = bytearray()
@@ -487,9 +804,14 @@ async def _pump_session(  # pragma: no cover
             return
         decision = decide_inbound_message(message)
         if decision.kind is InboundKind.IGNORED:
+            if bridge.on_control_event(decision.payload):
+                tasks.ensure_watchdog(bridge, sender)
+                await sender.flush()
+                _start_pending_response(bridge, sender, cancels, tasks)
             continue
         if decision.kind is InboundKind.ERROR:
-            await websocket.send_json(event_to_dict(_wire_error_event(session, decision.error)))
+            bridge.on_wire_error(decision.error)
+            await sender.flush()
             continue
         audio = decision.audio
 
@@ -507,11 +829,12 @@ async def _pump_session(  # pragma: no cover
             # _segmenter.py deliberately lets a raising VAD callable
             # propagate (see its module docstring) — translating that into
             # the named session error is this route's job.
-            await websocket.send_json(
-                event_to_dict(session.mark_vad_unavailable(f"{type(exc).__name__}: {exc}"))
-            )
+            bridge.fail_vad(f"{type(exc).__name__}: {exc}")
+            await sender.flush()
             return
-        await _emit_turn_events(websocket, session, events)
+        await _emit_turn_events(bridge, sender, events)
+        _start_pending_response(bridge, sender, cancels, tasks)
+        await sender.flush()
 
 
 def main() -> None:  # pragma: no cover - process entrypoint

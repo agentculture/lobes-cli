@@ -29,7 +29,7 @@ docs/specs/2026-07-21-realtime-ws-server-vad-149.md's Non-goals):
   ``invalid_session_config`` (bad session config), ``vad_unavailable``
   (Silero failed to load/run — distinct from ordinary silence, which emits
   no event at all), ``stt_forward_failed`` (a committed turn's Parakeet
-  forward failed).
+  forward failed), ``invalid_wire_event`` (a malformed client frame).
 
 Since issue #151, the engine also owns an OPT-IN, audio-path-only response
 lifecycle for server-side voice-to-voice conversation — a committed turn may
@@ -55,11 +55,20 @@ Open/follow-up); this module adopts only the audio-path event shapes:
   ``truncated`` marker) — timing/deadlines/cancellation plumbing is a
   separate floor/turn state machine's job, not this module's.
 
-Three new :class:`ErrorCode` members cover the new failure modes:
+Four new :class:`ErrorCode` members cover the new failure modes:
 ``generate_failed`` (the brain call failed), ``tts_failed`` (the mouth call
-failed), and ``response_timeout`` (a response stage exceeded its deadline —
-the floor always returns to the caller with a named error, never stuck
-responding/speaking).
+failed), ``response_timeout`` (a response stage exceeded its deadline — the
+floor always returns to the caller with a named error, never stuck
+responding/speaking), and ``invalid_wire_event`` (a malformed client frame —
+the ONE code the three ``_wire.WireErrorCode`` values all map onto, so this
+enum stays the single enumerable error vocabulary on this wire).
+
+The boundary events also carry the segmenter's own audio-stream timing since
+issue #151 t6: ``at_ms`` on both, plus ``reason`` on ``speech_stopped``.
+Those were computed by ``_segmenter.py`` and dropped at the route before they
+reached the wire, which left a client unable to tell a ``max_turn``
+force-commit from a silence-confirmed stop, and left VAD-knob effects
+observable only in fixture replay.
 
 ``SessionState`` gains ``responding``/``speaking`` so the floor holder —
 who currently owns the turn — is explicit in the schema itself, not implied
@@ -176,6 +185,20 @@ class ErrorCode(str, Enum):
       :func:`parse_session_config` (bad rate/format/channels/turn_detection/aec).
     - ``VAD_UNAVAILABLE`` — Silero failed to load or run; distinguishes VAD-down
       from ordinary silence, which emits no event at all.
+    - ``INVALID_WIRE_EVENT`` — a client frame was malformed at the wire-codec
+      level: not JSON, not a JSON object, an ``input_audio_buffer.append``
+      event with a missing/non-string/non-base64 ``audio`` field, or a raw
+      BINARY frame (removed as an accepted input by issue #151). ONE code
+      covers all of them, exactly like ``INVALID_SESSION_CONFIG`` covers
+      every rejected config shape: the specific wire reason
+      (:class:`lobes.realtime._wire.WireErrorCode` —
+      ``invalid_json``/``invalid_append_event``/``unsupported_frame_type``)
+      is named in the message TEXT, not fragmented across the code
+      vocabulary. This exists so there is exactly one enumerable list of
+      error codes on this wire: before issue #151 t6 the route put a
+      ``WireErrorCode`` value into this field verbatim, which meant a client
+      rendering codes had to know two enums (see
+      :mod:`lobes.realtime._conversation`'s ``WIRE_ERROR_CODES``).
     - ``STT_FORWARD_FAILED`` — a committed turn's forward to Parakeet failed
       (wired by the route layer; the code is reserved here as part of the
       schema this module owns).
@@ -192,6 +215,7 @@ class ErrorCode(str, Enum):
 
     INVALID_SESSION_CONFIG = "invalid_session_config"
     VAD_UNAVAILABLE = "vad_unavailable"
+    INVALID_WIRE_EVENT = "invalid_wire_event"
     STT_FORWARD_FAILED = "stt_forward_failed"
     GENERATE_FAILED = "generate_failed"
     TTS_FAILED = "tts_failed"
@@ -235,19 +259,45 @@ class SessionClosedEvent:
 
 @dataclass(frozen=True)
 class SpeechStartedEvent:
+    """A VAD speech onset.
+
+    ``at_ms`` is the segmenter's own ``SpeechStarted.at_ms``: elapsed,
+    32ms-quantised **audio-stream** time, NOT wall-clock and NOT the same
+    clock domain as ``timestamp_ms`` (a ``time.monotonic()`` process clock).
+    Keeping both on the event is the point — ``at_ms`` is what makes
+    ``VAD_THRESHOLD``/``VAD_SILENCE_MS``/``VAD_PREFIX_PADDING_MS`` effects
+    observable against a LIVE session rather than only in fixture replay
+    (issue #151 honesty condition h19). ``None`` when the caller had no
+    audio-stream time to report.
+    """
+
     session_id: str
     event_id: str
     timestamp_ms: int
     item_id: str
+    at_ms: int | None = None
     type: EventType = field(default=EventType.SPEECH_STARTED, init=False)
 
 
 @dataclass(frozen=True)
 class SpeechStoppedEvent:
+    """A committed turn boundary.
+
+    ``at_ms`` is audio-stream time, exactly as on :class:`SpeechStartedEvent`.
+    ``reason`` is the segmenter's own ``SpeechStopped.reason`` —
+    ``"silence"`` (``vad_silence_ms`` of continuous non-speech confirmed the
+    stop), ``"max_turn"`` (the ``vad_max_turn_ms`` force-commit, a normal
+    boundary event and never an error), or a caller's ``flush`` reason. Until
+    issue #151 t6 threaded it, no client could tell a force-commit from a
+    silence-confirmed stop at all.
+    """
+
     session_id: str
     event_id: str
     timestamp_ms: int
     item_id: str
+    at_ms: int | None = None
+    reason: str | None = None
     type: EventType = field(default=EventType.SPEECH_STOPPED, init=False)
 
 
@@ -590,35 +640,49 @@ class Session:
         if self._closed:
             raise SessionClosedError(self.session_id)
 
-    def begin_speech(self) -> SpeechStartedEvent:
+    def begin_speech(self, *, at_ms: int | None = None) -> SpeechStartedEvent:
         """Record a VAD-reported speech boundary onset.
 
         Called by the route layer once the (separately owned) VAD/segmenter
         logic decides speech started — this method only owns the resulting
-        state transition and event.
+        state transition and event. *at_ms* is the segmenter's own
+        audio-stream timestamp, carried onto the wire verbatim; see
+        :class:`SpeechStartedEvent` for the clock-domain caveat that makes it
+        worth a separate field from ``timestamp_ms``.
         """
         self._require_not_closed()
         self.current_item_id = gen_item_id()
         self.state = SessionState.SPEECH
-        self.log.info("speech started item_id=%s", self.current_item_id)
+        self.log.info("speech started item_id=%s at_ms=%s", self.current_item_id, at_ms)
         return SpeechStartedEvent(
             session_id=self.session_id,
             event_id=gen_event_id(),
             timestamp_ms=timestamp_ms(),
             item_id=self.current_item_id,
+            at_ms=at_ms,
         )
 
-    def end_speech(self) -> SpeechStoppedEvent:
-        """Record a VAD-reported speech boundary offset (turn committed)."""
+    def end_speech(
+        self, *, at_ms: int | None = None, reason: str | None = None
+    ) -> SpeechStoppedEvent:
+        """Record a VAD-reported speech boundary offset (turn committed).
+
+        *at_ms* and *reason* are the segmenter's own
+        ``SpeechStopped.at_ms``/``.reason``, carried onto the wire verbatim —
+        ``reason`` is what lets a client tell a ``"max_turn"`` force-commit
+        from a ``"silence"``-confirmed stop.
+        """
         self._require_not_closed()
         item_id = self.current_item_id
         self.state = SessionState.TRANSCRIBING
-        self.log.info("speech stopped item_id=%s", item_id)
+        self.log.info("speech stopped item_id=%s at_ms=%s reason=%s", item_id, at_ms, reason)
         return SpeechStoppedEvent(
             session_id=self.session_id,
             event_id=gen_event_id(),
             timestamp_ms=timestamp_ms(),
             item_id=item_id,
+            at_ms=at_ms,
+            reason=reason,
         )
 
     def complete_transcription(self, text: str) -> TranscriptionCompletedEvent:
@@ -655,6 +719,31 @@ class Session:
             code=ErrorCode.STT_FORWARD_FAILED,
             message=message,
             item_id=item_id,
+        )
+
+    def fail_wire_event(self, message: str) -> ErrorEvent:
+        """A client frame was malformed at the wire-codec level.
+
+        Changes NO state — a bad frame is not a turn boundary, does not open
+        or close an item, and the session stays open to keep receiving (the
+        #149 contract, unchanged). Deliberately does not call
+        :meth:`_require_not_closed` either, mirroring
+        :meth:`mark_vad_unavailable`: adversarial client input arriving in a
+        teardown race must never turn into an exception.
+
+        *message* is expected to already name the specific wire reason (the
+        :class:`lobes.realtime._wire.WireErrorCode` value), because
+        :attr:`ErrorCode.INVALID_WIRE_EVENT` alone does not distinguish the
+        three — see its docstring and
+        :mod:`lobes.realtime._conversation`'s ``WIRE_ERROR_CODES``.
+        """
+        self.log.warning("wire event rejected code=%s", ErrorCode.INVALID_WIRE_EVENT.value)
+        return ErrorEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            code=ErrorCode.INVALID_WIRE_EVENT,
+            message=message,
         )
 
     def mark_vad_unavailable(self, message: str = "server_vad is unavailable") -> ErrorEvent:

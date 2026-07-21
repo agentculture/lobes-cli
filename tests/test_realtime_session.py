@@ -855,3 +855,120 @@ def test_history_content_is_not_logged_verbatim(caplog) -> None:
         session.append_history("user", secret_sounding_text)
 
     assert secret_sounding_text not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# #151 t6 — boundary timings on the wire, and the single error vocabulary.
+#
+# _segmenter.py computed SpeechStarted.at_ms / SpeechStopped.at_ms+reason from
+# the very first #149 commit; the route dropped all three before they reached
+# the wire, so honesty condition h19 ("a live event stream that shows VAD
+# boundaries and timings") failed live and no client could tell a max_turn
+# force-commit from a silence-confirmed stop. The schema carries them now.
+# ---------------------------------------------------------------------------
+
+
+def test_begin_speech_carries_the_segmenters_audio_stream_time() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    event = session.begin_speech(at_ms=288)
+
+    assert event.at_ms == 288
+    # A DIFFERENT clock from timestamp_ms (a monotonic process clock) — the
+    # two are separate fields precisely because they are not comparable.
+    assert event.timestamp_ms != 288 or event.at_ms == event.timestamp_ms
+
+
+def test_end_speech_carries_the_commit_reason_and_time() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_speech(at_ms=128)
+
+    event = session.end_speech(at_ms=30_000, reason="max_turn")
+
+    assert (event.at_ms, event.reason) == (30_000, "max_turn")
+    assert event.type is S.EventType.SPEECH_STOPPED  # a boundary, never an error
+
+
+def test_boundary_timings_are_absent_rather_than_invented() -> None:
+    # A caller with no audio-stream time to report says so; the field is
+    # None, and the site renders an honestly-labelled wall-clock fallback
+    # rather than passing elapsed time off as audio-stream time.
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    started = session.begin_speech()
+    stopped = session.end_speech()
+
+    assert started.at_ms is None
+    assert (stopped.at_ms, stopped.reason) == (None, None)
+
+
+def test_boundary_timings_serialize_onto_the_wire() -> None:
+    import json
+
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_speech(at_ms=128)
+
+    payload = json.loads(
+        json.dumps(S.event_to_dict(session.end_speech(at_ms=2048, reason="silence")))
+    )
+
+    assert payload["at_ms"] == 2048
+    assert payload["reason"] == "silence"
+
+
+def test_fail_wire_event_is_a_named_error_in_the_session_vocabulary() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    event = session.fail_wire_event("invalid_json: malformed JSON: line 1 column 1")
+
+    assert event.type is S.EventType.ERROR
+    assert event.code is S.ErrorCode.INVALID_WIRE_EVENT
+    assert event.code.value == "invalid_wire_event"
+    # The specific wire reason survives in the text — one code covers all
+    # three, exactly like invalid_session_config covers every bad config.
+    assert "invalid_json" in event.message
+
+
+def test_fail_wire_event_changes_no_session_state() -> None:
+    # A malformed frame is not a turn boundary: it must not open or close an
+    # item, and the session stays open to keep receiving (#149 contract).
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_speech()
+
+    session.fail_wire_event("invalid_append_event: 'audio' field is not valid base64")
+
+    assert session.state is S.SessionState.SPEECH
+    assert session.has_open_item is True
+
+
+def test_fail_wire_event_survives_a_teardown_race() -> None:
+    # Adversarial client input arriving as the session tears down must never
+    # become an exception — same rule mark_vad_unavailable follows.
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.teardown()
+
+    event = session.fail_wire_event("unsupported_frame_type: binary frames are gone")
+
+    assert event.code is S.ErrorCode.INVALID_WIRE_EVENT
+
+
+def test_the_error_code_enum_is_the_whole_wire_vocabulary() -> None:
+    # One enumerable list: the site renders each code distinctly and the docs
+    # task documents them, so a second enum reaching ErrorEvent.code (the
+    # pre-t6 WireErrorCode leak) is a schema break, not a detail.
+    assert {code.value for code in S.ErrorCode} == {
+        "invalid_session_config",
+        "vad_unavailable",
+        "invalid_wire_event",
+        "stt_forward_failed",
+        "generate_failed",
+        "tts_failed",
+        "response_timeout",
+    }
