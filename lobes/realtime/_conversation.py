@@ -128,7 +128,7 @@ from ._turn import (
     parse_turn_response,
 )
 from ._wire import DEFAULT_DELTA_CHUNK_BYTES, WireErrorCode, WireFormatError, encode_audio_chunk
-from .protocol import TTS_SAMPLE_RATE, timestamp_ms
+from .protocol import BYTES_PER_SAMPLE, TTS_SAMPLE_RATE, timestamp_ms
 
 # The client's opt-in. OpenAI-Realtime's own event name, adopted for its
 # SHAPE only — full parity (session.update semantics, the conversation-item
@@ -244,6 +244,51 @@ def is_response_create(payload: Mapping[str, object] | None) -> bool:
 # ---------------------------------------------------------------------------
 # The bridge
 # ---------------------------------------------------------------------------
+
+
+# How far AHEAD of the playhead the server is allowed to run while delivering
+# audio-out. Some lead is required — a client whose buffer runs dry stutters —
+# but it is also the barge-in blind spot: an onset arriving inside the lead is
+# an interruption the server cannot honour, because those bytes are already
+# gone. 400 ms is comfortably above any local socket's jitter and well under
+# the ~1 s it takes a human to hear a wrong answer and start objecting.
+DELIVERY_LEAD_MS = 400
+
+
+def delivery_pause_ms(
+    *,
+    chunks_sent: int,
+    chunk_bytes: int,
+    sample_rate: int,
+    elapsed_ms: int,
+    lead_ms: int = DELIVERY_LEAD_MS,
+) -> int:
+    """Milliseconds to wait before sending the NEXT audio chunk.
+
+    Delivery has to track PLAYBACK, not socket drain. Without this the route
+    pumps every chunk as fast as the socket accepts it — MEASURED live at 2-4 ms
+    for 7.5-8.5 s of audio (docs/evidence/2026-07-22-accept-realtime-voice-to-
+    voice-spark.txt) — and then leaves SPEAKING. The client is still playing for
+    seconds afterwards, so a user talking over the reply is, to the server,
+    talking while LISTENING: it opens a new turn and `response.interrupted` is
+    never emitted. Every barge-in guarantee in :mod:`lobes.realtime._floor` is
+    correct and completely inert.
+
+    Pacing also keeps the session's HISTORY honest. The floor trims an
+    interrupted reply to the prefix that was plausibly heard; with instant
+    delivery nothing is ever undelivered, so the machine records the whole reply
+    as spoken and carries on as though the user heard words they never did.
+
+    Returns 0 whenever delivery is already at or behind the playhead (the first
+    chunks, or a slow socket) — this only ever *slows* a run-ahead, never adds
+    latency to audio the client is waiting on.
+    """
+    if chunk_bytes <= 0 or sample_rate <= 0:
+        return 0
+    chunk_ms = (chunk_bytes / BYTES_PER_SAMPLE) * 1000 / sample_rate
+    delivered_ms = chunks_sent * chunk_ms
+    # We may run `lead_ms` ahead of real time; wait for the excess to elapse.
+    return max(0, int(delivered_ms - lead_ms - elapsed_ms))
 
 
 @dataclass(frozen=True)

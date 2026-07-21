@@ -1473,3 +1473,67 @@ def test_app_py_waits_on_its_child_tasks_instead_of_awaiting_them() -> None:
         "each waited task must be checked with task.cancelled() before its result "
         f"is read, found {len(cancelled_checks)} check(s)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Paced delivery — the live gap the 2026-07-22 acceptance run found.
+# ---------------------------------------------------------------------------
+
+
+def test_delivery_pause_lets_the_first_chunks_prime_the_buffer() -> None:
+    # Inside the lead there is nothing to wait for: those chunks must go out
+    # immediately or the client starts with a dry buffer and stutters.
+    for sent in (1, 2, 3, 4):
+        assert (
+            C.delivery_pause_ms(chunks_sent=sent, chunk_bytes=4800, sample_rate=24000, elapsed_ms=0)
+            == 0
+        )
+
+
+def test_delivery_pause_tracks_playback_once_past_the_lead() -> None:
+    # 10 chunks x 100ms = 1000ms delivered; minus the 400ms lead, minus 0ms
+    # elapsed => wait 600ms so the server stops running ahead of the playhead.
+    assert (
+        C.delivery_pause_ms(chunks_sent=10, chunk_bytes=4800, sample_rate=24000, elapsed_ms=0)
+        == 600
+    )
+
+
+def test_delivery_pause_never_adds_latency_on_a_slow_socket() -> None:
+    # Already behind the playhead: pacing must only ever slow a run-ahead,
+    # never delay audio the client is waiting on.
+    assert (
+        C.delivery_pause_ms(chunks_sent=10, chunk_bytes=4800, sample_rate=24000, elapsed_ms=5_000)
+        == 0
+    )
+
+
+def test_delivery_pause_is_defensive_about_nonsense_inputs() -> None:
+    assert C.delivery_pause_ms(chunks_sent=9, chunk_bytes=0, sample_rate=24000, elapsed_ms=0) == 0
+    assert C.delivery_pause_ms(chunks_sent=9, chunk_bytes=4800, sample_rate=0, elapsed_ms=0) == 0
+
+
+def test_app_py_paces_its_delivery_loop() -> None:
+    """The route must SLEEP inside the delivery loop, not just flush.
+
+    Without this the loop drains the socket in ~2ms for ~8s of audio, the floor
+    leaves SPEAKING before the user has heard two words, and every barge-in
+    guarantee in _floor.py is inert live — the exact failure the 2026-07-22
+    acceptance run recorded. Structural, because app.py is never imported here.
+    """
+    node, _src = _function("_drive_response")
+    loops = [n for n in ast.walk(node) if isinstance(n, ast.While)]
+    delivery = [
+        loop
+        for loop in loops
+        if any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "deliver_next"
+            for c in ast.walk(loop.test)
+        )
+    ]
+    assert delivery, "no while-loop driving deliver_next() in _drive_response"
+    body = ast.dump(ast.Module(body=delivery[0].body, type_ignores=[]))
+    assert "delivery_pause_ms" in body, "the delivery loop does not compute a pace"
+    assert "sleep" in body, "the delivery loop never sleeps — it will drain the socket"

@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.1] - 2026-07-22
+
+### Added
+
+- `lobes.realtime._conversation.delivery_pause_ms` -- milliseconds to wait before the next audio chunk, tracking playback rather than socket drain. Runs at most `DELIVERY_LEAD_MS` (400 ms) ahead of the playhead: enough that a client buffer never runs dry, short enough that a barge-in onset lands inside a turn the server can still cancel. Returns 0 whenever delivery is already at or behind the playhead, so it only ever slows a run-ahead and never adds latency to audio the client is waiting on.
+
+### Changed
+
+- `secureContextHint` (Astro harness) derives a copy-pasteable remedy from the page's own origin -- the exact `ssh -L` command and URL -- instead of describing the secure-context rule and leaving the reader to apply it. A page already on localhost is told the origin is not the problem rather than sent chasing it.
+
+### Fixed
+
+- Realtime voice-out is now **paced to the playhead** instead of drained as fast as the socket accepts it. `_drive_response` pumped every delta in 2-4 ms for 7.5-8.5 s of audio (measured, `docs/evidence/2026-07-22-accept-realtime-voice-to-voice-spark.txt`) and then left `SPEAKING`, so a user talking over a still-playing reply was talking while the floor had already returned to `LISTENING`: a new turn opened and `response.interrupted` was never emitted. Every barge-in guarantee in `lobes/realtime/_floor.py` was correct and completely inert. It also made session history dishonest -- the floor trims an interrupted reply to the prefix plausibly heard, but with instant delivery nothing is ever undelivered, so the machine recorded the whole reply as spoken. Barge-in itself remains UNVALIDATED live (#108); this is the mechanism the next acceptance run must exercise, not a claim that it passed.
+- The Astro harness's `no-device` message now names the PipeWire/PulseAudio output-only-profile trap, where a card shows a working device to `arecord` and nothing at all to the browser, and points at `pactl list sources short` plus the duplex-profile fix.
+- The `unsupported` state no longer blames the origin unconditionally (Qodo #154-1). It is reached via `isSupported()`, which checks only API presence — so a browser missing `AudioWorkletNode` was being sent to set up SSH forwarding that would change nothing. `unsupportedMessage()` now reads `isSecureContext` and asserts a cause only when one is actually known: insecure origin → the forwarding remedy, secure origin → a missing-Web-Audio-APIs message, unreadable → both named and neither asserted. The pre-existing test that asserted the conflated copy is corrected and now pins both branches explicitly instead of depending on an ambient `isSecureContext`.
+- `CLAUDE.md` no longer overclaims the #151 realtime work on two counts. It said "no live acceptance transcript for this work has landed under `docs/evidence/` yet", which went stale in the very squash merge that added the 2026-07-22 Spark transcript; and it stated "Speaking during playback **interrupts**" as fact, which that transcript disproves. Both are corrected to match the evidence: the block is now **PARTIALLY validated**, naming what the run proved (voice-to-voice end-to-end) and what it did not (barge-in), and flagging that the transcript predates the 0.54.1 pacing fix so it is not evidence for barge-in either way.
+- `secureContextHint()` no longer invents port 4321 when `location.port` is empty (Qodo #154-2). A page served on a default port reported `""` and got a forwarding command for a service it was never served from; the real port is now derived from the protocol (80/443), and a privileged remote port maps to an unprivileged *local* one, so `ssh -L` never emits a command that needs root on the pasting side.
+
 ## [0.54.0] - 2026-07-21
 
 ### Added

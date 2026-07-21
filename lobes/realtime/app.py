@@ -43,6 +43,7 @@ from ._conversation import (
     WATCHDOG_INTERVAL_MS,
     ConversationBridge,
     GenerateConfig,
+    delivery_pause_ms,
     resolve_voice_model,
 )
 from ._pcm import needs_resample, resampled_frame_count, take_aligned_samples
@@ -56,7 +57,13 @@ from .audio_facade import (
     parse_speech_request,
     pcm_to_container,
 )
-from .protocol import BYTES_PER_SAMPLE, VAD_SAMPLE_RATE, gen_session_id
+from .protocol import (
+    BYTES_PER_SAMPLE,
+    TTS_SAMPLE_RATE,
+    VAD_SAMPLE_RATE,
+    gen_session_id,
+    timestamp_ms,
+)
 from .tts_client import synthesize
 
 log = logging.getLogger(__name__)
@@ -683,8 +690,26 @@ async def _drive_response(  # pragma: no cover
     # them, base64 and nothing else.
     bridge.on_tts_audio(pcm, turn_id=turn_id)
     await sender.flush()
+    # PACED delivery, not a drain race. Sending every chunk as fast as the
+    # socket accepts it leaves SPEAKING in ~2 ms for ~8 s of audio, so a user
+    # talking over the reply is talking while the floor is already LISTENING —
+    # barge-in never fires and the history records a reply the user never heard
+    # the end of. See delivery_pause_ms for the full reasoning and the measured
+    # numbers. asyncio.sleep also yields, so the receive loop runs between
+    # chunks and an onset can actually land mid-reply.
+    started_ms = timestamp_ms()
+    chunks_sent = 0
     while bridge.deliver_next(turn_id=turn_id):
         await sender.flush()
+        chunks_sent += 1
+        pause_ms = delivery_pause_ms(
+            chunks_sent=chunks_sent,
+            chunk_bytes=DEFAULT_DELTA_CHUNK_BYTES,
+            sample_rate=TTS_SAMPLE_RATE,
+            elapsed_ms=timestamp_ms() - started_ms,
+        )
+        if pause_ms > 0:
+            await asyncio.sleep(pause_ms / 1000)
 
 
 async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # pragma: no cover
