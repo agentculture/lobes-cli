@@ -611,12 +611,18 @@ class Floor:
         self._fail(stage, reason, message)
         return True
 
-    def close(self, reason: str = "client_disconnect") -> None:
+    def close(self) -> None:
         """Tear the floor down from ANY state. Idempotent.
 
         Cancels whatever was in flight and drops the undelivered audio, but
         emits nothing: session lifecycle events belong to the session engine,
         and a client that is already gone cannot act on an interruption event.
+
+        Takes no ``reason``. It used to, mirroring ``Session.teardown``, but the
+        floor emits nothing on close so the value was discarded — every caller
+        naming one was expressing an intent that went nowhere. The reason still
+        travels where it is actually rendered: ``Session.teardown(reason=...)``
+        puts it on the ``session.closed`` event.
         """
         if self._state is FloorState.CLOSED:
             return

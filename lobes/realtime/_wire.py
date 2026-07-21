@@ -11,7 +11,7 @@ is edited in parallel by a different task) — every function here takes and
 returns plain ``dict``/``Mapping`` values so it composes with whatever event
 members land in the session schema, rather than depending on it.
 
-Stdlib only (``base64``, ``binascii``, ``json``, ``dataclasses``-free plain
+Stdlib only (``base64``, ``json``, ``dataclasses``-free plain
 dicts, ``enum``) — importable and unit-testable with none of the
 ``[realtime]`` extra installed (no fastapi, httpx, numpy, scipy, torch
 anywhere in this module's import path), mirroring
@@ -105,7 +105,6 @@ round-trip test) checks itself against. Both shapes carry the same base64
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 from collections.abc import Iterator, Mapping
 from enum import Enum
@@ -226,7 +225,9 @@ def parse_append_event(payload: Mapping[str, object]) -> bytes:
         )
     try:
         return base64.b64decode(audio, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    # binascii.Error IS a ValueError subclass, so naming both caught nothing
+    # extra and only implied the two were independent failure modes.
+    except ValueError as exc:
         raise WireFormatError(
             WireErrorCode.INVALID_APPEND_EVENT,
             f"'audio' field is not valid base64: {exc}",

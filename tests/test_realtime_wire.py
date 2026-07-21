@@ -125,13 +125,11 @@ def test_decode_event_rejects_non_object_top_level_json() -> None:
 
 
 def test_decode_event_error_carries_a_wire_error_code_never_a_bare_exception() -> None:
-    try:
+    with pytest.raises(WireFormatError) as exc_info:
         decode_event("garbage{{{")
-    except WireFormatError as exc:
-        assert isinstance(exc.code, WireErrorCode)
-        assert isinstance(exc, ValueError)  # mirrors SessionConfigError's ValueError base
-    else:
-        pytest.fail("expected WireFormatError")
+    assert isinstance(exc_info.value.code, WireErrorCode)
+    # mirrors SessionConfigError's ValueError base
+    assert isinstance(exc_info.value, ValueError)
 
 
 # ---------------------------------------------------------------------------
@@ -488,15 +486,20 @@ def test_iter_audio_deltas_exact_multiple_of_chunk_size() -> None:
 
 def test_iter_audio_deltas_rejects_non_positive_chunk_bytes() -> None:
     for bad in (0, -1, -1024):
+        # Built outside the block so the ONLY call inside it is the one whose
+        # raise is under test — iter_audio_deltas is a generator, so nothing
+        # runs until it is consumed.
+        deltas = iter_audio_deltas(b"\x00\x01\x02\x03", bad, response_id="r", item_id="i")
         with pytest.raises(ValueError):
-            list(iter_audio_deltas(b"\x00\x01\x02\x03", bad, response_id="r", item_id="i"))
+            list(deltas)
 
 
 def test_iter_audio_deltas_rejects_odd_chunk_bytes() -> None:
     # PCM16 samples are 2 bytes; an odd chunk size would split a sample
     # across two frames.
+    deltas = iter_audio_deltas(b"\x00\x01\x02\x03", 3, response_id="r", item_id="i")
     with pytest.raises(ValueError):
-        list(iter_audio_deltas(b"\x00\x01\x02\x03", 3, response_id="r", item_id="i"))
+        list(deltas)
 
 
 def test_iter_audio_deltas_returns_an_iterator_not_a_list() -> None:

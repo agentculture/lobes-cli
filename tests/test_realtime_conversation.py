@@ -114,17 +114,29 @@ def chat_body(text: str | None) -> bytes:
 
 
 def make_bridge(config_payload: dict | None = None, **overrides):
-    """A bridge over a real Session, with a fake clock and counted cancels."""
+    """A bridge over a real Session, with a fake clock and counted cancels.
+
+    ``base_url``/``api_key``/``model`` may still be passed individually; they
+    are folded into the :class:`~lobes.realtime._conversation.GenerateConfig`
+    the bridge now takes, so a test that only cares about the model does not
+    have to restate the whole generate config.
+    """
     config = S.parse_session_config(config_payload or {})
     session, _created = S.Session.create(config)
     cancels = Cancels()
     clock = FakeClock()
+    generate = overrides.pop(
+        "generate",
+        C.GenerateConfig(
+            base_url=overrides.pop("base_url", "http://gateway:8000"),
+            api_key=overrides.pop("api_key", "test-key"),
+            model=overrides.pop("model", "multimodal"),
+        ),
+    )
     kwargs: dict = {
         "cancel_generate": cancels.on_generate,
         "cancel_tts": cancels.on_tts,
-        "base_url": "http://gateway:8000",
-        "api_key": "test-key",
-        "model": "multimodal",
+        "generate": generate,
         "chunk_bytes": CHUNK,
         "clock": clock,
     }
@@ -212,7 +224,7 @@ def test_the_bridge_default_chunk_size_is_the_wire_codecs() -> None:
         session,
         cancel_generate=lambda: None,
         cancel_tts=lambda: None,
-        base_url="http://gateway:8000",
+        generate=C.GenerateConfig(base_url="http://gateway:8000"),
     )
     assert bridge.floor.chunk_bytes == W.DEFAULT_DELTA_CHUNK_BYTES
     assert W.DEFAULT_DELTA_CHUNK_BYTES % BYTES_PER_SAMPLE == 0
@@ -696,7 +708,7 @@ def test_the_system_prompt_default_reaches_the_generate_call() -> None:
         session,
         cancel_generate=lambda: None,
         cancel_tts=lambda: None,
-        base_url="http://gateway:8000",
+        generate=C.GenerateConfig(base_url="http://gateway:8000"),
     )
     bridge.arm()
     commit_turn(bridge)

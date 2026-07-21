@@ -36,6 +36,19 @@ from lobes.realtime._settings import (
 )
 
 
+async def _acquire_within(semaphore: asyncio.Semaphore, *, timeout: float) -> bool:
+    """``True`` if *semaphore* was acquired within *timeout*, else ``False``.
+
+    Turns "did this lane block?" into a value a test can assert on with its own
+    message, instead of a TimeoutError each caller has to catch and re-explain.
+    """
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
 def test_batch_and_voice_lanes_get_independent_semaphore_objects() -> None:
     s = build_settings({})
     sems = new_tts_lane_semaphores(s)
@@ -66,15 +79,16 @@ def test_voice_lane_synthesis_does_not_queue_behind_a_saturated_batch_lane() -> 
             # A voice-lane synthesis acquires on a SEPARATE semaphore, so
             # this is uncontended and must return well within any
             # reasonable timeout — never wait on the batch lane at all.
-            try:
-                await asyncio.wait_for(voice_sem.acquire(), timeout=0.5)
-            except asyncio.TimeoutError:
-                pytest.fail(
-                    "voice-lane semaphore acquire timed out while the batch "
-                    "lane was saturated — the two lanes are not isolated"
-                )
-            else:
-                voice_sem.release()
+            # Reported as a bool rather than caught here: the diagnostic is
+            # what makes this test worth having ("the two lanes are not
+            # isolated" is the finding, not "TimeoutError"), and an assert
+            # carries it without a try/except in the test body.
+            acquired = await _acquire_within(voice_sem, timeout=0.5)
+            assert acquired, (
+                "voice-lane semaphore acquire timed out while the batch "
+                "lane was saturated — the two lanes are not isolated"
+            )
+            voice_sem.release()
         finally:
             batch_sem.release()
 
@@ -96,9 +110,12 @@ def test_batch_lane_still_serializes_a_second_batch_caller_at_the_default() -> N
         batch_sem = sems[BATCH_LANE]
 
         await batch_sem.acquire()
+        # The coroutine is created outside the block so the only call inside
+        # it is wait_for — the one whose timeout is under test.
+        contended = batch_sem.acquire()
         try:
             with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(batch_sem.acquire(), timeout=0.2)
+                await asyncio.wait_for(contended, timeout=0.2)
         finally:
             batch_sem.release()
 
@@ -117,8 +134,9 @@ def test_lane_semaphore_sizes_follow_their_own_env_override() -> None:
         # Batch: still only 1 permit. The failed/cancelled second acquire
         # never consumed a permit, so only ONE release is correct here.
         await batch_sem.acquire()
+        contended = batch_sem.acquire()
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(batch_sem.acquire(), timeout=0.2)
+            await asyncio.wait_for(contended, timeout=0.2)
         batch_sem.release()
 
         # Voice: 2 permits — a second concurrent voice acquire must succeed.

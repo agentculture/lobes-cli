@@ -39,7 +39,12 @@ from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSock
 from fastapi.responses import JSONResponse, Response
 from scipy.signal import resample as scipy_resample
 
-from ._conversation import WATCHDOG_INTERVAL_MS, ConversationBridge, resolve_voice_model
+from ._conversation import (
+    WATCHDOG_INTERVAL_MS,
+    ConversationBridge,
+    GenerateConfig,
+    resolve_voice_model,
+)
 from ._pcm import needs_resample, resampled_frame_count, take_aligned_samples
 from ._segmenter import Segmenter, SpeechStarted, SpeechStopped
 from ._session import Session, SessionConfigError, event_to_dict, parse_session_config
@@ -394,7 +399,7 @@ async def realtime(websocket: WebSocket) -> None:
             # Cancels whatever generate/TTS call was in flight and drops the
             # undelivered audio. Emits nothing: a client that is already gone
             # cannot act on an interruption event.
-            bridge.close(reason="client_disconnect")
+            bridge.close()
         if segmenter is not None and segmenter.speaking:
             # Best-effort: the client is already gone by the time we get
             # here on most paths, so the flushed turn is discarded rather
@@ -429,9 +434,11 @@ def _build_bridge(  # pragma: no cover
         session,
         cancel_generate=cancels.generate,
         cancel_tts=cancels.tts,
-        base_url=settings.openai_base_url,
-        api_key=settings.openai_api_key,
-        model=resolve_voice_model(settings.openai_model),
+        generate=GenerateConfig(
+            base_url=settings.openai_base_url,
+            api_key=settings.openai_api_key,
+            model=resolve_voice_model(settings.openai_model),
+        ),
         barge_in_window_ms=settings.barge_in_window_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
         generate_timeout_ms=int(_GENERATE_FORWARD_TIMEOUT * 1000),

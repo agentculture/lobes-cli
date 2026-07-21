@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import NoReturn
 
 # --- defaults, mirroring scripts/realtime-voice-loop.py's think() ----------
 
@@ -284,23 +285,37 @@ def parse_turn_response(status_code: int, body: bytes) -> str:
     data = _load_json_object(body)
 
     if status_code != 200:
-        error = _error_object(data)
-        code = error.get("code") if error else None
-        kind = error.get("type") if error else None
-        message = (error.get("message") if error else None) or (
-            f"generate backend returned HTTP {status_code}"
-        )
-        if status_code == 404 and "role_infeasible" in (code, kind):
-            hosted_by = error.get("hosted_by") if error else None
-            hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
-            raise RoleInfeasibleError(message, hosted_by=hosted_by)
-        raise TurnResponseError(message, status_code=status_code)
+        _raise_for_error_status(status_code, data)
 
     if data is None:
         raise TurnResponseError(
             "generate backend returned a non-JSON response", status_code=status_code
         )
     return _extract_reply_text(data)
+
+
+def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
+    """Always raises — the named error a non-200 generate response deserves.
+
+    Split out of :func:`parse_turn_response` so the happy path reads as three
+    lines: the branching that distinguishes a dropped LANE from an ordinary
+    backend failure is the only genuinely intricate part, and it is all here.
+    """
+    error = _error_object(data)
+    code = error.get("code") if error else None
+    kind = error.get("type") if error else None
+    message = (error.get("message") if error else None) or (
+        f"generate backend returned HTTP {status_code}"
+    )
+    # A 404 whose error object names role_infeasible means this box does not
+    # host the lane — a different fact from "the backend broke", and the one
+    # that must carry `hosted_by` so the caller can name the peer instead of
+    # silently falling back to another lane.
+    if status_code == 404 and "role_infeasible" in (code, kind):
+        hosted_by = error.get("hosted_by") if error else None
+        hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
+        raise RoleInfeasibleError(message, hosted_by=hosted_by)
+    raise TurnResponseError(message, status_code=status_code)
 
 
 def _extract_reply_text(data: dict) -> str:

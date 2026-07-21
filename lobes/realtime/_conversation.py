@@ -99,6 +99,7 @@ synchronous loop and every guarantee in :mod:`._floor` is inert at runtime.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Callable
 
 from ._floor import (
@@ -245,6 +246,27 @@ def is_response_create(payload: Mapping[str, object] | None) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class GenerateConfig:
+    """Where the voice lane's generate call goes, and how it is shaped.
+
+    These five travel together by construction: every one of them is consumed
+    by the SAME :func:`~lobes.realtime._turn.build_turn_request` call and
+    nothing else reads them individually, so passing them as five separate
+    constructor arguments only spread one decision across five call-site lines.
+
+    ``model`` stays deliberately policy-free here, as in :mod:`_turn`: the
+    voice-lane default (``multimodal``) is applied by
+    :func:`resolve_voice_model` at the wiring layer, not baked in.
+    """
+
+    base_url: str
+    api_key: str | None = None
+    model: str | None = None
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
+
+
 class ConversationBridge:
     """One session's conversation surface: floor + schema + history + wire.
 
@@ -270,16 +292,12 @@ class ConversationBridge:
         *,
         cancel_generate: Callable[[], None],
         cancel_tts: Callable[[], None],
-        base_url: str,
-        api_key: str | None = None,
-        model: str | None = None,
+        generate: GenerateConfig,
         barge_in_window_ms: int = DEFAULT_BARGE_IN_WINDOW_MS,
         transcribe_timeout_ms: int = DEFAULT_TRANSCRIBE_TIMEOUT_MS,
         generate_timeout_ms: int = DEFAULT_GENERATE_TIMEOUT_MS,
         tts_timeout_ms: int = DEFAULT_TTS_TIMEOUT_MS,
         chunk_bytes: int = DEFAULT_DELTA_CHUNK_BYTES,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        temperature: float = DEFAULT_TEMPERATURE,
         clock: Callable[[], int] = timestamp_ms,
     ) -> None:
         self.session = session
@@ -302,11 +320,7 @@ class ConversationBridge:
             # default so the trap is visible at the wiring site.
             sample_rate=TTS_SAMPLE_RATE,
         )
-        self._base_url = base_url
-        self._api_key = api_key
-        self._model = model
-        self._max_tokens = max_tokens
-        self._temperature = temperature
+        self._generate = generate
 
         self._outbox: list[dict[str, object]] = []
         self.armed = False
@@ -372,7 +386,7 @@ class ConversationBridge:
         it must not keep speaking either.
         """
         self._push(self.session.mark_vad_unavailable(message))
-        self.floor.close(reason="vad_unavailable")
+        self.floor.close()
 
     # -- inbound: turn boundaries ----------------------------------------
 
@@ -488,12 +502,12 @@ class ConversationBridge:
             return None
         return build_turn_request(
             self.session.get_history(),
-            base_url=self._base_url,
-            api_key=self._api_key,
+            base_url=self._generate.base_url,
+            api_key=self._generate.api_key,
             system_prompt=self.session.system_prompt,
-            model=self._model,
-            max_tokens=self._max_tokens,
-            temperature=self._temperature,
+            model=self._generate.model,
+            max_tokens=self._generate.max_tokens,
+            temperature=self._generate.temperature,
         )
 
     def on_generate_response(self, status_code: int, body: bytes, *, turn_id: int) -> bool:
@@ -559,13 +573,15 @@ class ConversationBridge:
         """
         return self.floor.tick()
 
-    def close(self, reason: str = "client_disconnect") -> None:
+    def close(self) -> None:
         """Tear the floor down from any state. Idempotent; emits nothing.
 
-        Session lifecycle events belong to :meth:`Session.teardown`, and a
-        client that is already gone cannot act on an interruption event.
+        Session lifecycle events belong to :meth:`Session.teardown` — which is
+        where a close ``reason`` is actually rendered, onto ``session.closed``.
+        This layer used to accept one and discard it; a client that is already
+        gone cannot act on an interruption event either way.
         """
-        self.floor.close(reason=reason)
+        self.floor.close()
 
     # -- floor callbacks --------------------------------------------------
 
