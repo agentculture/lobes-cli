@@ -200,7 +200,9 @@ machine, Silero injected as a callable — in `lobes/realtime/_segmenter.py`;
 the thin FastAPI route wiring both to real Silero + scipy in
 `lobes/realtime/app.py`). A never-silent turn force-commits at
 `VAD_MAX_TURN_MS` (default 30s) with `reason="max_turn"` — a normal
-boundary event, never an `error`. Sessions are ephemeral (no resume; any
+boundary event, never an `error` (true of the server's behaviour from the
+start, but **not observable by any client** until #151 put `reason` on the
+wire). Sessions are ephemeral (no resume; any
 disconnect tears the session down and a reconnect gets a brand-new session
 id) and reached **through the gateway** (101-upgrade + byte tunnel,
 `lobes/gateway/_realtime.py`) under the same opt-in `GATEWAY_API_KEY`
@@ -211,18 +213,66 @@ POST-only). This redeems two in-tree IOUs — `app.py`'s own "PR2 adds the
 `realtime-pipeline.md`'s former "planned for a later release" boundary
 claim — against the #149 baseline probe (the deployed facade served four
 batch routes and no WebSocket, forcing reachy-mini-cli's client-side
-energy-threshold endpointing). VALIDATED live on the DGX Spark GB10,
+energy-threshold endpointing). The **session mechanism** is VALIDATED live
+on the DGX Spark GB10,
 2026-07-21 (`docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full
 session through the gateway tunnel against real Silero + Parakeet, at both
 24000 Hz and the 16000 Hz passthrough. The live run is also what caught the
 tunnel's leftover-direction bug — the bridge's first frame was being sent
 back upstream, killing every session the instant it opened, and the unit
-test had asserted that wrong direction as correct. Still UNVALIDATED: a real
+test had asserted that wrong direction as correct. That transcript predates
+the #151 wire change below, so it proves the tunnel, the VAD and the STT
+forward — not the wire the server speaks today. Still UNVALIDATED, and NOT
+retired by #151: a real
 microphone (the runs used synthesized audio), the VAD-unavailable path,
 concurrent sessions, and the max-turn cap.
 
+**Voice-to-voice on the same socket (issue #151) — a coordinated wire break
+plus an opt-in conversation surface.** Two changes land together, and the
+first is a **break**: raw binary audio frames are gone. Audio now travels as
+OpenAI-shaped **base64 JSON events in BOTH directions** —
+`input_audio_buffer.append` inbound, `response.audio.delta` outbound (codec:
+`lobes/realtime/_wire.py`). A binary frame now yields the new named
+`invalid_wire_event` error instead of being read as audio. The deployed
+reachy-mini-cli speaks the old wire and **cannot stream until it adapts**
+(tracked in **reachy-mini-cli#115**); that is a recorded, operator-accepted
+decision (frame decision c40), not a regression. Second, **conversation is
+opt-in**: a session answers nothing until the client sends `response.create`,
+and one that never does emits exactly the #149 transcription-only sequence
+(the ears-only contract reachy depends on — a structural property of
+`_conversation.py`, where every floor call sits behind `if self.armed`).
+Once armed, a committed turn is generated through the gateway's own
+`/v1/chat/completions` (voice lane defaults to `multimodal`, ~1 s to a short
+reply; `OPENAI_MODEL` overrides; a lane this box does not host surfaces as
+`generate_failed` with `hosted_by`, never a silent fallback), synthesized by
+Chatterbox and streamed back as 24 kHz deltas that never resample. Speaking
+during playback **interrupts**: generate and TTS are both cancelled, the
+undelivered remainder is never sent, and `response.interrupted` goes out —
+only the plausibly-heard prefix enters history. New machinery:
+`_floor.py` (explicit floor/turn state machine, per-stage 60 s deadlines →
+`response_timeout` rather than a wedged session), `_turn.py` (generate
+payload shaping), per-session in-memory history + system prompt, and
+per-lane TTS pools so a spoken reply never queues behind batch TTS. New
+knobs: `BARGE_IN_WINDOW_MS` (750; a guard window, not a delay),
+`BARGE_IN_MODEL` (threaded but **unconsumed** — window-only barge-in ships),
+`TTS_VOICE_CONCURRENCY` (1), `DEFAULT_SYSTEM_PROMPT`. Boundary events now
+carry `at_ms` and `reason`, so VAD tuning is observable live. A **local-only**
+Astro harness under `site/` drives all of it from a browser (real mic, live
+event stream, audio out) through a local credential-injecting WebSocket proxy
+reached via `ssh -L` — never deployed; CI only builds it. **DECLARED and
+offline-proven, NOT validated (#108):** every decision lives in stdlib
+modules the offline suite covers and `app.py` stays a `pragma: no cover`
+shell, but no live acceptance transcript for this work has landed under
+`docs/evidence/` yet. On muting, note the deliberately narrow rule
+(deviation `d1`): **automatic** mute-during-playback stays FORBIDDEN — it is
+the AEC substitute that makes barge-in impossible, since you cannot interrupt
+a machine that has stopped listening — while **user-initiated** mute/mic-off
+is allowed, because AEC is genuinely owned at the client edge (Reachy
+firmware, browser `echoCancellation`).
+
 See `docs/realtime-pipeline.md`, `docs/parakeet-stt.md`,
-`docs/chatterbox-tts.md`, and `docs/openai-api.md` (the full
+`docs/chatterbox-tts.md`, `docs/gateway-fleet.md` (the realtime lane), and
+`docs/openai-api.md` (the full
 OpenAI-compatible endpoint surface, including `/v1/realtime`). `lobes
 explain realtime` / `api` are the in-CLI versions.
 
