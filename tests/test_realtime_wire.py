@@ -27,9 +27,13 @@ import pytest
 
 import lobes.realtime._wire as W
 from lobes.realtime._wire import (
+    APPEND_EVENT_TYPE,
     DEFAULT_DELTA_CHUNK_BYTES,
+    InboundDecision,
+    InboundKind,
     WireErrorCode,
     WireFormatError,
+    decide_inbound_message,
     decode_event,
     iter_audio_deltas,
     parse_append_event,
@@ -196,6 +200,208 @@ def test_decode_event_then_parse_append_event_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
+# decide_inbound_message — issue #151 t4: app.py's receive-loop decision,
+# extracted here so it is exhaustively testable without the [realtime]
+# extra installed (app.py is fastapi/torch-only and pragma-no-cover /
+# coverage-omitted — see tests/test_realtime_imports.py and pyproject.toml's
+# [tool.coverage.run] omit list). This mirrors the precedent set by t7's
+# tests/test_realtime_tts_gate.py: the real decision lives in a stdlib
+# module and is proven here; the route (app.py) is verified separately by
+# a source-text grep gate below, since it can never be imported offline.
+# ---------------------------------------------------------------------------
+
+
+def _append_message(pcm: bytes) -> dict:
+    """Build the plain dict a WebSocket receive() call would hand back for
+    one ``input_audio_buffer.append`` text frame carrying *pcm*."""
+    return {
+        "type": "websocket.receive",
+        "text": json.dumps(
+            {"type": APPEND_EVENT_TYPE, "audio": base64.b64encode(pcm).decode("ascii")}
+        ),
+    }
+
+
+def test_decide_inbound_message_classifies_a_valid_append_event_as_audio() -> None:
+    pcm = os.urandom(512)
+    decision = decide_inbound_message(_append_message(pcm))
+    assert decision.kind is InboundKind.AUDIO
+    assert decision.audio == pcm
+    assert decision.error is None
+
+
+def test_decide_inbound_message_empty_audio_is_still_audio_not_ignored() -> None:
+    # An empty append event is valid input (zero bytes of audio), not
+    # malformed and not "not audio" — see parse_append_event's own contract.
+    decision = decide_inbound_message(_append_message(b""))
+    assert decision.kind is InboundKind.AUDIO
+    assert decision.audio == b""
+
+
+def test_decide_inbound_message_ignores_a_well_formed_non_append_event() -> None:
+    message = {"type": "websocket.receive", "text": json.dumps({"type": "response.create"})}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.IGNORED
+    assert decision.audio is None
+    assert decision.error is None
+
+
+def test_decide_inbound_message_json_object_with_no_type_field_is_ignored() -> None:
+    # No "type" key at all still routes through the same "not an append
+    # event" branch as an explicitly different type — not a parse error.
+    message = {"type": "websocket.receive", "text": json.dumps({"foo": "bar"})}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.IGNORED
+
+
+def test_decide_inbound_message_malformed_json_is_a_named_error() -> None:
+    message = {"type": "websocket.receive", "text": "{not valid json"}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.audio is None
+    assert isinstance(decision.error, WireFormatError)
+    assert decision.error.code is WireErrorCode.INVALID_JSON
+
+
+def test_decide_inbound_message_malformed_append_audio_field_is_a_named_error() -> None:
+    message = {
+        "type": "websocket.receive",
+        "text": json.dumps({"type": APPEND_EVENT_TYPE, "audio": "not valid base64!!!"}),
+    }
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.error.code is WireErrorCode.INVALID_APPEND_EVENT
+
+
+def test_decide_inbound_message_missing_audio_field_is_a_named_error() -> None:
+    message = {"type": "websocket.receive", "text": json.dumps({"type": APPEND_EVENT_TYPE})}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.error.code is WireErrorCode.INVALID_APPEND_EVENT
+
+
+def test_decide_inbound_message_binary_frame_is_rejected_as_a_named_error() -> None:
+    # The coordinated wire break (issue #151 / reachy-mini-cli#115): a raw
+    # binary WebSocket frame was accepted as audio before this migration.
+    # It must now be a named error, never audio, never a silent drop.
+    message = {"type": "websocket.receive", "bytes": os.urandom(1024)}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.audio is None
+    assert decision.error.code is WireErrorCode.UNSUPPORTED_FRAME_TYPE
+
+
+def test_decide_inbound_message_binary_frame_of_valid_pcm_length_is_still_rejected() -> None:
+    # Even a well-formed-looking PCM16 payload (even byte length) must not
+    # sneak through as audio just because it happens to look plausible.
+    message = {"type": "websocket.receive", "bytes": bytes(range(256)) * 4}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.error.code is WireErrorCode.UNSUPPORTED_FRAME_TYPE
+
+
+def test_decide_inbound_message_empty_binary_frame_is_still_rejected() -> None:
+    # b"" is falsy but not None — the check must be "is not None", not
+    # a truthiness check, or an empty binary frame would slip past as if
+    # it were absent.
+    message = {"type": "websocket.receive", "bytes": b""}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.error.code is WireErrorCode.UNSUPPORTED_FRAME_TYPE
+
+
+def test_decide_inbound_message_neither_text_nor_bytes_is_a_named_error() -> None:
+    message = {"type": "websocket.receive"}
+    decision = decide_inbound_message(message)
+    assert decision.kind is InboundKind.ERROR
+    assert decision.error.code is WireErrorCode.UNSUPPORTED_FRAME_TYPE
+
+
+def test_decide_inbound_message_never_raises() -> None:
+    adversarial_messages = [
+        {},
+        {"type": "websocket.receive"},
+        {"type": "websocket.receive", "text": None},
+        {"type": "websocket.receive", "text": ""},
+        {"type": "websocket.receive", "text": "null"},
+        {"type": "websocket.receive", "text": "[1, 2, 3]"},
+        {"type": "websocket.receive", "text": "garbage{{{"},
+        {"type": "websocket.receive", "text": json.dumps({"type": APPEND_EVENT_TYPE, "audio": 5})},
+        {
+            "type": "websocket.receive",
+            "text": json.dumps({"type": APPEND_EVENT_TYPE, "audio": None}),
+        },
+        {"type": "websocket.receive", "bytes": b"\x00\x01\x02"},
+        {"type": "websocket.receive", "bytes": None, "text": None},
+    ]
+    for message in adversarial_messages:
+        decision = decide_inbound_message(message)  # must never raise
+        assert isinstance(decision, InboundDecision)
+        assert decision.kind in (InboundKind.AUDIO, InboundKind.IGNORED, InboundKind.ERROR)
+        if decision.kind is InboundKind.ERROR:
+            assert isinstance(decision.error, WireFormatError)
+
+
+def test_decide_inbound_message_result_fields_match_kind() -> None:
+    # audio/error are mutually exclusive and each populated only for its
+    # matching kind — a caller must be able to trust `decision.kind` alone.
+    audio_decision = decide_inbound_message(_append_message(b"\x01\x02"))
+    assert audio_decision.audio is not None and audio_decision.error is None
+
+    ignored_decision = decide_inbound_message(
+        {"type": "websocket.receive", "text": json.dumps({"type": "response.create"})}
+    )
+    assert ignored_decision.audio is None and ignored_decision.error is None
+
+    error_decision = decide_inbound_message({"type": "websocket.receive", "text": "{{{"})
+    assert error_decision.audio is None and error_decision.error is not None
+
+
+def test_decide_inbound_message_sequence_reassembles_audio_byte_exact_transcription_only() -> None:
+    """Acceptance criterion 1 (issue #151 t4): the transcription-only event
+    sequence is unchanged 1:1 over base64 append input.
+
+    Everything downstream of raw inbound bytes — buffering/alignment
+    (_pcm.py), VAD segmentation (_segmenter.py), and session event emission
+    (_session.py) — is untouched by this task and already covered by its own
+    offline tests; the ONLY thing t4 changes is how those bytes are obtained
+    from one received WebSocket message. This test proves that swap is
+    transparent: feeding a realistic stream of base64 append events (with an
+    ignorable non-append event interspersed, exactly as a real session might
+    receive one) through decide_inbound_message reassembles the identical
+    PCM stream, in order, byte-for-byte, that the pre-migration code would
+    have read directly off `message["bytes"]` — so the transcription-only
+    sequence downstream is unaffected in every respect except the wire
+    framing itself.
+    """
+    pcm = os.urandom(4001)  # odd length on purpose, mirrors a real mic stream
+    chunk_size = 733  # deliberately not aligned to a PCM16 sample boundary
+    chunks = [pcm[i : i + chunk_size] for i in range(0, len(pcm), chunk_size)]
+
+    messages = []
+    for i, chunk in enumerate(chunks):
+        messages.append(_append_message(chunk))
+        if i == 1:
+            # An ignorable control-type event arriving mid-stream must
+            # contribute no bytes and must not disturb reassembly order.
+            messages.append(
+                {"type": "websocket.receive", "text": json.dumps({"type": "response.create"})}
+            )
+
+    reassembled = bytearray()
+    for message in messages:
+        decision = decide_inbound_message(message)
+        if decision.kind is InboundKind.AUDIO:
+            reassembled.extend(decision.audio)
+        elif decision.kind is InboundKind.IGNORED:
+            continue
+        else:  # pragma: no cover - failure path only, fixture is well-formed
+            pytest.fail(f"unexpected error decision: {decision.error}")
+
+    assert bytes(reassembled) == pcm
+
+
+# ---------------------------------------------------------------------------
 # serialize_audio_delta — criterion 2: byte-exact round trip.
 # ---------------------------------------------------------------------------
 
@@ -301,3 +507,59 @@ def test_iter_audio_deltas_returns_an_iterator_not_a_list() -> None:
 
     result = iter_audio_deltas(b"\x00\x01", 2, response_id="r", item_id="i")
     assert isinstance(result, types.GeneratorType) or hasattr(result, "__next__")
+
+
+# ---------------------------------------------------------------------------
+# Grep gate — acceptance criterion 2 (issue #151 t4): no code path accepts
+# or emits raw binary audio frames after the change.
+#
+# app.py is FastAPI/torch-only and is never imported by this offline suite
+# (see test_realtime_imports.py and pyproject.toml's [tool.coverage.run]
+# omit list), so this reads its SOURCE TEXT the same way
+# test_module_source_never_imports_forbidden_deps above does for _wire.py —
+# proving the guarantee holds without importing fastapi/torch/httpx.
+# ---------------------------------------------------------------------------
+
+
+def _app_py_source() -> str:
+    return (Path(W.__file__).parent / "app.py").read_text(encoding="utf-8")
+
+
+def test_app_py_routes_every_receive_through_the_decision_helper() -> None:
+    src = _app_py_source()
+    assert "decide_inbound_message" in src, (
+        "app.py's _pump_session must classify every received WebSocket "
+        "message through _wire.decide_inbound_message, not read it directly"
+    )
+
+
+def test_app_py_no_longer_reads_bytes_off_a_message_directly() -> None:
+    # Before this task, _pump_session pulled inbound audio straight off
+    # `message.get("bytes")`. After, decide_inbound_message owns that
+    # decision (and classifies a "bytes"-carrying message as a named ERROR,
+    # never as audio — see test_decide_inbound_message_binary_frame_is_
+    # rejected_as_a_named_error above). A direct read reappearing in app.py
+    # would silently bypass that guarantee.
+    src = _app_py_source()
+    assert 'message.get("bytes")' not in src
+    assert 'message["bytes"]' not in src
+    assert "message.get('bytes')" not in src
+
+
+def test_app_py_never_sends_raw_binary_frames() -> None:
+    # Output-direction half of the same guarantee: no send_bytes call
+    # anywhere — outbound stays base64 JSON (response.audio.delta), wired by
+    # a later task (t6), never introduced here.
+    src = _app_py_source()
+    assert "send_bytes" not in src
+
+
+def test_app_py_route_docstring_no_longer_advertises_binary_input() -> None:
+    src = _app_py_source()
+    # The pre-migration docstring described input as "streamed as BINARY
+    # WebSocket frames" — that specific claim must be gone. (The docstring
+    # is still allowed to MENTION binary frames in the negative, e.g. "no
+    # longer accepted" — that phrasing is asserted separately below.)
+    assert "streamed as BINARY WebSocket" not in src
+    assert "unsupported_frame_type" in src
+    assert "input_audio_buffer.append" in src

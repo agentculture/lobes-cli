@@ -28,7 +28,18 @@ Two directions, two entry points
   generic "is this even valid JSON" concern separate from the
   append-event-specific "does this payload have a usable audio field"
   concern — a caller dispatching on ``payload["type"]`` to other event kinds
-  only needs :func:`decode_event`.
+  only needs :func:`decode_event`. :func:`decide_inbound_message` (issue
+  #151 t4) is the convenience layer on top of both: given one raw WebSocket
+  *message* (the ``{"text": ...}``/``{"bytes": ...}`` shape a receive call
+  hands back), it decides in one call whether the message is usable audio, an
+  ignorable non-append event, or malformed — including a raw BINARY frame,
+  which the wire migration removes as an accepted input entirely (a
+  deliberate, coordinated break with reachy-mini-cli, tracked in
+  reachy-mini-cli#115) rather than a compatibility path this module
+  preserves. It exists so ``app.py``'s receive loop is a thin dispatch over
+  one pure decision, testable here without the ``[realtime]`` extra —
+  mirroring how issue #151 t7 moved ``tts_client.py``'s real concurrency
+  decision into stdlib-only ``_settings.py`` for the same reason.
 - **Outbound** (server -> client): :func:`serialize_audio_delta` builds one
   ``response.audio.delta`` event from a chunk of PCM16 bytes;
   :func:`iter_audio_deltas` is the convenience wrapper that splits a
@@ -74,6 +85,7 @@ import binascii
 import json
 from collections.abc import Iterator, Mapping
 from enum import Enum
+from typing import NamedTuple
 
 from .protocol import BYTES_PER_SAMPLE, TTS_SAMPLE_RATE, gen_event_id
 
@@ -113,10 +125,17 @@ class WireErrorCode(str, Enum):
       ``_session.py``'s single ``INVALID_SESSION_CONFIG`` code covering every
       rejected config shape — with the specific reason carried in the
       exception's message text, not fragmented across many codes.
+    - ``UNSUPPORTED_FRAME_TYPE`` — :func:`decide_inbound_message`'s message
+      was not a JSON text frame: a raw BINARY WebSocket frame (accepted as
+      audio before issue #151's wire migration, rejected outright now — see
+      the module docstring), or a message carrying neither a ``"text"`` nor
+      a ``"bytes"`` payload at all (defensive; a well-formed ASGI data
+      message always carries one or the other).
     """
 
     INVALID_JSON = "invalid_json"
     INVALID_APPEND_EVENT = "invalid_append_event"
+    UNSUPPORTED_FRAME_TYPE = "unsupported_frame_type"
 
 
 class WireFormatError(ValueError):
@@ -188,6 +207,131 @@ def parse_append_event(payload: Mapping[str, object]) -> bytes:
             WireErrorCode.INVALID_APPEND_EVENT,
             f"'audio' field is not valid base64: {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Inbound message classification — issue #151 t4.
+#
+# One decision point for app.py's WebSocket receive loop, extracted here so
+# it is exhaustively unit-testable without the [realtime] extra (app.py
+# itself is fastapi/torch-only and pragma-no-cover/coverage-omitted — see
+# its own module docstring). This is the migration's single point of truth
+# for "no code path accepts a raw binary audio frame anymore": a message
+# carrying ``bytes`` is classified as a named error, never as audio.
+# ---------------------------------------------------------------------------
+
+
+class InboundKind(str, Enum):
+    """What :func:`decide_inbound_message` decided about one received
+    WebSocket message.
+
+    - ``AUDIO`` — a valid ``input_audio_buffer.append`` event; the
+      returned :class:`InboundDecision`'s ``audio`` field carries the
+      decoded PCM16 bytes (possibly empty — see :func:`parse_append_event`).
+    - ``IGNORED`` — well-formed JSON whose ``"type"`` is not
+      :data:`APPEND_EVENT_TYPE` (e.g. a future ``response.create`` — out of
+      scope for the #151 t4 input-framing migration, wired by a later task).
+      Not an error: valid input, just not audio this route acts on yet —
+      mirrors how the pre-migration route silently ignored every
+      text/control frame, just now discriminated by JSON event ``type``
+      instead of by WebSocket frame kind.
+    - ``ERROR`` — malformed input; the decision's ``error`` field carries
+      the :class:`WireFormatError` a caller turns into a named ``error``
+      session event. Covers everything :func:`decode_event`/
+      :func:`parse_append_event` already reject, PLUS a raw BINARY
+      WebSocket frame (:attr:`WireErrorCode.UNSUPPORTED_FRAME_TYPE`) —
+      accepted as audio before issue #151, rejected outright now: the wire
+      is base64 JSON text in both directions, a deliberate, coordinated
+      break with reachy-mini-cli (reachy-mini-cli#115), not a compatibility
+      path this module preserves.
+    """
+
+    AUDIO = "audio"
+    IGNORED = "ignored"
+    ERROR = "error"
+
+
+class InboundDecision(NamedTuple):
+    """The result of classifying one received WebSocket message.
+
+    Exactly one of ``audio``/``error`` is populated, matching ``kind`` — see
+    :class:`InboundKind` for what each combination means. A plain
+    ``NamedTuple`` (not a dataclass): this is an internal decision value
+    consumed only by the route layer, never itself serialized to the wire —
+    unlike this module's actual wire *events*, which stay plain dicts (see
+    the module docstring) precisely because those ARE serialized.
+    """
+
+    kind: InboundKind
+    audio: bytes | None = None
+    error: WireFormatError | None = None
+
+
+def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
+    """Classify one received WebSocket message: audio, ignorable, or malformed.
+
+    *message* is the plain mapping a WebSocket receive call hands back —
+    this function only reads the ``"text"``/``"bytes"`` keys (the ASGI/
+    Starlette receive-message shape: exactly one of the two is populated for
+    a data frame), so it composes with any WebSocket layer without importing
+    one. A caller (``app.py``'s ``_pump_session``) is expected to have
+    already handled ``message["type"] == "websocket.disconnect"`` itself —
+    this function only classifies a frame that carries data.
+
+    Decision order:
+
+    1. A ``"bytes"`` key present (a raw BINARY frame) -> :attr:`InboundKind.ERROR`
+       with :attr:`WireErrorCode.UNSUPPORTED_FRAME_TYPE` — removed by issue
+       #151; the wire is base64 JSON text now, in both directions.
+    2. Neither ``"bytes"`` nor ``"text"`` present (no data at all) -> the
+       same :attr:`WireErrorCode.UNSUPPORTED_FRAME_TYPE` error — defensive;
+       a well-formed ASGI data message always carries one or the other.
+    3. ``"text"`` present but not valid JSON, or not a JSON object ->
+       :attr:`InboundKind.ERROR` with whatever :func:`decode_event` raised
+       (:attr:`WireErrorCode.INVALID_JSON`).
+    4. Valid JSON whose ``"type"`` is not :data:`APPEND_EVENT_TYPE` ->
+       :attr:`InboundKind.IGNORED`.
+    5. An ``input_audio_buffer.append`` event with a missing/non-string/
+       non-base64 ``"audio"`` field -> :attr:`InboundKind.ERROR` with
+       whatever :func:`parse_append_event` raised
+       (:attr:`WireErrorCode.INVALID_APPEND_EVENT`).
+    6. A valid append event -> :attr:`InboundKind.AUDIO` carrying the exact
+       decoded PCM16 bytes.
+
+    Never raises :class:`WireFormatError` itself — every rejection path
+    above is returned as an ``ERROR`` decision, matching this module's
+    "errors never escape" contract for adversarial wire input.
+    """
+    if message.get("bytes") is not None:
+        return InboundDecision(
+            kind=InboundKind.ERROR,
+            error=WireFormatError(
+                WireErrorCode.UNSUPPORTED_FRAME_TYPE,
+                "binary WebSocket frames are no longer accepted; send "
+                f"{APPEND_EVENT_TYPE!r} JSON text events with a base64 "
+                "'audio' field instead",
+            ),
+        )
+    raw_text = message.get("text")
+    if raw_text is None:
+        return InboundDecision(
+            kind=InboundKind.ERROR,
+            error=WireFormatError(
+                WireErrorCode.UNSUPPORTED_FRAME_TYPE,
+                "WebSocket message carried neither 'text' nor 'bytes'",
+            ),
+        )
+    try:
+        payload = decode_event(raw_text)
+    except WireFormatError as exc:
+        return InboundDecision(kind=InboundKind.ERROR, error=exc)
+    if payload.get("type") != APPEND_EVENT_TYPE:
+        return InboundDecision(kind=InboundKind.IGNORED)
+    try:
+        audio = parse_append_event(payload)
+    except WireFormatError as exc:
+        return InboundDecision(kind=InboundKind.ERROR, error=exc)
+    return InboundDecision(kind=InboundKind.AUDIO, audio=audio)
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +423,9 @@ __all__ = [
     "WireFormatError",
     "decode_event",
     "parse_append_event",
+    "InboundKind",
+    "InboundDecision",
+    "decide_inbound_message",
     "serialize_audio_delta",
     "iter_audio_deltas",
 ]
