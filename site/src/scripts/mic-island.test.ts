@@ -27,7 +27,13 @@ import {
 import type { AppendEvent } from "./pcm-wire";
 import { TTS_OUTPUT_SAMPLE_RATE, encodeAudioPayload } from "./pcm-wire";
 import type { MicIslandHandle, MicIslandOptions } from "./mic-island";
-import { CLIENT_EVENT_NAME, SERVER_EVENT_NAME, mountMicIsland, secureContextHint } from "./mic-island";
+import {
+  CLIENT_EVENT_NAME,
+  SERVER_EVENT_NAME,
+  mountMicIsland,
+  secureContextHint,
+  unsupportedMessage,
+} from "./mic-island";
 
 interface Island {
   handle: MicIslandHandle;
@@ -191,7 +197,36 @@ describe("failure states are visually distinct", () => {
     expect(scene.state()).toBe("unsupported");
     expect(scene.contexts).toBe(0);
     expect(scene.getUserMedia).not.toHaveBeenCalled();
-    expect(scene.text(".mic-message")).toContain("secure context");
+    expect(scene.text(".mic-message")).toContain("Web Audio APIs");
+  });
+
+  it("blames the origin on an insecure page, and the browser on a secure one", async () => {
+    // The same isSupported() === false reaches this state from two unrelated
+    // causes, so the rendered remedy must follow isSecureContext rather than
+    // assume the origin. Stubbed explicitly: leaving it ambient made the
+    // assertion depend on whatever the test environment happened to define.
+    const original = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
+    try {
+      Object.defineProperty(globalThis, "isSecureContext", {
+        value: false,
+        configurable: true,
+      });
+      const insecure = island({ isSupported: () => false });
+      await insecure.handle.start();
+      expect(insecure.text(".mic-message")).toContain("secure context");
+
+      Object.defineProperty(globalThis, "isSecureContext", {
+        value: true,
+        configurable: true,
+      });
+      const secure = island({ isSupported: () => false });
+      await secure.handle.start();
+      expect(secure.text(".mic-message")).toContain("Web Audio APIs");
+      expect(secure.text(".mic-message")).not.toContain("ssh -L");
+    } finally {
+      if (original) Object.defineProperty(globalThis, "isSecureContext", original);
+      else delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
+    }
   });
 
   it("keeps silence looking like listening, not like a failure", async () => {
@@ -576,5 +611,55 @@ describe("secureContextHint — the remedy must be copy-pasteable", () => {
     const hint = secureContextHint({ hostname: "localhost", port: "4321" });
     expect(hint).toContain("IS on localhost");
     expect(hint).not.toContain("ssh -L");
+  });
+
+  it("uses the real default port when location.port is empty, not an invented one", () => {
+    // A page on http://spark/ reports port "" — forwarding 4321 there would
+    // tunnel to a service the page was never served from.
+    const hint = secureContextHint({ hostname: "spark", port: "", protocol: "http:" });
+    expect(hint).toContain("ssh -L 4321:localhost:80 spark");
+    expect(hint).not.toContain("localhost:4321 spark");
+  });
+
+  it("maps a privileged remote port to an unprivileged local one", () => {
+    // `ssh -L 443:...` needs root on the LOCAL side; the remedy must not be a
+    // command that fails for the person pasting it.
+    const hint = secureContextHint({ hostname: "spark", port: "", protocol: "https:" });
+    expect(hint).toContain("ssh -L 4321:localhost:443 spark");
+    expect(hint).toContain("http://localhost:4321/");
+  });
+
+  it("keeps both ends identical for an ordinary unprivileged port", () => {
+    const hint = secureContextHint({ hostname: "box", port: "8080", protocol: "http:" });
+    expect(hint).toContain("ssh -L 8080:localhost:8080 box");
+  });
+});
+
+describe("unsupportedMessage — never assert a cause that is not known", () => {
+  it("blames the origin only when the context is provably insecure", () => {
+    const msg = unsupportedMessage({
+      isSecureContext: false,
+      location: { hostname: "spark", port: "4321", protocol: "http:" },
+    });
+    expect(msg).toContain("ssh -L 4321:localhost:4321 spark");
+  });
+
+  it("blames the browser when the context is secure — the Qodo finding", () => {
+    // isSupported() checks API presence, so a secure page reaching this state
+    // is missing AudioWorkletNode. Sending it to fix its address bar would be
+    // exactly the wrong steer secureContextHint exists to prevent.
+    const msg = unsupportedMessage({
+      isSecureContext: true,
+      location: { hostname: "spark", port: "4321", protocol: "https:" },
+    });
+    expect(msg).toContain("AudioWorkletNode");
+    expect(msg).not.toContain("ssh -L");
+  });
+
+  it("names both causes and asserts neither when isSecureContext is unreadable", () => {
+    const msg = unsupportedMessage({ isSecureContext: undefined, location: undefined });
+    expect(msg).toContain("AudioWorkletNode");
+    expect(msg).toContain("http://");
+    expect(msg).not.toContain("ssh -L");
   });
 });

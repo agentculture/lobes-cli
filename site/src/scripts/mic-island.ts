@@ -116,6 +116,27 @@ interface StateCopy {
   message: string;
 }
 
+interface HintLocation {
+  hostname: string;
+  port: string;
+  protocol?: string;
+}
+
+/** The lowest port a non-root user can bind locally. */
+const FIRST_UNPRIVILEGED_PORT = 1024;
+/** Where the harness normally lives, and the local end of a privileged forward. */
+const DEFAULT_HARNESS_PORT = "4321";
+
+/**
+ * The port the page is really served on. `location.port` is EMPTY on a default
+ * port, so a naive `|| fallback` invents a port the page was never on and emits
+ * a forwarding command for the wrong service.
+ */
+function effectivePort(loc: HintLocation): string {
+  if (loc.port) return loc.port;
+  return loc.protocol === "https:" ? "443" : "80";
+}
+
 /**
  * A copy-pasteable remedy for an insecure origin, derived from the current URL.
  *
@@ -123,14 +144,21 @@ interface StateCopy {
  * symptom points anywhere but the address bar — so the message names the exact
  * URL and the exact forwarding command for THIS page rather than describing the
  * rule and leaving the reader to apply it.
+ *
+ * Only call this once the origin is KNOWN to be the problem — see
+ * `unsupportedMessage`, which decides that. Asserting it blind is how a missing
+ * `AudioWorkletNode` ends up sending someone to fix their address bar.
  */
-export function secureContextHint(location?: { hostname: string; port: string }): string {
+export function secureContextHint(location?: HintLocation): string {
   const loc =
     location ??
     (typeof window !== "undefined"
-      ? { hostname: window.location.hostname, port: window.location.port }
-      : { hostname: "localhost", port: "4321" });
-  const port = loc.port || "4321";
+      ? {
+          hostname: window.location.hostname,
+          port: window.location.port,
+          protocol: window.location.protocol,
+        }
+      : { hostname: "localhost", port: DEFAULT_HARNESS_PORT, protocol: "http:" });
   const base =
     "This page cannot capture audio from this origin. getUserMedia needs a secure context — https:// or a localhost origin, and nothing else.";
   if (loc.hostname === "localhost" || loc.hostname === "127.0.0.1" || loc.hostname === "::1") {
@@ -138,7 +166,44 @@ export function secureContextHint(location?: { hostname: string; port: string })
     // reader chasing it. Something else removed the API.
     return `${base} This page IS on localhost, so the origin is not the problem — the browser or an extension has removed getUserMedia.`;
   }
-  return `${base} From another machine: ssh -L ${port}:localhost:${port} ${loc.hostname} — then open http://localhost:${port}/ . On this box: open http://localhost:${port}/ directly.`;
+  const remotePort = effectivePort(loc);
+  // Binding a privileged port locally needs root, so a page served on 80/443
+  // gets forwarded to the harness port instead of a command that would fail.
+  const localPort =
+    Number(remotePort) < FIRST_UNPRIVILEGED_PORT ? DEFAULT_HARNESS_PORT : remotePort;
+  return `${base} From another machine: ssh -L ${localPort}:localhost:${remotePort} ${loc.hostname} — then open http://localhost:${localPort}/ . On this box: open http://localhost:${remotePort}/ directly.`;
+}
+
+const MISSING_AUDIO_APIS =
+  "This browser is missing the Web Audio APIs this page needs — getUserMedia, AudioContext, or AudioWorkletNode. Try a current Chrome or Firefox, and check whether an extension or a hardened privacy setting has removed them.";
+
+/**
+ * Both causes named, neither asserted — for when `isSecureContext` cannot be
+ * read, and as the static `STATE_COPY` fallback.
+ */
+export const UNSUPPORTED_CAUSE_UNKNOWN = `${MISSING_AUDIO_APIS} If this page is served over plain http:// from another machine, that alone also removes getUserMedia — reach it over localhost or https:// instead.`;
+
+/**
+ * The message for the `unsupported` state, which has TWO unrelated causes.
+ *
+ * An insecure origin strips `navigator.mediaDevices` in most browsers, so it
+ * lands in the same capability check as a genuinely missing `AudioWorkletNode`.
+ * Blaming the origin unconditionally sends someone with an old browser to go
+ * set up SSH forwarding that will change nothing — so read `isSecureContext`
+ * and only assert a cause when it is actually known.
+ */
+export function unsupportedMessage(env?: {
+  isSecureContext?: boolean;
+  location?: HintLocation;
+}): string {
+  const secure =
+    env?.isSecureContext ??
+    (typeof globalThis !== "undefined" ? globalThis.isSecureContext : undefined);
+  if (secure === false) return secureContextHint(env?.location);
+  if (secure === true) return MISSING_AUDIO_APIS;
+  // No isSecureContext to read at all. Either cause is live, so name both
+  // rather than pick one and send half the readers somewhere useless.
+  return UNSUPPORTED_CAUSE_UNKNOWN;
 }
 
 const STATE_COPY: Record<MicIslandState, StateCopy> = {
@@ -180,10 +245,12 @@ const STATE_COPY: Record<MicIslandState, StateCopy> = {
   },
   unsupported: {
     label: "Capture unavailable",
-    // The remedy is built from where the page is ACTUALLY running, so it can be
-    // copy-pasted rather than translated. An abstract "use a secure context"
-    // leaves the reader to work out which host and which port they need.
-    message: secureContextHint(),
+    // A cause-neutral fallback ONLY. The real message is resolved per-render by
+    // `unsupportedMessage()` and passed through `detail`, because it depends on
+    // `isSecureContext` and the live URL — neither of which is knowable here at
+    // module-init time (this module is also evaluated during the Astro build,
+    // where there is no `window` to read).
+    message: UNSUPPORTED_CAUSE_UNKNOWN,
   },
   failed: {
     label: "Capture failed",
@@ -512,7 +579,10 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     framesForwarded = 0;
 
     if (!deps.isSupported()) {
-      detail = { message: STATE_COPY.unsupported.message };
+      // Resolved HERE, not at module init: only now are `isSecureContext` and
+      // the live URL readable, and they are what decide whether this is an
+      // origin problem or a browser-capability one.
+      detail = { message: unsupportedMessage() };
       render("unsupported");
       return false;
     }
