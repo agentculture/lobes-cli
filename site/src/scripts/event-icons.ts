@@ -89,6 +89,17 @@ const SHAPES: Record<IconId, ShapeBuilder> = {
       el("line", { x1: "4", y1: "4", x2: "12", y2: "12", ...STROKE_ROUND })
     );
   },
+  // A malformed-frame glyph: brackets standing for "one wire event", with a
+  // jagged break inside them rather than the slash the other error icons
+  // share — this is the one failure that never reached a backend at all, so
+  // it earns a visibly different silhouette, not just a different colour.
+  "error-wire": (svg) => {
+    svg.append(
+      el("path", { d: "M5.4 3 L3 3 L3 13 L5.4 13", ...STROKE_ROUND }),
+      el("path", { d: "M10.6 3 L13 3 L13 13 L10.6 13", ...STROKE_ROUND }),
+      el("path", { d: "M9 5 L6.6 8.6 L8 8.6 L7 11 L10 7.4 L8.4 7.4 Z", fill: "currentColor" })
+    );
+  },
   "error-stt": (svg) => {
     svg.append(
       el("rect", { x: "3.2", y: "3.2", width: "9.6", height: "9.6", rx: "1.4", ...STROKE }),

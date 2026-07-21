@@ -45,6 +45,10 @@ function panelFixture(): HTMLElement {
       <option value="none">none</option>
       <option value="aec">aec</option>
     </select>
+    <label>
+      <input type="checkbox" data-connection-conversation />
+    </label>
+    <span data-conversation-state data-armed="false" data-live="false"></span>
     <button data-connection-connect disabled>Connect</button>
     <button data-connection-disconnect disabled>Disconnect</button>
     <button data-connection-check disabled>Check gateway</button>
@@ -245,5 +249,120 @@ describe("mountConnectionPanel", () => {
   it("throws loudly when the markup is missing a hook", () => {
     const broken = document.createElement("div");
     expect(() => mountConnectionPanel(broken)).toThrow(/missing required element/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conversation arming — issue #151 t19.
+//
+// The toggle defaults OFF (unchecked in the markup, see panelFixture()
+// above) so a session is ears-only unless an operator deliberately opts in.
+// The chosen shape is ARM-AT-CONNECT: the checkbox is read once, when
+// Connect is pressed, and — if checked — exactly one `response.create`
+// event is sent the moment the socket reaches "open". That is the whole
+// contract these tests pin: OFF sends nothing extra ever (byte-identical to
+// the pre-#151-t19 wire from the client's side), ON sends exactly one frame
+// at a known point, and the control locks while a session is live so a
+// mid-session flip can never leave the operator guessing which behaviour is
+// in effect.
+// ---------------------------------------------------------------------------
+describe("mountConnectionPanel — conversation arming (issue #151 t19)", () => {
+  it("ships unchecked, and the state text says so before anything connects", () => {
+    const { root } = mounted();
+    const checkbox = query<HTMLInputElement>(root, "data-connection-conversation");
+    const state = query<HTMLElement>(root, "data-conversation-state");
+    expect(checkbox.checked).toBe(false);
+    expect(state.dataset["armed"]).toBe("false");
+    expect(state.dataset["live"]).toBe("false");
+    expect(state.textContent).toMatch(/ears-only/i);
+  });
+
+  it("off: connecting and opening a session sends no response.create — byte-identical to ears-only", () => {
+    const { root, sockets } = mounted();
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([]);
+    const state = query<HTMLElement>(root, "data-conversation-state");
+    expect(state.dataset["armed"]).toBe("false");
+    expect(state.dataset["live"]).toBe("true");
+  });
+
+  it("on: checking the box before Connect sends exactly one response.create right after open", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    // Nothing is sent while still connecting — arming happens at "open".
+    expect(sockets[0]!.sent).toEqual([]);
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual(['{"type":"response.create"}']);
+    // Opening again (defensively) must not send a second one.
+    sockets[0]!.onopen?.();
+    expect(sockets[0]!.sent).toEqual(['{"type":"response.create"}']);
+    const state = query<HTMLElement>(root, "data-conversation-state");
+    expect(state.dataset["armed"]).toBe("true");
+    expect(state.dataset["live"]).toBe("true");
+    expect(state.textContent).toMatch(/armed/i);
+  });
+
+  it("reads the checkbox fresh on each Connect click, not a stale value from before", () => {
+    const { root, sockets } = mounted();
+    const checkbox = query<HTMLInputElement>(root, "data-connection-conversation");
+
+    // Checked, then unchecked again before ever pressing Connect.
+    checkbox.checked = true;
+    checkbox.checked = false;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([]);
+    sockets[0]!.shut(1000);
+
+    // Now check it and connect again — a fresh connect must arm.
+    checkbox.checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toEqual(['{"type":"response.create"}']);
+  });
+
+  it("locks the toggle while a session is live, and frees it again after disconnect", () => {
+    const { root, sockets } = mounted();
+    const checkbox = query<HTMLInputElement>(root, "data-connection-conversation");
+    expect(checkbox.disabled).toBe(false);
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    expect(checkbox.disabled).toBe(true);
+    sockets[0]!.open();
+    expect(checkbox.disabled).toBe(true);
+    sockets[0]!.shut(1000);
+    expect(checkbox.disabled).toBe(false);
+  });
+
+  it("toggling while idle updates the at-a-glance state text immediately, with no connection at all", () => {
+    const { root } = mounted();
+    const checkbox = query<HTMLInputElement>(root, "data-connection-conversation");
+    const state = query<HTMLElement>(root, "data-conversation-state");
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(state.dataset["armed"]).toBe("true");
+    expect(state.dataset["live"]).toBe("false");
+    expect(state.textContent).toMatch(/will reply/i);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(state.dataset["armed"]).toBe("false");
+    expect(state.textContent).toMatch(/ears-only/i);
+  });
+
+  it("a session that failed to open (never armed) resets sessionArmed for the next attempt", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.shut(1006, false); // handshake failure — never opened, never armed
+    const state = query<HTMLElement>(root, "data-conversation-state");
+    expect(state.dataset["live"]).toBe("false");
+    expect(state.dataset["armed"]).toBe("true"); // checkbox is still checked — will retry armed
+
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toEqual(['{"type":"response.create"}']);
   });
 });

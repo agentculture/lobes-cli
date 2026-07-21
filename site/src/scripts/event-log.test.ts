@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { mountEventStream, formatBoundaryTiming, MAX_LOG_ROWS } from "./event-log";
 import {
@@ -91,6 +94,57 @@ describe("mountEventStream — fixture coverage (core deliverable)", () => {
       seenIcons.add(icon);
       seenLabels.add(label);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drift guard — issue #151 t19.
+//
+// realtime-events.ts hand-mirrors lobes/realtime/_session.py's ErrorCode
+// enum because site/ has no Python import path into lobes/ (see that
+// module's own doc comment). A hand-mirror only stays honest if something
+// checks it: this reads _session.py as plain text off disk (vitest runs in
+// Node, so the filesystem is available) and asserts ERROR_CODES matches the
+// server enum member-for-member, IN ORDER — exactly what the #151 t12
+// mirror comment already promised but nothing enforced. Before this task,
+// the server's new INVALID_WIRE_EVENT landed with no site-side fixture and
+// no failing test; this is what makes the next such landing fail loudly
+// instead.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull every member value out of a Python `class <name>(str, Enum):` block,
+ * in source order. Deliberately narrow — not a Python parser — matching only
+ * the `ALL_CAPS = "value"` assignment lines the enum body itself contains,
+ * so it does not also pick up quoted enum-member names mentioned in prose
+ * inside the class docstring (those are written as `` ``NAME`` `` /
+ * `` ``value`` ``, never as a bare `NAME = "value"` assignment).
+ */
+function extractPythonStrEnumValues(source: string, className: string): string[] {
+  const classRe = new RegExp(`class ${className}\\(str, Enum\\):\\n([\\s\\S]*?)\\n(?=@|class )`);
+  const match = source.match(classRe);
+  if (!match) {
+    throw new Error(
+      `could not find "class ${className}(str, Enum):" in the given source — has _session.py been restructured?`
+    );
+  }
+  return [...match[1]!.matchAll(/^\s+[A-Z][A-Z0-9_]*\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1]!);
+}
+
+describe("ERROR_CODES — drift guard against lobes/realtime/_session.py", () => {
+  it("matches _session.py's ErrorCode enum member-for-member, in order", () => {
+    const sessionSource = readFileSync(
+      resolve(process.cwd(), "../lobes/realtime/_session.py"),
+      "utf8"
+    );
+    const serverCodes = extractPythonStrEnumValues(sessionSource, "ErrorCode");
+
+    // Sanity check on the parser itself: if this ever comes back empty, the
+    // test below would pass vacuously against an equally-empty ERROR_CODES
+    // rather than failing loudly on a broken extractor.
+    expect(serverCodes.length).toBeGreaterThan(0);
+
+    expect(ERROR_CODES).toEqual(serverCodes);
   });
 });
 
