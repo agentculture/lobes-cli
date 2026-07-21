@@ -200,15 +200,17 @@ def test_build_frame_empty_payload_round_trips() -> None:
 
 
 def test_read_frame_raises_on_a_header_truncated_before_two_bytes() -> None:
+    reader = _reader_from(b"\x81")
     with pytest.raises(realtime_smoke.FrameReadError):
-        realtime_smoke.read_frame(_reader_from(b"\x81"))
+        realtime_smoke.read_frame(reader)
 
 
 def test_read_frame_raises_on_a_payload_truncated_mid_frame() -> None:
     full = realtime_smoke.build_frame(realtime_smoke.OPCODE_TEXT, b"hello world", mask=False)
     truncated = full[:-3]  # header intact, payload cut short
+    reader = _reader_from(truncated)
     with pytest.raises(realtime_smoke.FrameReadError):
-        realtime_smoke.read_frame(_reader_from(truncated))
+        realtime_smoke.read_frame(reader)
 
 
 # --- PCM chunking / silence ---------------------------------------------------
@@ -221,8 +223,10 @@ def test_chunk_pcm_splits_evenly_and_keeps_a_short_final_remainder() -> None:
 
 
 def test_chunk_pcm_rejects_a_non_positive_chunk_size() -> None:
+    # chunk_pcm is a generator: building it cannot raise, iterating it does.
+    chunks = realtime_smoke.chunk_pcm(b"abcd", 0)
     with pytest.raises(ValueError):
-        list(realtime_smoke.chunk_pcm(b"abcd", 0))
+        list(chunks)
 
 
 def test_silence_bytes_is_all_zero_and_the_right_length() -> None:

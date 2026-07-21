@@ -49,6 +49,13 @@ _MAX_HEAD = 64 * 1024
 # the one request in the gateway where `Connection` and `Upgrade` are the
 # POINT and must survive. `Host` is rewritten to the bridge; the framing and
 # proxy-auth headers are meaningless on a bodyless handshake.
+#
+# `authorization`/`cookie` are dropped because the CALLER's credential is
+# spent the moment this gateway's own inbound gate validates it. The bridge
+# has no auth of its own and no use for it, so forwarding it would widen the
+# blast radius of a gateway key to the bridge's logs and telemetry for zero
+# benefit — the same strip-before-forward discipline proxy-lobes applies to
+# peer forwards.
 _DROP_FROM_HANDSHAKE = frozenset(
     {
         "host",
@@ -57,6 +64,8 @@ _DROP_FROM_HANDSHAKE = frozenset(
         "keep-alive",
         "proxy-authenticate",
         "proxy-authorization",
+        "authorization",
+        "cookie",
         "te",
         "trailers",
     }
@@ -237,11 +246,35 @@ def run_tunnel(client, upstream, *, leftover: bytes = b"") -> None:
             client.sendall(leftover)
         except OSError:
             return
-    up_to_client = threading.Thread(
-        target=pump, args=(upstream, client), name="realtime-up", daemon=True
-    )
+
+    def relay_down() -> None:
+        try:
+            pump(upstream, client)
+        finally:
+            # The upstream is done, so the session is over — but the pump
+            # below is parked in client.recv() and a half-close (SHUT_WR)
+            # does NOT wake a blocked recv on the same socket. Without this
+            # full shutdown an idle client would strand this handler thread
+            # until it happened to speak or hang up: a dead bridge would leak
+            # one thread per open session.
+            _shutdown_both(client)
+
+    up_to_client = threading.Thread(target=relay_down, name="realtime-up", daemon=True)
     up_to_client.start()
     try:
         pump(client, upstream)
     finally:
+        _shutdown_both(upstream)  # symmetric: wake relay_down if it is still parked
         up_to_client.join()
+
+
+def _shutdown_both(sock) -> None:
+    """Shut a socket down in both directions, ignoring an already-dead peer.
+
+    This is what unblocks a pump parked in ``recv``; ``pump``'s own
+    ``SHUT_WR`` is the graceful half-close that lets a live peer flush first.
+    """
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass

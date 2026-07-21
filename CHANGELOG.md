@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.3] - 2026-07-21
+
+### Changed
+
+- The `/v1/realtime` route is split into `_open_session`, `_arm_segmenter`, `_to_pcm16k`, `_emit_turn_events`, `_transcribe_turn`, and `_pump_session` (SonarCloud S3776: cognitive complexity 30 against a limit of 15). Behaviour is unchanged and, since the route carries no unit coverage by design, the refactor was gated on a fresh live run at both wire rates rather than on the offline suite alone.
+
+### Fixed
+
+- The `/v1/realtime` handshake forwarded the caller's `Authorization` (and `Cookie`) to the realtime bridge. The credential is spent the moment the gateway's own inbound gate validates it and the bridge has no auth of its own, so forwarding it only widened a gateway key's blast radius to the bridge's logs and telemetry. Both headers are now dropped from the forwarded handshake (Qodo).
+- A dead realtime bridge could strand a gateway handler thread. When the upstream pump ended it half-closed the client (`SHUT_WR`), which does NOT wake a `recv` blocked on that same socket — so an idle client left the thread parked until it happened to speak or hang up, leaking one thread per open session on every bridge restart. Each pump now shuts its peer down in both directions on exit. The unit test missed it because its fake socket returned EOF the moment its script ran dry; a fake that genuinely blocks is now the regression guard (Qodo).
+- `VAD_MAX_TURN_MS` was read unvalidated, so `0` or a negative value made the segmenter force-commit on the first chunk of every turn and keep committing — an event storm plus one STT forward per 32 ms chunk from a single typo in `.env`. Clamped to a 1000 ms floor, matching the existing `tts_speed`/`tts_concurrency` treatment (Qodo).
+
 ## [0.52.2] - 2026-07-21
 
 ### Changed

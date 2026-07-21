@@ -81,3 +81,25 @@ NOT established here (do not claim these):
     transcription — all covered offline, none exercised live here;
   - the production fleet itself, which still runs 0.51.1 and was deliberately
     left untouched; this rig was a parallel gateway+bridge on spare ports.
+
+=== RE-VALIDATION after the Qodo/Sonar review round, 2026-07-21T14:00:48Z ===
+commit: 1e57b52 (+ uncommitted review fixes)
+Changes re-tested here: caller Authorization/Cookie stripped from the forwarded
+handshake; full-shutdown on pump exit so a dead bridge cannot strand a handler
+thread; VAD_MAX_TURN_MS clamped; and the /v1/realtime route refactored into
+helpers for Sonar S3776 — the route has no unit coverage by design, so this live
+run IS the gate on that refactor.
+
+--- 24000 Hz ---
+PASS: tts-source — 136320 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — 101 Switching Protocols, Sec-WebSocket-Accept verified
+PASS: session-created — received 'session.created'
+PASS: audio-stream — streamed 193920 bytes + trailing silence
+PASS: speech-started — received 'input_audio_buffer.speech_started'
+PASS: speech-stopped — received 'input_audio_buffer.speech_stopped'
+PASS: transcription — transcript='The quick brown fox jumps over the lazy dog.' contains every expected keyword ('quick', 'brown', 'fox', 'lazy', 'dog')
+Results: 7/7 checks passed
+SUCCESS: all realtime checks passed
+--- 16000 Hz ---
+Results: 7/7 checks passed
+SUCCESS: all realtime checks passed

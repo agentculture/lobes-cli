@@ -306,90 +306,14 @@ async def realtime(websocket: WebSocket) -> None:
     session: Session | None = None
     segmenter: Segmenter | None = None
     try:
-        raw_config = dict(websocket.query_params)
-        try:
-            config = parse_session_config(
-                raw_config,
-                default_turn_detection=settings.default_turn_detection,
-                default_aec_mode=settings.default_aec_mode,
-            )
-        except SessionConfigError as exc:
-            await websocket.send_json(event_to_dict(exc.to_error_event(gen_session_id())))
-            await websocket.close(code=1008)  # policy violation
-            return
-
-        session, created_event = Session.create(config, raw_payload=raw_config)
-        await websocket.send_json(event_to_dict(created_event))
-
-        try:
-            vad_probability = await anyio.to_thread.run_sync(_load_vad_probability)
-        except Exception as exc:
-            error_event = session.mark_vad_unavailable(f"{type(exc).__name__}: {exc}")
-            await websocket.send_json(event_to_dict(error_event))
-            return
-
-        segmenter = Segmenter(
-            vad_probability,
-            vad_threshold=settings.vad_threshold,
-            vad_silence_ms=settings.vad_silence_ms,
-            vad_prefix_padding_ms=settings.vad_prefix_padding_ms,
-            max_turn_ms=settings.vad_max_turn_ms,
-        )
-
-        input_rate = config.input_sample_rate
-        pending = bytearray()
-
-        while True:
-            message = await websocket.receive()
-            if message["type"] == "websocket.disconnect":
-                break
-            audio = message.get("bytes")
-            if audio is None:
-                # A text/control frame. Out of scope (spec Non-goals: no
-                # response.create, no mid-session session.update) — ignored,
-                # never mistaken for a boundary/audio frame.
-                continue
-
-            pending.extend(audio)
-            aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
-            if not aligned:
-                continue
-            # Both of these are SYNCHRONOUS CPU work (scipy; torch inference
-            # one call per 32 ms chunk), and the bridge runs a single uvicorn
-            # event loop shared by every realtime session AND every batch
-            # /v1/audio/* request. Run inline, one talking session starves all
-            # of them — so they go to a worker thread, the same way
-            # chatterbox_server.py offloads its own model inference.
-            if needs_resample(input_rate, VAD_SAMPLE_RATE):
-                pcm16k = await anyio.to_thread.run_sync(_resample_to_16k, aligned, input_rate)
-            else:
-                pcm16k = aligned  # no-op passthrough; a thread hop would cost more
-
-            try:
-                events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
-            except Exception as exc:
-                # _segmenter.py deliberately lets a raising VAD callable
-                # propagate (see its module docstring) — translating that
-                # into the named session error is this route's job.
-                error_event = session.mark_vad_unavailable(f"{type(exc).__name__}: {exc}")
-                await websocket.send_json(event_to_dict(error_event))
-                break
-
-            for event in events:
-                if isinstance(event, SpeechStarted):
-                    await websocket.send_json(event_to_dict(session.begin_speech()))
-                elif isinstance(event, SpeechStopped):
-                    await websocket.send_json(event_to_dict(session.end_speech()))
-                    try:
-                        text = await _forward_turn_to_stt(event.audio)
-                    except _STTForwardError as exc:
-                        await websocket.send_json(
-                            event_to_dict(session.fail_transcription(str(exc)))
-                        )
-                    else:
-                        await websocket.send_json(
-                            event_to_dict(session.complete_transcription(text))
-                        )
+        opened = await _open_session(websocket)
+        if opened is None:
+            return  # the config was rejected; the named error is already sent
+        session, input_rate = opened
+        segmenter = await _arm_segmenter(websocket, session)
+        if segmenter is None:
+            return  # VAD is down; the named error is already sent
+        await _pump_session(websocket, session, segmenter, input_rate)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -403,6 +327,133 @@ async def realtime(websocket: WebSocket) -> None:
             segmenter.flush(reason="closed")
         if session is not None:
             session.teardown(reason="client_disconnect")
+
+
+async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # pragma: no cover
+    """Parse the connect-URL config and open a session.
+
+    ``None`` means the config was rejected — the named
+    ``invalid_session_config`` error has been sent and the socket closed with
+    1008 (policy violation), so the caller just returns.
+    """
+    raw_config = dict(websocket.query_params)
+    try:
+        config = parse_session_config(
+            raw_config,
+            default_turn_detection=settings.default_turn_detection,
+            default_aec_mode=settings.default_aec_mode,
+        )
+    except SessionConfigError as exc:
+        await websocket.send_json(event_to_dict(exc.to_error_event(gen_session_id())))
+        await websocket.close(code=1008)
+        return None
+    session, created_event = Session.create(config, raw_payload=raw_config)
+    await websocket.send_json(event_to_dict(created_event))
+    return session, config.input_sample_rate
+
+
+async def _arm_segmenter(  # pragma: no cover
+    websocket: WebSocket, session: Session
+) -> Segmenter | None:
+    """Load Silero and build this session's segmenter.
+
+    ``None`` means the model could not be loaded — the named
+    ``vad_unavailable`` error has been sent, which is what lets a consumer
+    tell "VAD is down" from "nobody spoke".
+    """
+    try:
+        vad_probability = await anyio.to_thread.run_sync(_load_vad_probability)
+    except Exception as exc:
+        await websocket.send_json(
+            event_to_dict(session.mark_vad_unavailable(f"{type(exc).__name__}: {exc}"))
+        )
+        return None
+    return Segmenter(
+        vad_probability,
+        vad_threshold=settings.vad_threshold,
+        vad_silence_ms=settings.vad_silence_ms,
+        vad_prefix_padding_ms=settings.vad_prefix_padding_ms,
+        max_turn_ms=settings.vad_max_turn_ms,
+    )
+
+
+async def _to_pcm16k(aligned: bytes, input_rate: int) -> bytes:  # pragma: no cover
+    """Bring a chunk to Silero/Parakeet's 16 kHz, off the event loop.
+
+    scipy is SYNCHRONOUS CPU work and the bridge runs a single uvicorn loop
+    shared by every realtime session and every batch ``/v1/audio/*`` request,
+    so a resample runs in a worker thread — the same way
+    ``chatterbox_server.py`` offloads its own model work. At 16 kHz there is
+    nothing to do and a thread hop would cost more than the passthrough.
+    """
+    if not needs_resample(input_rate, VAD_SAMPLE_RATE):
+        return aligned
+    return await anyio.to_thread.run_sync(_resample_to_16k, aligned, input_rate)
+
+
+async def _emit_turn_events(  # pragma: no cover
+    websocket: WebSocket, session: Session, events: list
+) -> None:
+    """Relay the segmenter's boundaries, transcribing each committed turn.
+
+    A committed turn goes to Parakeet on this same connection; a failed
+    forward becomes the named ``stt_forward_failed`` error, never a silently
+    dropped turn.
+    """
+    for event in events:
+        if isinstance(event, SpeechStarted):
+            await websocket.send_json(event_to_dict(session.begin_speech()))
+        elif isinstance(event, SpeechStopped):
+            await websocket.send_json(event_to_dict(session.end_speech()))
+            await _transcribe_turn(websocket, session, event.audio)
+
+
+async def _transcribe_turn(  # pragma: no cover
+    websocket: WebSocket, session: Session, audio: bytes
+) -> None:
+    try:
+        text = await _forward_turn_to_stt(audio)
+    except _STTForwardError as exc:
+        await websocket.send_json(event_to_dict(session.fail_transcription(str(exc))))
+    else:
+        await websocket.send_json(event_to_dict(session.complete_transcription(text)))
+
+
+async def _pump_session(  # pragma: no cover
+    websocket: WebSocket, session: Session, segmenter: Segmenter, input_rate: int
+) -> None:
+    """Receive audio until the client goes away, segmenting as it arrives."""
+    pending = bytearray()
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+        audio = message.get("bytes")
+        if audio is None:
+            # A text/control frame. Out of scope (spec Non-goals: no
+            # response.create, no mid-session session.update) — ignored,
+            # never mistaken for a boundary/audio frame.
+            continue
+
+        pending.extend(audio)
+        aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
+        if not aligned:
+            continue
+        pcm16k = await _to_pcm16k(aligned, input_rate)
+
+        try:
+            # torch inference, one call per 32 ms chunk — off the loop for the
+            # same reason as the resample above.
+            events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
+        except Exception as exc:
+            # _segmenter.py deliberately lets a raising VAD callable
+            # propagate (see its module docstring) — translating that into
+            # the named session error is this route's job.
+            await websocket.send_json(
+                event_to_dict(session.mark_vad_unavailable(f"{type(exc).__name__}: {exc}"))
+            )
+            return
+        await _emit_turn_events(websocket, session, events)
 
 
 def main() -> None:  # pragma: no cover - process entrypoint

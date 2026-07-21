@@ -132,6 +132,21 @@ def test_upgrade_request_preserves_the_websocket_headers_and_rewrites_host() -> 
     assert sent["sec-websocket-version"] == "13"
 
 
+def test_upgrade_request_strips_the_callers_credentials() -> None:
+    # The caller's credential is spent by this gateway's own inbound gate; the
+    # bridge has no auth and no use for it, so it must not travel further.
+    raw = R.upgrade_request_bytes(
+        "/v1/realtime",
+        _WS_HEADERS + [("Authorization", "Bearer super-secret"), ("Cookie", "sid=abc")],
+        host="realtime:8080",
+    )
+    assert b"super-secret" not in raw
+    assert b"sid=abc" not in raw
+    lowered = raw.decode("latin-1").lower()
+    assert "authorization" not in lowered and "cookie" not in lowered
+    assert "sec-websocket-key" in lowered  # the upgrade itself still intact
+
+
 def test_upgrade_request_drops_framing_and_proxy_headers() -> None:
     raw = R.upgrade_request_bytes(
         "/v1/realtime",
@@ -230,13 +245,15 @@ def test_read_head_reassembles_a_head_split_across_reads() -> None:
 
 
 def test_read_head_refuses_an_unbounded_header_block() -> None:
+    reader = _FakeReader(b"HTTP/1.1 101 x\r\n" + b"X: y\r\n" * 100_000)
     with pytest.raises(R.HandshakeError):
-        R.read_head(_FakeReader(b"HTTP/1.1 101 x\r\n" + b"X: y\r\n" * 100_000))
+        R.read_head(reader)
 
 
 def test_read_head_on_a_closed_upstream_raises_rather_than_hanging() -> None:
+    reader = _FakeReader(b"")
     with pytest.raises(R.HandshakeError):
-        R.read_head(_FakeReader(b""))
+        R.read_head(reader)
 
 
 # --- the byte pump --------------------------------------------------------
@@ -347,6 +364,54 @@ def test_tunnel_unwinds_when_the_upstream_dies_first() -> None:
     ).start()
     assert done.wait(timeout=5), "run_tunnel did not unwind after the upstream closed"
     assert client.shutdown_calls >= 1
+
+
+class _BlockingSock:
+    """A socket whose ``recv`` BLOCKS until the peer shuts it down.
+
+    The plain ``_FakeSock`` returns b"" the moment its script runs dry, which
+    makes every pump look like it unwinds. A real idle client does not EOF —
+    it just sits there — so only this fake can show whether a dead upstream
+    strands the handler thread.
+    """
+
+    def __init__(self) -> None:
+        self._down = threading.Event()
+        self.sent = b""
+        self.shutdown_calls = 0
+
+    def recv(self, _n: int) -> bytes:
+        self._down.wait(timeout=10)  # blocks like a real idle peer
+        return b""
+
+    def sendall(self, data: bytes) -> None:
+        self.sent += data
+
+    def shutdown(self, how: int) -> None:
+        self.shutdown_calls += 1
+        if how == socket.SHUT_RDWR:
+            self._down.set()
+
+    def close(self) -> None:
+        self._down.set()
+
+
+def test_a_dead_upstream_does_not_strand_the_handler_on_an_idle_client() -> None:
+    """The bridge dies while the client sits silent — c26's other direction.
+
+    A half-close cannot wake a blocking ``recv`` on the same socket, so
+    without a full shutdown this leaks one gateway thread per open session
+    every time the bridge restarts.
+    """
+    client = _BlockingSock()  # connected, idle, never speaks
+    upstream = _FakeSock([])  # already dead: EOFs immediately
+    done = threading.Event()
+
+    worker = threading.Thread(target=lambda: (R.run_tunnel(client, upstream), done.set()))
+    worker.start()
+    assert done.wait(timeout=5), "run_tunnel stranded the handler on an idle client"
+    worker.join(timeout=5)
+    assert not worker.is_alive()
 
 
 def test_pump_swallows_a_broken_pipe_instead_of_raising_into_the_handler() -> None:

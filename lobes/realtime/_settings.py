@@ -48,6 +48,11 @@ class Settings:
     port: int
 
 
+# Floor for VAD_MAX_TURN_MS — see build_settings for why a non-positive value
+# is not merely useless but actively harmful.
+_MIN_MAX_TURN_MS = 1_000
+
+
 def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
     try:
         return int(env.get(key) or default)
@@ -85,7 +90,12 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         # DEFAULT_MAX_TURN_MS=30_000 — same default, now env-tunable). Wired
         # through docker-compose.audio.yml / env.audio.example in #149 t5;
         # this is the settings-side read t5 left for t6 to add.
-        vad_max_turn_ms=_as_int(env, "VAD_MAX_TURN_MS", 30_000),
+        # Clamp like tts_speed/tts_concurrency above: the segmenter
+        # force-commits once a turn reaches this length, so 0 or a negative
+        # value would commit on the FIRST chunk of every turn and keep
+        # committing — an event storm plus one STT forward per chunk. One
+        # second is the floor a turn could conceivably want.
+        vad_max_turn_ms=max(_MIN_MAX_TURN_MS, _as_int(env, "VAD_MAX_TURN_MS", 30_000)),
         default_turn_detection=env.get("DEFAULT_TURN_DETECTION") or "server_vad",
         default_aec_mode=env.get("DEFAULT_AEC_MODE") or "none",
         barge_in_window_ms=_as_int(env, "BARGE_IN_WINDOW_MS", 750),
