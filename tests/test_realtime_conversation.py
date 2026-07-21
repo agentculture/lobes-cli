@@ -278,8 +278,34 @@ def test_the_floors_own_timeout_message_is_not_double_prefixed() -> None:
         message="generate stage exceeded 60000ms",
     )
     assert C.describe_failure(event) == "generate stage exceeded 60000ms"
-    # Idempotent — describing a described message adds nothing.
-    assert C.describe_failure(event) == C.describe_failure(event)
+
+
+def test_describe_failure_is_idempotent_when_its_own_output_is_fed_back() -> None:
+    """Idempotence means the OUTPUT survives a second pass unchanged.
+
+    Calling the same pure function twice on the same input proves nothing, so
+    this prefixes a message the route phrased itself (a backend read timeout,
+    which does not open with "<stage> stage"), then describes THAT result: the
+    stage must not be prefixed a second time.
+    """
+    raw = F.ResponseFailed(
+        at_ms=1_000,
+        turn_id=1,
+        stage=F.Stage.GENERATE,
+        reason=F.FailureReason.GENERATE_TIMEOUT,
+        message="ReadTimeout: backend took too long",
+    )
+    once = C.describe_failure(raw)
+    assert once == "generate stage: ReadTimeout: backend took too long"
+
+    already_described = F.ResponseFailed(
+        at_ms=1_000,
+        turn_id=1,
+        stage=F.Stage.GENERATE,
+        reason=F.FailureReason.GENERATE_TIMEOUT,
+        message=once,
+    )
+    assert C.describe_failure(already_described) == once
 
 
 def test_a_named_failure_message_is_passed_through_unchanged() -> None:
@@ -1363,3 +1389,46 @@ def test_a_trigger_arriving_inside_the_guard_window_answers_nothing() -> None:
     assert bridge.drain() == []
     assert bridge.take_pending_response() is None
     assert bridge.floor.state is F.FloorState.RESPONDING  # still on turn one
+
+
+def test_app_py_never_swallows_its_own_cancellation() -> None:
+    """Every ``except asyncio.CancelledError`` in app.py must re-raise unless it
+    has proven the cancellation belongs to a CHILD task.
+
+    ``_drive_response`` runs inside a tracked ``_run_response`` task that session
+    teardown cancels, while barge-in cancels the two child tasks it awaits. At
+    teardown both are true at once, so an unguarded ``return`` would let the
+    driver ignore its own cancellation, flush a socket that is going away, and
+    report itself completed to whoever cancelled it.
+
+    Structural (AST) rather than behavioural because app.py imports fastapi and
+    is never executed by the offline suite — the same reason its routes carry
+    ``pragma: no cover``. A grep would not do: the guard is a condition, not a
+    token.
+    """
+    tree = ast.parse(_app_source())
+
+    def _is_cancelled_error(node: ast.expr | None) -> bool:
+        return isinstance(node, ast.Attribute) and node.attr == "CancelledError"
+
+    handlers = [
+        handler
+        for handler in ast.walk(tree)
+        if isinstance(handler, ast.ExceptHandler) and _is_cancelled_error(handler.type)
+    ]
+    assert handlers, "expected app.py to handle asyncio.CancelledError somewhere"
+
+    for handler in handlers:
+        returns = [node for node in ast.walk(handler) if isinstance(node, ast.Return)]
+        raises = [node for node in ast.walk(handler) if isinstance(node, ast.Raise)]
+        if not returns:
+            assert raises, "a CancelledError handler that neither returns nor re-raises"
+            continue
+        # It returns on some path, so it MUST also re-raise on another, and the
+        # returning path must be guarded by the self-cancellation check.
+        assert raises, f"CancelledError handler at line {handler.lineno} never re-raises"
+        guard = ast.dump(ast.Module(body=handler.body, type_ignores=[]))
+        assert "_self_cancelled" in guard, (
+            f"CancelledError handler at line {handler.lineno} returns without "
+            "checking _self_cancelled() — it can swallow this task's own cancellation"
+        )

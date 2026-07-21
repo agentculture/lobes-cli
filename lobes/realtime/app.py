@@ -439,6 +439,27 @@ def _build_bridge(  # pragma: no cover
     )
 
 
+def _self_cancelled() -> bool:  # pragma: no cover
+    """True when THIS task is the one being cancelled, not just its child.
+
+    ``_drive_response`` awaits two child tasks that barge-in deliberately
+    cancels, so a :class:`asyncio.CancelledError` there is usually an ordinary,
+    already-handled interruption. But the coroutine also runs inside a tracked
+    ``_run_response`` task that session teardown cancels — and at teardown BOTH
+    are true at once, because the floor's ``close()`` fires the same cancel
+    hooks barge-in does.
+
+    Without this distinction the teardown case silently loses: the driver would
+    catch its own cancellation, return normally, and carry on to flush a socket
+    that is going away — and the task would report itself completed rather than
+    cancelled to whoever cancelled it. ``Task.cancelling()`` is what separates
+    the two (non-zero only when cancellation was requested on this task);
+    ``requires-python = ">=3.12"`` guarantees it exists.
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 class _ActiveResponse:  # pragma: no cover
     """The two in-flight calls of ONE response, and the hooks that kill them.
 
@@ -628,8 +649,11 @@ async def _drive_response(  # pragma: no cover
     try:
         status_code, body = await active.generate_task
     except asyncio.CancelledError:
-        if active.cancelled:
-            return  # barge-in or teardown; the floor already emitted
+        # Barge-in cancelled the CHILD and the floor already emitted the
+        # interruption, so there is nothing left to do — but only swallow that
+        # when this task is not itself being cancelled (see _self_cancelled).
+        if active.cancelled and not _self_cancelled():
+            return
         raise
     except httpx.TimeoutException as exc:
         bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
@@ -656,7 +680,9 @@ async def _drive_response(  # pragma: no cover
     try:
         pcm = await active.tts_task
     except asyncio.CancelledError:
-        if active.cancelled:
+        # Same rule as the generate stage above: a cancelled synthesis is
+        # barge-in's business, our own cancellation is teardown's.
+        if active.cancelled and not _self_cancelled():
             return
         raise
     except httpx.TimeoutException as exc:
