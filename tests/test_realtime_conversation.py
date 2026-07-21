@@ -1269,6 +1269,26 @@ def test_app_py_synthesizes_on_the_voice_lane() -> None:
     assert "cancel_event=active.tts_cancel" in segment
 
 
+def test_batch_speech_route_never_opts_into_a_tts_lane() -> None:
+    """Boundary guard (issue #151 t15): POST /v1/audio/speech stays lane-blind.
+
+    t7 gave ``tts_client.synthesize()`` a ``lane`` parameter so a voice reply
+    never queues behind batch work — but its default is ``BATCH_LANE``
+    (``normalize_tts_lane(None) == BATCH_LANE``, see
+    ``lobes/realtime/_settings.py``), meaning the ORIGINAL, pre-#151 batch
+    route keeps its exact pre-t7 behavior only as long as it never passes
+    ``lane=`` at all. Nothing exercises ``speech()`` at runtime (fastapi
+    route shells are pragma-no-cover and no CI lane installs the
+    ``[realtime]`` extra — see test_realtime_imports.py), so this is the one
+    place that would catch a future edit routing the batch handler onto the
+    voice lane, or onto any explicit lane at all.
+    """
+    node, src = _function("speech")
+    segment = ast.get_source_segment(src, node) or ""
+    assert "lane=" not in segment, "the batch /v1/audio/speech route must stay lane-blind"
+    assert "synthesize(" in segment, "expected speech() to still call tts_client.synthesize()"
+
+
 def test_app_py_never_resamples_on_the_way_out() -> None:
     node, src = _function("_drive_response")
     segment = (ast.get_source_segment(src, node) or "").lower()
