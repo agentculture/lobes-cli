@@ -38,6 +38,8 @@ import {
   EVENT_KIND_META,
   isKnownErrorCode,
   isKnownEventType,
+  isClientEventType,
+  CLIENT_EVENT_KIND_META,
   type ColourFamily,
   type ConnectionState,
   type IconId,
@@ -177,6 +179,25 @@ function classifyEvent(raw: RawEvent, ctx: ClassifyContext): Classified {
       timeText: formatElapsed(raw, ctx.sessionStartMs),
       detailText: `${truncate(message)} — this UI's vocabulary does not know this code yet`,
       errorCode: code || undefined,
+    };
+  }
+
+  // Client-origin rows (the mic island's mute/unmute, deviation d1). They are
+  // NOT wire events and never claim to be: the row says "(you)" and the detail
+  // names the origin, so a muted stretch of log can never be misread as the
+  // server having gone quiet. This is the distinction the log exists to make —
+  // muted, silence, and disconnected are three different nothings.
+  if (isClientEventType(type)) {
+    const meta = CLIENT_EVENT_KIND_META[type];
+    return {
+      family: meta.family,
+      icon: meta.icon,
+      label: meta.label,
+      timeText: formatElapsed(raw, ctx.sessionStartMs),
+      detailText:
+        type === "client.mic_muted"
+          ? "you muted the mic — the session is still open and still listening for the reply"
+          : "you unmuted the mic",
     };
   }
 

@@ -373,3 +373,62 @@ describe("event-fixtures.ts — replay drives the same controller cleanly", () =
 beforeEach(() => {
   document.body.innerHTML = "";
 });
+
+// ---------------------------------------------------------------------------
+// Client-origin rows — deviation d1 (coordinator wiring).
+//
+// The mic island emits these when the OPERATOR mutes; the server never sends
+// them. They exist so the log can tell apart three things that all look like
+// nothing happening: muted (you did it), silence (nobody spoke — emits no
+// event at all, by design), and disconnected (a banner, not a row).
+// ---------------------------------------------------------------------------
+describe("mountEventStream — client-origin mute rows", () => {
+  it("renders a mute as its own kind, not the unrecognized-event fallback", () => {
+    const controller = mountEventStream(createRoot());
+    const entry = controller.pushEvent({
+      type: "client.mic_muted",
+      origin: "client",
+      timestamp_ms: 1000,
+    });
+
+    expect(entry).not.toBeNull();
+    expect(entry!.family).toBe("client");
+    expect(entry!.label).not.toContain("unrecognized");
+    expect(entry!.icon).toBe("mic-muted");
+  });
+
+  it("says who caused it, so a muted stretch is never read as a quiet server", () => {
+    const controller = mountEventStream(createRoot());
+    const muted = controller.pushEvent({ type: "client.mic_muted", timestamp_ms: 1000 })!;
+    const unmuted = controller.pushEvent({ type: "client.mic_unmuted", timestamp_ms: 2000 })!;
+
+    expect(muted.label).toContain("you");
+    expect(muted.detailText).toContain("still open");
+    expect(unmuted.label).toContain("you");
+    expect(unmuted.icon).not.toBe(muted.icon);
+  });
+
+  it("keeps muted, silence and disconnected structurally distinct", () => {
+    const root = createRoot();
+    const controller = mountEventStream(root);
+
+    // Silence: no pushEvent call at all. The log stays empty — there is no
+    // "nothing happened" row anywhere in this module, and that is the point.
+    expect(controller.entries).toHaveLength(0);
+
+    controller.pushEvent({ type: "client.mic_muted", timestamp_ms: 1000 });
+    expect(controller.entries).toHaveLength(1);
+
+    // A disconnect gets its own row AND the banner — and its row belongs to a
+    // different family than the mute, so the two nothings never blur together.
+    controller.setConnectionState("disconnected", "socket closed");
+    expect(controller.connectionState).toBe("disconnected");
+    expect(controller.entries.map((entry) => entry.family)).toEqual(["client", "connection"]);
+  });
+
+  it("does not collide with the server vocabulary", () => {
+    for (const clientType of ["client.mic_muted", "client.mic_unmuted"]) {
+      expect(EVENT_TYPES as readonly string[]).not.toContain(clientType);
+    }
+  });
+});

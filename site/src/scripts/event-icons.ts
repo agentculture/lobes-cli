@@ -154,6 +154,26 @@ const SHAPES: Record<IconId, ShapeBuilder> = {
     );
     svg.querySelector("text")!.textContent = "?";
   },
+
+  // A mic capsule on a stand. Muted adds a slash across it — the one place a
+  // pair of icons is deliberately near-identical, because muted/unmuted are
+  // two states of ONE thing and reading them as a pair is the point. The
+  // slash (not colour) is what distinguishes them.
+  "mic-unmuted": (svg) => {
+    svg.append(
+      el("rect", { x: "6", y: "2.5", width: "4", height: "7", rx: "2", ...STROKE }),
+      el("path", { d: "M4 8a4 4 0 0 0 8 0", ...STROKE_ROUND }),
+      el("line", { x1: "8", y1: "12", x2: "8", y2: "14", ...STROKE_ROUND })
+    );
+  },
+  "mic-muted": (svg) => {
+    svg.append(
+      el("rect", { x: "6", y: "2.5", width: "4", height: "7", rx: "2", ...STROKE }),
+      el("path", { d: "M4 8a4 4 0 0 0 8 0", ...STROKE_ROUND }),
+      el("line", { x1: "8", y1: "12", x2: "8", y2: "14", ...STROKE_ROUND }),
+      el("line", { x1: "3", y1: "13", x2: "13", y2: "3", ...STROKE_ROUND })
+    );
+  },
 };
 
 /** Build one icon's SVG element. Never throws — an unmapped id falls back to `unknown`. */

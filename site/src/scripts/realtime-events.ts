@@ -64,6 +64,28 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 
 // ---------------------------------------------------------------------------
+// CLIENT-ORIGIN events — deliberately NOT part of EVENT_TYPES.
+//
+// EVENT_TYPES above mirrors _session.py exactly, and that mirror is what
+// keeps this file honest; folding browser-local events into it would make it
+// claim the server sends things it does not. These are emitted by the mic
+// island (t18) so the operator can tell "muted" from "silence" (which emits
+// nothing at all) and from "disconnected" — the three states that would
+// otherwise look identical in a quiet log. They carry `origin: "client"` on
+// the wire-shaped payload for the same reason.
+//
+// They exist because of approved deviation d1: a USER-initiated mute is a
+// control affordance, while an AUTOMATIC mute during playback stays
+// forbidden (it is the AEC substitute that makes barge-in impossible). A
+// muted row in the log is therefore never evidence of a bug — but a muted
+// row the operator did not cause would be.
+// ---------------------------------------------------------------------------
+
+export const CLIENT_EVENT_TYPES = ["client.mic_muted", "client.mic_unmuted"] as const;
+
+export type ClientEventType = (typeof CLIENT_EVENT_TYPES)[number];
+
+// ---------------------------------------------------------------------------
 // ErrorCode — mirrors _session.py's ErrorCode enum, in the same order.
 // ---------------------------------------------------------------------------
 
@@ -107,6 +129,8 @@ export type IconId =
   | "conn-connected"
   | "conn-disconnected"
   | "conn-error"
+  | "mic-muted"
+  | "mic-unmuted"
   | "unknown";
 
 /** Colour-role families — CSS classes, never the sole distinguishing signal. */
@@ -117,7 +141,8 @@ export type ColourFamily =
   | "response"
   | "interrupted"
   | "error"
-  | "connection";
+  | "connection"
+  | "client";
 
 export interface EventKindMeta {
   /** Short, human label shown on the row. */
@@ -256,6 +281,16 @@ export interface RawEvent {
 export function isKnownEventType(type: string): type is EventType {
   return (EVENT_TYPES as readonly string[]).includes(type);
 }
+
+export function isClientEventType(type: string): type is ClientEventType {
+  return (CLIENT_EVENT_TYPES as readonly string[]).includes(type);
+}
+
+/** Display metadata for the client-origin events, kept beside the server map. */
+export const CLIENT_EVENT_KIND_META: Record<ClientEventType, EventKindMeta> = {
+  "client.mic_muted": { label: "mic muted (you)", icon: "mic-muted", family: "client" },
+  "client.mic_unmuted": { label: "mic unmuted (you)", icon: "mic-unmuted", family: "client" },
+};
 
 export function isKnownErrorCode(code: string): code is ErrorCode {
   return (ERROR_CODES as readonly string[]).includes(code);

@@ -83,7 +83,8 @@ import EventStream from "../components/EventStream.astro";
       <h2 id="mic-heading">Mic &amp; playback</h2>
       <p class="muted">
         Arms together from one start gesture. Speaking during a reply
-        interrupts it — echo cancellation only, no mic muting.
+        interrupts it — echo cancellation does the work, never muting.
+        Mute and mic-off are yours to press; nothing here mutes on its own.
       </p>
       <div class="mount card" id="mic-mount" data-mount="mic">
         <MicIsland />

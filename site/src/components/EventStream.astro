@@ -80,6 +80,7 @@
     --es-interrupted: #ffab6b; /* >7.9:1 */
     --es-error: #ff8a80; /* 7.9:1 */
     --es-connection: #ffcf6b; /* connection-state marker family; > 4.5:1 */
+    --es-client: #c3b5f0; /* client-origin (you did this) family; 8.6:1 on --es-bg */
 
     background: var(--es-bg);
     border: 1px solid var(--line-soft);
@@ -277,6 +278,21 @@
   :global(.kind-error .es-row-icon),
   :global(.kind-error .es-label) {
     color: var(--es-error);
+  }
+
+  /* Client-origin rows (mute/unmute — deviation d1). Inset from the left so
+     they read as "you did this" rather than "the server said this", which is
+     the distinction that keeps a muted stretch of log from looking like a
+     server that went quiet. The inset is structural, not decorative: it
+     survives a monochrome render, where colour alone would not. */
+  :global(.kind-client) {
+    border-left: 2px solid var(--es-client);
+    padding-left: 0.5rem;
+  }
+
+  :global(.kind-client .es-row-icon),
+  :global(.kind-client .es-label) {
+    color: var(--es-client);
   }
 
   :global(.kind-connection) {
