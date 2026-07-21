@@ -61,3 +61,5 @@
 {"ts":"2026-07-20T17:42:18.129994+00:00","type":"readiness_arrived","pr":148,"waited_secs":60}
 {"ts":"2026-07-20T17:42:23.907627+00:00","type":"pr_read","pr":148,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
 {"ts":"2026-07-20T17:56:00.048140+00:00","type":"pr_read","pr":148,"comment_count":5,"threads_unresolved":1,"ci_state":"ok"}
+{"ts":"2026-07-21T15:37:05.205010+00:00","type":"readiness_arrived","pr":152,"waited_secs":180}
+{"ts":"2026-07-21T15:37:10.001805+00:00","type":"pr_read","pr":152,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}

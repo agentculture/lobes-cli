@@ -81,6 +81,7 @@ import hashlib
 import json
 import os
 import re
+import select
 import socket
 import struct
 import sys
@@ -403,8 +404,12 @@ class WebSocketClient:
         return client, status, headers
 
     def _read_until(self, marker: bytes, timeout: float) -> bytes:
-        self._sock.settimeout(timeout)
+        # Handshake only — single-threaded, before any writer exists — but it
+        # uses select() too so the socket never carries a timeout at all.
         while marker not in self._buf:
+            ready, _, _ = select.select([self._sock], [], [], timeout)
+            if not ready:
+                raise socket.timeout("timed out during the handshake")
             chunk = self._sock.recv(65536)
             if not chunk:
                 raise ConnectionError("connection closed during the handshake")
@@ -415,9 +420,23 @@ class WebSocketClient:
         return head
 
     def _recv_exact(self, n: int, timeout: float | None = None) -> bytes:
-        if timeout is not None:
-            self._sock.settimeout(timeout)
+        """Read up to *n* buffered-or-arriving bytes, waiting via ``select``.
+
+        NOT ``settimeout``: a socket timeout is a property of the SOCKET, not
+        of one call, so a reader setting it races with a concurrent
+        ``sendall`` on the same socket from another thread — the writer
+        inherits the reader's deadline, a large-enough write can time out
+        part-sent, and a partially written frame desynchronises the peer's
+        parser until it gives up and closes. The one-shot smoke run never saw
+        it (it streams, then reads); a duplex client that listens while it
+        talks hits it within minutes. ``select`` waits for readability without
+        touching socket state, so reads and writes stay independent.
+        """
         while len(self._buf) < n:
+            if timeout is not None:
+                ready, _, _ = select.select([self._sock], [], [], timeout)
+                if not ready:
+                    raise socket.timeout("timed out waiting for data")
             chunk = self._sock.recv(max(65536, n))
             if not chunk:
                 break

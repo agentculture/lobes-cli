@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.53.1] - 2026-07-21
+
+### Fixed
+
+- Six defects in the voice loop and its tests, all found by review (Qodo) and all accepted: the event reader swallowed EVERY exception from `read_frame` and retried, so an EOF after a disconnect became an endless spin and the main loop waited out its idle timeout — a dead session reading as 'nobody spoke' (timeouts now continue, anything else ends the session and says why); `speak()` ran the audio player with no timeout, which is not hypothetical — paplay was OBSERVED hanging on a sink whose ALSA device another process held, and with the mic muted for the duration that hang deafens the session permanently (now a bounded 60s per backend, falling through to the next); a mid-session mic EOF broke the feeder loop without stopping the session, faking silence again; `arecord`'s stderr was never piped, so the 'no audio' failure message could not actually quote the ALSA error it promised to; and two test weaknesses — a single `recv()` asserting an exact byte count where a stream socket may legitimately return less (now drains to the expected total, verified stable over 12 consecutive runs), and a `join(timeout=...)` that never asserted the thread finished, which is precisely where a deadlock should be reported.
+
+## [0.53.0] - 2026-07-21
+
+### Added
+
+- `scripts/realtime-voice-loop.py` — talk to the machine, voice to voice, by composing the three endpoints the fleet already serves: `/v1/realtime` for ears, a generate lane for the brain, `/v1/audio/speech` for the mouth. It is also the richest live test of the realtime surface, because it holds a LONG-LIVED DUPLEX session — reading while writing, for minutes — which the one-shot `realtime-smoke.py` cannot exercise. It defaults to the Gemma 4 12B lane (`--model multimodal`, ~1s to a short reply on the DGX Spark) rather than a thinking model, since in a spoken turn latency is dead air; takes the API key from `LOBES_API_KEY` because argv is world-readable via `/proc`; supports stereo-only capture devices (`--channels 2`, downmixed); and routes playback with `--sink` for boxes where another process owns the audio device.
+
+### Changed
+
+- `docs/realtime-pipeline.md` documents the voice loop and three behaviours that a client of `/v1/realtime` must get right, each learned on live hardware: **answer `PING` with `PONG`** (uvicorn pings every ~20s and closes a peer that never pongs — a duplex client that ignores them dies after tens of seconds while a short smoke run never notices); **half-duplex turn-taking** (the mic is muted for the whole synthesize-and-play window, because without AEC the session transcribes the machine talking to itself — real barge-in needs AEC, tracked in #151); and picking a FAST generate lane for spoken replies.
+
+### Fixed
+
+- The WebSocket client in `scripts/realtime-smoke.py` bounded its reads with `settimeout`, which is a property of the SOCKET rather than of one call — so a reader handed its deadline to any thread writing on the same socket, and a write that timed out part-sent left a torn frame that desynchronised the peer's parser. Reads now wait with `select`, which observes readability without mutating socket state. Invisible to the one-shot smoke run (which streams, then reads); found by building a client that listens while it talks.
+
 ## [0.52.3] - 2026-07-21
 
 ### Changed

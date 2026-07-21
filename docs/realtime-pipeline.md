@@ -360,6 +360,52 @@ client unwinds both tunnel pump threads on the gateway side,
 reconnect and restart the turn you were mid-way through — there is no
 partial-turn recovery across a disconnect.
 
+### Talking to it: `scripts/realtime-voice-loop.py`
+
+`/v1/realtime` is **ears only** — audio in, boundaries and transcripts out. A
+spoken *conversation* is therefore a client-side composition of three
+endpoints this fleet already serves:
+
+| role | endpoint | backend |
+|---|---|---|
+| ears | `ws /v1/realtime` | Silero VAD + Parakeet |
+| brain | `POST /v1/chat/completions` | any generate lane |
+| mouth | `POST /v1/audio/speech` | Chatterbox |
+
+`scripts/realtime-voice-loop.py` is that composition, and doubles as the
+richest live test of the realtime surface — it exercises a long-lived duplex
+session in a way the one-shot `realtime-smoke.py` cannot.
+
+```bash
+export LOBES_API_KEY=...        # never pass a key in argv: /proc is world-readable
+python3 scripts/realtime-voice-loop.py \
+    --device hw:1,0 --channels 2 \
+    --sink alsa_output.platform-NVDA2014_00.hdmi-stereo
+```
+
+Three behaviours are deliberate, and each was learned the hard way on live
+hardware:
+
+- **It answers `PING` with `PONG`.** uvicorn pings roughly every 20 s and
+  closes a peer that never pongs. A duplex client that ignores pings dies
+  after tens of seconds for no visible reason; a one-shot smoke run finishes
+  inside a single ping interval and never notices. If you write your own
+  client, handle `OPCODE_PING`.
+- **It is half-duplex — no barge-in.** The mic is muted (silence is streamed
+  in its place) for the whole synthesize-and-play window, because without
+  echo cancellation the mic hears the speakers and the session transcribes the
+  machine talking to itself. Real barge-in needs AEC and is tracked in
+  [#151](https://github.com/agentculture/lobes-cli/issues/151).
+- **It defaults to the Gemma 4 12B lane** (`--model multimodal`), not
+  `cortex`. Measured on the DGX Spark: ~1 s to a short reply with no reasoning
+  trace. In a spoken turn latency *is* dead air, so speed beats depth; a
+  thinking model spends its budget on a trace nobody hears.
+
+`--sink` matters on a box where something else owns the audio device: on the
+Spark, `reachy-mini-dae` holds the Reachy speaker exclusively and PipeWire
+cannot reach it while that daemon runs, so playback goes to the HDMI sink
+instead.
+
 ## Boundary / non-goals
 
 The audio surface **does not**:
