@@ -1,0 +1,86 @@
+---
+// The shared shell for the lobes realtime test harness (issue #151 t10).
+// Ported structure from ../org/site-astro's Layout.astro: head/meta, self
+// hosted font preloads, the html.js progressive-enhancement flag set
+// before paint, and the shared IntersectionObserver that flips
+// `.is-visible` on [data-reveal] elements. No UI framework, no external
+// requests — everything the built page needs is bundled by Astro.
+//
+// This site is LOCAL-ONLY (issue #151 scope boundary): it is never
+// deployed, so there is no canonical `Astro.site` URL and no og:url/
+// canonical link the way org's Layout has — that machinery is dropped
+// here, not merely unused.
+import "@fontsource-variable/albert-sans";
+import "@fontsource-variable/fraunces/full.css";
+import "../styles/global.css";
+import albertUrl from "@fontsource-variable/albert-sans/files/albert-sans-latin-wght-normal.woff2?url";
+import frauncesUrl from "@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2?url";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+
+interface Props {
+  /** Document title, already fully composed by the page. */
+  title: string;
+  /** Meta description — kept short; this page is never indexed. */
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <!-- Local-only tool: never indexed, never crawled. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5fb" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0f20" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" as="font" type="font/woff2" href={frauncesUrl} crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href={albertUrl} crossorigin />
+    <meta name="generator" content={Astro.generator} />
+    <script is:inline>
+      // Flag JS availability before first paint: entrance-hidden states in
+      // the CSS apply only under `html.js`, so a no-JS visit renders
+      // everything composed and visible.
+      document.documentElement.classList.add("js");
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <Header />
+    <main id="main">
+      <slot />
+    </main>
+    <Footer />
+    <script is:inline>
+      // Scroll reveals: observe [data-reveal] and settle each element in
+      // once. Runs only when the visitor allows motion — otherwise the CSS
+      // never hides anything and there is nothing to reveal.
+      (function () {
+        if (!matchMedia("(prefers-reduced-motion: no-preference)").matches) return;
+        if (!("IntersectionObserver" in window)) {
+          document.documentElement.classList.remove("js");
+          return;
+        }
+        var io = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("is-visible");
+                io.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.12, rootMargin: "0px 0px -36px 0px" }
+        );
+        document.querySelectorAll("[data-reveal]").forEach(function (el) {
+          io.observe(el);
+        });
+      })();
+    </script>
+  </body>
+</html>

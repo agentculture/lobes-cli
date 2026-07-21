@@ -1,0 +1,34 @@
+---
+// Local-only notice: no deploy workflow exists for this site (issue #151
+// scope boundary — see docs/specs). t13 owns the full dev-flow writeup
+// (site README, ssh -L instructions); this footer just states the fact on
+// the page itself, since a developer may land here without having read
+// the README first.
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="container">
+    <p class="note muted">
+      Local-only development tool for the lobes <code>/v1/realtime</code>
+      WebSocket surface — never deployed, never crawled.
+      <span class="sep" aria-hidden="true">·</span>
+      {year} lobes-cli
+    </p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--line-soft);
+    padding-block: 2.5rem 3rem;
+  }
+
+  .note {
+    font-size: 0.88rem;
+  }
+
+  .sep {
+    margin-inline: 0.5rem;
+  }
+</style>

@@ -1,0 +1,389 @@
+/*
+ * lobes realtime test harness — "first light over the mesh", ported
+ *
+ * This design system is PORTED from ../org/site-astro's global.css
+ * (issue #151 t10) — same token names, same "dawn"/"hour before dawn"
+ * palette, same motion contract, so the two sites read as siblings. What
+ * changed in the port: this file drops the marketing-scene machinery this
+ * page doesn't use (hero sun-glow variants, multi-page nav chrome) and
+ * keeps exactly the shared system — tokens, base elements, the
+ * [data-reveal] system, the node-breathe/halo-breathe keyframes, and the
+ * reduced-motion kill switch — for wave-2 islands (mic capture, the live
+ * event-stream log, connection controls) to build on.
+ *
+ * Contrast: every text/background pair below is independently verified
+ * >= 4.5:1 (WCAG AA) in both themes — see the computed ratios recorded in
+ * the t10 delivery report, not merely re-asserted from the org site.
+ *
+ * Reduced motion: every `animation` and `transition` on this site
+ * (including component-scoped styles wave-2 adds) is disabled by the kill
+ * switch at the bottom of this file, and every entrance-hidden state is
+ * additionally gated behind (prefers-reduced-motion: no-preference) +
+ * html.js, so the page is complete and static without motion or
+ * JavaScript running.
+ *
+ * This site is genuinely different from org in one respect: it holds a
+ * live WebSocket to a local gateway (org never dials a live machine). That
+ * is an architecture difference, not a visual-language one — the tokens
+ * below are unchanged in spirit.
+ */
+
+/* ---------- tokens ---------- */
+
+:root {
+  color-scheme: light dark;
+
+  /* dawn, ten minutes after sunrise */
+  --bg: #f4f5fb;            /* pale periwinkle sky-paper */
+  --surface: #ffffff;       /* lifted cloud-white */
+  --ink: #232a4d;           /* deep indigo, never black */
+  --ink-soft: #4d546f;      /* slate of the fading night */
+  --accent: #0b655c;        /* deep aurora teal — interactive */
+  --accent-strong: #0c5a53; /* filled-control teal */
+  --on-accent: #ffffff;
+  --line: rgba(35, 42, 77, 0.14);
+  --line-soft: rgba(35, 42, 77, 0.08);
+
+  /* sky washes (decorative only — never carry text alone) */
+  --sky-upper: rgba(198, 210, 248, 0.55); /* periwinkle zenith */
+  --sky-horizon: rgba(255, 205, 166, 0.5); /* apricot sun-line */
+  --sky-mist: rgba(167, 216, 205, 0.35);  /* teal morning mist */
+  --sky-glow: rgba(255, 178, 125, 0.5);   /* the breathing sun-glow */
+
+  /* the mesh */
+  --mesh-node: #0b655c;
+  --mesh-thread: rgba(35, 42, 77, 0.32);
+  --mesh-halo: rgba(255, 170, 110, 0.55);
+  --mesh-halo-alt: rgba(122, 158, 245, 0.5);
+
+  --shadow: 0 4px 24px rgba(35, 42, 77, 0.07), 0 1px 4px rgba(35, 42, 77, 0.05);
+  --shadow-lift: 0 14px 40px rgba(35, 42, 77, 0.12), 0 2px 8px rgba(35, 42, 77, 0.06);
+
+  /* type */
+  --font-display: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
+  --font-body: "Albert Sans Variable", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);   /* long, settling */
+  --ease-gentle: cubic-bezier(0.45, 0, 0.25, 1); /* breathing */
+
+  /* rhythm */
+  --section-pad: clamp(3rem, 8vh, 6rem);
+  --radius: 1.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* the hour before dawn */
+    --bg: #0b0f20;            /* deep night indigo */
+    --surface: #161b36;       /* a shade nearer morning */
+    --ink: #e9ecf8;           /* starlight */
+    --ink-soft: #a9b0cf;      /* moonlit slate */
+    --accent: #7fdcc9;        /* aurora teal, bright against night */
+    --accent-strong: #7fdcc9;
+    --on-accent: #0b0f20;
+    --line: rgba(233, 236, 248, 0.14);
+    --line-soft: rgba(233, 236, 248, 0.07);
+
+    --sky-upper: rgba(64, 92, 181, 0.25);   /* night blue zenith */
+    --sky-horizon: rgba(255, 159, 102, 0.1); /* first hint of sun */
+    --sky-mist: rgba(88, 214, 181, 0.14);   /* the aurora itself */
+    --sky-glow: rgba(96, 226, 189, 0.14);
+
+    --mesh-node: #7fdcc9;
+    --mesh-thread: rgba(233, 236, 248, 0.28);
+    --mesh-halo: rgba(96, 226, 189, 0.4);
+    --mesh-halo-alt: rgba(255, 170, 120, 0.28);
+
+    --shadow: 0 4px 24px rgba(2, 4, 12, 0.5), 0 1px 4px rgba(2, 4, 12, 0.4);
+    --shadow-lift: 0 14px 40px rgba(2, 4, 12, 0.6), 0 2px 8px rgba(2, 4, 12, 0.4);
+  }
+}
+
+/* ---------- base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  font-weight: 400;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The high sky belongs to the page, not to a section: the page opens under
+   the same dawn wash the org site uses, scrolling up out of it into plain
+   air. */
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: min(100%, 90vh, 44rem);
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(95% 70% at 12% -12%, var(--sky-upper), transparent 58%),
+    radial-gradient(85% 62% at 88% -6%, var(--sky-mist), transparent 60%);
+}
+
+main {
+  display: block;
+  flex: 1 0 auto;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 75, "WONK" 0;
+  font-weight: 440;
+  line-height: 1.14;
+  letter-spacing: -0.012em;
+  color: var(--ink);
+  margin: 0 0 0.6em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(2.2rem, 5.5vw, 3.4rem);
+  font-weight: 400;
+}
+
+h2 {
+  font-size: clamp(1.4rem, 2.6vw, 1.8rem);
+}
+
+h3 {
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+p {
+  margin: 0 0 1.1em;
+  text-wrap: pretty;
+}
+
+p:last-child {
+  margin-bottom: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-color: var(--accent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
+
+code,
+.repo {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  letter-spacing: 0.01em;
+}
+
+svg {
+  display: block;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ---------- focus ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.skip-link {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  padding: 0.6rem 1.1rem;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  font-weight: 500;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
+/* ---------- layout primitives ---------- */
+
+.container {
+  width: min(100% - 3rem, 60rem);
+  margin-inline: auto;
+}
+
+.prose {
+  max-width: 42rem;
+}
+
+.section {
+  padding-block: var(--section-pad);
+}
+
+.lede {
+  font-size: clamp(1.1rem, 1.8vw, 1.3rem);
+  line-height: 1.6;
+  font-weight: 420;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 640;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.1rem;
+}
+
+/* ---------- cards ---------- */
+
+.card {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.7rem 1.9rem;
+  color: var(--ink);
+}
+
+a.card {
+  text-decoration: none;
+}
+
+a.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  box-shadow: var(--shadow-lift);
+}
+
+/* ---------- reveal system ----------
+   Hidden states apply ONLY when (a) JS is running (html.js) and (b) the
+   visitor allows motion. Otherwise everything renders composed and still —
+   including the mount points wave-2 attaches islands to. */
+
+@media (prefers-reduced-motion: no-preference) {
+  html.js [data-reveal] {
+    opacity: 0;
+    transform: translateY(1.2rem);
+    transition:
+      opacity 0.8s var(--ease-out),
+      transform 0.8s var(--ease-out);
+    transition-delay: var(--reveal-delay, 0s);
+  }
+
+  html.js [data-reveal].is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  a.card {
+    transition:
+      transform 0.4s var(--ease-gentle),
+      box-shadow 0.4s var(--ease-gentle),
+      border-color 0.4s var(--ease-gentle);
+  }
+
+  a.card:hover {
+    transform: translateY(-4px);
+  }
+}
+
+/* shared breathing keyframes for mesh/status nodes and halos — used by any
+   wave-2 island that wants a "live" pulse (e.g. a connection indicator);
+   ported byte-for-byte from org's global.css so component code that
+   references them (like org's HeroMesh/LobesDiagram) needs no changes to
+   adopt here. */
+@keyframes node-breathe {
+  from {
+    transform: scale(1);
+    opacity: 0.78;
+  }
+
+  to {
+    transform: scale(1.09);
+    opacity: 1;
+  }
+}
+
+@keyframes halo-breathe {
+  from {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+
+  to {
+    transform: scale(1.14);
+    opacity: 0.95;
+  }
+}
+
+/* ---------- reduced-motion kill switch ----------
+   Belt and braces: even transitions declared in component-scoped styles
+   (including whatever wave-2 islands add) are silenced. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

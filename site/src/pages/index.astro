@@ -1,0 +1,160 @@
+---
+// The lobes realtime test harness — issue #151 t10.
+//
+// This page is the SHELL wave-2 attaches islands to. It deliberately does
+// not implement mic capture, event rendering, or connection/auth — those
+// are t11, t12, t13 respectively (see docs/plans/2026-07-21-realtime-
+// voice-to-voice-astro-test-site-151.md). Each mount point below is a
+// plain, styled <section> with a clearly commented anchor: a stable `id`
+// plus a `data-mount` attribute a wave-2 island can select on
+// (`document.querySelector('[data-mount="mic"]')`) without any
+// restructuring of this layout.
+//
+// Client JS wave-2 adds should be regular Astro-bundled <script> modules
+// (or a component's own <script> block), NOT `is:inline` — the honesty
+// condition in the spec is explicit that the live WS island is "new
+// client JS bundled by Astro, not is:inline". is:inline is reserved on
+// this page for the two tiny, framework-free progressive-enhancement
+// snippets in Layout.astro (the html.js flag and the [data-reveal]
+// IntersectionObserver), which predate any island and stay that way.
+import Layout from "../layouts/Layout.astro";
+import SignalMesh from "../components/SignalMesh.astro";
+---
+
+<Layout
+  title="lobes realtime test harness"
+  description="Local-only browser harness for driving the lobes /v1/realtime WebSocket surface: mic in, live event stream, audio out."
+>
+  <section class="section hero">
+    <div class="container hero-grid">
+      <div data-reveal>
+        <span class="eyebrow">/v1/realtime — local only</span>
+        <h1>Hear the mesh think.</h1>
+        <p class="lede muted">
+          A spoken turn goes out over one WebSocket and a spoken reply
+          comes back on the same connection. This page exists so you can
+          experience that exchange in a browser — watch VAD boundaries,
+          transcripts, and interruptions scroll by — instead of inferring
+          it from terminal prints.
+        </p>
+      </div>
+      <div class="hero-signal" data-reveal style="--reveal-delay: 0.1s">
+        <SignalMesh />
+      </div>
+    </div>
+  </section>
+
+  <!--
+    ============================================================
+    MOUNT POINT: t13 — connection / auth controls
+    Fed by the local WebSocket proxy (Vite dev-server server.proxy, or its
+    standalone fallback) that injects the Authorization bearer server-side.
+    The browser must never hold or display the gateway API key here.
+    ============================================================
+  -->
+  <section class="section" id="connection" aria-labelledby="connection-heading" data-reveal>
+    <div class="container">
+      <h2 id="connection-heading">Connection</h2>
+      <p class="muted">
+        Connect through the local proxy — the key lives only in the proxy
+        process, never in this page.
+      </p>
+      <div class="mount card" id="connection-mount" data-mount="connection">
+        <!-- t13 attaches its connect/disconnect controls and auth status here. -->
+        <p class="muted placeholder-note">
+          Connection controls mount here (t13).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!--
+    ============================================================
+    MOUNT POINT: t11 — mic capture + audio playback
+    getUserMedia({ echoCancellation: true }) + AudioWorklet capture to
+    24 kHz PCM16 base64 append events; a delta player for audio-out that
+    stops local playback on the interruption event. Mic + playback arm
+    ONLY from a start-control user gesture (AudioContext starts suspended);
+    NotAllowedError/NotFoundError are distinct states, not silence.
+    ============================================================
+  -->
+  <section class="section" id="mic" aria-labelledby="mic-heading" data-reveal>
+    <div class="container">
+      <h2 id="mic-heading">Mic &amp; playback</h2>
+      <p class="muted">
+        Arms together from one start gesture. Speaking during a reply
+        interrupts it — echo cancellation only, no mic muting.
+      </p>
+      <div class="mount card" id="mic-mount" data-mount="mic">
+        <!-- t11 attaches its start control, mic level meter, and audio
+             player here. -->
+        <p class="muted placeholder-note">
+          Mic capture and audio playback controls mount here (t11).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!--
+    ============================================================
+    MOUNT POINT: t12 — live event-stream log
+    Renders every /v1/realtime event type with timestamps, each named
+    error code visually distinct from silence and from disconnect, and VAD
+    boundary at_ms timing visible for knob tuning.
+    ============================================================
+  -->
+  <section class="section" id="events" aria-labelledby="events-heading" data-reveal>
+    <div class="container">
+      <h2 id="events-heading">Event stream</h2>
+      <p class="muted">
+        Every session event, in order, with timing — the surface this site
+        exists to make visible.
+      </p>
+      <div class="mount card" id="events-mount" data-mount="events">
+        <!-- t12 attaches its live event log here. -->
+        <p class="muted placeholder-note">
+          The live event-stream log mounts here (t12).
+        </p>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2rem 3rem;
+  }
+
+  .hero-signal {
+    display: flex;
+    justify-content: center;
+  }
+
+  .mount {
+    margin-top: 1.5rem;
+    min-height: 6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .placeholder-note {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    text-align: center;
+    margin: 0;
+  }
+
+  @media (max-width: 42rem) {
+    .hero-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hero-signal {
+      order: -1;
+    }
+  }
+</style>
