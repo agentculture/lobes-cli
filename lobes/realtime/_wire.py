@@ -64,18 +64,42 @@ mismatch, a truncated frame); this module's job is to turn every one of
 those into a value the caller can turn into a named ``error`` event, not an
 exception that unwinds the WebSocket handler.
 
-Delta chunk sizing
--------------------
+Delta chunk sizing — THE single source of truth (issue #151 t6)
+----------------------------------------------------------------
 :data:`DEFAULT_DELTA_CHUNK_BYTES` chunks outbound audio into
 :data:`DELTA_CHUNK_MS` (100ms) frames at :data:`TTS_SAMPLE_RATE` — small
 enough that the first frame of a reply reaches the client quickly and an
 interruption only ever discards a bounded remainder (see the #151 spec's
-truncation-on-barge-in requirement, wired by a later task), large enough that
-JSON/base64 framing overhead (33% larger than raw PCM, plus one event
-envelope) does not dominate. Every chunk boundary keeps whole PCM16 samples
+truncation-on-barge-in requirement), large enough that JSON/base64 framing
+overhead (33% larger than raw PCM, plus one event envelope) does not
+dominate. Every chunk boundary keeps whole PCM16 samples
 (:data:`~lobes.realtime.protocol.BYTES_PER_SAMPLE`-aligned) so a chunk is
 never split mid-sample; :func:`iter_audio_deltas` validates any
 caller-supplied ``chunk_bytes`` the same way.
+
+This value is the **only** outbound chunk size in the tree. t2's
+:mod:`lobes.realtime._floor` originally shipped its own, smaller default
+(40ms / 1920 bytes); t6 deleted it and made ``Floor(chunk_bytes=...)`` a
+REQUIRED constructor argument, so a second default cannot silently drift
+back into existence. Chunk size is a wire-framing concern, and this is the
+wire-framing module — :mod:`lobes.realtime._conversation` reads the value
+here and hands it to the floor.
+
+Outbound event SHAPE, and why the route does not call
+:func:`serialize_audio_delta`
+-------------------------------------------------------
+Both halves of an outbound delta live here — the base64 codec
+(:func:`encode_audio_chunk`) and the chunk size above — but the *event
+envelope* the live route sends is :mod:`lobes.realtime._session`'s
+``ResponseAudioDeltaEvent`` (via ``Session.emit_audio_delta``), not
+:func:`serialize_audio_delta`'s bare dict. That is deliberate: the session
+schema stamps ``session_id`` onto EVERY event this connection sends (a delta
+without one would be the only exception in the stream) and refuses to mint an
+event for a torn-down session at all. :func:`serialize_audio_delta` /
+:func:`iter_audio_deltas` remain the standalone, session-free OpenAI-shaped
+codec — what a *client* (``scripts/realtime-smoke.py``'s decoder, and its
+round-trip test) checks itself against. Both shapes carry the same base64
+``delta`` field, which is the only field either consumer reads.
 """
 
 from __future__ import annotations
@@ -260,11 +284,24 @@ class InboundDecision(NamedTuple):
     consumed only by the route layer, never itself serialized to the wire —
     unlike this module's actual wire *events*, which stay plain dicts (see
     the module docstring) precisely because those ARE serialized.
+
+    ``payload`` carries the decoded JSON object when — and only when —
+    ``kind`` is :attr:`InboundKind.IGNORED`. This module deliberately does
+    NOT grow a per-control-event kind (``response.create`` and friends):
+    turn-state triggers are not a codec concern, and
+    :class:`InboundKind.IGNORED` must keep meaning exactly what it meant
+    before issue #151 t6 — "well-formed, not audio" — or the transcription-
+    only reassembly test that classifies a ``response.create`` frame as
+    IGNORED would have to change, which is precisely the ears-only contract
+    t6 must not touch. Handing the already-parsed payload back instead lets
+    :mod:`lobes.realtime._conversation` own the "is this a conversation
+    trigger?" decision without re-parsing the frame.
     """
 
     kind: InboundKind
     audio: bytes | None = None
     error: WireFormatError | None = None
+    payload: Mapping[str, object] | None = None
 
 
 def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
@@ -290,7 +327,12 @@ def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
        :attr:`InboundKind.ERROR` with whatever :func:`decode_event` raised
        (:attr:`WireErrorCode.INVALID_JSON`).
     4. Valid JSON whose ``"type"`` is not :data:`APPEND_EVENT_TYPE` ->
-       :attr:`InboundKind.IGNORED`.
+       :attr:`InboundKind.IGNORED`, with the decoded object handed back as
+       the decision's ``payload`` so a caller that DOES act on some control
+       event (:mod:`lobes.realtime._conversation`'s ``response.create``
+       trigger) need not re-parse the frame. Still IGNORED as far as this
+       module is concerned — classifying turn-state triggers is not a
+       codec decision (see :class:`InboundDecision`).
     5. An ``input_audio_buffer.append`` event with a missing/non-string/
        non-base64 ``"audio"`` field -> :attr:`InboundKind.ERROR` with
        whatever :func:`parse_append_event` raised
@@ -326,7 +368,7 @@ def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
     except WireFormatError as exc:
         return InboundDecision(kind=InboundKind.ERROR, error=exc)
     if payload.get("type") != APPEND_EVENT_TYPE:
-        return InboundDecision(kind=InboundKind.IGNORED)
+        return InboundDecision(kind=InboundKind.IGNORED, payload=payload)
     try:
         audio = parse_append_event(payload)
     except WireFormatError as exc:
@@ -337,6 +379,22 @@ def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
 # ---------------------------------------------------------------------------
 # Outbound: PCM16 bytes -> dict event(s).
 # ---------------------------------------------------------------------------
+
+
+def encode_audio_chunk(pcm: bytes) -> str:
+    """Encode one PCM16 chunk as the base64 string an audio delta carries.
+
+    The outbound half of :func:`parse_append_event`'s decode, and the ONE
+    place outbound audio is base64-encoded: :func:`serialize_audio_delta`
+    calls it for the standalone OpenAI-shaped event, and
+    :mod:`lobes.realtime._conversation` calls it for the session-schema
+    ``response.audio.delta`` the live route actually sends (see the module
+    docstring's "Outbound event SHAPE"). Never resamples, never re-frames,
+    never inspects the bytes — Chatterbox's 24 kHz PCM16 is already the
+    client's wire rate (``protocol.TTS_SAMPLE_RATE == CLIENT_SAMPLE_RATE``),
+    so audio-out is a pure passthrough plus this encode.
+    """
+    return base64.b64encode(pcm).decode("ascii")
 
 
 def serialize_audio_delta(
@@ -366,7 +424,7 @@ def serialize_audio_delta(
         "item_id": item_id,
         "output_index": output_index,
         "content_index": content_index,
-        "delta": base64.b64encode(pcm).decode("ascii"),
+        "delta": encode_audio_chunk(pcm),
     }
 
 
@@ -426,6 +484,7 @@ __all__ = [
     "InboundKind",
     "InboundDecision",
     "decide_inbound_message",
+    "encode_audio_chunk",
     "serialize_audio_delta",
     "iter_audio_deltas",
 ]

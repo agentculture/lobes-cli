@@ -176,13 +176,15 @@ DEFAULT_TRANSCRIBE_TIMEOUT_MS = 60_000
 DEFAULT_GENERATE_TIMEOUT_MS = 60_000
 DEFAULT_TTS_TIMEOUT_MS = 60_000
 
-# One audio-out frame. 40ms at 24 kHz PCM16 = 1920 bytes: small enough that an
-# interruption truncates within a frame nobody notices, large enough not to
-# flood the socket with base64 frames. Derived from protocol.py's rate, never
-# an independent magic number. If the wire codec ships its own delta size, the
-# route passes it to the constructor — this module never imports it.
-DEFAULT_CHUNK_MS = 40
-DEFAULT_CHUNK_BYTES = TTS_SAMPLE_RATE * BYTES_PER_SAMPLE * DEFAULT_CHUNK_MS // 1000
+# NOTE (issue #151 t6): this module used to define its own
+# DEFAULT_CHUNK_MS/DEFAULT_CHUNK_BYTES (40ms / 1920 bytes). It no longer does.
+# The wire codec ships the delta size (_wire.DEFAULT_DELTA_CHUNK_BYTES, 100ms /
+# 4800 bytes) and chunk size is a WIRE-FRAMING concern, so `chunk_bytes` is now
+# a REQUIRED constructor argument here — exactly as this module's docstring
+# already anticipated ("If the wire codec ships its own delta size, the route
+# passes it to the constructor — this module never imports it"). Requiring it,
+# rather than keeping a second default in step with the first, is what makes a
+# silent drift between the two impossible.
 
 
 class FloorState(str, Enum):
@@ -350,6 +352,14 @@ class Floor:
     keyword-only on purpose: they share a type, and a positional mix-up
     between ``cancel_generate`` and ``cancel_tts`` would be silent.
 
+    ``chunk_bytes`` is REQUIRED, not defaulted (issue #151 t6): the outbound
+    delta size belongs to the wire codec
+    (:data:`lobes.realtime._wire.DEFAULT_DELTA_CHUNK_BYTES`), and a second
+    default here would be a value free to drift out of step with it.
+    ``sample_rate`` stays defaulted to the OUTPUT rate
+    (:data:`~lobes.realtime.protocol.TTS_SAMPLE_RATE`, 24 kHz) — it is NOT
+    the session's negotiated input rate, which may be 16 kHz.
+
     Inputs (the state machine's whole alphabet):
     :meth:`on_speech_started`, :meth:`on_turn_committed`, :meth:`on_transcript`,
     :meth:`on_reply_text`, :meth:`on_audio_ready`, :meth:`deliver_next`,
@@ -366,12 +376,12 @@ class Floor:
         send_audio_chunk: SendAudioChunk,
         cancel_generate: Cancel,
         cancel_tts: Cancel,
+        chunk_bytes: int,
         clock: Clock = timestamp_ms,
         barge_in_window_ms: int = DEFAULT_BARGE_IN_WINDOW_MS,
         transcribe_timeout_ms: int = DEFAULT_TRANSCRIBE_TIMEOUT_MS,
         generate_timeout_ms: int = DEFAULT_GENERATE_TIMEOUT_MS,
         tts_timeout_ms: int = DEFAULT_TTS_TIMEOUT_MS,
-        chunk_bytes: int = DEFAULT_CHUNK_BYTES,
         sample_rate: int = TTS_SAMPLE_RATE,
     ) -> None:
         self._emit = emit_event
@@ -696,8 +706,6 @@ __all__ = [
     "DEFAULT_TRANSCRIBE_TIMEOUT_MS",
     "DEFAULT_GENERATE_TIMEOUT_MS",
     "DEFAULT_TTS_TIMEOUT_MS",
-    "DEFAULT_CHUNK_MS",
-    "DEFAULT_CHUNK_BYTES",
     "MACHINE_HELD_STATES",
     "FloorState",
     "Stage",

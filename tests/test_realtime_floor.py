@@ -22,7 +22,6 @@ import pytest
 import lobes.realtime._floor as _floor
 from lobes.realtime._floor import (
     DEFAULT_BARGE_IN_WINDOW_MS,
-    DEFAULT_CHUNK_BYTES,
     FailureReason,
     Floor,
     FloorState,
@@ -266,9 +265,32 @@ def test_odd_chunk_size_is_rounded_down_to_whole_samples() -> None:
     assert floor.chunk_bytes == BYTES_PER_SAMPLE  # never zero — that would never deliver
 
 
-def test_default_chunk_size_is_derived_from_the_protocol_rate() -> None:
-    assert DEFAULT_CHUNK_BYTES % BYTES_PER_SAMPLE == 0
-    assert DEFAULT_CHUNK_BYTES == TTS_SAMPLE_RATE * BYTES_PER_SAMPLE * 40 // 1000
+def test_this_module_ships_no_chunk_size_default_of_its_own() -> None:
+    # Issue #151 t6's chunk-size reconciliation: this module used to define
+    # DEFAULT_CHUNK_MS/DEFAULT_CHUNK_BYTES (40ms / 1920 bytes) while the wire
+    # codec defined DEFAULT_DELTA_CHUNK_BYTES (100ms / 4800 bytes). Two
+    # defaults for one wire value is a drift waiting to happen; the wire codec
+    # keeps its (chunk size is wire framing) and `chunk_bytes` is REQUIRED
+    # here, so no second default can come back without failing this test.
+    assert not hasattr(_floor, "DEFAULT_CHUNK_BYTES")
+    assert not hasattr(_floor, "DEFAULT_CHUNK_MS")
+    with pytest.raises(TypeError):
+        Floor(
+            emit_event=lambda event: None,
+            send_audio_chunk=lambda chunk: None,
+            cancel_generate=lambda: None,
+            cancel_tts=lambda: None,
+        )
+
+
+def test_the_sample_rate_default_is_the_output_rate() -> None:
+    # Unlike chunk_bytes, sample_rate KEEPS its default — it is a property of
+    # the TTS sidecar, not of the wire framing. It is the OUTPUT rate: the
+    # session's negotiated INPUT rate may be 16 kHz, and feeding that in would
+    # misreport every audio_end_ms by 1.5x.
+    floor, _, _ = make_floor()
+    assert floor.sample_rate == TTS_SAMPLE_RATE == 24000
+    assert floor.chunk_bytes % BYTES_PER_SAMPLE == 0
 
 
 def test_the_observation_surface_tracks_the_turn_through_every_stage() -> None:
