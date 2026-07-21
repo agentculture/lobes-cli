@@ -29,15 +29,16 @@ from scipy.signal import resample as scipy_resample
 
 from ._pcm import needs_resample, resampled_frame_count, take_aligned_samples
 from ._segmenter import Segmenter, SpeechStarted, SpeechStopped
-from ._session import Session, SessionConfigError, event_to_dict, parse_session_config
+from ._session import ErrorEvent, Session, SessionConfigError, event_to_dict, parse_session_config
 from ._settings import settings
+from ._wire import InboundKind, WireFormatError, decide_inbound_message
 from .audio_facade import (
     SpeechRequestError,
     aggregate_audio_ready,
     parse_speech_request,
     pcm_to_container,
 )
-from .protocol import BYTES_PER_SAMPLE, VAD_SAMPLE_RATE, gen_session_id
+from .protocol import BYTES_PER_SAMPLE, VAD_SAMPLE_RATE, gen_event_id, gen_session_id, timestamp_ms
 from .tts_client import synthesize
 
 log = logging.getLogger(__name__)
@@ -257,10 +258,29 @@ async def realtime(websocket: WebSocket) -> None:
       rejected with the named ``error``/``invalid_session_config`` event and
       the socket is closed before any audio is accepted — no session is
       allocated for a rejected config.
-    - **Input audio**: PCM16 mono little-endian, streamed as BINARY WebSocket
-      frames at whatever chunking granularity the client happens to send (the
-      server reassembles it — a WS frame need not align to a whole sample,
-      let alone a whole VAD chunk). ``input_sample_rate`` defaults to
+    - **Input audio**: streamed as ``input_audio_buffer.append`` JSON TEXT
+      events carrying base64-encoded PCM16 mono little-endian audio (see
+      :mod:`lobes.realtime._wire` — :func:`~lobes.realtime._wire.decode_event`
+      parses the frame, :func:`~lobes.realtime._wire.parse_append_event`
+      decodes the base64 ``audio`` field to exact PCM bytes;
+      :func:`~lobes.realtime._wire.decide_inbound_message` is the single
+      classification point this route calls into for every received
+      message). Any chunking granularity is accepted — an append event's
+      audio need not align to a whole sample, let alone a whole VAD chunk;
+      the server reassembles it. Raw BINARY WebSocket frames are no longer
+      accepted (issue #151 — a deliberate, coordinated break with
+      reachy-mini-cli, tracked in reachy-mini-cli#115, not a compatibility
+      path this route preserves): one arriving now yields the named
+      ``error``/``unsupported_frame_type`` event instead of being read as
+      audio. A well-formed JSON event whose ``type`` is not
+      ``input_audio_buffer.append`` (e.g. a future ``response.create``) is
+      silently ignored — out of scope for THIS route (see the #151 spec's
+      t4/t6 split) — never mistaken for a boundary/audio frame. A malformed
+      frame (invalid JSON, or a missing/invalid base64 ``audio`` field) is
+      never a silent drop either: it becomes the named ``error`` event
+      (``invalid_json`` / ``invalid_append_event`` / ``unsupported_frame_type``,
+      per :class:`~lobes.realtime._wire.WireErrorCode`) and the session
+      stays open to keep receiving. ``input_sample_rate`` defaults to
       **24000 Hz** (OpenAI-Realtime-compatible) — **16000 Hz is also
       accepted** (Parakeet/Silero's native rate; the server skips resampling
       entirely in that case). Any other rate is rejected as an invalid
@@ -419,21 +439,59 @@ async def _transcribe_turn(  # pragma: no cover
         await websocket.send_json(event_to_dict(session.complete_transcription(text)))
 
 
+def _wire_error_event(session: Session, exc: WireFormatError) -> ErrorEvent:  # pragma: no cover
+    """Turn one malformed-frame :class:`~lobes.realtime._wire.WireFormatError`
+    into this session's named ``error`` event.
+
+    ``_wire.py`` deliberately never imports ``_session`` (a sibling module
+    owns the event schema — see both modules' docstrings), so this route
+    layer is the one place allowed to depend on both: it is what turns a
+    wire-level failure into a schema-level event. ``exc.code`` (a
+    :class:`~lobes.realtime._wire.WireErrorCode`) is carried through as the
+    event's ``code`` verbatim rather than mapped onto
+    :class:`~lobes.realtime._session.ErrorCode` — both are ``str``-valued
+    ``Enum`` classes, so the wire-visible JSON ``code`` string serializes
+    identically either way (a client discriminates on that string, never on
+    the Python enum class it came from), and _wire.py's own
+    :class:`~lobes.realtime._wire.WireErrorCode` docstring is what documents
+    these particular values.
+    """
+    return ErrorEvent(
+        session_id=session.session_id,
+        event_id=gen_event_id(),
+        timestamp_ms=timestamp_ms(),
+        code=exc.code,
+        message=str(exc),
+    )
+
+
 async def _pump_session(  # pragma: no cover
     websocket: WebSocket, session: Session, segmenter: Segmenter, input_rate: int
 ) -> None:
-    """Receive audio until the client goes away, segmenting as it arrives."""
+    """Receive audio until the client goes away, segmenting as it arrives.
+
+    Every received message is classified by
+    :func:`~lobes.realtime._wire.decide_inbound_message` — audio (a valid
+    ``input_audio_buffer.append`` event), ignorable (a well-formed event
+    this route does not act on yet, e.g. a future ``response.create`` — see
+    the #151 spec's t4/t6 split), or malformed (a named ``error`` event via
+    :func:`_wire_error_event`, never a silent drop). This loop is a thin
+    dispatch over that one decision; the classification itself is tested
+    offline in ``tests/test_realtime_wire.py``, since this route (like every
+    route in this module) is never imported by the offline suite.
+    """
     pending = bytearray()
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
             return
-        audio = message.get("bytes")
-        if audio is None:
-            # A text/control frame. Out of scope (spec Non-goals: no
-            # response.create, no mid-session session.update) — ignored,
-            # never mistaken for a boundary/audio frame.
+        decision = decide_inbound_message(message)
+        if decision.kind is InboundKind.IGNORED:
             continue
+        if decision.kind is InboundKind.ERROR:
+            await websocket.send_json(event_to_dict(_wire_error_event(session, decision.error)))
+            continue
+        audio = decision.audio
 
         pending.extend(audio)
         aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
