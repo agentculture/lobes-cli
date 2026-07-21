@@ -17,6 +17,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -28,6 +30,22 @@ class Settings:
     openai_base_url: str  # the fleet LLM front, e.g. http://gateway:8000
     openai_api_key: str
     openai_model: str  # may be "" → the gateway default-routes
+    # Operator-set DEFAULT system prompt for a session's generate calls (issue
+    # #151 t8) — the OPERATOR half of "an operator-set default system prompt
+    # via env and a per-session override in the connect config" (spec c34).
+    # The per-session override half already exists as
+    # SessionConfig.system_prompt / parse_session_config's own
+    # ``system_prompt`` payload key, which always wins over this value when a
+    # client sets one (see _session.parse_session_config's docstring). Never
+    # blank: an unset env mirrors _session.DEFAULT_SYSTEM_PROMPT, so a
+    # deployment that never sets DEFAULT_SYSTEM_PROMPT behaves exactly like
+    # the pre-#151 in-code fallback. A genuinely blank system prompt is
+    # actively harmful here, not merely useless — Chatterbox reads the reply
+    # aloud verbatim, so a reply that reverts to the model's normal WRITTEN
+    # register (markdown, bullet lists, code fences) comes back as spoken
+    # nonsense ("asterisk asterisk", literal list markers) instead of a
+    # sentence a listener can follow.
+    default_system_prompt: str
 
     # TTS defaults.
     default_voice: str  # "" → Chatterbox default voice; or a .wav path for zero-shot cloning
@@ -81,6 +99,10 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_base_url=(env.get("OPENAI_BASE_URL") or "http://gateway:8000").rstrip("/"),
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
+        # Empty/unset → the mirrored code-level fallback, same "or default"
+        # idiom as every other string field above (an operator who blanks the
+        # line in .env gets the safe spoken-style prompt back, not silence).
+        default_system_prompt=env.get("DEFAULT_SYSTEM_PROMPT") or _SESSION_DEFAULT_SYSTEM_PROMPT,
         default_voice=env.get("DEFAULT_VOICE") or "",
         # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
         # (or negative) blocks every TTS request forever; tts_speed is a percentage,

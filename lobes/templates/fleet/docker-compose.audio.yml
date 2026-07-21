@@ -125,14 +125,29 @@ services:
       - OPENAI_BASE_URL=http://gateway:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY:-EMPTY}
       - OPENAI_MODEL=${OPENAI_MODEL:-}
+      # Operator default system prompt (issue #151 t8) — a per-session
+      # system_prompt in the connect config always overrides this; empty
+      # falls back to lobes/realtime/_session.py's DEFAULT_SYSTEM_PROMPT. See
+      # env.audio.example for the full rationale.
+      - DEFAULT_SYSTEM_PROMPT=${DEFAULT_SYSTEM_PROMPT:-}
       - DEFAULT_VOICE=${DEFAULT_VOICE:-}
       - TTS_SPEED=${TTS_SPEED:-125}
+      # TTS concurrency lanes (issue #151 t7/t8) — two INDEPENDENT semaphore
+      # pools, batch vs. voice; see env.audio.example for why splitting the
+      # pool (not raising one shared ceiling) is the fix.
+      - TTS_CONCURRENCY=${TTS_CONCURRENCY:-1}
+      - TTS_VOICE_CONCURRENCY=${TTS_VOICE_CONCURRENCY:-1}
       - VAD_THRESHOLD=${VAD_THRESHOLD:-0.5}
       - VAD_SILENCE_MS=${VAD_SILENCE_MS:-600}
       - VAD_PREFIX_PADDING_MS=${VAD_PREFIX_PADDING_MS:-300}
       - VAD_MAX_TURN_MS=${VAD_MAX_TURN_MS:-30000}
       - DEFAULT_TURN_DETECTION=${DEFAULT_TURN_DETECTION:-server_vad}
       - DEFAULT_AEC_MODE=${DEFAULT_AEC_MODE:-none}
+      # Barge-in (issue #151 t8) — armed knobs previously read by
+      # _settings.py but never passed here (dead since #149); see
+      # env.audio.example for the rationale on both defaults.
+      - BARGE_IN_WINDOW_MS=${BARGE_IN_WINDOW_MS:-750}
+      - BARGE_IN_MODEL=${BARGE_IN_MODEL:-}
     expose:
       - "${REALTIME_PORT:-8080}"
     healthcheck:

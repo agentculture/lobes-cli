@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from lobes.realtime._session import DEFAULT_SYSTEM_PROMPT
 from lobes.realtime._settings import (
     BATCH_LANE,
     VOICE_LANE,
@@ -24,6 +25,7 @@ def test_defaults_point_at_the_fleet_compose_network() -> None:
     assert s.tts_voice_concurrency == 1
     assert s.default_voice == ""  # Chatterbox default voice (empty = built-in)
     assert s.vad_max_turn_ms == 30_000
+    assert s.default_system_prompt == DEFAULT_SYSTEM_PROMPT
 
 
 def test_overrides_and_trailing_slash_stripped() -> None:
@@ -137,3 +139,35 @@ def test_vad_max_turn_ms_is_clamped_to_a_sane_floor() -> None:
     assert build_settings({"VAD_MAX_TURN_MS": "not-a-number"}).vad_max_turn_ms == 30_000
     # A legitimate operator value passes through untouched.
     assert build_settings({"VAD_MAX_TURN_MS": "45000"}).vad_max_turn_ms == 45_000
+
+
+# --- default_system_prompt (issue #151 t8) ----------------------------------
+#
+# The OPERATOR half of "an operator-set default system prompt via env and a
+# per-session override in the connect config" (spec c34) — the per-session
+# override half (SessionConfig.system_prompt / parse_session_config's
+# default_system_prompt parameter) already existed from #151 t3. This field
+# is what a caller (app.py, a later task) threads into that parameter.
+
+
+def test_default_system_prompt_mirrors_the_session_default_when_unset() -> None:
+    # An operator who never sets DEFAULT_SYSTEM_PROMPT must get exactly the
+    # pre-#151 in-code fallback back — not a blank prompt, which would let a
+    # reply revert to the model's normal WRITTEN register (markdown, bullet
+    # lists, code fences) that a TTS voice then reads aloud verbatim.
+    assert build_settings({}).default_system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert build_settings({}).default_system_prompt != ""
+
+
+def test_default_system_prompt_operator_override() -> None:
+    s = build_settings({"DEFAULT_SYSTEM_PROMPT": "You are terse. One word answers only."})
+    assert s.default_system_prompt == "You are terse. One word answers only."
+
+
+def test_default_system_prompt_blank_env_falls_back_to_the_mirrored_default() -> None:
+    # Same "empty string in .env means unset" idiom as every other string
+    # field in this module (e.g. OPENAI_MODEL, DEFAULT_VOICE) — a blank line
+    # left in .env must not silently ship a blank system prompt.
+    assert build_settings({"DEFAULT_SYSTEM_PROMPT": ""}).default_system_prompt == (
+        DEFAULT_SYSTEM_PROMPT
+    )
