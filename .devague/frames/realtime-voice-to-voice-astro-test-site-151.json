@@ -1,0 +1,653 @@
+{
+  "slug": "realtime-voice-to-voice-astro-test-site-151",
+  "title": "realtime voice-to-voice + astro test site (#151)",
+  "schema_version": 3,
+  "status": "exported",
+  "created": "2026-07-21T16:01:52Z",
+  "updated": "2026-07-21T16:51:54Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves full realtime voice-to-voice: a spoken turn over /v1/realtime gets a spoken, interruptible reply back on the same WebSocket, and an Astro browser test site in the org site's visual language drives it live \u2014 mic in, animated event stream, audio out",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "a live Spark GB10 run through the production gateway: speak, hear the reply, interrupt it mid-playback, and the recorded event transcript shows the interruption \u2014 committed under docs/evidence/ before any doc says validated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "acceptance procedure mirrors docs/evidence/README-realtime-acceptance.md: fleet up with --audio, drive the session from the Astro site with a real microphone, save the event log as the transcript"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "a committed turn optionally triggers a server-side generate + TTS reply streamed back over the SAME WebSocket \u2014 the extension point exists: app.py _pump_session currently IGNORES text/control frames, citing the #149 spec non-goal (no response.create, no mid-session session.update), and protocol.py already ships dormant gen_response_id/gen_content_part_id for exactly this",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a session that never opts into conversation emits a byte-identical #149 event stream (offline-asserted), and the opt-in turn flow commit-generate-TTS-out is a scripted offline test against fake backends",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "the turn machinery lands in stdlib-only modules beside _session.py/_segmenter.py; app.py stays a pragma-no-cover shell wiring them to real httpx/TTS"
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "audio-out over the session needs NO resample and NO gateway change: protocol.py pins TTS_SAMPLE_RATE=24000 == CLIENT_SAMPLE_RATE (\"matches, no resample\"), tts_client.synthesize already runs in the bridge container, and the gateway tunnel is already full-duplex (run_tunnel pumps both directions in parallel threads)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "no resample call exists in the TTS-out path (24 kHz end to end) and the gateway diff for audio-out is zero lines \u2014 the tunnel already relays both directions",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "assert by unit test that the TTS-out path calls no resampler \u2014 audio-out frames reuse tts_client.synthesize PCM verbatim; the gateway tunnel diff must be zero lines"
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "the server-side brain call is already configured but unused: _settings.py ships openai_base_url (default http://gateway:8000), openai_api_key, openai_model (\"\" = gateway default-routes) in the bridge env \u2014 the voice lane defaults to model=multimodal with chat_template_kwargs {\"enable_thinking\": false} per issue #151 (measured ~1 s to a short reply vs cortex reasoning latency), operator-overridable via OPENAI_MODEL",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the voice-lane default is env-tunable (OPENAI_MODEL) and, with the default lane infeasible on the deployed shape, a voice turn yields a NAMED error event derived from the gateway 404 \u2014 never a silent fallback to another lane",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "read OPENAI_MODEL/OPENAI_BASE_URL from settings at turn time; default the voice lane to multimodal with enable_thinking=false; map a gateway 404 role_infeasible to the named error event, passing the hosted_by peer hint through"
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "turn-taking state must be explicit in the event schema (who holds the floor), not implied by event ordering: SessionState today is IDLE/SPEECH/TRANSCRIBING/CLOSED \u2014 no responding/speaking state exists \u2014 and the event schema is deliberately small (6 event types, 3 error codes), so voice-to-voice adds states + response/audio-out events to _session.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the floor holder is explicit in the event schema (a state field or event family), and the offline suite walks the full state graph \u2014 including an interrupt arriving in every responding/speaking state",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "extend SessionState + EventType + ErrorCode in _session.py, the module that owns the schema; keep every new dataclass frozen and event_to_dict-serializable"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "barge-in arms the shipped-but-dormant knobs: _settings.py has barge_in_window_ms (default 750) and barge_in_model, read from env and never consumed anywhere; the voice-loop script proves the alternative \u2014 its muted-mic half-duplex is explicitly \"what barge-in cannot do\" (its own docstring: without AEC the session transcribes the machine talking to itself)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "with audio-out playing, injected speech stops playback within barge_in_window_ms and emits the interruption event; the browser site does barge-in with echoCancellation only \u2014 no mic muting anywhere in the site code",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "arm the shipped barge_in_window_ms/barge_in_model knobs; thread them through compose env per c16"
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "the browser needs a WS auth path the gateway does not have: the inbound bearer gate runs BEFORE the realtime branch and reads the Authorization header (gateway/server.py ~2023-2030), which a browser WebSocket cannot set; the tunnel already forwards the connect path WITH query string verbatim and strips authorization/cookie from the forwarded handshake \u2014 so a query-param or Sec-WebSocket-Protocol token accepted by the inbound gate is a contained gateway change",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "the Astro test site reuses the org site VISUAL LANGUAGE, not its architecture: design tokens (dawn palette, --mesh-*/--accent, Fraunces + Albert Sans variable fonts), the node-breathe/halo-breathe keyframes, the data-reveal IntersectionObserver system, and terminal-pane chrome all port directly \u2014 but org has NO live-network pattern anywhere (zero fetch/WebSocket/EventSource under src/, philosophy \"replay captured data, never dial a live machine\"), so the mic + WS event-stream island is genuinely new client JS",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "the site meets the org bar it borrows: all animation dies under prefers-reduced-motion, text/background pairs hold WCAG AA in both themes, and each named error code renders visually distinct from silence and from disconnect",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "port the design tokens + keyframes + data-reveal system from ../org/site-astro global.css; the live WS island is new client JS bundled by Astro, not is:inline"
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "browser-side AEC is free and changes the barge-in calculus: getUserMedia({audio:{echoCancellation:true}}) gives the site echo-cancelled mic input natively, and reachy-mini-cli cancels echo in firmware (#149) \u2014 the two known consumers cover AEC client-side, so server-side AEC can stay a declared-off AECMode passthrough rather than new DSP machinery",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "ears-only stays intact and DEFAULT: reachy-mini-cli consumes transcription events and must not be forced into a conversation surface \u2014 a session that never sends response.create (or equivalent) behaves byte-identically to the #149 contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "the #149 offline event-sequence tests keep passing unmodified against the new code \u2014 the non-opt-in stream is byte-identical by test, not by intention",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "no cross-box WebSocket, still: the #129 proxy-lobes forwarder is POST-only and the tunnel refuses WS proxying even when STT_PEER_PROXY is armed (spec boundary c13, restated in _realtime.py docstring) \u2014 voice-to-voice adds traffic ON the session, not new session transport",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the tunnel refusal test for an armed STT_PEER_PROXY still asserts refusal after the change; no new WS egress to peers exists anywhere in the diff",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "the batch routes /v1/audio/speech and /v1/audio/transcriptions stay byte-identical (the #149 boundary carries forward \u2014 reachy measured-working links must not regress), and Parakeet/Chatterbox/Silero stay hardcoded sidecars outside catalog.py (the established audio-overlay rule)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "the batch /v1/audio/* handlers and catalog.py show a zero diff in the PR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c13",
+      "kind": "non_goal",
+      "text": "sessions stay ephemeral: no resume across bridge/gateway restarts, no session state on disk, an interrupted response is simply gone \u2014 the #149 lifecycle boundary (s20) is not reopened by voice-to-voice",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "no new Python dependencies: the [realtime] extra + Dockerfile.realtime already ship fastapi/uvicorn/httpx/numpy/scipy/silero-vad/torch, and the brain+mouth calls reuse in-container httpx + tts_client \u2014 voice-to-voice is wiring, not new wheels",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "the #108 evidence rule governs every validated claim: a live acceptance transcript under docs/evidence/ must land before any doc claims voice-to-voice or the site validated \u2014 and #149 left four items explicitly UNVALIDATED (real microphone, vad_unavailable path, concurrent sessions, max-turn cap); the browser site IS the real-microphone test vehicle, so its acceptance run can retire that debt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "every new knob must be threaded through the deployment, not just read: docker-compose.audio.yml already passes OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL (currently dead config \u2014 nothing in app.py consumes them) but NO BARGE_IN_* keys \u2014 the #149 s4 lesson applies verbatim: a settings key the compose env never passes silently pins to its default inside the container; compose environment block + env.audio.example + doctor-heal coverage move together",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "every key _settings.py reads exists in docker-compose.audio.yml environment AND env.audio.example, and doctor --fix heals absent ones \u2014 asserted by a test, not by inspection",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add BARGE_IN_WINDOW_MS/BARGE_IN_MODEL plus every new voice-turn key to docker-compose.audio.yml environment AND env.audio.example; extend the doctor-heal key list and its test in the same change"
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "offline tests for the turn-taking state machine per the established split: all 188 realtime-adjacent tests are stdlib-only or loopback-only (no fastapi/torch in CI), app.py route shells are pragma-no-cover and coverage-omitted in pyproject \u2014 the new floor/response/interrupt logic must land in stdlib modules the offline suite fully covers, with the route shell live-tested (issue AC5)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "CI with no [realtime] extra installed runs the new turn-taking tests green; the new logic lives in stdlib-only modules under offline coverage",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "model the floor/turn machine as a pure state class in a new stdlib module (like _segmenter.py: injected callables, no I/O); test every transition offline, including an interrupt from each responding/speaking state"
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "the docs flip in the same PR: realtime-pipeline.md explicitly IOUs this issue (\"It is half-duplex \u2014 no barge-in... Real barge-in needs AEC and is tracked in #151\") and records the voice-loop script as the client-side stitch this work moves server-side; openai-api.md endpoint table, gateway-fleet.md, and the lobes explain realtime catalog entry all carry the audio-in-only framing and must change together",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "after the PR, no doc or explain entry claims the session is audio-in-only/half-duplex except as history; realtime-pipeline.md, openai-api.md, gateway-fleet.md, and lobes explain realtime flip in the same PR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "update realtime-pipeline.md (drop the half-duplex IOU, document the conversation opt-in + new events), openai-api.md endpoint table, gateway-fleet.md, and the explain catalog _REALTIME entry in the same PR; run doc-test-alignment before opening it"
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "the site needs its own CI lane: Node 20 is already installed in the lint job (for markdownlint) but nothing runs npm ci/build anywhere; sonar.sources=lobes would not scan a site dir; version-check and publish path filters would not gate it; hatch packages only lobes/ so the site never ships in the wheel \u2014 a site-build job (the org repo pattern: npm ci && npm run build failing CI on a broken build) is new work",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "a broken Astro build fails PR CI, and the built wheel is byte-identical with and without the site directory present",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add a site-build job to tests.yml (npm ci && npm run build in the site dir, Node 22 per the org engines pin); leave sonar.sources, version-check path filters, and hatch packaging untouched"
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "the gateway does not become a static file host: do_GET is a fixed dispatcher (health/status/capabilities/models/realtime, else 404) \u2014 the site is served by Astro dev/preview (or Pages, per the deployment question), never by the gateway process",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the gateway do_GET dispatcher gains no static/file-serving branch in the PR diff",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c21",
+      "kind": "assumption",
+      "text": "scripts/realtime-voice-loop.py stays the terminal-side reference client: scripts/ is repo-only (hatch packages only lobes/), the script calls itself a scratch tool, and its client-side three-endpoint stitch becomes obsolete-by-default once the loop moves server-side \u2014 it is not deleted, it is the pre-#151 fallback and the non-browser live test",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "the local Astro test site connects through a LOCAL server-side WebSocket proxy that injects the Authorization: Bearer credential before forwarding to the gateway \u2014 the browser never holds or sends the key; the concrete mechanism (Astro/Vite dev-server proxy with an upgrade-header hook vs a tiny standalone local proxy) is a plan-time choice",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the API key never reaches the browser: not in served JS/HTML or any config response; the proxy injects Authorization server-side; with the proxy down the site cannot connect at all",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "prefer the Astro/Vite dev-server proxy (server.proxy, ws:true, upgrade-header hook) so no extra process is needed; a tiny standalone local proxy is the fallback if Vite cannot inject upgrade headers"
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "query-parameter and WebSocket-subprotocol authentication are OUT of scope: public realtime clients are robots and native applications capable of setting the existing Authorization: Bearer header on the handshake \u2014 the public gateway remains header-authenticated",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "after the PR, lobes/gateway contains no query-param or Sec-WebSocket-Protocol token handling, and the auth tests still assert header-only Bearer",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "no public site: the Astro site is local-only \u2014 testing, experiencing, and exemplifying the realtime surface against a local gateway; no Cloudflare Pages lane, no deploy workflow (the site-build CI job keeps it compiling, nothing publishes it)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "no deploy workflow for the site exists under .github/workflows; the site README states local-only and documents the dev flow (npm run dev + local proxy + local gateway + key)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "the internet-exposed realtime gateway posture hardens beyond auth: per-client limits, credential isolation, timeouts, and resource-budget enforcement appropriate for a public realtime service \u2014 the header-auth gate alone is not the whole public contract",
+      "origin": "user",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c26",
+      "kind": "assumption",
+      "text": "AEC ownership sits at the client edge, whoever that is: Reachy Mini cancels echo in firmware, the browser site gets it from getUserMedia echoCancellation, and a mic-speaker unit may do it in hardware \u2014 server-side AEC stays the declared-off AECMode passthrough with no DSP machinery",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c27",
+      "kind": "audience",
+      "text": "voice-capable clients of the fleet and the humans behind them: reachy-mini-cli (firmware-AEC robot, ears-only consumer that must not regress), native/terminal clients like the f1e6ffa voice loop (header-auth capable), the developer at the local Astro site experiencing the surface, and the operator reading the live event stream to tune VAD knobs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "each named audience has a concrete shipped surface: reachy an unchanged ears-only contract, the terminal client a still-working voice loop, the site developer a running site, the operator a live event stream that shows VAD boundaries and timings",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c28",
+      "kind": "before_state",
+      "text": "a voice conversation lives in the client: scripts/realtime-voice-loop.py stitches ears/brain/mouth across three endpoints, half-duplex by design (mic muted through the whole synthesize-and-play window), interruption is impossible, and the only observability is terminal prints \u2014 VAD tuning is guessed at, not observed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the before-state is cited from in-tree evidence, not memory: the f1e6ffa commit message, the voice-loop docstring (half-duplex, muted mic), and #149 spec non-goal c15",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c29",
+      "kind": "after_state",
+      "text": "a spoken turn over ONE WebSocket gets a spoken reply on the same connection \u2014 commit, generate, synthesize all server-side \u2014 and speaking during playback interrupts it; the local Astro site renders the whole exchange live (boundaries, transcripts, reply text, audio out, interruptions, named errors) in the org visual language, so the surface is experienced in a browser instead of inferred from prints",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "the live acceptance run demonstrates every element of the after-state: a spoken reply on one connection, an interruption mid-playback, and the site rendering boundaries, transcripts, reply text, audio and named errors",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "the #151 acceptance criteria hold: a spoken reply with no second HTTP call; barge-in visible in the event stream; ears-only consumers see a byte-identical #149 contract; the site drives a full conversation rendering every event type including each named error code distinctly; the turn-taking machine is fully offline-tested; a live transcript lands under docs/evidence/ before any validated wording (#108)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "each acceptance criterion maps to a named offline test or to the evidence transcript, and the mapping is explicit in the exported spec",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "the duplex-client hard-won lessons from f1e6ffa (answer uvicorn PING within ~20s or die; select()-based read deadlines; torn-frame writes) apply to any NON-browser client of the conversation surface \u2014 the browser WebSocket handles ping/pong natively, but whether the docs owe a client-authoring rule beyond the existing one is open",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "gateway realtime hardening \u2014 per-client session limits, credential isolation, timeouts, resource-budget enforcement for the internet-exposed service \u2014 ships as a sibling issue the exported spec cites by name; the #149 session-cap park folds into that issue",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/realtime/app.py (_pump_session, realtime route)",
+      "finding": "text/control frames are deliberately ignored today with a comment citing the #149 non-goals \u2014 response.create lands here; the route is a thin pragma-no-cover shell over stdlib-tested modules, and the established split (stdlib logic offline-tested, route shells live-tested) governs any new turn machinery",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/realtime/protocol.py + tts_client.py + lobes/gateway/_realtime.py",
+      "finding": "Chatterbox emits 24 kHz PCM16 and the client wire format is 24 kHz PCM16 \u2014 TTS-out is a passthrough; synthesize() is in-container; the byte tunnel relays opaque bytes both ways concurrently, so server-to-client audio frames traverse it with zero gateway work",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/realtime/_settings.py + scripts/realtime-voice-loop.py",
+      "finding": "Settings already carries the LLM backend block (openai_base_url/api_key/model) and the voice-loop script records the measured model choice in-tree: multimodal ~1 s to first reply, \"a thinking model spends that on a trace nobody hears\" \u2014 but a spark-lobe shape drops senses, so the default must tolerate an infeasible multimodal lane (gateway 404s role_infeasible, never silently falls back)",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/realtime/_session.py (SessionState, EventType, ErrorCode)",
+      "finding": "the session engine is stdlib-only and fully offline-tested; its docstring scopes it to \"audio-in, boundaries, transcription\" per the #149 spec \u2014 voice-to-voice extends SessionState (floor holder), EventType (response/audio-out/interruption events), and ErrorCode (generate/TTS forward failures) in the module that owns the schema",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/realtime/_settings.py (barge_in_*) + scripts/realtime-voice-loop.py (muted-mic pattern) + commit f1e6ffa",
+      "finding": "barge_in_window_ms=750 / barge_in_model ship unused (\"the in-tree barge_in_/response-id machinery stays dormant\" \u2014 #149 non-goal); the f1e6ffa voice loop is half-duplex BY DESIGN (mic muted during playback) because server AEC is absent \u2014 barge-in is precisely the capability that muting forecloses",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/gateway/server.py (inbound bearer gate + _handle_realtime)",
+      "finding": "auth precedes the realtime tunnel by design (\"a rejected handshake costs zero planning, zero upstream sockets\"); the gate is header-only Bearer with hmac.compare_digest \u2014 no query-param or subprotocol path exists; session config already travels as query params on the connect URL, so a token query param would reach the bridge (and its logs) unless the gateway strips it \u2014 the mechanism choice is a real security decision",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "../org/site-astro (global.css tokens, HeroMesh/LobesDiagram/LobesTerminal, Layout.astro, astro.config.mjs)",
+      "finding": "Astro 7, output static, zero integrations, zero UI frameworks; animations are CSS-only (compositor-friendly scale/opacity keyframes, per-instance --bd delays, global prefers-reduced-motion kill switch, WCAG AA both themes documented in global.css); terminals are build-time replay engines over typed capture data (CaptureLine kind cmd/cont/out) \u2014 the aesthetic and a11y bar to match; deploys to Cloudflare Pages via wrangler in org CI",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/realtime/protocol.py (AECMode) + _session.py (parse_session_config) + issue #151 note",
+      "finding": "AECMode {none, aec} and default_aec_mode=\"none\" are shipped and validated in config parsing but drive nothing; the issue REQUIRES server AEC stay optional/default-off for the firmware-AEC consumer; the browser gets AEC from getUserMedia constraints \u2014 client-side AEC covers both known consumers",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "issue #151 Notes + docs/specs/2026-07-21-realtime-ws-server-vad-149.md (Non-goals, c15)",
+      "finding": "the #149 spec deliberately recorded no-response.create/no-LLM/no-TTS-out as non-goal c15 with the barge-in machinery \"dormant\" \u2014 #151 is the planned lift of exactly that non-goal, while its Notes pin the ears-only default for reachy-mini-cli",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "lobes/gateway/_realtime.py (docstring: \"No cross-box WebSocket\", spec c13)",
+      "finding": "the tunnel docstring hard-codes the rationale: a half-served WS crossing a box boundary would break the loop-guard and attribution guarantees the POST proxy lane provides \u2014 lifting this is its own future issue, not #151",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "docs/evidence/2026-07-21-accept-realtime-spark.txt + README-realtime-acceptance.md + CLAUDE.md realtime section",
+      "finding": "the #149 acceptance run used synthesized audio through the gateway tunnel at both rates and caught the tunnel leftover-direction bug \u2014 but a real microphone, the VAD-unavailable path, concurrent sessions, and the max-turn cap are recorded as still-unvalidated; the site closes the real-mic gap by construction",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "lobes/templates/fleet/docker-compose.audio.yml (realtime service env) + env.audio.example",
+      "finding": "the bridge service already receives STT_URL/TTS_URL/OPENAI_* plus the VAD block and DEFAULT_AEC_MODE; BARGE_IN_WINDOW_MS/BARGE_IN_MODEL are read by _settings.py but absent from the compose environment \u2014 wired-but-dead on one side, read-but-never-passed on the other",
+      "seeds": [
+        "c4",
+        "c16"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "tests/test_realtime_*.py + test_gateway_realtime_ws.py + pyproject.toml coverage omit list",
+      "finding": "188 tests across ten realtime files, every one offline (stdlib or 127.0.0.1 loopback); the f1e6ffa duplex-client regressions live in test_realtime_smoke_helpers.py; the [realtime] extra (fastapi/torch) is never installed in CI, so route shells stay pragma-no-cover \u2014 the split is policy, not accident",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "docs/realtime-pipeline.md + docs/openai-api.md + docs/gateway-fleet.md + lobes/explain/catalog.py (_REALTIME)",
+      "finding": "realtime-pipeline.md names #151 by number as the tracked barge-in/AEC follow-up \u2014 an in-tree IOU exactly like the one #149 redeemed; the explain catalog mirrors the pipeline doc including the \"audio-in only\" framing and the still-unvalidated list",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": ".github/workflows/tests.yml + publish.yml + sonar-project.properties + pyproject.toml [tool.hatch.build.targets.wheel]",
+      "finding": "CI is uv/Python-shaped end to end; the one Node use is a global markdownlint install; org CI has the reusable pattern (site-build job + Cloudflare Pages deploy via wrangler) if the site lives here and deploys at all",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "lobes/gateway/server.py (do_GET dispatcher \u2014 no static serving)",
+      "finding": "grep confirms no static/text-html/SimpleHTTPRequestHandler path exists; hosting the site in-gateway would be new machinery with no precedent \u2014 Astro tooling serves the site",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "scripts/realtime-voice-loop.py + scripts/realtime-smoke.py (the shared duplex WS client) + pyproject packaging",
+      "finding": "the duplex-safe WebSocket client lives in realtime-smoke.py and is reused by the voice loop; its hard-won rules (pong uvicorn pings within ~20s, select()-based read deadlines, lock-guarded writes) are the survival contract for ANY non-browser client of the richer session \u2014 the browser WebSocket gets ping/pong for free",
+      "seeds": [
+        "c21"
+      ]
+    }
+  ]
+}
