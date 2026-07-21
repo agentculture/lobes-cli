@@ -82,6 +82,7 @@ slug: `realtime-voice-to-voice-astro-test-site-151` · status: `exported` · fro
 - acceptance:
   - npm run build succeeds on Node 22; the global CSS carries the prefers-reduced-motion kill and the documented AA token pairs in both themes
   - the built output makes zero external network requests (fonts bundled)
+  - package.json is pinned COMPLETE in this task — every dependency wave-2 site tasks (t11/t12/t13) will need is declared up front, so no wave-2 task edits package.json
 
 ### t11 — Mic + playback island: site client JS — getUserMedia({echoCancellation:true}) + AudioWorklet capture to 24 kHz PCM16 base64 append events; delta player; playback stops on interruption event; start-control gesture gating; permission-denied/not-found as distinct states
 
