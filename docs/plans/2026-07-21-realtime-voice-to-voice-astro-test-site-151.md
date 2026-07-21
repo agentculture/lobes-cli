@@ -151,6 +151,12 @@ slug: `realtime-voice-to-voice-astro-test-site-151` · status: `exported` · fro
   - the narrowed gate still fails if any code path mutes the mic in response to a playback/response event — asserted by test, with the deviation d1 rationale cited in the test
   - muted state is honest in the event stream: the operator can tell "muted" from "silence" from "disconnected"
 
+### t19 — Site conversation arming + vocabulary sync: a conversation toggle that sends response.create (default OFF so ears-only stays the default), and sync the site error vocabulary with the servers new invalid_wire_event code
+
+- acceptance:
+  - with the toggle off the session is byte-identical to ears-only; with it on, a committed turn produces a spoken reply over the same socket
+  - the site error vocabulary matches _session.ErrorCode exactly, with a fixture per code, and a test fails if the two drift
+
 ## Risks
 
 - [unknown_nonblocking] barge_in_model semantics are undefined in-tree — window-only barge-in ships; the knob stays declared/unconsumed-beyond-threading until the live run shows window-only is insufficient (frame park v3) (task t2)

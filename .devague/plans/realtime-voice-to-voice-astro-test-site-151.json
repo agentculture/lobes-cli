@@ -5,7 +5,7 @@
   "schema_version": 3,
   "status": "exported",
   "created": "2026-07-21T18:00:04Z",
-  "updated": "2026-07-21T19:58:58Z",
+  "updated": "2026-07-21T20:32:36Z",
   "targets": [
     {
       "id": "c1",
@@ -649,6 +649,19 @@
         "a user can mute the mic and turn it off from the UI; state is visible and distinguishable by more than colour, and the device is genuinely released on mic-off",
         "the narrowed gate still fails if any code path mutes the mic in response to a playback/response event \u2014 asserted by test, with the deviation d1 rationale cited in the test",
         "muted state is honest in the event stream: the operator can tell \"muted\" from \"silence\" from \"disconnected\""
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t19",
+      "summary": "Site conversation arming + vocabulary sync: a conversation toggle that sends response.create (default OFF so ears-only stays the default), and sync the site error vocabulary with the servers new invalid_wire_event code",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with the toggle off the session is byte-identical to ears-only; with it on, a committed turn produces a spoken reply over the same socket",
+        "the site error vocabulary matches _session.ErrorCode exactly, with a fixture per code, and a test fails if the two drift"
       ],
       "deps": [],
       "covers": [],
