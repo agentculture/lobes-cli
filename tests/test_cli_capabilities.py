@@ -26,7 +26,9 @@ import pytest
 
 from lobes.cli import main
 from lobes.cli._commands import capabilities as capabilities_module
-from lobes.roles import ROLES
+from lobes.gateway._config import build_config
+from lobes.gateway.server import capabilities_payload
+from lobes.roles import ROLES, STT_REALTIME_RESPONSIBILITY
 from lobes.runtime import _compose, _env
 
 _ROLE_INFO_FIELDS = {
@@ -265,6 +267,81 @@ def test_capabilities_has_no_apply_flag(capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["capabilities", "--apply"])
     assert exc.value.code == 1  # EXIT_USER_ERROR via the structured argparse error
+
+
+# ---------------------------------------------------------------------------
+# stt realtime/VAD session capability (issue #149, task t4)
+# ---------------------------------------------------------------------------
+#
+# Acceptance criterion 1: on an audio-enabled registry, BOTH `lobes
+# capabilities` (the CLI's offline .env-derived fallback) and `GET
+# /capabilities` (lobes.gateway.server.capabilities_payload — the SAME
+# function the gateway's own HTTP route calls, see server.py's
+# _get_capabilities) show the realtime capability under `stt`. Acceptance
+# criterion 2: a text-only fleet (no audio overlay) shows no realtime claim
+# on either surface — the negative control, without which the positive
+# assertions below would be vacuous.
+
+
+def test_capabilities_json_stt_advertises_realtime_when_audio_enabled(tmp_path, capsys) -> None:
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "AUDIO_URL", "http://realtime:8080")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stt"]["loaded"] is True
+    assert STT_REALTIME_RESPONSIBILITY in payload["stt"]["responsibilities"]
+    # The capability is stt-only — tts never claims it.
+    assert STT_REALTIME_RESPONSIBILITY not in payload["tts"]["responsibilities"]
+
+
+def test_capabilities_json_stt_no_realtime_claim_on_text_only_fleet(tmp_path, capsys) -> None:
+    """Negative control: the packaged fleet scaffold has no `--audio` overlay
+    (AUDIO_URL unset) — `stt` must not claim the realtime capability."""
+    _scaffold_fleet(tmp_path)
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stt"]["loaded"] is False
+    assert payload["stt"]["responsibilities"] == ["transcribe", "audio_input_to_text"]
+    assert STT_REALTIME_RESPONSIBILITY not in payload["stt"]["responsibilities"]
+
+
+def test_capabilities_json_stt_no_realtime_claim_when_lane_declared_infeasible(
+    tmp_path, capsys
+) -> None:
+    """Honesty: STT_FEASIBLE=false must withhold the claim even with the
+    overlay wired — a capability this machine declared off is never
+    advertised, exactly like the existing feasible/loaded discipline."""
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "AUDIO_URL", "http://realtime:8080")
+    _env.set_env(tmp_path / _compose.ENV_FILE, "STT_FEASIBLE", "false")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stt"]["feasible"] is False
+    assert STT_REALTIME_RESPONSIBILITY not in payload["stt"]["responsibilities"]
+
+
+def test_gateway_get_capabilities_stt_advertises_realtime_when_audio_enabled() -> None:
+    """The gateway side of criterion 1: `capabilities_payload` — the exact
+    function `GET /capabilities` dispatches to — claims the capability when
+    the audio overlay is wired."""
+    env = {"PRIMARY_URL": "http://vllm-primary:8000", "AUDIO_URL": "http://realtime:8080"}
+    table, cfg = build_config(env)
+    payload = capabilities_payload(table, cfg, env=env, gateway_url="http://localhost:8000")
+    assert payload["stt"]["loaded"] is True
+    assert STT_REALTIME_RESPONSIBILITY in payload["stt"]["responsibilities"]
+
+
+def test_gateway_get_capabilities_stt_no_realtime_claim_on_text_only_fleet() -> None:
+    """The gateway side of criterion 2: a text-only fleet's `GET
+    /capabilities` must not claim the realtime capability either."""
+    env = {"PRIMARY_URL": "http://vllm-primary:8000"}
+    table, cfg = build_config(env)
+    payload = capabilities_payload(table, cfg, env=env, gateway_url="http://localhost:8000")
+    assert payload["stt"]["loaded"] is False
+    assert STT_REALTIME_RESPONSIBILITY not in payload["stt"]["responsibilities"]
 
 
 # ---------------------------------------------------------------------------

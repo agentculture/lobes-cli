@@ -49,7 +49,7 @@ import pytest
 
 from lobes.gateway import server as S
 from lobes.gateway._config import ServerConfig, build_config
-from lobes.roles import ROLES, RoleInfo, build_role_registry
+from lobes.roles import ROLES, STT_REALTIME_RESPONSIBILITY, RoleInfo, build_role_registry
 from lobes.roles_measure import ALLOWED_METRIC_KEYS, measure_registry
 
 # --- the FAKE FLEET's operator-side configuration ---------------------------
@@ -341,6 +341,43 @@ def test_colleague_follows_an_operator_rename_with_no_client_code_change() -> No
         info, response = colleague_call_role(base_url, "cortex")
     assert info["model"] == "acme/renamed-cortex-9000"
     assert response["model"] == "acme/renamed-cortex-9000"
+
+
+# --- 2b. stt realtime/VAD session capability (issue #149, task t4) ---------
+#
+# Acceptance criterion 2: a text-only fleet shows no realtime claim. This is
+# the negative control against the fake fleet's DEFAULT env — `_full_env`
+# above deliberately never sets AUDIO_URL, so stt/tts stay unloaded (see the
+# module docstring) — proven here over the REAL production `GET
+# /capabilities` builder (`capabilities_payload`), not a hand-rolled fixture.
+# The positive side of the same contract (an audio-enabled fleet DOES claim
+# it) is asserted end to end in tests/test_cli_capabilities.py; without this
+# negative control that positive assertion would be vacuous.
+
+
+def test_stt_shows_no_realtime_claim_on_text_only_fake_fleet(fake_fleet) -> None:
+    base_url, _table, _cfg, _env = fake_fleet
+    with urllib.request.urlopen(base_url + "/capabilities", timeout=5) as r:
+        contract = json.load(r)
+    assert contract["stt"]["loaded"] is False
+    assert contract["stt"]["responsibilities"] == ["transcribe", "audio_input_to_text"]
+    assert STT_REALTIME_RESPONSIBILITY not in contract["stt"]["responsibilities"]
+    assert STT_REALTIME_RESPONSIBILITY not in contract["tts"]["responsibilities"]
+
+
+def test_stt_advertises_realtime_claim_when_fake_fleet_wires_audio_overlay() -> None:
+    """The end-to-end positive companion to the negative control above,
+    against the same real production builder: an audio-enabled fake fleet
+    (AUDIO_URL wired) DOES claim the capability under stt, over a genuine
+    HTTP round trip to GET /capabilities."""
+    port = _free_port()
+    env = _full_env(port, AUDIO_URL="http://realtime:8080")
+    with _running_fake_fleet(env) as (base_url, _table, _cfg):
+        with urllib.request.urlopen(base_url + "/capabilities", timeout=5) as r:
+            contract = json.load(r)
+    assert contract["stt"]["loaded"] is True
+    assert STT_REALTIME_RESPONSIBILITY in contract["stt"]["responsibilities"]
+    assert STT_REALTIME_RESPONSIBILITY not in contract["tts"]["responsibilities"]
 
 
 # --- 3. runtime-only boundary (h1): the contract + measure_registry never ---
