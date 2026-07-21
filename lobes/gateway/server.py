@@ -59,6 +59,7 @@ import http.client
 import json
 import os
 import re
+import socket
 import sys
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -73,6 +74,16 @@ from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._config import ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
+from lobes.gateway._realtime import (
+    HandshakeError,
+    RealtimeRefusal,
+    is_realtime_path,
+    plan_realtime_upgrade,
+    read_head,
+    run_tunnel,
+    status_of,
+    upgrade_request_bytes,
+)
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
@@ -2011,7 +2022,13 @@ class _Handler(BaseHTTPRequestHandler):
         if route.startswith("/v1/") and not self._authorized():
             self._reject_unauthorized()
             return
-        if route == "/health":
+        if is_realtime_path(route):
+            # The one GET route that may leave HTTP behind entirely (#149). It
+            # sits AFTER the auth gate above by design: the bearer check must
+            # cost a rejected handshake zero planning, zero upstream sockets,
+            # and zero session state.
+            self._handle_realtime()
+        elif route == "/health":
             # `version` is the deployed lobes-cli release THIS gateway process was
             # built from (`__version__`, read off installed package metadata inside
             # the container) — additive, issue #99. It is what lets a remote client
@@ -2041,6 +2058,109 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_capabilities()
         else:
             self._send_json(404, _not_found_body(route))
+
+    # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
+    def _handle_realtime(self) -> None:  # pragma: no cover - opens a socket; see below
+        """Tunnel a realtime WebSocket session to the local bridge.
+
+        The refusal paths and the byte pump are unit-tested in
+        :mod:`tests.test_gateway_realtime_ws` through
+        :mod:`lobes.gateway._realtime`; this method is the socket-owning shell
+        that joins them, so it carries the same ``pragma: no cover`` as the
+        other socket-level code here.
+
+        On success the handler thread stays parked in :func:`run_tunnel` for
+        the whole session and returns only once BOTH directions have unwound —
+        which is what makes a dropped client release the thread rather than
+        strand it (spec claim c26).
+        """
+        decision = plan_realtime_upgrade(
+            self.table, self.server_config, self.path, list(self.headers.items())
+        )
+        if isinstance(decision, RealtimeRefusal):
+            self._refuse_realtime(decision)
+            return
+        try:
+            upstream = socket.create_connection(
+                (decision.host, decision.port), timeout=self.server_config.connect_timeout
+            )
+        except OSError as exc:
+            self._send_simple(
+                502,
+                [("Content-Type", _CONTENT_TYPE_JSON)],
+                _error_body("realtime bridge is unavailable", [str(exc)]),
+            )
+            return
+        try:
+            # The session is long-lived and mostly idle between utterances, so
+            # neither leg may keep the request/response read timeout that HTTP
+            # relays use — it would kill a listening session mid-silence.
+            upstream.settimeout(None)
+            self.connection.settimeout(None)
+            upstream.sendall(
+                upgrade_request_bytes(
+                    decision.path,
+                    list(self.headers.items()),
+                    host=f"{decision.host}:{decision.port}",
+                )
+            )
+            reader = upstream.makefile("rb")
+            try:
+                head, leftover = read_head(reader)
+            finally:
+                reader.detach()  # hand the fd back; the pump owns it from here
+        except (OSError, HandshakeError) as exc:
+            upstream.close()
+            self._send_simple(
+                502,
+                [("Content-Type", _CONTENT_TYPE_JSON)],
+                _error_body("realtime handshake failed", [str(exc)]),
+            )
+            return
+        # Relay the bridge's verdict verbatim — 101 (Sec-WebSocket-Accept and
+        # all) or whatever it refused with. Written raw: the handshake is
+        # already a complete, correctly framed response, and re-emitting it
+        # through send_response/send_header would rewrite it.
+        self.close_connection = True
+        try:
+            self.wfile.write(head)
+            self.wfile.flush()
+        except OSError:
+            upstream.close()
+            return
+        if status_of(head) != 101:
+            upstream.close()
+            return
+        self.log_message("realtime session opened via %s:%s", decision.host, decision.port)
+        try:
+            run_tunnel(self.connection, upstream, leftover=leftover)
+        finally:
+            upstream.close()
+            self.log_message("realtime session closed")
+
+    def _refuse_realtime(self, refusal: RealtimeRefusal) -> None:  # pragma: no cover
+        """Turn a :class:`RealtimeRefusal` into its response body."""
+        if refusal.kind == "role_infeasible":
+            self._send_simple(
+                404,
+                [("Content-Type", _CONTENT_TYPE_JSON)],
+                _role_infeasible_body(refusal.role, refusal.role, refusal.peer_origin),
+            )
+        elif refusal.kind == "audio_not_configured":
+            self._send_simple(
+                404,
+                [("Content-Type", _CONTENT_TYPE_JSON)],
+                _error_body("realtime is not configured on this deployment", []),
+            )
+        else:  # not_an_upgrade
+            self._send_simple(
+                426,
+                [("Content-Type", _CONTENT_TYPE_JSON), ("Upgrade", "websocket")],
+                _error_body(
+                    "/v1/realtime is a WebSocket route — send an Upgrade: websocket handshake",
+                    [],
+                ),
+            )
 
     def _get_v1_models(self) -> None:
         # Advertise only backends the live readiness snapshot marks ready
