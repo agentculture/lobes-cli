@@ -17,6 +17,10 @@
  * `event-log.test.ts`'s "fixture coverage" tests fail loudly if
  * `EVENT_TYPES`/`ERROR_CODES` grows a member `event-fixtures.ts` does not
  * exercise — so an out-of-sync mirror is caught in CI, not discovered live.
+ * A second guard (issue #151 t19, same file) reads `_session.py` off disk at
+ * test time and asserts `ERROR_CODES` matches its `ErrorCode` enum
+ * member-for-member, in order — the "keep it in sync BY HAND" instruction
+ * above is no longer just a comment, a stale mirror fails `npm test`.
  *
  * `at_ms` — read this before touching boundary-event rendering
  * -----------------------------------------------------------------------
@@ -92,6 +96,7 @@ export type ClientEventType = (typeof CLIENT_EVENT_TYPES)[number];
 export const ERROR_CODES = [
   "invalid_session_config",
   "vad_unavailable",
+  "invalid_wire_event",
   "stt_forward_failed",
   "generate_failed",
   "tts_failed",
@@ -121,6 +126,7 @@ export type IconId =
   | "response-interrupted"
   | "error-config"
   | "error-vad"
+  | "error-wire"
   | "error-stt"
   | "error-generate"
   | "error-tts"
@@ -210,6 +216,12 @@ export const ERROR_KIND_META: Record<ErrorCode, ErrorKindMeta> = {
     label: "vad_unavailable",
     icon: "error-vad",
     hint: "Silero failed to load or run — distinct from silence, which emits no event at all",
+  },
+  invalid_wire_event: {
+    badge: "WIRE",
+    label: "invalid_wire_event",
+    icon: "error-wire",
+    hint: "a client frame was malformed at the wire-codec level (bad JSON, a bad append event, or an unsupported frame) — the specific reason is in the message",
   },
   stt_forward_failed: {
     badge: "STT",

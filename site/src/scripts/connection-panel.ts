@@ -48,6 +48,21 @@ export const REALTIME_READY_EVENT = "lobes:realtime-ready";
 /** Property the mounted connection is published on, for late-loading islands. */
 export const REALTIME_GLOBAL_KEY = "lobesRealtime";
 
+/**
+ * The conversation opt-in trigger — issue #151 t19. Mirrors
+ * `lobes/realtime/_conversation.py`'s `RESPONSE_CREATE_EVENT_TYPE`
+ * ("response.create"). Sent with no other fields: `_conversation.py`'s
+ * `is_response_create` only checks `payload["type"]`, and this panel adopts
+ * the ARM-AT-CONNECT shape the server explicitly supports ("send it once,
+ * at connect, and get a reply to every committed turn thereafter") rather
+ * than the OpenAI-style per-transcript shape — one checkbox checked before
+ * pressing Connect is the whole interaction, which is what makes the site
+ * simplest to drive for a live acceptance run: no per-turn control to
+ * remember, and the toggle can never be forgotten mid-conversation because
+ * it is read once, at connect time.
+ */
+const RESPONSE_CREATE_EVENT_TYPE = "response.create";
+
 interface StatePresentation {
   label: string;
   /** Shape, not colour: the state must survive a monochrome screen. */
@@ -80,6 +95,7 @@ export const PANEL_HOOKS = [
   "data-connection-endpoint",
   "data-connection-rate",
   "data-connection-aec",
+  "data-connection-conversation",
   "data-connection-connect",
   "data-connection-disconnect",
   "data-connection-check",
@@ -89,6 +105,7 @@ export const PANEL_HOOKS = [
   "data-connection-detail",
   "data-connection-url",
   "data-connection-check-result",
+  "data-conversation-state",
 ] as const;
 
 export interface MountConnectionPanelOptions {
@@ -129,6 +146,10 @@ export function mountConnectionPanel(
   const endpointInput = requireElement<HTMLInputElement>(root, "[data-connection-endpoint]");
   const rateSelect = requireElement<HTMLSelectElement>(root, "[data-connection-rate]");
   const aecSelect = requireElement<HTMLSelectElement>(root, "[data-connection-aec]");
+  const conversationCheckbox = requireElement<HTMLInputElement>(
+    root,
+    "[data-connection-conversation]",
+  );
   const connectButton = requireElement<HTMLButtonElement>(root, "[data-connection-connect]");
   const disconnectButton = requireElement<HTMLButtonElement>(root, "[data-connection-disconnect]");
   const checkButton = requireElement<HTMLButtonElement>(root, "[data-connection-check]");
@@ -138,6 +159,7 @@ export function mountConnectionPanel(
   const detailOut = requireElement<HTMLElement>(root, "[data-connection-detail]");
   const urlOut = requireElement<HTMLElement>(root, "[data-connection-url]");
   const checkOut = requireElement<HTMLElement>(root, "[data-connection-check-result]");
+  const conversationStateOut = requireElement<HTMLElement>(root, "[data-conversation-state]");
 
   const connection = options.connection ?? createRealtimeConnection();
   const broadcastTarget =
@@ -151,6 +173,40 @@ export function mountConnectionPanel(
     broadcastTarget?.dispatchEvent(
       new CustomEvent<ConnectionNotice>(REALTIME_NOTICE_EVENT, { detail: notice }),
     );
+  }
+
+  // -- conversation arming (issue #151 t19) --------------------------------
+  //
+  // Two booleans, two different questions:
+  //   armIntent    — what the checkbox said the LAST time Connect was
+  //                  pressed. Read once, at that moment (`onConnect`), so a
+  //                  toggle flipped mid-session cannot retroactively change
+  //                  what an already-open socket did — the design brief's
+  //                  "do not leave the user guessing" requirement, answered
+  //                  by making the toggle itself uneditable while live (see
+  //                  `renderState`'s busy-disable, below) rather than by
+  //                  silently ignoring a change no one could make anyway.
+  //   sessionArmed — did THIS live session actually get its response.create
+  //                  sent. False until the socket reaches "open" with
+  //                  armIntent true; reset on every disconnect/failure so a
+  //                  reconnect starts the question over.
+  // `renderConversationState` is the one place both collapse into the
+  // always-visible text the design brief asked for.
+  let armIntent = false;
+  let sessionArmed = false;
+
+  function renderConversationState(state: ConnectionState): void {
+    const live = state === "connecting" || state === "open" || state === "closing";
+    const armed = live ? sessionArmed : conversationCheckbox.checked;
+    conversationStateOut.dataset["armed"] = String(armed);
+    conversationStateOut.dataset["live"] = String(live);
+    conversationStateOut.textContent = live
+      ? armed
+        ? "Armed — response.create sent; every committed turn on this session gets a spoken reply"
+        : "Ears-only — this live session will not reply (the toggle applies at the next Connect)"
+      : armed
+        ? "Will reply — response.create sends automatically right after Connect"
+        : "Ears-only (default) — this session will not reply";
   }
 
   function renderState(state: ConnectionState, detail: string, url: string | null): void {
@@ -170,11 +226,23 @@ export function mountConnectionPanel(
     endpointInput.disabled = busy;
     rateSelect.disabled = busy;
     aecSelect.disabled = busy;
+    // Locked while live: arming is a connect-time decision (see the module
+    // doc above), and a control that visibly does nothing while disabled is
+    // the honest way to say so — matching how the other three session-config
+    // fields already lock for the same reason.
+    conversationCheckbox.disabled = busy;
   }
 
   const unsubscribe = connection.subscribe((notice) => {
     if (notice.kind === "state") {
       renderState(notice.state, notice.detail, notice.url);
+      if (notice.state === "open" && armIntent && !sessionArmed) {
+        sessionArmed = true;
+        connection.sendEvent({ type: RESPONSE_CREATE_EVENT_TYPE });
+      } else if (notice.state === "disconnected" || notice.state === "failed") {
+        sessionArmed = false;
+      }
+      renderConversationState(notice.state);
     }
     broadcast(notice);
   });
@@ -185,6 +253,7 @@ export function mountConnectionPanel(
       inputSampleRate: Number(rateSelect.value) as SampleRate,
       aecMode: aecSelect.value as AecMode,
     });
+    armIntent = conversationCheckbox.checked;
     connection.connect();
   }
 
@@ -213,9 +282,14 @@ export function mountConnectionPanel(
     }
   }
 
+  function onConversationToggle(): void {
+    renderConversationState(connection.state);
+  }
+
   connectButton.addEventListener("click", onConnect);
   disconnectButton.addEventListener("click", onDisconnect);
   checkButton.addEventListener("click", () => void onCheck());
+  conversationCheckbox.addEventListener("change", onConversationToggle);
 
   // The markup ships the buttons disabled so a JS-less visit cannot pretend
   // to work; taking over is what enables them. `renderState` below owns
@@ -225,7 +299,13 @@ export function mountConnectionPanel(
   if (endpointInput.value.trim() === "") {
     endpointInput.value = DEFAULT_ENDPOINT;
   }
+  // The checkbox itself ships unchecked in the markup (no `checked`
+  // attribute) — nothing here changes that. Only the always-visible text
+  // state needs an explicit first render, to match whatever the browser
+  // restored the control to (a reloaded tab can restore form state even
+  // with JS disabled-then-enabled mid-session).
   renderState(connection.state, "not connected yet", connection.url);
+  renderConversationState(connection.state);
 
   if (globalTarget !== null) {
     globalTarget[REALTIME_GLOBAL_KEY] = connection;
@@ -240,6 +320,7 @@ export function mountConnectionPanel(
       unsubscribe();
       connectButton.removeEventListener("click", onConnect);
       disconnectButton.removeEventListener("click", onDisconnect);
+      conversationCheckbox.removeEventListener("change", onConversationToggle);
       if (globalTarget !== null && globalTarget[REALTIME_GLOBAL_KEY] === connection) {
         delete globalTarget[REALTIME_GLOBAL_KEY];
       }

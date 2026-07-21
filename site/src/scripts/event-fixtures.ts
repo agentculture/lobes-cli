@@ -147,6 +147,12 @@ export const EVENT_FIXTURES: RawEvent[] = [
     code: "vad_unavailable",
     message: "RuntimeError: failed to load silero_vad from torch.hub",
   }),
+  ev(50150, {
+    type: "error",
+    code: "invalid_wire_event",
+    message:
+      "invalid_append_event: 'input_audio_buffer.append' requires a base64 string 'audio' field, got None",
+  }),
   ev(50200, {
     type: "error",
     code: "stt_forward_failed",
