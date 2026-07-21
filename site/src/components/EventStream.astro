@@ -1,0 +1,342 @@
+---
+// The live /v1/realtime event-stream log — issue #151 t12.
+//
+// Renders the terminal-pane chrome borrowed from ../org/site-astro's
+// LobesTerminal (fixed dark ground, a header bar with a status dot, AA
+// text pairs verified against that one fixed background in both the
+// site's light and dark themes — see the colour note in the <style>
+// block below) — but NOT its build-time replay architecture: org's
+// terminal pre-schedules a captured transcript's whole performance at
+// build time; this one has no schedule at all. Rows appear exactly when
+// `EventStreamController.pushEvent`/`setConnectionState` are called —
+// see event-log.ts's module doc.
+//
+// HOW TO MOUNT THIS COMPONENT (for whoever wires index.astro after all of
+// wave 2 merges — this file is not imported there yet, by design; see the
+// FILE SCOPE note in the task brief):
+//
+//   1. Drop `<EventStream />` inside the `#events-mount[data-mount="events"]`
+//      section in src/pages/index.astro, replacing the placeholder
+//      paragraph currently there. No props required.
+//   2. Feed it events from whatever owns the WebSocket (t13's connection
+//      island, or a later task) via `window` CustomEvents — no import
+//      needed, which keeps the islands decoupled:
+//
+//        window.dispatchEvent(new CustomEvent("lobes:realtime-event", {
+//          detail: parsedServerJson,               // one /v1/realtime message
+//        }));
+//        window.dispatchEvent(new CustomEvent("lobes:connection-state", {
+//          detail: { state: "connecting" | "connected" | "disconnected" | "error",
+//                    detail: "optional human-readable reason" },
+//        }));
+//
+//      This component's own <script> below listens for both on `window`
+//      the moment it mounts, so dispatching is all a caller ever needs to
+//      do — see src/pages/dev-events.astro for a complete worked example
+//      (it dispatches the exact fixtures from event-fixtures.ts).
+//   3. Prefer direct control over the decoupled events above? Import
+//      `mountEventStream` from `../scripts/event-log.ts` directly and call
+//      `.pushEvent(json)` / `.setConnectionState(state)` on the returned
+//      controller yourself — both integration paths are fully supported;
+//      pick whichever fits the caller's own module structure.
+---
+
+<div class="event-stream" data-event-stream-root>
+  <div class="es-head">
+    <span class="es-dot" data-connection-dot aria-hidden="true"></span>
+    <span class="es-title">/v1/realtime</span>
+    <span class="es-conn" data-connection-label>Not connected</span>
+    <button type="button" class="es-clear" data-clear-log>Clear</button>
+  </div>
+  <p class="es-conn-detail muted" data-connection-detail hidden></p>
+  <ol
+    class="es-log"
+    data-event-log
+    tabindex="0"
+    aria-live="polite"
+    aria-label="realtime event log"
+  ></ol>
+  <p class="es-empty muted" data-empty-note>
+    No events yet — nothing renders here on its own. A named error will
+    appear the instant one fires; ordinary silence never does.
+  </p>
+</div>
+
+<style>
+  /* One pane, both themes — same trick as org's LobesTerminal: a FIXED
+     dark ground rather than one that follows --bg/--surface. Every colour
+     below is verified >= 4.5:1 against this exact background (#10142b),
+     so the pane looks identical (and stays AA) whichever theme the rest
+     of the page is in — it never needs a second, re-verified palette. */
+  .event-stream {
+    --es-bg: #10142b;
+    --es-line: rgba(233, 236, 248, 0.12);
+    --es-text: #c7cde8;
+    --es-text-strong: #e9ecf8;
+    --es-muted: #a9b0cf; /* 8.5:1 on --es-bg */
+    --es-lifecycle: #7fdcc9; /* 11.2:1 */
+    --es-boundary: #9db4f5; /* 8.9:1 */
+    --es-response: #f5c669; /* 11.4:1 */
+    --es-interrupted: #ffab6b; /* >7.9:1 */
+    --es-error: #ff8a80; /* 7.9:1 */
+    --es-connection: #ffcf6b; /* connection-state marker family; > 4.5:1 */
+
+    background: var(--es-bg);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    width: 100%;
+    color: var(--es-text);
+    font-family: var(--font-mono);
+  }
+
+  .es-head {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.7rem 1.1rem;
+    border-bottom: 1px solid var(--es-line);
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    color: var(--es-muted);
+  }
+
+  .es-dot {
+    flex: none;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--es-muted);
+  }
+
+  .es-dot[data-state="connected"] {
+    background: var(--es-lifecycle);
+  }
+
+  .es-dot[data-state="connecting"] {
+    background: var(--es-connection);
+  }
+
+  .es-dot[data-state="disconnected"],
+  .es-dot[data-state="error"] {
+    background: var(--es-error);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .es-dot[data-state="connected"] {
+      animation: node-breathe 4s var(--ease-gentle) infinite alternate;
+    }
+  }
+
+  .es-title {
+    color: var(--es-text-strong);
+    font-weight: 600;
+  }
+
+  .es-conn {
+    margin-left: auto;
+  }
+
+  .es-clear {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--es-line);
+    color: var(--es-muted);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem;
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+
+  .es-clear:hover {
+    color: var(--es-text-strong);
+    border-color: var(--es-muted);
+  }
+
+  .es-conn-detail {
+    margin: 0;
+    padding: 0.5rem 1.1rem 0;
+    font-size: 0.74rem;
+    color: var(--es-muted);
+  }
+
+  .es-log {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 0.3rem 0.8rem;
+    max-height: 26rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .es-empty {
+    margin: 0;
+    padding: 0 1.1rem 1.1rem;
+    font-size: 0.82rem;
+    color: var(--es-muted);
+  }
+
+  :global(.es-row) {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 0.5rem;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  :global(.es-row:hover) {
+    background: rgba(233, 236, 248, 0.05);
+  }
+
+  :global(.es-row-icon) {
+    flex: none;
+    display: flex;
+    padding-top: 0.15rem;
+    color: var(--es-muted);
+  }
+
+  :global(.es-row-body) {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  :global(.es-row-head) {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  :global(.es-label) {
+    color: var(--es-text-strong);
+    font-weight: 600;
+  }
+
+  :global(.es-time) {
+    color: var(--es-muted);
+    font-size: 0.72rem;
+  }
+
+  :global(.es-detail) {
+    color: var(--es-text);
+    overflow-wrap: anywhere;
+  }
+
+  :global(.es-badge) {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 0.3rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: rgba(255, 138, 128, 0.16);
+    color: var(--es-error);
+    border: 1px solid rgba(255, 138, 128, 0.4);
+  }
+
+  /* Colour families — the SECONDARY signal. The icon shape (event-icons.ts)
+     and the label/badge text are the primary ones and are unique per row
+     kind regardless of colour, so this pane stays usable for a colour-blind
+     operator with every rule below deleted. */
+  :global(.kind-lifecycle .es-row-icon),
+  :global(.kind-lifecycle .es-label) {
+    color: var(--es-lifecycle);
+  }
+
+  :global(.kind-boundary .es-row-icon),
+  :global(.kind-boundary .es-label) {
+    color: var(--es-boundary);
+  }
+
+  :global(.kind-transcript .es-row-icon),
+  :global(.kind-transcript .es-label) {
+    color: var(--es-text-strong);
+  }
+
+  :global(.kind-response .es-row-icon),
+  :global(.kind-response .es-label) {
+    color: var(--es-response);
+  }
+
+  :global(.kind-interrupted .es-row-icon),
+  :global(.kind-interrupted .es-label) {
+    color: var(--es-interrupted);
+  }
+
+  :global(.kind-error) {
+    background: rgba(255, 138, 128, 0.07);
+  }
+
+  :global(.kind-error .es-row-icon),
+  :global(.kind-error .es-label) {
+    color: var(--es-error);
+  }
+
+  :global(.kind-connection) {
+    border-top: 1px dashed var(--es-line);
+    border-bottom: 1px dashed var(--es-line);
+    margin-block: 0.15rem;
+  }
+
+  :global(.kind-connection .es-row-icon),
+  :global(.kind-connection .es-label) {
+    color: var(--es-connection);
+  }
+
+  :global(.kind-unknown .es-row-icon),
+  :global(.kind-unknown .es-label) {
+    color: var(--es-muted);
+  }
+
+  /* New-row entrance — gated behind allowed motion only, matching the
+     [data-reveal] convention in global.css: without this media query the
+     row is simply visible immediately, never stuck mid-transition. */
+  @media (prefers-reduced-motion: no-preference) {
+    :global(.es-row) {
+      opacity: 0;
+      transform: translateY(0.35rem);
+      transition:
+        opacity 0.35s var(--ease-out),
+        transform 0.35s var(--ease-out);
+    }
+
+    :global(.es-row.es-row-in) {
+      opacity: 1;
+      transform: none;
+    }
+  }
+</style>
+
+<script>
+  import { mountEventStream } from "../scripts/event-log";
+
+  // Mount every instance of this component present on the page (normally
+  // exactly one). Guarded so re-running this module (Astro dev HMR, or a
+  // page embedding the component twice) never double-mounts the same root.
+  const MOUNTED = new WeakSet<Element>();
+
+  document.querySelectorAll<HTMLElement>("[data-event-stream-root]").forEach((root) => {
+    if (MOUNTED.has(root)) return;
+    MOUNTED.add(root);
+
+    const view = mountEventStream(root);
+
+    window.addEventListener("lobes:realtime-event", (e) => {
+      view.pushEvent((e as CustomEvent).detail);
+    });
+
+    window.addEventListener("lobes:connection-state", (e) => {
+      const detail = (e as CustomEvent).detail ?? {};
+      view.setConnectionState(detail.state, detail.detail);
+    });
+
+    root.querySelector("[data-clear-log]")?.addEventListener("click", () => view.clear());
+  });
+</script>
