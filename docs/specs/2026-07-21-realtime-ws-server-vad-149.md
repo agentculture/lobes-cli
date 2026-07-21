@@ -34,6 +34,14 @@
   - honesty: with GATEWAY_API_KEY set an unauthenticated /v1/realtime handshake is rejected before session allocation; with it unset behavior is byte-identical to the keyless contract
 - docs flip together: realtime-pipeline.md's Boundary section (which today records the WS as planned-for-a-later-release), openai-api.md's endpoint table, and the lobes explain realtime entry all gain /v1/realtime with the explicit dtype/channel/framing statement criterion 2 demands
   - honesty: after PR2 no doc records the WS as future work, openai-api.md lists /v1/realtime with dtype/channels/rate stated explicitly, and lobes explain realtime names the session surface — all flipped in the same PR
+- session teardown is leak-free: a client disconnect in ANY state (idle, mid-speech, mid-transcription) closes the upstream leg, unwinds the gateway tunnel threads, and frees session buffers; close propagates in both directions — a dropped robot never strands a bridge session or a gateway thread
+  - honesty: an offline test drives a session through connect-stream-disconnect at each state and asserts no leaked task/thread/buffer bookkeeping; the gateway tunnel unwinds both pump directions on either side's close
+- per-turn audio buffering is bounded: a documented max-turn length force-commits (or errors) with a named event when exceeded — a never-silent stream cannot grow bridge memory without limit
+  - honesty: the max-turn cap is a documented, env-tunable value; an offline test streams past it with a never-silent fake VAD and receives the documented commit-or-error event
+- session lifecycle is observable: session open/close, VAD arm/fail, and STT forward failures are logged with session ids in the bridge, and tunnel open/close in the gateway — lobes logs tells a session's story
+  - honesty: grepping bridge logs for one session id reconstructs its lifecycle: open, VAD state, commits, errors, close
+- VAD state is per-session: concurrent sessions get isolated segmentation state (shared model, per-session iterator state or equivalent) — interleaved sessions never corrupt each other's boundaries
+  - honesty: an offline test interleaves two sessions with different scripted fake-VAD patterns and asserts each gets exactly its own boundary events
 
 ## Honesty conditions
 
@@ -46,6 +54,8 @@
 - one connection suffices end-to-end — audio in, boundary events, transcript events — demonstrated by the live smoke script against a deployed overlay
 - the spec cites the in-tree IOUs (app.py PR2 docstring, realtime-pipeline.md boundary section) rather than generic motivation
 - the offline suite runs green with no GPU and no [realtime] extra installed, and any validated wording lands only with the docs/evidence/ transcript (#108 rule)
+- the deployed container starts a server_vad session with egress blocked; if the >=5.1 float ever breaks the VADIterator API the image build pins tighter, never vendors the model
+- restart behavior is documented; no code path persists or restores session state, and reconnect-and-restart is stated as the client contract
 
 ## Success signals
 
@@ -56,6 +66,7 @@
 - the batch routes /v1/audio/speech and /v1/audio/transcriptions stay byte-identical — reachy's measured-working links (gateway TTS, WAV to Parakeet) must not regress
 - no WebSocket peer-proxying in PR2: the #129 stt-lane proxy-lobes forwarder is POST-only; a declared-off stt lane 404s the /v1/realtime handshake role_infeasible with referral annotation (hosted_by) only
 - server-side AEC stays optional and default-off in the session handshake — Reachy Mini's mic array cancels echo in firmware (issue note); AECMode plus default_aec_mode=none already encode this
+- sessions are ephemeral: no resume across bridge/gateway restarts and no session state on disk — a dropped connection means the client reconnects and starts fresh
 
 ## Non-goals
 
@@ -67,6 +78,7 @@
 
 - no new dependencies: the [realtime] extra and Dockerfile.realtime already ship fastapi, uvicorn, httpx, numpy, scipy, silero-vad, torch — the deployed image contains everything PR2 needs
 - PR1 already landed PR2's config surface: _settings.py's VAD/turn-detection block (default_turn_detection=server_vad, default_aec_mode=none — AEC off by default, matching the issue's firmware-AEC note) is consumed by PR2, not invented
+- PROBED 2026-07-21: the silero-vad wheel bundles its model weights (silero_vad/data/silero_vad.jit + onnx variants, inspected in silero_vad-6.2.1-py3-none-any.whl) — VAD arms with no network egress at boot or session start
 
 ## Scope exploration
 
@@ -94,6 +106,21 @@
   - seeds: `c17`
 - `s12` — `eidetic recall: spark-lobe go-live + audio-overlay repair + stt/tts referral (#129)`: the Spark box dropped the audio overlay on 2026-07-14 but it was repaired/live by 2026-07-17 and the issue probed it live on 2026-07-21; stt/tts joined the referral/proxy contract in #129 — cross-box audio is declared/unvalidated, reinforcing that WS peer-proxying stays out
   - seeds: `c13`, `c16`
+- `s13` — `challenge pass / adjacent-systems lens: gateway ThreadingHTTPServer threading + timeouts`: a WS tunnel holds its handler thread for the session lifetime and must exempt the session socket from the request/read timeouts the relay applies to HTTP; thread-per-session is why the session-cap question exists — seeded the teardown requirement and the cap park
+  - seeds: `c26`
+- `s14` — `challenge pass / concurrency lens: silero VAD iterator state x concurrent sessions`: the Silero model is shareable but segmentation state is per-stream; nothing in the spec said so until now — seeded the per-session-state requirement
+  - seeds: `c29`
+- `s15` — `challenge pass / failure-mode lens: never-silent stream, unbounded buffer`: with VAD armed but silence never detected, per-turn PCM accumulates without bound in the bridge — seeded the max-turn cap requirement
+  - seeds: `c27`
+- `s16` — `challenge pass / observability lens: bridge + gateway logging`: the batch routes log per-request via uvicorn; nothing specified session-scoped logging for long-lived WS state — seeded the session-id logging requirement
+  - seeds: `c28`
+- `s17` — `challenge pass / hidden-dependency lens: silero-vad model packaging (PROBED)`: pip download silero-vad + wheel inspection in scratch: model weights ship inside the wheel (silero_vad/data/*.jit/.onnx) — no torch.hub or network fetch at load; NOTE pyproject floats silero-vad>=5.1 while PyPI is at 6.2.1, an unpinned major the image build absorbs
+  - seeds: `c30`
+- `s18` — `challenge pass / security lens: WS handshake auth + post-upgrade relay`: CLEAN: the bearer gate covers the handshake (c8); post-upgrade bytes are opaque payload the gateway relays without interpretation; the facade stays authless inside the compose network — the existing trust model, unchanged; residual: key material never appears in session logs (folded into the logging requirement)
+  - seeds: `c28`
+- `s19` — `challenge pass / reversibility + migration lens: additive surface`: CLEAN: no store or schema migration; rollback is the standing ops path (re-pin MODEL_GEAR_VERSION + rebuild); the batch routes are untouched (c12) so reverting PR2 restores the exact pre-PR2 surface
+- `s20` — `challenge pass / lifecycle lens: restart behavior`: bridge/gateway restarts drop live sessions; nothing resumes them — made explicit as the ephemeral-sessions boundary instead of staying unstated
+  - seeds: `c31`
 
 ## Decisions
 

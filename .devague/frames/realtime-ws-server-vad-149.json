@@ -4,7 +4,7 @@
   "schema_version": 3,
   "status": "exported",
   "created": "2026-07-21T09:21:49Z",
-  "updated": "2026-07-21T09:43:29Z",
+  "updated": "2026-07-21T10:09:22Z",
   "claims": [
     {
       "id": "c1",
@@ -399,12 +399,129 @@
       "hard_questions": [],
       "links": [],
       "instruction": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "session teardown is leak-free: a client disconnect in ANY state (idle, mid-speech, mid-transcription) closes the upstream leg, unwinds the gateway tunnel threads, and frees session buffers; close propagates in both directions \u2014 a dropped robot never strands a bridge session or a gateway thread",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "an offline test drives a session through connect-stream-disconnect at each state and asserts no leaked task/thread/buffer bookkeeping; the gateway tunnel unwinds both pump directions on either side's close",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "per-turn audio buffering is bounded: a documented max-turn length force-commits (or errors) with a named event when exceeded \u2014 a never-silent stream cannot grow bridge memory without limit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "the max-turn cap is a documented, env-tunable value; an offline test streams past it with a never-silent fake VAD and receives the documented commit-or-error event",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "session lifecycle is observable: session open/close, VAD arm/fail, and STT forward failures are logged with session ids in the bridge, and tunnel open/close in the gateway \u2014 lobes logs tells a session's story",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "grepping bridge logs for one session id reconstructs its lifecycle: open, VAD state, commits, errors, close",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "VAD state is per-session: concurrent sessions get isolated segmentation state (shared model, per-session iterator state or equivalent) \u2014 interleaved sessions never corrupt each other's boundaries",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "an offline test interleaves two sessions with different scripted fake-VAD patterns and asserts each gets exactly its own boundary events",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c30",
+      "kind": "assumption",
+      "text": "PROBED 2026-07-21: the silero-vad wheel bundles its model weights (silero_vad/data/silero_vad.jit + onnx variants, inspected in silero_vad-6.2.1-py3-none-any.whl) \u2014 VAD arms with no network egress at boot or session start",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the deployed container starts a server_vad session with egress blocked; if the >=5.1 float ever breaks the VADIterator API the image build pins tighter, never vendors the model",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "sessions are ephemeral: no resume across bridge/gateway restarts and no session state on disk \u2014 a dropped connection means the client reconnects and starts fresh",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "restart behavior is documented; no code path persists or restores session state, and reconnect-and-restart is stated as the client contract",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
     }
   ],
   "open_vagueness": [
     {
       "id": "v1",
       "text": "live acceptance sequencing: the deployed facade installs lobes-cli[realtime]==MODEL_GEAR_VERSION from PyPI, so validating on the robot needs release then re-init/rebuild (PyPI CDN-lag gotcha), and the #108 rule wants an evidence transcript under docs/evidence/ before any validated claim",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "whether PR2 needs a concurrent-session cap on the gateway tunnel (ThreadingHTTPServer is thread-per-session; the expected consumer population is ~one robot) \u2014 default unbounded-but-documented, decide at implementation",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -512,6 +629,68 @@
       "seeds": [
         "c13",
         "c16"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / adjacent-systems lens: gateway ThreadingHTTPServer threading + timeouts",
+      "finding": "a WS tunnel holds its handler thread for the session lifetime and must exempt the session socket from the request/read timeouts the relay applies to HTTP; thread-per-session is why the session-cap question exists \u2014 seeded the teardown requirement and the cap park",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / concurrency lens: silero VAD iterator state x concurrent sessions",
+      "finding": "the Silero model is shareable but segmentation state is per-stream; nothing in the spec said so until now \u2014 seeded the per-session-state requirement",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / failure-mode lens: never-silent stream, unbounded buffer",
+      "finding": "with VAD armed but silence never detected, per-turn PCM accumulates without bound in the bridge \u2014 seeded the max-turn cap requirement",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / observability lens: bridge + gateway logging",
+      "finding": "the batch routes log per-request via uvicorn; nothing specified session-scoped logging for long-lived WS state \u2014 seeded the session-id logging requirement",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / hidden-dependency lens: silero-vad model packaging (PROBED)",
+      "finding": "pip download silero-vad + wheel inspection in scratch: model weights ship inside the wheel (silero_vad/data/*.jit/.onnx) \u2014 no torch.hub or network fetch at load; NOTE pyproject floats silero-vad>=5.1 while PyPI is at 6.2.1, an unpinned major the image build absorbs",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / security lens: WS handshake auth + post-upgrade relay",
+      "finding": "CLEAN: the bearer gate covers the handshake (c8); post-upgrade bytes are opaque payload the gateway relays without interpretation; the facade stays authless inside the compose network \u2014 the existing trust model, unchanged; residual: key material never appears in session logs (folded into the logging requirement)",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / reversibility + migration lens: additive surface",
+      "finding": "CLEAN: no store or schema migration; rollback is the standing ops path (re-pin MODEL_GEAR_VERSION + rebuild); the batch routes are untouched (c12) so reverting PR2 restores the exact pre-PR2 surface",
+      "seeds": []
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / lifecycle lens: restart behavior",
+      "finding": "bridge/gateway restarts drop live sessions; nothing resumes them \u2014 made explicit as the ephemeral-sessions boundary instead of staying unstated",
+      "seeds": [
+        "c31"
       ]
     }
   ]
