@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.0] - 2026-07-21
+
+### Added
+
+- Voice-to-voice on /v1/realtime (#151): an opt-in conversation surface — a committed turn can trigger a server-side generate + Chatterbox reply streamed back over the SAME WebSocket as response.audio.delta events, interruptible by barge-in. Ears-only stays the default: a session that never sends response.create emits exactly the #149 transcription-only sequence.
+- Barge-in with cancel-both semantics: speech during playback cancels the in-flight generate AND TTS, never sends the undelivered audio remainder, and emits response.interrupted — only the plausibly-heard prefix enters history. Arms the previously-dormant BARGE_IN_WINDOW_MS.
+- New stdlib modules, all offline-tested: _wire.py (base64 event codec), _floor.py (floor/turn state machine with per-stage deadlines), _turn.py (generate payload shaping), _conversation.py (the wiring layer). app.py stays a pragma: no cover shell.
+- Per-session conversation history + system prompt, with an operator default via DEFAULT_SYSTEM_PROMPT and a per-session connect-config override.
+- site/ — a local-only Astro harness driving the realtime surface from a browser: mic capture with echoCancellation, live event stream with per-error-code distinction and VAD at_ms timing, audio-out playback, a user mute/mic-off control, and a conversation toggle. Reached through a local credential-injecting WebSocket proxy via ssh -L; never deployed. New site-build CI job.
+- New env knobs threaded end-to-end (settings -> compose -> env.audio.example -> doctor --fix): BARGE_IN_WINDOW_MS, BARGE_IN_MODEL, TTS_VOICE_CONCURRENCY, DEFAULT_SYSTEM_PROMPT.
+- Named error codes generate_failed, tts_failed, response_timeout and invalid_wire_event; boundary events now carry at_ms and reason, so VAD tuning is observable and a max_turn force-commit is finally distinguishable from a silence-confirmed stop.
+
+### Changed
+
+- BREAKING (#151, coordinated): /v1/realtime audio is now OpenAI-shaped base64 JSON events in BOTH directions — input_audio_buffer.append inbound, response.audio.delta outbound. Raw binary audio frames are gone and now yield invalid_wire_event. The deployed reachy-mini-cli speaks the old wire and cannot stream until it adapts — tracked in reachy-mini-cli#115. In-repo clients (realtime-smoke.py, realtime-voice-loop.py) are migrated.
+- Per-lane TTS concurrency: a spoken reply no longer queues behind unrelated batch /v1/audio/speech work. The batch lane's observable behaviour is unchanged (verified byte-for-byte).
+- Muting is a narrowed ban, not a lifted one (deviation d1): AUTOMATIC mute-during-playback stays forbidden — it is the AEC substitute that makes barge-in impossible — while user-initiated mute/mic-off is allowed, because AEC is owned at the client edge (Reachy firmware, browser echoCancellation).
+
+### Fixed
+
+- The segmenter's at_ms and reason were computed and then dropped before reaching the wire (pre-existing since #149), so VAD boundary timing was unobservable by any client and a max_turn force-commit looked identical to a silence-confirmed stop.
+- A stock Python-template .gitignore rule (/site, meant for mkdocs output) silently swallowed the new Astro harness: git add reported nothing, with no error.
+- Three env knobs the settings module read but the deployment never passed — BARGE_IN_WINDOW_MS, BARGE_IN_MODEL and TTS_CONCURRENCY — silently pinned to their in-container defaults. A new AST-based coverage test fails CI if any future Settings field is added unwired.
+
 ## [0.53.1] - 2026-07-21
 
 ### Fixed
