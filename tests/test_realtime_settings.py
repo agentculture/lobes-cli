@@ -16,6 +16,7 @@ def test_defaults_point_at_the_fleet_compose_network() -> None:
     assert s.tts_speed == 125
     assert s.tts_concurrency == 1
     assert s.default_voice == ""  # Chatterbox default voice (empty = built-in)
+    assert s.vad_max_turn_ms == 30_000
 
 
 def test_overrides_and_trailing_slash_stripped() -> None:
@@ -44,6 +45,17 @@ def test_bad_numbers_fall_back_to_defaults() -> None:
     assert s.port == 8080
     assert s.tts_speed == 125
     assert s.vad_threshold == 0.5
+
+
+def test_vad_max_turn_ms_default_and_override() -> None:
+    # Default mirrors _segmenter.py's DEFAULT_MAX_TURN_MS (30_000) — the two
+    # modules agree on the same number without importing each other (#149 t6).
+    assert build_settings({}).vad_max_turn_ms == 30_000
+    assert build_settings({"VAD_MAX_TURN_MS": "15000"}).vad_max_turn_ms == 15000
+
+
+def test_vad_max_turn_ms_bad_value_falls_back_to_default() -> None:
+    assert build_settings({"VAD_MAX_TURN_MS": "not-a-number"}).vad_max_turn_ms == 30_000
 
 
 def test_tts_concurrency_is_clamped_to_at_least_one() -> None:
