@@ -14,7 +14,7 @@ reconnecting client gets a brand-new :class:`Session`. Nothing here opens a
 file, a socket, or makes a network call — nothing here is I/O at all.
 
 Event schema (OpenAI-Realtime-flavoured naming, kept deliberately small —
-this PR's scope is audio-in, boundaries, and transcription; see
+the #149 baseline scope was audio-in, boundaries, and transcription; see
 docs/specs/2026-07-21-realtime-ws-server-vad-149.md's Non-goals):
 
 - ``session.created`` / ``session.closed`` — session lifecycle.
@@ -31,13 +31,55 @@ docs/specs/2026-07-21-realtime-ws-server-vad-149.md's Non-goals):
   no event at all), ``stt_forward_failed`` (a committed turn's Parakeet
   forward failed).
 
+Since issue #151, the engine also owns an OPT-IN, audio-path-only response
+lifecycle for server-side voice-to-voice conversation — a committed turn may
+trigger a generate call and a synthesized reply streamed back over the SAME
+session. A session that never triggers this (the default, ears-only mode)
+is byte-identical to the #149 baseline: exactly the event sequence above,
+nothing more. Full OpenAI Realtime parity — conversation items, tool calls,
+ephemeral tokens — stays a named follow-up (see
+docs/specs/2026-07-21-realtime-voice-to-voice-astro-test-site-151.md's
+Open/follow-up); this module adopts only the audio-path event shapes:
+
+- ``response.created`` — a committed turn triggered a server-side reply; the
+  floor moves from the caller to the assistant (:attr:`SessionState.RESPONDING`).
+- ``response.text.done`` — the generate call's full reply text arrived; the
+  floor moves to speaking (:attr:`SessionState.SPEAKING`) for TTS delivery.
+- ``response.audio.delta`` — one already wire-encoded (base64, owned by
+  ``_wire.py``, not this module) chunk of the synthesized reply.
+- ``response.done`` — the reply was delivered in full; the floor returns to
+  the caller (:attr:`SessionState.IDLE`).
+- ``response.interrupted`` — speech arrived while the floor was
+  responding/speaking (barge-in); the floor returns to the caller
+  immediately and any undelivered audio is truncated (the event's
+  ``truncated`` marker) — timing/deadlines/cancellation plumbing is a
+  separate floor/turn state machine's job, not this module's.
+
+Three new :class:`ErrorCode` members cover the new failure modes:
+``generate_failed`` (the brain call failed), ``tts_failed`` (the mouth call
+failed), and ``response_timeout`` (a response stage exceeded its deadline —
+the floor always returns to the caller with a named error, never stuck
+responding/speaking).
+
+``SessionState`` gains ``responding``/``speaking`` so the floor holder —
+who currently owns the turn — is explicit in the schema itself, not implied
+by event ordering.
+
+Per-session, in-memory conversation history and a system prompt back the
+opt-in conversation surface (the terminal ``scripts/realtime-voice-loop.py``
+proved a coherent reply needs both, client-side; #151 moves both
+server-side). Both are ephemeral by the same contract as everything else
+here: history lives only on the :class:`Session` object, nothing is ever
+written to disk, and :meth:`Session.teardown` drops it.
+
 Logging: every helper here logs through :func:`get_session_logger`, which
 stamps the session id into the message text itself (not just ``extra``) so
 grepping logs for one session id reconstructs its whole lifecycle even under
 a bare-bones formatter. :func:`redact_for_log` is the one approved way to log
 a client-supplied mapping (e.g. a raw session-config payload) — it masks any
 credential-shaped key so an API key or token can never reach a log line.
-Transcribed text is deliberately never logged verbatim (only its length).
+Transcribed text and reply text are deliberately never logged verbatim
+(only their length) — conversation history content follows the same rule.
 """
 
 from __future__ import annotations
@@ -56,6 +98,7 @@ from .protocol import (
     TurnDetectionType,
     gen_event_id,
     gen_item_id,
+    gen_response_id,
     gen_session_id,
     timestamp_ms,
 )
@@ -118,6 +161,12 @@ class EventType(str, Enum):
     SPEECH_STOPPED = "input_audio_buffer.speech_stopped"
     TRANSCRIPTION_COMPLETED = "conversation.item.input_audio_transcription.completed"
     ERROR = "error"
+    # --- opt-in response lifecycle + interruption (issue #151) ---
+    RESPONSE_CREATED = "response.created"
+    RESPONSE_TEXT_DONE = "response.text.done"
+    RESPONSE_AUDIO_DELTA = "response.audio.delta"
+    RESPONSE_DONE = "response.done"
+    RESPONSE_INTERRUPTED = "response.interrupted"
 
 
 class ErrorCode(str, Enum):
@@ -130,22 +179,40 @@ class ErrorCode(str, Enum):
     - ``STT_FORWARD_FAILED`` — a committed turn's forward to Parakeet failed
       (wired by the route layer; the code is reserved here as part of the
       schema this module owns).
+    - ``GENERATE_FAILED`` — a response's forward to the generate lane
+      (``/v1/chat/completions``) failed, including a gateway
+      ``role_infeasible`` 404 (wired by the route layer; issue #151).
+    - ``TTS_FAILED`` — a response's forward to the TTS lane
+      (``/v1/audio/speech``) failed (wired by the route layer; issue #151).
+    - ``RESPONSE_TIMEOUT`` — a response stage (generate or TTS) exceeded its
+      configured deadline; the floor always returns to the caller with this
+      named error, never stuck responding/speaking (wired by the floor/turn
+      state machine; issue #151).
     """
 
     INVALID_SESSION_CONFIG = "invalid_session_config"
     VAD_UNAVAILABLE = "vad_unavailable"
     STT_FORWARD_FAILED = "stt_forward_failed"
+    GENERATE_FAILED = "generate_failed"
+    TTS_FAILED = "tts_failed"
+    RESPONSE_TIMEOUT = "response_timeout"
 
 
 @dataclass(frozen=True)
 class SessionConfig:
-    """A validated session config — see :func:`parse_session_config`."""
+    """A validated session config — see :func:`parse_session_config`.
+
+    ``system_prompt`` is ``None`` unless the client explicitly overrode it
+    (or a caller-supplied settings-style default resolved one) — ``None``
+    means :class:`Session` falls back to :data:`DEFAULT_SYSTEM_PROMPT`.
+    """
 
     input_audio_format: AudioFormat = AudioFormat.PCM16
     input_sample_rate: int = CLIENT_SAMPLE_RATE
     channels: int = 1
     turn_detection: TurnDetectionType = TurnDetectionType.SERVER_VAD
     aec_mode: AECMode = AECMode.NONE
+    system_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +272,76 @@ class ErrorEvent:
     type: EventType = field(default=EventType.ERROR, init=False)
 
 
+@dataclass(frozen=True)
+class ResponseCreatedEvent:
+    """A committed turn triggered a server-side reply; the floor moves from
+    the caller to the assistant. ``item_id`` is the transcribed turn this
+    response answers (the caller's own bookkeeping — ``None`` when a
+    response was not triggered by one specific transcribed item)."""
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str
+    item_id: str | None = None
+    type: EventType = field(default=EventType.RESPONSE_CREATED, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseTextDoneEvent:
+    """The generate call's full reply text arrived. ``text`` is the reply
+    verbatim — the event schema carries it (a client needs it to render);
+    logging it verbatim is what's forbidden (see :meth:`Session.complete_response_text`)."""
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str
+    text: str
+    type: EventType = field(default=EventType.RESPONSE_TEXT_DONE, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseAudioDeltaEvent:
+    """One chunk of the synthesized reply. ``delta`` is already wire-encoded
+    (base64) by the caller — this module owns the event shape only, never
+    audio encoding/chunking (that is ``_wire.py``'s job, a sibling module)."""
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str
+    delta: str
+    type: EventType = field(default=EventType.RESPONSE_AUDIO_DELTA, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseDoneEvent:
+    """The reply was delivered in full; the floor returns to the caller."""
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str
+    type: EventType = field(default=EventType.RESPONSE_DONE, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseInterruptedEvent:
+    """Speech arrived while the floor was responding/speaking (barge-in).
+    ``truncated`` is the "truncated marker" the #151 spec requires — it is
+    always ``True`` today (a barge-in is the only trigger this module
+    defines); the field exists so a future, non-truncating interruption
+    reason can be represented without a schema break."""
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str
+    truncated: bool = True
+    type: EventType = field(default=EventType.RESPONSE_INTERRUPTED, init=False)
+
+
 Event = (
     SessionCreatedEvent
     | SessionClosedEvent
@@ -212,6 +349,11 @@ Event = (
     | SpeechStoppedEvent
     | TranscriptionCompletedEvent
     | ErrorEvent
+    | ResponseCreatedEvent
+    | ResponseTextDoneEvent
+    | ResponseAudioDeltaEvent
+    | ResponseDoneEvent
+    | ResponseInterruptedEvent
 )
 
 
@@ -231,6 +373,7 @@ def event_to_dict(event: Event) -> dict[str, object]:
                 "channels": value.channels,
                 "turn_detection": value.turn_detection,
                 "aec_mode": value.aec_mode,
+                "system_prompt": value.system_prompt,
             }
         else:
             out[key] = value
@@ -274,6 +417,7 @@ def parse_session_config(
     *,
     default_turn_detection: str = "server_vad",
     default_aec_mode: str = "none",
+    default_system_prompt: str | None = None,
 ) -> SessionConfig:
     """Validate a client's ``session.update``-style config dict.
 
@@ -282,7 +426,10 @@ def parse_session_config(
     ``input_channels=1``, ``turn_detection`` and ``aec_mode`` from the
     *default_turn_detection*/*default_aec_mode* args (a caller threads these
     from :mod:`lobes.realtime._settings`'s ``default_turn_detection``/
-    ``default_aec_mode``, which are themselves ``"server_vad"``/``"none"``).
+    ``default_aec_mode``, which are themselves ``"server_vad"``/``"none"``),
+    and ``system_prompt`` from *default_system_prompt* (a caller threads this
+    from an operator-set env default; issue #151) — the client's own
+    ``system_prompt`` key, if present, always overrides it.
 
     PCM16 mono little-endian at 24000 Hz or 16000 Hz is the only accepted
     wire format; AEC stays ``none`` unless the payload explicitly sets
@@ -330,12 +477,17 @@ def parse_session_config(
     except ValueError:
         _reject(f"unsupported aec_mode {raw_aec!r}")
 
+    system_prompt = payload.get("system_prompt", default_system_prompt)
+    if system_prompt is not None and not isinstance(system_prompt, str):
+        _reject(f"system_prompt must be a string, got {system_prompt!r}")
+
     return SessionConfig(
         input_audio_format=AudioFormat.PCM16,
         input_sample_rate=rate,
         channels=1,
         turn_detection=TurnDetectionType.SERVER_VAD,
         aec_mode=aec_mode,
+        system_prompt=system_prompt,
     )
 
 
@@ -348,7 +500,23 @@ class SessionState(str, Enum):
     IDLE = "idle"
     SPEECH = "speech"
     TRANSCRIBING = "transcribing"
+    RESPONDING = "responding"
+    SPEAKING = "speaking"
     CLOSED = "closed"
+
+
+# Mirrors scripts/realtime-voice-loop.py's SYSTEM_PROMPT — the client-side
+# text that moves server-side per issue #151. An operator-set env default
+# (a later task's concern) and a per-session connect-config override both
+# flow through :func:`parse_session_config`'s ``system_prompt``/
+# ``default_system_prompt``; this is the last-resort fallback when neither
+# is set.
+DEFAULT_SYSTEM_PROMPT = (
+    "You are the voice of this machine. You are being spoken to out loud and "
+    "your reply is read back aloud by a text-to-speech voice, so answer in "
+    "one or two short spoken sentences. No markdown, no lists, no code "
+    "blocks, no emoji — just what you would say."
+)
 
 
 class SessionClosedError(RuntimeError):
@@ -362,11 +530,14 @@ class SessionClosedError(RuntimeError):
 class Session:
     """A realtime session's state + bookkeeping, bound to one session id.
 
-    Holds only what THIS engine allocates: the current lifecycle state and
-    the in-flight conversation item id. Audio buffers and VAD/segmenter state
-    belong to other modules (the segmenter, the route layer) — this class's
-    job is the schema-level bookkeeping and the teardown contract: from ANY
-    state, :meth:`teardown` releases it all.
+    Holds only what THIS engine allocates: the current lifecycle state, the
+    in-flight conversation item id, the in-flight response id, and (since
+    issue #151) the per-session conversation history + system prompt. Audio
+    buffers and VAD/segmenter state belong to other modules (the segmenter,
+    the route layer); per-stage deadlines/callbacks/cancellation belong to a
+    separate floor/turn state machine — this class's job is the schema-level
+    bookkeeping and the teardown contract: from ANY state, :meth:`teardown`
+    releases it all, including history.
     """
 
     def __init__(self, config: SessionConfig, session_id: str | None = None) -> None:
@@ -374,7 +545,12 @@ class Session:
         self.config = config
         self.state = SessionState.IDLE
         self.current_item_id: str | None = None
+        self.current_response_id: str | None = None
         self.vad_available = True
+        self.system_prompt: str = (
+            config.system_prompt if config.system_prompt is not None else DEFAULT_SYSTEM_PROMPT
+        )
+        self._history: list[dict[str, str]] = []
         self._closed = False
         self.log = get_session_logger(self.session_id)
 
@@ -494,14 +670,154 @@ class Session:
             message=message,
         )
 
+    # -----------------------------------------------------------------
+    # Opt-in response lifecycle + interruption (issue #151).
+    #
+    # Bookkeeping + event-shape only: per-stage deadlines, cancellation
+    # callbacks, and the actual barge-in TRIGGER decision belong to a
+    # separate floor/turn state machine, not this class. These methods are
+    # what that machine (and the route layer) call to keep Session.state —
+    # the schema's floor-holder field — and the response id in sync with
+    # whichever event just fired.
+    # -----------------------------------------------------------------
+
+    def begin_response(self, item_id: str | None = None) -> ResponseCreatedEvent:
+        """A committed turn triggered a server-side reply — the floor moves
+        from the caller to the assistant. *item_id* identifies the
+        transcribed turn being answered (the caller's own bookkeeping;
+        optional since a response need not trace back to one specific item).
+        """
+        self._require_not_closed()
+        self.current_response_id = gen_response_id()
+        self.state = SessionState.RESPONDING
+        self.log.info(
+            "response created response_id=%s item_id=%s", self.current_response_id, item_id
+        )
+        return ResponseCreatedEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=self.current_response_id,
+            item_id=item_id,
+        )
+
+    def complete_response_text(self, text: str) -> ResponseTextDoneEvent:
+        """The generate call returned the full reply text; the floor moves to
+        SPEAKING for TTS delivery. Never logs *text* verbatim — only its
+        length. Does not touch history — call :meth:`append_history`
+        explicitly; history is opt-in bookkeeping, never an implicit side
+        effect of a state transition."""
+        self._require_not_closed()
+        response_id = self.current_response_id
+        self.state = SessionState.SPEAKING
+        self.log.info("response text done response_id=%s chars=%d", response_id, len(text))
+        return ResponseTextDoneEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=response_id,
+            text=text,
+        )
+
+    def emit_audio_delta(self, delta: str) -> ResponseAudioDeltaEvent:
+        """One already wire-encoded (base64) chunk of the synthesized reply.
+        Does not change :attr:`state` — a response may emit any number of
+        deltas while SPEAKING."""
+        self._require_not_closed()
+        return ResponseAudioDeltaEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=self.current_response_id,
+            delta=delta,
+        )
+
+    def complete_response(self) -> ResponseDoneEvent:
+        """All audio was delivered; the floor returns to the caller."""
+        self._require_not_closed()
+        response_id = self.current_response_id
+        self.current_response_id = None
+        self.state = SessionState.IDLE
+        self.log.info("response done response_id=%s", response_id)
+        return ResponseDoneEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=response_id,
+        )
+
+    def interrupt_response(self, reason: str = "barge_in") -> ResponseInterruptedEvent:
+        """Speech arrived while RESPONDING or SPEAKING — the floor returns to
+        the caller immediately, from either state, and any undelivered audio
+        is truncated (the event's ``truncated`` marker). *reason* documents
+        the trigger for logging (default: a barge-in)."""
+        self._require_not_closed()
+        response_id = self.current_response_id
+        self.current_response_id = None
+        self.state = SessionState.IDLE
+        self.log.info("response interrupted response_id=%s reason=%s", response_id, reason)
+        return ResponseInterruptedEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=response_id,
+        )
+
+    def fail_response(self, code: ErrorCode, message: str) -> ErrorEvent:
+        """A response stage failed or expired (``GENERATE_FAILED``,
+        ``TTS_FAILED``, or ``RESPONSE_TIMEOUT``) — the floor returns to the
+        caller with a named error, never stuck responding/speaking."""
+        self._require_not_closed()
+        response_id = self.current_response_id
+        self.current_response_id = None
+        self.state = SessionState.IDLE
+        self.log.warning("response failed response_id=%s code=%s", response_id, code.value)
+        return ErrorEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            code=code,
+            message=message,
+        )
+
+    # -----------------------------------------------------------------
+    # Per-session conversation history (issue #151) — ephemeral: lives only
+    # on this object, nothing is ever written to disk, teardown drops it.
+    # -----------------------------------------------------------------
+
+    def append_history(self, role: str, content: str) -> None:
+        """Append one turn to this session's in-memory conversation history.
+
+        Never logs *content* verbatim — only its length — matching the
+        module's transcript/reply-text redaction discipline. Purely opt-in:
+        no method here calls this implicitly, so an ears-only session that
+        never triggers a response never accumulates history."""
+        self._require_not_closed()
+        self._history.append({"role": role, "content": content})
+        self.log.debug(
+            "history appended role=%s chars=%d total_turns=%d",
+            role,
+            len(content),
+            len(self._history),
+        )
+
+    def get_history(self) -> list[dict[str, str]]:
+        """A defensive copy of this session's conversation history so far.
+
+        Lives only on this :class:`Session` object — no disk, no module-level
+        state — and is empty again after :meth:`teardown`."""
+        return list(self._history)
+
     def teardown(self, reason: str = "client_disconnect") -> SessionClosedEvent:
         """Release all session bookkeeping. Safe from ANY state — idle,
-        mid-speech, mid-transcription — and idempotent (a second call is a
-        no-op beyond returning a fresh close event)."""
+        mid-speech, mid-transcription, responding, speaking — and idempotent
+        (a second call is a no-op beyond returning a fresh close event)."""
         prior_state = self.state
         already_closed = self._closed
         self.state = SessionState.CLOSED
         self.current_item_id = None
+        self.current_response_id = None
+        self._history = []
         self.vad_available = False
         self._closed = True
         if not already_closed:
@@ -527,6 +843,11 @@ __all__ = [
     "SpeechStoppedEvent",
     "TranscriptionCompletedEvent",
     "ErrorEvent",
+    "ResponseCreatedEvent",
+    "ResponseTextDoneEvent",
+    "ResponseAudioDeltaEvent",
+    "ResponseDoneEvent",
+    "ResponseInterruptedEvent",
     "Event",
     "event_to_dict",
     "SessionConfigError",
@@ -534,6 +855,7 @@ __all__ = [
     "SessionState",
     "SessionClosedError",
     "Session",
+    "DEFAULT_SYSTEM_PROMPT",
     # re-exported from protocol.py — reused, not redefined.
     "AudioFormat",
     "TurnDetectionType",
@@ -541,4 +863,5 @@ __all__ = [
     "gen_session_id",
     "gen_event_id",
     "gen_item_id",
+    "gen_response_id",
 ]

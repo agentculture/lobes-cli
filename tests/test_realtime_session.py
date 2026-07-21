@@ -435,3 +435,423 @@ def test_event_to_dict_round_trips_through_json() -> None:
     payload = json.loads(json.dumps(S.event_to_dict(created)))
     assert payload["type"] == "session.created"
     assert payload["session_id"] == session.session_id
+
+
+# ---------------------------------------------------------------------------
+# #151 t3 — response lifecycle + interruption schema, floor states, history.
+#
+# Covers the t3 acceptance criteria from
+# docs/plans/2026-07-21-realtime-voice-to-voice-astro-test-site-151.md:
+#
+# 1. every new event dataclass is frozen and event_to_dict-serializable; the
+#    floor holder is explicit in the schema (SessionState.RESPONDING/SPEAKING)
+# 2. a two-turn offline conversation asserts the second generate request
+#    carries the first exchange; history lives only on the Session object
+# 3. teardown from every new state releases history and bookkeeping
+#    (idempotent, safe from any state)
+# ---------------------------------------------------------------------------
+
+
+# --- new schema members exist with the documented values -------------------
+
+
+def test_new_event_types_are_openai_realtime_flavoured_strings() -> None:
+    assert S.EventType.RESPONSE_CREATED.value == "response.created"
+    assert S.EventType.RESPONSE_TEXT_DONE.value == "response.text.done"
+    assert S.EventType.RESPONSE_AUDIO_DELTA.value == "response.audio.delta"
+    assert S.EventType.RESPONSE_DONE.value == "response.done"
+    assert S.EventType.RESPONSE_INTERRUPTED.value == "response.interrupted"
+
+
+def test_new_error_codes_are_documented_members() -> None:
+    assert S.ErrorCode.GENERATE_FAILED.value == "generate_failed"
+    assert S.ErrorCode.TTS_FAILED.value == "tts_failed"
+    assert S.ErrorCode.RESPONSE_TIMEOUT.value == "response_timeout"
+
+
+def test_new_session_states_exist_for_responding_and_speaking() -> None:
+    assert S.SessionState.RESPONDING.value == "responding"
+    assert S.SessionState.SPEAKING.value == "speaking"
+
+
+# --- criterion 1: every new event dataclass is frozen + serializable -------
+
+
+def test_response_created_event_is_frozen_and_serializable() -> None:
+    import dataclasses
+    import json
+
+    event = S.ResponseCreatedEvent(
+        session_id="sess_x",
+        event_id="event_x",
+        timestamp_ms=1,
+        response_id="resp_x",
+        item_id="item_x",
+    )
+    assert event.type is S.EventType.RESPONSE_CREATED
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.response_id = "resp_y"  # type: ignore[misc]
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.created"
+    assert payload["response_id"] == "resp_x"
+    assert payload["item_id"] == "item_x"
+
+
+def test_response_text_done_event_is_frozen_and_serializable() -> None:
+    import dataclasses
+    import json
+
+    event = S.ResponseTextDoneEvent(
+        session_id="sess_x", event_id="event_x", timestamp_ms=1, response_id="resp_x", text="hi"
+    )
+    assert event.type is S.EventType.RESPONSE_TEXT_DONE
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.text = "bye"  # type: ignore[misc]
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.text.done"
+    assert payload["text"] == "hi"
+
+
+def test_response_audio_delta_event_is_frozen_and_serializable() -> None:
+    import dataclasses
+    import json
+
+    event = S.ResponseAudioDeltaEvent(
+        session_id="sess_x", event_id="event_x", timestamp_ms=1, response_id="resp_x", delta="QUJD"
+    )
+    assert event.type is S.EventType.RESPONSE_AUDIO_DELTA
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.delta = "ZFJH"  # type: ignore[misc]
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.audio.delta"
+    assert payload["delta"] == "QUJD"
+
+
+def test_response_done_event_is_frozen_and_serializable() -> None:
+    import dataclasses
+    import json
+
+    event = S.ResponseDoneEvent(
+        session_id="sess_x", event_id="event_x", timestamp_ms=1, response_id="resp_x"
+    )
+    assert event.type is S.EventType.RESPONSE_DONE
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.response_id = "resp_y"  # type: ignore[misc]
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.done"
+    assert payload["response_id"] == "resp_x"
+
+
+def test_response_interrupted_event_is_frozen_and_serializable() -> None:
+    import dataclasses
+    import json
+
+    event = S.ResponseInterruptedEvent(
+        session_id="sess_x", event_id="event_x", timestamp_ms=1, response_id="resp_x"
+    )
+    assert event.type is S.EventType.RESPONSE_INTERRUPTED
+    assert event.truncated is True  # the "truncated marker" is on by default
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.truncated = False  # type: ignore[misc]
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.interrupted"
+    assert payload["truncated"] is True
+
+
+# --- criterion 1 (continued): the floor holder through a full response ----
+
+
+def test_begin_response_moves_floor_to_responding() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_speech()
+    stopped = session.end_speech()
+    session.complete_transcription("what time is it")
+
+    event = session.begin_response(item_id=stopped.item_id)
+
+    assert session.state is S.SessionState.RESPONDING
+    assert event.type is S.EventType.RESPONSE_CREATED
+    assert event.item_id == stopped.item_id
+    assert event.response_id  # a real id, not a placeholder
+
+
+def test_complete_response_text_moves_floor_to_speaking() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    created = session.begin_response()
+
+    event = session.complete_response_text("it is three o'clock")
+
+    assert session.state is S.SessionState.SPEAKING
+    assert event.type is S.EventType.RESPONSE_TEXT_DONE
+    assert event.response_id == created.response_id
+    assert event.text == "it is three o'clock"
+
+
+def test_emit_audio_delta_does_not_change_floor_state() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    session.complete_response_text("hi there")
+
+    event = session.emit_audio_delta("QUJD")
+
+    assert session.state is S.SessionState.SPEAKING
+    assert event.type is S.EventType.RESPONSE_AUDIO_DELTA
+    assert event.delta == "QUJD"
+
+
+def test_complete_response_returns_floor_to_idle() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    session.complete_response_text("hi there")
+    session.emit_audio_delta("QUJD")
+
+    event = session.complete_response()
+
+    assert session.state is S.SessionState.IDLE
+    assert session.current_response_id is None
+    assert event.type is S.EventType.RESPONSE_DONE
+
+
+@pytest.mark.parametrize("stage", ["responding", "speaking"])
+def test_interrupt_returns_floor_to_idle_from_every_responding_state(stage: str) -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    if stage == "speaking":
+        session.complete_response_text("a reply in progress")
+
+    assert session.state is S.SessionState(stage)
+
+    event = session.interrupt_response()
+
+    assert session.state is S.SessionState.IDLE
+    assert session.current_response_id is None
+    assert event.type is S.EventType.RESPONSE_INTERRUPTED
+    assert event.truncated is True
+
+
+@pytest.mark.parametrize("stage", ["responding", "speaking"])
+def test_fail_response_returns_floor_to_idle_with_named_error(stage: str) -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    if stage == "speaking":
+        session.complete_response_text("a reply in progress")
+
+    event = session.fail_response(S.ErrorCode.GENERATE_FAILED, "gateway 404 role_infeasible")
+
+    assert session.state is S.SessionState.IDLE
+    assert session.current_response_id is None
+    assert event.type is S.EventType.ERROR
+    assert event.code is S.ErrorCode.GENERATE_FAILED
+
+
+def test_fail_response_accepts_tts_failed_and_response_timeout_codes() -> None:
+    config = S.parse_session_config({})
+    for code in (S.ErrorCode.TTS_FAILED, S.ErrorCode.RESPONSE_TIMEOUT):
+        session, _ = S.Session.create(config)
+        session.begin_response()
+        event = session.fail_response(code, "stage exceeded its deadline")
+        assert event.code is code
+        assert session.state is S.SessionState.IDLE
+
+
+# --- criterion 2: history lives only on Session; second request carries ---
+# --- the first exchange -----------------------------------------------------
+
+
+def test_two_turn_conversation_history_carries_first_exchange_into_second_request() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    # Turn 1.
+    session.append_history("user", "what's the weather like")
+    first_request_messages = [
+        {"role": "system", "content": session.system_prompt}
+    ] + session.get_history()
+    assert first_request_messages[-1] == {"role": "user", "content": "what's the weather like"}
+    session.append_history("assistant", "I can't check live weather from here")
+    first_exchange = session.get_history()  # the whole turn-1 user+assistant pair
+
+    # Turn 2 — the SECOND generate request's payload must carry turn 1 whole.
+    session.append_history("user", "ok, tell me a joke instead")
+    second_request_messages = [
+        {"role": "system", "content": session.system_prompt}
+    ] + session.get_history()
+
+    assert second_request_messages == [
+        {"role": "system", "content": session.system_prompt},
+        {"role": "user", "content": "what's the weather like"},
+        {"role": "assistant", "content": "I can't check live weather from here"},
+        {"role": "user", "content": "ok, tell me a joke instead"},
+    ]
+    # The first exchange (both turn-1 messages) is a strict subsequence of
+    # the second request, appearing before the new turn-2 user message.
+    assert second_request_messages[1:3] == first_exchange
+
+
+def test_get_history_returns_a_defensive_copy() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.append_history("user", "hello")
+
+    snapshot = session.get_history()
+    snapshot.append({"role": "user", "content": "mutated after the fact"})
+
+    assert session.get_history() == [{"role": "user", "content": "hello"}]
+
+
+def test_history_lives_only_on_session_object_not_shared_across_sessions() -> None:
+    config = S.parse_session_config({})
+    a, _ = S.Session.create(config)
+    b, _ = S.Session.create(config)
+
+    a.append_history("user", "only in session a")
+
+    assert a.get_history() == [{"role": "user", "content": "only in session a"}]
+    assert b.get_history() == []
+
+
+def test_history_does_not_persist_to_disk(monkeypatch) -> None:
+    def _forbidden_open(*args, **kwargs):
+        raise AssertionError("_session must never touch the filesystem")
+
+    monkeypatch.setattr("builtins.open", _forbidden_open)
+
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.append_history("user", "hello")
+    session.append_history("assistant", "hi there")
+    session.teardown()
+
+
+# --- criterion 3: teardown from every new state releases bookkeeping ------
+
+
+def test_teardown_from_responding_releases_bookkeeping() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.append_history("user", "hi")
+    session.begin_response()
+    assert session.state is S.SessionState.RESPONDING
+
+    closed_event = session.teardown()
+
+    assert session.state is S.SessionState.CLOSED
+    assert session.current_response_id is None
+    assert session.get_history() == []
+    assert closed_event.type is S.EventType.SESSION_CLOSED
+
+
+def test_teardown_from_speaking_releases_bookkeeping() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.append_history("user", "hi")
+    session.begin_response()
+    session.complete_response_text("a reply")
+    assert session.state is S.SessionState.SPEAKING
+
+    session.teardown()
+
+    assert session.state is S.SessionState.CLOSED
+    assert session.current_response_id is None
+    assert session.get_history() == []
+
+
+def test_teardown_is_idempotent_from_speaking() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    session.complete_response_text("a reply")
+
+    first = session.teardown()
+    second = session.teardown()
+
+    assert session.state is S.SessionState.CLOSED
+    assert first.session_id == second.session_id
+
+
+def test_response_methods_after_teardown_are_refused() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.teardown()
+
+    with pytest.raises(S.SessionClosedError):
+        session.begin_response()
+
+
+def test_append_history_after_teardown_is_refused() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.teardown()
+
+    with pytest.raises(S.SessionClosedError):
+        session.append_history("user", "too late")
+
+
+# --- system prompt: default, per-session override, never logged verbatim --
+
+
+def test_default_system_prompt_is_used_when_not_overridden() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    assert session.system_prompt == S.DEFAULT_SYSTEM_PROMPT
+    assert isinstance(session.system_prompt, str)
+    assert session.system_prompt  # non-empty
+
+
+def test_system_prompt_override_via_connect_config() -> None:
+    config = S.parse_session_config({"system_prompt": "You are a pirate."})
+    session, _ = S.Session.create(config)
+
+    assert session.system_prompt == "You are a pirate."
+
+
+def test_system_prompt_threaded_from_settings_style_default() -> None:
+    # Mirrors default_aec_mode/default_turn_detection: a caller-supplied
+    # settings-style default is used when the client omits system_prompt,
+    # and an explicit per-session value still overrides it.
+    config = S.parse_session_config({}, default_system_prompt="Operator default prompt.")
+    assert config.system_prompt == "Operator default prompt."
+
+    config2 = S.parse_session_config(
+        {"system_prompt": "Client override."}, default_system_prompt="Operator default prompt."
+    )
+    assert config2.system_prompt == "Client override."
+
+
+def test_non_string_system_prompt_is_rejected_with_a_named_error() -> None:
+    with pytest.raises(S.SessionConfigError) as exc_info:
+        S.parse_session_config({"system_prompt": 12345})
+    assert exc_info.value.code is S.ErrorCode.INVALID_SESSION_CONFIG
+
+
+def test_response_text_is_not_logged_verbatim(caplog) -> None:
+    config = S.parse_session_config({})
+    secret_sounding_reply = "my password is hunter2-actually-a-spoken-reply"
+    with caplog.at_level(logging.INFO, logger="lobes.realtime._session"):
+        session, _ = S.Session.create(config)
+        session.begin_response()
+        session.complete_response_text(secret_sounding_reply)
+
+    assert secret_sounding_reply not in caplog.text
+
+
+def test_history_content_is_not_logged_verbatim(caplog) -> None:
+    config = S.parse_session_config({})
+    secret_sounding_text = "my password is hunter2-actually-history-content"
+    with caplog.at_level(logging.DEBUG, logger="lobes.realtime._session"):
+        session, _ = S.Session.create(config)
+        session.append_history("user", secret_sounding_text)
+
+    assert secret_sounding_text not in caplog.text
