@@ -23,11 +23,19 @@
  * 2. **Close its own ears.** There is no gate, no gain node, and no track
  *    toggle anywhere in the capture path. Half-duplex clients mute the mic
  *    while the machine talks (see `scripts/realtime-voice-loop.py`'s own
- *    docstring); muting is precisely the thing barge-in cannot coexist with.
- *    The mic stays open through playback and the browser's
- *    `echoCancellation` constraint keeps the machine's own voice out of it.
- *    `stop()` releases the device outright — that is teardown at the user's
- *    request, a different thing from silencing a live session.
+ *    docstring); an AUTOMATIC mute driven by playback is precisely the thing
+ *    barge-in cannot coexist with. The mic stays open through playback and
+ *    the browser's `echoCancellation` constraint keeps the machine's own
+ *    voice out of it. `stop()` releases the device outright — that is
+ *    teardown at the user's request, a different thing from silencing a
+ *    live session.
+ *
+ *    Issue #151 t18 (deviation d1) adds a genuinely new, user-triggered mute
+ *    to the island — but not HERE. It lives one layer up, in
+ *    `mic-island.ts`'s outbound relay: this module still encodes and reports
+ *    every frame it captures unconditionally, exactly as before, so the
+ *    claim above stays literally true. A click can gate what leaves the
+ *    browser; nothing may gate what this module itself does.
  *
  * Everything the browser supplies is injected through
  * {@link BrowserAudioDeps} so the state machine — including both named

@@ -91,6 +91,7 @@ const { inputSampleRate = 24000 } = Astro.props;
        light  (on --surface #ffffff / --bg #f4f5fb)
          --mic-live    #0b655c  6.93 / 6.37
          --mic-speak   #2f4fa8  7.49 / 6.88
+         --mic-mute    #3d4368  9.55 / 8.78    (added #151 t18, d1)
          --mic-warn    #7a3e00  8.34 / 7.67
          --mic-danger  #9a2620  7.86 / 7.22
          --mic-inert   #5b3fa8  7.72 / 7.09
@@ -98,16 +99,21 @@ const { inputSampleRate = 24000 } = Astro.props;
        dark   (on --surface #161b36 / --bg #0b0f20)
          --mic-live    #7fdcc9 10.44 / 11.77
          --mic-speak   #a8c4ff  9.65 / 10.88
+         --mic-mute    #b7c0ea  9.44 / 10.65   (added #151 t18, d1)
          --mic-warn    #ffcf9e 11.79 / 13.30
          --mic-danger  #ffa9a2  9.20 / 10.38
          --mic-inert   #c9b6ff  9.34 / 10.53
          --mic-fault   #f7a8d4  9.25 / 10.43
 
-     All well past WCAG AA's 4.5:1 for body text, in both themes. */
+     All well past WCAG AA's 4.5:1 for body text, in both themes. Computed
+     by hand from the WCAG relative-luminance formula (sRGB -> linear ->
+     0.2126R+0.7152G+0.0722B), the same method the t11 author's numbers
+     above imply — not run through a browser devtools contrast picker. */
 
   .mic-island {
     --mic-live: #0b655c;
     --mic-speak: #2f4fa8;
+    --mic-mute: #3d4368;
     --mic-warn: #7a3e00;
     --mic-danger: #9a2620;
     --mic-inert: #5b3fa8;
@@ -124,6 +130,7 @@ const { inputSampleRate = 24000 } = Astro.props;
     .mic-island {
       --mic-live: #7fdcc9;
       --mic-speak: #a8c4ff;
+      --mic-mute: #b7c0ea;
       --mic-warn: #ffcf9e;
       --mic-danger: #ffa9a2;
       --mic-inert: #c9b6ff;
@@ -140,6 +147,14 @@ const { inputSampleRate = 24000 } = Astro.props;
 
   .mic-island[data-state="speaking"] {
     --mic-state: var(--mic-speak);
+  }
+
+  /* Muted (#151 t18, d1): its own hue, its own dot shape (a hollow ring —
+     see .mic-dot below), AND its own word ("Muted"), so it can never read
+     as a colour-shifted "Listening"/"Speaking" nor as the failure states'
+     square dot. */
+  .mic-island[data-state="muted"] {
+    --mic-state: var(--mic-mute);
   }
 
   .mic-island[data-state="denied"] {
@@ -213,20 +228,61 @@ const { inputSampleRate = 24000 } = Astro.props;
     border-radius: 2px;
   }
 
-  .mic-button {
+  /* Muted (#151 t18, d1): a third shape family, distinct from both the
+     solid pulsing circle (audio actually flowing) and the failure square
+     (something broke) — a hollow ring says "held open, not flowing"
+     without relying on colour to make the distinction. */
+  .mic-island[data-state="muted"] .mic-dot {
+    background: transparent;
+    border: 0.14rem solid currentColor;
+    box-sizing: border-box;
+  }
+
+  .mic-button,
+  .mic-mute-button {
     appearance: none;
     border: 1px solid transparent;
     border-radius: 999px;
     padding: 0.6rem 1.3rem;
-    background: var(--accent-strong);
-    color: var(--on-accent);
     font-size: 0.95rem;
     font-weight: 560;
     cursor: pointer;
   }
 
+  .mic-button {
+    background: var(--accent-strong);
+    color: var(--on-accent);
+  }
+
   .mic-button:hover {
     background: color-mix(in srgb, var(--accent-strong) 88%, var(--ink));
+  }
+
+  /* The mute control (#151 t18, d1) is deliberately quieter than the
+     start/stop button — an outline, not a filled pill — since it is a
+     secondary, reversible toggle rather than the control that arms or tears
+     down the whole island. Its own colour tracks --mic-state, so it reads
+     as "muted" the instant it is pressed even before the chip repaints. */
+  .mic-mute-button {
+    border-color: color-mix(in srgb, var(--mic-state) 45%, transparent);
+    background: transparent;
+    color: var(--ink);
+  }
+
+  .mic-mute-button:hover:not(:disabled) {
+    border-color: var(--mic-state);
+    color: var(--mic-state);
+  }
+
+  .mic-mute-button[aria-pressed="true"] {
+    border-color: var(--mic-mute);
+    background: color-mix(in srgb, var(--mic-mute) 12%, transparent);
+    color: var(--mic-mute);
+  }
+
+  .mic-mute-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .mic-message {
@@ -324,18 +380,24 @@ const { inputSampleRate = 24000 } = Astro.props;
       transition: transform 0.12s linear;
     }
 
-    .mic-button {
+    .mic-button,
+    .mic-mute-button {
       transition:
         background 0.3s var(--ease-gentle),
+        border-color 0.3s var(--ease-gentle),
+        color 0.3s var(--ease-gentle),
         transform 0.3s var(--ease-gentle);
     }
 
-    .mic-button:active {
+    .mic-button:active,
+    .mic-mute-button:active:not(:disabled) {
       transform: translateY(1px);
     }
 
     /* The live pulse, borrowed from the shared keyframes in global.css. Only
-       the states where audio is actually flowing breathe. */
+       the states where audio is actually flowing breathe — muted is
+       deliberately excluded (see the .mic-dot rule above): a still ring
+       reads as "held, not flowing" precisely because it does not pulse. */
     .mic-island[data-state="arming"] .mic-dot,
     .mic-island[data-state="listening"] .mic-dot,
     .mic-island[data-state="speaking"] .mic-dot {
@@ -348,7 +410,8 @@ const { inputSampleRate = 24000 } = Astro.props;
       align-items: stretch;
     }
 
-    .mic-button {
+    .mic-button,
+    .mic-mute-button {
       width: 100%;
     }
   }

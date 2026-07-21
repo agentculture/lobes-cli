@@ -39,6 +39,35 @@
  * different next steps. They render as five different things — distinct
  * `data-state` values, distinct colours, distinct words — because collapsing
  * them into "no audio" is exactly the failure this site exists to prevent.
+ *
+ * ── `muted` — a deliberate, user-triggered exception (issue #151 t18, d1) ──
+ *
+ * t11 shipped this file next to `mic-capture.ts`'s claim that there is no
+ * state in which the mic is open but not listening, because that state would
+ * be the half-duplex mute `scripts/realtime-voice-loop.py` uses to survive
+ * without echo cancellation — and barge-in cannot coexist with a mic that
+ * stops listening while the machine talks. That claim was true when there
+ * was no way to own AEC except by muting.
+ *
+ * Deviation d1 (approved 2026-07-21, recorded in the plan under issue #151
+ * t18) narrows it, it does not repeal it: real hardware now owns echo
+ * cancellation at the client edge (Reachy's firmware, this browser's
+ * `echoCancellation` constraint), so a mic that is open-but-not-relaying is
+ * no longer automatically the AEC-substitute hack — PROVIDED a human, not a
+ * playback or response event, put it there. `muted` is exactly that: the
+ * device stays held (`MicCapture` keeps capturing, the worklet keeps
+ * running, the browser's recording indicator stays lit) and only the
+ * OUTBOUND relay in this file — `emitClientEvent`'s caller, below — is
+ * gated. Nothing about `mic-capture.ts` changed: it still never touches
+ * `track.enabled`, a gain node, or any element's `.muted`; the gate lives one
+ * layer up, in the part of the system a human's own click can reach.
+ *
+ * The constraint that survives d1, unnarrowed: nothing may flip that gate
+ * automatically. `handleServerEvent`, `handlePlaybackStop`, and
+ * `notifyDisconnected` — every function that reacts to something the SERVER
+ * or the CONNECTION did — are wrapped in `AUTOMATIC-MUTE-FORBIDDEN-ZONE`
+ * markers that `no-mic-mute.test.ts` scans, so an attempt to wire muting to
+ * playback slides right back into the failure d1 exists to keep out.
  */
 
 import type { BrowserAudioDeps, AudioContextLike } from "./audio-graph";
@@ -62,15 +91,20 @@ export const MIC_READY_EVENT_NAME = "lobes:mic-ready";
 /**
  * What the island is doing, as one word.
  *
- * `listening` and `speaking` are both "the mic is open" — the difference is
- * whether a reply is playing over it. There is no state in which the mic is
- * open but not listening, because that state would be muting.
+ * `listening` and `speaking` are both "the mic is open, and sent" — the
+ * difference is whether a reply is playing over it. `muted` is the one
+ * exception carved out by deviation d1 (see the module doc above): the mic
+ * is open and the device is held exactly like `listening`/`speaking`, but
+ * nothing captured is relayed outward. It renders as its own word and its
+ * own glyph precisely so it is never mistaken for either of them, for
+ * silence, or for `stopped` (the device released outright).
  */
 export type MicIslandState =
   | "idle"
   | "arming"
   | "listening"
   | "speaking"
+  | "muted"
   | "stopped"
   | "denied"
   | "no-device"
@@ -99,9 +133,15 @@ const STATE_COPY: Record<MicIslandState, StateCopy> = {
     label: "Reply playing",
     message: "The mic is still open while lobes speaks. Talk over it to interrupt.",
   },
+  muted: {
+    label: "Muted",
+    message:
+      "Mic held open, device still yours — nothing captured is leaving this tab. Reply audio, if any, keeps playing; muting never interrupts it. Press Unmute to resume sending.",
+  },
   stopped: {
-    label: "Stopped",
-    message: "The microphone is released and playback is cleared.",
+    label: "Mic off",
+    message:
+      "The microphone is released — the device is fully let go and playback is cleared. Press start to re-arm; that takes the same gesture path as the very first start.",
   },
   denied: {
     label: "Mic blocked",
@@ -145,6 +185,16 @@ export interface MicIslandHandle {
   getInputSampleRate(): number;
   start(): Promise<boolean>;
   stop(): Promise<void>;
+  /** Whether outbound frames are currently withheld (issue #151 t18, d1). */
+  isMuted(): boolean;
+  /**
+   * Set mute directly — the function-call equivalent of clicking the mute
+   * button. A no-op while the device is not held (nothing to mute) or when
+   * already at the requested value. Never call this from code that reacts
+   * to a server or connection event: see the module doc's d1 section and
+   * `no-mic-mute.test.ts`.
+   */
+  setMuted(muted: boolean): void;
   /** Install (or clear) a direct sink for outbound append events. */
   setSender(send: ((event: AppendEvent) => void) | null): void;
   /** Feed one server event in. Accepts the parsed object or its JSON text. */
@@ -227,7 +277,16 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
 
   const startButton = el(doc, "button", "mic-button");
   startButton.type = "button";
-  topRow.append(chip, startButton);
+
+  // The mute control (issue #151 t18, deviation d1). A second, independent
+  // toggle from the start/stop control above: muting never releases the
+  // device and never touches playback, so it gets its own button rather
+  // than overloading the one that arms/disarms both halves.
+  const muteButton = el(doc, "button", "mic-mute-button");
+  muteButton.type = "button";
+  muteButton.setAttribute("aria-pressed", "false");
+
+  topRow.append(chip, startButton, muteButton);
 
   const message = el(doc, "p", "mic-message");
   message.setAttribute("role", "status");
@@ -252,10 +311,18 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
   const factIn = el(doc, "dd");
   const factOut = el(doc, "dd");
   const factFrames = el(doc, "dd");
+  // A separate counter from `factFrames`: captured and sent are the same
+  // number until the human mutes, and deliberately different after — the
+  // fact that used to be called "frames sent" is now honestly "frames
+  // captured" (mic-capture.ts still encodes every frame regardless of
+  // mute), and this new one is the honest "frames sent" — the count that
+  // actually stalls the instant mute engages.
+  const factSent = el(doc, "dd");
   for (const [term, value] of [
     ["mic →", factIn],
     ["reply ←", factOut],
-    ["frames sent", factFrames],
+    ["frames captured", factFrames],
+    ["frames sent", factSent],
   ] as const) {
     const group = el(doc, "div", "mic-fact");
     const dt = el(doc, "dt");
@@ -281,6 +348,11 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
   let lastMeterPercent = -1;
   let playbackNote = "Reply audio: nothing received yet.";
   let destroyed = false;
+  // The mute gate (#151 t18, d1). Only ever flipped from `toggleMute`, which
+  // only ever runs from the mute button's click handler — never from inside
+  // an AUTOMATIC-MUTE-FORBIDDEN-ZONE. See the module doc above.
+  let muted = false;
+  let framesForwarded = 0;
 
   const capture = new MicCapture({
     inputSampleRate: requestedRate,
@@ -288,8 +360,17 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     workletUrl: options.workletUrl,
     deps,
     onAppend: (event) => {
-      emitClientEvent(event);
+      // mic-capture.ts encodes and counts this frame unconditionally — the
+      // device and the worklet do not know or care whether the human muted
+      // anything (see mic-capture.ts's own "two things this module will
+      // never do"). The gate is here, in the only layer a click handler can
+      // reach: a muted frame is captured (the fact below still climbs) and
+      // simply never forwarded (the OTHER fact does not).
       factFrames.textContent = String(capture.framesSent);
+      if (muted) return;
+      emitClientEvent(event);
+      framesForwarded += 1;
+      factSent.textContent = String(framesForwarded);
     },
     onLevel: renderLevel,
     onState: (captureState, captureDetail) => {
@@ -301,6 +382,7 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
   function mapCaptureState(captureState: MicCaptureState): MicIslandState {
     switch (captureState) {
       case "capturing":
+        if (muted) return "muted";
         return player?.getState() === "playing" ? "speaking" : "listening";
       case "idle":
         return "idle";
@@ -336,10 +418,16 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     const copy = STATE_COPY[next];
     root.dataset.state = next;
     chipLabel.textContent = copy.label;
-    startButton.textContent =
-      next === "listening" || next === "speaking" || next === "arming"
-        ? "Stop mic & playback"
-        : "Start mic & playback";
+    const armed = next === "listening" || next === "speaking" || next === "muted" || next === "arming";
+    startButton.textContent = armed ? "Stop mic & playback" : "Start mic & playback";
+
+    // The mute button only ever does something while the device is actually
+    // held (listening/speaking/muted) — arming is mid-flight and everything
+    // else has no live track to gate. `disabled` here is belt-and-braces:
+    // `toggleMute` itself is a no-op unless captureState is "capturing".
+    muteButton.disabled = !(next === "listening" || next === "speaking" || next === "muted");
+    muteButton.textContent = muted ? "Unmute mic" : "Mute mic";
+    muteButton.setAttribute("aria-pressed", String(muted));
 
     let text = copy.message;
     if ((next === "failed" || next === "denied" || next === "no-device") && detail.errorName) {
@@ -359,6 +447,7 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     // fixed TTS rate whatever the session negotiated for input.
     factOut.textContent = `${TTS_OUTPUT_SAMPLE_RATE} Hz PCM16 mono`;
     factFrames.textContent = String(capture.framesSent);
+    factSent.textContent = String(framesForwarded);
     playback.textContent = playbackNote;
   }
 
@@ -383,10 +472,17 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
 
   // ------------------------------------------------------------ lifecycle
   async function start(): Promise<boolean> {
-    if (state === "listening" || state === "speaking" || state === "arming") return true;
+    if (state === "listening" || state === "speaking" || state === "muted" || state === "arming") {
+      return true;
+    }
     clearServerError();
     droppedDeltas = 0;
     setPlaybackNote("Reply audio: nothing received yet.");
+    // A fresh arm always starts unmuted — the same gesture path as the very
+    // first start, per the acceptance criterion, never a stale mute carried
+    // over from a previous session.
+    muted = false;
+    framesForwarded = 0;
 
     if (!deps.isSupported()) {
       detail = { message: STATE_COPY.unsupported.message };
@@ -423,6 +519,13 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     return true;
   }
 
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-START (d1: this function runs only in
+  // reaction to the player finishing, being interrupted, or being torn down
+  // — never from a human's own click. Deviation d1 narrows the no-mic-mute
+  // rule to forbid exactly this: a mute mechanism triggered by a playback or
+  // response event. no-mic-mute.test.ts scans everything between this
+  // marker and its matching END for every mute mechanism, with no exception
+  // for the ones a user-triggered mute is now allowed to use elsewhere.)
   function handlePlaybackStop(info: PlaybackStopInfo): void {
     if (info.reason === "interrupted") {
       setPlaybackNote(
@@ -439,6 +542,7 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     }
     render(mapCaptureState(capture.getState()));
   }
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-END
 
   async function teardownAudio(): Promise<void> {
     capture.stop();
@@ -455,6 +559,10 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
       }
     }
     renderLevel(0);
+    // Mic-off (a full teardown) always clears mute too: there is no device
+    // left to hold a mute state on, and the next arm is a fresh start.
+    muted = false;
+    framesForwarded = 0;
   }
 
   async function stop(): Promise<void> {
@@ -462,7 +570,53 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     render(mapCaptureState(capture.getState()));
   }
 
+  // ------------------------------------------------------------ mute (d1)
+  //
+  // Deliberately NOT inside a AUTOMATIC-MUTE-FORBIDDEN-ZONE: this is the one
+  // place in the file a mute mechanism is allowed to live, because it only
+  // ever runs from `onMuteClick` below, a human's own click. See the module
+  // doc's "muted — a deliberate, user-triggered exception" section.
+  function setMuted(next: boolean): void {
+    if (muted === next || !capture.isRunning()) return;
+    muted = next;
+    emitMuteEvent(next);
+    render(mapCaptureState(capture.getState()));
+  }
+
+  /**
+   * Tell the event stream, honestly. `client.mic_muted`/`client.mic_unmuted`
+   * are NOT `/v1/realtime` wire events — nothing server-side ever sends
+   * them, and `origin: "client"` says so on the event itself — but the
+   * acceptance bar for this task is that an operator can tell "muted" apart
+   * from silence (which emits nothing at all, by `event-log.ts`'s own design
+   * — see its module doc) and from "disconnected" (its own family, driven by
+   * `lobes:connection-state`). Dispatched straight on `window`, the exact
+   * seam `EventStream.astro`'s own mount script already listens on — see
+   * `src/pages/index.astro`'s bridge `<script>` for the contract this
+   * mirrors. No import of any t12 module: the seam is the whole point.
+   */
+  function emitMuteEvent(nextMuted: boolean): void {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("lobes:realtime-event", {
+        detail: {
+          type: nextMuted ? "client.mic_muted" : "client.mic_unmuted",
+          origin: "client",
+          timestamp_ms: Date.now(),
+        },
+      }),
+    );
+  }
+
+  const onMuteClick = () => setMuted(!muted);
+  muteButton.addEventListener("click", onMuteClick);
+
   // -------------------------------------------------------- server events
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-START (d1: every case below runs only
+  // because the SERVER sent something — a response stage, a boundary, an
+  // error, a close. No mute mechanism may appear anywhere in this function;
+  // see the module doc's d1 section and the marker note on
+  // `handlePlaybackStop` above.)
   function handleServerEvent(raw: unknown): void {
     const event = parseServerEvent(raw);
     const type = typeof event?.type === "string" ? event.type : null;
@@ -523,7 +677,13 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
         break;
     }
   }
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-END
 
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-START (d1: the connection going away is
+  // not itself a "playback or response event", but it is exactly as
+  // automatic — nothing here is a human's click — so it gets the same
+  // treatment. This function only ever tears the device down; it must never
+  // grow a mute call instead.)
   function notifyDisconnected(reason?: string): void {
     player?.stop("disconnected");
     void teardownAudio().then(() => {
@@ -533,10 +693,13 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
       render(mapCaptureState(capture.getState()));
     });
   }
+  // AUTOMATIC-MUTE-FORBIDDEN-ZONE-END
 
   // --------------------------------------------------------------- wiring
   const onClick = () => {
-    void (state === "listening" || state === "speaking" || state === "arming" ? stop() : start());
+    void (state === "listening" || state === "speaking" || state === "muted" || state === "arming"
+      ? stop()
+      : start());
   };
   startButton.addEventListener("click", onClick);
 
@@ -553,6 +716,8 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
     getInputSampleRate: () => capture.getInputSampleRate(),
     start,
     stop,
+    isMuted: () => muted,
+    setMuted,
     setSender: (fn) => {
       sender = fn;
     },
@@ -562,6 +727,7 @@ export function mountMicIsland(root: HTMLElement, options: MicIslandOptions = {}
       if (destroyed) return;
       destroyed = true;
       startButton.removeEventListener("click", onClick);
+      muteButton.removeEventListener("click", onMuteClick);
       target.removeEventListener(serverEventName, onServerEvent);
       void teardownAudio();
       MOUNTED.delete(root);
