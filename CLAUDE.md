@@ -211,9 +211,15 @@ POST-only). This redeems two in-tree IOUs — `app.py`'s own "PR2 adds the
 `realtime-pipeline.md`'s former "planned for a later release" boundary
 claim — against the #149 baseline probe (the deployed facade served four
 batch routes and no WebSocket, forcing reachy-mini-cli's client-side
-energy-threshold endpointing). DECLARED/UNVALIDATED live (#108): the
-offline suite proves the session/VAD logic with a scripted fake VAD; no
-`docs/evidence/` transcript exists yet for issue #149.
+energy-threshold endpointing). VALIDATED live on the DGX Spark GB10,
+2026-07-21 (`docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full
+session through the gateway tunnel against real Silero + Parakeet, at both
+24000 Hz and the 16000 Hz passthrough. The live run is also what caught the
+tunnel's leftover-direction bug — the bridge's first frame was being sent
+back upstream, killing every session the instant it opened, and the unit
+test had asserted that wrong direction as correct. Still UNVALIDATED: a real
+microphone (the runs used synthesized audio), the VAD-unavailable path,
+concurrent sessions, and the max-turn cap.
 
 See `docs/realtime-pipeline.md`, `docs/parakeet-stt.md`,
 `docs/chatterbox-tts.md`, and `docs/openai-api.md` (the full

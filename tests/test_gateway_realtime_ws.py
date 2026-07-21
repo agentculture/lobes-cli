@@ -300,8 +300,23 @@ def test_tunnel_relays_both_directions_and_returns_when_both_sides_are_done() ->
     client = _FakeSock([b"client-audio-1", b"client-audio-2"])
     upstream = _FakeSock([b"event-1", b"event-2"])
     R.run_tunnel(client, upstream, leftover=b"pre-buffered")
-    assert upstream.sent == b"pre-bufferedclient-audio-1client-audio-2"
-    assert client.sent == b"event-1event-2"
+    assert upstream.sent == b"client-audio-1client-audio-2"
+    assert client.sent == b"pre-bufferedevent-1event-2"
+
+
+def test_leftover_goes_to_the_client_never_back_to_the_upstream() -> None:
+    """The bridge packs its first event into the 101's TCP segment.
+
+    Those bytes came FROM the upstream, so they belong to the CLIENT. Sending
+    them upstream instead loses `session.created` and bounces an unmasked
+    server frame at the bridge, which RFC 6455 makes it close on — caught live,
+    not by this suite, because the original test asserted the wrong direction.
+    """
+    client, upstream = _FakeSock([]), _FakeSock([])
+    first_event = b'\x81\x1a{"type":"session.created"}'
+    R.run_tunnel(client, upstream, leftover=first_event)
+    assert client.sent.startswith(first_event)
+    assert first_event not in upstream.sent
 
 
 def test_tunnel_unwinds_both_directions_when_the_client_drops_mid_stream() -> None:

@@ -431,10 +431,12 @@ gated by the same opt-in bearer check (a missing/wrong key is rejected
 before any tunnel is opened); see [Auth and exposure](#auth-and-exposure)
 below.
 
-**Live status: DECLARED/UNVALIDATED.** The session/VAD logic is proven by
-the offline unit suite with a scripted fake VAD; nothing here has been
-exercised on real hardware yet — no `docs/evidence/` transcript exists for
-issue #149. See
+**Live status: VALIDATED on the DGX Spark GB10, 2026-07-21** — a full
+session ran through the gateway tunnel against real Silero and real Parakeet
+at both wire rates (transcript:
+[`docs/evidence/2026-07-21-accept-realtime-spark.txt`](evidence/2026-07-21-accept-realtime-spark.txt)).
+Still unvalidated: a real microphone (the live runs used synthesized audio),
+the VAD-unavailable path, concurrent sessions, and the max-turn cap. See
 [`docs/realtime-pipeline.md`](realtime-pipeline.md#the-v1realtime-websocket-session-issue-149)
 for the full contract, the ephemeral-session restart contract in detail, and
 the #149 baseline this redeems.

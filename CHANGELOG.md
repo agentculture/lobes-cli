@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.2] - 2026-07-21
+
+### Changed
+
+- `/v1/realtime` is VALIDATED live on the DGX Spark GB10 (2026-07-21, `docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full session ran through the gateway tunnel against the real Silero model and the real Parakeet/Chatterbox sidecars — `session.created` through transcription on one connection, at 24000 Hz and the 16000 Hz passthrough, plus the 401 on an unauthenticated handshake and the 426 on a plain GET. The #149 motivating case (a five-word question that a client-side energy threshold shattered into "Ready, she") now arrives as one whole utterance with a single speech boundary pair. Four things stay UNVALIDATED and are documented as such: a real microphone (the live runs used synthesized audio), the VAD-unavailable path, concurrent sessions, and the max-turn force-commit.
+
+### Fixed
+
+- The gateway tunnel sent the bridge's FIRST FRAME back upstream instead of to the client. `read_head` returns any bytes the upstream packed into the same TCP segment as its 101, and `run_tunnel` wrote them to `upstream` — so `session.created` never reached the caller, and an unmasked server frame arrived at the bridge, which RFC 6455 §5.1 requires it to close on. Every session died the instant it opened. Caught by the first live run on a DGX Spark GB10, NOT by the unit suite, whose test had asserted the wrong direction as correct — the test is now inverted and joined by a regression test naming the failure.
+
 ## [0.52.1] - 2026-07-21
 
 ### Fixed

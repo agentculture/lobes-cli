@@ -218,12 +218,19 @@ Root cause diagnosis is open; see issues #39 and #40 if this resurfaces.
 
 ## The `/v1/realtime` WebSocket session (issue #149)
 
-**Status: DECLARED/UNVALIDATED live, pending acceptance evidence (#108).**
-Everything in this section is proven by the offline unit suite — a scripted
-fake VAD drives `lobes/realtime/_segmenter.py` and `_session.py` with no
-torch, no GPU, and no `[realtime]` extra installed. Nothing here has been
-exercised against a real Silero model, a real Parakeet forward, or actual
-hardware yet: there is no `docs/evidence/` transcript for issue #149. The
+**Status: VALIDATED on the DGX Spark GB10, 2026-07-21** — transcript:
+[`docs/evidence/2026-07-21-accept-realtime-spark.txt`](evidence/2026-07-21-accept-realtime-spark.txt).
+A live run drove a full session through the gateway tunnel against the real
+Silero model and the real Parakeet and Chatterbox sidecars: `session.created`
+→ `speech_started` → `speech_stopped` → transcription, all on one connection,
+at **both** wire rates (24000 Hz and the 16000 Hz passthrough), plus the 401
+on an unauthenticated handshake and the 426 on a plain GET.
+
+Four things stay **UNVALIDATED** and must not be claimed: a real
+**microphone** (every live run used synthesized Chatterbox audio, so
+reachy-mini-cli's mic path is still unproven end to end), the
+**VAD-unavailable** error path, **concurrent** sessions, and the
+**max-turn** force-commit — the last three are covered offline only. The
 live smoke procedure that will produce one — connect, stream, boundaries,
 transcript, all over one connection, plain-`websocket-client`-level like
 `scripts/audio-smoke.py` — is issue #149's task t8. Until that transcript

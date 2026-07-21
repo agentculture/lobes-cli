@@ -1,0 +1,83 @@
+=== lobes /v1/realtime acceptance — DGX Spark GB10 (spark), 2026-07-21T13:50:27Z ===
+branch: spec/realtime-ws-server-vad-149  commit: 5f43892
+rig: parallel gateway (port 8099) + realtime bridge from branch source, on the lobes_default
+     network, wired to the LIVE model-gear-stt (Parakeet) and model-gear-chatterbox containers.
+     The production fleet was left untouched throughout.
+
+--- baseline probe (production gateway :8001, lobes-cli 0.51.1) ---
+realtime container REST paths: ['/health', '/v1/audio/speech', '/v1/audio/transcriptions', '/v1/health/ready']
+  -> no /v1/realtime: reproduces the issue #149 baseline.
+
+--- refusal paths (branch gateway :8099) ---
+handshake without bearer -> 401 (expect 401)
+plain GET with bearer    -> 426 (expect 426)
+
+--- capabilities: stt role ---
+responsibilities: ['transcribe', 'audio_input_to_text', 'realtime_vad_session']
+ready: True feasible: True
+
+--- session at 24000 Hz (default) through the gateway tunnel ---
+PASS: tts-source — 115200 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — 101 Switching Protocols, Sec-WebSocket-Accept verified
+PASS: session-created — received 'session.created'
+PASS: audio-stream — streamed 172800 bytes + trailing silence
+PASS: speech-started — received 'input_audio_buffer.speech_started'
+PASS: speech-stopped — received 'input_audio_buffer.speech_stopped'
+PASS: transcription — transcript='The quick brown fox jumps over the lazy dog.' contains every expected keyword ('quick', 'brown', 'fox', 'lazy', 'dog')
+Results: 7/7 checks passed
+SUCCESS: all realtime checks passed
+
+--- session at 16000 Hz (reachy-mini-cli's native mic rate) ---
+PASS: tts-source — 115200 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — 101 Switching Protocols, Sec-WebSocket-Accept verified
+PASS: session-created — received 'session.created'
+PASS: audio-stream — streamed 153600 bytes + trailing silence
+PASS: speech-started — received 'input_audio_buffer.speech_started'
+PASS: speech-stopped — received 'input_audio_buffer.speech_stopped'
+PASS: transcription — transcript='The quick brown fox jumps over the lazy dog.' contains every expected keyword ('quick', 'brown', 'fox', 'lazy', 'dog')
+Results: 7/7 checks passed
+SUCCESS: all realtime checks passed
+
+--- the #149 motivating case: the five-word question that the client-side
+    energy threshold shattered into 'Ready, she' (16 kHz, reachy's mic rate) ---
+PASS: tts-source — 59520 bytes PCM16 @ 24000 Hz
+PASS: ws-handshake — 101 Switching Protocols, Sec-WebSocket-Accept verified
+PASS: session-created — received 'session.created'
+PASS: audio-stream — streamed 97920 bytes + trailing silence
+PASS: speech-started — received 'input_audio_buffer.speech_started'
+PASS: speech-stopped — received 'input_audio_buffer.speech_stopped'
+FAIL: transcription — transcript='Ricci, are you there?' missing keywords=['reachy']
+Results: 6/7 checks passed
+FAILURE: some checks failed
+
+    READ THIS RESULT CAREFULLY. The endpointing — the thing #149 is about —
+    WORKED: the five-word question arrived as ONE whole utterance,
+    "Ricci, are you there?", with a single speech_started/speech_stopped pair.
+    Compare the #149 baseline, where a client-side energy threshold shattered
+    the same question into the fragment "Ready, she". The residual error is
+    Parakeet mishearing the proper noun "Reachy" as "Ricci" — an ASR
+    vocabulary miss on a name, in audio that was SYNTHESIZED by Chatterbox and
+    never passed through a real microphone. That is a different problem from
+    the one this PR fixes, and the smoke script was right to fail the keyword
+    check rather than paper over it.
+
+=== WHAT THIS TRANSCRIPT DOES AND DOES NOT ESTABLISH ===
+
+VALIDATED on this run (real GB10, real Silero, real Parakeet, real Chatterbox):
+  - the gateway's 101-upgrade + byte tunnel, including Sec-WebSocket-Accept
+    relayed verbatim and the first event packed into the 101's TCP segment;
+  - session lifecycle events over ONE connection: session.created ->
+    speech_started -> speech_stopped -> transcription;
+  - server_vad segmentation by the real Silero model on real audio;
+  - both wire rates: 24000 Hz (default) and 16000 Hz (native passthrough);
+  - the inbound bearer gate on the handshake (401) and the 426 on a plain GET;
+  - the stt role advertising realtime_vad_session with ready=true.
+
+NOT established here (do not claim these):
+  - a real microphone: every run above used synthesized Chatterbox audio;
+    reachy-mini-cli's live mic path is still unproven end to end;
+  - the VAD-unavailable error path (no way to fail Silero on a healthy box);
+  - concurrent sessions, the max-turn force-commit, and teardown mid-
+    transcription — all covered offline, none exercised live here;
+  - the production fleet itself, which still runs 0.51.1 and was deliberately
+    left untouched; this rig was a parallel gateway+bridge on spare ports.

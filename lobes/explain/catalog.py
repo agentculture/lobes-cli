@@ -995,10 +995,11 @@ route; a plain `GET` gets 426, a declared-off `stt` lane 404s
 `role_infeasible` naming `hosted_by`, and the session is **never** proxied
 cross-box (the #129 proxy-lobes forwarder is POST-only).
 
-**DECLARED/UNVALIDATED live** (#108): the offline suite proves the
-session/VAD logic with a scripted fake VAD; nothing above has been
-exercised against real hardware yet, and no `docs/evidence/` transcript
-exists for issue #149.
+**VALIDATED live** on the DGX Spark GB10, 2026-07-21 (transcript:
+`docs/evidence/2026-07-21-accept-realtime-spark.txt`): a full session ran
+through the gateway tunnel against real Silero + Parakeet at both wire
+rates. Still unvalidated: a real microphone (the runs used synthesized
+audio), the VAD-unavailable path, concurrent sessions, the max-turn cap.
 
 Audio POST routes and the `/v1/realtime` handshake are gated by the same
 opt-in `GATEWAY_API_KEY` bearer check — `lobes explain gateway`. Full

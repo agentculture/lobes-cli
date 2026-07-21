@@ -223,14 +223,18 @@ def pump(src, dst) -> None:
 def run_tunnel(client, upstream, *, leftover: bytes = b"") -> None:
     """Pump bytes both ways until either side closes, then unwind both.
 
-    ``leftover`` is anything already buffered past the handshake head, written
-    to the upstream before the pump starts. Returns only once both directions
-    have finished, so the caller's handler thread ends with no orphaned pump
-    behind it.
+    ``leftover`` is whatever :func:`read_head` read past the handshake head —
+    bytes the UPSTREAM sent, so they belong to the CLIENT, and it is written
+    there before the pump starts. Sending them upstream instead loses the
+    session's first event and bounces a server-side (unmasked) frame back at
+    the bridge, which RFC 6455 §5.1 requires it to answer by closing — the
+    session dies the moment it opens. Returns only once both directions have
+    finished, so the caller's handler thread ends with no orphaned pump behind
+    it.
     """
     if leftover:
         try:
-            upstream.sendall(leftover)
+            client.sendall(leftover)
         except OSError:
             return
     up_to_client = threading.Thread(
