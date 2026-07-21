@@ -354,10 +354,19 @@ async def realtime(websocket: WebSocket) -> None:
             aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
             if not aligned:
                 continue
-            pcm16k = _resample_to_16k(aligned, input_rate)
+            # Both of these are SYNCHRONOUS CPU work (scipy; torch inference
+            # one call per 32 ms chunk), and the bridge runs a single uvicorn
+            # event loop shared by every realtime session AND every batch
+            # /v1/audio/* request. Run inline, one talking session starves all
+            # of them — so they go to a worker thread, the same way
+            # chatterbox_server.py offloads its own model inference.
+            if needs_resample(input_rate, VAD_SAMPLE_RATE):
+                pcm16k = await anyio.to_thread.run_sync(_resample_to_16k, aligned, input_rate)
+            else:
+                pcm16k = aligned  # no-op passthrough; a thread hop would cost more
 
             try:
-                events = segmenter.feed(pcm16k)
+                events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
             except Exception as exc:
                 # _segmenter.py deliberately lets a raising VAD callable
                 # propagate (see its module docstring) — translating that

@@ -428,7 +428,30 @@ class WebSocketClient:
         return data
 
     def read_frame(self, timeout: float | None = None) -> tuple[bool, int, bytes]:
-        return read_frame(lambda n: self._recv_exact(n, timeout=timeout))
+        """Read one frame, leaving the buffer intact if it times out mid-frame.
+
+        ``read_frame`` needs 2-4 separate reads (base header, extended length,
+        mask key, payload) and each can time out independently. Without the
+        push-back below, a timeout AFTER the header was consumed would drop
+        those bytes: the caller's retry would then read the frame's own
+        length bytes as if they were a new header and mis-parse everything
+        that followed. Restoring what this attempt consumed makes the retry
+        resume from the true frame boundary.
+        """
+        consumed = bytearray()
+
+        def reader(n: int) -> bytes:
+            data = self._recv_exact(n, timeout=timeout)
+            consumed.extend(data)
+            return data
+
+        try:
+            return read_frame(reader)
+        except socket.timeout:
+            # Consumed bytes preceded anything the failed attempt appended,
+            # so putting them back at the front restores true stream order.
+            self._buf[:0] = consumed
+            raise
 
     def read_raw(self, n: int, timeout: float | None = None) -> bytes:
         """Read up to *n* already-available-or-arriving bytes (best-effort diagnostics)."""

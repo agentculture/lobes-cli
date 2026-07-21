@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import socket
 import struct
 import sys
 from pathlib import Path
@@ -354,3 +355,46 @@ def test_classify_event_or_timeout_flags_an_unexpected_event_type() -> None:
     assert ok is False
     assert "session.closed" in detail
     assert "session.created" in detail
+
+
+# --- mid-frame timeout must not desync the reader --------------------------
+
+
+class _StutteringSock:
+    """Delivers a frame's header, then times out, then delivers the rest.
+
+    Models the real hazard: a frame split across TCP segments with a gap
+    longer than the per-read timeout, landing between the base header and the
+    payload.
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        header = struct.pack("!BB", 0x81, len(payload))
+        self._script = [header, socket.timeout("timed out"), payload]
+
+    def settimeout(self, _t) -> None:
+        pass
+
+    def recv(self, _n: int) -> bytes:
+        if not self._script:
+            return b""
+        item = self._script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_a_timeout_between_header_and_payload_does_not_corrupt_the_next_read() -> None:
+    text = b'{"type":"session.created"}'
+    client = realtime_smoke.WebSocketClient.__new__(realtime_smoke.WebSocketClient)
+    client._sock = _StutteringSock(text)
+    client._buf = bytearray()
+
+    with pytest.raises(socket.timeout):
+        client.read_frame(timeout=0.01)  # dies after consuming the header
+
+    # The retry must see the SAME frame, not the payload mis-read as a header.
+    fin, opcode, payload = client.read_frame(timeout=0.01)
+    assert fin is True
+    assert opcode == realtime_smoke.OPCODE_TEXT
+    assert payload == text

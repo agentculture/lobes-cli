@@ -164,6 +164,71 @@ def test_a_non_101_handshake_response_is_reported_as_its_own_status() -> None:
     assert R.status_of(head) == 503
 
 
+def test_read_head_returns_on_a_real_socket_that_stays_open() -> None:
+    """The regression guard for the hang that fakes could not catch.
+
+    A real bridge answers 101 and then goes SILENT, waiting for the client to
+    speak — it neither fills a 64 KiB buffer nor closes. ``read_head`` must
+    return as soon as the head is complete; anything that waits for more parks
+    the handler thread forever and no session ever starts.
+    """
+    client, bridge = socket.socketpair()
+    try:
+        bridge.sendall(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+            b"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+        )
+        reader = client.makefile("rb")
+        result: list = []
+
+        def run() -> None:
+            try:
+                result.append(R.read_head(reader))
+            except Exception as exc:  # noqa: BLE001 - surfaced via the assert below
+                result.append(exc)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "read_head blocked on an open, idle socket"
+        head, leftover = result[0]
+        assert R.status_of(head) == 101
+        assert b"Sec-WebSocket-Accept" in head
+        assert leftover == b""
+    finally:
+        client.close()
+        bridge.close()
+
+
+def test_read_head_keeps_bytes_the_bridge_packed_after_the_head() -> None:
+    """A real socket delivering the 101 and a first frame in one segment."""
+    client, bridge = socket.socketpair()
+    try:
+        bridge.sendall(b"HTTP/1.1 101 Switching Protocols\r\n\r\n" + b"\x81\x03abc")
+        head, leftover = R.read_head(client.makefile("rb"))
+        assert R.status_of(head) == 101
+        assert leftover == b"\x81\x03abc"  # the session's first event survives
+    finally:
+        client.close()
+        bridge.close()
+
+
+def test_read_head_reassembles_a_head_split_across_reads() -> None:
+    # One syscall per call, 8 bytes at a time: the loop must keep reading until
+    # the terminator rather than giving up on the first partial chunk.
+    reader = _FakeReader(
+        b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\nZ", chunk=8
+    )
+    head, leftover = R.read_head(reader)
+    assert head.endswith(b"\r\n\r\n") and b"Upgrade: websocket" in head
+    assert R.status_of(head) == 101
+    # `leftover` is only what was ALREADY read past the terminator — here the
+    # loop stopped on the chunk that completed it, so the trailing byte is
+    # still in the reader (the pump gets it). read1(_CHUNK) always asks for
+    # more than the buffer holds, so nothing can be stranded inside it.
+    assert leftover == b""
+
+
 def test_read_head_refuses_an_unbounded_header_block() -> None:
     with pytest.raises(R.HandshakeError):
         R.read_head(_FakeReader(b"HTTP/1.1 101 x\r\n" + b"X: y\r\n" * 100_000))
@@ -178,12 +243,22 @@ def test_read_head_on_a_closed_upstream_raises_rather_than_hanging() -> None:
 
 
 class _FakeReader:
-    """Duck-typed buffered reader over a fixed byte string."""
+    """Duck-typed buffered reader: ``read1`` semantics, one chunk per call.
 
-    def __init__(self, data: bytes) -> None:
+    Deliberately exposes ONLY ``read1``. An earlier version of this fake had a
+    ``read`` that returned immediately with whatever it had — which is NOT how
+    ``BufferedReader.read`` behaves on a blocking socket (it waits to fill the
+    buffer), and that mismatch hid a bug where the real handshake hung forever.
+    The real-socket test below is the regression guard; this fake stays honest
+    about which method the code may use.
+    """
+
+    def __init__(self, data: bytes, *, chunk: int | None = None) -> None:
         self._data = data
+        self._chunk = chunk
 
-    def read(self, n: int) -> bytes:
+    def read1(self, n: int) -> bytes:
+        n = min(n, self._chunk) if self._chunk else n
         chunk, self._data = self._data[:n], self._data[n:]
         return chunk
 

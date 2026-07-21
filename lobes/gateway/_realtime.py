@@ -169,12 +169,19 @@ def read_head(reader) -> tuple[bytes, bytes]:
     line, and any bytes already read past it (the bridge may pack its first
     WebSocket frame into the same TCP segment as the 101, and dropping those
     would silently lose the session's first event).
+
+    ``reader`` must expose ``read1`` (``socket.makefile('rb')`` does).
+    ``read1`` and not ``read``: on a blocking socket ``BufferedReader.read(n)``
+    keeps issuing syscalls until it has ``n`` bytes or hits EOF, so asking for
+    a chunk-sized read would park here forever — a 101 head is ~130 bytes and a
+    bridge that just accepted a session sends nothing more until the client
+    speaks, and never closes. ``read1`` returns whatever one syscall yielded.
     """
     buf = b""
     while b"\r\n\r\n" not in buf:
         if len(buf) > _MAX_HEAD:
             raise HandshakeError("upstream handshake headers exceeded the size cap")
-        chunk = reader.read(_CHUNK)
+        chunk = reader.read1(_CHUNK)
         if not chunk:
             raise HandshakeError("upstream closed before completing the handshake")
         buf += chunk
