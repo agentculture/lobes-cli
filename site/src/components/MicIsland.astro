@@ -1,0 +1,355 @@
+---
+// MicIsland.astro — the mic capture + audio playback island (issue #151 t11).
+//
+// ── How to mount this ───────────────────────────────────────────────────
+//
+// Drop the component inside the t11 mount point in `src/pages/index.astro`:
+//
+//     ---
+//     import MicIsland from "../components/MicIsland.astro";
+//     ---
+//     <div class="mount card" id="mic-mount" data-mount="mic">
+//       <MicIsland />
+//     </div>
+//
+// That is the whole integration. The component's own <script> block mounts
+// every `[data-mic-island]` element it finds, so nothing else on the page has
+// to import or call anything.
+//
+// ── How the connection layer talks to it ────────────────────────────────
+//
+// The island neither opens nor holds a WebSocket. It speaks two DOM
+// CustomEvents on `document`:
+//
+//   OUT  `lobes:client-event` — `detail` is a finished
+//        `{type: "input_audio_buffer.append", audio: "<base64>"}` event.
+//        Forward `detail` over the socket verbatim; it is exactly what
+//        `lobes/realtime/_wire.py`'s `parse_append_event` expects.
+//   IN   `lobes:server-event` — dispatch every parsed server event with the
+//        event object as `detail`. The island consumes `session.created`,
+//        `response.created`, `response.audio.delta`, `response.interrupted`,
+//        `response.done`, `session.closed`, and `error`, and ignores the rest.
+//
+//   READY `lobes:mic-ready` — dispatched once at mount with
+//        `{inputSampleRate, outputSampleRate}`. `inputSampleRate` is the value
+//        to put in the connect URL's `input_sample_rate` query parameter.
+//
+// A connection layer that prefers function calls over events can use the
+// handle published at `window.lobesMic`:
+// `setSender(fn)`, `handleServerEvent(evt)`, `notifyDisconnected(reason)`.
+//
+// ── Why the markup is built in JS ───────────────────────────────────────
+//
+// Everything below the shell is created by `mic-island.ts` so the whole
+// rendering path — including every failure state — is exercised by
+// `mic-island.test.ts` under jsdom, with no browser and no microphone. What
+// stays here is the static shell (server-rendered, styled, meaningful before
+// hydration) and the stylesheet.
+
+interface Props {
+  /**
+   * The rate to request for `input_sample_rate` — 24000 (default) or 16000.
+   * NOT the rate reply audio arrives at: that is fixed at 24 kHz by the TTS
+   * sidecar and is never derived from this value.
+   */
+  inputSampleRate?: number;
+}
+
+const { inputSampleRate = 24000 } = Astro.props;
+---
+
+<div class="mic-island-wrap">
+  <div class="mic-island" data-mic-island data-state="idle" data-input-sample-rate={String(inputSampleRate)}>
+    <p class="mic-boot muted">Loading the microphone controls…</p>
+  </div>
+  <noscript>
+    <p class="mic-noscript">
+      Microphone capture and audio playback need JavaScript. Nothing on this
+      page records or plays anything without it — and nothing will start even
+      with it until you press the start control.
+    </p>
+  </noscript>
+</div>
+
+<script>
+  import { autoMountMicIslands } from "../scripts/mic-island";
+
+  autoMountMicIslands(document);
+</script>
+
+<style is:global>
+  /* Global rather than scoped: the island's DOM is built by
+     `mic-island.ts` at runtime, so it never carries Astro's per-component
+     scoping attribute. Same convention SignalMesh.astro uses, and every
+     selector is prefixed `mic-` so it cannot collide with a sibling island.
+
+     Colours below are component-local tokens, not additions to
+     global.css — three wave-2 islands are being built in parallel and a
+     shared file is a merge conflict waiting to happen. Every value is
+     contrast-checked against BOTH surfaces it can appear on:
+
+       light  (on --surface #ffffff / --bg #f4f5fb)
+         --mic-live    #0b655c  6.93 / 6.37
+         --mic-speak   #2f4fa8  7.49 / 6.88
+         --mic-warn    #7a3e00  8.34 / 7.67
+         --mic-danger  #9a2620  7.86 / 7.22
+         --mic-inert   #5b3fa8  7.72 / 7.09
+         --mic-fault   #8a2262  8.45 / 7.76
+       dark   (on --surface #161b36 / --bg #0b0f20)
+         --mic-live    #7fdcc9 10.44 / 11.77
+         --mic-speak   #a8c4ff  9.65 / 10.88
+         --mic-warn    #ffcf9e 11.79 / 13.30
+         --mic-danger  #ffa9a2  9.20 / 10.38
+         --mic-inert   #c9b6ff  9.34 / 10.53
+         --mic-fault   #f7a8d4  9.25 / 10.43
+
+     All well past WCAG AA's 4.5:1 for body text, in both themes. */
+
+  .mic-island {
+    --mic-live: #0b655c;
+    --mic-speak: #2f4fa8;
+    --mic-warn: #7a3e00;
+    --mic-danger: #9a2620;
+    --mic-inert: #5b3fa8;
+    --mic-fault: #8a2262;
+    --mic-state: var(--ink-soft);
+
+    display: grid;
+    gap: 1.1rem;
+    width: 100%;
+    text-align: left;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .mic-island {
+      --mic-live: #7fdcc9;
+      --mic-speak: #a8c4ff;
+      --mic-warn: #ffcf9e;
+      --mic-danger: #ffa9a2;
+      --mic-inert: #c9b6ff;
+      --mic-fault: #f7a8d4;
+    }
+  }
+
+  /* One hue per state. Colour is never the only signal — the chip label, the
+     status message, and the dot's shape all change too (WCAG 1.4.1). */
+  .mic-island[data-state="arming"],
+  .mic-island[data-state="listening"] {
+    --mic-state: var(--mic-live);
+  }
+
+  .mic-island[data-state="speaking"] {
+    --mic-state: var(--mic-speak);
+  }
+
+  .mic-island[data-state="denied"] {
+    --mic-state: var(--mic-danger);
+  }
+
+  .mic-island[data-state="no-device"] {
+    --mic-state: var(--mic-warn);
+  }
+
+  .mic-island[data-state="unsupported"] {
+    --mic-state: var(--mic-inert);
+  }
+
+  .mic-island[data-state="failed"] {
+    --mic-state: var(--mic-fault);
+  }
+
+  .mic-island-wrap {
+    width: 100%;
+  }
+
+  .mic-boot,
+  .mic-noscript {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    margin: 0;
+  }
+
+  .mic-noscript {
+    color: var(--ink-soft);
+    margin-top: 0.8rem;
+  }
+
+  .mic-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .mic-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0.85rem 0.35rem 0.7rem;
+    border: 1px solid color-mix(in srgb, var(--mic-state) 35%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--mic-state) 8%, transparent);
+    color: var(--mic-state);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .mic-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: currentColor;
+    transform-origin: center;
+  }
+
+  /* A shape cue, not just a colour cue: the failure states square the dot. */
+  .mic-island[data-state="denied"] .mic-dot,
+  .mic-island[data-state="no-device"] .mic-dot,
+  .mic-island[data-state="unsupported"] .mic-dot,
+  .mic-island[data-state="failed"] .mic-dot {
+    border-radius: 2px;
+  }
+
+  .mic-button {
+    appearance: none;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 0.6rem 1.3rem;
+    background: var(--accent-strong);
+    color: var(--on-accent);
+    font-size: 0.95rem;
+    font-weight: 560;
+    cursor: pointer;
+  }
+
+  .mic-button:hover {
+    background: color-mix(in srgb, var(--accent-strong) 88%, var(--ink));
+  }
+
+  .mic-message {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .mic-meter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .mic-meter-label,
+  .mic-meter-value {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+  }
+
+  .mic-meter-value {
+    min-width: 3ch;
+    text-align: right;
+  }
+
+  .mic-meter {
+    flex: 1 1 auto;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    overflow: hidden;
+  }
+
+  .mic-meter-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    border-radius: inherit;
+    background: var(--mic-state);
+    transform-origin: left center;
+    /* Driven by a CSS custom property the island writes when a batch of
+       samples arrives — a data readout, not an animation loop. */
+    transform: scaleX(var(--mic-level, 0));
+  }
+
+  .mic-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.6rem;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+
+  .mic-fact {
+    display: flex;
+    gap: 0.45rem;
+  }
+
+  .mic-facts dt {
+    color: var(--ink-soft);
+  }
+
+  .mic-facts dd {
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .mic-playback {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+
+  /* A named server error (`tts_failed`, `response_timeout`, …) is a different
+     kind of fact from a browser permission failure, and reads as one: its own
+     line, its own rule, never the state chip. */
+  .mic-server-error {
+    margin: 0;
+    padding-left: 0.8rem;
+    border-left: 3px solid var(--mic-fault);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .mic-meter-fill {
+      transition: transform 0.12s linear;
+    }
+
+    .mic-button {
+      transition:
+        background 0.3s var(--ease-gentle),
+        transform 0.3s var(--ease-gentle);
+    }
+
+    .mic-button:active {
+      transform: translateY(1px);
+    }
+
+    /* The live pulse, borrowed from the shared keyframes in global.css. Only
+       the states where audio is actually flowing breathe. */
+    .mic-island[data-state="arming"] .mic-dot,
+    .mic-island[data-state="listening"] .mic-dot,
+    .mic-island[data-state="speaking"] .mic-dot {
+      animation: node-breathe 2.4s var(--ease-gentle) infinite alternate;
+    }
+  }
+
+  @media (max-width: 34rem) {
+    .mic-row {
+      align-items: stretch;
+    }
+
+    .mic-button {
+      width: 100%;
+    }
+  }
+</style>
