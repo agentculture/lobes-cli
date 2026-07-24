@@ -13,7 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Sonar S8786: replaced the quadratic `!{3,}$` regex in trailing_pause_ms with a linear rstrip count — a 40k-character input took ~2.6s to scan and now takes microseconds.
-- Sonar S3776: extracted _handle_tts_response / _is_truncated / _min_plausible_duration from _synthesize_single, dropping its cognitive complexity from 30 (limit 15).
+- Sonar S3776: extracted `_handle_tts_response` / `_is_truncated` / `_min_plausible_duration` from `_synthesize_single`, dropping its cognitive complexity from 30 (limit 15).
 - Sonar S8513 (x2): collapsed chained endswith calls into single tuple-argument calls.
 - Sonar S8572: the catch-all TTS retry arm now uses logging.exception so the traceback survives.
 - Sonar S8410 (x3): FastAPI /v1/audio/transcriptions parameters now use Annotated type hints; `model` is correctly typed `str | None`.
