@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.2] - 2026-07-24
+
+### Added
+
+- Spec and plan for issue #155 — STT readiness truth: device-agnostic readiness, per-lane audio gating, a completed realtime composite, and cause-naming gateway refusals.
+
 ## [0.54.1] - 2026-07-22
 
 ### Added
