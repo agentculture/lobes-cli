@@ -1,0 +1,389 @@
+{
+  "slug": "stt-readiness-truth-155",
+  "title": "stt readiness truth 155",
+  "frame_slug": "stt-readiness-truth-155",
+  "schema_version": 3,
+  "status": "exported",
+  "created": "2026-07-24T19:17:43Z",
+  "updated": "2026-07-24T20:00:52Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes never reports a lobe unhealthy while it is correctly serving \u2014 STT readiness tells the truth about CPU fallback"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A container that transcribes a known-content WAV correctly is reported ready by /v1/health/ready, healthy by docker, ready by lobes capabilities AND routable by the gateway \u2014 all four surfaces agreeing \u2014 regardless of whether the model sits on GPU or CPU."
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "lobes fleet status and lobes capabilities stop disagreeing about the same gear. Verified live: fleet status shows model-gear-stt unhealthy (docker health from the 503 probe) while uv run lobes capabilities prints stt ... yes http://localhost:8001 \u2014 because lobes/roles.py build_role_registry is called with audio_ready=None from the CLI, and audio_ready_signal then falls back to the CONFIG fact (audio_configured), never dialing anything."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "Run against the same box in the same second, lobes fleet status and lobes capabilities give the SAME ready verdict for stt \u2014 and capabilities' verdict changes when the container's real state changes, proving it is a live probe rather than an echo of .env config."
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "the gateway 503 body names the real reason at the boundary. Measured live: POST :8001/v1/audio/transcriptions returns 503 {\"message\":\"audio backend not ready yet (warming up) \u2014 retry shortly\",\"type\":\"upstream_unavailable\"} \u2014 but the gear is not warming up, it has been serving on CPU for 5 hours. 'retry shortly' is actively wrong advice for a persistent degraded state."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "A caller receiving a non-200 from /v1/audio/* can determine the cause from the response body alone, with no access to docker logs; and the body never says 'warming up / retry shortly' for a state that has already persisted past the container's start_period."
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "the 200-while-503 combination is eliminated: either the gateway routes transcriptions to the working endpoint, or the endpoint stops answering 200. Both halves are observable today at the same instant (container-direct 200 with a correct transcript, gateway 503)."
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "There is no instant at which a container-direct POST /v1/audio/transcriptions returns 200 with a correct transcript while the gateway returns non-200 for that same payload."
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "the GPU-visibility loss itself is a HOST/runtime regression, not lobes code, and lobes does not own fixing it. Proved live: a fresh docker run --rm --gpus all nvidia/cuda container sees 'GPU 0: NVIDIA GB10', while the 5-hour-old model-gear-stt and model-gear-chatterbox both report 'Failed to initialize NVML: Unknown Error' with torch.cuda.device_count()==0 and CUDA_VISIBLE_DEVICES unset \u2014 the running containers lost their device cgroup mid-life (systemd Reloading events at 16:52 and 20:32 in journalctl). vLLM containers survive because they already hold a CUDA context. lobes owns REPORTING this honestly, not repairing the container runtime."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "lobes ships no code that attempts to REPAIR container GPU visibility \u2014 no auto-restart, no cgroup manipulation, no device re-attach. The change is confined to reporting and routing paths; a container that has lost its device cgroup still requires an operator-initiated restart to regain the GPU."
+    },
+    {
+      "id": "c12",
+      "kind": "audience",
+      "text": "Operators of a lobes fleet, and downstream consumers of the OpenAI-compatible audio surface \u2014 webcam-cli, reachy-mini-cli, and any caller of POST /v1/audio/transcriptions or GET /v1/realtime \u2014 plus the agent that reads lobes fleet status / lobes capabilities to decide whether STT is usable at all."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Each named consumer actually exercises the surface this spec changes: webcam-cli and reachy-mini-cli both reach POST /v1/audio/transcriptions through the gateway rather than container-direct, and at least one agent surface (lobes capabilities or fleet status) is read programmatically to decide whether STT is usable."
+    },
+    {
+      "id": "c13",
+      "kind": "before_state",
+      "text": "The same gear answers four surfaces four different ways at the same instant (verified live on spark, 2026-07-24): lobes fleet status says unhealthy, lobes capabilities says loaded yes, a container-direct POST returns 200 with a CORRECT transcript, and the gateway returns 503 'audio backend not ready yet (warming up) \u2014 retry shortly'. An operator cannot tell which to believe, and the one surface that is right (the 200) is the one nothing routes to."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "All four contradictory signals are reproducible on demand rather than being a one-off observation: with the stt container's GPU visibility removed, fleet status reports unhealthy, capabilities reports loaded yes, a container-direct POST returns 200 with a correct transcript, and the gateway returns 503 \u2014 all captured in one evidence transcript."
+    },
+    {
+      "id": "c14",
+      "kind": "why_it_matters",
+      "text": "Consumers are blocked by a gear that works. webcam-cli's audio half could not be demonstrated through the documented gateway path while Parakeet was transcribing correctly the entire time; and 'retry shortly' sends a caller into an unbounded retry against a state that never clears on its own \u2014 the STT container had been serving on CPU for five hours."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The blockage is real, not hypothetical: a consumer following only the documented gateway path cannot obtain a transcript while the gear is transcribing correctly \u2014 demonstrated for webcam-cli on host spark, 2026-07-24."
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "A lobe that is correctly serving is never reported unhealthy nor refused at the gateway. STT readiness is device-agnostic (model loaded on ANY device reports ready, and every audio lane routes), stt and tts fail independently, lobes fleet status and lobes capabilities give the same verdict for the same gear, and any refusal that does happen names its real cause at the gateway boundary instead of a generic warming-up message."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Every clause of the after-state is independently checkable: device-agnostic ready, per-lane independence, CLI/gateway agreement, and a cause-naming refusal body each have a test that FAILS against today's code and PASSES after the change."
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "Reproducible on a box whose stt container has lost GPU visibility but still transcribes: (1) POST /v1/audio/transcriptions through the gateway returns 200 with a correct transcript for the known-content probe /usr/share/sounds/alsa/Front_Center.wav -> 'Front, center.'; (2) lobes fleet status and lobes capabilities report the same verdict for stt; (3) stopping ONLY chatterbox leaves transcriptions still answering 200."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The CPU-fallback condition can be SIMULATED (e.g. CUDA_VISIBLE_DEVICES='' on the stt container so NeMo loads on CPU) rather than requiring a real cgroup regression to occur \u2014 so the three success checks are runnable on demand as a scripted live probe, not only by waiting for the fault to recur."
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "REPLACES c3 under decision c17: evaluate_readiness stops gating on CUDA at all \u2014 model_loaded alone determines ready, so a model loaded on CPU reports 200 ready exactly like one on GPU. The cuda_ok probe is demoted from a gate to reported detail (the response names the device it actually loaded onto) so an operator can still see a GPU regression without it blocking traffic. Both copies change together: lobes/realtime/_readiness.py and the vendored lobes/templates/fleet/_readiness.py."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A stt container with CUDA unavailable but a loaded NeMo model returns 200 from /v1/health/ready, docker marks it healthy, and the response body still reports device=cpu so the GPU regression stays visible without gating traffic."
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "REPLACES c7 under decision c17: the #39 / c16 intent survives only IN PART. /v1/health/ready must still refuse with 503 when the model is NOT loaded \u2014 it never returns to the unconditional 200 of the pre-#39 liveness-only handler, which remains the bug #39 fixed. But the CUDA half of the gate is deliberately DELETED, not softened: cuda_ok stops being a gate and becomes reported detail. Any doc, comment or test asserting 'ready implies CUDA live' must therefore be UPDATED rather than preserved \u2014 including _readiness.py's own docstring, which currently states the model-loaded AND cuda-live rule as the contract."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "With the NeMo model deliberately unloaded or failed, /v1/health/ready still returns 503 and docker still marks the container unhealthy \u2014 the loaded-model gate is intact \u2014 while a CUDA-less but loaded container returns 200."
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "USER CORRECTION: the per-lane split (c18) applies to the BATCH facade ONLY. The realtime bridge deliberately WRAPS four capabilities \u2014 stt, tts, VAD and the multimodal/generate lane \u2014 and a voice-to-voice session genuinely needs all of them at once, so GET /v1/realtime KEEPS a composite readiness verdict. Splitting aggregate_audio_ready must ADD per-lane answers for /v1/audio/transcriptions and /v1/audio/speech without DELETING the all-of-them signal the realtime session depends on."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "After the change, GET /v1/realtime still refuses when any capability the session needs is missing, while POST /v1/audio/transcriptions succeeds with tts down \u2014 proving the composite and the per-lane signals coexist rather than one replacing the other."
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "The realtime composite is today INCOMPLETE and the split is the moment to fix it: lobes/realtime/app.py's ready() probes ONLY settings.tts_url and settings.stt_url, so it reports a session consumable while (a) Silero VAD may be unavailable and (b) the generate lane may be unreachable. On this very box the voice lane's generate target is multimodal, which is MULTIMODAL_FEASIBLE=false and PROXIED to http://orin.tail0be7e0.ts.net:8000 \u2014 so a realtime session here depends on a REMOTE peer that the readiness aggregate never dials."
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "With Silero unavailable, or with the voice generate lane unreachable (including a declared-but-down proxied peer), the realtime readiness reports not-ready and names which capability is missing \u2014 instead of today's 200 based on tts+stt alone."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Make evaluate_readiness device-agnostic in BOTH _readiness.py copies",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "evaluate_readiness(model_loaded=True, cuda_ok=False) returns (200, body) and the body reports the serving device (e.g. {'status':'ready','device':'cpu'})",
+        "evaluate_readiness(model_loaded=False, ...) still returns 503 regardless of cuda_ok \u2014 the loaded-model gate is intact",
+        "a test asserts lobes/templates/fleet/_readiness.py and lobes/realtime/_readiness.py expose the same evaluate_readiness contract, so the vendored copy cannot drift",
+        "the module docstring no longer states 'ready only when model loaded AND CUDA live'; it states the model-loaded gate and the device-reporting rule"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h2",
+        "c20",
+        "h7"
+      ],
+      "instruction": "FILES (do not touch others): lobes/realtime/_readiness.py, lobes/templates/fleet/_readiness.py, tests/test_realtime_readiness.py. Keep both copies in sync \u2014 cite-don't-import; a drift test is part of the acceptance."
+    },
+    {
+      "id": "t2",
+      "summary": "Report the NeMo model's real device from the Parakeet /v1/health/ready handler",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the handler derives the device the model actually loaded onto (e.g. next(model.parameters()).device) rather than probing torch.zeros(1, device='cuda')",
+        "with CUDA_VISIBLE_DEVICES='' the container answers 200 with device='cpu' and docker reports it healthy",
+        "a failed/unloaded model still answers 503 and docker reports it unhealthy"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c1",
+        "h1"
+      ],
+      "instruction": "FILES: lobes/templates/fleet/listen_server.py only. Derive the device from the loaded model (next(model.parameters()).device); do NOT probe torch.zeros(1, device='cuda') \u2014 that reports the process, not the model."
+    },
+    {
+      "id": "t3",
+      "summary": "Split aggregate_audio_ready into per-lane signals while KEEPING a composite",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "audio_facade exposes a per-lane readiness answer for stt and for tts independently",
+        "the composite all-of-them verdict still exists and is what /v1/realtime consumes \u2014 the split ADDS, it does not replace",
+        "unit test: tts not ready + stt ready => stt lane ready, tts lane not ready, composite not ready"
+      ],
+      "deps": [],
+      "covers": [
+        "c21",
+        "h14"
+      ],
+      "instruction": "FILES: lobes/realtime/audio_facade.py, tests/test_realtime_audio_facade.py. ADD per-lane answers; do NOT delete the composite \u2014 /v1/realtime depends on it (boundary c21)."
+    },
+    {
+      "id": "t4",
+      "summary": "Complete the realtime composite: probe VAD and the generate lane, not just tts+stt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/realtime/app.py ready() probes Silero VAD availability and the voice generate lane in addition to tts_url and stt_url",
+        "the generate-lane probe honours a PROXIED peer (MULTIMODAL_PEER_ORIGIN/_PROXY) rather than assuming the lane is local",
+        "when any one capability is missing the response is 503 and NAMES which one (not_ready lists e.g. ['vad'] or ['generate'])",
+        "per-lane routes remain available so a caller can ask about stt alone without the composite verdict"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c22",
+        "h15"
+      ],
+      "instruction": "FILES: lobes/realtime/app.py, lobes/realtime/_settings.py. app.py is a 'pragma: no cover' shell \u2014 keep decision logic in stdlib modules the offline suite covers. Heed risk r1: bound the peer probe, prefer a cached background probe over a synchronous cross-box dial on a health path."
+    },
+    {
+      "id": "t5",
+      "summary": "Gateway: route audio per-lane and make every refusal name its real cause",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "POST /v1/audio/transcriptions is gated on the stt lane alone; POST /v1/audio/speech on the tts lane alone",
+        "a non-200 body states the actual cause (e.g. stt lane unavailable / model not loaded) and is determinable without docker logs",
+        "the body never says 'warming up' / 'retry shortly' for a state that has persisted past the container start_period",
+        "regression test: a backend that answers 200 container-direct is never refused by the gateway for the same payload"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c5",
+        "h4",
+        "c6",
+        "h5"
+      ],
+      "instruction": "FILES: lobes/gateway/server.py, lobes/gateway/_readiness.py, tests/test_gateway_audio_routing.py. Preserve the existing tri-state (True/False/None) discipline \u2014 'reachable but warming' and 'cannot reach' must stay distinct."
+    },
+    {
+      "id": "t6",
+      "summary": "Give lobes capabilities a LIVE audio probe so it stops contradicting fleet status",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the CLI supplies a real audio_ready signal to build_role_registry instead of passing None and falling back to the config fact",
+        "lobes capabilities and lobes fleet status report the same ready verdict for stt when run against the same box",
+        "capabilities' verdict CHANGES when the container's real state changes, proving it dials rather than echoing .env",
+        "with the audio overlay unconfigured, capabilities still reports not-ready with an empty endpoint (the existing #81 clamp is preserved)"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c4",
+        "h3"
+      ],
+      "instruction": "FILES: lobes/roles.py, lobes/cli/_commands/capabilities.py. Preserve the #81 clamp: an unconfigured overlay is never ready and never has an endpoint, no matter what probe signal is passed in."
+    },
+    {
+      "id": "t7",
+      "summary": "Ship a scripted degraded-STT live probe and capture the acceptance transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a script SIMULATES the CPU-fallback condition (CUDA_VISIBLE_DEVICES='' on the stt container) so the fault needs no real cgroup regression to reproduce",
+        "it captures all four signals in ONE transcript: fleet status, capabilities, container-direct POST, gateway POST",
+        "it asserts the known-content probe end-to-end: Front_Center.wav through the GATEWAY returns 200 with a transcript containing 'front' and 'center'",
+        "it asserts the consumer path specifically \u2014 the gateway route, not container-direct \u2014 since that is what webcam-cli and reachy-mini-cli use",
+        "it asserts lane independence: with only chatterbox stopped, transcriptions still return 200",
+        "the transcript lands under docs/evidence/ per the #108 evidence rule"
+      ],
+      "deps": [
+        "t2",
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c16",
+        "h13",
+        "c13",
+        "h10",
+        "c14",
+        "h11",
+        "c12",
+        "h9"
+      ],
+      "instruction": "FILES: scripts/ (new probe script) only \u2014 no docs, no evidence. Script must be runnable without a real cgroup regression (simulate via CUDA_VISIBLE_DEVICES=''). The live run is t10."
+    },
+    {
+      "id": "t8",
+      "summary": "Add the after-state test matrix: one failing-before/passing-after test per clause",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a dedicated test module covers all four after-state clauses: device-agnostic ready, per-lane independence, CLI/gateway agreement, cause-naming refusal body",
+        "each test is demonstrated to FAIL against the pre-change code and PASS after \u2014 recorded in the PR description",
+        "the module lives in its own test file so it does not collide with the per-task test files edited in earlier waves"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c15",
+        "h12"
+      ],
+      "instruction": "FILES: a NEW test module (e.g. tests/test_stt_readiness_truth.py) only \u2014 do not edit test files owned by t1/t3/t5. Record the fail-before/pass-after demonstration in the PR body."
+    },
+    {
+      "id": "t9",
+      "summary": "Update every doc and comment that asserts 'ready implies CUDA live'",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/parakeet-stt.md, docs/gateway-fleet.md and CLAUDE.md describe the model-loaded gate plus device reporting, not the CUDA gate",
+        "the docs state that lobes never REPAIRS GPU visibility \u2014 no auto-restart, no cgroup manipulation, no device re-attach \u2014 and that recovery is operator-initiated",
+        "the docs record the fresh-container diagnostic (a new --gpus all container seeing the GPU proves the loss is per-container, not host-wide)",
+        "no doc, comment or test asserting 'ready implies CUDA live' survives a repo-wide grep"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c8",
+        "h8"
+      ],
+      "instruction": "FILES: docs/parakeet-stt.md, docs/gateway-fleet.md, CLAUDE.md, and the _readiness.py docstring is owned by t1 \u2014 coordinate, do not duplicate. Finish with a repo-wide grep proving no 'ready implies CUDA live' claim survives."
+    },
+    {
+      "id": "t10",
+      "summary": "Run the degraded-STT probe on the live box and commit the acceptance transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the probe is executed against a real fleet (host spark) with the stt container forced to CPU, not a mock",
+        "the run captures all four signals in one transcript: fleet status, capabilities, container-direct POST, gateway POST",
+        "the transcript demonstrates the consumer path is unblocked \u2014 a gateway POST returns 200 with a correct transcript while the gear serves on CPU",
+        "the transcript is committed under docs/evidence/ per the #108 rule, and no doc claims validation until it lands"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c13",
+        "h10",
+        "c14",
+        "h11"
+      ],
+      "instruction": "OPERATOR-ONLY \u2014 needs the live box; cannot run in a throwaway worktree. Run t7's script on spark, commit the transcript under docs/evidence/. Per #108, no doc may claim validation until this lands."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Probing a PROXIED generate peer inside the realtime readiness endpoint puts a cross-box call on a health path \u2014 a slow or flapping peer could stall or flap /v1/health/ready. Needs a bounded timeout and probably a cached background probe (the ReadinessCache/PressureCache pattern already in lobes/gateway/_readiness.py), not a synchronous dial.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Device-agnostic readiness means a silently-CPU-serving container now reads HEALTHY. The GPU regression becomes invisible to anyone who only watches docker health \u2014 the reported device is the ONLY remaining signal, so it must surface somewhere an operator actually looks (lobes status / capabilities), or this fix trades a false alarm for a silent degradation.",
+      "kind": "follow_up",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "The readiness code ships INSIDE the stt image, so none of this reaches a live box without an image rebuild and a MODEL_GEAR_VERSION bump. This deployment already skews three ways (gateway 0.52.3, realtime 0.54.0, repo 0.54.1), so a fix can appear merged yet be absent in production.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
