@@ -192,14 +192,17 @@ def trailing_pause_ms(original_text: str) -> int:
     if not s:
         return 200
 
-    # Check multi-char patterns first (longest match wins)
-    if re.search(r"!{3,}$", s):
+    # Check multi-char patterns first (longest match wins).
+    # Count the trailing run of "!" by string ops rather than a `!{3,}$` regex:
+    # on a long run that is not at the end, that pattern backtracks per start
+    # position (quadratic — Sonar S8786). rstrip is linear and says the same thing.
+    if len(s) - len(s.rstrip("!")) >= 3:
         return 400
-    if s.endswith("?!") or s.endswith("!?"):
+    if s.endswith(("?!", "!?")):
         return 350
     if s.endswith("!!"):
         return 350
-    if s.endswith("...") or s.endswith("…"):
+    if s.endswith(("...", "…")):
         return 400
     if s.endswith("."):
         return 350
@@ -213,6 +216,104 @@ def trailing_pause_ms(original_text: str) -> int:
         return 250
 
     return 200
+
+
+# Sentinel: this attempt failed, but a retry within the same semaphore hold may
+# still succeed. Distinct from b"" (give up) so the two outcomes cannot be
+# confused — an empty-bytes "retry" would silently mean "no audio" to the caller.
+_RETRY = object()
+
+
+def _min_plausible_duration(clean: str) -> float:
+    """Shortest audio duration that is plausible for *clean*.
+
+    Ratio-based: expect at least 15 ms per character (normal speech at 125 %
+    runs 60–80 ms/char, so 15 ms is very conservative).
+    """
+    return max(0.5, len(clean) * 0.015)
+
+
+def _is_truncated(clean: str, duration: float) -> bool:
+    """True when returned audio is implausibly short for the text it should speak."""
+    return len(clean) > 10 and duration < _min_plausible_duration(clean)
+
+
+def _handle_tts_response(
+    resp: "httpx.Response",
+    clean: str,
+    tag: str,
+    elapsed: float,
+    attempt: int,
+    lane: str,
+) -> object:
+    """Validate one TTS response.
+
+    Returns PCM bytes on success, :data:`_RETRY` when the attempt failed but a
+    retry may help, or ``b""`` when the caller should give up and degrade to no
+    audio. Split out of :func:`_synthesize_single` to keep that function's
+    cognitive complexity inside the gate (Sonar S3776).
+    """
+    if resp.status_code != 200:
+        hdrs = {
+            k: v for k, v in resp.headers.items() if k.lower() in ("content-type", "content-length")
+        }
+        log.error(
+            "%s HTTP %d after %.2fs | headers=%s | %s",
+            tag,
+            resp.status_code,
+            elapsed,
+            hdrs,
+            clean[:80],
+        )
+        return b""
+
+    pcm_data = resp.content
+    if not pcm_data:
+        log.error(
+            "%s EMPTY response body (0 bytes) after %.2fs | %s",
+            tag,
+            elapsed,
+            clean[:80],
+        )
+        if attempt == 0:
+            log.info("%s resetting client for retry", tag)
+            _reset_client(lane)
+            return _RETRY
+        return b""
+
+    duration = len(pcm_data) / 2 / TTS_SAMPLE_RATE
+    log.info(
+        "%s result: %d bytes (%.2fs audio) in %.2fs | %s",
+        tag,
+        len(pcm_data),
+        duration,
+        elapsed,
+        clean[:120],
+    )
+
+    if _is_truncated(clean, duration):
+        min_expected = _min_plausible_duration(clean)
+        if attempt == 0:
+            log.warning(
+                "%s TRUNCATED: %d chars → %.3fs (expected ≥%.2fs), retrying | %s",
+                tag,
+                len(clean),
+                duration,
+                min_expected,
+                clean[:80],
+            )
+            _reset_client(lane)
+            return _RETRY  # retry within same semaphore hold
+        log.warning(
+            "%s STILL TRUNCATED after retry: %d chars → %.3fs (expected ≥%.2fs) | %s",
+            tag,
+            len(clean),
+            duration,
+            min_expected,
+            clean,
+        )
+
+    return pcm_data
 
 
 async def _synthesize_single(
@@ -279,73 +380,10 @@ async def _synthesize_single(
                 )
                 elapsed = time.monotonic() - t0
 
-                if resp.status_code != 200:
-                    hdrs = {
-                        k: v
-                        for k, v in resp.headers.items()
-                        if k.lower() in ("content-type", "content-length")
-                    }
-                    log.error(
-                        "%s HTTP %d after %.2fs | headers=%s | %s",
-                        tag,
-                        resp.status_code,
-                        elapsed,
-                        hdrs,
-                        clean[:80],
-                    )
-                    return b""
-
-                pcm_data = resp.content
-                if not pcm_data:
-                    log.error(
-                        "%s EMPTY response body (0 bytes) after %.2fs | %s",
-                        tag,
-                        elapsed,
-                        clean[:80],
-                    )
-                    if attempt == 0:
-                        log.info("%s resetting client for retry", tag)
-                        _reset_client(lane)
-                        continue
-                    return b""
-
-                duration = len(pcm_data) / 2 / TTS_SAMPLE_RATE
-                log.info(
-                    "%s result: %d bytes (%.2fs audio) in %.2fs | %s",
-                    tag,
-                    len(pcm_data),
-                    duration,
-                    elapsed,
-                    clean[:120],
-                )
-
-                # Detect truncated audio — ratio-based: expect at least 15ms per char
-                # (normal speech at 125% ≈ 60-80ms/char; 15ms is very conservative)
-                min_expected = max(0.5, len(clean) * 0.015)
-                if len(clean) > 10 and duration < min_expected:
-                    if attempt == 0:
-                        log.warning(
-                            "%s TRUNCATED: %d chars → %.3fs (expected ≥%.2fs), retrying | %s",
-                            tag,
-                            len(clean),
-                            duration,
-                            min_expected,
-                            clean[:80],
-                        )
-                        _reset_client(lane)
-                        continue  # retry within same semaphore hold
-                    else:
-                        log.warning(
-                            "%s STILL TRUNCATED after retry: %d chars → %.3fs "
-                            "(expected ≥%.2fs) | %s",
-                            tag,
-                            len(clean),
-                            duration,
-                            min_expected,
-                            clean,
-                        )
-
-                return pcm_data
+                outcome = _handle_tts_response(resp, clean, tag, elapsed, attempt, lane)
+                if outcome is _RETRY:
+                    continue
+                return outcome  # type: ignore[return-value]
 
             except httpx.ConnectError:
                 log.error("%s connect error to %s (attempt %d)", tag, url, attempt + 1)
@@ -368,7 +406,11 @@ async def _synthesize_single(
             except (
                 Exception
             ) as e:  # noqa: BLE001 - log and fail soft; the caller degrades to no audio
-                log.error("%s error (%s, attempt %d): %s", tag, type(e).__name__, attempt + 1, e)
+                # log.exception (not log.error): this is the catch-all arm, so the
+                # traceback is the only thing that says WHICH unexpected failure hit.
+                log.exception(
+                    "%s error (%s, attempt %d): %s", tag, type(e).__name__, attempt + 1, e
+                )
                 return b""
 
         return b""  # should not reach here
