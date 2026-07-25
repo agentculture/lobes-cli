@@ -270,8 +270,38 @@ def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
     return offline, "offline"
 
 
+def _loaded_cell(info: dict) -> str:
+    """The ``loaded`` column's THREE states — where a role is served, not just whether.
+
+    ``loaded`` itself is a purely LOCAL wiring fact (``lobes.roles`` builds it as
+    "a Backend for this role exists in this box's routing table"), so on a
+    mesh-brain box it answers a different question than the one an operator
+    reads it as. Two roles in the SAME dropped-and-proxied state print different
+    values purely because one deployment still sets ``<PREFIX>_BASE_URL`` and
+    the other never did — the peer, its health, and the served traffic are
+    identical. Rendering a bare ``no`` for a role this gateway happily forwards
+    is the misleading half; rendering ``yes`` for a role whose container this
+    box does not even run is the other.
+
+    So a role this box serves BY FORWARDING reads ``by-proxy`` — distinct from
+    both "served here" (``yes``) and "not served at all" (``no``). The state is
+    derived from the payload's OWN ``feasible``/``proxied`` keys, the same pair
+    the detail lines below already consume, so the table can never disagree
+    with the gateway about whether a role is proxied. Nothing is added to the
+    wire: ``GET /capabilities`` keeps ``loaded`` a bool, so every programmatic
+    consumer that branches on it is unaffected.
+
+    Both ``.get`` defaults match the convention below — an older/foreign payload
+    (pre-proxy gateway, or a hand-built fixture) missing either key renders as
+    the plain two-state column instead of raising.
+    """
+    if info.get("feasible", True) is False and info.get("proxied"):
+        return "by-proxy"
+    return "yes" if info["loaded"] else "no"
+
+
 def _render_table(registry: dict[str, dict], source: str) -> str:
-    header = f"{'role':<9} {'model':<48} {'context':>8}  loaded  endpoint"
+    header = f"{'role':<9} {'model':<48} {'context':>8}  {'loaded':<8}  endpoint"
     lines: list[str] = []
     if source == "offline":
         lines.append(f"# {_OFFLINE_NOTICE}")
@@ -284,12 +314,14 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         model = info["model"] if len(info["model"]) <= 48 else info["model"][:45] + "..."
         lines.append(
             f"{info['role']:<9} {model:<48} {info['context']:>8}  "
-            f"{'yes' if info['loaded'] else 'no ':<6} {info['endpoint'] or '(none)'}"
+            f"{_loaded_cell(info):<8}  {info['endpoint'] or '(none)'}"
         )
         # Hardware feasibility (task t6): a role this machine's per-machine
-        # profile declared it can never serve — surfaced even though the row
-        # above still shows loaded=yes (the backend can be structurally wired,
-        # e.g. the always-present primary, yet infeasible on this box).
+        # profile declared it can never serve. The row above narrows to
+        # `by-proxy` when this box FOLLOWS its own referral, but an infeasible
+        # role can still read `yes` (the backend can be structurally wired —
+        # e.g. the always-present primary, or a leftover `<PREFIX>_BASE_URL` —
+        # yet infeasible on this box), so the explicit line stays.
         # `.get` defaults True so an older/foreign payload missing this key
         # (pre-t6 gateway, or a hand-built fixture) never raises.
         if info.get("feasible", True) is False:

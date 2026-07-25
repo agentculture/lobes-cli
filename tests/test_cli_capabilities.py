@@ -183,6 +183,66 @@ def test_capabilities_table_distinguishes_proxied_from_referral_only(tmp_path, c
     assert "dial it directly" not in out
 
 
+def test_capabilities_table_reads_by_proxy_for_a_proxied_role(tmp_path, capsys) -> None:
+    """The ``loaded`` column's THIRD state — where a role is served, not just whether.
+
+    ``loaded`` is a purely LOCAL wiring fact, so on a mesh-brain box two roles
+    in the SAME dropped-and-proxied state printed DIFFERENT values purely
+    because one deployment still set ``<PREFIX>_BASE_URL`` and the other never
+    did — while both forwarded identically and both answered 200. A role this
+    gateway serves by forwarding now reads ``by-proxy``, distinct from both
+    "served here" and "not served at all".
+    """
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_FEASIBLE", "false")
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_PEER_ORIGIN", "http://peer.example:8000")
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_PEER_PROXY", "true")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines() if line.strip()}
+    assert "by-proxy" in rows["senses"]
+    # A locally-served role is untouched — still the plain two-state column.
+    assert "by-proxy" not in rows["cortex"]
+    assert "yes" in rows["cortex"]
+
+
+def test_capabilities_table_referral_only_role_is_not_by_proxy(tmp_path, capsys) -> None:
+    """Referral-only is NOT by-proxy: with an origin but no ``_PEER_PROXY`` knob
+    this box does not forward at all (the caller must dial the peer directly and
+    this gateway 404s), so claiming ``by-proxy`` would advertise a forward that
+    never happens. The column must track the proxy knob, not merely the origin.
+    """
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_FEASIBLE", "false")
+    _env.set_env(tmp_path / _compose.ENV_FILE, "MULTIMODAL_PEER_ORIGIN", "http://peer.example:8000")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    senses_row = next(line for line in out.splitlines() if line.startswith("senses"))
+    assert "by-proxy" not in senses_row
+    assert "dial it directly" in out
+
+
+def test_loaded_cell_three_states_and_safe_defaults() -> None:
+    """The cell is pure and total: an older/foreign payload missing either key
+    renders the plain two-state column instead of raising, matching the
+    ``.get("feasible", True)`` convention the detail lines already use.
+    """
+    cell = capabilities_module._loaded_cell
+    # Pre-proxy gateway / hand-built fixture: neither key present.
+    assert cell({"loaded": True}) == "yes"
+    assert cell({"loaded": False}) == "no"
+    # Infeasible but NOT proxied (dropped, referral-only or unwired) stays "no".
+    assert cell({"loaded": False, "feasible": False}) == "no"
+    # A wired-but-infeasible role still reads "yes" — the explicit
+    # "infeasible on this machine" line is what flags it, not this column.
+    assert cell({"loaded": True, "feasible": False}) == "yes"
+    # The third state needs BOTH signals.
+    assert cell({"loaded": False, "feasible": False, "proxied": True}) == "by-proxy"
+    # ...and holds regardless of the stale local wiring that set loaded.
+    assert cell({"loaded": True, "feasible": False, "proxied": True}) == "by-proxy"
+
+
 def test_capabilities_unscaffolded_still_answers_all_six_roles(capsys) -> None:
     """Read-only: with nothing scaffolded, capabilities degrades gracefully to
     catalog defaults (all unloaded except the always-present cortex) instead of
