@@ -24,6 +24,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonar S8572: the catch-all TTS retry arm now uses logging.exception so the traceback survives.
 - Sonar S8410 (x3): FastAPI /v1/audio/transcriptions parameters now use Annotated type hints; `model` is correctly typed `str | None`.
 - Sonar S5778 (x2): hoisted non-asserting setup calls out of pytest.raises blocks so the tests assert what they claim.
+## [0.54.2] - 2026-07-24
+
+### Added
+
+- Spec and plan for issue #155 — STT readiness truth: device-agnostic readiness, per-lane audio gating, a completed realtime composite, and cause-naming gateway refusals.
 
 ## [0.54.1] - 2026-07-22
 
