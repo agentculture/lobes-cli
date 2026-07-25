@@ -1,0 +1,248 @@
+{
+  "slug": "lobes-capabilities-tells-you-where-a-lobe-is-serve",
+  "title": "lobes capabilities tells you WHERE a lobe is served \u2014 a proxied role reads by-proxy, never a bare loaded:no",
+  "frame_slug": "lobes-capabilities-tells-you-where-a-lobe-is-serve",
+  "schema_version": 3,
+  "status": "exported",
+  "created": "2026-07-25T08:09:35Z",
+  "updated": "2026-07-25T08:27:48Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes capabilities tells you WHERE a lobe is served \u2014 a proxied role reads by-proxy, never a bare loaded:no"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The table distinguishes THREE readings an operator can act on \u2014 locally served, served by a named peer, and genuinely absent \u2014 visible in one command's output, rather than collapsing the last two onto the same 'no'."
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Operators reading 'lobes capabilities' / 'lobes fleet status' on a mesh-brain box, and programmatic consumers of gateway GET /capabilities (Colleague, webcam-cli, reachy-mini-cli) that decide from the payload whether a role is usable and where it lives."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Both audiences are actually reached: the CLI table is what an operator runs, and at least one named programmatic consumer genuinely reads GET /capabilities to decide role usability (checkable in that consumer's source) \u2014 so a CLI-only change is verified sufficient for the operator audience and explicitly NOT claimed to change anything for the payload audience."
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Verified live on spark 2026-07-25: senses and muse are BOTH dropped-and-proxied and BOTH serve 200 through this gateway (muse proved end-to-end: X-Lobes-Proxied-By thor, plus a clean tool_calls response). Yet 'lobes capabilities' prints senses loaded=yes and muse loaded=no. The difference is not health, reachability, or the peer \u2014 it is only whether <PREFIX>_BASE_URL happens to be set in this box's local .env."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The asymmetry is reproducible on demand, not a one-off: toggling <PREFIX>_BASE_URL alone flips the affected role's loaded value with no change on the peer side, proving the display tracks local wiring rather than the peer's real state."
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "'loaded' is the ONLY yes/no column in the capabilities table, so operators read it as 'is this role usable'. For a proxied role it answers a different question (did this box wire a local backend), so it is both wrong-looking (muse:no while muse serves) and misleading (senses:yes while spark runs no senses container at all). An operator cannot tell a working proxied lobe from a dead one."
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Demonstrable today: two roles in the SAME proxied state, both returning 200 through this gateway, print DIFFERENT loaded values \u2014 and no other column in that table distinguishes a working proxied lobe from a dead one."
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "A proxied role reads 'by-proxy' in the capabilities table instead of a bare yes/no, and names its hosting peer. loaded stops being the field an operator consults to answer 'is this usable' for a role this box does not host. Both senses and muse read identically for identical situations \u2014 the display no longer depends on leftover local wiring."
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "After the change a role's displayed state is a function of (feasible, proxied, hosted_by) ONLY and never of whether <PREFIX>_BASE_URL is set \u2014 provable by toggling that var and observing the displayed state does not move."
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "Scoped to how a role's serving LOCATION is reported (capabilities table + payload) and to correcting spark's stale local wiring. NOT a change to routing, proxy behaviour, auth, or which box hosts what \u2014 every request that works today keeps working byte-identically."
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "No file on a routing or auth path is modified \u2014 the diff is confined to the CLI renderer (and its tests/docs) \u2014 and a live model=muse and model=senses POST return byte-identical results before and after, headers included."
+    },
+    {
+      "id": "c10",
+      "kind": "success_signal",
+      "text": "On spark, after the change: senses and muse BOTH read by-proxy with their hosting peer named (orin / thor), while cortex/embedder/reranker still read as locally served; and a live POST for model=muse still returns 200 with X-Lobes-Proxied-By thor, proving the display change moved no traffic."
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The success check runs as ONE scripted probe on spark that emits both the capabilities table and the live proxied 200s into a single transcript, so it is re-runnable evidence rather than a claim."
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "A role this box serves via a peer reads 'by-proxy' (not yes, not no) in the capabilities table, and names the hosting peer alongside it."
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A programmatic consumer of GET /capabilities that today branches on loaded as a JSON boolean keeps working across the upgrade, OR the break is deliberate, named, and coordinated with the known consumers (Colleague, webcam-cli, reachy-mini-cli) the way the #151 wire break was."
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The by-proxy state is derived from the SAME signals the gateway already sends (proxied + hosted_by), so the CLI and the gateway can never disagree about whether a role is proxied."
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Spark's stale local wiring is corrected so senses' displayed state no longer depends on a leftover MULTIMODAL_BASE_URL pointing at a compose service this box does not run."
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "After the wiring correction, a live POST for model=senses through spark still returns 200 with X-Lobes-Proxied-By orin \u2014 proving the peer probe still resolves the same served id and the proxy is still armed."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The correction is applied without booting the dropped vllm-multimodal container or recreating cortex \u2014 i.e. the gateway restart passes -f docker-compose.yml -f docker-compose.shape.yml, per the recorded shape-override trap."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Render a third 'by-proxy' state in the capabilities table renderer",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "In lobes/cli/_commands/capabilities.py _render_table, a role with feasible=false AND proxied=true prints 'by-proxy' in the loaded column and names its hosted_by peer; a locally-served role still prints 'yes'; a role that is neither prints 'no'.",
+        "The state is derived ONLY from the payload's existing proxied/hosted_by/feasible keys \u2014 no new key is read and the gateway JSON is not touched.",
+        "A payload missing the 'proxied' key (offline path, older gateway, hand-built fixture) renders without raising, matching the existing .get('feasible', True) convention.",
+        "The stale comment at capabilities.py:289-292 ('the row above still shows loaded=yes') is updated to describe the shipped behaviour.",
+        "Unit tests cover all four cases above against fixture payloads and FAIL against current main."
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "c5",
+        "c13",
+        "h2",
+        "h5",
+        "h9",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Correct spark's stale MULTIMODAL wiring, shape-override-safe",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "MULTIMODAL_BASE_URL is commented out in spark ~/.lobes/.env while MULTIMODAL_SERVED_NAME is retained, so the peer served-name still resolves to coolthor/gemma-4-12B-it-NVFP4A16.",
+        "Only the gateway container is recreated, via docker compose -f docker-compose.yml -f docker-compose.shape.yml up -d --no-deps gateway.",
+        "Post-change: vllm-multimodal is NOT running and vllm-primary (cortex) has the same container id / start time as before \u2014 no 27B reload.",
+        "A live POST model=senses through the spark gateway returns 200 with X-Lobes-Proxied-By: orin, proving the peer probe still passes and the proxy stays armed."
+      ],
+      "deps": [],
+      "covers": [
+        "c14",
+        "h3",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Confirm a named programmatic consumer actually reads GET /capabilities",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Establish by source inspection whether Colleague, webcam-cli or reachy-mini-cli reads GET /capabilities to decide role usability; record the finding with a file/line citation.",
+        "If NO consumer reads it programmatically, say so plainly and narrow the spec's audience claim rather than asserting an unverified consumer \u2014 the CLI-display-only decision is then trivially sufficient."
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Update the docs that describe the capabilities loaded column",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every doc that shows or describes the capabilities table's loaded column (docs/colleague-stack.md, docs/deployment-shapes.md, docs/gateway-fleet.md as applicable) reflects the three-state rendering.",
+        "lobes explain (lobes/explain/catalog.py) matches the shipped table if it documents the column.",
+        "Docs state explicitly that GET /capabilities JSON is UNCHANGED \u2014 loaded stays a bool \u2014 so no reader infers a wire change."
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Acceptance probe: one transcript proving before, after and boundary",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A single re-runnable script emits into one transcript under docs/evidence/: the capabilities table, plus live model=muse and model=senses POSTs showing 200 + X-Lobes-Proxied-By.",
+        "Both proxied roles read 'by-proxy' with their peer named, while cortex/embedder/reranker still read 'yes'.",
+        "The toggle-proof for h7/h9: flipping <PREFIX>_BASE_URL alone no longer moves the displayed state (before the change it did).",
+        "Boundary proof for h10: git diff --name-only shows no file on a routing or auth path, and the live POST responses are byte-identical to the pre-change capture, headers included."
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c3",
+        "c4",
+        "c9",
+        "c10",
+        "h7",
+        "h8",
+        "h10",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Version bump and CHANGELOG entry",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "python3 .claude/skills/version-bump/scripts/bump.py patch run; pyproject version differs from main so the version-check CI job passes.",
+        "CHANGELOG entry describes the display-only change and states that the /capabilities wire contract is unchanged."
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Issue #155's converged-but-unmerged spec (branch spec/stt-readiness-truth-155) edits the SAME two files this plan touches: lobes/roles.py and the lobes capabilities renderer. It targets 'ready' for audio roles, not 'loaded' for proxied generate roles, so the concerns are disjoint \u2014 but whichever merges second will need a rebase, and #155 also changes what the capabilities table reports.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Thor runs gateway 0.46.0 vs repo 0.54.1. The by-proxy display reads the proxied/hosted_by keys from the LOCAL gateway's payload, so Thor's version does not affect spark's rendering \u2014 but a by-proxy row rendered on Thor itself would depend on 0.46.0 emitting those keys, which is unverified.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
