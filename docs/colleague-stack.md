@@ -175,7 +175,7 @@ by role name, each value carrying exactly these fields:
     "responsibilities": [str, ...],
     "forbidden_responsibilities": [str, ...],
     "ready": bool | null,                 # see the note below
-    "loaded": bool,                       # is this role's backend wired in THIS deployment?
+    "loaded": bool,                       # is this role's backend wired in THIS deployment? (LOCAL wiring only — see below)
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
     "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
     "proxied": bool                       # OPTIONAL — present (and true) only when this box also forwards to that peer
@@ -289,6 +289,33 @@ two things a client can tell apart by key presence alone:
   "loaded": false
 }
 ```
+
+**`loaded` is a LOCAL wiring fact, and it does not tell you whether a proxied
+role works.** It answers "does a backend for this role exist in *this box's*
+routing table" — never "is this role usable". For a proxied role the usable
+signal is `ready` (which for a proxied role is the *peer* probe's verdict:
+the peer answered and its own `/v1/models` lists exactly this id). Two roles
+in the same proxied state, both forwarding happily, can therefore report
+different `loaded` values:
+
+- `loaded: false` is the common case — a dropped role realistically has no
+  `<PREFIX>_BASE_URL`, so no local `Backend` is built (the example above).
+- `loaded: true` also occurs, and is **not** a bug in the payload: any
+  `<PREFIX>_BASE_URL` still present wires a local `Backend` even when no such
+  container runs here. Note `multimodal` is the one optional generate backend
+  whose fleet-compose default is **non-empty**
+  (`MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}`,
+  where `MINOR_BASE_URL` and `MUSE_BASE_URL` both default to empty), and
+  because `${VAR:-default}` ignores an explicit empty value too, a proxied
+  `senses` reports `loaded: true` on every fleet deployment and **cannot** be
+  unwired from `.env`.
+
+Because of that, `lobes capabilities` does not render `loaded` verbatim: a
+role this box serves by forwarding shows **`by-proxy`** in the `loaded`
+column (derived from `feasible: false` + `proxied: true`), so the table reads
+the same for every proxied role regardless of leftover local wiring. That is
+a **CLI display state only** — this JSON contract is unchanged, `loaded`
+stays a `bool`, and a programmatic consumer branching on it is unaffected.
 
 **What a caller actually sees.** A proxied role's `endpoint`/`path` are
 unchanged — a client that already discovered them via `GET /capabilities`

@@ -1,0 +1,23 @@
+{
+  "plan_slug": "lobes-capabilities-tells-you-where-a-lobe-is-serve",
+  "schema_version": 1,
+  "created": "2026-07-25T08:54:39Z",
+  "updated": "2026-07-25T08:54:39Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Narrow t2: drop the .env unwiring (impossible) and redefine it as recording the compose-template root cause; keep the live proxy verification that already passed.",
+      "task_ref": "t2",
+      "reason": "senses loaded=true is NOT stale spark .env wiring. The shipped fleet compose template defaults MULTIMODAL_BASE_URL to http://vllm-multimodal:8000 while MINOR_BASE_URL and MUSE_BASE_URL both default to empty, and ${VAR:-default} ignores an explicit empty value too (verified with docker compose config) \u2014 so no .env edit can unwire it and the asymmetry reproduces on EVERY fleet deployment, not just this box. Proven live: commented the line out, recreated the gateway shape-override-safe, container env came back identical and senses loaded stayed true. t1's by-proxy display already fixes the operator-visible symptom regardless, because _loaded_cell checks feasible+proxied before loaded.",
+      "affects": [
+        "c6",
+        "c14",
+        "h3",
+        "h4"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

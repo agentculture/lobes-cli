@@ -1,0 +1,95 @@
+=== by-proxy capabilities acceptance ===
+host:        spark-f8a9
+date:        2026-07-25T12:18:45+03:00
+deploy dir:  /home/spark/.lobes
+gateway:     http://localhost:8001
+lobes:       lobes 0.54.5
+inbound key: armed
+
+--- [0] gateway reachable ---
+  GET /capabilities: 200, 7 roles
+
+--- [1] capabilities table (the operator surface) ---
+# source: gateway — live GET /capabilities
+role      model                                             context  loaded    endpoint
+---------------------------------------------------------------------------------------
+cortex    sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP           262144  yes       http://localhost:8001
+          responsibilities: reasoning, deciding, planning, tool_use, code_repo_actions, validation, final_authority
+senses    coolthor/gemma-4-12B-it-NVFP4A16                    32768  by-proxy  http://localhost:8001
+          ** infeasible on this machine — never served here **
+          proxied via this gateway from peer: http://orin.tail0be7e0.ts.net:8000
+          responsibilities: intake, normalize_input, classify_intent, prepare_context_packet, speak_back
+muse      nvidia/Gemma-4-31B-IT-NVFP4                        262144  by-proxy  http://localhost:8001
+          ** infeasible on this machine — never served here **
+          proxied via this gateway from peer: http://thor.tail0be7e0.ts.net:8000
+          responsibilities: creative_generation, long_form_writing, ideation, style_variation, divergent_second_opinion, tool_use
+embedder  Qwen/Qwen3-Embedding-0.6B                            8192  yes       http://localhost:8001
+          responsibilities: vectorization, memory_retrieval_input
+reranker  Qwen/Qwen3-Reranker-0.6B                             8192  yes       http://localhost:8001
+          responsibilities: retrieval_ordering, relevance_refinement
+stt       nvidia/parakeet-tdt-0.6b-v2                             0  yes       http://localhost:8001
+          responsibilities: transcribe, audio_input_to_text, realtime_vad_session
+tts       ResembleAI/chatterbox                                   0  yes       http://localhost:8001
+          responsibilities: speech_output, synthesize
+
+--- [2] gateway JSON: loaded is STILL a bool for every role ---
+  cortex    loaded=True  (type=bool) feasible=True  proxied=None hosted_by=None
+  senses    loaded=True  (type=bool) feasible=False proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000
+  muse      loaded=False (type=bool) feasible=False proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000
+  embedder  loaded=True  (type=bool) feasible=True  proxied=None hosted_by=None
+  reranker  loaded=True  (type=bool) feasible=True  proxied=None hosted_by=None
+  stt       loaded=True  (type=bool) feasible=True  proxied=None hosted_by=None
+  tts       loaded=True  (type=bool) feasible=True  proxied=None hosted_by=None
+
+  WIRE CONTRACT: UNCHANGED — every loaded is a bool
+
+--- [3] the toggle-proof: display does NOT track local wiring (h7/h9) ---
+  senses    loaded=True  -> table reads by-proxy  (peer: http://orin.tail0be7e0.ts.net:8000)
+  muse      loaded=False -> table reads by-proxy  (peer: http://thor.tail0be7e0.ts.net:8000)
+
+  PROOF: loaded DIFFERS across proxied roles, yet both render by-proxy — the display is independent of local wiring.
+
+--- [4] traffic did not move: live POST per proxied role (h10) ---
+  model=senses
+    HTTP/1.1 200 OK
+    X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000
+    served model: coolthor/gemma-4-12B-it-NVFP4A16
+    finish: stop | content: 'The ocean is vast and deep.'
+  model=muse
+    HTTP/1.1 200 OK
+    X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+    served model: nvidia/Gemma-4-31B-IT-NVFP4
+    finish: stop | content: 'The ocean is vast and deep.'
+
+--- [5] boundary: no routing/auth file in the diff (h10) ---
+    .agex/data/pr/events.jsonl
+    .devague/current
+    .devague/current_plan
+    .devague/deliveries/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
+    .devague/frames/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
+    .devague/frames/stt-readiness-truth-155.json
+    .devague/plans/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
+    .devague/plans/stt-readiness-truth-155.json
+    .eidetic/memory/colleague__public.jsonl
+    .eidetic/memory/lobes__public.jsonl
+    CHANGELOG.md
+    docs/colleague-stack.md
+    docs/evidence/2026-07-25-accept-by-proxy-spark-f8a9.txt
+    docs/plans/2026-07-24-stt-readiness-truth-155.md
+    docs/plans/2026-07-25-lobes-capabilities-tells-you-where-a-lobe-is-serve.md
+    docs/specs/2026-07-24-stt-readiness-truth-155.md
+    docs/specs/2026-07-25-lobes-capabilities-tells-you-where-a-lobe-is-serve.md
+    lobes/cli/_commands/capabilities.py
+    lobes/realtime/app.py
+    lobes/realtime/tts_client.py
+    pyproject.toml
+    scripts/accept-by-proxy.sh
+    tests/test_benchmark_all_lobes.py
+    tests/test_cli_capabilities.py
+    tests/test_cli_runtime.py
+    tests/test_tts_pause_and_truncation.py
+    uv.lock
+
+  ROUTING/AUTH FILES TOUCHED: none
+
+=== PASS — all checks green ===

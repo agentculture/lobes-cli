@@ -78,3 +78,21 @@
 {"ts":"2026-07-21T22:51:40.662396+00:00","type":"readiness_arrived","pr":154,"waited_secs":0}
 {"ts":"2026-07-21T22:51:45.153066+00:00","type":"pr_read","pr":154,"comment_count":8,"threads_unresolved":0,"ci_state":"ok"}
 {"ts":"2026-07-21T22:53:11.579408+00:00","type":"pr_read","pr":154,"comment_count":8,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-21T23:10:49.714175+00:00","type":"pr_read","pr":154,"comment_count":8,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-24T20:11:43.116759+00:00","type":"pr_opened","pr":156,"title":"spec+plan: STT readiness tells the truth about CPU fallback (#155)"}
+{"ts":"2026-07-24T20:11:44.217221+00:00","type":"pr_review_triggered","pr":156,"command":"/agentic_review"}
+{"ts":"2026-07-24T20:11:44.877039+00:00","type":"pr_webhook_posted","pr":156,"event":"pr_opened"}
+{"ts":"2026-07-24T20:12:47.569843+00:00","type":"readiness_arrived","pr":156,"waited_secs":60}
+{"ts":"2026-07-24T20:12:52.129185+00:00","type":"pr_read","pr":156,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-07-24T20:20:53.424024+00:00","type":"pr_opened","pr":157,"title":"fix: clear the 10 open SonarCloud issues, incl. a quadratic regex on the TTS path (0.54.3)"}
+{"ts":"2026-07-24T20:20:54.585385+00:00","type":"pr_review_triggered","pr":157,"command":"/agentic_review"}
+{"ts":"2026-07-24T20:20:55.375974+00:00","type":"pr_webhook_posted","pr":157,"event":"pr_opened"}
+{"ts":"2026-07-24T20:21:58.417371+00:00","type":"readiness_arrived","pr":157,"waited_secs":60}
+{"ts":"2026-07-24T20:22:02.775219+00:00","type":"pr_read","pr":157,"comment_count":2,"threads_unresolved":0,"ci_state":"failure"}
+{"ts":"2026-07-25T04:40:23.293974+00:00","type":"pr_read","pr":157,"comment_count":5,"threads_unresolved":1,"ci_state":"ok"}
+{"ts":"2026-07-25T04:44:53.559597+00:00","type":"pr_batch_replied","pr":157,"count":0,"resolved":0}
+{"ts":"2026-07-25T04:45:46.642112+00:00","type":"pr_reply","pr":157,"thread_id":"PRRT_kwDOSktgM86TqGXU","in_reply_to":3647941477}
+{"ts":"2026-07-25T04:45:47.222517+00:00","type":"pr_batch_replied","pr":157,"count":1,"resolved":1}
+{"ts":"2026-07-25T04:45:47.866069+00:00","type":"pr_webhook_posted","pr":157,"event":"pr_replied"}
+{"ts":"2026-07-25T04:45:57.235287+00:00","type":"readiness_arrived","pr":157,"waited_secs":0}
+{"ts":"2026-07-25T04:46:01.607351+00:00","type":"pr_read","pr":157,"comment_count":6,"threads_unresolved":0,"ci_state":"ok"}
