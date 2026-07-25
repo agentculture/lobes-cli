@@ -218,10 +218,21 @@ def trailing_pause_ms(original_text: str) -> int:
     return 200
 
 
-# Sentinel: this attempt failed, but a retry within the same semaphore hold may
-# still succeed. Distinct from b"" (give up) so the two outcomes cannot be
-# confused — an empty-bytes "retry" would silently mean "no audio" to the caller.
-_RETRY = object()
+class _Retry:
+    """Sentinel type: the attempt failed, but a retry within the same semaphore
+    hold may still succeed.
+
+    Distinct from ``b""`` (give up) so the two outcomes cannot be confused — an
+    empty-bytes "retry" would silently mean "no audio" to the caller. It is a
+    dedicated type rather than a bare ``object()`` so the helper below can be
+    annotated ``bytes | _Retry``: that keeps the "callers only ever see bytes"
+    invariant statically checked instead of asserted by a ``type: ignore``.
+    """
+
+    __slots__ = ()
+
+
+_RETRY = _Retry()
 
 
 def _min_plausible_duration(clean: str) -> float:
@@ -245,7 +256,7 @@ def _handle_tts_response(
     elapsed: float,
     attempt: int,
     lane: str,
-) -> object:
+) -> bytes | _Retry:
     """Validate one TTS response.
 
     Returns PCM bytes on success, :data:`_RETRY` when the attempt failed but a
@@ -381,9 +392,12 @@ async def _synthesize_single(
                 elapsed = time.monotonic() - t0
 
                 outcome = _handle_tts_response(resp, clean, tag, elapsed, attempt, lane)
-                if outcome is _RETRY:
+                # isinstance, not `is _RETRY`: identity against a module global does
+                # not narrow the union for a type checker, so the bare `return` below
+                # would still need a suppression.
+                if isinstance(outcome, _Retry):
                     continue
-                return outcome  # type: ignore[return-value]
+                return outcome
 
             except httpx.ConnectError:
                 log.error("%s connect error to %s (attempt %d)", tag, url, attempt + 1)

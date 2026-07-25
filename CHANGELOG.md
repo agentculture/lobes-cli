@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.4] - 2026-07-25
+
+### Changed
+
+- `lobes.realtime.tts_client` — the TTS retry sentinel is now a dedicated `_Retry` type rather than a bare `object()`, so `_handle_tts_response()` annotates as `bytes | _Retry` and `_synthesize_single()` narrows with `isinstance` instead of suppressing the mismatch with `# type: ignore[return-value]`. The runtime contract is unchanged — callers still only ever see `bytes` — but that invariant is now statically checked rather than asserted, so a future edit cannot leak a non-bytes sentinel past the retry check unnoticed (Qodo review, PR #157).
+
 ## [0.54.3] - 2026-07-24
 
 ### Added
