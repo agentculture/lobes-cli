@@ -59,8 +59,9 @@ def test_resolve_explicit(tmp_path) -> None:
 
 
 def test_resolve_explicit_missing_raises_user_error(tmp_path) -> None:
+    missing = str(tmp_path / "empty")
     with pytest.raises(ModelGearError) as exc:
-        _compose.resolve_deployment_dir(str(tmp_path / "empty"))
+        _compose.resolve_deployment_dir(missing)
     assert exc.value.code == EXIT_USER_ERROR
 
 

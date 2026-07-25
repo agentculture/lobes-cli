@@ -534,8 +534,9 @@ def test_concurrency_invalid_does_not_call_run_concurrent(monkeypatch) -> None:
     for bad in ("-1", "0", "abc"):
         concurrent_calls.clear()
         ramp_calls.clear()
+        args = _make_all_lobes_args(concurrency=bad)
         with pytest.raises(ModelGearError):
-            benchmark_cmd.cmd_benchmark(_make_all_lobes_args(concurrency=bad))
+            benchmark_cmd.cmd_benchmark(args)
         assert (
             len(concurrent_calls) == 0
         ), f"concurrency={bad!r}: run_concurrent must not be called on invalid concurrency"

@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from typing import Annotated
 
 import anyio
 import httpx
@@ -126,9 +127,9 @@ async def speech(request: Request) -> Response:
 
 @app.post("/v1/audio/transcriptions")  # pragma: no cover
 async def transcriptions(
-    file: UploadFile = File(...),
-    language: str = Form("en"),
-    model: str = Form(None),
+    file: Annotated[UploadFile, File()],
+    language: Annotated[str, Form()] = "en",
+    model: Annotated[str | None, Form()] = None,
 ) -> Response:
     """OpenAI speech-to-text → forwards the upload to Parakeet (already OpenAI-shaped)."""
     content = await file.read()
