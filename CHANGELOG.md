@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.2] - 2026-07-25
+
+### Added
+
+- `lobes capabilities` renders a third `loaded` state, **`by-proxy`**, for a role this box serves by forwarding to a peer — derived from the payload's existing `feasible`+`proxied` pair and shown alongside the hosting peer. Two roles in the same proxied state previously printed different values (`yes` vs `no`) purely because of leftover local `<PREFIX>_BASE_URL` wiring, while both forwarded happily and both answered 200.
+
+### Changed
+
+- `docs/colleague-stack.md` now states that `loaded` is a LOCAL wiring fact that does not indicate whether a proxied role works, and records why `senses` reports `loaded: true` on every fleet deployment: `multimodal` is the only optional generate backend whose compose default is non-empty (`MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}`), and `${VAR:-default}` ignores an explicit empty value, so it cannot be unwired from `.env`.
+
+### Fixed
+
+- The stale comment in `lobes/cli/_commands/capabilities.py` that admitted an infeasible role's row "still shows loaded=yes" now describes the shipped three-state behaviour.
+
 ## [0.54.1] - 2026-07-22
 
 ### Added
