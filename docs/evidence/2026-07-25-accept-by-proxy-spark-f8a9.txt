@@ -1,10 +1,13 @@
 === by-proxy capabilities acceptance ===
 host:        spark-f8a9
-date:        2026-07-25T11:57:46+03:00
+date:        2026-07-25T12:18:45+03:00
 deploy dir:  /home/spark/.lobes
 gateway:     http://localhost:8001
-lobes:       lobes 0.54.2
+lobes:       lobes 0.54.5
 inbound key: armed
+
+--- [0] gateway reachable ---
+  GET /capabilities: 200, 7 roles
 
 --- [1] capabilities table (the operator surface) ---
 # source: gateway — live GET /capabilities
@@ -51,29 +54,42 @@ tts       ResembleAI/chatterbox                                   0  yes       h
     HTTP/1.1 200 OK
     X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000
     served model: coolthor/gemma-4-12B-it-NVFP4A16
-    finish: stop | content: 'The ocean is deep and blue.'
+    finish: stop | content: 'The ocean is vast and deep.'
   model=muse
     HTTP/1.1 200 OK
     X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
     served model: nvidia/Gemma-4-31B-IT-NVFP4
-    finish: stop | content: 'The deep blue sea is vast.'
+    finish: stop | content: 'The ocean is vast and deep.'
 
 --- [5] boundary: no routing/auth file in the diff (h10) ---
+    .agex/data/pr/events.jsonl
     .devague/current
     .devague/current_plan
     .devague/deliveries/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
     .devague/frames/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
+    .devague/frames/stt-readiness-truth-155.json
     .devague/plans/lobes-capabilities-tells-you-where-a-lobe-is-serve.json
+    .devague/plans/stt-readiness-truth-155.json
+    .eidetic/memory/colleague__public.jsonl
+    .eidetic/memory/lobes__public.jsonl
     CHANGELOG.md
     docs/colleague-stack.md
+    docs/evidence/2026-07-25-accept-by-proxy-spark-f8a9.txt
+    docs/plans/2026-07-24-stt-readiness-truth-155.md
     docs/plans/2026-07-25-lobes-capabilities-tells-you-where-a-lobe-is-serve.md
+    docs/specs/2026-07-24-stt-readiness-truth-155.md
     docs/specs/2026-07-25-lobes-capabilities-tells-you-where-a-lobe-is-serve.md
     lobes/cli/_commands/capabilities.py
+    lobes/realtime/app.py
+    lobes/realtime/tts_client.py
     pyproject.toml
     scripts/accept-by-proxy.sh
+    tests/test_benchmark_all_lobes.py
     tests/test_cli_capabilities.py
+    tests/test_cli_runtime.py
+    tests/test_tts_pause_and_truncation.py
     uv.lock
 
   ROUTING/AUTH FILES TOUCHED: none
 
-=== end ===
+=== PASS — all checks green ===
