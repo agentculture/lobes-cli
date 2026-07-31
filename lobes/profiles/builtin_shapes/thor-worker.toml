@@ -24,10 +24,22 @@
 # MEASURED at gpu_mem_util=0.45 / max_model_len=262144 (the FULL 256K native
 # window, served — no trim needed):
 #   * model weights loaded: 24.81 GiB (24.67 GiB checkpoint) in ~31 s
-#   * KV-cache pool: 41.78 GiB = 14.07x concurrency at 262,144 tokens/request
-#     (far more headroom than thor-muse's 2.33x — the ~3B-active MoE + the
-#     mixed-precision NVFP4/fp8 weights leave a large KV budget)
-#   * decode ~50.8 tok/s end-to-end; MTP self-draft acceptance 89.1%
+#   * KV-cache pool: 41.78 GiB = a 14.07x KV-POOL CEILING at 262,144
+#     tokens/request (far more headroom than thor-muse's 2.33x — the ~3B-active
+#     MoE + the mixed-precision NVFP4/fp8 weights leave a large KV budget)
+#   * decode ~50.8 tok/s end-to-end SINGLE-STREAM; MTP self-draft acceptance 89.1%
+#
+# !!! 14.07x IS A CEILING, NOT MEASURED CONCURRENCY — AND NOT 14x50 tok/s !!!
+# It is arithmetic: KV pool / max_model_len. It says how many FULL-CONTEXT
+# requests the KV cache could hold, nothing about useful throughput at that
+# width. Two independent consumers measured the real behaviour on this box
+# (2026-07-31): usable concurrency SATURATES near width 8-9, not 14, and
+# per-stream decode falls to ~30 tok/s at high width (embodiment, and
+# colleague#361 which measured 29.8 tok/s/stream and 268.1 tok/s aggregate at
+# width 14 — a 5.5% aggregate gain for a 75% load increase over width 8).
+# The 50.8 tok/s above is a SINGLE-STREAM number; multiplying it by the ceiling
+# is exactly the misreading to avoid. Quote the ceiling and the measured
+# saturation together, or quote neither.
 #   * co-resides with embedder+reranker (util 0.06 each) on the 128 GB box.
 # The 0.45 hypothesis booted healthy on the FIRST try (unlike thor-muse, where
 # 0.40 was refused and 0.55 measured) — the MoE's small active-param footprint

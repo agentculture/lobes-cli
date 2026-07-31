@@ -90,7 +90,7 @@ numbers, not hypotheses.
 | `gpu_mem_util` / `max_model_len` | 0.44 / 262144 | **0.44 / 262144** |
 | KV cache | — | **26.39 GiB** |
 | KV pool | 888,946 tokens | **756,642 tokens** |
-| concurrency @ full context | 3.39× | **≈2.89×** |
+| KV-pool *ceiling* @ full context | 3.39× | **≈2.89×** |
 
 The unquantized bf16 ViT costs ≈**132,300 tokens of KV pool (~15%)**. The full
 256K window survives, and `embedder`, `reranker` and `embed-deep` all stayed
@@ -138,8 +138,14 @@ promoting. See [`model-switch-playbook.md`](model-switch-playbook.md) §1.
 - **Quality.** Nothing above measures whether this model *reasons better* — only
   that it is alive, fast and structurally intact. A swap that degraded reasoning
   quality would pass every gate here.
-- **Concurrency.** All numbers are single-stream; ~2.89× is implied by the KV
-  pool, not measured.
+- **Concurrency.** Every throughput number above is **single-stream**. The
+  ~2.89× is a **KV-pool ceiling** (`KV pool / max_model_len`) — how many
+  full-context requests the cache could *hold*, not a measured serving width,
+  and emphatically **not** something to multiply the single-stream tok/s by.
+  On the `worker` lane, where two consumers did measure it, the real behaviour
+  fell well short of the ceiling: saturation near width **8–9** against a
+  **14.07×** ceiling, with per-stream decode dropping to ~30 tok/s at high width
+  (embodiment; colleague#361). Expect the same shape here; it is unmeasured.
 - **Long context.** The lane serves 262144 tokens; the longest probe used ~94.
 - **Vision quality at 27B** relative to the 12B `senses` gear it sits alongside.
 - **Breaking change.** Promotion changes the served id, and **no consumer in the

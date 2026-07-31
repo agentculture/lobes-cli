@@ -31,7 +31,7 @@ Capture, per case:
 | decode tok/s | **`usage.completion_tokens`**, never a count of stream chunks |
 | prompt tokens | `usage.prompt_tokens` |
 | MTP acceptance | `docker logs <engine> \| grep SpecDecoding` — mean acceptance length, per-position rate, avg draft acceptance |
-| KV pool / concurrency | the boot log's `Available KV cache memory` + `GPU KV cache size` |
+| KV pool + ceiling | the boot log's `Available KV cache memory` + `GPU KV cache size` (the ceiling is arithmetic — see §8) |
 
 > **Trap:** counting SSE chunks under-reports decode throughput, because
 > speculative decoding delivers **multiple tokens per chunk**. The first pass of
@@ -132,9 +132,9 @@ Record both the value that booted **and** any value that was refused — the
 refusal is the more useful number next time.
 
 The 2026-07-31 cortex candidate: `gpu_mem_util=0.44` at the full `262144`
-window booted first try — KV pool **26.39 GiB / 756,642 tokens ≈ 2.89×**
-concurrency, against the incumbent's 888,946 / 3.39× at the same knobs. The
-unquantized bf16 ViT costs ≈132,300 tokens of KV pool (~15%).
+window booted first try — KV pool **26.39 GiB / 756,642 tokens** (a ≈2.89×
+*ceiling*, see §8), against the incumbent's 888,946 / 3.39× at the same knobs.
+The unquantized bf16 ViT costs ≈132,300 tokens of KV pool (~15%).
 
 ## 7. Sequence the downtime
 
@@ -157,7 +157,29 @@ Order that works:
 Keep the rollback one flag wide: drop the `-f <override>` and restore the
 commented `.env` lines. Both were left in place on 2026-07-31.
 
-## 8. What still is not covered
+## 8. Concurrency figures are CEILINGS, not measured throughput
+
+`Nx concurrency` anywhere in this repo means `KV pool / max_model_len` — how
+many full-context requests the KV cache could *hold*. It is arithmetic off the
+boot log, not a serving measurement, and it must never be multiplied by a
+single-stream tok/s.
+
+Measured on the `worker` lane by two independent consumers (2026-07-31):
+
+| | advertised | measured |
+|---|---|---|
+| concurrency | 14.07x ceiling | saturates near width **8-9** |
+| per-stream decode | ~50.8 tok/s (single-stream) | **~30 tok/s** at high width |
+| aggregate @ width 14 | — | 268.1 tok/s — a 5.5% gain over width 8 for 75% more load |
+
+(embodiment; colleague#361.) So the useful operating point was roughly HALF the
+ceiling, and per-stream throughput degraded ~40% getting there.
+
+Rule: quote the ceiling and the measured saturation together, or quote neither.
+If concurrency has not been measured for a lane, say so — the ceiling alone
+reads as a capacity claim it cannot support.
+
+## 9. What still is not covered
 
 Honest gaps in the current probe set, for whoever does this next:
 

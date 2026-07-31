@@ -148,6 +148,23 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "code_repo_actions",
         "validation",
         "final_authority",
+        # Added 2026-07-31 with the multimodal promotion (colleague#361). The
+        # cortex checkpoint (unsloth/Qwen3.6-27B-NVFP4) serves its own ViT and
+        # image + video intake were VALIDATED live on the GB10 against negative
+        # controls (docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt).
+        #
+        # Advertising them is REQUIRED, not cosmetic. Consumers are told to
+        # resolve roles by name from this advert and NEVER to parse model names,
+        # so omitting these made a seeing cortex look blind to every caller
+        # obeying the contract — a lie by omission of exactly the kind the
+        # "never advertise a capability you cannot serve" rule exists to
+        # prevent, in the opposite direction. Reported by colleague#361.
+        #
+        # cortex is now the ONLY role that both SEES and DECIDES: `senses` is
+        # forbidden final_decision/repo_action and `worker` is forbidden
+        # final_decision/security_decision, so before this no role could do both.
+        "image_understanding",
+        "video_understanding",
     ),
     "senses": (
         "intake",

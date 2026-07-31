@@ -214,12 +214,17 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # MEASURED live on the DGX Spark GB10, 2026-07-31 — see
         # docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
         # Booted FIRST TRY at the spark-lobe shape's own 0.44 / 262144 (no retune,
-        # unlike thor-muse's refused 0.40): KV pool 26.39 GiB / 756,642 tokens =
-        # ~2.89x concurrency at the full 256K window, vs the outgoing text-only
-        # primary's 888,946 / 3.39x at the same knobs — so the unquantized bf16
-        # ViT costs ~132,300 tokens (~15%) of KV pool and the full window survives
-        # with embedder/reranker/embed-deep still co-resident.
-        # Decode 14.9 / 16.4 / 19.0 tok/s (short/medium/512-tok gen) at TTFT
+        # unlike thor-muse's refused 0.40): KV pool 26.39 GiB / 756,642 tokens at
+        # the full 256K window, vs the outgoing text-only primary's 888,946 at the
+        # same knobs — so the unquantized bf16 ViT costs ~132,300 tokens (~15%) of
+        # KV pool and the full window survives with embedder/reranker/embed-deep
+        # still co-resident. (KV pool / max_model_len = a ~2.89x CEILING vs the
+        # outgoing 3.39x — that is how many full-context requests the cache could
+        # HOLD, not measured concurrency. Real saturation is unmeasured for this
+        # lane; on the worker lane two consumers measured saturation near width
+        # 8-9 against a 14.07x ceiling. Never multiply a single-stream tok/s by a
+        # ceiling.)
+        # Decode 14.9 / 16.4 / 19.0 tok/s SINGLE-STREAM (short/medium/512-tok gen) at TTFT
         # ~0.27s; self-hosted MTP engages at 62-67% draft acceptance, mean
         # acceptance length 2.24-2.35.
         # Gates all pass: image (colour + negative control), VIDEO (directional

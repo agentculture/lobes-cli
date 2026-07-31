@@ -671,6 +671,12 @@ _GOLDEN_CAPABILITIES = {
             "code_repo_actions",
             "validation",
             "final_authority",
+            # 2026-07-31: the cortex checkpoint became multimodal, so the advert
+            # must say so — a consumer resolving roles by name (and NEVER parsing
+            # model ids, as the contract instructs) would otherwise read a seeing
+            # cortex as blind. Reported by colleague#361.
+            "image_understanding",
+            "video_understanding",
         ],
         "forbidden_responsibilities": [],
         "feasible": True,

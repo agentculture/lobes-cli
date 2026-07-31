@@ -251,8 +251,18 @@ physical Jetson AGX Thor (sm_110), 2026-07-31 —
 `senses` and hosts `worker` + the pooling gears + the audio overlay, mirroring
 `thor-muse`'s structure. Its budget is **measured, not declared**:
 `gpu_mem_util=0.45` at the full `max_model_len=262144` (no trim), weights
-24.81 GiB loaded in ~31 s, KV pool 41.78 GiB = **14.07x** concurrency at
-262,144 tokens/request, ~50.8 tok/s decode, MTP self-draft acceptance **89.1%**.
+24.81 GiB loaded in ~31 s, KV pool 41.78 GiB, ~50.8 tok/s decode
+**single-stream**, MTP self-draft acceptance **89.1%**.
+
+> **Concurrency numbers in this repo are KV-pool CEILINGS, not measured
+> throughput.** `KV pool / max_model_len` gives 14.07× for this lane — how many
+> full-context requests the cache could *hold*. Two independent consumers
+> measured the real behaviour on 2026-07-31: usable concurrency **saturates near
+> width 8–9**, and per-stream decode falls to **~30 tok/s** at high width
+> (embodiment; colleague#361 measured 29.8 tok/s/stream and 268.1 tok/s aggregate
+> at width 14 — a 5.5% aggregate gain for a 75% load increase over width 8).
+> Multiplying a single-stream tok/s by the ceiling is the misreading to avoid.
+> The same caveat applies to every `Nx concurrency` figure below.
 The 0.45 hypothesis booted first try — the MoE's ~3B active-parameter footprint
 is why. **`--moe-backend` is deliberately NOT forced on sm_110**: every forced
 value was refused live (`flashinfer_b12x`/`flashinfer_cutlass` are
