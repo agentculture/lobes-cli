@@ -104,24 +104,28 @@ that exclusion that turned out to be **wrong** (the `supports_required_and_named
 flag, which cortex's own parser shares; and an EngineCore-crash risk that did
 not reproduce).
 
-### Colleague roles: cortex / senses / muse / embedder / reranker / stt / tts
+### Colleague roles: cortex / senses / muse / worker / embedder / reranker / stt / tts
 
-Beyond `cortex`, the **fleet** exposes SEVEN first-class, Colleague-facing
-**roles** (issue #81) — the primary contract callers should address, not raw
-model ids: `cortex` (the 27B primary — reasoning/deciding/final authority),
-`senses` (the Gemma 4 12B multimodal gear — vision intake/perception; never
-decides or takes repo actions; the checkpoint declares audio support but it is
-**not currently served** on this vLLM path — issue #101 — so `senses` is
-vision-only in practice, and the purpose-built `stt` role, below, is the
-supported path for speech), `muse` (the opt-in-hosted creative/ideation lobe —
-see the paragraph below), `embedder` (`Qwen/Qwen3-Embedding-0.6B` →
-`POST /v1/embeddings`), `reranker` (`Qwen/Qwen3-Reranker-0.6B` → `POST
-/v1/rerank` + `/v1/score`), and the opt-in audio overlay's `stt`/`tts`. Roles
-are routed by **task family** (`generate` / `embed` / `score` / `rerank`) and
-discoverable via `lobes capabilities` / `lobes endpoint <role>` / gateway `GET
-/capabilities` — a JSON contract keyed by role (model / runtime / endpoint /
-path / context / quant / mtp / responsibilities / forbidden_responsibilities /
-ready / loaded); see `docs/colleague-stack.md` for the full contract.
+Beyond `cortex`, the **fleet** exposes EIGHT first-class, Colleague-facing
+**roles** (issue #81; `worker` joined as the eighth — thor-worker-lobe plan)
+— the primary contract callers should address, not raw model ids: `cortex`
+(the 27B primary — reasoning/deciding/final authority), `senses` (the Gemma 4
+12B multimodal gear — vision intake/perception; never decides or takes repo
+actions; the checkpoint declares audio support but it is **not currently
+served** on this vLLM path — issue #101 — so `senses` is vision-only in
+practice, and the purpose-built `stt` role, below, is the supported path for
+speech), `muse` (the opt-in-hosted creative/ideation lobe — **currently
+DORMANT/unhosted mesh-wide**, see the paragraph below), `worker` (the
+opt-in-hosted fast ground-work DOER, and the first non-`cortex` role allowed
+to act on the repo — see the paragraph below), `embedder`
+(`Qwen/Qwen3-Embedding-0.6B` → `POST /v1/embeddings`), `reranker`
+(`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`), and the
+opt-in audio overlay's `stt`/`tts`. Roles are routed by **task family**
+(`generate` / `embed` / `score` / `rerank`) and discoverable via `lobes
+capabilities` / `lobes endpoint <role>` / gateway `GET /capabilities` — a
+JSON contract keyed by role (model / runtime / endpoint / path / context /
+quant / mtp / responsibilities / forbidden_responsibilities / ready /
+loaded); see `docs/colleague-stack.md` for the full contract.
 `cortex`/`senses`/`embedder`/`reranker` are default-on and co-reside on the
 DGX Spark GB10: `cortex` serves its **full 128K native context at util 0.30**,
 `senses` is trimmed to **32K at util 0.14**, and the two ~0.6B pooling gears
@@ -133,38 +137,43 @@ instead of merely co-residing it. The 4B `minor` (back-compat `cheap`,
 `COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
 (`COMPOSE_PROFILES=middle`, util 0.12) are **opt-in** gears and are not
 first-class Colleague roles. Callers address the generate lane by
-**capability-tier alias** — `model=main|minor|multimodal|muse` (back-compat:
-`hard|cheap|normal`; capability order `minor` < `multimodal` < `muse` <
-`main`), or the Colleague-role names `model=cortex|senses` layered
-on top of `main`/`multimodal` (`muse`'s role name IS its tier/backend name);
-`normal`/`multimodal` maps to the Gemma gear, not
-the demoted 14B. A swap/iowait **pressure policy** degrades `cortex`,
-`senses`, and `muse` requests to `minor` (swap > 75 % or iowait > 50 % →
-degraded, `minor`
-only — `senses`/`muse` are different capabilities, not cheaper rungs);
-`lobes status --pressure` shows the current tier ceiling. Start/stop one role at
-a time with `lobes up <role>` (or the six-default-role bundle, `lobes up
-colleague-stack` — `muse` is deliberately excluded from the bundle; `lobes up
-muse` works on a muse-hosting deployment and errors helpfully when
-`COMPOSE_PROFILES` doesn't include `muse`); measure per-role runtime with
-`lobes measure` (muse rides the llm family) and compare
-fleet profiles with `lobes benchmark --profile {cortex-only,cortex+senses,
-senses-direct,qwen-nvfp4-vs-bf16,all}`. LoRA adapter training targets the 4B
-bf16 `minor` only — the 14B NVFP4 is inference-only, and there is no `lobes
-train` verb. See `docs/qwen3-embedding-0.6b.md`, `docs/qwen3-reranker-0.6b.md`,
-`docs/gemma-4-12b-nvfp4.md`, `docs/gemma-4-31b-nvfp4.md`,
-`docs/gateway-fleet.md`, and
-`docs/colleague-stack.md` (the seven-role contract).
+**capability-tier alias** — `model=main|minor|multimodal|worker|muse`
+(back-compat: `hard|cheap|normal`; capability order `minor` < `multimodal` <
+`worker` < `muse` < `main`), or the Colleague-role names `model=cortex|senses`
+layered on top of `main`/`multimodal` (`muse`'s and `worker`'s role names ARE
+their tier/backend names); `normal`/`multimodal` maps to the Gemma gear, not
+the demoted 14B. A swap/iowait **pressure policy** SHEDS full-tier `cortex`,
+`senses`, `worker`, and `muse` requests with **HTTP 429 + `Retry-After`**
+rather than substituting a different model (swap > 75 % or iowait > 50 % →
+busy — the former degrade-to-`minor` substitution path was removed outright,
+so there is no cheaper-rung fallback for any of the four); an explicit
+`minor` request is the servable floor and is always served regardless of
+pressure. `lobes status --pressure` shows the current busy/warm state.
+Start/stop one role at a time with `lobes up <role>` (or the six-default-role
+bundle, `lobes up colleague-stack` — `muse` and `worker` are deliberately
+excluded from the bundle, both being opt-in-hosted; `lobes up muse` works on
+a muse-hosting deployment and errors helpfully when `COMPOSE_PROFILES`
+doesn't include `muse`, and `lobes up worker` is landing alongside the
+worker-hosting shape, below, to mirror that exact mechanic); measure
+per-role runtime with `lobes measure` (muse and worker ride the llm family)
+and compare fleet profiles with `lobes benchmark --profile {cortex-only,
+cortex+senses,senses-direct,qwen-nvfp4-vs-bf16,all}`. LoRA adapter training
+targets the 4B bf16 `minor` only — the 14B NVFP4 is inference-only, and there
+is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
+`docs/qwen3-reranker-0.6b.md`, `docs/gemma-4-12b-nvfp4.md`,
+`docs/gemma-4-31b-nvfp4.md`, `docs/qwen3.6-35b-a3b-nvfp4.md`,
+`docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the eight-role
+contract).
 
-**`muse` — the seventh role (opt-in hosting).** Checkpoint:
-`nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's official modelopt
-NVFP4 export; 256K native; plain-gemma4 line, **`gemma4` tool parser**; native
-MTP declared via the `google/gemma-4-31B-it-assistant` draft — UNMEASURED on
-this target). Responsibilities: creative generation, long-form writing,
-ideation, style variation, a divergent second opinion, **`tool_use`** — muse
-proposes, `cortex` decides (forbidden: final_decision / repo_action /
-security_decision, so muse calls tools to RESEARCH a proposal, never to enact
-one). Alias `model=muse`. It is an **opt-in core role**
+**`muse` — the seventh role, currently DORMANT/unhosted mesh-wide.**
+Checkpoint: `nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's official
+modelopt NVFP4 export; 256K native; plain-gemma4 line, **`gemma4` tool
+parser**; native MTP declared via the `google/gemma-4-31B-it-assistant`
+draft — UNMEASURED on this target). Responsibilities: creative generation,
+long-form writing, ideation, style variation, a divergent second opinion,
+**`tool_use`** — muse proposes, `cortex` decides (forbidden: final_decision /
+repo_action / security_decision, so muse calls tools to RESEARCH a proposal,
+never to enact one). Alias `model=muse`. It is an **opt-in core role**
 (`OPT_IN_CORE_ROLES`): machine-as-brain NEVER hosts it — a 31B cannot
 co-reside with the cortex+senses duo on a 128 GB box — so only an explicit
 muse-hosting shape (`thor-muse`, below) serves it; every non-hosting shape
@@ -173,10 +182,47 @@ machine-as-brain stays a byte-identical no-op and only `base.toml`'s veto
 emits `MUSE_FEASIBLE=false` — and on a stale/pre-muse `.env` an unwired
 `muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
 `role_infeasible`, referable/proxyable, never a silent fallback to cortex).
-Under pressure `muse` degrades to `minor` exactly like cortex/senses.
-DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget (util
-0.55 at the full 262144 window); the acceptance transcript is pending
-(#108). See `docs/gemma-4-31b-nvfp4.md`.
+Under pressure `muse` sheds (429) exactly like cortex/senses/worker.
+**Operator decision (thor-worker-lobe plan): no box in the mesh currently
+hosts `muse`** — the Jetson AGX Thor, the one box that ran `thor-muse`
+(DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget, util
+0.55 at the full 262144 window, but the acceptance transcript never landed —
+#108), moved to hosting `worker` instead (below). The deployed Thor declares
+no `MUSE_PEER_ORIGIN`, so `model=muse` now 404s `role_infeasible` with **no**
+`hosted_by` referral anywhere in the mesh. The `muse` role, its catalog
+entry, and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) —
+dormant, not deleted — and the tier vocabulary above still ranks `worker` <
+`muse`. See `docs/gemma-4-31b-nvfp4.md`.
+
+**`worker` — the eighth role (opt-in hosting), the fast ground-work DOER.**
+Checkpoint: `unsloth/Qwen3.6-35B-A3B-NVFP4` (Qwen3.6 35B-A3B, an MoE with
+~3B active parameters per token, **262144 native context**,
+compressed-tensors NVFP4, and — unlike the catalog's other 35B-A3B candidate,
+`mmangkad/Qwen3.6-35B-A3B-NVFP4`, whose MTP never loads — ships its OWN
+self-hosted MTP draft module baked into the checkpoint). Served
+**MULTIMODAL** (image+video intake via the checkpoint's own ViT, no audio;
+no `--language-model-only`) — a "seeing doer", distinct from `senses`, which
+perceives but must never act. Responsibilities: execution, ground_work,
+bulk_transform, drafting, image_understanding, video_understanding,
+`tool_use`, and **`repo_action`** — worker is the FIRST role besides `cortex`
+permitted to act on the repo, under `cortex`'s direction (forbidden:
+final_decision, security_decision — worker never makes the final call or a
+security decision on its own authority). Alias `model=worker`. It is the
+**second opt-in core role** (`OPT_IN_CORE_ROLES = ("muse", "worker")`):
+machine-as-brain NEVER hosts it, the gateway wires its backend only behind
+`WORKER_BASE_URL`, and an unwired `worker` defaults to infeasible
+(`OPT_IN_BACKENDS` — `model=worker` 404s `role_infeasible`, never a silent
+fallback), mirroring `muse`'s mechanics exactly (`WORKER_FEASIBLE` /
+`WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY`; `base.toml`
+vetoes it on an unrecognised card just like `muse`). Under pressure `worker`
+sheds (429) exactly like cortex/senses/muse. The role/tier/gateway-config
+plumbing above is **shipped**; the `thor-worker` deployment shape (the
+Jetson AGX Thor, dropping BOTH `cortex` and `senses`, hosting `worker` +
+the pooling gears + audio overlay, mirroring `thor-muse`'s structure) and its
+compose service are **forthcoming** — its `gpu_mem_util`/`max_model_len`
+budget, MoE backend choice, and MTP acceptance are measured on the physical
+Thor, not invented, so they are **declared/UNVALIDATED** until that live
+boot lands (#108). See `docs/qwen3.6-35b-a3b-nvfp4.md`.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
@@ -320,7 +366,7 @@ meanings, Thor's validated divergences, custom profiles, goldens contract);
 ## Deployment shapes
 
 Orthogonal to the machine-profile axis above (how a role is *tuned* on a
-card) is the **deployment-shape** axis (issue #113): which of the seven
+card) is the **deployment-shape** axis (issue #113): which of the eight
 Colleague roles a box *hosts* at all, composed as pure data over the card
 profile at render time (`lobes/profiles/shapes.py`, `shape_render.py`).
 **machine-as-brain** (the default — bare `lobes init`, unchanged, zero new
@@ -352,19 +398,33 @@ card profiles silent on it, and `base.toml` vetoing it; `thor-muse` too is
 `max_model_len=262144` — the full 256K window) were measured by the
 2026-07-17 live boot on a physical Thor (the 0.40 hypothesis was refused),
 and it stays UNVALIDATED until the acceptance transcript lands under
-`docs/evidence/` (#108). Select with `lobes
+`docs/evidence/` (#108). **`thor-muse` is now DORMANT/unhosted** — the
+physical Thor moved to hosting `worker` instead (below) and no box declares
+`MUSE_PEER_ORIGIN` — but the shape file, its TOML, and its goldens stay
+in-tree unchanged (cite-don't-delete); nothing here or in `lobes
+capabilities` claims a box currently renders it. `worker` — the eighth
+Colleague role — introduced a **second opt-in core role** on the same
+mechanism: a **`thor-worker`** shape (forthcoming, thor-worker-lobe plan
+task t7) will drop BOTH `cortex` and `senses` and instead host the opt-in
+`worker` lobe (`vllm-worker`, Qwen3.6-35B-A3B) plus the pooling gears and
+audio overlay, mirroring `thor-muse`'s structure exactly
+(`OPT_IN_CORE_ROLES = ("muse", "worker")`, `base.toml` veto, shape-owned
+override declaration). Its budget values are **not yet measured** — they
+are committed only once a live boot on the physical Thor produces them (the
+same measured-truth discipline `thor-muse`'s 0.40→0.55 refusal already
+demonstrated), so no number is declared here. Select with `lobes
 init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse>`
-(dry-run by
+today (`thor-worker` joins this list once t7 lands; dry-run by
 default, `--apply` to commit, byte-for-byte restorable by re-running with
 the previous shape). A dropped role is flagged `feasible:false` on both
 `lobes capabilities` and `GET /capabilities`, omitted from `/v1/models`, and
 404s `role_infeasible` on every alias — never half-served. Opt-in **honest
 referral** (issue #112, t3): declaring a peer origin per dropped role
 (`PRIMARY_PEER_ORIGIN` / `MULTIMODAL_PEER_ORIGIN` / `MUSE_PEER_ORIGIN` /
-`EMBED_PEER_ORIGIN` / `RERANK_PEER_ORIGIN` — plus, since #129, the
-first-class audio lanes `STT_PEER_ORIGIN` / `TTS_PEER_ORIGIN`, declared off
-per-lane with `STT_FEASIBLE`/`TTS_FEASIBLE=false` — always operator-typed,
-never derived, per #92) makes
+`WORKER_PEER_ORIGIN` / `EMBED_PEER_ORIGIN` / `RERANK_PEER_ORIGIN` — plus,
+since #129, the first-class audio lanes `STT_PEER_ORIGIN` / `TTS_PEER_ORIGIN`,
+declared off per-lane with `STT_FEASIBLE`/`TTS_FEASIBLE=false` — always
+operator-typed, never derived, per #92) makes
 both capabilities surfaces and the `role_infeasible` 404 body name the
 hosting peer (`hosted_by`); by default this is annotation only — the gateway
 does not forward a request to a peer on the origin declaration alone, and
