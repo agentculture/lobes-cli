@@ -60,6 +60,18 @@ def _spark_lobe_env(**over: str) -> dict[str, str]:
     return env
 
 
+def _worker_env(**over: str) -> dict[str, str]:
+    """A box hosting cortex but NOT worker — worker stays unwired, so it is
+    infeasible by default (OPT_IN_BACKENDS) without needing an explicit
+    WORKER_FEASIBLE=false, exactly like muse's own dropped-role shape."""
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": _CORTEX_ID,
+    }
+    env.update(over)
+    return env
+
+
 # ============================================================================
 # The env channels: one <PREFIX>_<KNOB> convention, five core roles
 # ============================================================================
@@ -67,13 +79,15 @@ def _spark_lobe_env(**over: str) -> dict[str, str]:
 
 def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
     # One channel vocabulary: the proxy knob names exactly the backends the
-    # feasibility / peer-origin channels name — the five core roles plus the
-    # first-class stt/tts audio roles (issue #129).
+    # feasibility / peer-origin channels name — the five core roles, the
+    # opt-in worker role (thor-worker-lobe plan, t3), plus the first-class
+    # stt/tts audio roles (issue #129).
     assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) == set(PEER_ORIGIN_ENV)
     assert PEER_PROXY_ENV == {
         "primary": "PRIMARY_PEER_PROXY",
         "multimodal": "MULTIMODAL_PEER_PROXY",
         "muse": "MUSE_PEER_PROXY",
+        "worker": "WORKER_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
         "stt": "STT_PEER_PROXY",
@@ -87,6 +101,7 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
         "primary": "PRIMARY_PEER_API_KEY",
         "multimodal": "MULTIMODAL_PEER_API_KEY",
         "muse": "MUSE_PEER_API_KEY",
+        "worker": "WORKER_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
         "stt": "STT_PEER_API_KEY",
@@ -177,6 +192,58 @@ def test_non_truthy_proxy_tokens_rejected(token: str) -> None:
 def test_absent_proxy_knob_is_not_proxied() -> None:
     table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN))
     assert table.peer_proxied == frozenset()
+
+
+# ============================================================================
+# worker (the opt-in-core eighth role, thor-worker-lobe plan t3): the exact
+# same three-condition arming as every other name — including the
+# OPT_IN_BACKENDS delta that a dropped opt-in role need not carry an explicit
+# WORKER_FEASIBLE=false to land in `infeasible` (unwired alone is enough).
+# ============================================================================
+
+
+def test_worker_proxy_knob_with_origin_on_unwired_role_is_proxied() -> None:
+    table, _cfg = build_config(
+        _worker_env(
+            WORKER_PEER_ORIGIN=_THOR_ORIGIN,
+            WORKER_PEER_PROXY="true",
+        )
+    )
+    assert table.peer_proxied == frozenset({"worker"})
+    assert dict(table.peer_origins) == {"worker": _THOR_ORIGIN}
+
+
+def test_worker_proxy_knob_without_origin_is_ignored() -> None:
+    table, _cfg = build_config(_worker_env(WORKER_PEER_PROXY="true"))
+    assert table.peer_proxied == frozenset()
+
+
+def test_worker_origin_without_knob_stays_referral_only() -> None:
+    table, _cfg = build_config(_worker_env(WORKER_PEER_ORIGIN=_THOR_ORIGIN))
+    assert table.peer_proxied == frozenset()
+    assert dict(table.peer_origins) == {"worker": _THOR_ORIGIN}
+
+
+def test_worker_proxy_knob_and_origin_on_locally_hosted_role_is_ignored() -> None:
+    # Worker IS hosted locally here (WORKER_BASE_URL set, no WORKER_FEASIBLE
+    # override) — the local engine serves it, so the knob is inert.
+    env = _worker_env(
+        WORKER_BASE_URL="http://vllm-worker:8000",
+        WORKER_PEER_ORIGIN=_THOR_ORIGIN,
+        WORKER_PEER_PROXY="true",
+    )
+    table, _cfg = build_config(env)
+    assert table.peer_proxied == frozenset()
+
+
+def test_worker_peer_api_key_populated_verbatim_when_origin_present() -> None:
+    table, _cfg = build_config(
+        _worker_env(
+            WORKER_PEER_ORIGIN=_THOR_ORIGIN,
+            WORKER_PEER_API_KEY="sk-lobes-thor-worker-0001",
+        )
+    )
+    assert dict(table.peer_api_keys) == {"worker": "sk-lobes-thor-worker-0001"}
 
 
 # ============================================================================
@@ -324,12 +391,13 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         backends=(primary,),
         default_model=_CORTEX_ID,
         aliases=tier_aliases([primary], TIER_ROLE),
-        # The ONE deliberate delta since muse landed: the opt-in muse lobe is
-        # unwired here (no MUSE_BASE_URL) and unflagged, so it defaults to
-        # INFEASIBLE (OPT_IN_BACKENDS) — `model=muse` 404s role_infeasible
-        # instead of silently upward-falling-back to the primary. Every
-        # pre-muse behaviour is otherwise unchanged.
-        infeasible=frozenset({"muse"}),
+        # The deliberate deltas since muse (and now worker) landed: both
+        # opt-in lobes are unwired here (no MUSE_BASE_URL / WORKER_BASE_URL)
+        # and unflagged, so they default to INFEASIBLE (OPT_IN_BACKENDS) —
+        # `model=muse` / `model=worker` 404 role_infeasible instead of
+        # silently upward-falling-back to the primary. Every pre-muse (and
+        # pre-worker) behaviour is otherwise unchanged.
+        infeasible=frozenset({"muse", "worker"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding
