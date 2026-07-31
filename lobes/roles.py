@@ -1,10 +1,10 @@
-"""The role registry — the seven first-class, Colleague-facing lobes (issue #81).
+"""The role registry — the eight first-class, Colleague-facing lobes (issue #81).
 
-lobes exposes the fleet not as a bag of model ids but as SEVEN discoverable
+lobes exposes the fleet not as a bag of model ids but as EIGHT discoverable
 *roles*, each resolved to a live endpoint + metadata so a caller (Colleague)
 can address a capability by role — ``cortex``, ``senses``, ``muse``,
-``embedder``, ``reranker``, ``stt``, ``tts`` — without hardcoding any single
-model endpoint:
+``worker``, ``embedder``, ``reranker``, ``stt``, ``tts`` — without hardcoding
+any single model endpoint:
 
 * ``cortex``   → the ``primary`` generate backend (Qwen 3.6 27B NVFP4 MTP).
   The authoritative reasoning/action/decision layer — the final authority.
@@ -16,6 +16,13 @@ model endpoint:
   muse-hosting deployment shape (``lobes init --shape thor-muse``), never
   by the default ``machine-as-brain`` (a 31B cannot co-reside with the
   cortex+senses duo on a 128 GB box).
+* ``worker``   → the ``worker`` generate backend (Qwen3.6-35B-A3B NVFP4, an
+  MoE ~3B-active-per-token lobe). The fast ground-work DOER — bulk execution,
+  drafting, and repo actions UNDER cortex's direction. It is the first role
+  besides ``cortex`` permitted ``repo_action`` (it may ACT on the repo), but
+  it never makes the final decision or a security call. OPT-IN like ``muse``:
+  hosted only by a worker-hosting deployment shape, never by the default
+  ``machine-as-brain``.
 * ``embedder`` → the ``embed`` pooling backend (Qwen3-Embedding-0.6B) →
   ``POST /v1/embeddings``.
 * ``reranker`` → the ``score``/rerank backend (Qwen3-Reranker-0.6B) →
@@ -53,24 +60,35 @@ from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._routing import RoutingTable
 
-# The seven first-class roles, in canonical order: generate lane, pooling lane,
-# then the opt-in audio overlay. Downstream (CLI/gateway) iterate this for a
-# stable ordering.
-ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
+# The eight first-class roles, in canonical order: generate lanes (cortex,
+# senses, muse, worker), pooling lanes, then the opt-in audio overlay.
+# Downstream (CLI/gateway) iterate this for a stable ordering.
+ROLES: tuple[str, ...] = (
+    "cortex",
+    "senses",
+    "muse",
+    "worker",
+    "embedder",
+    "reranker",
+    "stt",
+    "tts",
+)
 
 # role → the internal gateway backend NAME that serves it — the key space the
-# RoutingTable's feasibility/peer channels use. The five gateway-fronted roles
+# RoutingTable's feasibility/peer channels use. The six gateway-fronted roles
 # map to their vLLM backends; ``stt``/``tts`` (first-class since issue #129)
 # map to themselves — they are path-routed audio lanes, not model-routed
 # backends (still resolved from ``ServerConfig.audio_url`` below), but their
 # names now ride the SAME ``FEASIBLE_ENV`` / peer origin/proxy/key channels,
-# so :func:`annotate_peer_referrals` covers all seven roles uniformly.
+# so :func:`annotate_peer_referrals` covers all eight roles uniformly.
 # NOTE the name↔role_hint mismatch for the pooling lane: the *backend* is named
 # ``embed``/``rerank`` while the *catalog* role_hint is ``embedding``/``reranker``.
+# ``muse`` and ``worker`` each use their own name as their backend name.
 ROLE_BACKEND: dict[str, str] = {
     "cortex": "primary",
     "senses": "multimodal",
     "muse": "muse",
+    "worker": "worker",
     "embedder": "embed",
     "reranker": "rerank",
     "stt": "stt",
@@ -84,6 +102,7 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "cortex": "primary",
     "senses": "multimodal",
     "muse": "muse",
+    "worker": "worker",
     "embedder": "embedding",
     "reranker": "reranker",
 }
@@ -97,6 +116,7 @@ ROLE_PATH: dict[str, str] = {
     "cortex": _CHAT_PATH,
     "senses": _CHAT_PATH,
     "muse": _CHAT_PATH,
+    "worker": _CHAT_PATH,
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
@@ -111,7 +131,7 @@ _STT_MODEL = "nvidia/parakeet-tdt-0.6b-v2"  # Parakeet TDT 0.6B, NeMo ASR
 _STT_RUNTIME = "parakeet"
 _TTS_MODEL = "ResembleAI/chatterbox"  # Chatterbox, Resemble AI 0.5B, Apache-2.0
 _TTS_RUNTIME = "chatterbox"
-_VLLM_RUNTIME = "vllm"  # the four gateway-fronted roles all serve on vLLM
+_VLLM_RUNTIME = "vllm"  # the six gateway-fronted roles all serve on vLLM
 
 # Canonical responsibilities per role (issue #81 worked examples — PROVISIONAL,
 # see the module docstring). A role's responsibilities are what it is EXPECTED to
@@ -150,6 +170,21 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "divergent_second_opinion",
         "tool_use",
     ),
+    # `worker` is the fast ground-work DOER (thor-worker-lobe plan). Unlike
+    # every other non-cortex role its list carries `repo_action`: worker is
+    # the FIRST role besides cortex permitted to ACT on the repo — it executes
+    # bulk ground-work UNDER cortex's direction, and to do that it genuinely
+    # calls tools and touches the repo. What it must NOT do is decide: the
+    # forbidden list below still bars final_decision / security_decision, so
+    # worker acts on cortex's plan, never on its own final authority.
+    "worker": (
+        "execution",
+        "ground_work",
+        "bulk_transform",
+        "drafting",
+        "tool_use",
+        "repo_action",
+    ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
     # NOTE: this base tuple deliberately does NOT list the realtime/VAD
@@ -179,11 +214,16 @@ STT_REALTIME_RESPONSIBILITY = "realtime_vad_session"
 # What each role must NOT do. cortex is the final authority (nothing forbidden);
 # senses is intake/perception only — it must not decide, act on the repo, or make
 # security calls; muse proposes/creates but likewise never decides or acts.
-# The service roles carry no forbidden list of their own.
+# `worker` is the sole exception among the non-cortex generate lobes: it MAY act
+# on the repo (repo_action is deliberately ABSENT from its forbidden list — see
+# ROLE_RESPONSIBILITIES above), but it still must never make the final decision
+# or a security call, so worker acts under cortex's direction, never on its own
+# authority. The service roles carry no forbidden list of their own.
 ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "cortex": (),
     "senses": ("final_decision", "repo_action", "security_decision"),
     "muse": ("final_decision", "repo_action", "security_decision"),
+    "worker": ("final_decision", "security_decision"),
     "embedder": (),
     "reranker": (),
     "stt": (),
@@ -193,12 +233,13 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
 # role → the deployment env var that carries the SERVED ``--max-model-len`` for
 # that role's backend (issue #81, t5). Mirrors the fleet compose template's
 # `--max-model-len=${...}` flags (see docs/gateway-fleet.md / the fleet
-# env.example). Only the four gateway-fronted roles carry one — stt/tts have no
+# env.example). Only the six gateway-fronted roles carry one — stt/tts have no
 # token context (see :func:`_audio_role`), so they are deliberately absent here.
 ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "cortex": "PRIMARY_MAX_MODEL_LEN",
     "senses": "MULTIMODAL_MAX_MODEL_LEN",
     "muse": "MUSE_MAX_MODEL_LEN",
+    "worker": "WORKER_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
 }
@@ -260,9 +301,9 @@ class RoleInfo:
     feasible: bool = True
     # Runtime readiness — a caller-supplied LIVE signal, folded in by
     # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
-    # for the four gateway-fronted roles, `audio_ready` for stt/tts (issue
-    # #89). Generalised from the stt/tts-only split (issue #89/#90) to all six
-    # roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
+    # for the six gateway-fronted roles, `audio_ready` for stt/tts (issue
+    # #89). Generalised from the stt/tts-only split (issue #89/#90) to all
+    # eight roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
     #
     # `backend_ready` is TRI-STATE PER BACKEND but resolves to `ready` under a
     # SUPPLIED-vs-OMITTED rule the builder self-enforces (issue #92 / honesty
@@ -286,7 +327,7 @@ class RoleInfo:
     # `False` (task t6) can never report `ready=True`, no matter what signal a
     # caller passes in. This mirrors — and is enforced by the same code path
     # as — the stt/tts clamp on `audio_configured` (issue #89/#90 review
-    # finding), now applied to all six roles by build_role_registry itself,
+    # finding), now applied to all eight roles by build_role_registry itself,
     # not left to caller discipline. The `feasible` clamp is what makes an
     # infeasible-but-HEALTHY role (a live `backend_ready=True` signal) still
     # report `ready=False` — a healthy PROCESS is not evidence this MACHINE
@@ -425,7 +466,7 @@ def _gateway_role(
     ready_signal: bool | None,
     peer_signal: bool | None = None,
 ) -> RoleInfo:
-    """Resolve a gateway-fronted role (cortex/senses/embedder/reranker).
+    """Resolve a gateway-fronted role (cortex/senses/muse/worker/embedder/reranker).
 
     ``ready_signal`` carries only TWO meanings here, never the readiness cache's
     tri-state — :func:`build_role_registry` has already resolved that away:
@@ -544,7 +585,7 @@ def build_role_registry(
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
-    """Resolve the six first-class roles to live metadata — the #81 contract.
+    """Resolve the eight first-class roles to live metadata — the #81 contract.
 
     This is the ONE canonical builder both the CLI (t5) and gateway (t6) call.
     Its inputs are exactly what :func:`lobes.gateway._config.build_config`
@@ -555,7 +596,7 @@ def build_role_registry(
         tell us which roles are ``loaded`` and each role's served model id.
     :param server: the gateway server config — supplies the audio overlay URL
         (``audio_url``) for stt/tts and, absent ``gateway_url``, the (very
-        narrow) ``public_url`` fallback for the four gateway-fronted roles —
+        narrow) ``public_url`` fallback for the six gateway-fronted roles —
         see :func:`_gateway_base_url`.
     :param env: the deployment's environment mapping, consulted ONLY for the
         served ``--max-model-len`` overlay (:data:`ROLE_MAX_MODEL_LEN_ENV`) —
@@ -577,7 +618,7 @@ def build_role_registry(
         When not ``None`` it sets the audio roles' ``ready`` (the runtime signal)
         — ``loaded`` stays the config fact ``bool(audio_url)``. When ``None``,
         ``ready`` falls back to ``bool(audio_url)`` (the CLI/back-compat path).
-    :param backend_ready: optional live-readiness signal for the four
+    :param backend_ready: optional live-readiness signal for the six
         gateway-fronted roles (issue #81 t5), keyed by the internal
         :class:`~lobes.gateway._routing.Backend` name (:data:`ROLE_BACKEND`'s
         values — ``"primary"``/``"multimodal"``/``"embed"``/``"rerank"``), one
@@ -619,14 +660,14 @@ def build_role_registry(
         and every deployment with no proxied roles) leaves every role's
         ``ready`` exactly as before: a proxied role without a live peer
         signal is honestly not-ready, never hardcoded true.
-    :returns: an ordered ``dict`` keyed by role name with EXACTLY the seven roles.
+    :returns: an ordered ``dict`` keyed by role name with EXACTLY the eight roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
 
     Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
     (issue #81 t5 — generalising the stt/tts split from issue #89/#90 to all
-    six roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
+    eight roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
     AUTHORITATIVE (a present ``None``/``False`` or a missing key ⇒ not ready);
     only an OMITTED signal falls back to the coarse "configured/wired"
     ``loaded`` proxy. Either way it is CLAMPED, here, to ``False`` whenever a
@@ -641,7 +682,7 @@ def build_role_registry(
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
     registry: dict[str, RoleInfo] = {}
 
-    for role in ("cortex", "senses", "muse", "embedder", "reranker"):
+    for role in ("cortex", "senses", "muse", "worker", "embedder", "reranker"):
         if backend_ready is None:
             # NOT SUPPLIED → back-compat: no live signal at all, so fall back to
             # the coarse `loaded` proxy (the original t4 behaviour). `None` here
