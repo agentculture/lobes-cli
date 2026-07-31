@@ -427,6 +427,66 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         ),
     ),
     SupportedModel(
+        id="unsloth/Qwen3.6-35B-A3B-NVFP4",
+        # The `worker` gear (thor-worker-lobe plan, t1) — a DISTINCT entry from
+        # the mmangkad/Qwen3.6-35B-A3B-NVFP4 "candidate" above (same
+        # architecture family, different org/export). Unlike that copy, this
+        # unsloth export ships its OWN MTP draft module baked into the
+        # checkpoint (never dropped one to begin with), so it "can act as its
+        # own speculative draft for faster decoding" (some throughput tradeoff
+        # vs plain inference — the card's own words).
+        #
+        # Verified against the checkpoint's ACTUAL config files (fetched
+        # 2026-07-31), not card prose:
+        #   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4/resolve/main/config.json
+        #     - architectures: ["Qwen3_5MoeForConditionalGeneration"],
+        #       model_type "qwen3_5_moe"; text_config.max_position_embeddings
+        #       = 262144 (native); num_experts=256, num_experts_per_tok=8
+        #       (MoE, ~3B active/token); text_config.mtp_num_hidden_layers=1,
+        #       and quantization_config.ignore carries a "re:^mtp.*" pattern —
+        #       i.e. the checkpoint's own MTP weight tensors physically exist
+        #       and are deliberately left UNQUANTIZED, confirming the
+        #       self-hosted draft module the card describes.
+        #     - quantization_config.quant_method="compressed-tensors" (mixed
+        #       precision: 8-bit float-quantized for attention/lm_head/the
+        #       upper 8 MLP layers, 4-bit nvfp4-pack-quantized for the MoE
+        #       experts) — NOT nvidia modelopt, unlike the mmangkad/ candidate
+        #       above; resolves directly to quantization="compressed-tensors"
+        #       (same convention as the Gemma 4 12B gears' compressed-tensors
+        #       entries — no modelopt_fp4 translation needed).
+        #   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4/resolve/main/hf_quant_config.json
+        #     - 404 Not Found: compressed-tensors checkpoints carry their
+        #       quant config inline in config.json; there is no separate
+        #       hf_quant_config.json here (that file is a modelopt/TensorRT
+        #       export convention, absent from this compressed-tensors one).
+        #   The README's own vLLM MTP serve command matches the card claim
+        #   verbatim: `--speculative-config '{"method": "mtp",
+        #   "num_speculative_tokens": 2}'` — no external "model"/
+        #   "draft_model_id" key, because the draft lives IN this checkpoint
+        #   (see the config facts above), unlike the Gemma gears' native MTP
+        #   (a separate public HF draft id). This id carries no "-MTP" suffix
+        #   despite shipping its own draft weights — see
+        #   tests/test_catalog.py's _SELF_HOSTED_MTP_WITHOUT_ID_MARKER for why
+        #   the generic id/external-draft guard still allows it.
+        #   README DGX Spark serving note (--moe-backend flashinfer_b12x under
+        #   CUTE_DSL_ARCH=sm_121a; explicitly recommends AGAINST marlin here —
+        #   "2x slower"): carried below as the best-cited default, but sm_121a
+        #   is Spark's arch, not Thor's (sm_110 — see
+        #   docs/machine-profiles.md); UNCONFIRMED on Thor until the live
+        #   boot (plan task t7).
+        role_hint="worker",
+        shape="MoE (~3B active per token)",
+        context="256K native (→~1.01M via YaRN)",
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="compressed-tensors",
+        status="configured",  # declared 2026-07-31; not yet booted on any hardware (t7)
+        doc="qwen3.6-35b-a3b-nvfp4.md",
+        moe_backend="flashinfer_b12x",
+        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        task="generate",
+    ),
+    SupportedModel(
         id="Qwen/Qwen3-Reranker-0.6B",
         # Reranker gear (issue #44): cross-encoder that scores (query, passage) pairs.
         # Built on Qwen3ForSequenceClassification with a binary yes/no logit head;
@@ -493,6 +553,10 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 #: — no internal service/env/container is renamed):
 #:   cortex → primary    (== main — the "thinking" primary backend)
 #:   senses → multimodal (== multimodal — the vision+audio backend)
+#:   worker → worker     (unsloth Qwen3.6-35B-A3B-NVFP4 MoE lobe — role IS the
+#:                        backend name; opt-in, hosted only by a
+#:                        worker-hosting deployment shape — thor-worker-lobe
+#:                        plan)
 #:   muse   → muse       (Gemma 4 31B creative/ideation lobe — role IS the
 #:                        backend name; opt-in, hosted only by a muse-hosting
 #:                        deployment shape)
@@ -506,13 +570,14 @@ TIER_ROLE: dict[str, str] = {
     "normal": "multimodal",
     "hard": "primary",
     # Capability-ROLE names (alias the same backends as main / multimodal;
-    # muse is its own backend). Order matters: ``tier_aliases`` derives
-    # ascending capability order from each role's *last* occurrence position
-    # here, so a multimodal-role alias must appear before the muse one, and
-    # muse before a primary-role one (senses < muse < cortex) to keep the
-    # last-occurrence sequence ascending
-    # (minor < multimodal < muse < primary).
+    # muse/worker are their own backends). Order matters: ``tier_aliases``
+    # derives ascending capability order from each role's *last* occurrence
+    # position here, so a multimodal-role alias must appear before the worker
+    # one, worker before the muse one, and muse before a primary-role one
+    # (senses < worker < muse < cortex) to keep the last-occurrence sequence
+    # ascending (minor < multimodal < worker < muse < primary).
     "senses": "multimodal",
+    "worker": "worker",
     "muse": "muse",
     "cortex": "primary",
 }
