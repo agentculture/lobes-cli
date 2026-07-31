@@ -327,6 +327,66 @@ def _handle_tts_response(
     return pcm_data
 
 
+def _retry_or_give_up(attempt: int, lane: str) -> bytes | _Retry:
+    """After a transient network error on *attempt*, retry once or give up.
+
+    ``attempt`` 0 resets *lane*'s client (stale-connection recovery) and
+    signals a retry; any later attempt gives up with ``b""``. Shared by both
+    network-error arms of :func:`_attempt_synthesize` so that shared decision
+    only needs to be read once.
+    """
+    if attempt == 0:
+        _reset_client(lane)
+        return _RETRY
+    return b""
+
+
+async def _attempt_synthesize(
+    clean: str,
+    url: str,
+    voice: str,
+    tag: str,
+    attempt: int,
+    lane: str,
+) -> bytes | _Retry:
+    """Perform ONE HTTP attempt against the Chatterbox sidecar.
+
+    Returns PCM bytes on success, :data:`_RETRY` when this attempt failed but
+    another may help, or ``b""`` when the caller should give up. Split out of
+    :func:`_synthesize_single` — together with :func:`_retry_or_give_up` —
+    to keep that function's cognitive complexity inside the gate (Sonar
+    S3776); the try/except tree that used to live inline is unchanged, just
+    relocated.
+    """
+    try:
+        client = _get_client(lane)
+        t0 = time.monotonic()
+        resp = await client.post(
+            url,
+            json={"text": clean, "voice": voice},
+        )
+        elapsed = time.monotonic() - t0
+        return _handle_tts_response(resp, clean, tag, elapsed, attempt, lane)
+
+    except httpx.ConnectError:
+        log.error("%s connect error to %s (attempt %d)", tag, url, attempt + 1)
+        return _retry_or_give_up(attempt, lane)
+    except httpx.ReadTimeout:
+        log.error(
+            "%s read timeout after %.0fs (attempt %d) | %s",
+            tag,
+            time.monotonic() - t0,
+            attempt + 1,
+            clean[:80],
+        )
+        return _retry_or_give_up(attempt, lane)
+    except Exception as e:  # noqa: BLE001 - log and fail soft; caller degrades to no audio
+        # log.exception (not log.error): this is the catch-all arm, so the
+        # traceback is the only thing that says WHICH unexpected failure hit.
+        log.exception("%s error (%s, attempt %d): %s", tag, type(e).__name__, attempt + 1, e)
+        return b""
+
+
 async def _synthesize_single(
     clean: str,
     url: str,
@@ -382,50 +442,13 @@ async def _synthesize_single(
             log.info("%s semaphore acquired after %.3fs wait", tag, sem_waited)
 
         for attempt in range(2):  # at most 1 retry
-            try:
-                client = _get_client(lane)
-                t0 = time.monotonic()
-                resp = await client.post(
-                    url,
-                    json={"text": clean, "voice": voice},
-                )
-                elapsed = time.monotonic() - t0
-
-                outcome = _handle_tts_response(resp, clean, tag, elapsed, attempt, lane)
-                # isinstance, not `is _RETRY`: identity against a module global does
-                # not narrow the union for a type checker, so the bare `return` below
-                # would still need a suppression.
-                if isinstance(outcome, _Retry):
-                    continue
-                return outcome
-
-            except httpx.ConnectError:
-                log.error("%s connect error to %s (attempt %d)", tag, url, attempt + 1)
-                if attempt == 0:
-                    _reset_client(lane)
-                    continue
-                return b""
-            except httpx.ReadTimeout:
-                log.error(
-                    "%s read timeout after %.0fs (attempt %d) | %s",
-                    tag,
-                    time.monotonic() - t0,
-                    attempt + 1,
-                    clean[:80],
-                )
-                if attempt == 0:
-                    _reset_client(lane)
-                    continue
-                return b""
-            except (
-                Exception
-            ) as e:  # noqa: BLE001 - log and fail soft; the caller degrades to no audio
-                # log.exception (not log.error): this is the catch-all arm, so the
-                # traceback is the only thing that says WHICH unexpected failure hit.
-                log.exception(
-                    "%s error (%s, attempt %d): %s", tag, type(e).__name__, attempt + 1, e
-                )
-                return b""
+            outcome = await _attempt_synthesize(clean, url, voice, tag, attempt, lane)
+            # isinstance, not `is _RETRY`: identity against a module global does
+            # not narrow the union for a type checker, so the bare `return` below
+            # would still need a suppression.
+            if isinstance(outcome, _Retry):
+                continue
+            return outcome
 
         return b""  # should not reach here
 
