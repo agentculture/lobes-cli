@@ -119,7 +119,16 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # round-trip + reasoning trace, all under the production compose, with MTP
         # spec-decode active at 78.6% draft acceptance and 18.7 tok/s decode —
         # ~2.4x the archived baseline 27B). Replaces mmangkad/Qwen3.6-27B-NVFP4.
-        role_hint="primary",
+        # DEMOTED from fleet default primary 2026-07-31 (operator-confirmed),
+        # replaced by unsloth/Qwen3.6-27B-NVFP4 above — same 27B family and the
+        # same Qwen3_5ForConditionalGeneration arch, but MULTIMODAL (its export
+        # keeps the ViT this one dropped) and with a self-hosted MTP draft
+        # instead of a grafted one. Kept, not deleted (cite-don't-delete): it is
+        # the last text-only 27B in the catalog, so it remains the pick for a
+        # deployment that wants the smaller weight footprint and no vision, and
+        # it is the checkpoint every pre-0.54.9 evidence transcript was measured
+        # against. Selectable via `lobes switch`.
+        role_hint="candidate",
         shape="hybrid Mamba/linear-attn (text-only, MTP draft head)",
         context="256K native (served at full 256K on the shared GB10)",
         native_max_model_len=262144,
@@ -193,15 +202,35 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         #     workaround for a TokenizersBackend declaration absent from the
         #     image) would be DROPPED.
         #   License apache-2.0.
-        role_hint="candidate",
+        # PROMOTED to fleet default primary 2026-07-31 (operator-confirmed), after
+        # the live GB10 boot below. Replaces sakamakismile/…-Text-NVFP4-MTP, which
+        # is demoted to `candidate` and kept (cite-don't-delete).
+        role_hint="primary",
         shape="hybrid Mamba/linear-attn + ViT (text+image+video, self-hosted MTP draft)",
-        context="256K native",
+        context="256K native (served at full 256K on the spark-lobe shape)",
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="compressed-tensors",
-        # "configured", not "load-tested": declared from the published config,
-        # never booted. Same status the other un-booted candidates carry.
-        status="configured",
+        # MEASURED live on the DGX Spark GB10, 2026-07-31 — see
+        # docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
+        # Booted FIRST TRY at the spark-lobe shape's own 0.44 / 262144 (no retune,
+        # unlike thor-muse's refused 0.40): KV pool 26.39 GiB / 756,642 tokens =
+        # ~2.89x concurrency at the full 256K window, vs the outgoing text-only
+        # primary's 888,946 / 3.39x at the same knobs — so the unquantized bf16
+        # ViT costs ~132,300 tokens (~15%) of KV pool and the full window survives
+        # with embedder/reranker/embed-deep still co-resident.
+        # Decode 14.9 / 16.4 / 19.0 tok/s (short/medium/512-tok gen) at TTFT
+        # ~0.27s; self-hosted MTP engages at 62-67% draft acceptance, mean
+        # acceptance length 2.24-2.35.
+        # Gates all pass: image (colour + negative control), VIDEO (directional
+        # motion with the reversed clip as control), thinking (4,195-char trace —
+        # note the field is `reasoning`, NOT `reasoning_content` on this build),
+        # preserve_thinking #93 (+800-token two-turn delta), and strict tool
+        # calling with thinking ON (colleague#320) — clean structured call.
+        # CAVEAT: the throughput comparison against the outgoing primary is NOT
+        # controlled (its numbers came from a different vLLM build). See
+        # docs/model-switch-playbook.md.
+        status="load-tested",
         doc="qwen3.6-27b-nvfp4-multimodal.md",
         # Self-hosted draft (no external "model" key), mirroring the 35B-A3B
         # worker's own README serve command. UNMEASURED on this checkpoint:
@@ -722,11 +751,21 @@ def speculative_config_item(model: SupportedModel) -> str:
 def mtp_compose_command_items() -> list[str]:
     """The extra compose ``command:`` items the MTP default primary needs.
 
-    These four flags are baked into the packaged compose templates *and* named by
+    These flags are baked into the packaged compose templates *and* named by
     ``lobes switch`` as the lines to remove when switching to a non-MTP model. This
     is the single source of truth so the two cannot drift — ``tests/test_catalog.py``
     asserts the packaged templates contain exactly these items, and the speculative
     config is pulled from the primary catalog entry rather than re-typed.
+
+    **TWO items since 2026-07-31, not four.** The outgoing text-only primary
+    (``sakamakismile/…-Text-NVFP4-MTP``) additionally needed
+    ``--language-model-only`` (its export had the ViT stripped) and
+    ``--tokenizer=<MTP_TOKENIZER_OVERRIDE>`` (its ``tokenizer_config`` declared a
+    ``TokenizersBackend`` absent from the image). The promoted multimodal primary
+    (``unsloth/Qwen3.6-27B-NVFP4``) needs NEITHER: it declares
+    ``language_model_only=false`` and keeping its ViT is the whole point, and it
+    ships its own tokenizer. ``MTP_TOKENIZER_OVERRIDE`` is retained for the
+    demoted checkpoint, which is still selectable via ``lobes switch``.
 
     Returns argv tokens (no YAML quoting) in compose ``command:`` order.
     """
@@ -740,6 +779,4 @@ def mtp_compose_command_items() -> list[str]:
     return [
         spec_item,
         "--trust-remote-code",
-        "--language-model-only",
-        f"--tokenizer={MTP_TOKENIZER_OVERRIDE}",
     ]

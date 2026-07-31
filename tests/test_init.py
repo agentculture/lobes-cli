@@ -195,7 +195,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path, monkeypatch) -> None:
     for svc in ("primary", "embed", "rerank"):
         assert f"MG_LOG_NAME={svc}" in compose
     env = (target / ".env").read_text()
-    assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
+    assert "PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4" in env
     assert "FALLBACK_MODEL=" not in env
     # The primary serves its full 128K context at util 0.30 (util-bound, not
     # context-bound); the always-on Gemma multimodal gear is trimmed to 32K to
@@ -205,7 +205,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path, monkeypatch) -> None:
     # init --fleet pins the gateway image to the running lobes-cli version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
-    assert "VLLM_SERVED_NAME=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
+    assert "VLLM_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4" in env
 
 
 def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
@@ -335,7 +335,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path, monkeyp
         assert (target / name).is_file(), name
     env = (target / ".env").read_text()
     # fleet keys still present, audio keys appended (not clobbered).
-    assert "PRIMARY_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in env
+    assert "PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4" in env
     assert "CHATTERBOX_PORT=9000" in env
     assert "AUDIO_URL=http://realtime:8080" in env
 

@@ -185,8 +185,8 @@ def test_build_config_defaults_single_backend() -> None:
     # RERANK_URL, which is exercised separately below).
     table, cfg = build_config({})
     assert len(table.backends) == 1
-    assert table.backends[0].served_name == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
-    assert table.default_model == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # defaults to primary
+    assert table.backends[0].served_name == "unsloth/Qwen3.6-27B-NVFP4"
+    assert table.default_model == "unsloth/Qwen3.6-27B-NVFP4"  # defaults to primary
     assert table.backends[0].base_url == "http://vllm-primary:8000"
     assert cfg.host == "0.0.0.0"
     assert cfg.port == 8000

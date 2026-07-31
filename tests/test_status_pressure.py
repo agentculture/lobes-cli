@@ -34,7 +34,7 @@ from lobes.runtime import _pressure as _pressure_mod
 # Tier model IDs — mirrors test_catalog_tiers.py constants so that any catalog
 # change that renames an ID also breaks *this* test (intentional coupling).
 _MINOR_ID = "Qwen/Qwen3.5-4B"  # minor tier (the servable floor under pressure)
-_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"  # main tier (full)
+_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"  # main tier (full)
 
 _KEYS = {"mode", "shed", "servable_tier", "model", "reason", "retry_after", "pressure"}
 

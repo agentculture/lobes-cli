@@ -18,10 +18,30 @@ summary = "Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified) — load-tes
 
 [roles.cortex]
 feasible = true
-model = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+# unsloth/Qwen3.6-27B-NVFP4 — tracks the fleet default primary (promoted
+# 2026-07-31). The MODEL is deliberately NOT a per-card divergence: thor's
+# cortex must differ from spark's in kv_cache_dtype ALONE (see
+# tests/test_profile_schema.py::test_thor_builtin_encodes_exactly_the_four_validated_divergences),
+# so pinning a different checkpoint here would silently break that contract.
+#
+# STATUS on sm_110: the CHECKPOINT is unvalidated on this card — no physical
+# Thor has booted this 27B (#108). What IS proven on Thor is the family: the
+# `worker` gear (unsloth/Qwen3.6-35B-A3B-NVFP4) is the same publisher, the same
+# compressed-tensors mixed-precision recipe, and likewise serves a ViT, and it
+# was validated live 2026-07-31
+# (docs/evidence/2026-07-31-accept-worker-thor.txt). That is a family prior, not
+# a measurement of this checkpoint.
+model = "unsloth/Qwen3.6-27B-NVFP4"
+# Budget INHERITED, not measured for this checkpoint — identical caveat to
+# spark.toml's duo values. 0.30 / 131072 were measured for the outgoing
+# TEXT-ONLY export; this one adds an unquantized bf16 ViT. A machine-as-brain
+# Thor should expect to MEASURE these (docs/machine-profiles.md). Note Thor
+# does not host cortex at all in its current shape (thor-worker drops it).
 gpu_mem_util = 0.30
 max_model_len = 131072
-quantization = "modelopt"
+# compressed-tensors, matching the checkpoint's own quant_method (the outgoing
+# export used modelopt; passing that here fails on a quant-method mismatch).
+quantization = "compressed-tensors"
 max_num_seqs = 2
 # kv_cache_dtype: overlaid from lobes.machines.get("thor") — measured "auto"
 # (the fp8 default asserts k_scale > 0.0 on this checkpoint/board pairing).

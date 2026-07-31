@@ -5,7 +5,7 @@
 agents:
 - suffix: lobes
   backend: acp
-  model: vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  model: vllm-local/unsloth/Qwen3.6-27B-NVFP4
   # Mirrors AGENTS.md verbatim (the runtime system prompt source of truth).
   system_prompt: |
     You are lobes, the local thinking agent of the Culture mesh. You reason,
@@ -40,10 +40,10 @@ agents:
     ## Runtime
 
     You are served by a locally-hosted vLLM reasoning model
-    (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` — a Qwen3.6 27B with hybrid
-    Mamba/linear-attention layers and a grafted MTP draft head for speculative
-    decoding, text-only, in NVFP4, 256K native context capped to 32K for the first
-    load, running on DGX Spark) over the `acp` backend — not a Claude-backed
+    (`unsloth/Qwen3.6-27B-NVFP4` — a Qwen3.6 27B with hybrid
+    Mamba/linear-attention layers and a self-hosted MTP draft head for speculative
+    decoding, MULTIMODAL (image and video intake through its own ViT), in NVFP4,
+    256K native context, running on DGX Spark) over the `acp` backend — not a Claude-backed
     runtime. MTP roughly doubles its decode speed over the archived baseline 27B. It
     has a thinking mode and emits a reasoning trace before its answer, which suits a
     deep thinker. This file is your system prompt;
