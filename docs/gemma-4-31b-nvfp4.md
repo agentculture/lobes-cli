@@ -213,7 +213,10 @@ An explicit `MUSE_FEASIBLE` always wins. See
 Under swap/iowait pressure a `muse` request is shed (`429` busy) exactly like
 `cortex`/`senses` — `minor` remains the servable floor.
 
-## How to host it: the thor-muse shape (currently DORMANT — no box renders it)
+## How to host it: the thor-muse shape
+
+> **Currently DORMANT — no box renders it.** The mesh moved off `muse` to the
+> `worker` lobe; the shape and this checkpoint stay in-tree (cite-don't-delete).
 
 `muse` is an **opt-in core role** (`lobes/profiles/shapes.py`'s
 `OPT_IN_CORE_ROLES`): it carries the full per-machine Profile knob set, but no

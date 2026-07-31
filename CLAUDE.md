@@ -186,8 +186,8 @@ Under pressure `muse` sheds (429) exactly like cortex/senses/worker.
 **Operator decision (thor-worker-lobe plan): no box in the mesh currently
 hosts `muse`** — the Jetson AGX Thor, the one box that ran `thor-muse`
 (DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget, util
-0.55 at the full 262144 window, but the acceptance transcript never landed —
-#108), moved to hosting `worker` instead (below). The deployed Thor declares
+0.55 at the full 262144 window, but the acceptance transcript never landed,
+issue #108), moved to hosting `worker` instead (below). The deployed Thor declares
 no `MUSE_PEER_ORIGIN`, so `model=muse` now 404s `role_infeasible` with **no**
 `hosted_by` referral anywhere in the mesh. The `muse` role, its catalog
 entry, and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) —
