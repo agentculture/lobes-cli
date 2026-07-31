@@ -1,0 +1,384 @@
+{
+  "slug": "thor-worker-lobe-qwen3-6-35b-a3b",
+  "title": "thor worker lobe (Qwen3.6-35B-A3B)",
+  "frame_slug": "thor-worker-lobe-qwen3-6-35b-a3b",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-07-31T07:06:31Z",
+  "updated": "2026-07-31T07:11:35Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Thor moves off the Gemma 4 31B muse and hosts unsloth/Qwen3.6-35B-A3B-NVFP4 as 'worker' \u2014 a new fast ground-work lobe with self-draft MTP"
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the announcement is falsifiable against live surfaces: the deployed Thor answers model=worker through the gateway and the acceptance transcript exists under docs/evidence/"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains a NEW SupportedModel entry for unsloth/Qwen3.6-35B-A3B-NVFP4 with role_hint='worker' \u2014 distinct from the existing mmangkad/Qwen3.6-35B-A3B-NVFP4 candidate (32K native, moe_backend=marlin, NO speculative_config: nvidia's MTP config fails on that copy with a weight-shape mismatch). The unsloth export is 262144-token native and ships its OWN MTP module ('can act as its own speculative draft'), card-suggested --speculative-config '{\"method\": \"mtp\", \"num_speculative_tokens\": 2}' \u2014 a different method string than the 27B primary's qwen3_5_mtp"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the committed catalog entry's native_max_model_len / quantization / speculative_config are read from the unsloth checkpoint's actual config.json + hf_quant_config.json at implementation time, not the card prose \u2014 and if the checkpoint disagrees with the card (e.g. MTP fails to load), the entry records what was verified"
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the role registry widens to an EIGHTH first-class role: lobes/roles.py needs 'worker' entries in ROLES, ROLE_BACKEND, ROLE_ROLE_HINT, ROLE_PATH (/v1/chat/completions), ROLE_RESPONSIBILITIES, ROLE_FORBIDDEN, and ROLE_MAX_MODEL_LEN_ENV (WORKER_MAX_MODEL_LEN); lobes/profiles/schema.py ROLES (the Profile-machinery set) gains 'worker' so shape overrides can declare its budget knobs"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "every roles surface (lobes capabilities, GET /capabilities, /v1/models alias resolution) lists exactly eight roles with worker present; no stale seven-role literal survives in code, tests, or docs"
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "worker becomes the SECOND opt-in core role, mirroring muse end-to-end: shapes.OPT_IN_CORE_ROLES += 'worker'; gateway _config.py wires a WORKER_BASE_URL-gated backend, adds 'worker' to OPT_IN_BACKENDS (infeasible-by-default when unwired \u2014 model=worker 404s role_infeasible, never a silent fallback), and adds WORKER_* keys to FEASIBLE_ENV / PEER_ORIGIN_ENV / PEER_PROXY_ENV / PEER_API_KEY_ENV; profiles/builtin/base.toml vetoes worker on unrecognised cards exactly as it vetoes muse"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "with no WORKER_* env set anywhere, every existing deployment renders byte-identically (goldens prove it); model=worker on a non-hosting box 404s role_infeasible \u2014 never a silent fallback"
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "the fleet compose template gains a profile-gated vllm-worker service + WORKER_* knobs in env.example, and shape_render.OPT_IN_CORE_ACTIVATION_ENV maps worker \u2192 COMPOSE_PROFILES gate + WORKER_BASE_URL=http://vllm-worker:8000. The worker lane runs on the QWEN-lane image (the vllm-openai nightly pin the primary/minor lanes use), NOT the lobes/vllm-gemma4:local custom image the muse lane needs"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the rendered thor-worker deployment boots vllm-worker on the Qwen-lane image on the physical Thor and serves /v1/chat/completions through the gateway"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "a new built-in shape (working name thor-worker) hosts ['worker','embedder','reranker','stt','tts'], drops cortex/senses to peers, and carries the FULL worker declaration (model + budget knobs) in its own overrides \u2014 the card profiles stay silent on worker, exactly the thor-muse pattern. Its gpu_mem_util / max_model_len MUST be measured on the physical Thor before commit: shape budgets on unified-memory boxes are measured truths, not arithmetic (thor-muse's 0.55 was measured only after the 0.40 hypothesis was refused live)"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "the shape TOML's committed budget values are the ones a live Thor boot measured, with any refused hypothesis recorded in the TOML comments (the thor-muse 0.40\u21920.55 pattern)"
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "the worker lane serves the Qwen-family parser PAIR: --tool-call-parser=qwen3_coder (runtime._parser.infer_parser must resolve the unsloth id to qwen3_coder \u2014 the catalog pairing guard in tests/test_catalog.py enforces it) plus --reasoning-parser=qwen3, mirroring the cortex lane \u2014 never inferred from the model card, and verified live with skip_special_tokens:false per the per-family parser rule"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "verified live on the worker lane with skip_special_tokens:false \u2014 a tool call parses into a tool_calls array (not content) and the reasoning trace separates via --reasoning-parser=qwen3"
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "cortex/senses/embedder/reranker contracts are untouched and machine-as-brain stays byte-identical \u2014 worker is opt-in-core like muse: non-hosting shapes render nothing for it, only base.toml's veto emits WORKER_FEASIBLE=false, and a stale pre-worker .env defaults it to infeasible via OPT_IN_BACKENDS"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the shape goldens (machine-as-brain / spark / thor / base) render byte-identical before and after the change when no WORKER_* env is set"
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "the pooling gears + audio overlay keep co-residing on Thor (mesh-brain decision 2: cheap gears co-reside on every box that wants them) \u2014 the new shape hosts embedder/reranker/stt/tts exactly as thor-muse does today"
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the thor-worker shape's hosts list includes embedder/reranker/stt/tts and the rendered deployment serves them unchanged \u2014 same probes thor-muse passes today"
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "worker's role contract (user decision q1): responsibilities include fast ground-work execution \u2014 tool_use + repo_action allowed, under cortex direction; forbidden_responsibilities: final_decision, security_decision. First role besides cortex permitted repo_action"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "capabilities output for worker lists repo_action among responsibilities and forbidden is exactly [final_decision, security_decision]; docs/colleague-stack.md's division-of-labour records the widening \u2014 every 'cortex is the only lobe that acts' wording is updated"
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "muse support is dropped as deployment reality (user decision q3): no box hosts the 31B, Thor's new shape declares no MUSE_PEER_ORIGIN, model=muse 404s role_infeasible without referral. The muse role/gear/shape code stays in-tree as dormant (cite-don't-delete; the q2 tier order still ranks worker < muse), with docs updated to say muse is unhosted"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "after the move, model=muse 404s role_infeasible with no hosted_by on every box; the thor-muse shape, catalog entry, and docs stay in-tree explicitly marked dormant/unhosted"
+    },
+    {
+      "id": "c15",
+      "kind": "audience",
+      "text": "Culture-mesh Colleagues that address the fleet by role/tier alias (model=worker via the gateway, lobes capabilities / GET /capabilities), plus the operator running the physical Thor"
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the surfaces Colleagues actually consume (capabilities JSON keyed by role, gateway tier aliases) carry worker \u2014 the audience needs no lobes source access to discover it"
+    },
+    {
+      "id": "c16",
+      "kind": "after_state",
+      "text": "Thor serves unsloth/Qwen3.6-35B-A3B-NVFP4 as 'worker' \u2014 the EIGHTH first-class Colleague role, a fast ground-work DOER (repo_action allowed, under cortex direction) with self-draft MTP at 262144 native \u2014 hosted via a thor-worker shape; muse is dormant mesh-wide (unhosted, no referral)"
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "verified live on the deployed Thor: lobes capabilities lists worker feasible+ready serving the unsloth id, and muse feasible:false with no hosted_by"
+    },
+    {
+      "id": "c17",
+      "kind": "before_state",
+      "text": "Thor serves thor-muse (Gemma 4 31B muse at full 256K, util 0.55, gemma4 parser pair); no worker role exists in the contract; the catalog's only 35B-A3B is the 32K-native mmangkad copy with MTP explicitly not carried"
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "matches the recorded present: Thor's deployment runs thor-muse per the 2026-07-17 evidence transcript, and the catalog's mmangkad entry says 32K-native with no speculative_config"
+    },
+    {
+      "id": "c18",
+      "kind": "why_it_matters",
+      "text": "the mesh gains a fast executor \u2014 ~3B-active MoE decode speed with 35B-class knowledge plus MTP self-draft \u2014 so ground work stops queueing on the 27B cortex; the 31B muse's 67 GiB on Thor bought creative divergence the mesh uses less than fast execution"
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "the speed rationale is measured, not assumed: the acceptance run records worker-lane decode tok/s with MTP on (and off, if feasible) via lobes measure/benchmark"
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "on the deployed Thor: lobes capabilities shows worker feasible+ready with truthful model/context/mtp; model=worker serves a chat completion whose tool call parses into tool_calls (not content); an acceptance transcript under docs/evidence/ records the measured budget + MTP acceptance; model=muse 404s role_infeasible with no hosted_by"
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "every listed signal is a checkable artifact: capabilities JSON, a chat transcript with a parsed tool_calls array, the docs/evidence/ file, and the muse role_infeasible 404 body"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Catalog + tier vocabulary: add the unsloth/Qwen3.6-35B-A3B-NVFP4 entry (role_hint='worker') with values read from the checkpoint's config.json + hf_quant_config.json; TIER_ROLE and the pressure-policy tier dicts gain worker at position minor < multimodal < worker < muse < main",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_catalog.py passes with the new entry: id, native_max_model_len, quantization, speculative_config all match the checkpoint's actual config files (fetched at implementation time, cited in the entry comment) \u2014 card prose is not the source",
+        "TIER_ROLE and _pressure_policy's tier dicts both gain worker in order minor < multimodal < worker < muse < main, and a test asserts the two dicts stay identical",
+        "runtime._parser.infer_parser resolves the unsloth id to qwen3_coder and the catalog pairing guard passes"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Role registry: eighth role in lobes/roles.py (ROLES, ROLE_BACKEND, ROLE_ROLE_HINT, ROLE_PATH, ROLE_RESPONSIBILITIES, ROLE_FORBIDDEN, ROLE_MAX_MODEL_LEN_ENV) + profiles/schema.py ROLES gains worker; worker's doer contract encoded",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "build_role_registry returns exactly eight roles with worker present (loaded=False when unwired); a test asserts every ROLE_* dict carries a worker entry \u2014 no stale seven-role literal in code or tests",
+        "ROLE_RESPONSIBILITIES['worker'] includes ground-work execution tokens + tool_use + repo_action; ROLE_FORBIDDEN['worker'] == ('final_decision','security_decision')",
+        "profiles/schema.py ROLES includes worker; unknown-role override rejection behaviour unchanged"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "c13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Gateway opt-in wiring: _config.py gains the WORKER_BASE_URL-gated backend, worker joins OPT_IN_BACKENDS (unwired \u2192 infeasible by default), and WORKER_* keys land in FEASIBLE_ENV / PEER_ORIGIN_ENV / PEER_PROXY_ENV / PEER_API_KEY_ENV",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with no WORKER_* env set, the worker backend is unwired AND infeasible: gateway tests prove model=worker 404s role_infeasible, never a silent fallback",
+        "WORKER_BASE_URL wires the backend; WORKER_FEASIBLE / WORKER_PEER_ORIGIN / WORKER_PEER_PROXY / WORKER_PEER_API_KEY ride the same four channels \u2014 tests mirror muse's coverage"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Fleet template + activation env: profile-gated vllm-worker service on the Qwen-lane image with the qwen3_coder + qwen3 parser pair, WORKER_* knobs in env.example, shape_render.OPT_IN_CORE_ACTIVATION_ENV maps worker",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docker compose config with COMPOSE_PROFILES=worker resolves vllm-worker on the vllm-openai nightly pin (NOT the gemma4 image) carrying --tool-call-parser=qwen3_coder --reasoning-parser=qwen3 and WORKER_* substitutions; without the profile the service is absent",
+        "OPT_IN_CORE_ACTIVATION_ENV['worker'] renders COMPOSE_PROFILES gate + WORKER_BASE_URL=http://vllm-worker:8000; env.example documents every WORKER_* knob"
+      ],
+      "deps": [
+        "t1",
+        "t3"
+      ],
+      "covers": [
+        "c5",
+        "c7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Shape machinery + honesty defaults: shapes.OPT_IN_CORE_ROLES += 'worker', base.toml vetoes worker on unrecognised cards, machine-as-brain/spark/thor/base goldens prove byte-identical rendering",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "OPT_IN_CORE_ROLES == ('muse','worker'); DEFAULT_HOSTED_ROLES excludes both; shape loader accepts worker in hosts and overrides",
+        "goldens for machine-as-brain / spark / thor / base regenerate byte-identical with no WORKER_* env set \u2014 the diff is empty",
+        "base.toml [roles.worker] feasible=false; a base-profile render emits the veto exactly as it does for muse"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c9",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "CLI verbs: lobes up worker \u2192 vllm-worker (muse-style error when unwired), capabilities / status / overview / measure / init name the eighth role, help text updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes up worker maps to vllm-worker and errors helpfully when COMPOSE_PROFILES lacks worker (mirrors the muse error path, tested)",
+        "capabilities/status/overview/measure output and the up-verb help text list worker \u2014 the audience discovers worker from CLI/gateway surfaces without reading source"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c15"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "LIVE measurement on the physical Thor + thor-worker shape commit: boot the checkpoint, measure gpu_mem_util/max_model_len, choose the sm_110 MoE backend, verify the MTP spec-config loads; commit thor-worker.toml with measured values + its goldens",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "thor-worker.toml lands with hosts [worker, embedder, reranker, stt, tts] and MEASURED gpu_mem_util / max_model_len \u2014 any refused hypothesis recorded in TOML comments (the thor-muse 0.40\u21920.55 pattern); no committed value precedes its measurement",
+        "the chosen sm_110 MoE backend and the MTP verdict (loads + acceptance rate, or recorded failure with catalog speculative_config corrected) are written into the shape/catalog data from the live boot log",
+        "the rendered thor-worker deployment boots vllm-worker on the Qwen-lane image on the physical Thor and serves /v1/chat/completions through the gateway; thor-worker goldens regenerate and pass"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c6",
+        "h5",
+        "c10",
+        "h12",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Docs: colleague-stack.md documents eight roles + the widened division of labour (worker may act; cortex-only-actor wording updated everywhere), deployment-shapes/gateway-fleet/gemma-4-31b/qwen3.6-35b-a3b docs + CLAUDE.md updated, muse marked dormant/unhosted",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/colleague-stack.md lists eight roles with worker's responsibilities/forbidden exactly as served; every 'cortex is the only lobe that acts' claim is updated",
+        "muse is documented dormant/unhosted (docs + CLAUDE.md); thor-muse shape and the 31B catalog entry stay in-tree; docs/qwen3.6-35b-a3b-nvfp4.md gains the unsloth variant story; doc-test-alignment spot-check passes"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c14",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Acceptance run on the deployed Thor: switch the box to thor-worker (strip muse hosting, no MUSE_PEER_ORIGIN), verify every live signal, measure decode speed, land the evidence transcript under docs/evidence/",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "transcript under docs/evidence/ records: lobes capabilities on the deployed Thor shows worker feasible+ready serving the unsloth id, muse feasible:false with NO hosted_by, and model=muse 404s role_infeasible",
+        "a model=worker chat completion returns a parsed tool_calls array (not content); a skip_special_tokens:false probe shows the reasoning trace separating via --reasoning-parser=qwen3",
+        "decode tok/s measured with MTP on (and off, if feasible) via lobes measure/benchmark \u2014 the speed rationale is measured, not assumed",
+        "the transcript records the pre-move state (thor-muse serving per the 2026-07-17 evidence) and the post-move state, and the deployed .env carries no muse hosting keys"
+      ],
+      "deps": [
+        "t6",
+        "t7",
+        "t8"
+      ],
+      "covers": [
+        "c1",
+        "h10",
+        "h6",
+        "h8",
+        "c16",
+        "h14",
+        "c17",
+        "h15",
+        "c18",
+        "h16",
+        "c19",
+        "h17",
+        "h13"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "sm_110 MoE backend is unknown until the t7 live boot \u2014 the card's flashinfer_b12x + CUTE_DSL_ARCH=sm_121a is Spark-arch-specific; marlin is verified only GB10-solo on the mmangkad sibling",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    },
+    {
+      "id": "r2",
+      "text": "MTP loadability on the deployed vLLM image is unverified \u2014 the mmangkad sibling's MTP failed with a weight-shape mismatch; if the unsloth module fails to load, the catalog entry records the absence and the announcement's MTP claim degrades honestly (h1)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    },
+    {
+      "id": "r3",
+      "text": "t7 and t9 need the PHYSICAL Thor \u2014 they cannot fan out to isolated worktree agents, and the box currently serves muse in production: boot ordering gotchas apply (drop_caches before any recreate; depends_on can orphan a service in 'created')",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    },
+    {
+      "id": "r4",
+      "text": "the vllm-openai nightly pin's sm_110 compatibility for the MoE marlin/flashinfer kernels is unproven (cu-wheel arch lesson: dump SASS before trusting a pin) \u2014 if the pinned image lacks sm_110 MoE kernels, t7 must select or build a Thor-safe image before measuring",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7"
+    }
+  ]
+}
