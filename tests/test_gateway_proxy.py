@@ -135,6 +135,31 @@ def _worker_dropped_env(**over) -> dict[str, str]:
     return env
 
 
+def _worker_unwired_env(**over) -> dict[str, str]:
+    """The REAL spark-lobe/machine-as-brain shape for a proxied ``worker``:
+    the gear is **never wired here at all**.
+
+    ``worker`` is an OPT-IN core role (``shapes.OPT_IN_CORE_ROLES``), so only
+    an explicit worker-hosting shape (``thor-worker``) renders
+    ``WORKER_BASE_URL``. A box that merely *reaches* worker on a peer — the
+    Spark declaring ``WORKER_PEER_ORIGIN`` + ``WORKER_PEER_PROXY`` — has no
+    ``WORKER_BASE_URL`` and therefore no :class:`Backend` in the table. That
+    drops :func:`lobes.gateway.server._peer_served_name` past its step-1
+    wired-backend branch and onto the env/catalog fallbacks, which is exactly
+    the path :func:`_worker_dropped_env` deliberately avoids by wiring the
+    backend. Both shapes must resolve a served id; only this one exercises
+    ``_PEER_SERVED_NAME_ENV`` / ``_PEER_ROLE_HINT``."""
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": _CORTEX_ID,
+        "WORKER_PEER_ORIGIN": _THOR_ORIGIN,
+        "WORKER_PEER_PROXY": "true",
+        "WORKER_PEER_API_KEY": _PEER_KEY,
+    }
+    env.update(over)
+    return env
+
+
 def _build(env):
     table, cfg = build_config(env)
     return table, cfg, S.peer_specs_from_table(table, env)
@@ -374,6 +399,80 @@ def test_worker_marked_request_that_would_reproxy_is_refused() -> None:
     assert calls == []
     assert resp.status == 508
     assert json.loads(resp.body)["error"]["type"] == "proxy_loop"
+
+
+# ============================================================================
+# worker, UNWIRED — the shape a reaching box actually deploys.
+#
+# The wired-but-infeasible tests above resolve worker's served id off the
+# WIRED Backend (step 1 of _peer_served_name), so they never touch
+# _PEER_SERVED_NAME_ENV / _PEER_ROLE_HINT. A box that only REACHES worker on
+# a peer never sets WORKER_BASE_URL, so it lands on those two tables — and
+# both shipped carrying only the five pre-worker roles, silently resolving ""
+# and making peer_specs_from_table drop worker at its `if not served_name`
+# guard: no peer probe, no /v1/models entry, no _proxied_owner match, so
+# WORKER_PEER_PROXY=true was INERT on exactly the deployment that needs it.
+# ============================================================================
+
+
+def test_peer_specs_unwired_worker_served_name_from_env() -> None:
+    # <PREFIX>_SERVED_NAME is the operator's declaration of what the dropped
+    # role serves; it must be honoured for worker as it is for multimodal.
+    env = _worker_unwired_env(WORKER_SERVED_NAME="custom/worker-tuned")
+    _table, _cfg, specs = _build(env)
+    assert set(specs) == {"worker"}
+    assert specs["worker"].served_name == "custom/worker-tuned"
+    assert specs["worker"].origin == _THOR_ORIGIN
+    assert specs["worker"].api_key == _PEER_KEY
+
+
+def test_peer_specs_unwired_worker_falls_back_to_catalog() -> None:
+    # No WORKER_SERVED_NAME either → the catalog canonical id for role_hint
+    # "worker" (unsloth/Qwen3.6-35B-A3B-NVFP4), mirroring the multimodal case.
+    _table, _cfg, specs = _build(_worker_unwired_env())
+    assert set(specs) == {"worker"}
+    assert specs["worker"].served_name == _WORKER_ID
+
+
+def test_unwired_worker_proxied_request_forwards_to_peer_origin() -> None:
+    # The data-plane consequence: without a spec, handle_post never proxies.
+    table, cfg, specs = _build(_worker_unwired_env())
+    assert "worker" in table.peer_proxied
+    for alias in ("worker", _WORKER_ID):
+        body = json.dumps({"model": alias, "messages": []}).encode()
+        resp, calls = _post(table, cfg, specs, body)
+        assert len(calls) == 1, alias
+        assert calls[0].backend.base_url == _THOR_ORIGIN, alias
+        assert json.loads(calls[0].body)["model"] == _WORKER_ID, alias
+        assert resp.status == 200, alias
+        assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _THOR_ORIGIN, alias
+
+
+def test_every_proxyable_role_resolves_a_served_name() -> None:
+    """CONTRACT: every role the config layer can proxy must resolve an id.
+
+    The regression guard for the whole class of bug, not just worker: adding
+    a role to ``_config.PEER_PROXY_ENV`` without also teaching
+    ``server._PEER_SERVED_NAME_ENV`` / ``_PEER_ROLE_HINT`` about it yields a
+    silently inert proxy. Fail here rather than in production.
+    """
+    from lobes.gateway._config import PEER_API_KEY_ENV, PEER_ORIGIN_ENV, PEER_PROXY_ENV
+
+    unresolved = []
+    for role in sorted(PEER_PROXY_ENV):
+        env = {
+            PEER_ORIGIN_ENV[role]: _THOR_ORIGIN,
+            PEER_PROXY_ENV[role]: "true",
+            PEER_API_KEY_ENV[role]: _PEER_KEY,
+        }
+        table, _cfg = build_config(env)
+        if S._peer_served_name(table, role, env) == "":
+            unresolved.append(role)
+    assert unresolved == [], (
+        f"proxyable roles that resolve NO served name: {unresolved} — "
+        "add them to server._PEER_SERVED_NAME_ENV and _PEER_ROLE_HINT "
+        "(stt/tts use the fixed-sidecar early return instead)"
+    )
 
 
 # ============================================================================

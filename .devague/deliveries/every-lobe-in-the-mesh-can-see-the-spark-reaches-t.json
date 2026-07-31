@@ -1,0 +1,24 @@
+{
+  "plan_slug": "every-lobe-in-the-mesh-can-see-the-spark-reaches-t",
+  "schema_version": 1,
+  "created": "2026-07-31T14:23:30Z",
+  "updated": "2026-07-31T14:23:30Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Add task t14: fix the worker peer-resolution gap in lobes/gateway/server.py (add 'worker' to _PEER_SERVED_NAME_ENV and _PEER_ROLE_HINT) plus a regression test asserting every PEER_PROXY_ENV role resolves a served name. PR 1 becomes a CODE pr, delivered to the Spark via the documented TestPyPI dev lane (MODEL_GEAR_VERSION=0.54.8.devN + GATEWAY_PIP_EXTRA_INDEX_URL) rather than deployment-only.",
+      "task_ref": "t1",
+      "reason": "t1 (the falsification task) DISPROVED boundary claim c6. lobes/gateway/server.py's _PEER_SERVED_NAME_ENV and _PEER_ROLE_HINT still carry only the five pre-worker roles, while _config.py's PEER_PROXY_ENV carries eight. _peer_served_name therefore returns '' for worker even with WORKER_SERVED_NAME set, so peer_specs_from_table drops it at its 'if not served_name: continue' guard: no peer probe, no /v1/models entry, no _proxied_owner match. WORKER_PEER_PROXY=true would have been SILENTLY INERT. Verified independently against the real build_config/peer_specs_from_table/_peer_served_name (worker -> specs=[]; muse -> specs=['muse']), and the 2-line fix verified to resolve it via both the env-override and catalog-fallback paths. Consequently c17's 'PR 1 is deployment-only' is also false: the gateway pip-installs lobes-cli==MODEL_GEAR_VERSION, so the fix must be PUBLISHED before the box can use it.",
+      "affects": [
+        "c6",
+        "h9",
+        "c17",
+        "t4",
+        "t6"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}
