@@ -16,11 +16,12 @@ from lobes.profiles.schema import Profile, RoleProfile
 # --- role -> prefix table ----------------------------------------------------
 
 
-def test_role_env_prefix_covers_all_four_roles() -> None:
+def test_role_env_prefix_covers_all_six_roles() -> None:
     assert ROLE_ENV_PREFIX == {
         "cortex": "PRIMARY",
         "senses": "MULTIMODAL",
         "muse": "MUSE",
+        "worker": "WORKER",
         "embedder": "EMBED",
         "reranker": "RERANK",
     }

@@ -737,6 +737,45 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "worker": {
+        "role": "worker",
+        # The opt-in worker lobe (thor-worker-lobe plan): unwired in this
+        # no-knob deployment, so it is honestly infeasible-by-default
+        # (OPT_IN_BACKENDS, exactly like muse above) and named by its catalog
+        # default. mtp True: the checkpoint ships its OWN MTP draft weights
+        # (self-hosted, unlike the Gemma gears' external draft id).
+        "model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/chat/completions",
+        "context": 262144,
+        "quant": "compressed-tensors",
+        "mtp": True,
+        # True even though this deployment does not HOST worker: `tools` is a
+        # fact about the model the role would serve (the catalog's
+        # `qwen3_coder` tool parser), exactly like muse above. `feasible:
+        # false` is what tells a caller it is unreachable here.
+        "tools": True,
+        "responsibilities": [
+            "execution",
+            "ground_work",
+            "bulk_transform",
+            "drafting",
+            "image_understanding",
+            "video_understanding",
+            "tool_use",
+            "repo_action",
+        ],
+        # Unlike muse/senses, worker MAY act on the repo — repo_action is
+        # deliberately ABSENT here (it is only permitted, never forbidden).
+        "forbidden_responsibilities": [
+            "final_decision",
+            "security_decision",
+        ],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
     "embedder": {
         "role": "embedder",
         "model": _EMBED_ID,

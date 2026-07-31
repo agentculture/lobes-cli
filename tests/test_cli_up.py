@@ -51,7 +51,7 @@ def test_up_is_registered_as_top_level_verb() -> None:
     assert args.func is up_cmd.cmd_up
 
 
-def test_role_service_map_covers_exactly_the_six_roles() -> None:
+def test_role_service_map_covers_exactly_the_eight_roles() -> None:
     """ROLE_SERVICE must stay in lockstep with lobes.roles.ROLES (single source)."""
     assert set(up_cmd.ROLE_SERVICE) == set(roles.ROLES)
     assert up_cmd.TARGETS == roles.ROLES + ("colleague-stack",)
