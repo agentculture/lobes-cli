@@ -64,7 +64,8 @@ class TestWorkerServiceExists:
         # Mirror vllm-muse's Thor first-boot ordering mitigation.
         svc = _load_fleet()["services"]["vllm-worker"]
         deps = svc.get("depends_on", {})
-        assert "vllm-embed" in deps and "vllm-rerank" in deps
+        assert "vllm-embed" in deps
+        assert "vllm-rerank" in deps
         assert deps["vllm-embed"]["condition"] == "service_healthy"
         assert deps["vllm-rerank"]["condition"] == "service_healthy"
 
@@ -127,7 +128,8 @@ class TestWorkerCommand:
         assert '"method": "mtp"' in blob
         assert '"num_speculative_tokens": 2' in blob
         # Self-draft: NO external draft-model key (unlike the Gemma gears).
-        assert '"model"' not in blob and "draft_model" not in blob
+        assert '"model"' not in blob
+        assert "draft_model" not in blob
 
     def test_parser_pair_qwen(self) -> None:
         cmd = _worker_command()

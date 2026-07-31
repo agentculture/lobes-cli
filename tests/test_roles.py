@@ -120,14 +120,18 @@ def test_every_role_carries_the_full_metadata_block() -> None:
     for name, info in registry.items():
         assert isinstance(info, RoleInfo)
         assert info.role == name
-        assert isinstance(info.model, str) and info.model  # never empty
-        assert isinstance(info.runtime, str) and info.runtime
+        assert isinstance(info.model, str)
+        assert info.model  # never empty
+        assert isinstance(info.runtime, str)
+        assert info.runtime
         assert isinstance(info.endpoint, str)
         assert info.path.startswith("/v1/")
-        assert isinstance(info.context, int) and info.context >= 0
+        assert isinstance(info.context, int)
+        assert info.context >= 0
         assert isinstance(info.quant, str)
         assert isinstance(info.mtp, bool)
-        assert isinstance(info.responsibilities, tuple) and info.responsibilities
+        assert isinstance(info.responsibilities, tuple)
+        assert info.responsibilities
         assert isinstance(info.forbidden_responsibilities, tuple)
         assert isinstance(info.loaded, bool)
         # Coarse "configured/wired" readiness — always a present boolean, equal
