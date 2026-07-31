@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.9] - 2026-07-31
+
+### Added
+
+- **`docs/model-switch-playbook.md`** — how to swap a served checkpoint without guessing, written from the 2026-07-31 `cortex` candidate run. Records the ordering that matters (benchmark the *incumbent* first, on today's engine — that baseline is unrecoverable once the model is gone), the consumer-breakage audit (**no consumer in this mesh addresses by role name**; every one sends the raw served id, so changing `PRIMARY_SERVED_NAME` 404s them all), two measurement traps that produced wrong answers on this run, and a probe-design table with negative controls.
+
+### Changed
+
+- `docs/qwen3.6-27b-nvfp4-multimodal.md` — replaced the "open, unmeasured" section with **measured** live-GB10 results. Booted first try at the incumbent's own `0.44 / 262144` (no retune, unlike `thor-muse`): KV pool 26.39 GiB / 756,642 tokens ≈ 2.89× concurrency, so the unquantized bf16 ViT costs ≈132,300 tokens (~15%) of KV pool and the full 256K window survives. Decode 14.9 / 16.4 / **19.0** tok/s (TTFT ~0.27 s); self-hosted MTP engages at 62–67% draft acceptance. All behavioural gates pass: vision and **video** (directional-motion probe with the reversed clip as control), thinking, `preserve_thinking` (#93, +800-token two-turn delta), and strict tool calling with thinking on (colleague#320). The page now also states plainly that the throughput comparison against the incumbent is **not controlled** — those numbers came from a different vLLM build.
+
+### Fixed
+
+- Two measurement traps now documented rather than re-learned: counting SSE **chunks** instead of `usage.completion_tokens` under-reports decode by >2× under speculative decoding (8.2 vs the true 19.0 tok/s), and this vLLM build returns the thinking trace as **`reasoning`**, not `reasoning_content` — reading the wrong field looks exactly like a model that stopped thinking. Reconciling `completion_tokens` against visible field lengths catches both.
+
 ## [0.54.8] - 2026-07-31
 
 ### Fixed
