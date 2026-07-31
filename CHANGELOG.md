@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.6] - 2026-07-31
+
+### Added
+
+- Spec + plan for the **`worker`** role (devague `/scope` → `/think` →
+  `/spec-to-plan`): Thor moves off the Gemma 4 31B `muse` and hosts
+  `unsloth/Qwen3.6-35B-A3B-NVFP4` as the eighth first-class Colleague role — a
+  fast ground-work **doer** (`repo_action` allowed; forbidden only
+  `final_decision`/`security_decision`) with self-draft MTP at 262K native,
+  tier position `minor < multimodal < worker < muse < main`. Muse goes
+  dormant in-tree (unhosted, no referral). Nine measurement-gated tasks in
+  five waves; budget / sm_110 MoE backend / MTP verdict are live-measured on
+  the physical Thor before any value is committed
+  (`docs/specs/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`,
+  `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`).
+
 ## [0.54.5] - 2026-07-25
 
 ### Added
