@@ -8,17 +8,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Spec + plan for the **`worker`** role (devague `/scope` → `/think` →
-  `/spec-to-plan`): Thor moves off the Gemma 4 31B `muse` and hosts
-  `unsloth/Qwen3.6-35B-A3B-NVFP4` as the eighth first-class Colleague role — a
-  fast ground-work **doer** (`repo_action` allowed; forbidden only
-  `final_decision`/`security_decision`) with self-draft MTP at 262K native,
-  tier position `minor < multimodal < worker < muse < main`. Muse goes
-  dormant in-tree (unhosted, no referral). Nine measurement-gated tasks in
-  five waves; budget / sm_110 MoE backend / MTP verdict are live-measured on
-  the physical Thor before any value is committed
-  (`docs/specs/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`,
-  `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`).
+- The **`worker`** role — an eighth first-class Colleague role serving
+  `unsloth/Qwen3.6-35B-A3B-NVFP4`, a **multimodal** (image+video, no audio)
+  ~3B-active MoE with a self-hosted MTP draft at 262K native. `worker` is the
+  fast ground-work **DOER** — the first role besides `cortex` permitted
+  `repo_action` (it may act on the repo under cortex's direction; forbidden
+  only `final_decision`/`security_decision`), served multimodal (no
+  `--language-model-only`) — a "seeing doer" distinct from `senses`, which
+  perceives but must not act. Wired end-to-end: catalog gear + capability tier
+  (`minor < multimodal < worker < muse < main`), the eight-role registry, the
+  opt-in-core gateway backend (`WORKER_BASE_URL`; unwired ⇒ infeasible, never a
+  silent fallback), `OPT_IN_CORE_ROLES` + `base.toml` unknown-card veto, a
+  profile-gated `vllm-worker` compose service on the Qwen nightly lane
+  (compressed-tensors, `qwen3_coder`+`qwen3` parser pair, self-draft MTP), the
+  `lobes up worker` verb, and full docs. **DECLARED/UNVALIDATED (#108):** no
+  value is measured on hardware yet — the Thor budget (`gpu_mem_util` /
+  `max_model_len`), the sm_110 MoE backend, MTP acceptance, and the multimodal
+  (image+video) + thinking/coding serving are all gated on the live boot
+  (`thor-worker` shape, plan task t7) and the acceptance run (t9), which also
+  captures the full latency/throughput profile (TTFT, decode tok/s + per-token
+  latency, writing length, effective served context). Spec/plan under
+  `docs/specs/` and `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`.
+- Muse goes **dormant/unhosted** mesh-wide: Thor moves off the Gemma 4 31B
+  `muse` to host `worker` instead. `model=muse` now 404s `role_infeasible`
+  with no `hosted_by` referral; the `muse` role, its catalog entry, and the
+  `thor-muse` shape all stay in-tree (cite-don't-delete), and the tier
+  vocabulary still ranks `worker < muse`.
+
+### Fixed
+
+- CLAUDE.md / docs: the stale "pressure policy degrades … to `minor`" wording
+  now matches the shipped code — the degrade-to-`minor` substitution was
+  removed; under pressure the full tiers (`cortex`/`senses`/`worker`/`muse`)
+  are **shed** with HTTP 429 + `Retry-After`, and `minor` is the servable
+  floor.
 
 ## [0.54.5] - 2026-07-25
 

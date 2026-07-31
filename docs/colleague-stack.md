@@ -422,7 +422,7 @@ touching the rest of the fleet:
 lobes up cortex --apply             # docker compose up -d vllm-primary
 lobes up senses --apply             # docker compose up -d vllm-multimodal
 lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only — currently no box hosts one, see the dormant callout above)
-lobes up worker --apply             # docker compose up -d vllm-worker (worker-hosting shape only — forthcoming, thor-worker-lobe plan t6/t7)
+lobes up worker --apply             # docker compose up -d vllm-worker (verb wired; errors helpfully off a non-hosting box — a worker-hosting shape is forthcoming, thor-worker-lobe plan t7)
 lobes up embedder --apply           # docker compose up -d vllm-embed
 lobes up reranker --apply           # docker compose up -d vllm-rerank
 lobes up stt --apply                # requires the --audio overlay

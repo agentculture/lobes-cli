@@ -160,7 +160,7 @@ Jetson AGX Thor produces it.
 ```bash
 lobes init --shape thor-worker --apply   # forthcoming — not yet a valid shape name
 lobes fleet up --apply
-lobes up worker --apply                  # forthcoming — mirrors `lobes up muse` once wired
+lobes up worker --apply                  # verb wired (mirrors `lobes up muse`); needs a worker-hosting shape to actually boot (thor-worker, t7)
 ```
 
 `thor-worker` will drop BOTH heavy default lobes (`cortex` and `senses`) to
