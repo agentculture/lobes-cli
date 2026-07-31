@@ -114,7 +114,7 @@ def test_empty_input_returns_empty_bytes() -> None:
     not _cs_mod._NUMPY_AVAILABLE,  # noqa: SLF001
     reason="numpy not installed; parity test requires both paths",
 )
-def test_numpy_and_stdlib_paths_produce_identical_bytes() -> None:
+def test_numpy_and_stdlib_paths_produce_identical_bytes(monkeypatch) -> None:
     """numpy fast path and pure-Python fallback must be byte-identical.
 
     We exercise: silence (0.0), positive peak (1.0), negative peak (-1.0),
@@ -134,13 +134,11 @@ def test_numpy_and_stdlib_paths_produce_identical_bytes() -> None:
         # numpy path (current _NUMPY_AVAILABLE == True)
         numpy_bytes = float_tensor_to_pcm16(samples)
 
-        # stdlib path: temporarily mask numpy away
-        saved = _cs_mod._NUMPY_AVAILABLE  # noqa: SLF001
-        _cs_mod._NUMPY_AVAILABLE = False  # noqa: SLF001
-        try:
-            stdlib_bytes = float_tensor_to_pcm16(samples)
-        finally:
-            _cs_mod._NUMPY_AVAILABLE = saved  # noqa: SLF001
+        # stdlib path: temporarily mask numpy away for just this call, then
+        # flip back so the next iteration's numpy path is exercised too.
+        monkeypatch.setattr(_cs_mod, "_NUMPY_AVAILABLE", False)
+        stdlib_bytes = float_tensor_to_pcm16(samples)
+        monkeypatch.setattr(_cs_mod, "_NUMPY_AVAILABLE", True)
 
         assert numpy_bytes == stdlib_bytes, (
             f"path mismatch for samples={samples}: "

@@ -152,9 +152,11 @@ def _start_capturing_server() -> tuple[HTTPServer, threading.Thread]:
     return server, thread
 
 
-def test_authorization_header_present_iff_key_declared() -> None:
-    _CapturingHandler.captured_headers = []
-    _CapturingHandler.response_body = json.dumps({"data": [{"id": "gemma"}]}).encode()
+def test_authorization_header_present_iff_key_declared(monkeypatch) -> None:
+    monkeypatch.setattr(_CapturingHandler, "captured_headers", [])
+    monkeypatch.setattr(
+        _CapturingHandler, "response_body", json.dumps({"data": [{"id": "gemma"}]}).encode()
+    )
     server, thread = _start_capturing_server()
     try:
         origin = f"http://127.0.0.1:{server.server_port}"

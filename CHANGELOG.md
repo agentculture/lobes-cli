@@ -50,6 +50,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removed; under pressure the full tiers (`cortex`/`senses`/`worker`/`muse`)
   are **shed** with HTTP 429 + `Retry-After`, and `minor` is the servable
   floor.
+- **SonarCloud cleanup** (folded in from #163): cleared the 5 genuinely-open
+  issues — **S8997** ×4 (`test_chatterbox_pcm16.py` and
+  `test_readiness_peer_probe.py` now use the `monkeypatch` fixture instead of
+  manual save/restore) and **S3776** (`tts_client.py::_synthesize_single`
+  refactored, cognitive complexity 18 → 6, behavior-preserving). No
+  suppressions were added — the false-positive candidates were already resolved.
 
 ## [0.54.5] - 2026-07-25
 
