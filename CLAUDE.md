@@ -19,24 +19,52 @@ OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`lobes`*
   and the agent rides on it. (It used to be a separate agent, `lepenseur`; that
   name is retired.)
 
-The served model is **`vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** (a
-Qwen3.6 27B with hybrid Mamba/linear-attention layers, re-exported with its MTP
-draft head restored so vLLM speculative decoding (Multi-Token Prediction) works;
-text-only (ViT vision tower removed), NVFP4, 256K native; thinking mode with a
-reasoning trace; ~2.4x single-stream decode over the archived baseline). This is
-the **`cortex`** role — the fleet's reasoning/deciding/final-authority lobe
-(issue #81). **Served context depends on deployment shape:** the legacy single-model
-scaffold (`lobes serve`, no fleet) still serves the full 256K solo; the default
-**fleet** duo serves `cortex` at **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so it
-can co-reside with the multimodal gear — see "Colleague roles" below and
-`docs/colleague-stack.md#migration-before--after` for the full before→after
-table. lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to
-it. (It is the fleet's default primary/`cortex`. `mmangkad/Qwen3.6-27B-NVFP4` is
-the archived former primary, demoted to a candidate but kept — it is the
-tokenizer source the MTP primary serves with
-(`--tokenizer=mmangkad/Qwen3.6-27B-NVFP4`) and the only vision-capable 27B; the
-`nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate — see
-`docs/qwen3-32b-nvfp4.md` and `lobes overview --list`.)
+The served model is **`vllm-local/unsloth/Qwen3.6-27B-NVFP4`** (a Qwen3.6 27B
+with hybrid Mamba/linear-attention layers; **MULTIMODAL** — image and video
+intake through its own ViT; a **self-hosted** MTP draft head baked into the
+checkpoint, so vLLM speculative decoding (Multi-Token Prediction) works with no
+external draft repo; compressed-tensors NVFP4 (mixed precision: fp8
+attention/`lm_head` + nvfp4 MLP, ViT left unquantized), 256K native; thinking
+mode with a reasoning trace). This is the **`cortex`** role — the fleet's
+reasoning/deciding/final-authority lobe (issue #81), and since the 2026-07-31
+promotion it is **the first role that can both see an image and decide**: the
+role contract forbids `senses` from `final_decision`/`repo_action` and `worker`
+from `final_decision`/`security_decision`, so before this every visual decision
+had to be handed to a role barred from making it.
+
+**Served context depends on deployment shape:** the legacy single-model scaffold
+(`lobes serve`, no fleet) serves the full 256K solo; the **spark-lobe** shape
+(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at the full
+**256K** at `gpu_mem_util=0.44`, MEASURED 2026-07-31; the machine-as-brain
+**fleet duo** declares **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so cortex can
+co-reside with a local multimodal gear — that duo budget is **inherited from the
+previous text-only checkpoint and has not been booted with a ViT** (see
+`lobes/profiles/builtin/spark.toml`). See `docs/colleague-stack.md#migration-before--after`.
+lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to it.
+
+Two 27B checkpoints remain as **candidates**, kept not deleted
+(cite-don't-delete):
+
+- **`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** — the previous default primary,
+  demoted 2026-07-31. Its export dropped the ViT (hence its `--language-model-only`
+  and `--tokenizer=mmangkad/…` flags, both now gone from the lane), so it is the
+  remaining **text-only** 27B — the pick for a deployment wanting a smaller weight
+  footprint and no vision. Every pre-0.54.9 evidence transcript was measured
+  against it.
+- **`mmangkad/Qwen3.6-27B-NVFP4`** — the archived original primary. It used to be
+  justified as the tokenizer source the MTP primary served with *and* the only
+  vision-capable 27B; **both rationales are now obsolete** — the promoted primary
+  ships its own tokenizer and its own ViT. It is kept as a plain candidate.
+
+The `nvidia/Qwen3-32B-NVFP4` dense model also remains a supported candidate — see
+`docs/qwen3-32b-nvfp4.md` and `lobes overview --list`.
+
+> **Swapping the served checkpoint breaks every consumer that pins a raw model
+> id** — and as of the 2026-07-31 audit, *none* of them address the fleet by role
+> name. Read `docs/model-switch-playbook.md` before the next swap; it records the
+> ordering that matters (benchmark the incumbent first — that baseline is
+> unrecoverable afterwards) and two measurement traps that produced wrong answers
+> on this one.
 
 **Thinking continuity — `preserve_thinking` (issue #93).** The cortex/main
 vLLM service adds `--default-chat-template-kwargs
@@ -215,14 +243,43 @@ machine-as-brain NEVER hosts it, the gateway wires its backend only behind
 fallback), mirroring `muse`'s mechanics exactly (`WORKER_FEASIBLE` /
 `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY`; `base.toml`
 vetoes it on an unrecognised card just like `muse`). Under pressure `worker`
-sheds (429) exactly like cortex/senses/muse. The role/tier/gateway-config
-plumbing above is **shipped**; the `thor-worker` deployment shape (the
-Jetson AGX Thor, dropping BOTH `cortex` and `senses`, hosting `worker` +
-the pooling gears + audio overlay, mirroring `thor-muse`'s structure) and its
-compose service are **forthcoming** — its `gpu_mem_util`/`max_model_len`
-budget, MoE backend choice, and MTP acceptance are measured on the physical
-Thor, not invented, so they are **declared/UNVALIDATED** until that live
-boot lands (#108). See `docs/qwen3.6-35b-a3b-nvfp4.md`.
+sheds (429) exactly like cortex/senses/muse.
+
+The `thor-worker` deployment shape has **LANDED and is VALIDATED** on the
+physical Jetson AGX Thor (sm_110), 2026-07-31 —
+`docs/evidence/2026-07-31-accept-worker-thor.txt`. It drops BOTH `cortex` and
+`senses` and hosts `worker` + the pooling gears + the audio overlay, mirroring
+`thor-muse`'s structure. Its budget is **measured, not declared**:
+`gpu_mem_util=0.45` at the full `max_model_len=262144` (no trim), weights
+24.81 GiB loaded in ~31 s, KV pool 41.78 GiB, ~50.8 tok/s decode
+**single-stream**, MTP self-draft acceptance **89.1%**.
+
+> **Concurrency numbers in this repo are KV-pool CEILINGS, not measured
+> throughput.** `KV pool / max_model_len` gives 14.07× for this lane — how many
+> full-context requests the cache could *hold*. Two independent consumers
+> measured the real behaviour on 2026-07-31: usable concurrency **saturates near
+> width 8–9**, and per-stream decode falls to **~30 tok/s** at high width
+> (embodiment; colleague#361 measured 29.8 tok/s/stream and 268.1 tok/s aggregate
+> at width 14 — a 5.5% aggregate gain for a 75% load increase over width 8).
+> Multiplying a single-stream tok/s by the ceiling is the misreading to avoid.
+> The same caveat applies to every `Nx concurrency` figure below.
+The 0.45 hypothesis booted first try — the MoE's ~3B active-parameter footprint
+is why. **`--moe-backend` is deliberately NOT forced on sm_110**: every forced
+value was refused live (`flashinfer_b12x`/`flashinfer_cutlass` are
+sm_121a/Spark-only, `marlin` rejects the unquantized MTP experts, `triton`
+rejects NVFP4 MoE) — only auto-select boots, so the committed compose omits the
+flag and `WORKER_MOE_BACKEND` is an opt-in hand-pin. See
+`docs/qwen3.6-35b-a3b-nvfp4.md`.
+
+**The Spark reaches it by proxy** (2026-07-31): `WORKER_PEER_ORIGIN` +
+`WORKER_PEER_PROXY` on the spark-lobe box forward `model=worker` to the Thor and
+relay the answer with `X-Lobes-Proxied-By`, image input included — so callers
+address `worker` on their local gateway and never dial the Thor directly. That
+required a **fix in 0.54.8**: `worker` was wired into `_config.py`'s peer dicts
+in 0.54.6 but missing from `server.py`'s `_PEER_SERVED_NAME_ENV` /
+`_PEER_ROLE_HINT`, so `peer_specs_from_table` silently dropped it and
+`WORKER_PEER_PROXY=true` did nothing. See
+`docs/evidence/2026-07-31-accept-worker-proxy-spark.txt`.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
@@ -404,19 +461,19 @@ physical Thor moved to hosting `worker` instead (below) and no box declares
 in-tree unchanged (cite-don't-delete); nothing here or in `lobes
 capabilities` claims a box currently renders it. `worker` — the eighth
 Colleague role — introduced a **second opt-in core role** on the same
-mechanism: a **`thor-worker`** shape (forthcoming, thor-worker-lobe plan
-task t7) will drop BOTH `cortex` and `senses` and instead host the opt-in
-`worker` lobe (`vllm-worker`, Qwen3.6-35B-A3B) plus the pooling gears and
-audio overlay, mirroring `thor-muse`'s structure exactly
+mechanism: the **`thor-worker`** shape drops BOTH `cortex` and `senses` and
+instead hosts the opt-in `worker` lobe (`vllm-worker`, Qwen3.6-35B-A3B) plus
+the pooling gears and audio overlay, mirroring `thor-muse`'s structure exactly
 (`OPT_IN_CORE_ROLES = ("muse", "worker")`, `base.toml` veto, shape-owned
-override declaration). Its budget values are **not yet measured** — they
-are committed only once a live boot on the physical Thor produces them (the
-same measured-truth discipline `thor-muse`'s 0.40→0.55 refusal already
-demonstrated), so no number is declared here. Select with `lobes
-init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse>`
-today (`thor-worker` joins this list once t7 lands; dry-run by
-default, `--apply` to commit, byte-for-byte restorable by re-running with
-the previous shape). A dropped role is flagged `feasible:false` on both
+override declaration). It has **LANDED and is VALIDATED** on the physical
+Jetson AGX Thor, 2026-07-31, with **measured** values —
+`gpu_mem_util=0.45` at the full `max_model_len=262144`, KV pool 41.78 GiB =
+14.07x concurrency, MTP acceptance 89.1%
+(`docs/evidence/2026-07-31-accept-worker-thor.txt`); the 0.45 hypothesis booted
+first try, unlike `thor-muse`'s refused 0.40. Select with `lobes init --shape
+<machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse|thor-worker>`
+(dry-run by default, `--apply` to commit, byte-for-byte restorable by re-running
+with the previous shape). A dropped role is flagged `feasible:false` on both
 `lobes capabilities` and `GET /capabilities`, omitted from `/v1/models`, and
 404s `role_infeasible` on every alias — never half-served. Opt-in **honest
 referral** (issue #112, t3): declaring a peer origin per dropped role
@@ -465,9 +522,17 @@ marked `X-Lobes-Proxied` is refused (`508 proxy_loop`) rather than re-forwarded
 caller can always tell a forwarded answer from a locally-served one. Peer
 origins are assumed reachable over a private/tailnet transport, never the
 public internet (no TLS termination happens at this layer). With no
-`<PREFIX>_PEER_PROXY` set anywhere — every pre-#115 deployment, and both live
-`spark-lobe`/`thor-lobe` boxes as of this writing — every response stays
-byte-identical to the pre-proxy contract. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
+`<PREFIX>_PEER_PROXY` set anywhere — every pre-#115 deployment — every response
+stays byte-identical to the pre-proxy contract.
+
+**Live as of 2026-07-31:** the DGX Spark (`spark-lobe`) proxies TWO roles —
+`senses` → the AGX Orin and `worker` → the Jetson AGX Thor — so a caller
+addresses either on the Spark's own gateway and never dials the peer box.
+Both answer 200 with `X-Lobes-Proxied-By`, image input included. Note a proxied
+role reports `feasible: false` **by design** (it means "this box does not *host*
+it", not "you cannot use it here"); `proxied: true` + `hosted_by` + `ready` are
+the fields that say it is usable, and `loaded` is a *wiring* fact, not a
+running one. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
 and `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`.
 
 ## Deployment model

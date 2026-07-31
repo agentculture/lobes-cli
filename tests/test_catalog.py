@@ -370,7 +370,7 @@ def test_minor_gear_quantization_is_none_sentinel() -> None:
 _GEMMA_BASE_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _GEMMA_CODER_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _14B_ID = "nvidia/Qwen3-14B-NVFP4"
-_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
 
 # The exact native-MTP speculative_config §7 measured on the NVFP4 base gear —
 # 28.6 tok/s decode at 57.9% draft acceptance (vs the coder's 30.8%/~6% win, and

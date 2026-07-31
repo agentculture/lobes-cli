@@ -200,10 +200,10 @@ def test_spark_builtin_matches_the_fleet_template_exactly() -> None:
 
     cortex = spark.role("cortex")
     assert cortex.feasible is True
-    assert cortex.model == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+    assert cortex.model == "unsloth/Qwen3.6-27B-NVFP4"
     assert cortex.gpu_mem_util == 0.30
     assert cortex.max_model_len == 131072
-    assert cortex.quantization == "modelopt"
+    assert cortex.quantization == "compressed-tensors"
     assert cortex.kv_cache_dtype == "fp8"
     assert cortex.max_num_seqs == 2
 
@@ -345,7 +345,7 @@ def test_operator_profile_overrides_a_builtin_of_the_same_name(tmp_path) -> None
 
     # The built-in itself is never touched by the override.
     builtin_spark = loader.load_builtin("spark")
-    assert builtin_spark.role("cortex").model == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+    assert builtin_spark.role("cortex").model == "unsloth/Qwen3.6-27B-NVFP4"
 
 
 def test_mixed_case_operator_file_overrides_the_builtin(tmp_path) -> None:

@@ -26,11 +26,25 @@ hosts = ["cortex", "embedder", "reranker", "stt", "tts"]
 # (53.5 GiB) fits that measured reality with margin. (Live transcript:
 # lobes-accept-spark-lobe-20260714; issue #113.)
 #
-# max_model_len = 262144 -- the checkpoint's own native context
-# (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP, 256K -- see CLAUDE.md's model
-# section), previously trimmed to 131072 only so cortex could co-reside with
-# senses on the single-box shape. Senses is dropped in THIS shape, so the
-# trim's reason is gone -- reclaimed here (issue #113, user decision on the
-# PR), not deferred to #112.
+# max_model_len = 262144 -- the checkpoint's own native context (256K),
+# previously trimmed to 131072 only so cortex could co-reside with senses on
+# the single-box shape. Senses is dropped in THIS shape, so the trim's reason
+# is gone -- reclaimed here (issue #113, user decision on the PR), not deferred
+# to #112.
+#
+# RE-VALIDATED 2026-07-31 for the MULTIMODAL cortex (unsloth/Qwen3.6-27B-NVFP4,
+# which replaced the text-only sakamakismile MTP export). BOTH values below
+# survived the checkpoint change unchanged -- it booted FIRST TRY at 0.44 /
+# 262144, no retune, despite the export adding an unquantized bf16 ViT:
+#   * KV pool 26.39 GiB = 756,642 tokens = ~2.89x concurrency at the full 256K
+#     window, vs the outgoing text-only primary's 888,946 / 3.39x at these same
+#     knobs -- so the ViT costs ~132,300 tokens (~15%) of KV pool and the full
+#     window still fits.
+#   * embedder + reranker + embed-deep all stayed co-resident and healthy.
+#   * decode 14.9 / 16.4 / 19.0 tok/s (short/medium/512-tok gen), TTFT ~0.27s,
+#     self-hosted MTP engaging at 62-67% draft acceptance.
+#   * VISION VALIDATED on this shape: image intake against an opposite-colour
+#     negative control, and VIDEO intake against a REVERSED-motion control.
+# Transcript: docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
 gpu_mem_util = 0.44
 max_model_len = 262144

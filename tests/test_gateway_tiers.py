@@ -30,6 +30,7 @@ from lobes.gateway._config import (
 )
 from lobes.gateway._routing import (
     Backend,
+    is_unknown_model,
     order_backends,
     resolve_model,
     tier_aliases,
@@ -472,3 +473,60 @@ def test_explicit_synonym_override_is_not_clobbered_by_expansion() -> None:
     table, _ = build_config({"GATEWAY_ALIASES": "hard=A-27B,main=B-27B"})
     assert table.aliases["hard"] == "A-27B"
     assert table.aliases["main"] == "B-27B"
+
+
+# ============================================================================
+# Pooling ROLE IDENTITY aliases — the stable address for the embed/rerank lanes.
+#
+# tier_aliases is generate-only, so before this the ONLY working address for the
+# pooling gears was the raw served id. Every embed consumer had to pin a concrete
+# checkpoint with no stable name to migrate to, so an embed-model swap would 404
+# all of them — the same failure the 2026-07-31 cortex swap caused on the
+# generate lane, except there `cortex`/`main` existed as an escape hatch.
+# ============================================================================
+
+
+def _pooling_env() -> dict[str, str]:
+    return {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "some/primary-model",
+        "EMBED_URL": "http://vllm-embed:8000",
+        "EMBED_SERVED_NAME": "Qwen/Qwen3-Embedding-0.6B",
+        "RERANK_URL": "http://vllm-rerank:8000",
+        "RERANK_SERVED_NAME": "Qwen/Qwen3-Reranker-0.6B",
+    }
+
+
+def test_pooling_role_names_resolve_to_their_served_ids() -> None:
+    table, _cfg = build_config(_pooling_env())
+    for alias in ("embedder", "embed"):
+        assert table.aliases[alias] == "Qwen/Qwen3-Embedding-0.6B", alias
+        assert not is_unknown_model(table, alias), alias
+        assert resolve_model(table, alias) == "Qwen/Qwen3-Embedding-0.6B", alias
+    for alias in ("reranker", "rerank"):
+        assert table.aliases[alias] == "Qwen/Qwen3-Reranker-0.6B", alias
+        assert not is_unknown_model(table, alias), alias
+        assert resolve_model(table, alias) == "Qwen/Qwen3-Reranker-0.6B", alias
+
+
+def test_pooling_alias_absent_when_its_gear_is_unwired_never_substituted() -> None:
+    # The no-fallback contract, shared with embed-deep: a missing gear means the
+    # alias is ABSENT (so the caller gets an honest unknown-model 404), never a
+    # silent substitution — an embedding from a different model would answer in
+    # the WRONG VECTOR SPACE.
+    env = _pooling_env()
+    del env["EMBED_URL"]
+    del env["EMBED_SERVED_NAME"]
+    table, _cfg = build_config(env)
+    assert "embedder" not in table.aliases
+    assert "embed" not in table.aliases
+    assert is_unknown_model(table, "embedder")
+    # the reranker gear is still wired, so its alias is unaffected
+    assert table.aliases["reranker"] == "Qwen/Qwen3-Reranker-0.6B"
+
+
+def test_pooling_alias_never_shadows_an_operator_override() -> None:
+    env = _pooling_env()
+    env["GATEWAY_ALIASES"] = "embedder=custom/other-embedder"
+    table, _cfg = build_config(env)
+    assert table.aliases["embedder"] == "custom/other-embedder"

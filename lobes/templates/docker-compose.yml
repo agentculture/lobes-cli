@@ -73,11 +73,11 @@ services:
     command:
       - vllm
       - serve
-      - ${VLLM_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
-      - --served-model-name=${VLLM_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - ${VLLM_MODEL:-unsloth/Qwen3.6-27B-NVFP4}
+      - --served-model-name=${VLLM_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${VLLM_QUANTIZATION:-modelopt}   # MTP primary is ModelOpt NVFP4 (`modelopt` → modelopt_fp4); mmangkad/nvidia are modelopt_fp4, RedHatAI (Mistral) is compressed-tensors (`lobes switch` sets this from the catalog)
+      - --quantization=${VLLM_QUANTIZATION:-compressed-tensors}   # the multimodal primary's own quant_method (mixed fp8 + nvfp4); mmangkad/nvidia are modelopt_fp4 (`lobes switch` sets this from the catalog)
       - --kv-cache-dtype=${VLLM_KV_CACHE_DTYPE:-fp8}   # fp8 needs calibrated k_scale/v_scale in the checkpoint; set to `auto` for a checkpoint that ships none (kv_cache_quant_algo: null trips `assert layer.k_scale > 0.0`)
       - --max-model-len=${VLLM_MAX_MODEL_LEN:-262144}   # 256K native, served at the full 256K (load-tested 2026-06-03 on the shared GB10 — ~70 GiB at util 0.6, same as 32K/128K; 5.3x KV concurrency headroom at full context); lower only for heavier co-residence
       - --gpu-memory-utilization=${VLLM_GPU_MEM_UTIL:-0.6}
@@ -92,23 +92,22 @@ services:
       - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
       - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
       - --enable-prefix-caching
-      # --- MTP default primary (sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP) ---------
-      # These four serve the speculative-decoding MTP primary out of the box (~2.4x
-      # decode vs the archived baseline 27B; 78.6% draft acceptance, tool calling +
-      # reasoning verified 2026-05-31). They are MTP-only: --language-model-only and
-      # the --tokenizer override break every non-MTP checkpoint, and compose can't
-      # conditionally omit a list item — so to serve a NON-MTP model, REMOVE these 4
-      # lines by hand (`lobes switch <non-mtp-model>` prints them). See
-      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
+      # --- MTP default primary (unsloth/Qwen3.6-27B-NVFP4) -----------------------
+      # The MULTIMODAL primary (promoted 2026-07-31) serves its ViT: image AND
+      # video intake, both validated live on the GB10 against negative controls
+      # (docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt). Its MTP
+      # draft is SELF-HOSTED (baked into the checkpoint), so unlike the outgoing
+      # text-only export it needs neither --language-model-only nor a --tokenizer
+      # override. Compose can't conditionally omit a list item, so to serve a
+      # NON-MTP model, REMOVE these 2 lines by hand (`lobes switch
+      # <non-mtp-model>` prints them). See docs/qwen3.6-27b-nvfp4-multimodal.md.
       # SECURITY: --trust-remote-code runs the model repo's code in-container with
       # access to whatever .env carries. HF_TOKEN is only needed to *download* gated
       # repos (these defaults are public) — leave it empty, or use a minimal-scope
       # read-only token and clear it once weights are cached. Pin model revisions you
       # trust; the blast radius of a compromised repo is arbitrary code, not just weights.
-      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
-      - --trust-remote-code                # MTP build ships custom modeling code (see SECURITY note above)
-      - --language-model-only              # MTP build is text-only (ViT tower removed)
-      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4   # MTP checkpoint's tokenizer_config declares TokenizersBackend (absent from nv26.04); point at the cached base tokenizer (same vocab)
+      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'
+      - --trust-remote-code                # the checkpoint ships custom modeling code (see SECURITY note above)
       # NOTE: the MoE-only flag is NOT here. The Qwen3.6-35B-A3B MoE candidate also
       # wants `--moe-backend=marlin` (verified to load it solo on the GB10). It is
       # catalog data, not a default — add it by hand when serving the MoE

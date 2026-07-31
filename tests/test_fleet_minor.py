@@ -19,7 +19,7 @@ from lobes.gateway._config import build_config
 from lobes.gateway._routing import order_backends, resolve_model
 
 _MINOR_SERVED = "Qwen/Qwen3.5-4B"
-_PRIMARY_SERVED = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+_PRIMARY_SERVED = "unsloth/Qwen3.6-27B-NVFP4"
 
 # ---------------------------------------------------------------------------
 # Gateway routing tests (written before the implementation — TDD)

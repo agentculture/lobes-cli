@@ -55,6 +55,17 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed 2026-07-31 for the multimodal-cortex promotion: the GATEWAY
+    # service's PRIMARY_SERVED_NAME passthrough default moved from the outgoing
+    # sakamakismile/…-Text-NVFP4-MTP to unsloth/Qwen3.6-27B-NVFP4, matching
+    # vllm-primary's own --served-model-name default. Leaving them mismatched was
+    # a real bug (caught in review): the gateway builds its routing table from
+    # PRIMARY_SERVED_NAME, so a deployment whose .env omits the var would rewrite
+    # model=cortex|main|hard to an id the engine does not serve — a 404 with a
+    # healthy backend behind it, observed live during the 2026-07-31 boot.
+    # ONLY `gateway` moved; every other service is byte-identical, which is this
+    # tripwire proving the blast radius.
+    #
     # Recomputed for the opt-in-core `worker` gear (thor-worker-lobe plan, t4),
     # on top of the `embed-deep` recompute and the 2026-07-17 Gemma 4 parser-pair
     # correction. The newest story rebases onto the earlier ones, so all matter:
@@ -90,7 +101,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
     # byte-identical — this tripwire firing on exactly the intended services, and
     # NOTHING else, is itself the proof of each change's blast radius.
-    "gateway": "2bc7ff1060266cc44d33547e5648c4d980ff7ab5bfa3a075f3c9d259ae3c4b76",
+    "gateway": "079f50f67e47cf09f31fd960b5fd6dd831eb6099f9eddb8978434626e0d23211",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",

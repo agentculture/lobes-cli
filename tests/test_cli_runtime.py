@@ -108,9 +108,7 @@ def test_switch_dry_run_changes_nothing(tmp_path, capsys) -> None:
     assert "DRY RUN" in out
     assert "VLLM_MODEL=foo/bar" in out
     # .env untouched
-    assert (
-        _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
-    )
+    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "unsloth/Qwen3.6-27B-NVFP4"
 
 
 def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
@@ -315,7 +313,7 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     rc = main(
         [
             "switch",
-            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "unsloth/Qwen3.6-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -328,8 +326,10 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     assert "VLLM_MAX_NUM_SEQS=2" in out  # forced MTP cap (overrides the balanced 4)
     assert "MTP primary cap" in out
     assert "VLLM_MAX_MODEL_LEN=262144" in out  # spark serves the full 256K by default (load-tested)
-    # quantization comes from the catalog (modelopt, not modelopt_fp4)
-    assert any(line.strip() == "VLLM_QUANTIZATION=modelopt" for line in out.splitlines())
+    # quantization comes from the catalog: the promoted multimodal primary is
+    # compressed-tensors (its own mixed-precision quant_method), NOT the outgoing
+    # text-only export's plain `modelopt`.
+    assert any(line.strip() == "VLLM_QUANTIZATION=compressed-tensors" for line in out.splitlines())
 
 
 def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
@@ -353,10 +353,15 @@ def test_switch_to_non_mtp_prints_remove_notice(tmp_path, capsys) -> None:
     assert "REMOVE these" in out
     assert "- '--speculative-config=" in out  # single quoted YAML list item
     assert "--speculative-config '" not in out  # no shell space form
-    assert "qwen3_5_mtp" in out
+    assert '"method": "mtp"' in out
     assert "--trust-remote-code" in out
-    assert "--language-model-only" in out
-    assert "--tokenizer=mmangkad/Qwen3.6-27B-NVFP4" in out
+    # TWO items since the 2026-07-31 multimodal promotion, not four. The outgoing
+    # text-only primary also needed --language-model-only (its export dropped the
+    # ViT) and --tokenizer=<override> (its tokenizer_config declared a
+    # TokenizersBackend absent from the image). The promoted multimodal primary
+    # needs neither, so the notice must NOT name them.
+    assert "--language-model-only" not in out
+    assert "--tokenizer=" not in out
     # not an MoE checkpoint — no --moe-backend
     assert "--moe-backend" not in out
 
@@ -367,7 +372,7 @@ def test_switch_to_gemma_multimodal_needs_compose_edit_despite_own_speculative_c
     # coolthor/gemma-4-12B-it-NVFP4A16 carries its OWN, Gemma-specific
     # speculative_config (native "mtp" + the assistant draft) — NOT the Qwen MTP
     # primary's baked-in flags the single-model template ships
-    # (qwen3_5_mtp + --language-model-only + --tokenizer=mmangkad/...). A gating
+    # (the self-hosted mtp spec-config + --trust-remote-code). A gating
     # rule that suppresses the compose-edit notice for ANY non-empty
     # speculative_config would incorrectly treat this model like the MTP primary
     # and let `switch --apply` restart the container straight into the
@@ -390,9 +395,17 @@ def test_switch_to_gemma_multimodal_needs_compose_edit_despite_own_speculative_c
     assert "REMOVE these" in out
     # The notice names the Qwen MTP primary's flags to remove, not the Gemma
     # model's own (different) speculative config.
-    assert "qwen3_5_mtp" in out
-    assert '"method": "mtp"' not in out
+    #
+    # NOTE the discriminator changed on 2026-07-31. It used to be the METHOD
+    # STRING: the primary's grafted draft used "qwen3_5_mtp" while Gemma's native
+    # one uses "mtp". The promoted multimodal primary carries a SELF-HOSTED draft
+    # whose method is also plain "mtp", so that no longer separates them. What
+    # still does is the EXTERNAL DRAFT key: Gemma wires a separate draft
+    # checkpoint ("model": "google/gemma-4-12B-it-assistant"), whereas the
+    # primary's draft is baked into its own weights and names no draft repo.
+    assert '"method": "mtp"' in out
     assert "gemma-4-12B-it-assistant" not in out
+    assert '"model":' not in out  # no external draft key — that would be Gemma's own config
 
 
 def test_switch_apply_gemma_multimodal_blocks_restart_without_force(
@@ -437,7 +450,7 @@ def test_switch_to_mtp_primary_still_needs_no_compose_edit_regression(tmp_path, 
     rc = main(
         [
             "switch",
-            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "unsloth/Qwen3.6-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -477,7 +490,7 @@ def test_switch_no_clamp_when_model_fits_machine_default(tmp_path, capsys) -> No
     rc = main(
         [
             "switch",
-            "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+            "unsloth/Qwen3.6-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -906,5 +919,5 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["container"] == "model-gear-vllm"
     assert payload["state"] == "not created"  # offline _probe → None
     assert payload["health"] == "not responding"  # offline is_healthy → False
-    assert payload["model"] == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+    assert payload["model"] == "unsloth/Qwen3.6-27B-NVFP4"
     assert payload["tool_call_parser"] == "qwen3_coder"  # scaffolded default

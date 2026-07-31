@@ -85,11 +85,15 @@ services:
     command:
       - vllm
       - serve
-      - ${PRIMARY_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
-      - --served-model-name=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      - ${PRIMARY_MODEL:-unsloth/Qwen3.6-27B-NVFP4}
+      - --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
-      - --quantization=${PRIMARY_QUANTIZATION:-modelopt}
+      # compressed-tensors — the checkpoint's OWN quant_method (mixed precision:
+      # fp8 attention/lm_head/upper-8 MLP + nvfp4 MLP gate/up/down, ViT and every
+      # linear_attn left unquantized). The outgoing text-only MTP export used
+      # `modelopt`; passing that here fails on a quant-method mismatch.
+      - --quantization=${PRIMARY_QUANTIZATION:-compressed-tensors}
       # fp8 KV needs calibrated k_scale/v_scale in the checkpoint. The shipped
       # default STAYS fp8 (GB10 behavior unchanged) — per-machine override goes
       # in .env. On boxes serving an NVFP4 re-export with no KV scales
@@ -118,21 +122,31 @@ services:
       - --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
       # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
       - --enable-prefix-caching
-      # MTP default primary: speculative decoding (~2.4x decode) + the text-only /
-      # custom-code / tokenizer-override flags it needs. To run a non-MTP model as
-      # primary, remove these 4 lines (and clear PRIMARY_MAX_NUM_SEQS). See
-      # docs/qwen3.6-27b-text-nvfp4-mtp.md.
-      # Unchanged by the t4 nightly flip: the t2 spike proved nightly auto-maps
-      # the deprecated "qwen3_5_mtp" method string to "mtp" internally with MTP
-      # still active (69.9% draft acceptance, near the 0.19.0 72-79% baseline)
-      # — no caller/config change needed. See docs/vllm-nightly-migration.md §4.
+      # SELF-HOSTED MTP draft — the draft module is baked into the checkpoint
+      # (15 real `mtp.*` tensors + an `unsloth_fixed_mtp` config flag), so the
+      # generic "mtp" method applies with no external draft-model key. This
+      # replaces the outgoing export's grafted '{"method": "qwen3_5_mtp",
+      # "num_speculative_tokens": 3}'. MEASURED on the GB10 2026-07-31: engages
+      # at 62-67% draft acceptance, mean acceptance length 2.24-2.35, decode up
+      # to 19.0 tok/s at TTFT ~0.27s. To run a non-MTP model as primary, remove
+      # this line (and clear PRIMARY_MAX_NUM_SEQS).
       # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
       # is only needed to download gated repos (these defaults are public) — leave it
       # empty or use a minimal-scope read-only token; pin revisions you trust.
-      - '--speculative-config={"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
+      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'
       - --trust-remote-code
-      - --language-model-only
-      - --tokenizer=mmangkad/Qwen3.6-27B-NVFP4
+      # DELIBERATELY ABSENT, and both removals are load-bearing:
+      #   --language-model-only  — the outgoing export had its ViT stripped, so it
+      #     had to be told to run text-only. THIS checkpoint declares
+      #     language_model_only=false and ships a 27-layer ViT; keeping the tower
+      #     is the entire point. VALIDATED live 2026-07-31 on the GB10: image
+      #     intake against an opposite-colour negative control AND video intake
+      #     against a REVERSED-motion control (a single-frame read cannot pass
+      #     that). See docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
+      #   --tokenizer=mmangkad/…  — that override existed only because the
+      #     outgoing checkpoint's tokenizer_config declared a TokenizersBackend
+      #     absent from the image. This export ships its own tokenizer AND a
+      #     chat_template.jinja carrying `preserve_thinking`, so #93 survives.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -1029,7 +1043,11 @@ services:
       # instead of a 404ing endpoint /capabilities still calls ready=true.
       - AUDIO_URL=${AUDIO_URL:-}
       - PRIMARY_URL=http://vllm-primary:8000
-      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}
+      # MUST match vllm-primary's own --served-model-name default above. The
+      # gateway builds its routing table from THIS value, so a mismatch makes it
+      # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
+      # with a perfectly healthy backend behind it (observed live 2026-07-31).
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
       # gateway wires a second backend only when these are present).
       # Minor co-resident generate backend (opt-in: activate with --profile minor

@@ -26,7 +26,7 @@ from lobes.runtime._parser import infer_parser
 
 _MIDDLE_ID = "nvidia/Qwen3-14B-NVFP4"
 _MINOR_ID = "Qwen/Qwen3.5-4B"
-_PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
 
 
 # ---------------------------------------------------------------------------

@@ -171,8 +171,8 @@ def test_doc_cites_real_mesh_traffic_not_a_hypothetical() -> None:
     assert "culture.yaml" in doc_text, "doc must cite culture.yaml as evidence"
     # The exact model id culture.yaml's lobes agent is served by — verifies
     # the doc's citation is accurate, not a stale/guessed value.
-    assert "vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in culture_yaml_text
-    assert "vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" in doc_text
+    assert "vllm-local/unsloth/Qwen3.6-27B-NVFP4" in culture_yaml_text
+    assert "vllm-local/unsloth/Qwen3.6-27B-NVFP4" in doc_text
 
     assert "model=main" in doc_text or "model=multimodal" in doc_text, (
         "doc must cite the tier-alias routing (model=main / model=multimodal), "

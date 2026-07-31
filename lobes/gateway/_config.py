@@ -15,7 +15,13 @@ from dataclasses import dataclass, field
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 
-_DEFAULT_PRIMARY = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+# The multimodal cortex (promoted 2026-07-31, replacing the text-only
+# sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP). NOTE this is the served-name a
+# deployment falls back to when PRIMARY_SERVED_NAME is unset — changing it
+# changes the id callers must name, and NO consumer in this mesh addresses by
+# role name (they all send the raw id), so a swap 404s them until they migrate
+# to the stable `cortex`/`main` aliases. See docs/model-switch-playbook.md §2.
+_DEFAULT_PRIMARY = "unsloth/Qwen3.6-27B-NVFP4"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 # The opt-in "deep" embedding slot — the higher-fidelity companion to _DEFAULT_EMBED,
@@ -668,6 +674,31 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         _opt_in_backend = next((b for b in backends if b.name == _opt_in), None)
         if _opt_in_backend is not None:
             aliases[_opt_in] = _opt_in_backend.served_name
+    # POOLING ROLE IDENTITY aliases — the stable address for the embed/rerank
+    # lanes, mirroring what `cortex`/`senses` already give the generate lane.
+    #
+    # Why this exists: a caller that names a role survives a checkpoint swap; a
+    # caller that hardcodes a served id does not. Before this, `embedder` and
+    # `reranker` were NOT addressable at all — the only working address was the
+    # raw served id (`Qwen/Qwen3-Embedding-0.6B`), because tier_aliases is
+    # generate-only. So every embed consumer (eidetic among them) had to pin a
+    # concrete checkpoint, with no stable name to migrate to, and an embed-model
+    # swap would 404 all of them. The 2026-07-31 cortex swap demonstrated that
+    # failure mode on the generate lane, where role aliases at least existed as
+    # an escape hatch; the pooling lanes had none.
+    #
+    # Same no-fallback contract as `embed-deep` directly above: an alias is added
+    # ONLY when its own backend is wired. An absent gear means the alias is
+    # absent (404 role_infeasible / model_not_found), NEVER a silent substitution
+    # — an embedding served from a different model answers in the WRONG VECTOR
+    # SPACE, and a rerank from the wrong head returns meaningless orderings.
+    # Both the Colleague-facing ROLE name and the internal BACKEND name are
+    # accepted, exactly as the generate lane takes `senses` and `multimodal`.
+    for _role_name, _backend_name in (("embedder", "embed"), ("reranker", "rerank")):
+        _pool_backend = next((b for b in backends if b.name == _backend_name), None)
+        if _pool_backend is not None:
+            aliases.setdefault(_role_name, _pool_backend.served_name)
+            aliases.setdefault(_backend_name, _pool_backend.served_name)
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually

@@ -33,11 +33,11 @@ def test_role_env_prefix_covers_all_six_roles() -> None:
 def test_spark_profile_env_matches_compose_defaults() -> None:
     spark = resolve_profile("spark")
     env = profile_env(spark)
-    assert env["PRIMARY_MODEL"] == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
-    assert env["PRIMARY_SERVED_NAME"] == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+    assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.6-27B-NVFP4"
+    assert env["PRIMARY_SERVED_NAME"] == "unsloth/Qwen3.6-27B-NVFP4"
     assert env["PRIMARY_GPU_MEM_UTIL"] == "0.3"
     assert env["PRIMARY_MAX_MODEL_LEN"] == "131072"
-    assert env["PRIMARY_QUANTIZATION"] == "modelopt"
+    assert env["PRIMARY_QUANTIZATION"] == "compressed-tensors"
     assert env["PRIMARY_KV_CACHE_DTYPE"] == "fp8"
     assert env["PRIMARY_MAX_NUM_SEQS"] == "2"
     assert env["MULTIMODAL_MODEL"] == "coolthor/gemma-4-12B-it-NVFP4A16"

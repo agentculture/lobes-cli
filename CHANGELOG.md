@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.9] - 2026-07-31
+
+### Changed
+
+- **BREAKING (served id): `cortex` is now `unsloth/Qwen3.6-27B-NVFP4` — a MULTIMODAL primary.** Promoted after a live GB10 boot; the outgoing `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` is demoted to `candidate` and kept (it remains the only text-only 27B). The fleet's reasoning/final-authority lobe can now take image **and** video input through its own ViT — previously the role contract had *no* role that both sees an image and decides, since `senses` is forbidden `final_decision`/`repo_action` and `worker` is forbidden `final_decision`/`security_decision`. **Callers pinning the old raw id get a 404**; migrate to the stable `cortex`/`main`/`hard` aliases. MEASURED (`docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt`): boots first try at the spark-lobe shape's existing `0.44 / 262144` with no retune, KV pool 26.39 GiB / 756,642 tokens ≈ 2.89× concurrency at the full 256K window (the unquantized bf16 ViT costs ~132,300 tokens, ~15%), decode 15.0/15.5/18.4 tok/s at TTFT ~0.27 s, self-hosted MTP at 62–67% acceptance. Vision, video (reversed-motion control), thinking, `preserve_thinking` (#93) and strict tool calling with thinking on (colleague#320) all re-verified. The lane converges on the validated `worker` lane's shape: `--quantization` `modelopt`→`compressed-tensors`, spec-config `qwen3_5_mtp`/3→self-hosted `mtp`/2, and **both** `--language-model-only` and `--tokenizer=<override>` dropped — so `mtp_compose_command_items()` is now two items, not four.
+- `spark.toml` / `thor.toml` take the new model, but their machine-as-brain **duo** budget (`0.30 / 131072`) is explicitly marked **inherited and unmeasured with a ViT** — it was measured for the text-only export, and this box runs `spark-lobe`, so that configuration was never booted. `thor.toml` takes the model to preserve its "cortex differs from spark's in `kv_cache_dtype` alone" contract; the checkpoint itself is unvalidated on sm_110 (#108).
+
+- `docs/qwen3.6-27b-nvfp4-multimodal.md` — replaced the "open, unmeasured" section with **measured** live-GB10 results. Booted first try at the incumbent's own `0.44 / 262144` (no retune, unlike `thor-muse`): KV pool 26.39 GiB / 756,642 tokens ≈ 2.89× concurrency, so the unquantized bf16 ViT costs ≈132,300 tokens (~15%) of KV pool and the full 256K window survives. Decode 14.9 / 16.4 / **19.0** tok/s (TTFT ~0.27 s); self-hosted MTP engages at 62–67% draft acceptance. All behavioural gates pass: vision and **video** (directional-motion probe with the reversed clip as control), thinking, `preserve_thinking` (#93, +800-token two-turn delta), and strict tool calling with thinking on (colleague#320). The page now also states plainly that the throughput comparison against the incumbent is **not controlled** — those numbers came from a different vLLM build.
+
+### Added
+
+- **Pooling ROLE-IDENTITY aliases** — `embedder` / `reranker` (and the backend names `embed` / `rerank`) are now addressable on `/v1/embeddings` and `/v1/rerank`, mirroring what `cortex`/`senses` give the generate lane. `tier_aliases` is generate-only, so the pooling gears previously had **no stable address at all**: every embed consumer had to pin a concrete served id with nothing to migrate to when it changed. Same no-fallback contract as `embed-deep` — a missing gear means the alias is **absent** (honest 404), never a substitution, because an embedding served from a different model answers in the wrong vector space (the 0.6B is 1024-dim, the 4B is 2560-dim).
+- **`docs/model-switch-playbook.md`** — how to swap a served checkpoint without guessing, written from the 2026-07-31 `cortex` candidate run. Records the ordering that matters (benchmark the *incumbent* first, on today's engine — that baseline is unrecoverable once the model is gone), the consumer-breakage audit (**no consumer in this mesh addresses by role name**; every one sends the raw served id, so changing `PRIMARY_SERVED_NAME` 404s them all), two measurement traps that produced wrong answers on this run, and a probe-design table with negative controls.
+
+### Fixed
+
+- Two measurement traps now documented rather than re-learned: counting SSE **chunks** instead of `usage.completion_tokens` under-reports decode by >2× under speculative decoding (8.2 vs the true 19.0 tok/s), and this vLLM build returns the thinking trace as **`reasoning`**, not `reasoning_content` — reading the wrong field looks exactly like a model that stopped thinking. Reconciling `completion_tokens` against visible field lengths catches both.
+
 ## [0.54.8] - 2026-07-31
 
 ### Fixed

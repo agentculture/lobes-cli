@@ -1,0 +1,164 @@
+================================================================================
+ACCEPTANCE — multimodal cortex on the DGX Spark GB10
+  checkpoint : unsloth/Qwen3.6-27B-NVFP4  (replaces sakamakismile/…-Text-NVFP4-MTP)
+  shape      : spark-lobe (senses dropped to the Orin, cortex local)
+  knobs      : gpu_mem_util=0.44  max_model_len=262144
+  date       : 2026-07-31
+================================================================================
+
+VERDICT
+-------
+PROVED by this run:
+  * Boots FIRST TRY at the shape's existing 0.44 / 262144 -- no retune, despite
+    the export adding an unquantized bf16 ViT. (Contrast thor-muse, whose
+    hypothesised 0.40 was refused live.)
+  * KV pool 26.39 GiB = 756,642 tokens = ~2.89x concurrency at the FULL 256K
+    window, vs the outgoing text-only primary's 888,946 / 3.39x at the SAME
+    knobs -> the ViT costs ~132,300 tokens (~15%) of KV pool, and the full
+    window still fits.
+  * embedder + reranker + embed-deep stayed co-resident and healthy throughout.
+  * VISION: image intake correct against an opposite-colour negative control.
+  * VIDEO: motion direction correct against a REVERSED-motion negative control
+    -- a single-frame read cannot pass this, so temporal processing is real.
+  * Thinking produces a real trace; preserve_thinking (#93) retains it across
+    turns (+800 prompt tokens on a two-turn delta).
+  * Strict tool calling with thinking ON (colleague#320) returns a clean
+    structured call -- no 500 grammar rejection, no mangled name.
+  * Self-hosted MTP engages: 62-67% draft acceptance, mean acceptance length
+    2.24-2.35 -- resolving the previously-UNMEASURED question of whether the
+    baked-in draft module works on this checkpoint.
+
+NOT proved by this run:
+  * QUALITY. Nothing here measures whether this model reasons BETTER than the
+    one it replaces. A swap that degraded reasoning quality would pass every
+    gate below.
+  * A CONTROLLED throughput comparison. The outgoing primary's recorded
+    18.7-19.1 tok/s came from a DIFFERENT vLLM build (0.19.0+nv26.04) at a
+    different util, so "level with the incumbent" is weaker than it reads. The
+    fix for next time is written up in docs/model-switch-playbook.md §1:
+    benchmark the incumbent on today's engine BEFORE swapping.
+  * CONCURRENCY. All numbers are single-stream; ~2.89x is implied by the KV
+    pool, not measured.
+  * LONG CONTEXT. The lane serves 262144 tokens; the longest probe used ~94.
+  * The machine-as-brain DUO budget (0.30 / 131072). This box runs spark-lobe,
+    so that configuration was never booted here -- spark.toml/thor.toml carry it
+    as an INHERITED, unmeasured value and say so.
+  * sm_110 (Thor) / Orin. Unvalidated on any card but this one (#108).
+  * Pressure-shedding behaviour against the new lane.
+
+--- [1] engine boot: budget + KV pool -----------------------------------
+(EngineCore pid=282) INFO 07-31 15:10:14 [backends.py:1089] Using cache directory: /root/.cache/vllm/torch_compile_cache/ab08620be8/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=282) INFO 07-31 15:10:57 [decorators.py:708] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/33466f385e33ed414975fe6a594f261a8b45a2022bb670c20c2ac686b080b835/rank_0_0/model
+(EngineCore pid=282) INFO 07-31 15:10:57 [monitor.py:53] torch.compile took 58.02 s in total
+(EngineCore pid=282) INFO 07-31 15:11:40 [backends.py:1089] Using cache directory: /root/.cache/vllm/torch_compile_cache/ab08620be8/rank_0_0/eagle_head for vLLM's torch.compile
+(EngineCore pid=282) INFO 07-31 15:11:47 [decorators.py:708] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/d5c36d04942012870160704bf3aa7556d7c014a686e7a8961d68f6afb9c3ab9b/rank_0_0/model
+(EngineCore pid=282) INFO 07-31 15:11:47 [monitor.py:53] torch.compile took 7.76 s in total
+(EngineCore pid=282) INFO 07-31 15:11:53 [gpu_worker.py:538] Available KV cache memory: 26.39 GiB
+(EngineCore pid=282) INFO 07-31 15:11:53 [kv_cache_utils.py:2146] GPU KV cache size: 756,642 tokens
+(EngineCore pid=282) INFO 07-31 15:12:30 [core.py:337] init engine (profile, create kv cache, warmup model) took 158.39 s (compilation: 65.77 s)
+(APIServer pid=1) INFO 07-31 15:12:53 [api_server.py:610] Starting vLLM server on http://0.0.0.0:8000
+
+--- [2] what vLLM actually serves ---------------------------------------
+{
+    "object": "list",
+    "data": [
+        {
+            "id": "unsloth/Qwen3.6-27B-NVFP4",
+            "object": "model",
+            "created": 1785515689,
+            "owned_by": "vllm",
+            "root": "unsloth/Qwen3.6-27B-NVFP4",
+            "parent": null,
+            "max_model_len": 262144,
+            "permission": [
+                {
+                    "id": "modelperm-9eec4a6258a5f767",
+
+--- [3] resolved serve command ------------------------------------------
+  vllm
+  serve
+  unsloth/Qwen3.6-27B-NVFP4
+  --served-model-name=unsloth/Qwen3.6-27B-NVFP4
+  --host=0.0.0.0
+  --port=8000
+  --quantization=compressed-tensors
+  --kv-cache-dtype=fp8
+  --max-model-len=262144
+  --gpu-memory-utilization=0.44
+  --max-num-seqs=2
+  --reasoning-parser=qwen3
+  --default-chat-template-kwargs
+  {"preserve_thinking": true}
+  --enable-auto-tool-choice
+  --tool-call-parser=qwen3_coder_thinking
+  --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
+  --enable-prefix-caching
+  --speculative-config={"method": "mtp", "num_speculative_tokens": 2}
+  --trust-remote-code
+  
+
+--- [4] VISION: image + opposite-colour negative control ----------------
+$ POST /v1/chat/completions  model=cortex + image_url(64x64 red square)
+  served: unsloth/Qwen3.6-27B-NVFP4
+  answer: 'Red'
+$ POST /v1/chat/completions  model=cortex + image_url(64x64 blue square)
+  served: unsloth/Qwen3.6-27B-NVFP4
+  answer: 'Blue'
+  CONTROL: red answered 'Red', blue answered 'Blue' -- reading pixels, not the prompt.
+
+--- [5] VIDEO: motion direction + REVERSED-motion negative control ------
+$ POST /v1/chat/completions  model=cortex + video_url(motion_lr: white square crossing a black field)
+  answer: 'LEFT-TO-RIGHT'
+$ POST /v1/chat/completions  model=cortex + video_url(motion_rl: white square crossing a black field)
+  answer: 'RIGHT-TO-LEFT'
+  CONTROL: the forward clip answered LEFT-TO-RIGHT and the REVERSED clip
+  answered RIGHT-TO-LEFT. A single-frame read cannot distinguish these.
+
+--- [6] THINKING + preserve_thinking (#93) ------------------------------
+NOTE: on this vLLM build the trace field is `reasoning`, NOT
+`reasoning_content`. Reading the wrong one returns None and looks exactly
+like a model that stopped thinking. Reconcile usage.completion_tokens
+against visible field lengths. See docs/model-switch-playbook.md §4.
+  turn1 reasoning: 1636 chars (>0 = thinking engaged)
+  turn1 head     : 'Here\'s a thinking process:\n\n1.  **Analyze User Input:**\n   - Question: "What is 12*13?"\n   - Instruction: "Thi'
+  turn2 prompt_tokens WITH reasoning in history : 826
+  turn2 prompt_tokens WITHOUT                   : 164
+  delta = 662  (>0 => historical <think> RETAINED across turns)
+
+--- [7] STRICT TOOL CALLING with thinking ON (colleague#320) ------------
+$ POST /v1/chat/completions  model=cortex, tools=[read_file strict:true], enable_thinking=true
+  finish_reason: tool_calls
+  tool name    : 'read_file'
+  arguments    : '{"path": "calc.py"}'
+  -> not a 500 grammar rejection, not a mangled salvaged name.
+
+--- [8] THROUGHPUT (single stream, measured on usage.completion_tokens) -
+NOTE: counting SSE CHUNKS instead of completion_tokens under-reports decode
+by >2x under speculative decoding (8.2 vs the true 19.0). See playbook §1.
+  case                       TTFT s   total s   prompt   tokens tok/s decode
+  short / 256                 0.260      1.59       20       21         15.0
+  medium / 256                0.271     12.54       35      191         15.5
+  long gen / 512              0.287     27.99       30      512         18.4
+
+--- [9] MTP self-hosted draft acceptance --------------------------------
+  (APIServer pid=1) INFO 07-31 16:36:43 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 2.42, Accepted throughput: 3.40 tokens/s, Drafted throughput: 4.80 tokens/s, Accepted: 102 tokens, Drafted: 144 tokens, Per-position acceptance rate: 0.792, 0.625, Avg Draft acceptance rate: 70.8%
+  (APIServer pid=1) INFO 07-31 16:36:54 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 1.97, Accepted throughput: 7.20 tokens/s, Drafted throughput: 14.80 tokens/s, Accepted: 72 tokens, Drafted: 148 tokens, Per-position acceptance rate: 0.649, 0.324, Avg Draft acceptance rate: 48.6%
+  (APIServer pid=1) INFO 07-31 16:37:04 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 2.38, Accepted throughput: 10.80 tokens/s, Drafted throughput: 15.60 tokens/s, Accepted: 108 tokens, Drafted: 156 tokens, Per-position acceptance rate: 0.821, 0.564, Avg Draft acceptance rate: 69.2%
+  (APIServer pid=1) INFO 07-31 16:37:14 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 2.35, Accepted throughput: 10.90 tokens/s, Drafted throughput: 16.20 tokens/s, Accepted: 109 tokens, Drafted: 162 tokens, Per-position acceptance rate: 0.815, 0.531, Avg Draft acceptance rate: 67.3%
+
+--- [10] co-residence preserved -----------------------------------------
+model-gear-gateway	Up About an hour (healthy)
+model-gear-vllm-primary	Up 2 hours (healthy)
+model-gear-realtime	Up 4 days (healthy)
+model-gear-stt	Up 29 hours (healthy)
+model-gear-chatterbox	Up 4 days (healthy)
+model-gear-vllm-embed-deep	Up 4 days (healthy)
+model-gear-vllm-rerank	Up 4 days (healthy)
+model-gear-vllm-embed	Up 4 days (healthy)
+
+--- [11] rollback --------------------------------------------------------
+  Restore the two commented PRIMARY_MODEL/PRIMARY_SERVED_NAME lines in
+  ~/.lobes/.env, drop -f docker-compose.cortex-candidate.yml, re-up
+  vllm-primary. Pre-change deployment: ~/.lobes.pre-worker-proxy-*
+
+================================ END ====================================

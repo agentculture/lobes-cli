@@ -77,18 +77,80 @@ tokenizer source the MTP primary serves with and (b) the only vision-capable
 27B. Promotion makes **both false**. The entry stays (cite-don't-delete), but its
 recorded rationale must be rewritten rather than left asserting something untrue.
 
-## Open, unmeasured
+## MEASURED — live GB10 boot, 2026-07-31
 
-- **Budget.** The incumbent runs `PRIMARY_GPU_MEM_UTIL=0.44` at the full 262144
-  window — measured for a *text-only* checkpoint. This export adds an
-  unquantized bf16 ViT (333 visual tensors) plus video preprocessing. Whether
-  the full 256K window survives, whether `embedder`/`reranker`/`embed-deep`
-  still co-reside, and whether `PRIMARY_MAX_NUM_SEQS` needs changing are all
-  boot-time findings.
-- **MTP acceptance.** The 35B twin hit 89.1% at 2 tokens. That is the sibling's
-  number. This checkpoint's is unknown, as is whether 2 or 3 tokens is right.
-- **Vision quality at 27B.** Nothing is known about how this export's ViT
-  performs relative to the 12B `senses` gear it would sit alongside.
+The candidate booted on the DGX Spark and was probed live. These are measured
+numbers, not hypotheses.
+
+**Budget — booted first try at the incumbent's own knobs**, no retune needed
+(unlike `thor-muse`, whose 0.40 was refused):
+
+| | incumbent (text-only) | candidate (multimodal) |
+|---|---|---|
+| `gpu_mem_util` / `max_model_len` | 0.44 / 262144 | **0.44 / 262144** |
+| KV cache | — | **26.39 GiB** |
+| KV pool | 888,946 tokens | **756,642 tokens** |
+| KV-pool *ceiling* @ full context | 3.39× | **≈2.89×** |
+
+The unquantized bf16 ViT costs ≈**132,300 tokens of KV pool (~15%)**. The full
+256K window survives, and `embedder`, `reranker` and `embed-deep` all stayed
+co-resident and healthy throughout.
+
+**Throughput** (single-stream, `enable_thinking=false`, measured against
+`usage.completion_tokens`):
+
+| case | TTFT | decode tok/s |
+|---|---|---|
+| short prompt / 21 tok gen | 0.262 s | 14.9 |
+| medium prompt / 191 tok gen | 0.275 s | 16.4 |
+| long gen / 512 tok | 0.267 s | **19.0** |
+
+**MTP self-hosted draft engages** — mean acceptance length 2.24–2.35,
+per-position rate ~0.79/0.52, avg draft acceptance **62–67%**. That resolves the
+previously-unmeasured question: the self-hosted head works at
+`num_speculative_tokens: 2`. It is lower than both the 35B twin's 89.1% and the
+incumbent's recorded 72–78.6%.
+
+**Behavioural gates — all pass:**
+
+- **Vision**: red/blue squares with an opposite-colour negative control.
+- **Video**: a white square crossing a black field, asked left-to-right vs
+  right-to-left, with the *reversed* clip as the control — both correct. A
+  single-frame read cannot pass this, so temporal processing is real.
+- **Thinking**: 4,195 chars of trace on a deliberately misleading puzzle.
+  *Note the field is `reasoning`, NOT `reasoning_content`* — see the playbook.
+- **`preserve_thinking` (#93)**: two-turn `prompt_tokens` delta of **+800**,
+  i.e. historical `<think>` is retained across turns.
+- **Strict tool calling with thinking on (colleague#320)**: clean
+  `read_file {"path": "calc.py"}`, `finish_reason: tool_calls` — no 500 grammar
+  rejection, no mangled name.
+
+### The comparison is NOT controlled
+
+The incumbent's 18.7–19.1 tok/s and 72–78.6% acceptance were recorded on a
+**different vLLM build** (0.19.0+nv26.04) at a different util. Sustained decode
+being "level with the incumbent" is therefore a weaker claim than it reads. A
+fair head-to-head means re-benchmarking the incumbent on today's engine before
+promoting. See [`model-switch-playbook.md`](model-switch-playbook.md) §1.
+
+## Still open
+
+- **Quality.** Nothing above measures whether this model *reasons better* — only
+  that it is alive, fast and structurally intact. A swap that degraded reasoning
+  quality would pass every gate here.
+- **Concurrency.** Every throughput number above is **single-stream**. The
+  ~2.89× is a **KV-pool ceiling** (`KV pool / max_model_len`) — how many
+  full-context requests the cache could *hold*, not a measured serving width,
+  and emphatically **not** something to multiply the single-stream tok/s by.
+  On the `worker` lane, where two consumers did measure it, the real behaviour
+  fell well short of the ceiling: saturation near width **8–9** against a
+  **14.07×** ceiling, with per-stream decode dropping to ~30 tok/s at high width
+  (embodiment; colleague#361). Expect the same shape here; it is unmeasured.
+- **Long context.** The lane serves 262144 tokens; the longest probe used ~94.
+- **Vision quality at 27B** relative to the 12B `senses` gear it sits alongside.
+- **Breaking change.** Promotion changes the served id, and **no consumer in the
+  mesh addresses by role name** — every one sends the raw id and would 404. See
+  the playbook §2.
 
 ## See also
 
