@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-31T07:06:31Z",
-  "updated": "2026-07-31T07:11:35Z",
+  "updated": "2026-07-31T09:30:19Z",
   "targets": [
     {
       "id": "c1",
@@ -330,7 +330,10 @@
         "transcript under docs/evidence/ records: lobes capabilities on the deployed Thor shows worker feasible+ready serving the unsloth id, muse feasible:false with NO hosted_by, and model=muse 404s role_infeasible",
         "a model=worker chat completion returns a parsed tool_calls array (not content); a skip_special_tokens:false probe shows the reasoning trace separating via --reasoning-parser=qwen3",
         "decode tok/s measured with MTP on (and off, if feasible) via lobes measure/benchmark \u2014 the speed rationale is measured, not assumed",
-        "the transcript records the pre-move state (thor-muse serving per the 2026-07-17 evidence) and the post-move state, and the deployed .env carries no muse hosting keys"
+        "the transcript records the pre-move state (thor-muse serving per the 2026-07-17 evidence) and the post-move state, and the deployed .env carries no muse hosting keys",
+        "LIVE image probe with ground truth + negative control (mirrors the senses Red/Blue vision validation): send worker an image via model=worker and verify it correctly identifies known content, AND a deliberately-wrong assertion correctly fails. Record the HONEST verdict \u2014 vision serves, OR a #101-style gap where vLLM drops the image content part for Qwen3_5MoeForConditionalGeneration; the announcement's multimodal claim degrades honestly if it does not serve",
+        "LIVE video probe: send worker a short clip (video_url, the card's fps extra_body knob) and verify a correct answer about its content \u2014 or record honestly that video intake is not served on this vLLM/arch",
+        "LIVE thinking+coding probe exercising the doer contract: a real coding task through model=worker returns a correct code answer WITH a separated reasoning/<think> trace (via --reasoning-parser=qwen3), with MTP self-draft active \u2014 recorded with the measured draft-acceptance/decode numbers, not assumed"
       ],
       "deps": [
         "t6",

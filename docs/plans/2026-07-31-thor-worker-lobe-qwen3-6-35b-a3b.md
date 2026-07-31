@@ -82,6 +82,9 @@ slug: `thor-worker-lobe-qwen3-6-35b-a3b` · status: `exported` · from frame: `t
   - a model=worker chat completion returns a parsed tool_calls array (not content); a skip_special_tokens:false probe shows the reasoning trace separating via --reasoning-parser=qwen3
   - decode tok/s measured with MTP on (and off, if feasible) via lobes measure/benchmark — the speed rationale is measured, not assumed
   - the transcript records the pre-move state (thor-muse serving per the 2026-07-17 evidence) and the post-move state, and the deployed .env carries no muse hosting keys
+  - LIVE image probe with ground truth + negative control (mirrors the senses Red/Blue vision validation): send worker an image via model=worker and verify it correctly identifies known content, AND a deliberately-wrong assertion correctly fails. Record the HONEST verdict — vision serves, OR a #101-style gap where vLLM drops the image content part for Qwen3_5MoeForConditionalGeneration; the announcement's multimodal claim degrades honestly if it does not serve
+  - LIVE video probe: send worker a short clip (video_url, the card's fps extra_body knob) and verify a correct answer about its content — or record honestly that video intake is not served on this vLLM/arch
+  - LIVE thinking+coding probe exercising the doer contract: a real coding task through model=worker returns a correct code answer WITH a separated reasoning/<think> trace (via --reasoning-parser=qwen3), with MTP self-draft active — recorded with the measured draft-acceptance/decode numbers, not assumed
 
 ## Risks
 
