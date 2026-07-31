@@ -6,11 +6,13 @@ see `docs/deployment-shapes.md`) with knob values tuned to the hardware it
 lands on. A **machine profile** is the per-card tuning declaration: which
 models serve each role, their
 GPU memory budget, context length, attention backend, and other vLLM knobs
-the compose template substitutes. The profile schema now covers **five core
-roles** (`cortex` / `senses` / `muse` / `embedder` / `reranker`) — `muse`
-being the opt-in-hosted seventh Colleague role, whose full declaration lives
-in a deployment *shape*, not a card profile (see "muse: shape-declared, not
-card-declared" below). This document walks the detection flow,
+the compose template substitutes. The profile schema now covers **six core
+roles** (`cortex` / `senses` / `muse` / `worker` / `embedder` / `reranker`) —
+`muse` being the opt-in-hosted seventh Colleague role and `worker` the
+opt-in-hosted eighth (thor-worker-lobe plan), both of whose full declarations
+live in a deployment *shape*, not a card profile (see "muse: shape-declared,
+not card-declared" below, which now covers `worker` too). This document
+walks the detection flow,
 how a profile is chosen, the knobs' meanings and provenance, and how to
 write custom profiles for new hardware.
 
@@ -93,35 +95,42 @@ Every knob is optional (`None` = "profile takes no position, template default
 applies"). Only knobs the profile diverges on appear in the TOML or env; the
 rest are inherited from the template.
 
-The five roles and seven knobs map to env vars via `lobes/profiles/render.py`:
+The six roles and seven knobs map to env vars via `lobes/profiles/render.py`:
 
 | role | env prefix | feasible | model | gpu_mem_util | max_model_len | quantization | kv_cache_dtype | attention_backend | enforce_eager | max_num_seqs |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `cortex` | `PRIMARY_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | `KV_CACHE_DTYPE` | `ATTENTION_BACKEND` | `ENFORCE_EAGER` | `MAX_NUM_SEQS` |
 | `senses` | `MULTIMODAL_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | `KV_CACHE_DTYPE` | `ATTENTION_BACKEND` | (not used) | `MAX_NUM_SEQS` |
 | `muse` | `MUSE_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
+| `worker` | `WORKER_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
 | `embedder` | `EMBED_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | (not used) | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
 | `reranker` | `RERANK_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | (not used) | (not used) | `ATTENTION_BACKEND` | `ENFORCE_EAGER` | (not used) |
 
-### muse: shape-declared, not card-declared
+### muse and worker: shape-declared, not card-declared
 
-`muse` is an **opt-in core role** (`lobes/profiles/shapes.py`'s
-`OPT_IN_CORE_ROLES`): it carries the full per-machine knob set above, but the
-built-in **card profiles stay silent on it** — `spark.toml` and `thor.toml`
-declare nothing for `[roles.muse]`, because no card hosts a 31B alongside the
-default `cortex`+`senses` duo. The one exception is `base.toml`, which
-**vetoes** it (`[roles.muse] feasible = false`) under its conservative
-unknown-card rule, exactly as it already disables `senses`. The full `muse`
-declaration (model, budget, quantization, attention backend) lives in the
-muse-hosting deployment *shape*'s own overrides — `thor-muse`, see
-[`docs/deployment-shapes.md`](deployment-shapes.md) — while every non-hosting
-shape renders nothing for muse at all, passing the card's own declaration
-through verbatim: `base.toml`'s veto marker survives, and a card that stays
-silent on muse renders no `MUSE_*` line. `thor-muse`'s
-budget values are **measured** (2026-07-17 live boot on the physical Thor:
-util 0.55 at the full 262144 window), though the shape itself stays
-UNVALIDATED until the acceptance run passes; see
-[`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md).
+`muse` and `worker` are the two **opt-in core roles**
+(`lobes/profiles/shapes.py`'s `OPT_IN_CORE_ROLES = ("muse", "worker")`): each
+carries the full per-machine knob set above, but the built-in **card
+profiles stay silent on both** — `spark.toml` and `thor.toml` declare
+nothing for `[roles.muse]` or `[roles.worker]`, because no card hosts either
+heavy lobe alongside the default `cortex`+`senses` duo. The one exception is
+`base.toml`, which **vetoes** both (`[roles.muse] feasible = false` /
+`[roles.worker] feasible = false`) under its conservative unknown-card rule,
+exactly as it already disables `senses`. The full `muse`/`worker` declaration
+(model, budget, quantization, attention backend) lives in the
+muse-/worker-hosting deployment *shape*'s own overrides — `thor-muse` for
+`muse`, `thor-worker` (forthcoming, thor-worker-lobe plan task t7) for
+`worker` — see [`docs/deployment-shapes.md`](deployment-shapes.md) — while
+every non-hosting shape renders nothing for either role at all, passing the
+card's own declaration through verbatim: `base.toml`'s veto marker survives,
+and a card that stays silent on muse/worker renders no `MUSE_*`/`WORKER_*`
+line. `thor-muse`'s budget values are **measured** (2026-07-17 live boot on
+the physical Thor: util 0.55 at the full 262144 window), though the shape
+itself stays UNVALIDATED, and is now additionally **DORMANT** — the box that
+measured it moved to hosting `worker` instead; see
+[`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). `thor-worker`'s budget
+values are **not yet measured** — no number is declared here; see
+[`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md).
 
 ### Field descriptions and provenance
 
@@ -136,12 +145,15 @@ no `<PREFIX>_FEASIBLE` key is emitted — "feasible" is the assumed default.
 **When set:**
 
 - `spark` profile (GB10): all four default roles `feasible=true` (all
-  load-tested here); silent on `muse` (shape-declared — see above).
+  load-tested here); silent on `muse` and `worker` (both shape-declared —
+  see above).
 - `thor` profile (Jetson AGX Thor): all four default roles `feasible=true`
-  (validated live 2026-07-13); silent on `muse` (shape-declared — see above).
+  (validated live 2026-07-13); silent on `muse` and `worker` (both
+  shape-declared — see above).
 - `base` profile (unknown card): `cortex=true`, `senses=false`, `muse=false`,
-  `embedder=true`, `reranker=true` — the multimodal gear and the 31B muse
-  lobe are disabled to save memory on unknown hardware.
+  `worker=false`, `embedder=true`, `reranker=true` — the multimodal gear, the
+  31B muse lobe, and the 35B-A3B worker lobe are all disabled to save memory
+  on unknown hardware.
 
 #### `model` (no default)
 
@@ -380,9 +392,9 @@ max_model_len = 8192
   confusion from stale copies).
 - **Roles are optional.** A role omitted from the TOML means "take no position
   — use the template's defaults for this role." You don't have to restate all
-  five roles; a minimal profile might only touch `cortex`. (Staying silent on
-  `muse` is the norm — the built-in card profiles do; a muse-hosting *shape*
-  carries its declaration.)
+  six roles; a minimal profile might only touch `cortex`. (Staying silent on
+  `muse`/`worker` is the norm — the built-in card profiles do; a
+  muse-/worker-hosting *shape* carries each role's own declaration.)
 - **Knobs within a role are optional.** A knob omitted means "no opinion" (the
   template's `${VAR:-default}` applies). This lets you override only the knobs
   you care about and inherit sensible defaults for the rest.
