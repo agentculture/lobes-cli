@@ -120,7 +120,7 @@ class _MeasureHandler(http.server.BaseHTTPRequestHandler):
         pass  # silence log noise in test output
 
 
-@pytest.fixture()
+@pytest.fixture
 def measure_server():
     """``ThreadingHTTPServer`` on an ephemeral port; yields the base URL string."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MeasureHandler)
