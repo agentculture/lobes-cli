@@ -95,9 +95,15 @@ def test_moe_backend_aligns_with_shape() -> None:
     # models. Tie the invariant to the architecture phrase so the two can't drift.
     for model in SUPPORTED_MODELS:
         is_moe = model.shape.lower().startswith("moe")
-        assert bool(model.moe_backend) == is_moe, f"{model.id}: moe_backend vs shape"
+        # A forced --moe-backend belongs to MoE checkpoints alone (it breaks the
+        # dense/hybrid models) — but a MoE gear MAY leave it empty to let vLLM
+        # auto-select. worker does: every forced NVFP4 MoE backend was refused on
+        # Thor sm_110 (docs/evidence/2026-07-31-accept-worker-thor.txt). So the
+        # invariant is one-directional: a moe_backend implies MoE, not vice-versa.
+        if model.moe_backend:
+            assert is_moe, f"{model.id}: moe_backend on a non-MoE shape"
     moe = next(m for m in SUPPORTED_MODELS if m.shape.lower().startswith("moe"))
-    assert moe.moe_backend == "marlin"
+    assert moe.moe_backend == "marlin"  # the mmangkad candidate (first MoE gear)
     # the 35B MoE candidate does NOT carry the MTP speculative-config — it fails on
     # the mmangkad checkpoint (verified live 2026-05-31); see its doc.
     assert moe.speculative_config == ""
@@ -565,7 +571,7 @@ def test_worker_gear_exists_with_correct_fields() -> None:
     assert worker.native_max_model_len == 262144  # config.json max_position_embeddings
     assert worker.quantization == "compressed-tensors"  # config.json quant_method
     assert worker.tool_parser == "qwen3_coder"
-    assert worker.status == "configured"  # declared, not yet booted on any hardware
+    assert worker.status == "load-tested"  # Thor sm_110 2026-07-31: boots+serves
     assert worker.task == "generate"
     assert worker.dimension == 0
     assert worker.hf_overrides == ""
@@ -583,10 +589,14 @@ def test_worker_gear_speculative_config_matches_checkpoint_card() -> None:
     assert "draft_model_id" not in cfg
 
 
-def test_worker_gear_is_moe_with_a_moe_backend() -> None:
+def test_worker_gear_is_moe_with_auto_selected_backend() -> None:
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
     assert worker.shape.lower().startswith("moe")
-    assert worker.moe_backend, f"{_WORKER_ID}: MoE gear must carry a moe_backend"
+    # NO forced moe_backend: measured on Thor sm_110 (2026-07-31), every forced
+    # NVFP4 MoE backend was refused (flashinfer_* lack sm_110 kernels;
+    # marlin/triton reject the mixed quantized-main/unquantized-MTP experts), so
+    # the gear leaves --moe-backend off and vLLM auto-selects per path.
+    assert worker.moe_backend == ""
 
 
 def test_worker_gear_tool_parser_matches_infer_parser() -> None:

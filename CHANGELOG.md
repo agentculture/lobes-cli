@@ -21,13 +21,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   silent fallback), `OPT_IN_CORE_ROLES` + `base.toml` unknown-card veto, a
   profile-gated `vllm-worker` compose service on the Qwen nightly lane
   (compressed-tensors, `qwen3_coder`+`qwen3` parser pair, self-draft MTP), the
-  `lobes up worker` verb, and full docs. **DECLARED/UNVALIDATED (#108):** no
-  value is measured on hardware yet — the Thor budget (`gpu_mem_util` /
-  `max_model_len`), the sm_110 MoE backend, MTP acceptance, and the multimodal
-  (image+video) + thinking/coding serving are all gated on the live boot
-  (`thor-worker` shape, plan task t7) and the acceptance run (t9), which also
-  captures the full latency/throughput profile (TTFT, decode tok/s + per-token
-  latency, writing length, effective served context). Spec/plan under
+  `lobes up worker` verb, the `thor-worker` deployment shape, and full docs.
+  **VALIDATED live on the physical Jetson AGX Thor (sm_110), 2026-07-31**
+  (`docs/evidence/2026-07-31-accept-worker-thor.txt`): boots and serves at
+  measured util 0.45 / full 262144 window (KV pool 41.78 GiB = 14.07×
+  concurrency, weights 24.81 GiB); MTP self-draft **loads and accepts at
+  89.1%**; decode 50.8 tok/s (with thinking) / 73.5 tok/s sustained, TTFT
+  ~2.1 s; **image intake correct** (red/blue with a negative control);
+  thinking + tool + reasoning parsers work; `model=worker` routes through the
+  gateway and `model=muse` 404s `role_infeasible` with no referral. Key
+  finding — **the vllm-worker lane must NOT force `--moe-backend` on sm_110**:
+  every forced NVFP4 backend was refused (flashinfer_* lack sm_110 kernels;
+  marlin/triton reject the mixed quantized-main/unquantized-MTP experts), so
+  the compose omits the flag and vLLM auto-selects per path. Still unverified:
+  **video** intake (image is proven; a real clip is pending). Spec/plan under
   `docs/specs/` and `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`.
 - Muse goes **dormant/unhosted** mesh-wide: Thor moves off the Gemma 4 31B
   `muse` to host `worker` instead. `model=muse` now 404s `role_infeasible`

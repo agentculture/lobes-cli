@@ -110,9 +110,14 @@ class TestWorkerCommand:
         cmd = _worker_command()
         assert any(c.startswith("--gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-") for c in cmd)
 
-    def test_moe_backend_is_overridable(self) -> None:
+    def test_moe_backend_not_forced_so_vllm_auto_selects(self) -> None:
+        # --moe-backend is DELIBERATELY not forced. Measured on Thor sm_110
+        # (docs/evidence/2026-07-31-accept-worker-thor.txt): every forced NVFP4
+        # MoE backend was refused (flashinfer_* lack sm_110 kernels;
+        # marlin/triton reject the mixed quantized-main/unquantized-MTP experts).
+        # vLLM auto-selects a working kernel per path when the flag is absent.
         cmd = _worker_command()
-        assert any(c.startswith("--moe-backend=${WORKER_MOE_BACKEND:-") for c in cmd)
+        assert not any(c.startswith("--moe-backend") for c in cmd)
 
     def test_self_draft_mtp_no_external_draft_model(self) -> None:
         cmd = _worker_command()

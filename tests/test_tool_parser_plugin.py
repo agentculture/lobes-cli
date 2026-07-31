@@ -99,7 +99,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
     "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
-    "vllm-worker": "4b2ff0c3a1f7afbe9f81a2f4fd6c3ffc0b940a51947b1ed6c3d58088cf198e7e",
+    "vllm-worker": "c749aa3782f55bf855d4cf4d329418626d6d4709998ddb9e6963049f3a2b6910",
 }
 
 

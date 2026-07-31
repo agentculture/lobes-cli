@@ -481,17 +481,25 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # NO audio_config. Operator decision (2026-07-31): worker is served
         # MULTIMODAL — a "seeing doer" (image+video intake + repo_action) — so
         # the compose lane does NOT pass --language-model-only (unlike the 27B
-        # cortex MTP primary, whose export dropped its ViT). Whether vLLM serves
-        # Qwen3_5MoeForConditionalGeneration + MTP together on Thor's sm_110 is
-        # UNCONFIRMED until the live boot (plan task t7).
+        # cortex MTP primary, whose export dropped its ViT). VALIDATED live on
+        # the physical Jetson AGX Thor (sm_110), 2026-07-31: vLLM serves
+        # Qwen3_5MoeForConditionalGeneration + MTP together (MTP draft acceptance
+        # 89.1%, ~50.8 tok/s decode), image intake correct (red/blue + negative
+        # control), thinking/tool parsers work. See
+        # docs/evidence/2026-07-31-accept-worker-thor.txt.
         shape="MoE (~3B active) + ViT (text+image+video)",
         context="256K native (→~1.01M via YaRN)",
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="compressed-tensors",
-        status="configured",  # declared 2026-07-31; not yet booted on any hardware (t7)
+        status="load-tested",  # Thor sm_110 2026-07-31: boots+serves, MTP 89.1%, vision ✓
         doc="qwen3.6-35b-a3b-nvfp4.md",
-        moe_backend="flashinfer_b12x",
+        # moe_backend="" (auto-select) — NOT forced. Measured on Thor sm_110:
+        # every forced NVFP4 MoE backend was refused (flashinfer_* lack sm_110
+        # kernels; marlin/triton reject the mixed quantized-main/unquantized-MTP
+        # experts). vLLM auto-selects a working kernel per path. `lobes switch`
+        # therefore adds NO --moe-backend flag for this gear.
+        moe_backend="",
         speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
         task="generate",
     ),

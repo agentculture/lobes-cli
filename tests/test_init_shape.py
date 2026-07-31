@@ -230,6 +230,7 @@ def test_builtin_shape_names_are_sorted() -> None:
         "spark-lobe",
         "thor-lobe",
         "thor-muse",
+        "thor-worker",
     )
 
 

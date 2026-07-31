@@ -176,6 +176,11 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("thor-muse", "cortex"),
         ("thor-muse", "senses"),
         ("thor-muse", "worker"),
+        # thor-worker hosts the opt-in `worker` lobe and drops BOTH heavy
+        # defaults AND muse (the mesh moved off muse to worker) — three cells.
+        ("thor-worker", "cortex"),
+        ("thor-worker", "senses"),
+        ("thor-worker", "muse"),
     }
     # machine-as-brain contributes ONLY the opt-in-core cells (muse, worker)
     # — never a default-role drop (its default path is golden-pinned instead).
@@ -401,6 +406,8 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
         ]
     if shape.hosts_role("muse"):
         expected += [("muse", "muse")]
+    if shape.hosts_role("worker"):
+        expected += [("worker", "worker")]
     if shape.hosts_role("minor"):
         expected += [("minor", "minor"), ("cheap", "minor")]
     assert expected, f"{shape_name} hosts no generate lane at all?"

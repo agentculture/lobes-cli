@@ -246,13 +246,14 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
 # --- built-ins: the four shapes are expressible as pure data -----------------
 
 
-def test_builtin_shape_names_lists_all_four() -> None:
+def test_builtin_shape_names_lists_all_six() -> None:
     names = builtin_shape_names()
     assert set(names) == {
         "machine-as-brain",
         "spark-lobe",
         "thor-lobe",
         "thor-muse",
+        "thor-worker",
         "orin-small",
     }
 

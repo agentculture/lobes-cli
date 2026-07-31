@@ -948,12 +948,17 @@ services:
       # boot), exactly as thor-muse's 0.55 was measured, not computed. Do NOT
       # treat 0.30 as validated.
       - --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
-      # MoE (~3B active/token). The card's DGX Spark note recommends
-      # flashinfer_b12x (under CUTE_DSL_ARCH=sm_121a; it warns marlin is ~2x
-      # slower THERE) — but that is Spark's sm_121 arch, NOT Thor's sm_110, so
-      # the right MoE backend on Thor is UNCONFIRMED (a live-boot question for
-      # t7). Overridable so t7 can flip it without a template edit.
-      - --moe-backend=${WORKER_MOE_BACKEND:-flashinfer_b12x}
+      # MoE (~3B active/token). --moe-backend is DELIBERATELY NOT forced:
+      # measured live on Thor sm_110 (2026-07-31,
+      # docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value was
+      # REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not support
+      # current device cuda"; flashinfer NVFP4 is sm_121a/Spark-only), marlin
+      # ("not supported for unquantized MoE" — the self-hosted MTP experts are
+      # unquantized), triton ("not supported for NvFP4 MoE"). Only AUTO-SELECT
+      # boots: vLLM picks TRITON for the unquantized/fp8 MoE and a modular NVFP4
+      # kernel for the main experts, and auto-picks the fastest SUPPORTED kernel
+      # on any card (incl. flashinfer_b12x on a Spark). To pin a backend, add a
+      # `--moe-backend=<x>` line here by hand (see env.example WORKER_MOE_BACKEND).
       # Self-draft MTP baked INTO the checkpoint (its own MTP head, no external
       # draft-model key) — mirrors the 27B primary's speculative decode, minus
       # the separate draft repo.
