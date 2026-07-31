@@ -27,15 +27,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   measured util 0.45 / full 262144 window (KV pool 41.78 GiB = 14.07×
   concurrency, weights 24.81 GiB); MTP self-draft **loads and accepts at
   89.1%**; decode 50.8 tok/s (with thinking) / 73.5 tok/s sustained, TTFT
-  ~2.1 s; **image intake correct** (red/blue with a negative control);
-  thinking + tool + reasoning parsers work; `model=worker` routes through the
-  gateway and `model=muse` 404s `role_infeasible` with no referral. Key
-  finding — **the vllm-worker lane must NOT force `--moe-backend` on sm_110**:
-  every forced NVFP4 backend was refused (flashinfer_* lack sm_110 kernels;
-  marlin/triton reject the mixed quantized-main/unquantized-MTP experts), so
-  the compose omits the flag and vLLM auto-selects per path. Still unverified:
-  **video** intake (image is proven; a real clip is pending). Spec/plan under
-  `docs/specs/` and `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`.
+  ~2.1 s; **image AND video intake correct** (image: red/blue with a negative
+  control; video: a real Spark-webcam clip described accurately —
+  subject/scene/motion, not a #101-style drop); thinking + tool + reasoning
+  parsers work; `model=worker` routes through the gateway and `model=muse`
+  404s `role_infeasible` with no referral. Key finding — **the vllm-worker
+  lane must NOT force `--moe-backend` on sm_110**: every forced NVFP4 backend
+  was refused (flashinfer_* lack sm_110 kernels; marlin/triton reject the
+  mixed quantized-main/unquantized-MTP experts), so the compose omits the flag
+  and vLLM auto-selects per path. Spec/plan under `docs/specs/` and
+  `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`.
 - Muse goes **dormant/unhosted** mesh-wide: Thor moves off the Gemma 4 31B
   `muse` to host `worker` instead. `model=muse` now 404s `role_infeasible`
   with no `hosted_by` referral; the `muse` role, its catalog entry, and the

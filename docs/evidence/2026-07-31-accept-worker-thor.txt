@@ -43,5 +43,10 @@ AUTO-SELECT (no --moe-backend forced): SUCCESS — vLLM picks TRITON for the unq
   context: served 262144; 34,022-token prefill probe -> HTTP 200 in 9936 ms (large context honoured)
   concurrency: 14.07x at 262,144 tokens/request (KV 41.78 GiB @ util 0.45)
 
-=== still UNVERIFIED this run ===
-  video intake (video_token_id present; needs a real clip — image intake IS verified above)
+=== VIDEO intake (verified with a real Spark-webcam clip, 78 KB) ===
+  video_url data URI -> 1572 prompt tokens decoded; final answer (finish=stop):
+  "A shirtless man with sunglasses resting on his head sits in a room near a bright
+   window. He looks downward with a focused expression, remaining largely still
+   while wearing white earbuds."
+  => video intake SERVES on sm_110 (accurate scene/subject/motion description) — NOT a #101-style drop.
+  Clip captured on the Spark peer via webcam-cli `webcam record`, copied to Thor.

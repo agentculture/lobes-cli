@@ -484,8 +484,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # cortex MTP primary, whose export dropped its ViT). VALIDATED live on
         # the physical Jetson AGX Thor (sm_110), 2026-07-31: vLLM serves
         # Qwen3_5MoeForConditionalGeneration + MTP together (MTP draft acceptance
-        # 89.1%, ~50.8 tok/s decode), image intake correct (red/blue + negative
-        # control), thinking/tool parsers work. See
+        # 89.1%, ~50.8 tok/s decode), image AND video intake correct (image:
+        # red/blue + negative control; video: a real webcam clip described
+        # accurately), thinking/tool parsers work. See
         # docs/evidence/2026-07-31-accept-worker-thor.txt.
         shape="MoE (~3B active) + ViT (text+image+video)",
         context="256K native (→~1.01M via YaRN)",

@@ -54,7 +54,8 @@ hosts = ["worker", "embedder", "reranker", "stt", "tts"]
 # ~3B active params/token, 262144 native context, compressed-tensors NVFP4
 # (mixed precision: fp8 attention/lm_head + nvfp4 experts), self-hosted MTP
 # draft. Served multimodal (the compose lane omits --language-model-only) —
-# VALIDATED live: red/blue image intake correct with a negative control.
+# VALIDATED live: red/blue image intake correct with a negative control, AND a
+# real webcam video clip described accurately (subject/scene/motion).
 model = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 # MEASURED 2026-07-31 (Thor sm_110): booted healthy at util 0.45, full 262144
 # window, KV 41.78 GiB = 14.07x concurrency. See the header + evidence.
