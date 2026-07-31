@@ -5,7 +5,7 @@
   "schema_version": 2,
   "status": "exported",
   "created": "2026-07-31T07:06:31Z",
-  "updated": "2026-07-31T09:30:19Z",
+  "updated": "2026-07-31T09:31:26Z",
   "targets": [
     {
       "id": "c1",
@@ -288,7 +288,8 @@
       "acceptance_criteria": [
         "thor-worker.toml lands with hosts [worker, embedder, reranker, stt, tts] and MEASURED gpu_mem_util / max_model_len \u2014 any refused hypothesis recorded in TOML comments (the thor-muse 0.40\u21920.55 pattern); no committed value precedes its measurement",
         "the chosen sm_110 MoE backend and the MTP verdict (loads + acceptance rate, or recorded failure with catalog speculative_config corrected) are written into the shape/catalog data from the live boot log",
-        "the rendered thor-worker deployment boots vllm-worker on the Qwen-lane image on the physical Thor and serves /v1/chat/completions through the gateway; thor-worker goldens regenerate and pass"
+        "the rendered thor-worker deployment boots vllm-worker on the Qwen-lane image on the physical Thor and serves /v1/chat/completions through the gateway; thor-worker goldens regenerate and pass",
+        "context/KV capacity measured at boot (thor-muse pattern): record the KV-cache pool size (tokens) and resulting concurrency multiple at the served --max-model-len, so the served context is a MEASURED capacity figure (e.g. 'N tokens = Kx concurrency at max_model_len'), not merely the flag value"
       ],
       "deps": [
         "t4",
@@ -333,7 +334,10 @@
         "the transcript records the pre-move state (thor-muse serving per the 2026-07-17 evidence) and the post-move state, and the deployed .env carries no muse hosting keys",
         "LIVE image probe with ground truth + negative control (mirrors the senses Red/Blue vision validation): send worker an image via model=worker and verify it correctly identifies known content, AND a deliberately-wrong assertion correctly fails. Record the HONEST verdict \u2014 vision serves, OR a #101-style gap where vLLM drops the image content part for Qwen3_5MoeForConditionalGeneration; the announcement's multimodal claim degrades honestly if it does not serve",
         "LIVE video probe: send worker a short clip (video_url, the card's fps extra_body knob) and verify a correct answer about its content \u2014 or record honestly that video intake is not served on this vLLM/arch",
-        "LIVE thinking+coding probe exercising the doer contract: a real coding task through model=worker returns a correct code answer WITH a separated reasoning/<think> trace (via --reasoning-parser=qwen3), with MTP self-draft active \u2014 recorded with the measured draft-acceptance/decode numbers, not assumed"
+        "LIVE thinking+coding probe exercising the doer contract: a real coding task through model=worker returns a correct code answer WITH a separated reasoning/<think> trace (via --reasoning-parser=qwen3), with MTP self-draft active \u2014 recorded with the measured draft-acceptance/decode numbers, not assumed",
+        "full latency/throughput profile recorded in docs/evidence/ via lobes measure + lobes benchmark: TTFT (ttft_ms), decode throughput (decode_tps) AND the derived average inter-token latency after the first token (ms/token = 1000/decode_tps), and prefill throughput (prefill_tps) \u2014 each captured with MTP self-draft ON and OFF, alongside the measured draft-acceptance rate, so the MTP speedup is a measured delta not an assumption",
+        "writing-length measurement: for an open-ended generation prompt (not the fixed 24-token decode probe), record the actual output token count worker produces and the sustained decode_tps across that full generation \u2014 the practical write speed for a real ground-work task",
+        "context-length technical measurement: a long-context prefill probe near the served --max-model-len returns 200 with a measured prefill_tps and TTFT at that length, confirming the effective served context (vs the 262144 native); record the effective window worker actually serves on Thor"
       ],
       "deps": [
         "t6",

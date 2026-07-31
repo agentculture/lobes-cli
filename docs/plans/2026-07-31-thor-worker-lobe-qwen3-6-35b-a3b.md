@@ -64,6 +64,7 @@ slug: `thor-worker-lobe-qwen3-6-35b-a3b` · status: `exported` · from frame: `t
   - thor-worker.toml lands with hosts [worker, embedder, reranker, stt, tts] and MEASURED gpu_mem_util / max_model_len — any refused hypothesis recorded in TOML comments (the thor-muse 0.40→0.55 pattern); no committed value precedes its measurement
   - the chosen sm_110 MoE backend and the MTP verdict (loads + acceptance rate, or recorded failure with catalog speculative_config corrected) are written into the shape/catalog data from the live boot log
   - the rendered thor-worker deployment boots vllm-worker on the Qwen-lane image on the physical Thor and serves /v1/chat/completions through the gateway; thor-worker goldens regenerate and pass
+  - context/KV capacity measured at boot (thor-muse pattern): record the KV-cache pool size (tokens) and resulting concurrency multiple at the served --max-model-len, so the served context is a MEASURED capacity figure (e.g. 'N tokens = Kx concurrency at max_model_len'), not merely the flag value
 
 ### t8 — Docs: colleague-stack.md documents eight roles + the widened division of labour (worker may act; cortex-only-actor wording updated everywhere), deployment-shapes/gateway-fleet/gemma-4-31b/qwen3.6-35b-a3b docs + CLAUDE.md updated, muse marked dormant/unhosted
 
@@ -85,6 +86,9 @@ slug: `thor-worker-lobe-qwen3-6-35b-a3b` · status: `exported` · from frame: `t
   - LIVE image probe with ground truth + negative control (mirrors the senses Red/Blue vision validation): send worker an image via model=worker and verify it correctly identifies known content, AND a deliberately-wrong assertion correctly fails. Record the HONEST verdict — vision serves, OR a #101-style gap where vLLM drops the image content part for Qwen3_5MoeForConditionalGeneration; the announcement's multimodal claim degrades honestly if it does not serve
   - LIVE video probe: send worker a short clip (video_url, the card's fps extra_body knob) and verify a correct answer about its content — or record honestly that video intake is not served on this vLLM/arch
   - LIVE thinking+coding probe exercising the doer contract: a real coding task through model=worker returns a correct code answer WITH a separated reasoning/<think> trace (via --reasoning-parser=qwen3), with MTP self-draft active — recorded with the measured draft-acceptance/decode numbers, not assumed
+  - full latency/throughput profile recorded in docs/evidence/ via lobes measure + lobes benchmark: TTFT (ttft_ms), decode throughput (decode_tps) AND the derived average inter-token latency after the first token (ms/token = 1000/decode_tps), and prefill throughput (prefill_tps) — each captured with MTP self-draft ON and OFF, alongside the measured draft-acceptance rate, so the MTP speedup is a measured delta not an assumption
+  - writing-length measurement: for an open-ended generation prompt (not the fixed 24-token decode probe), record the actual output token count worker produces and the sustained decode_tps across that full generation — the practical write speed for a real ground-work task
+  - context-length technical measurement: a long-context prefill probe near the served --max-model-len returns 200 with a measured prefill_tps and TTFT at that length, confirming the effective served context (vs the 262144 native); record the effective window worker actually serves on Thor
 
 ## Risks
 
