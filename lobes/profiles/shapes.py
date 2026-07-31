@@ -71,12 +71,16 @@ COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
 # Core roles that are OPT-IN for HOSTING: they carry the full per-machine
 # Profile knob set (unlike `minor`/stt/tts) but are heavy lobes no card can
 # co-host with the default cortex+senses duo, so the default machine-as-brain
-# shape never hosts them -- only an explicit muse-hosting shape (thor-muse)
-# does. A shape's `overrides` MAY declare them (they are Profile-machinery
-# roles), and a muse-hosting shape typically carries the FULL declaration
-# (model + budget knobs) in its overrides, with the card profiles staying
-# silent -- see builtin_shapes/thor-muse.toml.
-OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse",)
+# shape never hosts them -- only an explicit hosting shape (thor-muse for
+# `muse`, thor-worker for `worker`) does. A shape's `overrides` MAY declare
+# them (they are Profile-machinery roles), and such a shape typically carries
+# the FULL declaration (model + budget knobs) in its overrides, with the card
+# profiles staying silent -- see builtin_shapes/thor-muse.toml. `worker` (the
+# 35B-A3B fast ground-work doer, issue #whatever) joined `muse` here: it is
+# likewise too heavy to co-reside with the default duo, so it is hosted only
+# by an explicit worker-hosting shape and renders nothing by default -- which
+# is what keeps machine-as-brain byte-identical when the role vocabulary grew.
+OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker")
 
 # The "whole brain" set machine-as-brain hosts exactly -- the identity-shape
 # invariant (see shape_render.py's module docstring and

@@ -475,7 +475,16 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         #   docs/machine-profiles.md); UNCONFIRMED on Thor until the live
         #   boot (plan task t7).
         role_hint="worker",
-        shape="MoE (~3B active per token)",
+        # MULTIMODAL (image+video) — config.json (fetched 2026-07-31) carries a
+        # vision_config (27-layer ViT), image_token_id=248056,
+        # video_token_id=248057, vision_start/end tokens (248053/248054), and
+        # NO audio_config. Operator decision (2026-07-31): worker is served
+        # MULTIMODAL — a "seeing doer" (image+video intake + repo_action) — so
+        # the compose lane does NOT pass --language-model-only (unlike the 27B
+        # cortex MTP primary, whose export dropped its ViT). Whether vLLM serves
+        # Qwen3_5MoeForConditionalGeneration + MTP together on Thor's sm_110 is
+        # UNCONFIRMED until the live boot (plan task t7).
+        shape="MoE (~3B active) + ViT (text+image+video)",
         context="256K native (→~1.01M via YaRN)",
         native_max_model_len=262144,
         tool_parser="qwen3_coder",

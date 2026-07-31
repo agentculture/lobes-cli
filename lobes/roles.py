@@ -20,7 +20,10 @@ any single model endpoint:
   MoE ~3B-active-per-token lobe). The fast ground-work DOER — bulk execution,
   drafting, and repo actions UNDER cortex's direction. It is the first role
   besides ``cortex`` permitted ``repo_action`` (it may ACT on the repo), but
-  it never makes the final decision or a security call. OPT-IN like ``muse``:
+  it never makes the final decision or a security call. MULTIMODAL: the
+  checkpoint carries a ViT (image+video intake, no audio), so worker is a
+  "seeing doer" served multimodal (no ``--language-model-only``) — distinct
+  from ``senses``, which perceives but must not act. OPT-IN like ``muse``:
   hosted only by a worker-hosting deployment shape, never by the default
   ``machine-as-brain``.
 * ``embedder`` → the ``embed`` pooling backend (Qwen3-Embedding-0.6B) →
@@ -176,12 +179,17 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
     # bulk ground-work UNDER cortex's direction, and to do that it genuinely
     # calls tools and touches the repo. What it must NOT do is decide: the
     # forbidden list below still bars final_decision / security_decision, so
-    # worker acts on cortex's plan, never on its own final authority.
+    # worker acts on cortex's plan, never on its own final authority. It is
+    # also MULTIMODAL (the checkpoint's ViT gives it image+video intake, no
+    # audio), hence the image_understanding / video_understanding tokens — a
+    # seeing doer, unlike text-only cortex.
     "worker": (
         "execution",
         "ground_work",
         "bulk_transform",
         "drafting",
+        "image_understanding",
+        "video_understanding",
         "tool_use",
         "repo_action",
     ),

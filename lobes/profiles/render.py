@@ -67,6 +67,7 @@ ROLE_ENV_PREFIX: dict[str, str] = {
     "cortex": "PRIMARY",
     "senses": "MULTIMODAL",
     "muse": "MUSE",
+    "worker": "WORKER",
     "embedder": "EMBED",
     "reranker": "RERANK",
 }

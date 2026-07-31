@@ -109,7 +109,7 @@ AUDIO_METRIC_KEYS: frozenset[str] = frozenset(
 
 ALLOWED_METRIC_KEYS: frozenset[str] = LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS
 
-_LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse")
+_LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker")
 _EMBED_RERANK_ROLES: tuple[str, ...] = ("embedder", "reranker")
 _AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
@@ -117,6 +117,7 @@ _FAMILY_BY_ROLE: dict[str, str] = {
     "cortex": "llm",
     "senses": "llm",
     "muse": "llm",
+    "worker": "llm",
     "embedder": "embed_rerank",
     "reranker": "embed_rerank",
     "stt": "audio",
@@ -393,6 +394,7 @@ _MEASURE_FN = {
     "cortex": _measure_llm_role,
     "senses": _measure_llm_role,
     "muse": _measure_llm_role,
+    "worker": _measure_llm_role,
     "embedder": _measure_embed_rerank_role,
     "reranker": _measure_embed_rerank_role,
     "stt": _measure_stt_role,
