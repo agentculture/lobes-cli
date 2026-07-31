@@ -391,6 +391,8 @@ def test_static_responsibility_maps_cover_all_eight_roles() -> None:
         "ground_work",
         "bulk_transform",
         "drafting",
+        "image_understanding",
+        "video_understanding",
         "tool_use",
         "repo_action",
     )
@@ -422,19 +424,31 @@ def test_worker_is_present_and_resolves_to_the_worker_gear() -> None:
     assert worker.quant == entry.quantization
     assert worker.mtp is bool(entry.speculative_config)
     assert worker.tools is True  # qwen3_coder tool parser
-    # Unwired here (no gateway backend merged) → loaded/ready False; feasible
-    # stays True (t3's infeasible-by-default rule is a sibling task).
+    # Unwired here (no gateway backend merged) → loaded/ready False. worker is
+    # an OPT-IN CORE role (OPT_IN_BACKENDS, like muse) — unwired-and-unflagged
+    # is honestly infeasible by default, same as muse (see
+    # test_muse_reports_tools_true_even_when_this_box_does_not_host_it).
     assert worker.loaded is False
     assert worker.ready is False
-    assert worker.feasible is True
+    assert worker.feasible is False
 
 
 def test_worker_responsibilities_are_the_doer_contract() -> None:
     """worker is the fast ground-work DOER: execution/drafting tokens PLUS
     tool_use AND repo_action — the first role besides cortex permitted to act
-    on the repo, yet still barred from the final decision / a security call."""
+    on the repo, yet still barred from the final decision / a security call.
+    It is also MULTIMODAL (image+video intake via its ViT), hence the
+    image_understanding/video_understanding tokens — a seeing doer, unlike
+    text-only cortex."""
     worker = _registry(_full_env())["worker"]
-    for token in ("execution", "ground_work", "bulk_transform", "drafting"):
+    for token in (
+        "execution",
+        "ground_work",
+        "bulk_transform",
+        "drafting",
+        "image_understanding",
+        "video_understanding",
+    ):
         assert token in worker.responsibilities
     assert "tool_use" in worker.responsibilities
     assert "repo_action" in worker.responsibilities

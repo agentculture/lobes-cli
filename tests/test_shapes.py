@@ -95,14 +95,26 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
     # narrower DEFAULT_HOSTED_ROLES (opt-in core roles excluded — see
     # test_machine_as_brain_hosts_every_default_role below).
     assert COLLEAGUE_ROLES == PROFILE_ROLES + AUDIO_ROLES
-    assert COLLEAGUE_ROLES == ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
+    assert COLLEAGUE_ROLES == (
+        "cortex",
+        "senses",
+        "muse",
+        "worker",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    )
 
 
 def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     # The machine-as-brain identity set: every Colleague role EXCEPT the
     # opt-in core lobes (muse — a 31B that cannot co-reside with the
-    # cortex+senses duo; hosted only by an explicit muse-hosting shape).
-    assert OPT_IN_CORE_ROLES == ("muse",)
+    # cortex+senses duo; hosted only by an explicit muse-hosting shape — and
+    # worker, the 35B-A3B fast ground-work doer, likewise too heavy to
+    # co-reside with the default duo and hosted only by an explicit
+    # worker-hosting shape).
+    assert OPT_IN_CORE_ROLES == ("muse", "worker")
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
@@ -119,6 +131,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "cortex",
         "senses",
         "muse",
+        "worker",
         "embedder",
         "reranker",
         "stt",

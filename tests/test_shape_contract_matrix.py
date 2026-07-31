@@ -88,6 +88,7 @@ _MODEL_ID: dict[str, str] = {
     "cortex": "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
     "senses": "coolthor/gemma-4-12B-it-NVFP4A16",
     "muse": "nvidia/Gemma-4-31B-IT-NVFP4",
+    "worker": "unsloth/Qwen3.6-35B-A3B-NVFP4",
     "embedder": "Qwen/Qwen3-Embedding-0.6B",
     "reranker": "Qwen/Qwen3-Reranker-0.6B",
 }
@@ -100,6 +101,7 @@ _WIRE_ENV: dict[str, tuple[str, str]] = {
     "cortex": ("PRIMARY_URL", "PRIMARY_SERVED_NAME"),
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
     "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
+    "worker": ("WORKER_BASE_URL", "WORKER_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
 }
@@ -150,25 +152,34 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
 
     spark-lobe drops senses; thor-lobe drops cortex; thor-muse and orin-small
     drop BOTH heavies; every shape that doesn't host the opt-in muse lobe
-    (all but thor-muse) contributes a muse cell too. If this fails because a NEW
-    built-in shape landed: the parametrized cell tests below already cover it —
-    just extend this documented set to match its declared drops.
+    (all but thor-muse) contributes a muse cell too. `worker` — the second
+    opt-in core role (thor-worker-lobe plan) — joined `muse` in
+    OPT_IN_CORE_ROLES with NO hosting shape built yet, so EVERY shape
+    (including thor-muse) contributes a worker cell too. If this fails
+    because a NEW built-in shape landed: the parametrized cell tests below
+    already cover it — just extend this documented set to match its declared
+    drops.
     """
     assert set(CELLS) == {
         ("machine-as-brain", "muse"),
+        ("machine-as-brain", "worker"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),
+        ("orin-small", "worker"),
         ("spark-lobe", "senses"),
         ("spark-lobe", "muse"),
+        ("spark-lobe", "worker"),
         ("thor-lobe", "cortex"),
         ("thor-lobe", "muse"),
+        ("thor-lobe", "worker"),
         ("thor-muse", "cortex"),
         ("thor-muse", "senses"),
+        ("thor-muse", "worker"),
     }
-    # machine-as-brain contributes ONLY the opt-in muse cell — never a
-    # default-role drop (its default path is golden-pinned instead).
-    assert all(role == "muse" for shape, role in CELLS if shape == "machine-as-brain")
+    # machine-as-brain contributes ONLY the opt-in-core cells (muse, worker)
+    # — never a default-role drop (its default path is golden-pinned instead).
+    assert all(role in ("muse", "worker") for shape, role in CELLS if shape == "machine-as-brain")
 
 
 def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:

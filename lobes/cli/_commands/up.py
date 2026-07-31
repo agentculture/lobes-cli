@@ -12,6 +12,9 @@ Roles → compose services (issue #81, t7)::
     senses    → vllm-multimodal    (the Gemma 4 12B multimodal gear)
     muse      → vllm-muse          (the Gemma 4 31B creative lobe — opt-in,
                                     hosted only by a muse-hosting shape)
+    worker    → vllm-worker        (the Qwen3.6-35B-A3B fast ground-work
+                                    doer — opt-in, hosted only by a
+                                    worker-hosting shape)
     embedder  → vllm-embed         (Qwen3-Embedding-0.6B pooling gear)
     reranker  → vllm-rerank        (Qwen3-Reranker-0.6B score gear)
     stt       → stt                (Parakeet — audio overlay, opt-in)
@@ -61,6 +64,7 @@ ROLE_SERVICE: dict[str, str] = {
     "cortex": "vllm-primary",
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
+    "worker": "vllm-worker",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -258,7 +262,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "role",
         metavar="ROLE",
-        help="cortex | senses | muse | embedder | reranker | stt | tts | colleague-stack.",
+        help="cortex | senses | muse | worker | embedder | reranker | stt | tts | colleague-stack.",
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--apply", action="store_true", help="Actually run docker compose.")
