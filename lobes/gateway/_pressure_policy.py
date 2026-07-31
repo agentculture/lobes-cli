@@ -23,15 +23,19 @@ Return keys from :func:`decide`:
     servable_tier: str               — "minor" under pressure, else normalized tier
     requested_tier: str              — normalize_tier(requested_tier)
 
-Tier vocabulary (main / minor / multimodal / muse)
---------------------------------------------------
+Tier vocabulary (main / minor / multimodal / worker / muse)
+-------------------------------------------------------------
 Issue #69 reframed the generate-lane capability tiers to **main / minor /
-multimodal**, and the seventh Colleague role added **muse** (mirroring
-``catalog.TIER_ROLE``; capability order ``minor < multimodal < muse < main``):
+multimodal**, the seventh Colleague role added **muse**, and the
+thor-worker-lobe plan added **worker** (mirroring ``catalog.TIER_ROLE``;
+capability order ``minor < multimodal < worker < muse < main``):
 
     main        → 27B primary   (full text capability, the former "hard" tier)
     minor       → 4B minor       (fast, low memory, the former "cheap" tier)
     multimodal  → 12B multimodal (text+image+audio — a *different* capability)
+    worker      → 35B-A3B worker (opt-in MoE lobe — its role name IS its
+                                  tier; sheds to ``minor`` under pressure
+                                  exactly like main/multimodal/muse)
     muse        → 31B muse       (opt-in creative/ideation lobe — its role name
                                   IS its tier; sheds to ``minor`` under
                                   pressure exactly like main/multimodal)
@@ -101,20 +105,22 @@ _TIER_ROLE: dict[str, str] = {
     "normal": "multimodal",
     "hard": "primary",
     # Capability-ROLE names (alias the same backends as main / multimodal;
-    # muse is its own backend). Kept in the same order as catalog.TIER_ROLE
-    # (senses, then muse, then cortex) so the two dicts stay identical — the
-    # mirror guard test asserts equality.
+    # muse/worker are their own backends). Kept in the same order as
+    # catalog.TIER_ROLE (senses, then worker, then muse, then cortex) so the
+    # two dicts stay identical — the mirror guard test asserts equality.
     "senses": "multimodal",
+    "worker": "worker",
     "muse": "muse",
     "cortex": "primary",
 }
 
 #: Backend role → canonical new-vocabulary tier name (the inverse of the primary
-#: vocabulary rows above; muse's role IS its tier name).
+#: vocabulary rows above; muse's/worker's role IS its tier name).
 _ROLE_TO_TIER: dict[str, str] = {
     "primary": "main",
     "minor": "minor",
     "multimodal": "multimodal",
+    "worker": "worker",
     "muse": "muse",
 }
 
@@ -183,8 +189,9 @@ def normalize_tier(tier: str) -> str:
     """Normalize a tier alias (either vocabulary) to its new-vocabulary name.
 
     ``main``/``hard`` → ``"main"``; ``minor``/``cheap`` → ``"minor"``;
-    ``multimodal``/``normal`` → ``"multimodal"``; ``muse`` → ``"muse"``
-    (its role name IS its tier — no back-compat alias).
+    ``multimodal``/``normal`` → ``"multimodal"``; ``muse`` → ``"muse"``;
+    ``worker`` → ``"worker"`` (muse's and worker's role names ARE their
+    tiers — no back-compat alias for either).
 
     Raises
     ------

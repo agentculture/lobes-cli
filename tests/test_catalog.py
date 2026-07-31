@@ -23,6 +23,7 @@ from lobes.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
+_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
 # Fields required non-empty for ALL models (task-agnostic).
 _FIELDS_ALL = ("id", "role_hint", "shape", "context", "status", "doc")
@@ -102,16 +103,33 @@ def test_moe_backend_aligns_with_shape() -> None:
     assert moe.speculative_config == ""
 
 
+# Checkpoints that carry a *self-hosted* MTP draft (own baked-in draft weights,
+# vLLM's generic "mtp" method, no external "model"/"draft_model_id" key) but
+# whose id does NOT happen to contain an "-MTP" suffix. The 27B primary's id
+# carries "-MTP" because IT is a re-export that GRAFTED a draft head onto a
+# baseline that otherwise lacked one; this unsloth export never dropped its
+# draft in the first place, so its id has no reason to say so. Verified
+# against the checkpoint's actual config.json (fetched 2026-07-31), not card
+# prose: text_config.mtp_num_hidden_layers=1, and quantization_config.ignore
+# carries a "re:^mtp.*" pattern — i.e. real MTP weight tensors exist in the
+# checkpoint and are deliberately left unquantized. See the worker catalog
+# entry's own comment for the full citation.
+_SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset({_WORKER_ID})
+
+
 def test_speculative_config_only_on_mtp_or_external_draft_checkpoints() -> None:
-    # --speculative-config (MTP draft) is carried by a checkpoint either because it
-    # ships its OWN MTP draft weights (flagged by an "-MTP" suffix in its id, e.g.
-    # the 27B primary's MTP-grafted re-export — a baseline NVFP4 export drops the
-    # draft head, 0% acceptance) OR because it wires a SEPARATE, external draft
-    # model via the "model"/"draft_model_id" key (Gemma4 native MTP — the draft is
-    # a public HF checkpoint, not baked into the served id; see
-    # docs/vllm-nightly-migration.md §7 — coolthor/gemma-4-12B-it-NVFP4A16 carries
-    # no "-MTP" in its id but is wired to the external google/gemma-4-12B-it-
-    # assistant draft).
+    # --speculative-config (MTP draft) is carried by a checkpoint for one of THREE
+    # reasons: (1) it ships its OWN MTP draft weights, flagged by an "-MTP" suffix
+    # in its id (e.g. the 27B primary's MTP-grafted re-export — a baseline NVFP4
+    # export drops the draft head, 0% acceptance); (2) it wires a SEPARATE,
+    # external draft model via the "model"/"draft_model_id" key (Gemma4 native
+    # MTP — the draft is a public HF checkpoint, not baked into the served id;
+    # see docs/vllm-nightly-migration.md §7 — coolthor/gemma-4-12B-it-NVFP4A16
+    # carries no "-MTP" in its id but is wired to the external
+    # google/gemma-4-12B-it-assistant draft); or (3) it is explicitly allow-listed
+    # in _SELF_HOSTED_MTP_WITHOUT_ID_MARKER — a checkpoint that ships its own
+    # draft weights (like case 1) but whose upstream id never carried an "-MTP"
+    # marker because it never lost the draft to begin with (the worker gear).
     for model in SUPPORTED_MODELS:
         if not model.speculative_config:
             continue
@@ -120,9 +138,11 @@ def test_speculative_config_only_on_mtp_or_external_draft_checkpoints() -> None:
         assert method, f"{model.id}: speculative_config missing 'method'"
         has_mtp_in_id = "MTP" in model.id.upper()
         has_external_draft = bool(cfg.get("model") or cfg.get("draft_model_id"))
-        assert has_mtp_in_id or has_external_draft, (
-            f"{model.id}: speculative_config carried but neither an -MTP id nor an "
-            "external draft 'model'/'draft_model_id' key is present"
+        is_allow_listed_self_hosted = model.id in _SELF_HOSTED_MTP_WITHOUT_ID_MARKER
+        assert has_mtp_in_id or has_external_draft or is_allow_listed_self_hosted, (
+            f"{model.id}: speculative_config carried but neither an -MTP id, an "
+            "external draft 'model'/'draft_model_id' key, nor an explicit "
+            "_SELF_HOSTED_MTP_WITHOUT_ID_MARKER allow-listing is present"
         )
     # the MTP-grafted 27B primary (issue #26) carries the qwen3_5_mtp draft config.
     sak = next(m for m in SUPPORTED_MODELS if m.id == "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP")
@@ -517,3 +537,81 @@ def test_resolve_tier_minor_and_cheap_return_4b_minor() -> None:
 def test_resolve_tier_unknown_still_raises_value_error() -> None:
     with pytest.raises(ValueError, match="unknown tier"):
         resolve_tier("ultra")
+
+
+# ---------------------------------------------------------------------------
+# `worker` gear: unsloth/Qwen3.6-35B-A3B-NVFP4 (thor-worker-lobe plan, t1)
+# ---------------------------------------------------------------------------
+# A DISTINCT catalog entry from the existing mmangkad/Qwen3.6-35B-A3B-NVFP4
+# "candidate" above — same architecture family, different org/export. Facts
+# below are verified against the checkpoint's ACTUAL config files (fetched
+# 2026-07-31), not card prose:
+#   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4/resolve/main/config.json
+#     - text_config.max_position_embeddings = 262144
+#     - quantization_config.quant_method = "compressed-tensors"
+#   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4/resolve/main/hf_quant_config.json
+#     - 404 Not Found (compressed-tensors checkpoints carry their quant config
+#       inline in config.json; there is no separate hf_quant_config.json here,
+#       unlike the nvidia/modelopt-style exports elsewhere in this catalog).
+#   The README's own vLLM MTP serve command:
+#     vllm serve unsloth/Qwen3.6-35B-A3B-NVFP4 \
+#         --speculative-config '{"method": "mtp", "num_speculative_tokens": 2}'
+
+
+def test_worker_gear_exists_with_correct_fields() -> None:
+    worker = next((m for m in SUPPORTED_MODELS if m.id == _WORKER_ID), None)
+    assert worker is not None, f"{_WORKER_ID} not found in catalog"
+    assert worker.role_hint == "worker"
+    assert worker.native_max_model_len == 262144  # config.json max_position_embeddings
+    assert worker.quantization == "compressed-tensors"  # config.json quant_method
+    assert worker.tool_parser == "qwen3_coder"
+    assert worker.status == "configured"  # declared, not yet booted on any hardware
+    assert worker.task == "generate"
+    assert worker.dimension == 0
+    assert worker.hf_overrides == ""
+    assert worker.doc, f"{_WORKER_ID}: doc must be non-empty"
+
+
+def test_worker_gear_speculative_config_matches_checkpoint_card() -> None:
+    worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
+    assert worker.speculative_config == '{"method": "mtp", "num_speculative_tokens": 2}'
+    cfg = json.loads(worker.speculative_config)
+    assert cfg["method"] == "mtp"
+    assert cfg["num_speculative_tokens"] == 2
+    # Self-hosted draft: no external "model"/"draft_model_id" key.
+    assert "model" not in cfg
+    assert "draft_model_id" not in cfg
+
+
+def test_worker_gear_is_moe_with_a_moe_backend() -> None:
+    worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
+    assert worker.shape.lower().startswith("moe")
+    assert worker.moe_backend, f"{_WORKER_ID}: MoE gear must carry a moe_backend"
+
+
+def test_worker_gear_tool_parser_matches_infer_parser() -> None:
+    worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
+    assert infer_parser(worker.id) == worker.tool_parser
+
+
+def test_worker_gear_does_not_modify_the_mmangkad_candidate_sibling() -> None:
+    # The pre-existing mmangkad/ candidate entry must stay untouched: same
+    # role_hint="candidate", 32K native, marlin moe_backend, no speculative_config.
+    mmangkad = next(m for m in SUPPORTED_MODELS if m.id == "mmangkad/Qwen3.6-35B-A3B-NVFP4")
+    assert mmangkad.role_hint == "candidate"
+    assert mmangkad.native_max_model_len == 32768
+    assert mmangkad.moe_backend == "marlin"
+    assert mmangkad.speculative_config == ""
+
+
+def test_exactly_one_worker_gear() -> None:
+    workers = [m.id for m in SUPPORTED_MODELS if m.role_hint == "worker"]
+    assert workers == [_WORKER_ID], f"role_hint='worker' models: {workers}"
+
+
+def test_resolve_tier_worker_returns_the_worker_gear() -> None:
+    model = resolve_tier("worker")
+    assert isinstance(model, SupportedModel)
+    assert model.id == _WORKER_ID
+    assert model.role_hint == "worker"
+    assert model.task == "generate"

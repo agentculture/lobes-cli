@@ -197,16 +197,39 @@ def test_resolve_tier_muse_returns_the_31b_gear() -> None:
     assert model.id == "nvidia/Gemma-4-31B-IT-NVFP4"
 
 
-def test_tier_role_capability_order_is_ascending_with_muse() -> None:
+def test_tier_role_capability_order_is_ascending_with_muse_and_worker() -> None:
     """tier_aliases derives ascending capability order from each role's LAST
-    occurrence in TIER_ROLE — muse must land between multimodal and primary
-    (minor < multimodal < muse < primary), or the upward-fallback ladder
-    breaks. Pinned here against the dict's insertion order."""
+    occurrence in TIER_ROLE — worker must land between multimodal and muse,
+    and muse between worker and primary (minor < multimodal < worker < muse
+    < primary), or the upward-fallback ladder breaks. Pinned here against the
+    dict's insertion order."""
     last_pos: dict[str, int] = {}
     for i, role in enumerate(TIER_ROLE.values()):
         last_pos[role] = i
     roles_asc = sorted(last_pos, key=last_pos.__getitem__)
-    assert roles_asc == ["minor", "multimodal", "muse", "primary"]
+    assert roles_asc == ["minor", "multimodal", "worker", "muse", "primary"]
+
+
+# ---------------------------------------------------------------------------
+# `worker` capability-ROLE (thor-worker-lobe plan, t1) — its own backend name
+# IS its tier, exactly like muse.
+# ---------------------------------------------------------------------------
+
+_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+
+
+def test_tier_role_map_includes_worker_as_its_own_backend() -> None:
+    """worker is the second capability-ROLE (after muse) whose backend name
+    IS the role name — there is no pre-existing internal name to preserve."""
+    assert TIER_ROLE["worker"] == "worker"
+
+
+def test_resolve_tier_worker_returns_the_worker_gear() -> None:
+    """resolve_tier('worker') must return the unsloth MoE worker gear."""
+    model = resolve_tier("worker")
+    assert model.role_hint == "worker"
+    assert model.task == "generate"
+    assert model.id == _WORKER_ID
 
 
 def test_resolve_tier_unknown_raises_value_error() -> None:
