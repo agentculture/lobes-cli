@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.7] - 2026-07-31
+
+### Fixed
+
+- Cleared the 5 genuinely-open SonarCloud issues (the rest of the tracker's
+  list was already-closed noise): **S8997** ×4 — `test_chatterbox_pcm16.py`
+  and `test_readiness_peer_probe.py` now use the `monkeypatch` fixture
+  (auto-restored) instead of manual save/restore of module/class attributes;
+  and **S3776** — `tts_client.py::_synthesize_single` refactored (cognitive
+  complexity 18 → 6) by extracting `_attempt_synthesize` / `_retry_or_give_up`
+  helpers, behavior-preserving (retry semantics, logging, and ordering
+  unchanged). No suppressions were added — the false-positive candidates
+  (`_env.py` S2083, `shape_render.py` S5332) were already resolved.
+
 ## [0.54.5] - 2026-07-25
 
 ### Added
