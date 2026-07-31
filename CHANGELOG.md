@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.8] - 2026-07-31
+
+### Fixed
+
+- **`worker` peer-proxy was silently inert.** `lobes/gateway/server.py`'s `_PEER_SERVED_NAME_ENV` and `_PEER_ROLE_HINT` still carried only the five pre-`worker` roles, while `lobes/gateway/_config.py`'s `PEER_PROXY_ENV` carries eight. `_peer_served_name` therefore resolved `""` for `worker` — **even with `WORKER_SERVED_NAME` set**, because that var was never looked up — so `peer_specs_from_table` dropped the role at its `if not served_name: continue` guard. Downstream: the `ReadinessCache` never peer-probed it, `/v1/models` never advertised it, and `_proxied_owner` never matched, so `WORKER_PEER_PROXY=true` forwarded nothing and the request fell through to the referral-only `role_infeasible` 404. This hit exactly the shape that needs it — a box that only *reaches* `worker` on a peer has no `WORKER_BASE_URL`, hence no wired `Backend` to resolve off. The pre-existing `worker` proxy tests all used a **wired**-but-infeasible env, which resolves via the wired backend and never touches either table, so the gap was invisible to CI. Introduced in 0.54.6 with the `worker` role.
+
+### Added
+
+- `tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name` — a standing contract guard asserting every role in `PEER_PROXY_ENV` resolves a non-empty served name, so adding a proxyable role without teaching both `server.py` tables fails in CI instead of going silently inert in production. (`stt`/`tts` resolve via `_peer_served_name`'s fixed-sidecar early return rather than these tables.)
+- Three unwired-`worker` proxy tests covering the paths the wired fixture skipped: `WORKER_SERVED_NAME` override, catalog `role_hint` fallback, and the data-plane forward for both the `worker` alias and the raw served id.
+
 ## [0.54.7] - 2026-07-31
 
 ### Changed

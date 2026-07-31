@@ -120,7 +120,13 @@ def test_moe_backend_aligns_with_shape() -> None:
 # carries a "re:^mtp.*" pattern — i.e. real MTP weight tensors exist in the
 # checkpoint and are deliberately left unquantized. See the worker catalog
 # entry's own comment for the full citation.
-_SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset({_WORKER_ID})
+# unsloth/Qwen3.6-27B-NVFP4 (the multimodal-cortex CANDIDATE) is the same
+# publisher's same-recipe 27B sibling and qualifies for the same reason,
+# verified the same way against its own published config (fetched 2026-07-31):
+# mtp_num_hidden_layers=1, a top-level "unsloth_fixed_mtp" flag, and 15 real
+# `mtp.*` tensors in model.safetensors.index.json. Like the worker gear it
+# never lost its draft head, so its upstream id never carried an "-MTP" marker.
+_SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset({_WORKER_ID, "unsloth/Qwen3.6-27B-NVFP4"})
 
 
 def test_speculative_config_only_on_mtp_or_external_draft_checkpoints() -> None:

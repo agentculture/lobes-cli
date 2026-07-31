@@ -1,0 +1,290 @@
+================================================================================
+ACCEPTANCE — worker proxy, DGX Spark GB10 -> Jetson AGX Thor
+  plan : every-lobe-in-the-mesh-can-see-the-spark-reaches-t  (tasks t2/t4/t5/t6)
+  PR   : agentculture/lobes-cli#165
+  build: lobes-cli 0.54.8.dev352 (TestPyPI dev lane)
+================================================================================
+
+VERDICT
+-------
+PROVED by this run:
+  * `model=worker` on the Spark forwards to the Thor and returns the peer's
+    answer, attributed with X-Lobes-Proxied-By: <thor origin>.
+  * The forward carries MULTIMODAL content: a base64 image round-trips and is
+    described correctly, with a negative control that does NOT match.
+  * GET /capabilities reports worker feasible=false / proxied=true /
+    hosted_by=<thor>, and GET /v1/models lists the proxied served id.
+  * The dead muse referral is gone: model=muse now 404s role_infeasible with
+    hosted_by=null instead of proxying into a box that no longer hosts it,
+    while the muse catalog entry and `lobes init --shape thor-muse` both still
+    render (cite-don't-delete).
+  * The box's own cortex lobe survived the gateway cutover unaffected.
+
+NOT proved by this run (do not read this transcript as evidence for any of it):
+  * NOTHING about cortex multimodality. The cortex here is still the text-only
+    sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP. The unsloth/Qwen3.6-27B-NVFP4
+    swap is a later, separate task with its own live boot and its own
+    transcript.
+  * No throughput, latency or concurrency numbers for the proxied lane.
+  * No claim about the Thor's own worker budget -- that was measured
+    separately (docs/evidence/2026-07-31-accept-worker-thor.txt).
+  * Nothing about the audio/realtime lane, which is never proxied cross-box.
+  * Behaviour under pressure-shedding (429) for a proxied worker is untested.
+
+--- [0] BEFORE state (captured pre-change) ------------------------------
+================================================================
+t2 — LIVE BEFORE-STATE BASELINE  (captured 2026-07-31T14:12:18Z)
+  operator box: spark-f8a9  |  peer: thor
+================================================================
+
+---- [1] THOR /capabilities (via ssh thor@thor) ----
+  cortex     feasible=False ready=False proxied=None hosted_by=http://spark.tail0be7e0.ts.net:8001 model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  senses     feasible=False ready=True  proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 model=coolthor/gemma-4-12B-it-NVFP4A16
+  muse       feasible=False ready=False proxied=None hosted_by=None model=nvidia/Gemma-4-31B-IT-NVFP4
+  worker     feasible=True  ready=True  proxied=None hosted_by=None model=unsloth/Qwen3.6-35B-A3B-NVFP4
+  embedder   feasible=True  ready=True  proxied=None hosted_by=None model=Qwen/Qwen3-Embedding-0.6B
+  reranker   feasible=True  ready=True  proxied=None hosted_by=None model=Qwen/Qwen3-Reranker-0.6B
+  stt        feasible=True  ready=False proxied=None hosted_by=None model=nvidia/parakeet-tdt-0.6b-v2
+  tts        feasible=True  ready=False proxied=None hosted_by=None model=ResembleAI/chatterbox
+
+---- [2] SPARK ~/.lobes/.env : the DEAD muse referral + stale version pin ----
+  333:MODEL_GEAR_VERSION=0.52.3
+  349:MULTIMODAL_PEER_ORIGIN=http://orin.tail0be7e0.ts.net:8000
+  355:MULTIMODAL_PEER_PROXY=true
+  377:MUSE_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+  378:MUSE_PEER_PROXY=true
+  383:MUSE_PEER_API_KEY=
+  (grep for any WORKER_ line in .env:)
+    WORKER_ lines present: 0
+
+---- [3] SPARK deployed docker-compose.yml : MUSE_* passthrough vs WORKER_* ----
+  MUSE_*   passthrough lines in gateway service: 7
+  WORKER_* passthrough lines in gateway service: 0
+  sample MUSE_* lines that DO exist:
+    876:      - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
+    889:      - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
+    913:      - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
+    925:      - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
+
+---- [4] SPARK gateway BEFORE-state requests (port 8001) ----
+  gateway container:
+model-gear-gateway	Up 4 days (unhealthy)
+model-gear-vllm-embed-deep	Up 4 days (healthy)
+model-gear-vllm-primary	Up 4 days (healthy)
+model-gear-vllm-rerank	Up 4 days (healthy)
+model-gear-vllm-embed	Up 4 days (healthy)
+
+  $ curl model=worker   (expect: FAILS -- role unknown to a 0.52.3 gateway)
+    HTTP 404
+    {"error": {"message": "The model `worker` does not exist.", "type": "model_not_found", "code": "model_not_found"}}
+  $ curl model=muse     (expect: the DEAD referral -- proxied to a Thor that no longer hosts muse)
+    HTTP 404
+    {"error": {"message": "The model `nvidia/Gemma-4-31B-IT-NVFP4` does not exist.", "type": "model_not_found", "code": "model_not_found"}}
+  $ curl model=cortex   (baseline: the live lobe this box must NOT lose)
+    HTTP 200
+    model: sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+    reply: 'BASELINE_OK'
+
+  local /capabilities — worker + muse rows:
+    cortex     feasible=True  ready=True  proxied=None hosted_by=None
+    senses     feasible=False ready=True  proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000
+    muse       feasible=False ready=False proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000
+    embedder   feasible=True  ready=True  proxied=None hosted_by=None
+    reranker   feasible=True  ready=True  proxied=None hosted_by=None
+    stt        feasible=True  ready=True  proxied=None hosted_by=None
+    tts        feasible=True  ready=True  proxied=None hosted_by=None
+
+---- [5] PRE-EXISTING FINDING: gateway container health ----
+  model-gear-gateway has been 'Up 4 days (unhealthy)', FailingStreak 8.
+  Cause: the CONTAINER's healthcheck exceeds its 10s timeout.
+  BUT GET /health from the host returns HTTP 200 immediately.
+  => pre-existing, not caused by this work. The t4 re-scaffold replaces
+     the compose (incl. its healthcheck stanza), so re-check after t6.
+
+---- [6] SPLIT-BRAIN COMPOSE STATE (found during t2, not requested) ----
+  The deployment has THREE compose layers:
+    docker-compose.yml           0.46.0-era base (no WORKER_*, no vllm-embed-deep)
+    docker-compose.override.yml  hand-written: stt loopback :9002 + vllm-embed-deep
+                                 backfill + EMBED_DEEP_* gateway passthrough
+    docker-compose.shape.yml     generated spark-lobe: parks vllm-multimodal in the
+                                 'shape-dropped' profile, resets gateway depends_on
+
+  Services were last brought up with DIFFERENT overlay sets:
+    gateway          <- docker-compose.yml, docker-compose.shape.yml          (2 files)
+    vllm-embed-deep  <- .yml, .audio.yml, .shape.yml, .override.yml           (4 files)
+
+  CONSEQUENCE (verified live): the running gateway has ZERO EMBED_DEEP_* env vars,
+  so although model-gear-vllm-embed-deep has been Up 4 days (healthy) holding GPU
+  budget, the gateway cannot route to it -- Qwen/Qwen3-Embedding-4B is ABSENT from
+  GET /v1/models. The embed-deep gear has been unreachable for days.
+  This is PRE-EXISTING and unrelated to the worker proxy; the t4 re-scaffold fixes
+  it incidentally because the packaged template carries the service AND the
+  passthrough natively.
+
+  CORRECTION TO RECORDED PRACTICE: the remembered rule 'always bring up with
+  -f docker-compose.yml -f docker-compose.shape.yml' is INCOMPLETE. Passing any
+  explicit -f suppresses compose's auto-load of docker-compose.override.yml, which
+  is exactly how the gateway lost its EMBED_DEEP_* passthrough. The correct
+  invocation on this box names ALL FOUR files explicitly.
+
+---- t2 VERDICT ----
+  All four acceptance criteria MET:
+   (1) Thor: muse feasible=false hosted_by=null; worker feasible=true ready=true  OK
+   (2) Spark .env: MUSE_PEER_ORIGIN->thor, MODEL_GEAR_VERSION=0.52.3, 0 WORKER_ lines OK
+   (3) Spark compose: 7 MUSE_* passthrough lines, 0 WORKER_*                      OK
+   (4) model=worker BEFORE change -> HTTP 404 model_not_found                     OK
+  Plus: model=muse -> HTTP 404 naming nvidia/Gemma-4-31B-IT-NVFP4, while this box's
+  own /capabilities advertises muse proxied=true hosted_by=<thor>. That is the
+  dishonest-advertisement violation requirement c9 exists to fix, captured live.
+  Baseline to protect: model=cortex -> HTTP 200 'BASELINE_OK'.
+
+--- [1] AFTER: gateway build provenance ---------------------------------
+$ docker run --rm --entrypoint python lobes-gateway -c '<introspect>'
+lobes-cli version: 0.54.8.dev352
+_PEER_SERVED_NAME_ENV: ['embed', 'multimodal', 'muse', 'primary', 'rerank', 'worker']
+_PEER_ROLE_HINT      : ['embed', 'multimodal', 'muse', 'primary', 'rerank', 'worker']
+
+--- [2] containers after the gateway-only cutover ------------------------
+$ docker ps  (vllm-multimodal must be ABSENT: dropped by the spark-lobe shape)
+model-gear-gateway	Up About a minute (healthy)
+model-gear-realtime	Up 4 days (healthy)
+model-gear-stt	Up 27 hours (healthy)
+model-gear-chatterbox	Up 4 days (healthy)
+model-gear-vllm-embed-deep	Up 4 days (healthy)
+model-gear-vllm-primary	Up 4 days (healthy)
+model-gear-vllm-rerank	Up 4 days (healthy)
+model-gear-vllm-embed	Up 4 days (healthy)
+
+--- [3] cortex baseline preserved ---------------------------------------
+$ curl -X POST /v1/chat/completions -d '{"model":"cortex",...}'
+{
+    "id": "chatcmpl-afa1b0d1479832ae",
+    "object": "chat.completion",
+    "created": 1785508819,
+    "model": "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "CORTEX_ALIVE",
+                "refusal": null,
+                "annotations": null,
+                "audio": null,
+                "function_call": null,
+                "reasoning": null
+            },
+            "logprobs": null,
+
+--- [4] THE RELAY: model=worker -> thor ---------------------------------
+$ curl -i -X POST /v1/chat/completions -d '{"model":"worker",...}'
+HTTP/1.1 200 OK
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+content-type: application/json
+{
+    "id": "chatcmpl-b62386e59496c392",
+    "object": "chat.completion",
+    "created": 1785508854,
+    "model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "WORKER_VIA_PROXY",
+                "refusal": null,
+                "annotations": null,
+                "audio": null,
+                "function_call": null,
+                "reasoning": null
+            },
+            "logprobs": null,
+            "finish_reason": "stop",
+            "stop_reason": null,
+
+--- [5] MULTIMODAL through the proxy, with a negative control ------------
+$ curl -X POST ... model=worker + image_url(data:image/png;base64,<64x64 red square>)
+HTTP/1.1 200 OK
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+  served model : unsloth/Qwen3.6-35B-A3B-NVFP4
+  answer       : ' red'
+
+$ curl -X POST ... model=worker + image_url(data:image/png;base64,<64x64 blue square>)
+HTTP/1.1 200 OK
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+  served model : unsloth/Qwen3.6-35B-A3B-NVFP4
+  answer       : ' Blue.'
+
+CONTROL CHECK: the red square answered 'red' and the blue square answered
+'blue' -- the model is reading the pixels, not echoing the prompt.
+
+--- [6] capabilities + models surfaces ----------------------------------
+$ curl /capabilities
+cortex     feasible=True  ready=True  proxied=None  hosted_by=None
+senses     feasible=False ready=True  proxied=True  hosted_by=http://orin.tail0be7e0.ts.net:8000
+muse       feasible=False ready=False proxied=None  hosted_by=None
+worker     feasible=False ready=True  proxied=True  hosted_by=http://thor.tail0be7e0.ts.net:8000
+embedder   feasible=True  ready=True  proxied=None  hosted_by=None
+reranker   feasible=True  ready=True  proxied=None  hosted_by=None
+stt        feasible=True  ready=True  proxied=None  hosted_by=None
+tts        feasible=True  ready=True  proxied=None  hosted_by=None
+
+$ curl /v1/models
+  sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  Qwen/Qwen3-Embedding-0.6B
+  Qwen/Qwen3-Embedding-4B
+  Qwen/Qwen3-Reranker-0.6B
+  coolthor/gemma-4-12B-it-NVFP4A16
+  unsloth/Qwen3.6-35B-A3B-NVFP4
+  NOTE Qwen/Qwen3-Embedding-4B is present again -- see [8].
+
+--- [7] muse honesty: the dead referral is gone --------------------------
+$ curl -X POST -d '{"model":"muse",...}'   (expect 404 role_infeasible, hosted_by null)
+{
+  "error": {
+    "message": "The model `muse` is not feasible on this machine \u2014 its backend (`muse`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here.",
+    "type": "role_infeasible",
+    "code": "role_infeasible"
+  }
+}
+HTTP404
+
+cite-don't-delete held:
+$ uv run lobes overview --list | grep muse
+- gemma-4-31b-nvfp4.md — Gemma 4 31B-NVFP4 — the "muse" role (creative/ideation lobe)
+$ uv run lobes init --fleet --shape thor-muse <tmpdir>   (dry-run)
+  Shape: thor-muse (hosts=['muse', 'embedder', 'reranker', 'stt', 'tts'])
+  would set 18 env var(s) in .env   [renders fine; nothing written]
+
+--- [8] INCIDENTAL FIX: the split-brain compose ---------------------------
+Before this run the deployed stack had been brought up with INCONSISTENT
+overlay sets -- the gateway from 2 compose files, vllm-embed-deep from 4. The
+gateway therefore carried ZERO EMBED_DEEP_* env vars, so although
+model-gear-vllm-embed-deep had been Up 4 days (healthy) holding GPU budget,
+Qwen/Qwen3-Embedding-4B was ABSENT from /v1/models -- unroutable for days.
+See section [0] item [6] for the captured before-state.
+
+Re-scaffolding docker-compose.yml from the packaged 0.54.8 fleet template
+fixed it: the template carries both the vllm-embed-deep service and the
+gateway EMBED_DEEP_* passthrough natively, so docker-compose.override.yml's
+hand-written backfill became redundant (and was actively appending a SECOND,
+duplicate nvidia device reservation). The override is now trimmed to the one
+thing still load-bearing: the stt loopback :9002 publish reachy-mini-cli
+depends on.
+
+OPERATIONAL RULE CORRECTED. The previously-recorded practice
+    docker compose -f docker-compose.yml -f docker-compose.shape.yml ...
+is INCOMPLETE and is what caused the split brain: passing any explicit -f
+suppresses compose's auto-load of docker-compose.override.yml. Every bring-up
+on this box must name ALL FOUR files:
+    docker compose -f docker-compose.yml -f docker-compose.audio.yml \
+                   -f docker-compose.shape.yml -f docker-compose.override.yml
+
+--- [9] rollback ---------------------------------------------------------
+Pre-change deployment preserved at:
+/home/spark/.lobes.pre-worker-proxy-20260731T141316Z
+In-place file backups:
+/home/spark/.lobes/docker-compose.yml.pre-worker-proxy-0.54.8
+/home/spark/.lobes/.env.pre-worker-proxy-20260731T143717Z
+
+================================ END ====================================

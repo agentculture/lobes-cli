@@ -707,17 +707,31 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "primary": "PRIMARY_SERVED_NAME",
     "multimodal": "MULTIMODAL_SERVED_NAME",
     "muse": "MUSE_SERVED_NAME",
+    "worker": "WORKER_SERVED_NAME",
     "embed": "EMBED_SERVED_NAME",
     "rerank": "RERANK_SERVED_NAME",
 }
 
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
-# fallback lobes.roles uses to NAME an unwired role's model. Scoped, like every
-# peer channel, to the five core roles (see lobes.gateway._config.PEER_PROXY_ENV).
+# fallback lobes.roles uses to NAME an unwired role's model.
+#
+# MUST stay in step with :data:`lobes.gateway._config.PEER_PROXY_ENV`: a role
+# the config layer can proxy but that resolves NO served name here is dropped
+# by :func:`peer_specs_from_table` at its ``if not served_name`` guard, so the
+# proxy goes silently inert — no peer probe, no ``/v1/models`` entry, no
+# :func:`_proxied_owner` match. That is exactly how ``worker`` shipped in
+# 0.54.6: wired through _config.py's three peer dicts but missing from these
+# two, so ``WORKER_PEER_PROXY=true`` did nothing on a box that only REACHES
+# worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve off).
+# ``stt``/``tts`` are proxyable too but resolve via _peer_served_name's
+# fixed-sidecar early return, not these tables.
+# tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name
+# is the standing guard.
 _PEER_ROLE_HINT: dict[str, str] = {
     "primary": "primary",
     "multimodal": "multimodal",
     "muse": "muse",
+    "worker": "worker",
     "embed": "embedding",
     "rerank": "reranker",
 }

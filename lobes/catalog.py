@@ -141,6 +141,76 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         speculative_config='{"method": "qwen3_5_mtp", "num_speculative_tokens": 3}',
     ),
     SupportedModel(
+        id="unsloth/Qwen3.6-27B-NVFP4",
+        # CANDIDATE for a MULTIMODAL cortex — the same-family 27B sibling of the
+        # `worker` gear below (unsloth/Qwen3.6-35B-A3B-NVFP4), from the SAME
+        # publisher with the SAME export recipe. If promoted it would replace
+        # the text-only sakamakismile/…-Text-NVFP4-MTP primary above and give
+        # the fleet's reasoning/final-authority lobe image AND video intake for
+        # the first time.
+        #
+        # STATUS: untested. Everything below is read off the checkpoint's own
+        # published config files (fetched 2026-07-31) — NOT from a boot. No
+        # gpu_mem_util or max_model_len is declared anywhere for it, because on
+        # a unified-memory card those are MEASURED truths, not arithmetic (the
+        # rule thor-muse's refused 0.40 and thor-worker's accepted 0.45 both
+        # established). Promotion to role_hint="primary" is gated on a live
+        # GB10 boot + an evidence transcript under docs/evidence/.
+        #
+        # Verified against the ACTUAL config files, not card prose:
+        #   https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4/resolve/main/config.json
+        #     - architectures: ["Qwen3_5ForConditionalGeneration"], model_type
+        #       "qwen3_5" — the SAME arch the current text-only primary serves,
+        #       so this is a checkpoint swap, not an engine-support question.
+        #     - text_config.max_position_embeddings = 262144 (native 256K),
+        #       num_hidden_layers = 64, hybrid linear-attn (linear_key_head_dim
+        #       etc.) — matching the incumbent primary.
+        #     - language_model_only = FALSE, with a vision_config (27-layer ViT,
+        #       hidden 1152), image_token_id=248056, video_token_id=248057 and
+        #       vision_start/end (248053/248054). NO audio_config. So a promoted
+        #       lane must NOT pass --language-model-only (unlike the incumbent,
+        #       whose export physically removed the ViT).
+        #     - mtp_num_hidden_layers = 1 AND a top-level "unsloth_fixed_mtp"
+        #       flag; the safetensors index carries 15 real `mtp.*` tensors
+        #       (mtp.fc.weight, mtp.layers.0.*), i.e. the draft module is
+        #       physically present, self-hosted, no external draft repo. The
+        #       incumbent primary needed its draft GRAFTED back on because the
+        #       baseline NVFP4 export dropped it (0% acceptance); this export
+        #       never lost it.
+        #     - quantization_config.format "mixed-precision": 8-bit
+        #       float-quantized for attention/lm_head/upper-8 MLP layers, 4-bit
+        #       nvfp4-pack-quantized for the MLP gate/up/down, with the ViT
+        #       (model.visual.*) and every linear_attn left UNQUANTIZED — 303
+        #       ignore patterns. quant_method is compressed-tensors, NOT nvidia
+        #       modelopt, so a promoted lane needs
+        #       --quantization=compressed-tensors, not the incumbent's
+        #       `modelopt`.
+        #   model.safetensors.index.json: 1968 tensors / 23.42 GB across 5 shards.
+        #   chat_template.jinja: CONTAINS the `preserve_thinking` variable, so
+        #     issue #93's --default-chat-template-kwargs flag keeps working
+        #     across the swap. It also ships its own tokenizer, so the
+        #     incumbent's --tokenizer=mmangkad/Qwen3.6-27B-NVFP4 override (a
+        #     workaround for a TokenizersBackend declaration absent from the
+        #     image) would be DROPPED.
+        #   License apache-2.0.
+        role_hint="candidate",
+        shape="hybrid Mamba/linear-attn + ViT (text+image+video, self-hosted MTP draft)",
+        context="256K native",
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="compressed-tensors",
+        # "configured", not "load-tested": declared from the published config,
+        # never booted. Same status the other un-booted candidates carry.
+        status="configured",
+        doc="qwen3.6-27b-nvfp4-multimodal.md",
+        # Self-hosted draft (no external "model" key), mirroring the 35B-A3B
+        # worker's own README serve command. UNMEASURED on this checkpoint:
+        # the 35B twin reached 89.1% acceptance at 2 tokens, but that is the
+        # sibling's number, not this one's.
+        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        task="generate",
+    ),
+    SupportedModel(
         id="mmangkad/Qwen3.6-35B-A3B-NVFP4",
         role_hint="candidate",
         shape="MoE (~3B active per token)",
