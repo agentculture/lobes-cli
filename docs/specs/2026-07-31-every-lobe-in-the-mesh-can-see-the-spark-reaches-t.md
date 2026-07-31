@@ -1,0 +1,72 @@
+# Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake
+
+> Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake
+> instruction: Land in two halves. (A) Spark deployment: copy the packaged fleet compose over ~/.lobes/docker-compose.yml (the deployed copy predates `WORKER_`\* passthrough), re-pin `MODEL_GEAR_VERSION`>=0.54.7, replace the `MUSE_`\* peer block with `WORKER_PEER_ORIGIN`=<http://thor.tail0be7e0.ts.net:8000> + `WORKER_PEER_PROXY`=true + empty `WORKER_PEER_API_KEY` (Thor sets no inbound key), then rebuild the gateway ALWAYS with -f docker-compose.yml -f docker-compose.shape.yml. (B) Repo: add unsloth/Qwen3.6-27B-NVFP4 to lobes/catalog.py and point the primary compose lane at it with the worker lane's flag shape, then boot it on the Spark to measure the real budget.
+
+## Audience
+
+- Callers on the DGX Spark gateway (the Colleague/culture mesh backends, eidetic, reachy-mini-cli, and the lobes agent itself) that address roles by name -- plus the operator who runs the three-box mesh (Spark cortex / Orin senses / Thor worker).
+
+## Before → After
+
+- Before: Today the Spark's .env proxies muse to Thor -- a DEAD referral: Thor moved to the thor-worker shape and reports muse feasible=false `hosted_by`=None, so model=muse yields a 503/404 with no lobe behind it. model=worker is unknown to the Spark's gateway entirely (pinned `MODEL_GEAR_VERSION`=0.52.3, which predates the worker role at 0.54.6), and the deployed docker-compose.yml carries `MUSE_`\* gateway passthrough but no `WORKER_`\* -- so even correct .env knobs would silently never reach the container. Meanwhile cortex serves sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP with --language-model-only and no ViT: the fleet's reasoning/final-authority lobe is structurally blind.
+- After: On the Spark, model=worker is served: the gateway forwards to Thor's vllm-worker and returns the answer with X-Lobes-Proxied-By: <thor origin>, exactly as model=senses already proxies to the Orin. And model=cortex/main accepts `image_url` and `video_url` content parts, answering about what it sees, because cortex now serves unsloth/Qwen3.6-27B-NVFP4 with its ViT tower intact.
+
+## Why it matters
+
+- The mesh brain's authority lobe cannot see. Every visual question must be delegated to senses (perception-only, forbidden from deciding) or worker (a doer, forbidden from `final_decision`), so a decision that depends on an image costs a cross-box round trip and a hand-off to a role that is contractually barred from making the call. Giving cortex eyes puts perception and authority in the same lobe for the first time; proxying worker makes the Spark a single endpoint for the whole mesh again, which it stopped being when muse went dormant.
+
+## Requirements
+
+- The Spark must stop advertising a lobe it cannot reach: the muse peer block (`MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY`) is cleared, so model=muse 404s `role_infeasible` with `hosted_by`=None -- honest -- instead of proxying to a Thor that no longer hosts it. The muse ROLE, its catalog entry and the thor-muse shape all stay in-tree (cite-don't-delete); only this box's dead referral goes.
+  - instruction: In ~/.lobes/.env delete or comment `MUSE_PEER_ORIGIN`, `MUSE_PEER_PROXY` and `MUSE_PEER_API_KEY`. Leave `MUSE_FEASIBLE` unset so the gateway's `OPT_IN_BACKENDS` rule keeps muse infeasible-by-default. Verify with: curl -s localhost:8001/capabilities | jq '.roles\[\]|select(.role=="muse")' -- expect feasible=false, `hosted_by`=null, proxied absent; and a model=muse chat request returning 404 `role_infeasible`, NOT 503 `backend_unavailable`.
+  - honesty: After the change, GET /capabilities on the Spark reports muse with `hosted_by`=None (not a Thor origin), and model=muse returns 404 `role_infeasible` rather than a proxied 503 -- while lobes overview --list still lists the muse catalog entry and lobes init --shape thor-muse still renders.
+- The cortex checkpoint swap must preserve both hard-won cortex behaviours: `preserve_thinking` (#93) -- the unsloth chat template does carry the `preserve_thinking` variable, verified from the published template -- and strict grammar-constrained tool calling with thinking on (colleague#320), which means the primary lane keeps --tool-parser-plugin=/opt/lobes/`qwen3_thinking_tool_parser.py` and `GATEWAY_FORCE_STRICT_TOOLS` stays armed.
+  - instruction: Do not touch --tool-parser-plugin=/opt/lobes/`qwen3_thinking_tool_parser.py` or --reasoning-parser=qwen3 when rewriting the primary lane, and leave `GATEWAY_FORCE_STRICT_TOOLS`=1 armed in the Spark .env. The --default-chat-template-kwargs '{"`preserve_thinking`": true}' flag stays too -- the unsloth template's `preserve_thinking` variable is what it drives. Re-run both #93's two-turn token-delta diagnostic and colleague#320's strict-tool probe after the boot; a 500 with 'grammar rejected tokens' means the plugin did not load.
+  - honesty: Two probes pass against the swapped cortex on the live Spark: a two-turn `preserve_thinking` prompt-token-count delta proves historical <think> blocks are still retained, and a tool call with strict:true plus thinking enabled returns a clean structured tool call (not a 500 grammar rejection and not a mangled salvaged name).
+
+## Honesty conditions
+
+- A caller on the Spark that sends model=worker with an image gets a correct answer relayed from Thor, and the same caller sending model=cortex with an image gets a correct answer served locally -- both verifiable in one session against the live box, with negative controls.
+- Each named consumer addresses the fleet by ROLE name through the Spark gateway, not by raw model id or by dialling Thor directly -- so a role that resolves on the Spark is the only thing any of them needs changed. Verifiable by checking that the culture/colleague backend config and eidetic's embed URL both point at the Spark gateway.
+- Both halves are observable from a single curl against the Spark: model=worker returns 200 carrying X-Lobes-Proxied-By, and model=cortex with an `image_url` content part returns a description that a negative control (a different image) does not match.
+- Every claim about today's broken state is read off the live boxes, not inferred: Thor's GET /capabilities shows muse feasible=false `hosted_by`=None while worker is feasible=true ready=true; the Spark's .env carries `MUSE_PEER_ORIGIN` pointed at Thor and `MODEL_GEAR_VERSION`=0.52.3; and the Spark's deployed docker-compose.yml contains `MUSE_`\* gateway passthrough lines but zero `WORKER_`\* ones.
+- The cost being claimed is real and not hypothetical: the eight-role contract does forbid senses from `final_decision`/`repo_action` and forbids worker from `final_decision`/`security_decision`, so a visual decision genuinely cannot be made by either -- checkable against lobes capabilities' `forbidden_responsibilities` for both roles.
+- The worker-proxy half touches no file in this repo's lobes/ package -- the worker peer knobs (`WORKER_PEER_ORIGIN` / `_PROXY` / `_API_KEY`) already ship in gateway/`_config.py` at 0.54.7 and the `WORKER_`\* passthrough already exists in the packaged fleet template -- so its only repo-side output is docs plus whatever the stale-compose follow-up decides. If that proves false, the halves are coupled after all and the boundary claim is wrong.
+- Each probe is captured as a transcript under docs/evidence/ following the existing accept-\* naming, and each states plainly which of the three it did and did not prove -- the split-verdict discipline the realtime voice-to-voice transcript already set, where voice-to-voice passed and barge-in did not.
+- The four flag changes are each justified by the checkpoint's own published config -- `quant_method` compressed-tensors, `mtp_num_hidden_layers`=1 with real mtp.\* tensors, `language_model_only`=false, and a self-contained tokenizer/`chat_template` -- and the resulting lane boots on the GB10.
+
+## Success signals
+
+- Three live probes on the Spark, each with a transcript under docs/evidence/: (1) POST /v1/chat/completions model=worker returns 200 with X-Lobes-Proxied-By naming the Thor origin, and GET /capabilities shows worker feasible=false proxied=true `hosted_by`=<thor>; (2) model=cortex answers correctly about an image AND a video clip, each with a negative control (the same probe the worker acceptance used); (3) the two hard-won cortex behaviours still hold after the swap -- MTP draft acceptance is non-zero, and a strict tool call under `GATEWAY_FORCE_STRICT_TOOLS`=1 with thinking on returns a clean structured call rather than a 500.
+  - instruction: Write two transcripts, one per PR, under docs/evidence/ using the accept-\* convention: 2026-XX-XX-accept-worker-proxy-spark.txt for probe (1), and a later one for probes (2)+(3) after the cortex promotion. Each must open with a VERDICT block naming what it proved AND what it did not -- e.g. the worker-proxy transcript proves relay and attribution but proves nothing about cortex vision.
+
+## Scope / boundaries
+
+- Two independently shippable halves, deliberately not coupled: (A) the worker proxy is a Spark DEPLOYMENT change (re-copy the packaged fleet compose so `WORKER_`\* passes through, re-pin `MODEL_GEAR_VERSION` >= 0.54.7, swap the dead `MUSE_`\* peer block for `WORKER_`\*) plus whatever repo-side gap that exposes; (B) the cortex multimodal swap is a REPO change (catalog entry + primary compose lane) that must then be booted on the Spark. Either can land without the other.
+
+## Non-goals
+
+- Not in scope: adding a ninth role; changing what senses, worker, or muse are responsible for or forbidden from; reviving muse on any box; extending referral/proxy to the audio lane; touching the realtime/voice surface; re-tuning Thor (its worker budget is already measured and accepted).
+
+## Assumptions
+
+- unsloth/Qwen3.6-27B-NVFP4 will boot and serve on the GB10 because it is a structural twin of unsloth/Qwen3.6-35B-A3B-NVFP4, which booted healthy on Thor at the first attempt: same publisher, same mixed-precision compressed-tensors recipe (fp8 attn/`lm_head` + nvfp4 MLP, ViT and `linear_attn` left unquantized), same self-hosted MTP head, same ViT-kept multimodal shape, same `Qwen3_5ForConditionalGeneration` arch. Verified from the published config.json, safetensors index (15 real mtp.\* tensors, 23.42 GB total) and chat template -- NOT from a boot.
+- The Spark's current cortex budget (`PRIMARY_GPU_MEM_UTIL`=0.44 at the full 262144 window) will NOT simply carry over: it was measured for a text-only checkpoint, and the unsloth export adds an unquantized bf16 ViT tower (333 visual tensors) plus video preprocessing. Per the repo's measured-truth rule, the new budget is a hypothesis until a live boot on the GB10 produces it.
+
+## Decisions
+
+- The primary compose lane converges onto the ALREADY-VALIDATED worker lane's shape, which is the same publisher's same recipe: --quantization=compressed-tensors (not modelopt), --speculative-config={"method": "mtp", ...} for the self-hosted draft head (not the grafted "`qwen3_5_mtp`"), and DROP both --language-model-only and --tokenizer=mmangkad/Qwen3.6-27B-NVFP4 (unsloth ships its own tokenizer and template). It KEEPS --trust-remote-code, --enable-prefix-caching, --tool-parser-plugin, --tool-call-parser=`qwen3_coder` and --reasoning-parser=qwen3.
+- Once cortex serves a vision-capable checkpoint, the standing reason for keeping mmangkad/Qwen3.6-27B-NVFP4 in the catalog evaporates: CLAUDE.md justifies it as (a) the tokenizer source the MTP primary serves with and (b) the only vision-capable 27B. Both become false. It stays in the catalog under cite-don't-delete, but its recorded rationale must be rewritten rather than left stating something untrue.
+- USER-CONFIRMED (2026-07-31): senses is left untouched. Cortex vision is an ADDED capability, not a replacement -- the Spark keeps proxying senses to the Orin, senses keeps its perception-only contract, and no role's responsibilities or `forbidden_responsibilities` change. Callers choose cortex when a DECISION needs sight and senses when the task is pure perception.
+- USER-CONFIRMED (2026-07-31): unsloth/Qwen3.6-27B-NVFP4 enters the catalog as `role_hint`='candidate' / status='untested' with the primary compose lane UNCHANGED. Only after a live GB10 boot produces the measured budget and an evidence transcript does a follow-up promote it to primary and rewrite the lane -- the same candidate-then-promote path the current cortex itself took. No unvalidated default ever ships in the wheel.
+- USER-CONFIRMED (2026-07-31): one spec, two PRs, worker proxy FIRST. The worker proxy is deployment-only and unblocks using Thor's multimodal worker from the Spark immediately; the cortex candidate + live boot follows. The halves are never coupled in a single bring-up, so a checkpoint that misbehaves at boot cannot block the proxy fix.
+
+## Open parks
+
+- [unknown_nonblocking] Whether the unsloth self-hosted MTP head actually engages on this 27B (`num_speculative_tokens` value and real draft-acceptance rate). The 35B twin hit 89.1% with method=mtp/2 tokens and the config carries an `unsloth_fixed_mtp` flag, but this checkpoint's acceptance is unmeasured.
+- [follow_up] Whether the repo needs a code-side fix so a STALE deployed compose is detected rather than silently swallowing `WORKER_`\* knobs -- this exact trap (a deployed compose predating a role's passthrough) has now cost time twice, at muse go-live and again here. Candidate home: lobes doctor / doctor --fix.
+
+## Resolved vagueness
+
+- [unknown_blocking] The multimodal cortex's real `gpu_mem_util` and `max_model_len` on the GB10 -- the ViT tower is unquantized bf16 and the current 0.44/262144 was measured text-only. Whether the full 256K window survives, whether embed/rerank/embed-deep still co-reside, and whether `PRIMARY_MAX_NUM_SEQS` needs changing are all MEASURED, not computed. — resolved: Resolved by the candidate-first decision: the spec declares NO `gpu_mem_util` or `max_model_len` for a multimodal cortex. Those values are produced by the live GB10 boot and only then committed -- exactly as thor-worker's 0.45/262144 were measured on the physical Thor rather than computed. The unknown stops blocking because the spec's contract is to withhold the number, not to guess it.

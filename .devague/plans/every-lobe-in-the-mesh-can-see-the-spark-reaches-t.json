@@ -1,0 +1,417 @@
+{
+  "slug": "every-lobe-in-the-mesh-can-see-the-spark-reaches-t",
+  "title": "Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake",
+  "frame_slug": "every-lobe-in-the-mesh-can-see-the-spark-reaches-t",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-07-31T14:00:22Z",
+  "updated": "2026-07-31T14:09:27Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A caller on the Spark that sends model=worker with an image gets a correct answer relayed from Thor, and the same caller sending model=cortex with an image gets a correct answer served locally -- both verifiable in one session against the live box, with negative controls.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Callers on the DGX Spark gateway (the Colleague/culture mesh backends, eidetic, reachy-mini-cli, and the lobes agent itself) that address roles by name -- plus the operator who runs the three-box mesh (Spark cortex / Orin senses / Thor worker).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Each named consumer addresses the fleet by ROLE name through the Spark gateway, not by raw model id or by dialling Thor directly -- so a role that resolves on the Spark is the only thing any of them needs changed. Verifiable by checking that the culture/colleague backend config and eidetic's embed URL both point at the Spark gateway.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "On the Spark, model=worker is served: the gateway forwards to Thor's vllm-worker and returns the answer with X-Lobes-Proxied-By: <thor origin>, exactly as model=senses already proxies to the Orin. And model=cortex/main accepts image_url and video_url content parts, answering about what it sees, because cortex now serves unsloth/Qwen3.6-27B-NVFP4 with its ViT tower intact.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Both halves are observable from a single curl against the Spark: model=worker returns 200 carrying X-Lobes-Proxied-By, and model=cortex with an image_url content part returns a description that a negative control (a different image) does not match.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "before_state",
+      "text": "Today the Spark's .env proxies muse to Thor -- a DEAD referral: Thor moved to the thor-worker shape and reports muse feasible=false hosted_by=None, so model=muse yields a 503/404 with no lobe behind it. model=worker is unknown to the Spark's gateway entirely (pinned MODEL_GEAR_VERSION=0.52.3, which predates the worker role at 0.54.6), and the deployed docker-compose.yml carries MUSE_* gateway passthrough but no WORKER_* -- so even correct .env knobs would silently never reach the container. Meanwhile cortex serves sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP with --language-model-only and no ViT: the fleet's reasoning/final-authority lobe is structurally blind.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Every claim about today's broken state is read off the live boxes, not inferred: Thor's GET /capabilities shows muse feasible=false hosted_by=None while worker is feasible=true ready=true; the Spark's .env carries MUSE_PEER_ORIGIN pointed at Thor and MODEL_GEAR_VERSION=0.52.3; and the Spark's deployed docker-compose.yml contains MUSE_* gateway passthrough lines but zero WORKER_* ones.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "why_it_matters",
+      "text": "The mesh brain's authority lobe cannot see. Every visual question must be delegated to senses (perception-only, forbidden from deciding) or worker (a doer, forbidden from final_decision), so a decision that depends on an image costs a cross-box round trip and a hand-off to a role that is contractually barred from making the call. Giving cortex eyes puts perception and authority in the same lobe for the first time; proxying worker makes the Spark a single endpoint for the whole mesh again, which it stopped being when muse went dormant.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The cost being claimed is real and not hypothetical: the eight-role contract does forbid senses from final_decision/repo_action and forbids worker from final_decision/security_decision, so a visual decision genuinely cannot be made by either -- checkable against lobes capabilities' forbidden_responsibilities for both roles.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Two independently shippable halves, deliberately not coupled: (A) the worker proxy is a Spark DEPLOYMENT change (re-copy the packaged fleet compose so WORKER_* passes through, re-pin MODEL_GEAR_VERSION >= 0.54.7, swap the dead MUSE_* peer block for WORKER_*) plus whatever repo-side gap that exposes; (B) the cortex multimodal swap is a REPO change (catalog entry + primary compose lane) that must then be booted on the Spark. Either can land without the other.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The worker-proxy half touches no file in this repo's lobes/ package -- the worker peer knobs (WORKER_PEER_ORIGIN / _PROXY / _API_KEY) already ship in gateway/_config.py at 0.54.7 and the WORKER_* passthrough already exists in the packaged fleet template -- so its only repo-side output is docs plus whatever the stale-compose follow-up decides. If that proves false, the halves are coupled after all and the boundary claim is wrong.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "success_signal",
+      "text": "Three live probes on the Spark, each with a transcript under docs/evidence/: (1) POST /v1/chat/completions model=worker returns 200 with X-Lobes-Proxied-By naming the Thor origin, and GET /capabilities shows worker feasible=false proxied=true hosted_by=<thor>; (2) model=cortex answers correctly about an image AND a video clip, each with a negative control (the same probe the worker acceptance used); (3) the two hard-won cortex behaviours still hold after the swap -- MTP draft acceptance is non-zero, and a strict tool call under GATEWAY_FORCE_STRICT_TOOLS=1 with thinking on returns a clean structured call rather than a 500.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Each probe is captured as a transcript under docs/evidence/ following the existing accept-* naming, and each states plainly which of the three it did and did not prove -- the split-verdict discipline the realtime voice-to-voice transcript already set, where voice-to-voice passed and barge-in did not.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The Spark must stop advertising a lobe it cannot reach: the muse peer block (MUSE_PEER_ORIGIN / MUSE_PEER_PROXY) is cleared, so model=muse 404s role_infeasible with hosted_by=None -- honest -- instead of proxying to a Thor that no longer hosts it. The muse ROLE, its catalog entry and the thor-muse shape all stay in-tree (cite-don't-delete); only this box's dead referral goes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "After the change, GET /capabilities on the Spark reports muse with hosted_by=None (not a Thor origin), and model=muse returns 404 role_infeasible rather than a proxied 503 -- while lobes overview --list still lists the muse catalog entry and lobes init --shape thor-muse still renders.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The cortex checkpoint swap must preserve both hard-won cortex behaviours: preserve_thinking (#93) -- the unsloth chat template does carry the preserve_thinking variable, verified from the published template -- and strict grammar-constrained tool calling with thinking on (colleague#320), which means the primary lane keeps --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py and GATEWAY_FORCE_STRICT_TOOLS stays armed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "Two probes pass against the swapped cortex on the live Spark: a two-turn preserve_thinking prompt-token-count delta proves historical <think> blocks are still retained, and a tool call with strict:true plus thinking enabled returns a clean structured tool call (not a 500 grammar rejection and not a mangled salvaged name).",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Falsify the boundary claim: prove the worker proxy needs NO change inside lobes/",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "gateway/_config.py at 0.54.7 is shown to carry worker in all three of PEER_ORIGIN_ENV, PEER_PROXY_ENV and PEER_API_KEY_ENV",
+        "the packaged fleet template lobes/templates/fleet/docker-compose.yml is shown to pass WORKER_BASE_URL, WORKER_FEASIBLE, WORKER_PEER_ORIGIN, WORKER_PEER_PROXY and WORKER_PEER_API_KEY into the gateway service",
+        "a written verdict states either 'no lobes/ change needed -- halves are independent' or names the exact file that must change, which would invalidate boundary claim c6"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Capture the live before-state baseline from the Spark and the Thor",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Thor GET /capabilities output is captured showing muse feasible=false hosted_by=null AND worker feasible=true ready=true",
+        "the Spark's ~/.lobes/.env is shown carrying MUSE_PEER_ORIGIN pointed at Thor and MODEL_GEAR_VERSION=0.52.3",
+        "the Spark's deployed docker-compose.yml is shown containing MUSE_* gateway passthrough lines and zero WORKER_* lines",
+        "a model=worker request against the Spark is captured failing BEFORE any change, establishing the baseline"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Audit the role-contract cost claim and how callers address the fleet",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes capabilities output is shown listing final_decision/repo_action in forbidden_responsibilities for senses and final_decision/security_decision for worker",
+        "the culture/colleague backend config and eidetic's embed URL are each shown pointing at the Spark gateway and addressing roles by name, not by raw model id",
+        "if any named consumer turns out to dial Thor directly or use a raw model id, that is written down as a correction to audience claim c2"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "c5",
+        "h5",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Re-scaffold the Spark deployment: packaged fleet compose + version re-pin",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "~/.lobes/docker-compose.yml is replaced by the packaged lobes/templates/fleet/docker-compose.yml from >=0.54.7, and a diff of what the old hand-patched copy carried (GATEWAY_API_KEY, CULTURE_VLLM_API_KEY, MULTIMODAL_PEER_PROXY, MULTIMODAL_PEER_API_KEY) confirms nothing needed is lost",
+        "MODEL_GEAR_VERSION in ~/.lobes/.env is re-pinned to >=0.54.7 so the gateway image installs a lobes-cli that knows the worker role",
+        "the previous deployment is preserved as a timestamped backup before any file is overwritten"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Replace the Spark's dead muse peer block with a live worker peer block",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "MUSE_PEER_ORIGIN, MUSE_PEER_PROXY and MUSE_PEER_API_KEY are removed from ~/.lobes/.env and MUSE_FEASIBLE is left unset",
+        "WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000 and WORKER_PEER_PROXY=true are set, with WORKER_PEER_API_KEY left EMPTY because Thor declares no inbound gate",
+        "after bring-up, GET /capabilities on the Spark reports muse with hosted_by=null and a model=muse request returns 404 role_infeasible -- NOT a proxied 503 backend_unavailable",
+        "lobes overview --list still lists the muse catalog entry and lobes init --shape thor-muse still renders, proving cite-don't-delete held"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c9",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Bring the Spark gateway up and prove the worker relay end to end",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the rebuild is run with BOTH -f docker-compose.yml and -f docker-compose.shape.yml, and vllm-multimodal is confirmed NOT to have started (the dropped lobe must not eat cortex's reclaimed budget)",
+        "POST /v1/chat/completions with model=worker returns 200 and the response carries X-Lobes-Proxied-By naming the Thor origin",
+        "the same request with an image_url content part returns a description matching the image, and a negative control image does not match",
+        "GET /capabilities shows worker feasible=false proxied=true hosted_by=<thor origin>, and /v1/models lists the proxied worker",
+        "the live cortex on the Spark is confirmed still serving after the gateway rebuild -- no regression to the box's primary duty"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Write the worker-proxy evidence transcript with an explicit split verdict",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-XX-XX-accept-worker-proxy-spark.txt exists following the accept-* naming convention",
+        "it opens with a VERDICT block naming what it proved (relay, attribution, muse honesty) AND what it did not prove (nothing about cortex vision, nothing about the cortex swap)",
+        "every command and its raw output are included, not summarised"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c8",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Add unsloth/Qwen3.6-27B-NVFP4 to the catalog as an untested candidate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/catalog.py gains a SupportedModel with role_hint='candidate', status='untested', native_max_model_len=262144, quantization='compressed-tensors', tool_parser='qwen3_coder'",
+        "the entry's comment records what was verified from the published checkpoint (language_model_only=false, ViT depth 27, image_token_id AND video_token_id, 15 real mtp.* tensors, 23.42 GB, preserve_thinking in its own chat template) and states plainly that NONE of it is a boot",
+        "the primary compose lane is left BYTE-UNCHANGED -- this task ships no default change",
+        "a docs/ page for the checkpoint exists and declares the model UNVALIDATED with no gpu_mem_util or max_model_len number in it",
+        "existing catalog tests still pass, including the assertion that tool_parser equals infer_parser"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Boot the multimodal cortex candidate on the GB10 and MEASURE its budget",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a hand-tuned lane serving unsloth/Qwen3.6-27B-NVFP4 boots healthy on the Spark with --quantization=compressed-tensors, no --language-model-only and no --tokenizer override",
+        "the real gpu_mem_util and max_model_len that BOOT are recorded from the live run -- refused values are recorded too, exactly as thor-muse's refused 0.40 and thor-worker's accepted 0.45 were",
+        "the vLLM log lines for weight load size, KV-cache pool and concurrency multiplier are captured verbatim",
+        "whether embedder, reranker and embed-deep still co-reside at the new budget is stated explicitly",
+        "if the checkpoint refuses to boot, that is recorded as the outcome and assumption c13 is marked disproven rather than retried indefinitely"
+      ],
+      "deps": [
+        "t8",
+        "t7"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Probe image AND video intake on the cortex candidate with negative controls",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model=cortex with an image_url content part returns a description matching the image, and a different control image does not match",
+        "model=cortex with a video clip returns a description of subject, scene and motion, matching the same standard the worker acceptance used",
+        "MTP draft acceptance rate is read from the live log and recorded, resolving the parked unknown about whether the self-hosted MTP head engages"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c3",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Prove the swap preserves preserve_thinking and strict tool calling",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a two-turn prompt-token-count delta shows historical <think> blocks are still retained, matching issue #93's diagnostic",
+        "a tool call with strict:true and thinking ENABLED returns a clean structured tool call -- not a 500 grammar rejection and not a mangled salvaged name",
+        "the lane is confirmed to still carry --tool-parser-plugin, --reasoning-parser=qwen3 and --default-chat-template-kwargs preserve_thinking, with GATEWAY_FORCE_STRICT_TOOLS=1 armed",
+        "if either probe fails, the promotion is blocked and the failure is recorded rather than worked around"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c10",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Rewrite the now-false rationales in CLAUDE.md and the catalog",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "mmangkad/Qwen3.6-27B-NVFP4's recorded rationale no longer claims it is the tokenizer source or the only vision-capable 27B; the entry itself stays (cite-don't-delete)",
+        "CLAUDE.md's cortex paragraph stops describing the served model as text-only with the ViT removed, once the promotion lands",
+        "CLAUDE.md's already-stale worker text is corrected: it describes the thor-worker shape and its compose service as forthcoming with no measured budget, when the shape has landed with MEASURED values (util 0.45 / 262144, KV 41.78 GiB, 14.07x) and an evidence transcript",
+        "the muse paragraph is updated to say no box declares MUSE_PEER_ORIGIN anywhere in the mesh, now that the Spark's dead referral is gone"
+      ],
+      "deps": [
+        "t10",
+        "t11",
+        "t13"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "Prove both halves in one session and decide the cortex promotion",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "in a SINGLE session against the live Spark, model=worker with an image returns a correct answer relayed from Thor, and model=cortex with an image returns a correct answer served locally -- each with a negative control",
+        "a second evidence transcript covering the cortex probes lands under docs/evidence/ with its own split VERDICT block",
+        "an explicit promote-or-hold decision is recorded: promote unsloth/Qwen3.6-27B-NVFP4 to role_hint='primary' and rewrite the compose lane, or hold it at candidate with the reason stated",
+        "if promoted, the measured budget from t9 is what ships -- no computed or hypothesised number enters the repo"
+      ],
+      "deps": [
+        "t7",
+        "t10",
+        "t11"
+      ],
+      "covers": [
+        "c1",
+        "h1"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Booting a new cortex on the Spark takes down the mesh's LIVE reasoning lobe. The Spark is the box that colleague, eidetic and the lobes agent itself depend on for model=main/cortex, and a 27B reload is minutes, not seconds. t9 must schedule the boot deliberately and keep a byte-for-byte rollback to the current sakamakismile lane.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "If t1 falsifies the boundary claim -- i.e. the worker proxy DOES need a change inside lobes/ -- then c6 is wrong, the halves are coupled, and the worker-proxy-first sequencing (c17) must be revisited before t4 starts.",
+      "kind": "unknown_blocking",
+      "task_id": "t1",
+      "resolved": true,
+      "resolution": "Managed by the dependency graph rather than left open: t1 is a falsification task whose acceptance criteria REQUIRE an explicit written verdict, and t4 (the first mutating deployment step) depends on t1. So the boundary claim is tested before anything relies on it. If t1's verdict names a file inside lobes/, the plan stops at that point and c6/c17 are revisited in the frame -- that is a deliberate stop, not an unhandled unknown."
+    },
+    {
+      "id": "r3",
+      "text": "Whether the unsloth self-hosted MTP head actually engages on this 27B: num_speculative_tokens value and real draft-acceptance rate. The 35B twin hit 89.1% with method=mtp and 2 tokens and the config carries an unsloth_fixed_mtp flag, but this checkpoint is unmeasured. Resolved by t10.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "A deployed compose that predates a role's env passthrough silently swallows that role's knobs -- this exact trap has now cost time twice, at muse go-live and again here. Candidate home for a fix: lobes doctor / doctor --fix detecting a stale deployed compose.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
