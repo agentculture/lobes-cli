@@ -230,6 +230,7 @@ def test_builtin_shape_names_are_sorted() -> None:
         "spark-lobe",
         "thor-lobe",
         "thor-muse",
+        "thor-worker",
     )
 
 
@@ -241,7 +242,8 @@ def test_shape_with_single_is_a_user_error(tmp_path, capsys) -> None:
     rc = main(["init", "--single", "--shape", "spark-lobe", str(target), "--apply"])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "--shape" in err and "--single" in err
+    assert "--shape" in err
+    assert "--single" in err
     assert not target.exists()
 
 

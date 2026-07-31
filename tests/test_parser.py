@@ -20,6 +20,9 @@ from lobes.runtime import _parser
         ("cosmicproc/Qwen3.5-4B-NVFP4", "qwen3_coder"),
         ("some/qwen3-5-foo", "qwen3_coder"),
         ("some/qwen3_5-foo", "qwen3_coder"),
+        # The `worker` gear's MoE checkpoint (unsloth's NVFP4 export, ships its
+        # own MTP draft module) — still a Qwen3.6 id, so qwen3_coder applies.
+        ("unsloth/Qwen3.6-35B-A3B-NVFP4", "qwen3_coder"),
         # Qwen3 dense → hermes
         ("nvidia/Qwen3-32B-NVFP4", "hermes"),
         ("Qwen/Qwen3-8B", "hermes"),

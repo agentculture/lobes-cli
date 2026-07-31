@@ -506,7 +506,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--shape",
-        metavar="{machine-as-brain,spark-lobe,thor-lobe,thor-muse,orin-small}",
+        metavar="{machine-as-brain,spark-lobe,thor-lobe,thor-muse,thor-worker,orin-small}",
         help="Deployment shape to render (brain-shapes, issue #113): which "
         "roles this box hosts, composed on top of whichever --profile/"
         "detection resolves. Default 'machine-as-brain' (host every "
@@ -516,7 +516,9 @@ def register(sub: argparse._SubParsersAction) -> None:
         "to a peer box and reclaim its GPU-memory budget: 'spark-lobe' "
         "(drops senses), 'thor-lobe' (drops cortex). 'thor-muse' drops BOTH "
         "heavy default lobes and hosts the opt-in 31B 'muse' creative lobe "
-        "instead. 'orin-small' (issue #112, DECLARED/UNVALIDATED — no "
+        "instead; 'thor-worker' drops BOTH and hosts the opt-in 35B-A3B "
+        "multimodal 'worker' ground-work lobe instead. 'orin-small' (issue "
+        "#112, DECLARED/UNVALIDATED — no "
         "physical Jetson AGX Orin has booted it) drops both heavy lobes and "
         "hosts the opt-in 'minor' generate gear instead. Fleet topology only "
         "— incompatible with --single. An unknown value is a user error "

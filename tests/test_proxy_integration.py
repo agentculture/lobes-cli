@@ -364,7 +364,8 @@ def test_chat_naming_proxied_role_answers_from_peer_end_to_end(world, alias) -> 
     # The request really crossed both hops: the peer gateway received exactly
     # one forwarded POST, and its own senses engine produced the answer.
     posts = [r for r in world.peer_log if r.method == "POST"]
-    assert len(posts) == 1 and posts[0].path == "/v1/chat/completions"
+    assert len(posts) == 1
+    assert posts[0].path == "/v1/chat/completions"
     assert json.loads(posts[0].body)["model"] == _SENSES_ID
     assert any(r.method == "POST" for r in world.senses_backend.log)
 
@@ -422,7 +423,8 @@ def test_capabilities_and_models_track_peer_lifecycle(world) -> None:
     assert senses["hosted_by"] == world.peer.base  # the declared origin verbatim
     assert senses["ready"] is True  # the live peer probe verified /v1/models
     assert senses["feasible"] is False  # still a hardware fact, never relaxed
-    assert "proxied" not in caps["cortex"] and "hosted_by" not in caps["cortex"]
+    assert "proxied" not in caps["cortex"]
+    assert "hosted_by" not in caps["cortex"]
     with _request(world.box.base, "/v1/models") as resp:
         ids = {m["id"] for m in json.loads(resp.read())["data"]}
     assert ids == {_CORTEX_ID, _EMBED_ID, _RERANK_ID, _SENSES_ID}
@@ -578,8 +580,10 @@ def test_credential_hygiene_end_to_end(world, capfd) -> None:
         assert _PEER_KEY not in artifact
     # And neither key reaches the gateways' captured log output.
     captured = capfd.readouterr()
-    assert _CALLER_KEY not in captured.err and _CALLER_KEY not in captured.out
-    assert _PEER_KEY not in captured.err and _PEER_KEY not in captured.out
+    assert _CALLER_KEY not in captured.err
+    assert _CALLER_KEY not in captured.out
+    assert _PEER_KEY not in captured.err
+    assert _PEER_KEY not in captured.out
 
 
 # ============================================================================
@@ -731,6 +735,45 @@ _GOLDEN_CAPABILITIES = {
         "forbidden_responsibilities": [
             "final_decision",
             "repo_action",
+            "security_decision",
+        ],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
+    "worker": {
+        "role": "worker",
+        # The opt-in worker lobe (thor-worker-lobe plan): unwired in this
+        # no-knob deployment, so it is honestly infeasible-by-default
+        # (OPT_IN_BACKENDS, exactly like muse above) and named by its catalog
+        # default. mtp True: the checkpoint ships its OWN MTP draft weights
+        # (self-hosted, unlike the Gemma gears' external draft id).
+        "model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/chat/completions",
+        "context": 262144,
+        "quant": "compressed-tensors",
+        "mtp": True,
+        # True even though this deployment does not HOST worker: `tools` is a
+        # fact about the model the role would serve (the catalog's
+        # `qwen3_coder` tool parser), exactly like muse above. `feasible:
+        # false` is what tells a caller it is unreachable here.
+        "tools": True,
+        "responsibilities": [
+            "execution",
+            "ground_work",
+            "bulk_transform",
+            "drafting",
+            "image_understanding",
+            "video_understanding",
+            "tool_use",
+            "repo_action",
+        ],
+        # Unlike muse/senses, worker MAY act on the repo — repo_action is
+        # deliberately ABSENT here (it is only permitted, never forbidden).
+        "forbidden_responsibilities": [
+            "final_decision",
             "security_decision",
         ],
         "feasible": False,

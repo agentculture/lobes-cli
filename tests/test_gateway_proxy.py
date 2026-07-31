@@ -54,6 +54,7 @@ _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"  # the catalog multimodal default
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
+_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"  # the catalog worker default (t1)
 _GATEWAY_URL = "http://localhost:8000"
 
 _THOR_ORIGIN = "http://thor.local:8001"
@@ -105,6 +106,30 @@ def _thor_env(**over) -> dict[str, str]:
         "EMBED_SERVED_NAME": _EMBED_ID,
         "RERANK_URL": "http://vllm-rerank:8000",
         "RERANK_SERVED_NAME": _RERANK_ID,
+    }
+    env.update(over)
+    return env
+
+
+def _worker_dropped_env(**over) -> dict[str, str]:
+    """A box that WIRES the opt-in worker gear (thor-worker-lobe plan, t3)
+    but has since dropped it to a peer — mirrors thor-lobe's own
+    wired-but-infeasible primary shape (:func:`_thor_env`). Wiring the
+    backend (rather than leaving it unwired) means the peer's served id
+    resolves off the WIRED ``Backend.served_name`` in
+    :func:`lobes.gateway.server._peer_served_name` — the same path
+    thor-lobe's primary uses — so this proves the generic data-plane proxy
+    machinery already carries a NEW backend name end to end from the
+    _config.py wiring alone, with no server.py change required."""
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": _CORTEX_ID,
+        "WORKER_BASE_URL": "http://vllm-worker:8000",
+        "WORKER_SERVED_NAME": _WORKER_ID,
+        "WORKER_FEASIBLE": "false",
+        "WORKER_PEER_ORIGIN": _SPARK_ORIGIN,
+        "WORKER_PEER_PROXY": "true",
+        "WORKER_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
@@ -277,7 +302,8 @@ def test_thor_proxied_cortex_aliases_forward() -> None:
     for alias in ("cortex", "main", "hard", _CORTEX_ID):
         resp, calls = _post(table, cfg, specs, json.dumps({"model": alias}).encode())
         assert resp.status == 200, alias
-        assert len(calls) == 1 and calls[0].backend.base_url == _SPARK_ORIGIN, alias
+        assert len(calls) == 1, alias
+        assert calls[0].backend.base_url == _SPARK_ORIGIN, alias
         assert json.loads(calls[0].body)["model"] == _CORTEX_ID, alias
 
 
@@ -288,7 +314,66 @@ def test_unspecified_model_routing_to_proxied_default_forwards() -> None:
     table, cfg, specs = _build(_thor_env())
     resp, calls = _post(table, cfg, specs, b"{}")
     assert resp.status == 200
-    assert len(calls) == 1 and calls[0].backend.base_url == _SPARK_ORIGIN
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _SPARK_ORIGIN
+
+
+# ============================================================================
+# worker (the opt-in-core eighth role, thor-worker-lobe plan t3): the config
+# layer wires it via the same *_BASE_URL / *_FEASIBLE / *_PEER_* channels as
+# every other backend name, so the existing data-plane proxy machinery
+# already carries it end to end — no server.py change needed for THIS shape.
+# ============================================================================
+
+
+def test_worker_proxied_request_forwards_to_peer_origin() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    assert "worker" in table.peer_proxied
+    for alias in ("worker", _WORKER_ID):
+        body = json.dumps({"model": alias, "messages": []}).encode()
+        resp, calls = _post(table, cfg, specs, body)
+        assert len(calls) == 1, alias
+        call = calls[0]
+        assert call.backend.base_url == _SPARK_ORIGIN, alias  # declared origin, verbatim
+        assert call.path == "/v1/chat/completions", alias
+        assert json.loads(call.body)["model"] == _WORKER_ID, alias  # rewritten to served id
+        assert resp.status == 200, alias
+        assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _SPARK_ORIGIN, alias
+
+
+def test_worker_outbound_carries_peer_key_and_never_callers_token() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    inbound = [("Authorization", f"Bearer {_CALLER_TOKEN}")]
+    _resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
+    auth_values = [v for k, v in calls[0].headers if k.lower() == "authorization"]
+    assert auth_values == [f"Bearer {_PEER_KEY}"]
+    dumped = json.dumps(calls[0].headers) + calls[0].body.decode("utf-8", errors="replace")
+    assert _CALLER_TOKEN not in dumped
+
+
+def test_worker_hosted_locally_is_unaffected_by_stray_peer_config() -> None:
+    # Same declaration, MINUS the FEASIBLE=false drop — worker is hosted here,
+    # so the local engine serves it; the peer knobs are inert (config-layer
+    # already proved this in test_gateway_config_proxy.py; this is the
+    # data-plane confirmation).
+    env = _worker_dropped_env()
+    del env["WORKER_FEASIBLE"]
+    table, cfg, specs = _build(env)
+    assert table.peer_proxied == frozenset()
+    resp, calls = _post(table, cfg, specs, b'{"model":"worker"}')
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert calls[0].backend.name == "worker"
+    assert S.PROXIED_BY_HEADER not in dict(resp.headers)
+
+
+def test_worker_marked_request_that_would_reproxy_is_refused() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    inbound = [(S.PROXIED_HEADER, "primary")]
+    resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
+    assert calls == []
+    assert resp.status == 508
+    assert json.loads(resp.body)["error"]["type"] == "proxy_loop"
 
 
 # ============================================================================
@@ -343,11 +428,13 @@ def test_marked_request_that_would_reproxy_is_refused_zero_outbound() -> None:
     assert calls == []  # NO outbound attempt
     assert resp.status == 508
     err = json.loads(resp.body)["error"]
-    assert err["type"] == "proxy_loop" and err["code"] == "proxy_loop"
+    assert err["type"] == "proxy_loop"
+    assert err["code"] == "proxy_loop"
     # Both hops named: the hop already taken (the arriving marker) and the hop
     # refused (this box's declared peer origin for the role).
     assert err["hops"] == ["primary", _THOR_ORIGIN]
-    assert "primary" in err["message"] and _THOR_ORIGIN in err["message"]
+    assert "primary" in err["message"]
+    assert _THOR_ORIGIN in err["message"]
     # Nothing was proxied → no proxied-by header, and no key material anywhere.
     assert S.PROXIED_BY_HEADER not in dict(resp.headers)
     assert _PEER_KEY not in resp.body.decode()
@@ -358,7 +445,8 @@ def test_marker_header_is_case_insensitive() -> None:
     resp, calls = _post(
         table, cfg, specs, b'{"model":"senses"}', headers=[("x-lobes-proxied", "primary")]
     )
-    assert resp.status == 508 and calls == []
+    assert resp.status == 508
+    assert calls == []
 
 
 def test_marked_request_for_locally_served_role_processes_normally() -> None:
@@ -368,7 +456,8 @@ def test_marked_request_for_locally_served_role_processes_normally() -> None:
     inbound = [(S.PROXIED_HEADER, "multimodal")]
     resp, calls = _post(table, cfg, specs, b'{"model":"cortex"}', headers=inbound)
     assert resp.status == 200
-    assert len(calls) == 1 and calls[0].backend.name == "primary"  # the LOCAL owner
+    assert len(calls) == 1
+    assert calls[0].backend.name == "primary"  # the LOCAL owner
     assert S.PROXIED_BY_HEADER not in dict(resp.headers)  # served locally
 
 
@@ -382,7 +471,8 @@ def test_peer_connect_refused_yields_503_with_retry_after() -> None:
     table, cfg, specs = _build(_spark_env())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert len(calls) == 1  # tried the peer once — no second hop, no fallback (#91)
-    assert resp.status == 503 and resp.upstream is None
+    assert resp.status == 503
+    assert resp.upstream is None
     headers = dict(resp.headers)
     assert headers["Retry-After"] == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
     assert headers[S.PROXIED_BY_HEADER] == _THOR_ORIGIN  # names the peer that failed
@@ -410,11 +500,13 @@ def test_proxied_request_bypasses_local_pressure_shed() -> None:
     table, cfg, specs = _build(_spark_env())
     resp, calls = _post(table, cfg, specs, b'{"model":"senses"}', pressure=_HIGH_PRESSURE)
     assert resp.status == 200  # forwarded, not shed
-    assert len(calls) == 1 and calls[0].backend.base_url == _THOR_ORIGIN
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _THOR_ORIGIN
     # Control: a HOSTED full tier under the same pressure is still shed (429) —
     # the bypass is scoped to proxied names only.
     resp, calls = _post(table, cfg, specs, b'{"model":"main"}', pressure=_HIGH_PRESSURE)
-    assert resp.status == 429 and calls == []
+    assert resp.status == 429
+    assert calls == []
 
 
 # ============================================================================
@@ -436,10 +528,12 @@ def test_peer_role_infeasible_is_terminal_and_names_the_peer() -> None:
     table, cfg, specs = _build(_spark_env())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert len(calls) == 1  # never a second attempt / another hop
-    assert resp.status == 404 and resp.upstream is None
+    assert resp.status == 404
+    assert resp.upstream is None
     assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _THOR_ORIGIN
     err = json.loads(resp.body)["error"]
-    assert err["type"] == "role_infeasible" and err["code"] == "role_infeasible"
+    assert err["type"] == "role_infeasible"
+    assert err["code"] == "role_infeasible"
     # The message makes clear the PEER declined (a misdeclared referral).
     assert _THOR_ORIGIN in err["message"]
     assert "declined" in err["message"]
@@ -487,7 +581,8 @@ def test_non_proxied_infeasible_role_keeps_byte_identical_referral_404() -> None
         with_specs, calls = _post(table, cfg, specs, body)
         opener, legacy_calls = _opener()
         legacy = S.handle_post(table, cfg, "/v1/chat/completions", [], body, opener, pressure=None)
-        assert calls == [] and legacy_calls == []
+        assert calls == []
+        assert legacy_calls == []
         assert with_specs.status == legacy.status == 404
         assert with_specs.body == legacy.body  # byte-identical referral body
         assert with_specs.headers == legacy.headers
@@ -513,7 +608,8 @@ def test_locally_served_response_never_carries_proxied_by() -> None:
         resp, calls = _post(table, cfg, specs, json.dumps({"model": model}).encode())
         assert resp.status == 200, model
         assert S.PROXIED_BY_HEADER not in dict(resp.headers), model
-        assert len(calls) == 1 and calls[0].backend.base_url != _THOR_ORIGIN, model
+        assert len(calls) == 1, model
+        assert calls[0].backend.base_url != _THOR_ORIGIN, model
 
 
 def test_handle_post_without_peer_specs_is_pre_proxy_behaviour() -> None:
@@ -524,7 +620,8 @@ def test_handle_post_without_peer_specs_is_pre_proxy_behaviour() -> None:
     assert "multimodal" in table.peer_proxied  # the table itself is armed
     opener, calls = _opener()
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"senses"}', opener)
-    assert resp.status == 404 and calls == []
+    assert resp.status == 404
+    assert calls == []
     assert json.loads(resp.body)["error"]["code"] == "role_infeasible"
 
 
@@ -546,7 +643,8 @@ def test_v1_models_lists_proxied_id_iff_peer_ready_true() -> None:
     ids = {
         m["id"] for m in list_models_payload(table, _ready(multimodal=True), peer_served)["data"]
     }
-    assert _SENSES_ID in ids and _CORTEX_ID in ids
+    assert _SENSES_ID in ids
+    assert _CORTEX_ID in ids
     # Peer down / unprobed / missing → dropped, exactly like a dead local backend.
     for signal in (False, None):
         ids = {

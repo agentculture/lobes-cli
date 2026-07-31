@@ -1,4 +1,193 @@
-# MoE candidate: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
+# Qwen3.6-35B-A3B-NVFP4: two checkpoints, two stories
+
+The catalog carries **two, distinct** `Qwen3.6-35B-A3B-NVFP4` entries — same
+architecture family (MoE, ~35B total / ~3B active per token), different
+org/export, different role, different story:
+
+- **`unsloth/Qwen3.6-35B-A3B-NVFP4`** — the **`worker`** role, the eighth
+  first-class Colleague role (thor-worker-lobe plan). MULTIMODAL, ships its
+  OWN self-hosted MTP draft, 262144 native context. See ["`worker`: the
+  eighth Colleague role"](#worker-the-eighth-colleague-role-unslothqwen36-35b-a3b-nvfp4)
+  below.
+- **`mmangkad/Qwen3.6-35B-A3B-NVFP4`** — a **MoE candidate**, the *former*
+  fleet fallback, 32K native, its own MTP explicitly does not load. Unchanged
+  by the `worker` role's addition — see the rest of this document below.
+
+The two are deliberately kept as separate catalog entries (never merged):
+they resolve to different `role_hint`s, different native context windows,
+different quantization conventions, and — critically — one (`mmangkad/`)
+has an MTP config that is *known* not to load, while the other
+(`unsloth/`) ships its own MTP draft module whose loadability is genuinely
+unconfirmed, not assumed working. Treating them as interchangeable would be
+exactly the kind of card-prose-over-measurement mistake this repo's honesty
+rules exist to prevent.
+
+## `worker`: the eighth Colleague role (`unsloth/Qwen3.6-35B-A3B-NVFP4`)
+
+> **Status: DECLARED, not yet booted on any hardware.** The catalog entry,
+> role registry, and gateway config wiring are **shipped** (verified against
+> the checkpoint's own `config.json`, fetched 2026-07-31 — not card prose).
+> The `thor-worker` deployment shape, its compose service, and every
+> live-measured number (`gpu_mem_util`, `max_model_len` if trimmed from
+> native, the sm_110 MoE backend choice, MTP acceptance) are **forthcoming**
+> (thor-worker-lobe plan task t7) — nothing here claims worker validated on
+> hardware (#108).
+
+**Model id:** `unsloth/Qwen3.6-35B-A3B-NVFP4`
+**Tier alias:** `worker` — like `muse`, the role name *is* the alias
+(capability order: `minor` < `multimodal` < `worker` < `muse` < `primary`/`main`).
+**Role:** `worker` — the fleet's fast **ground-work DOER**, the EIGHTH
+first-class Colleague role. **Opt-in for hosting**: `machine-as-brain` never
+hosts it; only an explicit worker-hosting shape (`thor-worker`, forthcoming)
+will.
+**Status:** `configured` in the catalog (declared 2026-07-31; not yet booted
+on any hardware — task t7 gates that).
+
+### What it is
+
+Qwen3.6 35B-A3B (a DISTINCT export from the `mmangkad/` candidate below —
+same architecture family, different org). Facts verified against the
+checkpoint's actual `config.json` + the absence of a separate
+`hf_quant_config.json` (fetched 2026-07-31, not card prose):
+
+- **MoE, ~3B active parameters per token** — `architectures:
+  ["Qwen3_5MoeForConditionalGeneration"]`, `model_type: "qwen3_5_moe"`,
+  `num_experts=256`, `num_experts_per_tok=8`. vLLM loads *all* experts into
+  memory; the small active set only reduces per-token compute (the same MoE
+  decode-speed advantage the `mmangkad/` sibling demonstrated live, below).
+- **262144 native context** (`text_config.max_position_embeddings`), the
+  card additionally advertising a YaRN-extended ~1.01M window (unconfirmed
+  here — the catalog carries the native figure only).
+- **Ships its OWN self-hosted MTP draft module** — unlike the `mmangkad/`
+  candidate, whose MTP explicitly fails to load. `text_config
+  .mtp_num_hidden_layers=1`, and `quantization_config.ignore` carries a
+  `"re:^mtp.*"` pattern — i.e. the checkpoint's own MTP weight tensors
+  physically exist and are deliberately left UNQUANTIZED, confirming the
+  self-hosted draft the card describes ("can act as its own speculative
+  draft for faster decoding"). The README's own vLLM MTP serve command
+  matches: `--speculative-config '{"method": "mtp",
+  "num_speculative_tokens": 2}'` — no external `model`/`draft_model_id` key,
+  because the draft lives IN this checkpoint. **Loadability on the deployed
+  vLLM image and MTP's acceptance rate are UNCONFIRMED until the live boot
+  (task t7)** — the `mmangkad/` sibling's own MTP attempt failed with a
+  weight-shape mismatch on a *different* checkpoint's draft, so this is a
+  genuinely open question, not a formality.
+- **`compressed-tensors` quantization** — `quantization_config.quant_method
+  ="compressed-tensors"` (mixed precision: 8-bit float-quantized
+  attention/lm_head/upper MLP layers, 4-bit nvfp4-pack-quantized MoE
+  experts) — NOT nvidia `modelopt`, unlike the `mmangkad/` candidate. No
+  separate `hf_quant_config.json` exists (a `compressed-tensors` checkpoint
+  carries its quant config inline in `config.json`; that separate file is a
+  modelopt/TensorRT export convention this checkpoint doesn't use).
+- **MULTIMODAL — image+video, no audio.** `config.json` carries a
+  `vision_config` (27-layer ViT), `image_token_id`/`video_token_id`, and
+  vision start/end tokens, and **no** `audio_config`. **Operator decision
+  (2026-07-31): worker is served MULTIMODAL** — a "seeing doer" (image+video
+  intake + `repo_action`) — so the compose lane will NOT pass
+  `--language-model-only` (unlike the 27B `cortex` MTP primary, whose export
+  dropped its ViT). Whether vLLM actually serves
+  `Qwen3_5MoeForConditionalGeneration` + MTP together on Thor's sm_110 is
+  **UNCONFIRMED until the live boot** (task t7).
+- **`qwen3_coder` tool-call parser** — the same Qwen-family parser pair
+  `cortex` uses (`--tool-call-parser=qwen3_coder` **plus**
+  `--reasoning-parser=qwen3`), never inferred from the model card — see
+  ["vLLM parser pairs are per-family"](#tool-calling-the-qwen-family-parser-pair)
+  below.
+- **The README's DGX Spark serving note recommends `--moe-backend
+  flashinfer_b12x` under `CUTE_DSL_ARCH=sm_121a`** — explicitly *against*
+  `marlin` ("2x slower") on that arch. `sm_121a` is the **Spark's** arch, not
+  Thor's (**sm_110** — see [`docs/machine-profiles.md`](machine-profiles.md)
+  and the CUDA-wheel-arch-is-not-a-family lesson: Spark and Thor are
+  different SASS targets even though both are "Blackwell-class"). The
+  catalog carries `flashinfer_b12x` as the best-cited default, but the
+  correct sm_110 MoE backend for Thor is **UNCONFIRMED** until task t7's
+  live boot chooses (or refuses) it — the `mmangkad/` sibling's own
+  sm_110-vs-sm_121 story (below) is exactly why this isn't assumed.
+
+### Responsibilities: the fast ground-work DOER, and the first non-`cortex` actor
+
+`worker`'s responsibilities: `execution`, `ground_work`, `bulk_transform`,
+`drafting`, `image_understanding`, `video_understanding`, `tool_use`, and —
+uniquely among every role besides `cortex` — **`repo_action`**. Forbidden:
+`final_decision`, `security_decision`. `worker` executes bulk ground work
+(drafting, transforms, image/video-informed edits) UNDER `cortex`'s
+direction; it never makes the final call or a security decision on its own
+authority. This is a materially different contract from `senses` (perceives,
+never acts) and `muse` (proposes via tool calls, never acts) — see
+[`docs/colleague-stack.md`](colleague-stack.md) for the full division of
+labour across all eight roles.
+
+### Tool calling: the Qwen-family parser pair
+
+`worker` is specified to serve tool calls on the same **matched pair** the
+`cortex` lane has always used, never a parser inferred from the model card
+(the recorded, hard-won lesson from the Gemma 4 tool-calling incident — see
+[`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md#tool-calling) and
+`CLAUDE.md`'s "Gemma 4 tool calling" section):
+
+```text
+--tool-call-parser=qwen3_coder     # the same parser cortex uses
+--reasoning-parser=qwen3           # the same reasoning parser cortex uses
+```
+
+This is a Qwen3.6 checkpoint, and the catalog's `infer_parser` already
+resolves the unsloth id to `qwen3_coder` (mirroring the `mmangkad/`
+candidate's own `qwen3_coder` entry) — but per the per-family parser rule,
+**this must still be verified live** with a `skip_special_tokens:false`
+probe against the actually-served worker lane before it is trusted, exactly
+as the Gemma 4 pair had to be (task t7/t9 — a live, evidence-backed
+verification, not a repeat of a never-validated guess).
+
+### How it will be hosted: the `thor-worker` shape (forthcoming)
+
+`worker` is the **second opt-in core role**
+(`lobes/profiles/shapes.py`'s `OPT_IN_CORE_ROLES = ("muse", "worker")`),
+mirroring `muse`'s mechanics exactly: never hosted by `machine-as-brain`, the
+gateway wires its backend only behind `WORKER_BASE_URL`, an unwired `worker`
+defaults to infeasible (`model=worker` 404s `role_infeasible`, never a
+silent fallback), and `base.toml` vetoes it on an unrecognised card just
+like `muse`. The shape/gateway-config machinery that would host it is
+**shipped** (`OPT_IN_CORE_ROLES`, `WORKER_FEASIBLE`/`WORKER_PEER_ORIGIN`/
+`WORKER_PEER_PROXY`/`WORKER_PEER_API_KEY`, `shape_render.py`'s
+`OPT_IN_CORE_ACTIVATION_ENV["worker"]`); what remains is the `thor-worker`
+shape's own TOML (with a live-measured `[overrides.worker]` budget,
+mirroring `thor-muse`'s `0.40→0.55` measured-not-arithmetic pattern), the
+`vllm-worker` compose service, and the CLI verb polish (`lobes up worker`) —
+all forthcoming, thor-worker-lobe plan tasks t4/t6/t7. **No budget number is
+declared here** — it is committed only once a live boot on the physical
+Jetson AGX Thor produces it.
+
+```bash
+lobes init --shape thor-worker --apply   # forthcoming — not yet a valid shape name
+lobes fleet up --apply
+lobes up worker --apply                  # verb wired (mirrors `lobes up muse`); needs a worker-hosting shape to actually boot (thor-worker, t7)
+```
+
+`thor-worker` will drop BOTH heavy default lobes (`cortex` and `senses`) to
+peer boxes, exactly like `thor-muse` does today — the physical Thor that
+previously hosted `thor-muse` is the box this shape targets. See
+[`docs/deployment-shapes.md`](deployment-shapes.md) for the opt-in-core-role
+mechanism shared with `muse`, and `CLAUDE.md`'s "Colleague roles" section for
+the mesh-wide picture (including `muse`'s new DORMANT status on this same
+box).
+
+### Related docs
+
+- [`docs/colleague-stack.md`](colleague-stack.md) — the eight-role Colleague
+  contract, `worker`'s `responsibilities`/`forbidden_responsibilities`
+  exactly as declared, and the "first non-`cortex` actor" division of labour.
+- [`docs/deployment-shapes.md`](deployment-shapes.md) — the opt-in-core-role
+  concept `worker` shares with `muse`, and the `thor-worker` shape's status.
+- [`docs/gateway-fleet.md`](gateway-fleet.md) — the `worker` tier alias, the
+  inverted feasibility default, peer channels, pressure policy.
+- [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md) — `muse`, the sibling
+  opt-in core role, now DORMANT on the box `worker` is moving onto.
+- `CLAUDE.md`'s "Colleague roles" section — the eight-role summary and the
+  muse-to-worker mesh migration in one place.
+
+---
+
+## MoE candidate: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
 
 A **MoE candidate** — the *former* fleet fallback. It was **superseded as the
 fallback choice** by the dense `RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4`
@@ -13,6 +202,10 @@ fleet topology and the
 (what you *can* load vs. what's loaded *now*).
 
 Source: <https://huggingface.co/mmangkad/Qwen3.6-35B-A3B-NVFP4>.
+
+**This entry is unchanged by the `worker` role's addition above** — no
+promotion, no removal, no rewrite (thor-worker-lobe plan non-goal). It stays
+exactly the candidate it was.
 
 > **Status: load-tested 2026-05-30 — does NOT load reliably on this GB10.** First
 > live `lobes fleet up` on `spark-f8a9`: co-resident with the 27B primary it hit

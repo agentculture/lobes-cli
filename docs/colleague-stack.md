@@ -1,10 +1,12 @@
-# The Colleague stack: seven roles, one contract
+# The Colleague stack: eight roles, one contract
 
-> The seven first-class, Colleague-facing roles lobes exposes over the fleet —
-> `cortex` / `senses` / `muse` / `embedder` / `reranker` / `stt` / `tts` — how
-> a caller discovers them, drives them, measures them, and the before→after
-> context migration that shipped alongside this contract (issue #81; `muse`
-> joined as the seventh, opt-in-hosted role).
+> The eight first-class, Colleague-facing roles lobes exposes over the fleet —
+> `cortex` / `senses` / `muse` / `worker` / `embedder` / `reranker` / `stt` /
+> `tts` — how a caller discovers them, drives them, measures them, and the
+> before→after context migration that shipped alongside this contract (issue
+> #81; `muse` joined as the seventh, opt-in-hosted role, and `worker` as the
+> eighth, thor-worker-lobe plan). **`muse` is currently DORMANT/unhosted
+> mesh-wide** — see the callout below the role table.
 
 This doc is the **role contract** reference. For the fleet's Docker topology,
 tuning knobs, and memory budget, see [`docs/gateway-fleet.md`](gateway-fleet.md);
@@ -23,17 +25,28 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The seven roles
+## The eight roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
 | `cortex` | `primary` (generate) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
-| `muse` | `muse` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
+| `muse` | `muse` (generate, **opt-in hosting, currently DORMANT/unhosted**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
+| `worker` | `worker` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, image/video understanding — **and repo actions**, under `cortex`'s direction. Never the final decision or a security call. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
 | `tts` | Chatterbox (audio overlay, opt-in) | `POST /v1/audio/speech` | Text-to-speech. |
+
+**`cortex` is the final decision authority, not the only lobe that acts.**
+Since `worker` joined as the eighth role, two lobes may act on the repo:
+`cortex` (unrestricted — `code_repo_actions` plus `final_authority`) and
+`worker` (`repo_action` allowed, but forbidden `final_decision` and
+`security_decision` — it executes ground work under `cortex`'s direction, it
+never decides on its own authority). Every other role — `senses`, `muse`,
+`embedder`, `reranker`, `stt`, `tts` — still carries no acting authority at
+all. See "Responsibilities and forbidden responsibilities" below for the
+full division of labour.
 
 > **`senses` is vision-only intake — audio is not currently served (issue
 > #101).** The `coolthor/gemma-4-12B-it-NVFP4A16` checkpoint behind `senses`
@@ -46,33 +59,53 @@ below.
 > /v1/audio/transcriptions`) instead — it remains first-class and is
 > unaffected by this gap.
 
-`cortex`, `senses`, `muse`, `embedder`, and `reranker` are always enumerated
-(present with `loaded=false` if their gear isn't wired in this deployment —
-`muse` additionally reports `feasible=false` unless a muse-hosting shape
-declares it, see the note below); `stt`/`tts` require `lobes init --fleet
---audio`. **`brain` is not a valid role name** — `cortex` is the only
-reasoning/decision role.
+`cortex`, `senses`, `muse`, `worker`, `embedder`, and `reranker` are always
+enumerated (present with `loaded=false` if their gear isn't wired in this
+deployment — `muse` and `worker` additionally report `feasible=false` unless
+their respective hosting shape declares them, see the note below); `stt`/`tts`
+require `lobes init --fleet --audio`. **`brain` is not a valid role name** —
+`cortex` is the only reasoning/decision-*authority* role (`worker` may act,
+per the callout above, but it never decides).
 
-> **`muse` is an OPT-IN CORE ROLE — machine-as-brain never hosts it.** The
-> `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` is too heavy to
-> co-reside with the default `cortex`+`senses` duo on a 128 GB box, so the
-> default shape's hosted set stays the SIX default roles (`DEFAULT_HOSTED_ROLES`
-> in `lobes/profiles/shapes.py`) while the contract set capabilities reports
-> (`COLLEAGUE_ROLES`) is seven. Only an explicit muse-hosting deployment shape
-> (`lobes init --shape thor-muse`) serves it — **DECLARED/UNVALIDATED** as of
-> this writing: a 2026-07-17 live boot measured the budget, but the
-> acceptance run/transcript is pending, #108 (see
-> [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)). On every non-hosting
-> deployment `muse` is honestly `feasible: false` (and, uniquely, an unwired
-> muse *defaults* to infeasible even on a stale pre-muse `.env` — see
+> **`muse` and `worker` are OPT-IN CORE ROLES — machine-as-brain never hosts
+> either.** The `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` and the
+> `unsloth/Qwen3.6-35B-A3B-NVFP4` checkpoint behind `worker` are both too
+> heavy to co-reside with the default `cortex`+`senses` duo on a 128 GB box,
+> so the default shape's hosted set stays the SIX default roles
+> (`DEFAULT_HOSTED_ROLES` in `lobes/profiles/shapes.py`) while the contract
+> set capabilities reports (`COLLEAGUE_ROLES`) is eight. Only an explicit
+> hosting shape serves either: `lobes init --shape thor-muse` for `muse` —
+> **DECLARED/UNVALIDATED** as of this writing, and now additionally
+> **DORMANT** (see below) — a 2026-07-17 live boot measured the budget, but
+> the acceptance run/transcript never landed, #108 (see
+> [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)); a `thor-worker` shape
+> for `worker` is **forthcoming** (thor-worker-lobe plan task t7) with no
+> budget numbers committed yet — the role/tier/gateway-config plumbing is
+> shipped, the shape and its live-measured budget are not (see
+> [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). On every
+> non-hosting deployment both are honestly `feasible: false` (and, uniquely
+> among the six other roles, an unwired `muse`/`worker` *defaults* to
+> infeasible even on a stale pre-muse/pre-worker `.env` — see
 > [`docs/gateway-fleet.md`](gateway-fleet.md#generate-lane-tier-aliases)), so
-> `model=muse` 404s `role_infeasible` — referable and proxyable like every
-> core role — rather than silently falling back to `cortex`.
+> `model=muse` / `model=worker` 404s `role_infeasible` — referable and
+> proxyable like every core role — rather than silently falling back to
+> `cortex`.
+>
+> **`muse` is currently DORMANT/unhosted mesh-wide.** The physical Jetson AGX
+> Thor — the one box that ran (unvalidated) `thor-muse` — moved to hosting
+> `worker` instead: an operator decision (thor-worker-lobe plan) that no box
+> in the mesh currently hosts the 31B `muse`, and the Thor's deployment
+> declares no `MUSE_PEER_ORIGIN`, so `model=muse` 404s `role_infeasible` with
+> **no** `hosted_by` referral anywhere. The `muse` role, its catalog entry,
+> and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) — dormant,
+> not deleted — so this contract still enumerates `muse` with `loaded=false`,
+> `feasible=false`, and no `hosted_by`, exactly like any other unhosted opt-in
+> core role with no declared peer.
 
 ### Responsibilities and forbidden responsibilities
 
 Each role carries a declared division of labour — what it is expected to own,
-and (for `senses` and `muse`) what it must **not** do. These are
+and (for `senses`, `muse`, and `worker`) what it must **not** do. These are
 **runtime-descriptor tokens, not correctness claims** — lobes does not grade
 whether a role did its job well; that judgment is Colleague's (see
 "Runtime-only, always" below).
@@ -82,10 +115,23 @@ whether a role did its job well; that judgment is Colleague's (see
 | `cortex` | `reasoning`, `deciding`, `planning`, `tool_use`, `code_repo_actions`, `validation`, `final_authority` | *(none — cortex is the final authority)* |
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
 | `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
+| `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `image_understanding`, `video_understanding`, `tool_use`, `repo_action` | `final_decision`, `security_decision` — worker acts under cortex's direction, never on its own authority |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
 | `tts` | `speech_output`, `synthesize` | *(none)* |
+
+**`worker` is the first role besides `cortex` permitted `repo_action`.**
+Every other non-`cortex` role (`senses`, `muse`, `embedder`, `reranker`,
+`stt`, `tts`) forbids it or has no acting authority to begin with. `worker`'s
+`repo_action` is deliberately narrower than `cortex`'s: `cortex` also carries
+`final_authority` and no forbidden list at all, while `worker`'s forbidden
+list still bars `final_decision` and `security_decision` — worker executes
+ground work (bulk transforms, drafting, image/video-informed edits) UNDER
+`cortex`'s direction, it never decides on its own authority. It is also
+MULTIMODAL (the checkpoint's ViT gives it image+video intake, no audio),
+hence `image_understanding`/`video_understanding` — a "seeing doer," unlike
+text-only `cortex`.
 
 **`stt`'s `realtime_vad_session` responsibility is additive and
 honesty-gated (issue #149).** It names the `/v1/realtime` WebSocket
@@ -104,11 +150,18 @@ field in this contract already follows, not a new signal. See
 `tests/test_cli_capabilities.py` and `tests/test_colleague_contract.py` for
 the positive (audio-enabled) and negative (text-only) proof.
 
-Two roles carry `tool_use`: `cortex` and `muse`. They are not equivalent, and the
-`forbidden_responsibilities` column is what separates them — `cortex` may act on a
-tool result (`repo_action`, `final_authority`); `muse` may only *research* with
-one. muse calling `read_file` to ground a proposal is in-contract; muse calling
-anything that writes is not. `senses` has no `tool_use` at all: it is
+Three roles carry `tool_use`: `cortex`, `muse`, and `worker`. They are not
+equivalent, and the `forbidden_responsibilities` column is what separates
+them — `cortex` may act on a tool result with full authority (`repo_action`
+via `code_repo_actions`, plus `final_authority`); `worker` may also act
+(`repo_action` is present, not forbidden) but never decides
+(`final_decision`/`security_decision` stay forbidden) — it executes under
+`cortex`'s direction; `muse` may only *research* with a tool call
+(`repo_action` is forbidden outright). muse calling `read_file` to ground a
+proposal is in-contract; muse calling anything that writes is not. worker
+calling a write tool to execute ground work IS in-contract, but worker
+choosing to merge, deploy, or otherwise make the final call is not — that
+authority stays `cortex`'s alone. `senses` has no `tool_use` at all: it is
 intake/perception, even though its Gemma lane *can* serve tool calls (see `tools`,
 below — a capability of the lane, not a licence for the role).
 
@@ -123,7 +176,8 @@ resolve to the same backend (`lobes/catalog.py`'s `TIER_ROLE`):
 |---|---|---|---|
 | `primary` | `main` | `hard` | `cortex` |
 | `multimodal` | `multimodal` | `normal` | `senses` |
-| `muse` | `muse` | *(none — new with the role)* | `muse` — the first role whose name IS the backend/tier name; capability order is `minor` < `multimodal` < `muse` < `primary` |
+| `worker` | `worker` | *(none — new with the role)* | `worker` — like `muse`, its name IS the backend/tier name; capability order is `minor` < `multimodal` < `worker` < `muse` < `primary` |
+| `muse` | `muse` | *(none — new with the role)* | `muse` — the first role whose name IS the backend/tier name; capability order is `minor` < `multimodal` < `worker` < `muse` < `primary` |
 | `minor` | `minor` | `cheap` | *(no role name — `minor` has no Colleague role; it's the servable floor under pressure, not a first-class capability)* |
 
 A caller can send `model=cortex`, `model=main`, or `model=hard` to
@@ -141,7 +195,7 @@ base URL. Everything else — which model backs a role, whether it's loaded,
 what context it's served at — comes from the contract itself.
 
 ```bash
-lobes capabilities              # human-readable table, all seven roles
+lobes capabilities              # human-readable table, all eight roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # the same contract, over HTTP
@@ -163,7 +217,7 @@ by role name, each value carrying exactly these fields:
 ```text
 {
   "<role>": {
-    "role": str,                          # "cortex" | "senses" | "muse" | "embedder" | "reranker" | "stt" | "tts"
+    "role": str,                          # "cortex" | "senses" | "muse" | "worker" | "embedder" | "reranker" | "stt" | "tts"
     "model": str,                         # the served model id this role resolves to (never blank)
     "runtime": str,                       # "vllm" | "parakeet" | "chatterbox"
     "endpoint": str,                      # client-reachable base URL to dial ("" when not wired)
@@ -192,7 +246,7 @@ host, and only when the operator declared a peer for it — see
 three-state contract.
 
 **`tools`** answers "can I put an OpenAI `tools` array on a request to this
-role?" — `true` for the three generate lobes (`cortex`/`senses`/`muse`), `false`
+role?" — `true` for the four generate lobes (`cortex`/`senses`/`muse`/`worker`), `false`
 for `embedder`/`reranker` (pooling lanes, no chat endpoint) and `stt`/`tts`. It
 is a fact about the MODEL the role resolves to, derived from the catalog's
 `tool_parser` — the same field the served `--tool-call-parser` flag is built
@@ -213,8 +267,8 @@ RESPONSIBILITY of the role. `senses` has `tools: true` and no `tool_use`: its
 Gemma lane can serve tool calls, but the division of labour doesn't ask it to.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
-it directly (issue #87). All seven roles (`cortex`/`senses`/`muse`/`embedder`/
-`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
+it directly (issue #87). All eight roles (`cortex`/`senses`/`muse`/`worker`/
+`embedder`/`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
 `model` field / the OpenAI `path`, not distinct per-role URLs; the internal
 upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
 fetch `GET /capabilities`, the gateway advertises the origin **you actually
@@ -230,10 +284,11 @@ one for consumers: for `stt`/`tts` it now reports a **live** readiness probe of
 the audio backend (issue #89) — `ready: true` only when an audio round-trip
 would actually succeed (Chatterbox + Parakeet both up, no poisoned CUDA
 context), `false` while they warm — so an advertised-ready audio role is truly
-consumable. The gateway-fronted roles (`cortex`/`senses`/`muse`/`embedder`/
-`reranker`) still report `ready` as a same-cost-as-`loaded` boolean **unless
-the role is proxied** (below), in which case `ready` reflects a live probe of
-the *peer*, not a local boolean. No `ready` value is a task-quality claim.
+consumable. The gateway-fronted roles (`cortex`/`senses`/`muse`/`worker`/
+`embedder`/`reranker`) still report `ready` as a same-cost-as-`loaded` boolean
+**unless the role is proxied** (below), in which case `ready` reflects a live
+probe of the *peer*, not a local boolean. No `ready` value is a task-quality
+claim.
 
 Example (`cortex`, fully wired, default fleet):
 
@@ -258,8 +313,9 @@ Example (`cortex`, fully wired, default fleet):
 An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
-client can always render all seven roles. (An unwired `muse` additionally
-defaults to `feasible: false` — the opt-in-hosting honesty rule above.)
+client can always render all eight roles. (An unwired `muse` or `worker`
+additionally defaults to `feasible: false` — the opt-in-hosting honesty rule
+above.)
 
 ## A third role state: proxied
 
@@ -365,7 +421,8 @@ touching the rest of the fleet:
 ```bash
 lobes up cortex --apply             # docker compose up -d vllm-primary
 lobes up senses --apply             # docker compose up -d vllm-multimodal
-lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only)
+lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only — currently no box hosts one, see the dormant callout above)
+lobes up worker --apply             # docker compose up -d vllm-worker (verb wired; errors helpfully off a non-hosting box — a worker-hosting shape is forthcoming, thor-worker-lobe plan t7)
 lobes up embedder --apply           # docker compose up -d vllm-embed
 lobes up reranker --apply           # docker compose up -d vllm-rerank
 lobes up stt --apply                # requires the --audio overlay
@@ -381,11 +438,13 @@ demote them out of the default fleet (a regression). If the audio overlay
 isn't scaffolded, `colleague-stack` (and `up stt`/`up tts`) fail with a
 remediation pointing at `lobes init --fleet --audio --apply`, rather than
 silently starting only four of the six roles. **`colleague-stack` stays the
-six default-hosted roles — `muse` is deliberately excluded** (its `vllm-muse`
-service is compose-profile-gated, so bundling it would break the target on
-every non-muse deployment). `lobes up muse` works on a muse-hosting
-deployment and errors helpfully — naming the fix — when the deployment's
-`COMPOSE_PROFILES` doesn't include `muse`.
+six default-hosted roles — `muse` and `worker` are deliberately excluded**
+(their services are compose-profile-gated, so bundling either would break the
+target on every non-hosting deployment). `lobes up muse` works on a
+muse-hosting deployment and errors helpfully — naming the fix — when the
+deployment's `COMPOSE_PROFILES` doesn't include `muse`; `lobes up worker` is
+designed to mirror that exact mechanic once the `vllm-worker` compose service
+and a worker-hosting shape land (thor-worker-lobe plan).
 
 ## Measurement: `lobes measure`
 
@@ -394,14 +453,14 @@ claim (lobes measures serving performance; whether an *answer* was good is
 Colleague's call):
 
 ```bash
-lobes measure              # all seven roles, table
-lobes measure --json       # all seven roles, JSON
+lobes measure              # all eight roles, table
+lobes measure --json       # all eight roles, JSON
 lobes measure --role cortex --json
 ```
 
 Metrics are grouped by the role's family:
 
-- **LLM roles** (`cortex`, `senses`, `muse`): `ttft_ms`, `decode_tps`, `prefill_tps`,
+- **LLM roles** (`cortex`, `senses`, `muse`, `worker`): `ttft_ms`, `decode_tps`, `prefill_tps`,
   `context`, `mem_usage_pct` (when the vLLM `/metrics` scrape is cheaply
   reachable); `restart_count`/`error_count` are always `null` (not cheaply
   available without a docker inspect, which this verb deliberately never does).
@@ -442,11 +501,12 @@ A Colleague client needs **only the fleet's base URL**. The whole discovery
 and dispatch flow:
 
 1. `GET <base_url>/capabilities` once.
-2. Read the role you want (`cortex`, `senses`, `muse`, `embedder`, `reranker`,
-   `stt`, `tts`) out of the response — its `endpoint`, `model`, and `path`.
+2. Read the role you want (`cortex`, `senses`, `muse`, `worker`, `embedder`,
+   `reranker`, `stt`, `tts`) out of the response — its `endpoint`, `model`,
+   and `path`.
 3. `POST <endpoint><path>` with `"model": <model>` and the role-appropriate
-   body shape (chat messages for `cortex`/`senses`/`muse`, `input` for
-   `embedder`, `query`+`documents` for `reranker`).
+   body shape (chat messages for `cortex`/`senses`/`muse`/`worker`, `input`
+   for `embedder`, `query`+`documents` for `reranker`).
 
 No model id is ever hardcoded in the client. Concretely (Python, stdlib-only):
 
@@ -471,11 +531,11 @@ call_role("http://localhost:8000", "cortex",
           {"messages": [{"role": "user", "content": "ping"}]})
 ```
 
-Because `cortex`, `senses`, and `muse` are **gateway-fronted**, they (along
-with `embedder`/`reranker`) share the **same `endpoint`** — the gateway's base
-URL — and routing between them happens purely via the `model` field the
-contract handed back. `stt`/`tts` resolve to the audio-overlay bridge URL
-instead.
+Because `cortex`, `senses`, `muse`, and `worker` are **gateway-fronted**, they
+(along with `embedder`/`reranker`) share the **same `endpoint`** — the
+gateway's base URL — and routing between them happens purely via the `model`
+field the contract handed back. `stt`/`tts` resolve to the audio-overlay
+bridge URL instead.
 
 **Rename-safety, proven.** If an operator swaps `cortex`'s served checkpoint
 (`PRIMARY_SERVED_NAME` in the fleet `.env`) and re-runs `lobes fleet up
@@ -530,7 +590,7 @@ and live-validation history behind this rebalance.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
-  deployment-shape axis: which of these seven roles a given box hosts at all,
+  deployment-shape axis: which of these eight roles a given box hosts at all,
   the cross-box honest-referral surface for a role it doesn't, and the
   opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
   key contract, a worked example).

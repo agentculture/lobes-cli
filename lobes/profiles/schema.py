@@ -3,9 +3,9 @@
 Where the legacy :class:`~lobes.profiles.MachineProfile` (still exported from
 :mod:`lobes.profiles`, see the package ``__init__``) is one flat row of
 single-model knobs, a :class:`Profile` is the FLEET-shaped declaration this
-package resolves: per :data:`ROLES` entry (``cortex`` / ``senses`` /
-``embedder`` / ``reranker``), whether that role is even feasible on the target
-box, which model serves it, and every machine knob the compose templates
+package resolves: per :data:`ROLES` entry (``cortex`` / ``senses`` / ``muse`` /
+``worker`` / ``embedder`` / ``reranker``), whether that role is even feasible on
+the target box, which model serves it, and every machine knob the compose templates
 substitute (``gpu_mem_util``, ``max_model_len``, ``quantization``,
 ``kv_cache_dtype``, ``attention_backend``, ``enforce_eager``,
 ``max_num_seqs``).
@@ -28,16 +28,18 @@ from typing import Any, Mapping
 
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 
-# The per-machine-profile roles — the five gateway-fronted, generate/pooling
+# The per-machine-profile roles — the six gateway-fronted, generate/pooling
 # lanes a compose template actually parameterises per machine. Deliberately a
 # SUBSET of lobes.roles.ROLES: stt/tts are fixed audio sidecars (Parakeet /
 # Chatterbox) with no machine-dependent vLLM knobs of their own — they are out
 # of scope for this schema, matching lobes/roles.py's own
 # ROLE_MAX_MODEL_LEN_ENV, which likewise carries no stt/tts entry. ``muse``
-# (the opt-in Gemma 4 31B creative lobe) IS in scope — it carries the full
-# per-machine knob set — but is hosted only by a muse-hosting deployment
-# shape, never by machine-as-brain (see lobes.profiles.shapes.OPT_IN_CORE_ROLES).
-ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "embedder", "reranker")
+# (the opt-in Gemma 4 31B creative lobe) and ``worker`` (the opt-in
+# Qwen3.6-35B-A3B ground-work lobe — the fast DOER) are BOTH in scope — each
+# carries the full per-machine knob set — but are hosted only by an explicit
+# muse-/worker-hosting deployment shape, never by machine-as-brain (see
+# lobes.profiles.shapes.OPT_IN_CORE_ROLES).
+ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "embedder", "reranker")
 
 # The machine knobs a compose template substitutes per role/gear. Order here
 # is the canonical field order on RoleProfile below (minus feasible/model).

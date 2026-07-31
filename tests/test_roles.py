@@ -1,10 +1,12 @@
 """Tests for the role registry + capability-metadata core (issue #81, task t4).
 
-``lobes.roles`` defines the SIX first-class Colleague-facing roles and resolves
-each to live metadata from the gateway config + the catalog:
+``lobes.roles`` defines the EIGHT first-class Colleague-facing roles and
+resolves each to live metadata from the gateway config + the catalog:
 
     cortex   → primary generate backend   (Qwen 27B MTP) — reasoning/authority
     senses   → multimodal generate backend (Gemma 4 12B)  — intake/perception
+    muse     → muse generate backend       (Gemma 4 31B)  — creative/ideation
+    worker   → worker generate backend     (Qwen3.6-35B-A3B) — fast ground-work
     embedder → embed pooling backend       (Qwen3-Embedding-0.6B, /v1/embeddings)
     reranker → score/rerank backend        (Qwen3-Reranker-0.6B, /v1/rerank)
     stt      → Parakeet audio sidecar       (/v1/audio/transcriptions) — opt-in
@@ -23,7 +25,9 @@ from lobes.roles import (
     ROLE_BACKEND,
     ROLE_FORBIDDEN,
     ROLE_MAX_MODEL_LEN_ENV,
+    ROLE_PATH,
     ROLE_RESPONSIBILITIES,
+    ROLE_ROLE_HINT,
     ROLES,
     STT_REALTIME_RESPONSIBILITY,
     RoleInfo,
@@ -40,8 +44,9 @@ _MULTIMODAL_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 
-_EXPECTED_ROLES = {"cortex", "senses", "muse", "embedder", "reranker", "stt", "tts"}
+_EXPECTED_ROLES = {"cortex", "senses", "muse", "worker", "embedder", "reranker", "stt", "tts"}
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
+_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
 # The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
 # GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL
@@ -99,14 +104,14 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 
 
 # ---------------------------------------------------------------------------
-# Acceptance 1 — exactly the seven roles, each with the full metadata block
+# Acceptance 1 — exactly the eight roles, each with the full metadata block
 # ---------------------------------------------------------------------------
 
 
-def test_registry_returns_exactly_the_six_roles() -> None:
+def test_registry_returns_exactly_the_eight_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 7
+    assert len(registry) == 8
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -115,14 +120,18 @@ def test_every_role_carries_the_full_metadata_block() -> None:
     for name, info in registry.items():
         assert isinstance(info, RoleInfo)
         assert info.role == name
-        assert isinstance(info.model, str) and info.model  # never empty
-        assert isinstance(info.runtime, str) and info.runtime
+        assert isinstance(info.model, str)
+        assert info.model  # never empty
+        assert isinstance(info.runtime, str)
+        assert info.runtime
         assert isinstance(info.endpoint, str)
         assert info.path.startswith("/v1/")
-        assert isinstance(info.context, int) and info.context >= 0
+        assert isinstance(info.context, int)
+        assert info.context >= 0
         assert isinstance(info.quant, str)
         assert isinstance(info.mtp, bool)
-        assert isinstance(info.responsibilities, tuple) and info.responsibilities
+        assert isinstance(info.responsibilities, tuple)
+        assert info.responsibilities
         assert isinstance(info.forbidden_responsibilities, tuple)
         assert isinstance(info.loaded, bool)
         # Coarse "configured/wired" readiness — always a present boolean, equal
@@ -219,12 +228,13 @@ def test_absent_pooling_and_multimodal_roles_present_but_unloaded() -> None:
     registry = _registry(_primary_only_env())
     # All seven still present even though only the primary is wired.
     assert set(registry) == _EXPECTED_ROLES
-    for name in ("senses", "muse", "embedder", "reranker"):
+    for name in ("senses", "muse", "worker", "embedder", "reranker"):
         assert registry[name].loaded is False
     # An unloaded role still names the model it WOULD serve (the catalog default),
     # with that model's catalog metadata — never blank, never an error.
     assert registry["senses"].model == _MULTIMODAL_ID
     assert registry["senses"].context == _catalog(_MULTIMODAL_ID).native_max_model_len
+    assert registry["worker"].model == _WORKER_ID
     assert registry["embedder"].model == _EMBED_ID
     assert registry["reranker"].model == _RERANK_ID
     # The primary is always wired → cortex is loaded even on a minimal fleet.
@@ -315,10 +325,10 @@ def test_cortex_carries_authoritative_responsibilities_and_no_forbidden() -> Non
 
 
 def test_generate_lobes_report_tools_true_and_service_roles_false() -> None:
-    """The three generate lobes serve a chat lane with a tool parser; the pooling
+    """The four generate lobes serve a chat lane with a tool parser; the pooling
     and audio roles have no chat lane at all."""
     registry = _registry(_full_env())
-    for role in ("cortex", "senses", "muse"):
+    for role in ("cortex", "senses", "muse", "worker"):
         assert registry[role].tools is True, f"{role} serves tool calls"
     for role in ("embedder", "reranker", "stt", "tts"):
         assert registry[role].tools is False, f"{role} has no chat lane"
@@ -329,7 +339,7 @@ def test_tools_is_derived_from_the_catalog_tool_parser_not_hardcoded() -> None:
     is built from, so the contract cannot claim tool support the deployment does
     not actually wire (or vice versa)."""
     registry = _registry(_full_env())
-    for role in ("cortex", "senses", "muse", "embedder", "reranker"):
+    for role in ("cortex", "senses", "muse", "worker", "embedder", "reranker"):
         entry = next(m for m in SUPPORTED_MODELS if m.id == registry[role].model)
         assert registry[role].tools is bool(entry.tool_parser)
 
@@ -357,7 +367,7 @@ def test_senses_has_tools_but_not_the_tool_use_responsibility() -> None:
     assert "tool_use" not in senses.responsibilities
 
 
-def test_static_responsibility_maps_cover_all_six_roles() -> None:
+def test_static_responsibility_maps_cover_all_eight_roles() -> None:
     assert set(ROLE_RESPONSIBILITIES) == _EXPECTED_ROLES
     assert set(ROLE_FORBIDDEN) == _EXPECTED_ROLES
     assert ROLE_RESPONSIBILITIES["muse"] == (
@@ -376,10 +386,110 @@ def test_static_responsibility_maps_cover_all_six_roles() -> None:
         "repo_action",
         "security_decision",
     )
+    # worker — the fast ground-work DOER: execution/drafting tokens PLUS
+    # tool_use AND repo_action. Unlike muse/senses it may ACT on the repo
+    # (repo_action is NOT forbidden); unlike cortex it is not the final
+    # authority (final_decision / security_decision stay forbidden).
+    assert ROLE_RESPONSIBILITIES["worker"] == (
+        "execution",
+        "ground_work",
+        "bulk_transform",
+        "drafting",
+        "image_understanding",
+        "video_understanding",
+        "tool_use",
+        "repo_action",
+    )
+    assert ROLE_FORBIDDEN["worker"] == ("final_decision", "security_decision")
+    assert "repo_action" not in ROLE_FORBIDDEN["worker"]
     assert ROLE_RESPONSIBILITIES["stt"] == ("transcribe", "audio_input_to_text")
     assert ROLE_RESPONSIBILITIES["tts"] == ("speech_output", "synthesize")
     assert ROLE_RESPONSIBILITIES["embedder"] == ("vectorization", "memory_retrieval_input")
     assert ROLE_RESPONSIBILITIES["reranker"] == ("retrieval_ordering", "relevance_refinement")
+
+
+# ---------------------------------------------------------------------------
+# worker — the EIGHTH first-class role (thor-worker-lobe plan, t2). A
+# gateway-fronted generate role added structurally exactly like `muse`; its
+# gateway backend is a SIBLING task (t3), so in this worktree worker is
+# unwired: PRESENT with loaded=False, feasible=True (t3's infeasible-by-default
+# rule isn't merged here), ready clamped False.
+# ---------------------------------------------------------------------------
+
+
+def test_worker_is_present_and_resolves_to_the_worker_gear() -> None:
+    registry = _registry(_full_env())
+    worker = registry["worker"]
+    entry = _catalog(_WORKER_ID)
+    assert worker.role == "worker"
+    assert worker.model == _WORKER_ID
+    assert worker.path == "/v1/chat/completions"
+    assert worker.context == entry.native_max_model_len
+    assert worker.quant == entry.quantization
+    assert worker.mtp is bool(entry.speculative_config)
+    assert worker.tools is True  # qwen3_coder tool parser
+    # Unwired here (no gateway backend merged) → loaded/ready False. worker is
+    # an OPT-IN CORE role (OPT_IN_BACKENDS, like muse) — unwired-and-unflagged
+    # is honestly infeasible by default, same as muse (see
+    # test_muse_reports_tools_true_even_when_this_box_does_not_host_it).
+    assert worker.loaded is False
+    assert worker.ready is False
+    assert worker.feasible is False
+
+
+def test_worker_responsibilities_are_the_doer_contract() -> None:
+    """worker is the fast ground-work DOER: execution/drafting tokens PLUS
+    tool_use AND repo_action — the first role besides cortex permitted to act
+    on the repo, yet still barred from the final decision / a security call.
+    It is also MULTIMODAL (image+video intake via its ViT), hence the
+    image_understanding/video_understanding tokens — a seeing doer, unlike
+    text-only cortex."""
+    worker = _registry(_full_env())["worker"]
+    for token in (
+        "execution",
+        "ground_work",
+        "bulk_transform",
+        "drafting",
+        "image_understanding",
+        "video_understanding",
+    ):
+        assert token in worker.responsibilities
+    assert "tool_use" in worker.responsibilities
+    assert "repo_action" in worker.responsibilities
+    assert worker.forbidden_responsibilities == ("final_decision", "security_decision")
+    assert "repo_action" not in worker.forbidden_responsibilities
+
+
+def test_worker_may_act_on_repo_unlike_senses_and_muse() -> None:
+    """The distinctive contract: worker is the first role besides cortex that
+    is PERMITTED repo_action, precisely the token senses/muse forbid."""
+    registry = _registry(_full_env())
+    assert "repo_action" in registry["worker"].responsibilities
+    assert "repo_action" in registry["senses"].forbidden_responsibilities
+    assert "repo_action" in registry["muse"].forbidden_responsibilities
+
+
+def test_worker_ready_clamped_false_even_with_a_live_true_signal() -> None:
+    """The #92/#115 honesty clamp applies to worker exactly as to an unwired
+    muse: a stray live `backend_ready=True` for an unwired backend can never
+    fabricate ready=True. worker is not special-cased."""
+    registry = _registry(_full_env(), backend_ready={"worker": True})
+    worker = registry["worker"]
+    assert worker.loaded is False  # no worker backend wired in this worktree
+    assert worker.ready is False  # clamped: nothing is actually wired
+
+
+def test_every_role_star_dict_carries_a_worker_entry() -> None:
+    """Acceptance 1: no stale seven-role literal — every ROLE_* registry dict
+    gained a `worker` entry, wired exactly like `muse` (backend name == role
+    name == catalog role_hint == worker)."""
+    assert ROLE_BACKEND["worker"] == "worker"
+    assert ROLE_ROLE_HINT["worker"] == "worker"
+    assert ROLE_PATH["worker"] == "/v1/chat/completions"
+    assert ROLE_MAX_MODEL_LEN_ENV["worker"] == "WORKER_MAX_MODEL_LEN"
+    assert "worker" in ROLE_RESPONSIBILITIES
+    assert "worker" in ROLE_FORBIDDEN
+    assert "worker" in ROLES
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +635,14 @@ def test_served_context_ignores_blank_override() -> None:
 def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
     """Audio roles (stt/tts) have no *_MAX_MODEL_LEN entry — they carry no token
     context regardless of any deployment env (see _audio_role)."""
-    assert set(ROLE_MAX_MODEL_LEN_ENV) == {"cortex", "senses", "muse", "embedder", "reranker"}
+    assert set(ROLE_MAX_MODEL_LEN_ENV) == {
+        "cortex",
+        "senses",
+        "muse",
+        "worker",
+        "embedder",
+        "reranker",
+    }
     assert "stt" not in ROLE_MAX_MODEL_LEN_ENV
     assert "tts" not in ROLE_MAX_MODEL_LEN_ENV
 
@@ -734,24 +851,25 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
         "primary",
         "multimodal",
         "muse",
+        "worker",
         "embed",
         "rerank",
         "stt",
         "tts",
     }
-    assert set(ROLE_BACKEND) == {"cortex", "senses", "muse", "embedder", "reranker", "stt", "tts"}
+    assert set(ROLE_BACKEND) == _EXPECTED_ROLES
 
 
 # ---------------------------------------------------------------------------
-# All six roles expose the identical key set
+# All eight roles expose the identical key set
 # ---------------------------------------------------------------------------
 
 
-def test_all_six_roles_expose_identical_key_set() -> None:
+def test_all_eight_roles_expose_identical_key_set() -> None:
     """Every role's asdict keys are identical — no role has extra or missing fields."""
     import dataclasses
 
     registry = _registry(_full_env())
     first_keys = set(dataclasses.asdict(registry["cortex"]).keys())
-    for name in ("senses", "embedder", "reranker", "stt", "tts"):
+    for name in ("senses", "muse", "worker", "embedder", "reranker", "stt", "tts"):
         assert set(dataclasses.asdict(registry[name]).keys()) == first_keys

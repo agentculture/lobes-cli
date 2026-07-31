@@ -852,6 +852,135 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in worker generate backend (Qwen3.6-35B-A3B, NVFP4 MoE) ----------
+  # The EIGHTH Colleague role: the fast ground-work DOER (`worker`). An OPT-IN
+  # heavy lobe — parked behind the "worker" Docker Compose profile exactly like
+  # vllm-muse, so a plain `docker compose up` (machine-as-brain, and every
+  # pre-worker deployment) never starts a 35B by accident. A worker-hosting
+  # deployment shape (`lobes init --shape thor-worker --apply`) activates it:
+  # the shape render writes COMPOSE_PROFILES=worker (un-gates this service) +
+  # WORKER_BASE_URL (wires the gateway backend) + the WORKER_* budget knobs.
+  #
+  # Checkpoint: unsloth/Qwen3.6-35B-A3B-NVFP4 — a Qwen3.5 MoE (~3B active/token)
+  # that is MULTIMODAL (Qwen3_5MoeForConditionalGeneration, a 27-layer ViT,
+  # image+video intake — NO audio). Served MULTIMODAL: do NOT add
+  # --language-model-only (that would drop the ViT and defeat vision/video).
+  #
+  # IMAGE: worker is a Qwen3.5 MoE, NOT a Gemma gear, so it rides the SAME
+  # Qwen/vllm-openai nightly lane the primary/embed/rerank gears use (pinned by
+  # digest via VLLM_NIGHTLY_IMAGE) — NOT the custom lobes/vllm-gemma4:local tag.
+  # WORKER_IMAGE overrides it because the multimodal
+  # Qwen3_5MoeForConditionalGeneration arch + baked-in MTP self-draft support on
+  # Thor sm_110 is UNCONFIRMED until the live boot (thor-worker-lobe plan t7) —
+  # an operator may need to point this at a fixed/nightlier image there.
+  #
+  # GPU budget: NOT part of the default fleet budget — worker only ever runs on
+  # a shape that drops the heavy default lobes first (thor-worker). The
+  # WORKER_GPU_MEM_UTIL default below is a PLACEHOLDER; the real value is
+  # MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55 was
+  # measured (not computed) — do NOT treat 0.30 as validated.
+  vllm-worker:
+    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}}
+    container_name: model-gear-vllm-worker
+    profiles:
+      - worker
+    # Boot ORDERING, not just start order — the same Thor unified-memory
+    # first-boot race the vllm-muse block documents (measured live 2026-07-17 at
+    # 31B scale): waiting for the two cheap pooling gears to be HEALTHY first
+    # removes the concurrent-allocation window that crashed a cold heavy-lobe boot.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Same nightly cudagraph-estimate gotcha the Qwen primary works around
+      # (#71): disable the ESTIMATED cudagraph headroom so the util knob maps
+      # back to true usage instead of starving the KV cache.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      # NOTE: worker rides the Qwen GENERATE lane, so — like vllm-primary and
+      # UNLIKE the Gemma gears — it wires NO VLLM_ATTENTION_BACKEND: this nightly
+      # honours AttentionConfig, not that env, and a Qwen generate model needs no
+      # attention override on Thor (cortex's only sm_110 divergence is
+      # kv_cache_dtype). WORKER_ATTENTION_BACKEND is left unwired on purpose (t7
+      # confirms on sm_110); see env.example.
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-worker:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${WORKER_MODEL:-unsloth/Qwen3.6-35B-A3B-NVFP4}
+      - --served-model-name=${WORKER_SERVED_NAME:-unsloth/Qwen3.6-35B-A3B-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      # compressed-tensors: the checkpoint's OWN config.json quant_method
+      # (verified against the real config.json) — NOT modelopt. modelopt/
+      # modelopt_fp4 would fail with a quant-method mismatch.
+      - --quantization=${WORKER_QUANTIZATION:-compressed-tensors}
+      # Full 256K native window by default; a worker-hosting shape (thor-worker)
+      # renders the real served length into WORKER_MAX_MODEL_LEN.
+      - --max-model-len=${WORKER_MAX_MODEL_LEN:-262144}
+      # PLACEHOLDER default — the real util is MEASURED on Thor at t7 (the live
+      # boot), exactly as thor-muse's 0.55 was measured, not computed. Do NOT
+      # treat 0.30 as validated.
+      - --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
+      # MoE (~3B active/token). --moe-backend is DELIBERATELY NOT forced:
+      # measured live on Thor sm_110 (2026-07-31,
+      # docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value was
+      # REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not support
+      # current device cuda"; flashinfer NVFP4 is sm_121a/Spark-only), marlin
+      # ("not supported for unquantized MoE" — the self-hosted MTP experts are
+      # unquantized), triton ("not supported for NvFP4 MoE"). Only AUTO-SELECT
+      # boots: vLLM picks TRITON for the unquantized/fp8 MoE and a modular NVFP4
+      # kernel for the main experts, and auto-picks the fastest SUPPORTED kernel
+      # on any card (incl. flashinfer_b12x on a Spark). To pin a backend, add a
+      # `--moe-backend=<x>` line here by hand (see env.example WORKER_MOE_BACKEND).
+      # Self-draft MTP baked INTO the checkpoint (its own MTP head, no external
+      # draft-model key) — mirrors the 27B primary's speculative decode, minus
+      # the separate draft repo.
+      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'
+      # Qwen-family parser PAIR (same as the cortex/main lane): the qwen3_coder
+      # tool parser + the qwen3 reasoning parser. Plain upstream qwen3_coder here
+      # (NOT the cortex lane's qwen3_coder_thinking plugin — worker mounts no
+      # tool-parser plugin file).
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+      - --reasoning-parser=qwen3
+      # SECURITY: --trust-remote-code runs the model repo's code in-container
+      # (same posture as the 27B primary). Multimodal (image+video) is SERVED —
+      # deliberately NO --language-model-only: worker keeps its ViT vision tower.
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .
@@ -929,6 +1058,12 @@ services:
       # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
       - MUSE_BASE_URL=${MUSE_BASE_URL:-}
       - MUSE_SERVED_NAME=${MUSE_SERVED_NAME:-}
+      # Opt-in worker gear — the eighth Colleague role (a worker-hosting shape
+      # sets WORKER_BASE_URL + COMPOSE_PROFILES=worker in .env; empty default =
+      # no backend wired, AND `model=worker` 404s role_infeasible instead of
+      # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
+      - WORKER_BASE_URL=${WORKER_BASE_URL:-}
+      - WORKER_SERVED_NAME=${WORKER_SERVED_NAME:-}
       # Empty default = follow the primary gear's served name (see _config.py's
       # `or primary.served_name` fallback) — stays correct when a profile swaps
       # the cortex model instead of routing no-model requests to an unserved id.
@@ -959,6 +1094,10 @@ services:
       # a deployment with no muse shape reports the catalog native for the
       # sleeping lobe; a muse-hosting shape renders the served value into .env.
       - MUSE_MAX_MODEL_LEN=${MUSE_MAX_MODEL_LEN:-}
+      # Empty default (NOT the vllm-worker service's 262144): worker is opt-in,
+      # so a deployment with no worker shape reports the catalog native for the
+      # sleeping lobe; a worker-hosting shape renders the served value into .env.
+      - WORKER_MAX_MODEL_LEN=${WORKER_MAX_MODEL_LEN:-}
       - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
       - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
@@ -980,6 +1119,7 @@ services:
       - PRIMARY_FEASIBLE=${PRIMARY_FEASIBLE:-}
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
+      - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
       # First-class audio lanes (issue #129): declare one off exactly like a
@@ -997,6 +1137,7 @@ services:
       - PRIMARY_PEER_ORIGIN=${PRIMARY_PEER_ORIGIN:-}
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
+      - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
       - STT_PEER_ORIGIN=${STT_PEER_ORIGIN:-}
@@ -1023,6 +1164,7 @@ services:
       - PRIMARY_PEER_PROXY=${PRIMARY_PEER_PROXY:-}
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
+      - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
       - STT_PEER_PROXY=${STT_PEER_PROXY:-}
@@ -1037,6 +1179,7 @@ services:
       - PRIMARY_PEER_API_KEY=${PRIMARY_PEER_API_KEY:-}
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
+      - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
       - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}

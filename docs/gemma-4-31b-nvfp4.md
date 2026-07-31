@@ -4,7 +4,8 @@
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 >
-> **Status: DECLARED — memory budget measured live, acceptance pending.** Most
+> **Status: DECLARED — memory budget measured live, acceptance pending, and
+> now DORMANT/unhosted mesh-wide.** Most
 > of this doc is read from the checkpoint's own published config and declared
 > as data in the repo (catalog entry, `thor-muse` shape, compose template).
 > The **memory budget is measured** — a physical Jetson AGX Thor booted the
@@ -13,7 +14,16 @@
 > throughput, MTP acceptance, and the correctness probes remain unmeasured,
 > and per the #108 rule nothing here claims *validated* until the acceptance
 > run (`scripts/accept-shape.sh`) passes and its transcript lands under
-> `docs/evidence/` (the measured-truth lesson from `spark-lobe`/`thor-lobe`).
+> `docs/evidence/` (the measured-truth lesson from `spark-lobe`/`thor-lobe`) —
+> and that acceptance run never landed. **Operator decision
+> (thor-worker-lobe plan): the physical Thor that measured this budget moved
+> to hosting `worker` (`unsloth/Qwen3.6-35B-A3B-NVFP4`, see
+> [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)) instead.** No
+> box in the mesh currently declares the `thor-muse` shape or
+> `MUSE_PEER_ORIGIN`, so `model=muse` 404s `role_infeasible` with no
+> `hosted_by` referral anywhere. Everything below — the catalog entry, the
+> `thor-muse` shape, this doc — **stays in-tree** (cite-don't-delete):
+> dormant, not deleted, and the tier vocabulary still ranks `worker` < `muse`.
 
 **Model id:** `nvidia/Gemma-4-31B-IT-NVFP4`
 **Tier alias:** `muse` — the role name *is* the alias (capability order:
@@ -205,13 +215,19 @@ Under swap/iowait pressure a `muse` request is shed (`429` busy) exactly like
 
 ## How to host it: the thor-muse shape
 
+> **Currently DORMANT — no box renders it.** The mesh moved off `muse` to the
+> `worker` lobe; the shape and this checkpoint stay in-tree (cite-don't-delete).
+
 `muse` is an **opt-in core role** (`lobes/profiles/shapes.py`'s
 `OPT_IN_CORE_ROLES`): it carries the full per-machine Profile knob set, but no
 card profile declares it — a 31B cannot co-reside with the default
 `cortex`+`senses` duo on a 128 GB box, so the **shape** that hosts it carries
 the full declaration in its own `[overrides.muse]`, and the card profiles stay
 silent (`base.toml` vetoes it for unrecognised cards). The one built-in
-muse-hosting shape:
+muse-hosting shape (the commands below still work exactly as documented — the
+shape resolves and renders identically — but as of the thor-worker-lobe plan
+**no physical box currently applies it**; the Thor that used to is now a
+`thor-worker` box instead, see [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)):
 
 ```bash
 lobes init --shape thor-muse --apply   # on a Jetson AGX Thor
@@ -241,23 +257,27 @@ not validated (#108).
 
 ## Validation status
 
-**DECLARED — memory budget measured live 2026-07-17, acceptance run pending.**
+**DECLARED — memory budget measured live 2026-07-17, acceptance run never
+landed, and now additionally DORMANT.**
 A physical Thor booted this gear (native class, `TRITON_ATTN`, `modelopt`
 quant all held) and measured the memory ceiling: util 0.55 → 26.47 GiB KV pool
 at the full 262144 window; the 0.40 hypothesis was refused with 0.6 GiB KV.
 Per the #108 rule, no doc, support table, or `lobes capabilities` output may
 claim it validated until an acceptance run (`scripts/accept-shape.sh`) passes
-on a physical Thor and its transcript lands under `docs/evidence/`. That run
-still gates: the correctness probes, the MTP draft's acceptance rate (vs. the
-declared config), and whether the #101 audio gap applies to this plain-gemma4
-line as assumed.
+on a physical Thor and its transcript lands under `docs/evidence/` — that run
+never happened before the box moved to hosting `worker` instead. What it
+still gates, unchanged: the correctness probes, the MTP draft's acceptance
+rate (vs. the declared config), and whether the #101 audio gap applies to
+this plain-gemma4 line as assumed. **`muse` stays in-tree, dormant** — see
+the status callout at the top of this document.
 
 ## Related docs
 
-- [`colleague-stack.md`](colleague-stack.md) — the seven-role contract and
-  `muse`'s responsibilities/forbidden lists.
+- [`colleague-stack.md`](colleague-stack.md) — the eight-role contract,
+  `muse`'s responsibilities/forbidden lists, and the dormant-role callout.
 - [`deployment-shapes.md`](deployment-shapes.md) — the `thor-muse` shape, the
-  opt-in-core-role concept, referral/proxy for the dropped roles.
+  opt-in-core-role concept (now shared with `worker`), referral/proxy for the
+  dropped roles.
 - [`gateway-fleet.md`](gateway-fleet.md) — tier aliases, the inverted
   feasibility default, peer channels, pressure policy.
 - [`gemma4-mtp-draft.md`](gemma4-mtp-draft.md) — the assistant-draft family
@@ -266,3 +286,5 @@ line as assumed.
   shares an image (and the #101 caveat) with.
 - [`machine-profiles.md`](machine-profiles.md) — the per-card tuning axis;
   why the card profiles stay silent on `muse`.
+- [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) — `worker`, the
+  eighth Colleague role now hosted on the Thor `muse` used to run on.

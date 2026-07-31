@@ -1,7 +1,7 @@
 """``lobes measure`` — read-only per-role RUNTIME measurement (issue #81, t8).
 
-Probes each of the seven first-class roles (``cortex``/``senses``/``muse``/``embedder``/
-``reranker``/``stt``/``tts``) on its own live endpoint and reports **runtime**
+Probes each of the eight first-class roles (``cortex``/``senses``/``muse``/``worker``/
+``embedder``/``reranker``/``stt``/``tts``) on its own live endpoint and reports **runtime**
 metrics, organised BY ROLE: TTFT/decode-tps/prefill-tps/context(+mem, when
 cheaply available) for the LLM roles, requests-or-docs-per-sec/latency/batch/
 loaded for the pooling roles, RTF/latency/duration/failure-rate for the audio

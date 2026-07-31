@@ -84,11 +84,14 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
     # they stay OUTSIDE the Profile TUNING schema (no per-card knobs), but an
     # operator can declare a lane off with STT_/TTS_FEASIBLE=false exactly
     # like a dropped core role; absent, both stay feasible (the sleeping-lobe
-    # default), so every pre-#129 deployment renders byte-identically.
+    # default), so every pre-#129 deployment renders byte-identically. Since
+    # the thor-worker-lobe plan (t3), the second opt-in-core role `worker`
+    # rides the same channel too — see OPT_IN_BACKENDS below.
     assert FEASIBLE_ENV == {
         "primary": "PRIMARY_FEASIBLE",
         "multimodal": "MULTIMODAL_FEASIBLE",
         "muse": "MUSE_FEASIBLE",
+        "worker": "WORKER_FEASIBLE",
         "embed": "EMBED_FEASIBLE",
         "rerank": "RERANK_FEASIBLE",
         "stt": "STT_FEASIBLE",
@@ -96,12 +99,49 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
     }
 
 
-# The opt-in muse lobe defaults to INFEASIBLE whenever it is unwired and
-# unflagged (OPT_IN_BACKENDS in lobes.gateway._config) — so on every env in
-# this module that doesn't wire MUSE_BASE_URL, `muse` is the honest baseline
-# member of table.infeasible. Every pre-muse expectation below composes with
-# this one deliberate delta.
-_BASELINE = frozenset({"muse"})
+# The opt-in muse AND worker lobes both default to INFEASIBLE whenever they
+# are unwired and unflagged (OPT_IN_BACKENDS in lobes.gateway._config) — so on
+# every env in this module that doesn't wire MUSE_BASE_URL / WORKER_BASE_URL,
+# `muse` and `worker` are the honest baseline members of table.infeasible.
+# Every pre-muse (and pre-worker) expectation below composes with these two
+# deliberate deltas.
+_BASELINE = frozenset({"muse", "worker"})
+
+
+# --- worker (the eighth/opt-in-core role): mirrors muse's own coverage ------
+
+
+def test_worker_defaults_infeasible_when_unwired_and_unflagged() -> None:
+    # No WORKER_* env set anywhere: the backend is unwired AND infeasible by
+    # default (OPT_IN_BACKENDS) — never a silent fallback to another gear.
+    table, _cfg = build_config(_full_env())
+    assert "worker" in table.infeasible
+    assert not any(b.name == "worker" for b in table.backends)
+
+
+def test_worker_base_url_wires_and_defaults_feasible() -> None:
+    # Once WORKER_BASE_URL is set (a worker-hosting deployment shape), the
+    # backend is wired AND defaults back to feasible — the OPT_IN_BACKENDS
+    # inversion only bites while unwired.
+    table, _cfg = build_config(_full_env(WORKER_BASE_URL="http://vllm-worker:8000"))
+    assert any(b.name == "worker" for b in table.backends)
+    assert "worker" not in table.infeasible
+
+
+def test_worker_explicit_feasible_false_wins_even_when_wired() -> None:
+    # An explicit falsy WORKER_FEASIBLE always wins over the wired fact.
+    table, _cfg = build_config(
+        _full_env(WORKER_BASE_URL="http://vllm-worker:8000", WORKER_FEASIBLE="false")
+    )
+    assert any(b.name == "worker" for b in table.backends)
+    assert "worker" in table.infeasible
+
+
+def test_worker_explicit_feasible_true_wins_even_when_unwired() -> None:
+    # An explicit truthy WORKER_FEASIBLE always wins over the unwired default.
+    table, _cfg = build_config(_full_env(WORKER_FEASIBLE="true"))
+    assert not any(b.name == "worker" for b in table.backends)
+    assert "worker" not in table.infeasible
 
 
 def test_build_config_default_infeasible_is_empty() -> None:

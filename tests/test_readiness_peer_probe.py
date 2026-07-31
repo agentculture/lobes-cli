@@ -152,9 +152,11 @@ def _start_capturing_server() -> tuple[HTTPServer, threading.Thread]:
     return server, thread
 
 
-def test_authorization_header_present_iff_key_declared() -> None:
-    _CapturingHandler.captured_headers = []
-    _CapturingHandler.response_body = json.dumps({"data": [{"id": "gemma"}]}).encode()
+def test_authorization_header_present_iff_key_declared(monkeypatch) -> None:
+    monkeypatch.setattr(_CapturingHandler, "captured_headers", [])
+    monkeypatch.setattr(
+        _CapturingHandler, "response_body", json.dumps({"data": [{"id": "gemma"}]}).encode()
+    )
     server, thread = _start_capturing_server()
     try:
         origin = f"http://127.0.0.1:{server.server_port}"
@@ -271,7 +273,8 @@ def test_peer_probe_receives_the_spec_it_was_registered_with() -> None:
         deadline = time.time() + 2.0
         while time.time() < deadline and not seen:
             time.sleep(0.005)
-        assert seen and seen[0] is spec
+        assert seen
+        assert seen[0] is spec
     finally:
         cache.stop()
 
@@ -290,7 +293,8 @@ def test_peer_probe_raising_degrades_to_false_not_none() -> None:
         while time.time() < deadline and cache.current().get("multimodal") is None:
             time.sleep(0.005)
         assert cache.current() == {"multimodal": False}
-        assert cache._peer_thread is not None and cache._peer_thread.is_alive()
+        assert cache._peer_thread is not None
+        assert cache._peer_thread.is_alive()
     finally:
         cache.stop()
 
@@ -481,7 +485,8 @@ def test_stop_terminates_the_peer_thread_too() -> None:
     cache = R.ReadinessCache(
         {}, peer_specs=[spec], peer_probe=lambda s: True, interval=0.01, start=True
     )
-    assert cache._peer_thread is not None and cache._peer_thread.is_alive()
+    assert cache._peer_thread is not None
+    assert cache._peer_thread.is_alive()
     cache.stop()
     assert cache._peer_thread is None
 
@@ -491,7 +496,8 @@ def test_close_is_an_alias_for_stop_for_peer_thread_too() -> None:
     cache = R.ReadinessCache(
         {}, peer_specs=[spec], peer_probe=lambda s: True, interval=0.01, start=True
     )
-    assert cache._peer_thread is not None and cache._peer_thread.is_alive()
+    assert cache._peer_thread is not None
+    assert cache._peer_thread.is_alive()
     cache.close()
     assert cache._peer_thread is None
 

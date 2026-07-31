@@ -1,0 +1,52 @@
+Acceptance evidence — worker role (unsloth/Qwen3.6-35B-A3B-NVFP4) on the physical Jetson AGX Thor (sm_110)
+Date: 2026-07-31 | vLLM 0.23.1rc1.dev672 (torch 2.11.0+cu130, arch_list includes sm_110)
+Deployment: thor-worker shape (drops cortex->Spark, senses->Orin; muse dormant); util 0.45 @ max_model_len 262144
+
+=== MoE backend finding (sm_110) ===
+flashinfer_b12x : FAIL — 'NvFp4 MoE backend FLASHINFER_B12X does not support ... kernel does not support current device cuda' (Spark sm_121a only)
+marlin          : FAIL — 'not supported for unquantized MoE' (the self-hosted MTP experts are unquantized)
+triton          : FAIL — 'not supported for NvFP4 MoE' (valid for the unquantized MTP path only)
+flashinfer_cutlass: FAIL — 'kernel does not support current device cuda' (flashinfer NVFP4 lacks sm_110 kernels)
+AUTO-SELECT (no --moe-backend forced): SUCCESS — vLLM picks TRITON for the unquantized/fp8 MoE + a modular NVFP4 kernel for the main experts.
+=> FIX: the vllm-worker compose lane must NOT force --moe-backend on sm_110; auto-select is the portable default.
+
+=== boot + budget (auto-select) ===
+  (APIServer pid=1) INFO 07-31 10:41:52 [model.py:606] Resolved architecture: Qwen3_5MoeForConditionalGeneration
+  (APIServer pid=1) INFO 07-31 10:42:02 [model.py:606] Resolved architecture: Qwen3_5MoeMTP
+  (EngineCore pid=279) INFO 07-31 10:43:06 [fp8.py:388] Using TRITON Fp8 MoE backend out of potential backends: ['AITER', 'FLASHINFER_TRTLLM', 'FLASHINFER_CUTLASS', 'DEEP
+  (EngineCore pid=279) INFO 07-31 10:43:31 [unquantized.py:260] Using TRITON Unquantized MoE backend out of potential backends: ['FlashInfer TRTLLM', 'FlashInfer CUTLASS'
+  (EngineCore pid=279) INFO 07-31 10:43:35 [gpu_model_runner.py:5291] Model loading took 24.81 GiB memory and 30.747068 seconds
+  (EngineCore pid=279) INFO 07-31 10:47:00 [gpu_worker.py:538] Available KV cache memory: 41.78 GiB
+  (EngineCore pid=279) INFO 07-31 10:47:00 [kv_cache_utils.py:2147] Maximum concurrency for 262,144 tokens per request: 14.07x
+  (APIServer pid=1) INFO:     Application startup complete.
+
+=== live probes ===
+  text/thinking: '17 times 23' -> final content '391' (correct), finish=stop, reasoning trace separated via --reasoning-parser=qwen3
+  decode: 300 completion tokens in 5.90s = 50.8 tok/s (end-to-end incl TTFT)
+  MTP self-draft: accepted=385 draft=432 acceptance_rate=89.1%
+  VISION: red image -> 'Red', blue image -> 'Blue' (ground truth + negative control both pass) — multimodal image intake serves on sm_110
+
+=== gateway contract (worker-aware gateway, lobes-gateway:worker / 0.54.6) ===
+  GET /capabilities:
+    worker : feasible=True  ready=True  loaded=True  model=unsloth/Qwen3.6-35B-A3B-NVFP4  hosted_by=-
+    muse   : feasible=False ready=False loaded=False hosted_by=- (DORMANT/unhosted, no referral)
+    cortex : feasible=False hosted_by=http://spark.tail0be7e0.ts.net:8001 (referred)
+    senses : feasible=False hosted_by=http://orin.tail0be7e0.ts.net:8000 (referred, proxied)
+  model=worker via gateway -> 'ROUTED' (finish=stop)  [routing works end-to-end]
+  model=muse via gateway   -> HTTP 404 role_infeasible, no hosted_by  [honest, no silent fallback]
+
+=== performance profile (measured live) ===
+  TTFT (short prompt, max_tokens=1) : 2102 ms
+  decode (with thinking)            : 50.8 tok/s
+  sustained decode (no thinking)    : 73.5 tok/s (600 tokens / 8.17 s)
+  MTP self-draft acceptance         : 89.1% (accepted 385 / draft 432)
+  context: served 262144; 34,022-token prefill probe -> HTTP 200 in 9936 ms (large context honoured)
+  concurrency: 14.07x at 262,144 tokens/request (KV 41.78 GiB @ util 0.45)
+
+=== VIDEO intake (verified with a real Spark-webcam clip, 78 KB) ===
+  video_url data URI -> 1572 prompt tokens decoded; final answer (finish=stop):
+  "A shirtless man with sunglasses resting on his head sits in a room near a bright
+   window. He looks downward with a focused expression, remaining largely still
+   while wearing white earbuds."
+  => video intake SERVES on sm_110 (accurate scene/subject/motion description) — NOT a #101-style drop.
+  Clip captured on the Spark peer via webcam-cli `webcam record`, copied to Thor.

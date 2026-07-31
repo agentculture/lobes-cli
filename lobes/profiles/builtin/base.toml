@@ -46,6 +46,14 @@ feasible = false
 [roles.muse]
 feasible = false
 
+# The opt-in 35B-A3B `worker` lobe (the fast ground-work doer) is vetoed on an
+# unrecognised card for the same reason as muse — an MoE this size on unknown
+# hardware risks an OOM crash-loop. A worker-hosting shape (thor-worker)
+# rendered against THIS card stays worker-less; write a custom card profile to
+# override.
+[roles.worker]
+feasible = false
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

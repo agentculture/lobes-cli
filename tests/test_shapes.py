@@ -30,7 +30,7 @@ from lobes import profiles
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.schema import KNOB_NAMES
 from lobes.profiles.schema import ROLES as PROFILE_ROLES
-from lobes.profiles.schema import RoleProfile
+from lobes.profiles.schema import Profile, RoleProfile
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
     COLLEAGUE_ROLES,
@@ -51,6 +51,33 @@ def test_audio_roles_are_stt_and_tts() -> None:
     assert AUDIO_ROLES == ("stt", "tts")
 
 
+# --- schema.ROLES set: the EIGHTH role `worker` joins the Profile machinery --
+# (thor-worker-lobe plan, t2). This is the schema-ROLES-set part of this file;
+# the shapes-vocabulary tuples DERIVED from schema.ROLES (COLLEAGUE_ROLES /
+# SHAPE_ROLES / DEFAULT_HOSTED_ROLES) are updated by the shapes sibling task.
+
+
+def test_worker_is_in_the_schema_roles_set_after_muse() -> None:
+    # `worker` is a gateway-fronted generate role carrying the full per-machine
+    # knob set, added to schema.ROLES exactly like `muse` — canonical order:
+    # generate lanes first (cortex, senses, muse, worker), then pooling.
+    assert "worker" in PROFILE_ROLES
+    assert PROFILE_ROLES.index("worker") == PROFILE_ROLES.index("muse") + 1
+    assert PROFILE_ROLES.index("worker") < PROFILE_ROLES.index("embedder")
+
+
+def test_worker_is_a_recognised_profile_role_but_unknown_still_errors() -> None:
+    # A Profile may now declare a `worker` role (recognised, no raise)...
+    p = Profile.from_dict("p", {"roles": {"worker": {"model": "x", "gpu_mem_util": 0.4}}})
+    assert p.role("worker").model == "x"
+    # ...while a genuinely unknown role is STILL a load error (acceptance #3:
+    # the unknown-role override rejection behaviour is unchanged).
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("p", {"roles": {"not_a_role": {"model": "x"}}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not_a_role" in exc.value.message
+
+
 def test_opt_in_roles_is_minor() -> None:
     # `minor` (mesh-brain end-state t2, issue #112): the opt-in vllm-minor
     # generate gear, added to the Shape schema's hostable vocabulary WITHOUT
@@ -68,14 +95,26 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
     # narrower DEFAULT_HOSTED_ROLES (opt-in core roles excluded — see
     # test_machine_as_brain_hosts_every_default_role below).
     assert COLLEAGUE_ROLES == PROFILE_ROLES + AUDIO_ROLES
-    assert COLLEAGUE_ROLES == ("cortex", "senses", "muse", "embedder", "reranker", "stt", "tts")
+    assert COLLEAGUE_ROLES == (
+        "cortex",
+        "senses",
+        "muse",
+        "worker",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    )
 
 
 def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     # The machine-as-brain identity set: every Colleague role EXCEPT the
     # opt-in core lobes (muse — a 31B that cannot co-reside with the
-    # cortex+senses duo; hosted only by an explicit muse-hosting shape).
-    assert OPT_IN_CORE_ROLES == ("muse",)
+    # cortex+senses duo; hosted only by an explicit muse-hosting shape — and
+    # worker, the 35B-A3B fast ground-work doer, likewise too heavy to
+    # co-reside with the default duo and hosted only by an explicit
+    # worker-hosting shape).
+    assert OPT_IN_CORE_ROLES == ("muse", "worker")
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
@@ -92,6 +131,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "cortex",
         "senses",
         "muse",
+        "worker",
         "embedder",
         "reranker",
         "stt",
@@ -206,13 +246,14 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
 # --- built-ins: the four shapes are expressible as pure data -----------------
 
 
-def test_builtin_shape_names_lists_all_four() -> None:
+def test_builtin_shape_names_lists_all_six() -> None:
     names = builtin_shape_names()
     assert set(names) == {
         "machine-as-brain",
         "spark-lobe",
         "thor-lobe",
         "thor-muse",
+        "thor-worker",
         "orin-small",
     }
 

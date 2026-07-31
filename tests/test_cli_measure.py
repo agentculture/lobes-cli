@@ -120,7 +120,7 @@ class _MeasureHandler(http.server.BaseHTTPRequestHandler):
         pass  # silence log noise in test output
 
 
-@pytest.fixture()
+@pytest.fixture
 def measure_server():
     """``ThreadingHTTPServer`` on an ephemeral port; yields the base URL string."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MeasureHandler)
@@ -382,11 +382,12 @@ def test_measure_role_wraps_family_result_with_common_fields(measure_server: str
     assert set(out["metrics"]) == set(RM.LLM_METRIC_KEYS)
 
 
-def test_measure_role_family_assignment_covers_all_six_roles() -> None:
+def test_measure_role_family_assignment_covers_all_eight_roles() -> None:
     assert RM._FAMILY_BY_ROLE == {
         "cortex": "llm",
         "senses": "llm",
         "muse": "llm",
+        "worker": "llm",
         "embedder": "embed_rerank",
         "reranker": "embed_rerank",
         "stt": "audio",

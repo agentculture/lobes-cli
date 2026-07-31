@@ -4,6 +4,59 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.6] - 2026-07-31
+
+### Added
+
+- The **`worker`** role — an eighth first-class Colleague role serving
+  `unsloth/Qwen3.6-35B-A3B-NVFP4`, a **multimodal** (image+video, no audio)
+  ~3B-active MoE with a self-hosted MTP draft at 262K native. `worker` is the
+  fast ground-work **DOER** — the first role besides `cortex` permitted
+  `repo_action` (it may act on the repo under cortex's direction; forbidden
+  only `final_decision`/`security_decision`), served multimodal (no
+  `--language-model-only`) — a "seeing doer" distinct from `senses`, which
+  perceives but must not act. Wired end-to-end: catalog gear + capability tier
+  (`minor < multimodal < worker < muse < main`), the eight-role registry, the
+  opt-in-core gateway backend (`WORKER_BASE_URL`; unwired ⇒ infeasible, never a
+  silent fallback), `OPT_IN_CORE_ROLES` + `base.toml` unknown-card veto, a
+  profile-gated `vllm-worker` compose service on the Qwen nightly lane
+  (compressed-tensors, `qwen3_coder`+`qwen3` parser pair, self-draft MTP), the
+  `lobes up worker` verb, the `thor-worker` deployment shape, and full docs.
+  **VALIDATED live on the physical Jetson AGX Thor (sm_110), 2026-07-31**
+  (`docs/evidence/2026-07-31-accept-worker-thor.txt`): boots and serves at
+  measured util 0.45 / full 262144 window (KV pool 41.78 GiB = 14.07×
+  concurrency, weights 24.81 GiB); MTP self-draft **loads and accepts at
+  89.1%**; decode 50.8 tok/s (with thinking) / 73.5 tok/s sustained, TTFT
+  ~2.1 s; **image AND video intake correct** (image: red/blue with a negative
+  control; video: a real Spark-webcam clip described accurately —
+  subject/scene/motion, not a #101-style drop); thinking + tool + reasoning
+  parsers work; `model=worker` routes through the gateway and `model=muse`
+  404s `role_infeasible` with no referral. Key finding — **the vllm-worker
+  lane must NOT force `--moe-backend` on sm_110**: every forced NVFP4 backend
+  was refused (flashinfer_* lack sm_110 kernels; marlin/triton reject the
+  mixed quantized-main/unquantized-MTP experts), so the compose omits the flag
+  and vLLM auto-selects per path. Spec/plan under `docs/specs/` and
+  `docs/plans/2026-07-31-thor-worker-lobe-qwen3-6-35b-a3b.md`.
+- Muse goes **dormant/unhosted** mesh-wide: Thor moves off the Gemma 4 31B
+  `muse` to host `worker` instead. `model=muse` now 404s `role_infeasible`
+  with no `hosted_by` referral; the `muse` role, its catalog entry, and the
+  `thor-muse` shape all stay in-tree (cite-don't-delete), and the tier
+  vocabulary still ranks `worker < muse`.
+
+### Fixed
+
+- CLAUDE.md / docs: the stale "pressure policy degrades … to `minor`" wording
+  now matches the shipped code — the degrade-to-`minor` substitution was
+  removed; under pressure the full tiers (`cortex`/`senses`/`worker`/`muse`)
+  are **shed** with HTTP 429 + `Retry-After`, and `minor` is the servable
+  floor.
+- **SonarCloud cleanup** (folded in from #163): cleared the 5 genuinely-open
+  issues — **S8997** ×4 (`test_chatterbox_pcm16.py` and
+  `test_readiness_peer_probe.py` now use the `monkeypatch` fixture instead of
+  manual save/restore) and **S3776** (`tts_client.py::_synthesize_single`
+  refactored, cognitive complexity 18 → 6, behavior-preserving). No
+  suppressions were added — the false-positive candidates were already resolved.
+
 ## [0.54.5] - 2026-07-25
 
 ### Added

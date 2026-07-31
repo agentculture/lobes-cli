@@ -395,7 +395,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     cap = sub.add_parser(
         "capabilities",
-        help="Read-only: the seven first-class roles (cortex/senses/muse/embedder/"
+        help="Read-only: the eight first-class roles (cortex/senses/muse/worker/embedder/"
         "reranker/stt/tts) resolved to live endpoint + metadata (issue #81).",
     )
     _add_common_args(cap)

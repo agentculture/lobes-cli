@@ -324,6 +324,6 @@ def test_only_the_proxied_backend_role_carries_the_marker_in_full_payload() -> N
     payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
     annotate_peer_referrals(payload, table)
     assert payload["senses"]["proxied"] is True
-    for role in ("cortex", "embedder", "reranker", "stt", "tts"):
+    for role in ("cortex", "muse", "worker", "embedder", "reranker", "stt", "tts"):
         assert "proxied" not in payload[role], role
         assert "hosted_by" not in payload[role], role

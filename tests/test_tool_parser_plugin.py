@@ -55,9 +55,19 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
-    # Recomputed for the opt-in `embed-deep` gear, on top of the 2026-07-17 Gemma 4
-    # parser-pair correction. THREE deliberate stories are folded in here — this
-    # recompute rebased the newest onto the other two, so all three matter:
+    # Recomputed for the opt-in-core `worker` gear (thor-worker-lobe plan, t4),
+    # on top of the `embed-deep` recompute and the 2026-07-17 Gemma 4 parser-pair
+    # correction. The newest story rebases onto the earlier ones, so all matter:
+    #
+    #  * `worker` (newest): the profile-gated vllm-worker service (the eighth
+    #    Colleague role — a Qwen3.5 multimodal MoE on the SAME Qwen nightly lane
+    #    as the primary, self-draft MTP, served multimodal so NO
+    #    --language-model-only) joined the set, and the GATEWAY service's
+    #    environment: block gained the WORKER_* passthroughs (BASE_URL /
+    #    SERVED_NAME / MAX_MODEL_LEN / FEASIBLE / PEER_ORIGIN / PEER_PROXY /
+    #    PEER_API_KEY — all empty defaults, mirroring the muse passthroughs). Only
+    #    `gateway` and the new `vllm-worker` move; every other service is
+    #    byte-identical, which is the tripwire proving the blast radius.
     #
     #  * `embed-deep` (newest): the GATEWAY service's environment: block gained
     #    EMBED_DEEP_BASE_URL (empty default) + EMBED_DEEP_SERVED_NAME, and the
@@ -80,7 +90,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
     # byte-identical — this tripwire firing on exactly the intended services, and
     # NOTHING else, is itself the proof of each change's blast radius.
-    "gateway": "3a029e22a7fbc7628215216a157caf434a133ecec0d249cc8801ff63a8c3157d",
+    "gateway": "2bc7ff1060266cc44d33547e5648c4d980ff7ab5bfa3a075f3c9d259ae3c4b76",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
@@ -89,6 +99,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
     "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
+    "vllm-worker": "c749aa3782f55bf855d4cf4d329418626d6d4709998ddb9e6963049f3a2b6910",
 }
 
 

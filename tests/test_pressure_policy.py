@@ -269,6 +269,42 @@ class TestCortexSensesVocabulary:
 
 
 # ---------------------------------------------------------------------------
+# 4c. `worker` capability-ROLE (thor-worker-lobe plan, t1) — its role name IS
+# its tier, exactly like muse; sheds to minor under pressure like every other
+# non-minor tier.
+# ---------------------------------------------------------------------------
+
+
+class TestWorkerVocabulary:
+    """worker is its own backend (mirrors muse) — no pressure means it stays
+    'worker'; pressure sheds it to minor exactly like main/multimodal/muse."""
+
+    def test_worker_normalizes_to_worker_no_pressure(self):
+        r = _decide(0.0, 0.0, "worker")
+        assert r["mode"] == "warm"
+        assert r["shed"] is False
+        assert r["servable_tier"] == "worker"
+        assert r["requested_tier"] == "worker"
+        assert r["reason"] == "default"
+
+    def test_worker_shed_under_swap_pressure(self):
+        r = _decide(80.0, 5.0, "worker")
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "worker"
+        assert r["reason"] == "pressure"
+
+    def test_worker_shed_under_iowait_pressure(self):
+        r = _decide(5.0, 60.0, "worker")
+        assert r["mode"] == "busy"
+        assert r["shed"] is True
+        assert r["servable_tier"] == "minor"
+        assert r["requested_tier"] == "worker"
+        assert r["reason"] == "pressure"
+
+
+# ---------------------------------------------------------------------------
 # 5. Combined pressure — either signal triggers busy
 # ---------------------------------------------------------------------------
 

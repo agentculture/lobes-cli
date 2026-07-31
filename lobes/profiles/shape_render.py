@@ -65,6 +65,7 @@ ROLE_SERVICE: dict[str, str] = {
     "cortex": "vllm-primary",
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
+    "worker": "vllm-worker",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -114,9 +115,19 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "muse": {
         "MUSE_BASE_URL": "http://vllm-muse:8000",
     },
+    # `worker` mirrors `muse` exactly: the vllm-worker service is parked behind
+    # the "worker" Docker Compose profile in the base fleet template, and its
+    # gateway backend is wired only when WORKER_BASE_URL is non-empty. Its model
+    # + budget knobs render through profile_env from a worker-hosting shape's
+    # own overrides (thor-worker), so the activation env carries ONLY the
+    # base-URL wiring — never a served name or budget knob.
+    "worker": {
+        "WORKER_BASE_URL": "http://vllm-worker:8000",
+    },
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
+    "worker": "worker",
 }
 
 
