@@ -54,6 +54,7 @@ _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"  # the catalog multimodal default
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
+_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"  # the catalog worker default (t1)
 _GATEWAY_URL = "http://localhost:8000"
 
 _THOR_ORIGIN = "http://thor.local:8001"
@@ -105,6 +106,30 @@ def _thor_env(**over) -> dict[str, str]:
         "EMBED_SERVED_NAME": _EMBED_ID,
         "RERANK_URL": "http://vllm-rerank:8000",
         "RERANK_SERVED_NAME": _RERANK_ID,
+    }
+    env.update(over)
+    return env
+
+
+def _worker_dropped_env(**over) -> dict[str, str]:
+    """A box that WIRES the opt-in worker gear (thor-worker-lobe plan, t3)
+    but has since dropped it to a peer — mirrors thor-lobe's own
+    wired-but-infeasible primary shape (:func:`_thor_env`). Wiring the
+    backend (rather than leaving it unwired) means the peer's served id
+    resolves off the WIRED ``Backend.served_name`` in
+    :func:`lobes.gateway.server._peer_served_name` — the same path
+    thor-lobe's primary uses — so this proves the generic data-plane proxy
+    machinery already carries a NEW backend name end to end from the
+    _config.py wiring alone, with no server.py change required."""
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": _CORTEX_ID,
+        "WORKER_BASE_URL": "http://vllm-worker:8000",
+        "WORKER_SERVED_NAME": _WORKER_ID,
+        "WORKER_FEASIBLE": "false",
+        "WORKER_PEER_ORIGIN": _SPARK_ORIGIN,
+        "WORKER_PEER_PROXY": "true",
+        "WORKER_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
@@ -289,6 +314,63 @@ def test_unspecified_model_routing_to_proxied_default_forwards() -> None:
     resp, calls = _post(table, cfg, specs, b"{}")
     assert resp.status == 200
     assert len(calls) == 1 and calls[0].backend.base_url == _SPARK_ORIGIN
+
+
+# ============================================================================
+# worker (the opt-in-core eighth role, thor-worker-lobe plan t3): the config
+# layer wires it via the same *_BASE_URL / *_FEASIBLE / *_PEER_* channels as
+# every other backend name, so the existing data-plane proxy machinery
+# already carries it end to end — no server.py change needed for THIS shape.
+# ============================================================================
+
+
+def test_worker_proxied_request_forwards_to_peer_origin() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    assert "worker" in table.peer_proxied
+    for alias in ("worker", _WORKER_ID):
+        body = json.dumps({"model": alias, "messages": []}).encode()
+        resp, calls = _post(table, cfg, specs, body)
+        assert len(calls) == 1, alias
+        call = calls[0]
+        assert call.backend.base_url == _SPARK_ORIGIN, alias  # declared origin, verbatim
+        assert call.path == "/v1/chat/completions", alias
+        assert json.loads(call.body)["model"] == _WORKER_ID, alias  # rewritten to served id
+        assert resp.status == 200, alias
+        assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _SPARK_ORIGIN, alias
+
+
+def test_worker_outbound_carries_peer_key_and_never_callers_token() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    inbound = [("Authorization", f"Bearer {_CALLER_TOKEN}")]
+    _resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
+    auth_values = [v for k, v in calls[0].headers if k.lower() == "authorization"]
+    assert auth_values == [f"Bearer {_PEER_KEY}"]
+    dumped = json.dumps(calls[0].headers) + calls[0].body.decode("utf-8", errors="replace")
+    assert _CALLER_TOKEN not in dumped
+
+
+def test_worker_hosted_locally_is_unaffected_by_stray_peer_config() -> None:
+    # Same declaration, MINUS the FEASIBLE=false drop — worker is hosted here,
+    # so the local engine serves it; the peer knobs are inert (config-layer
+    # already proved this in test_gateway_config_proxy.py; this is the
+    # data-plane confirmation).
+    env = _worker_dropped_env()
+    del env["WORKER_FEASIBLE"]
+    table, cfg, specs = _build(env)
+    assert table.peer_proxied == frozenset()
+    resp, calls = _post(table, cfg, specs, b'{"model":"worker"}')
+    assert resp.status == 200
+    assert len(calls) == 1 and calls[0].backend.name == "worker"
+    assert S.PROXIED_BY_HEADER not in dict(resp.headers)
+
+
+def test_worker_marked_request_that_would_reproxy_is_refused() -> None:
+    table, cfg, specs = _build(_worker_dropped_env())
+    inbound = [(S.PROXIED_HEADER, "primary")]
+    resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
+    assert calls == []
+    assert resp.status == 508
+    assert json.loads(resp.body)["error"]["type"] == "proxy_loop"
 
 
 # ============================================================================

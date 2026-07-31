@@ -18,6 +18,7 @@ from lobes.gateway._config import (
     _DEFAULT_MIDDLE,
     _DEFAULT_MULTIMODAL_CODER,
     _DEFAULT_PRIMARY,
+    _DEFAULT_WORKER,
     build_config,
 )
 from lobes.gateway._routing import resolve_model
@@ -74,6 +75,38 @@ def test_multimodal_coder_base_url_alone_still_wires_the_backend() -> None:
     coder = next(b for b in table.backends if b.name == "multimodal-coder")
     assert coder.served_name == _DEFAULT_MULTIMODAL_CODER
     assert coder.base_url == "http://vllm-multimodal-coder:8000"
+
+
+# --- worker (the eighth/opt-in-core role): same *_BASE_URL-gated contract ---
+# (thor-worker-lobe plan, t3 — mirrors the muse opt-in backend exactly)
+
+
+def test_worker_served_name_alone_does_not_wire_the_backend() -> None:
+    table, _ = build_config({"WORKER_SERVED_NAME": _DEFAULT_WORKER})
+    names = [b.name for b in table.backends]
+    assert "worker" not in names
+    assert names == ["primary"]  # no phantom backend — primary alone
+
+
+def test_worker_base_url_alone_still_wires_the_backend() -> None:
+    table, _ = build_config({"WORKER_BASE_URL": "http://vllm-worker:8000"})
+    worker = next(b for b in table.backends if b.name == "worker")
+    assert worker.served_name == _DEFAULT_WORKER
+    assert worker.base_url == "http://vllm-worker:8000"
+    assert resolve_model(table, _DEFAULT_WORKER) == _DEFAULT_WORKER
+
+
+def test_worker_base_url_and_served_name_both_set_wires_worker() -> None:
+    custom_id = "unsloth/Qwen3.6-35B-A3B-NVFP4-custom"
+    table, _ = build_config(
+        {
+            "WORKER_BASE_URL": "http://vllm-worker:8000",
+            "WORKER_SERVED_NAME": custom_id,
+        }
+    )
+    worker = next(b for b in table.backends if b.name == "worker")
+    assert worker.served_name == custom_id
+    assert resolve_model(table, custom_id) == custom_id
 
 
 # --- criterion 4: EMBED_URL / RERANK_URL / PRIMARY_URL are unchanged -------

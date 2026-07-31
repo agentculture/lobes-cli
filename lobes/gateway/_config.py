@@ -42,8 +42,16 @@ _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 # The opt-in muse gear (Gemma 4 31B IT, NVIDIA NVFP4) — the seventh Colleague
 # role's backend. Hosted only by a muse-hosting deployment shape (never
 # machine-as-brain), so its backend is wired only when MUSE_BASE_URL is set —
-# and, uniquely, it is INFEASIBLE by default when unwired (see OPT_IN_BACKENDS).
+# and, like the worker gear below, it is INFEASIBLE by default when unwired
+# (see OPT_IN_BACKENDS).
 _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
+# The opt-in worker gear (unsloth Qwen3.6-35B-A3B-NVFP4, MoE with a
+# self-hosted MTP draft) — the eighth Colleague role's backend
+# (thor-worker-lobe plan, t1/t3). Hosted only by a worker-hosting deployment
+# shape (never machine-as-brain), so its backend is wired only when
+# WORKER_BASE_URL is set — and, like muse above, it is INFEASIBLE by default
+# when unwired (see OPT_IN_BACKENDS).
+_DEFAULT_WORKER = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
 # Per-backend "this machine's per-machine profile declares it CANNOT be served
 # AT ALL" signal (issue #92's "advertised implies reachable" extended to the
@@ -62,6 +70,9 @@ FEASIBLE_ENV: dict[str, str] = {
     "primary": "PRIMARY_FEASIBLE",
     "multimodal": "MULTIMODAL_FEASIBLE",
     "muse": "MUSE_FEASIBLE",
+    # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
+    # channel as muse — see OPT_IN_BACKENDS below.
+    "worker": "WORKER_FEASIBLE",
     "embed": "EMBED_FEASIBLE",
     "rerank": "RERANK_FEASIBLE",
     # First-class audio roles (issue #129): stt/tts joined the same channel so
@@ -78,16 +89,19 @@ FEASIBLE_ENV: dict[str, str] = {
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 
 # Backend names that are OPT-IN heavy lobes: hosted only by an explicit
-# muse-hosting deployment shape, never by the default machine-as-brain (see
-# lobes.profiles.shapes.OPT_IN_CORE_ROLES). Their feasibility DEFAULT is
-# inverted: with no explicit ``<PREFIX>_FEASIBLE`` value in the env, an
-# opt-in name is feasible only when its backend is actually WIRED
-# (``*_BASE_URL`` set). This keeps a pre-muse ``.env`` honest without a
-# re-init — ``model=muse`` on such a box 404s ``role_infeasible`` (referable /
-# proxyable via the peer channels) instead of silently upward-falling-back to
-# the primary, the exact half-honest posture #92 forbids. An explicit
-# truthy/falsy ``MUSE_FEASIBLE`` always wins over this default.
-OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse"})
+# muse-hosting or worker-hosting deployment shape, never by the default
+# machine-as-brain (see lobes.profiles.shapes.OPT_IN_CORE_ROLES). Their
+# feasibility DEFAULT is inverted: with no explicit ``<PREFIX>_FEASIBLE``
+# value in the env, an opt-in name is feasible only when its backend is
+# actually WIRED (``*_BASE_URL`` set). This keeps a pre-muse/pre-worker
+# ``.env`` honest without a re-init — ``model=muse`` / ``model=worker`` on
+# such a box 404s ``role_infeasible`` (referable / proxyable via the peer
+# channels) instead of silently upward-falling-back to the primary, the exact
+# half-honest posture #92 forbids. An explicit truthy/falsy
+# ``MUSE_FEASIBLE``/``WORKER_FEASIBLE`` always wins over this default. worker
+# joined muse on this channel via the thor-worker-lobe plan (t3) — the second
+# opt-in-core role, same honesty contract.
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -132,6 +146,9 @@ PEER_ORIGIN_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_ORIGIN",
     "multimodal": "MULTIMODAL_PEER_ORIGIN",
     "muse": "MUSE_PEER_ORIGIN",
+    # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
+    # channel as muse.
+    "worker": "WORKER_PEER_ORIGIN",
     "embed": "EMBED_PEER_ORIGIN",
     "rerank": "RERANK_PEER_ORIGIN",
     # First-class audio roles (issue #129 item 3): the referral/proxy channels
@@ -170,6 +187,9 @@ PEER_PROXY_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_PROXY",
     "multimodal": "MULTIMODAL_PEER_PROXY",
     "muse": "MUSE_PEER_PROXY",
+    # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
+    # channel as muse.
+    "worker": "WORKER_PEER_PROXY",
     "embed": "EMBED_PEER_PROXY",
     "rerank": "RERANK_PEER_PROXY",
     # Audio roles (issue #129): same three-condition arming as every other
@@ -194,6 +214,9 @@ PEER_API_KEY_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_API_KEY",
     "multimodal": "MULTIMODAL_PEER_API_KEY",
     "muse": "MUSE_PEER_API_KEY",
+    # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
+    # channel as muse.
+    "worker": "WORKER_PEER_API_KEY",
     "embed": "EMBED_PEER_API_KEY",
     "rerank": "RERANK_PEER_API_KEY",
     # Audio roles (issue #129): the O(machines) rule holds — the value is a
@@ -534,6 +557,24 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             name_key="MUSE_SERVED_NAME",
             default_url="http://vllm-muse:8000",
             default_name=_DEFAULT_MUSE,
+        ),
+        # The opt-in worker generate backend (unsloth Qwen3.6-35B-A3B-NVFP4,
+        # MoE with a self-hosted MTP draft — the eighth Colleague role, the
+        # ground-work execution lobe; thor-worker-lobe plan t1/t3). Wired only
+        # when WORKER_BASE_URL is present — i.e. when a worker-hosting
+        # deployment shape (thor-worker) rendered its activation env
+        # (COMPOSE_PROFILES=worker + WORKER_BASE_URL, see
+        # lobes.profiles.shape_render). Absent by default, so the routing
+        # table is unchanged on every pre-worker deployment; the unwired
+        # backend is also INFEASIBLE by default (OPT_IN_BACKENDS above) so
+        # `model=worker` 404s role_infeasible instead of falling back upward.
+        _optional_backend(
+            env,
+            name="worker",
+            url_key="WORKER_BASE_URL",
+            name_key="WORKER_SERVED_NAME",
+            default_url="http://vllm-worker:8000",
+            default_name=_DEFAULT_WORKER,
         ),
         # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
         # role_hint="candidate" since the "support both" demotion — see
