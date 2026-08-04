@@ -56,6 +56,16 @@ task to read.
 A ``feasible=True`` role (the default) never gets a ``<PREFIX>_FEASIBLE`` key
 at all — "feasible" is the assumed default the compose template already
 encodes, so spelling out ``=true`` for every role would just be noise.
+
+**Card-level (non-role) keys — ``host_env``.** A few ``.env`` keys the compose
+template reads belong to no lane at all (the gateway's pressure-policy
+thresholds are the whole of it today). A card whose HOST accounting makes the
+shipped default wrong declares them in its profile's ``host_env`` table (see
+:attr:`lobes.profiles.schema.Profile.host_env`) and this module renders them
+verbatim — *before* the role keys, so a role knob always wins a name
+collision and ``host_env`` can never shadow ``PRIMARY_GPU_MEM_UTIL`` & co. A
+profile that declares no ``host_env`` (every built-in but ``orin``) renders
+exactly what it rendered before the field existed.
 """
 
 from __future__ import annotations
@@ -129,10 +139,13 @@ def profile_env(profile: Profile) -> dict[str, str]:
     returned dict, leaving the compose template's own ``${VAR:-default}`` in
     effect. See the module docstring for the role->prefix table, the
     knob->env-suffix mapping, the ``model``->two-keys special case, the
-    ``enforce_eager`` bool->flag-token translation, and the
-    ``<PREFIX>_FEASIBLE=false`` marker convention for ``feasible=False`` roles.
+    ``enforce_eager`` bool->flag-token translation, the
+    ``<PREFIX>_FEASIBLE=false`` marker convention for ``feasible=False`` roles,
+    and the card-level ``host_env`` passthrough.
     """
-    env: dict[str, str] = {}
+    # host_env FIRST: a role knob rendered below always wins a name collision,
+    # so a card's non-role declaration can never shadow a lane's own budget.
+    env: dict[str, str] = dict(profile.host_env)
     for role in ROLES:
         env.update(_role_env(role, profile.role(role)))
     return env

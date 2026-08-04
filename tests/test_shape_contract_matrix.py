@@ -163,6 +163,13 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     assert set(CELLS) == {
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
+        # orin-lobe is thor-lobe's sm_87 sibling: it hosts senses and drops
+        # cortex (which the orin CARD also declares infeasible — NVFP4 W4A4
+        # needs Blackwell), so it contributes the same three cells thor-lobe
+        # does.
+        ("orin-lobe", "cortex"),
+        ("orin-lobe", "muse"),
+        ("orin-lobe", "worker"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),

@@ -156,3 +156,39 @@ def test_all_four_roles_map_to_distinct_prefixes() -> None:
         "EMBED_GPU_MEM_UTIL": "0.3",
         "RERANK_GPU_MEM_UTIL": "0.4",
     }
+
+
+# --- host_env: the card-level (non-role) .env passthrough --------------------
+
+
+def test_host_env_is_rendered_verbatim_alongside_the_role_keys() -> None:
+    profile = Profile(
+        name="quirky-card",
+        roles={"senses": RoleProfile(gpu_mem_util=0.45)},
+        host_env={"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"},
+    )
+    assert profile_env(profile) == {
+        "MULTIMODAL_GPU_MEM_UTIL": "0.45",
+        "LOBES_IOWAIT_DEGRADED_THRESHOLD": "100",
+    }
+
+
+def test_a_role_knob_always_wins_a_host_env_name_collision() -> None:
+    # host_env is rendered FIRST precisely so it can never shadow a lane's own
+    # budget: a card that (wrongly) spells a role key there loses to the role
+    # table, rather than silently overriding a measured knob.
+    profile = Profile(
+        name="collision",
+        roles={"senses": RoleProfile(gpu_mem_util=0.45)},
+        host_env={"MULTIMODAL_GPU_MEM_UTIL": "0.99"},
+    )
+    assert profile_env(profile)["MULTIMODAL_GPU_MEM_UTIL"] == "0.45"
+
+
+def test_a_profile_with_no_host_env_renders_exactly_what_it_always_did() -> None:
+    # The "byte-identical for every other card" guarantee, as a unit fact:
+    # spark/thor/base declare no host_env, so nothing new appears in their env.
+    for card in ("base", "spark", "thor"):
+        profile = resolve_profile(card)
+        assert dict(profile.host_env) == {}
+        assert not any(k.startswith("LOBES_") for k in profile_env(profile))

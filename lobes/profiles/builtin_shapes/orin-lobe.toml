@@ -1,0 +1,66 @@
+# The Jetson AGX Orin 64GB half of a mesh-brain deployment: keeps the Gemma
+# `senses` lobe + the two ~0.6B pooling gears on this board, and drops the Qwen
+# `cortex` primary to a peer box (today, the DGX Spark running spark-lobe.toml).
+#
+# Structurally this is `thor-lobe` for a DIFFERENT card, with two deliberate
+# divergences — the audio pair and the senses budget, both below.
+#
+# DECLARED-BUT-UNVALIDATED (the #108 rule, mirrored exactly from orin-small.toml
+# and thor-muse.toml): NO physical box has booted THIS shape. No doc, support
+# table, or `lobes capabilities` output may claim it validated until an
+# acceptance transcript lands under docs/evidence/. Its senses budget below is
+# inherited from lobes/profiles/builtin/orin.toml's own MEASURED-PENDING
+# hypothesis, which is itself pending the live boot that backfills it — read
+# that file's provenance block before copying either number anywhere.
+#
+# --- why no stt/tts (the divergence from thor-lobe) --------------------------
+#
+# This board CANNOT serve the audio overlay. MEASURED live (2026-07-17): the
+# Parakeet STT image is built FROM `scitrera/dgx-spark-vllm`, whose bundled
+# torch carries no sm_87 kernels — the container crash-looped 8 times with
+# "CUDA error: no kernel image is available for execution on the device". That
+# is a build-artifact fact about the base image, not a budget question, so
+# hosting `stt`/`tts` here would advertise two lanes that cannot start.
+#
+# The board reaches audio the same way it reaches cortex — through a peer. The
+# operator declares the forwarding target (AUDIO_URL, and/or the per-lane
+# STT_PEER_ORIGIN / TTS_PEER_ORIGIN + STT_FEASIBLE=false / TTS_FEASIBLE=false
+# of #129) in the deployment's own .env; a shape never derives a peer origin
+# (#92 — always operator-typed). Consequence of the drop: `shape_services`
+# renders no `stt`/`chatterbox`/`realtime` service, so `lobes init --audio`
+# scaffolds the overlay file but this shape starts nothing from it.
+name = "orin-lobe"
+summary = "Jetson AGX Orin 64GB mesh-lobe (DECLARED, UNVALIDATED) -- Gemma senses + embedder + reranker, no cortex, no audio (sm_87 has no Parakeet image)"
+
+hosts = ["senses", "embedder", "reranker"]
+
+[overrides.senses]
+# These restate builtin/orin.toml's OWN senses values, on purpose — and the
+# restatement is the entire reason this shape file exists.
+#
+# THE CLOBBER THIS PREVENTS: the deployed Orin box ran `--profile orin --shape
+# thor-lobe` (docs/orin-profiles.md "Shape choice"), and thor-lobe's
+# [overrides.senses] is 0.30 / 131072 — Thor's MEASURED sm_110 values, which
+# WIN over the card profile at render time (shape_render._overlay: a non-None
+# override field beats the card's). So the orin card's own 0.45 / 262144 were
+# silently overwritten by another board's numbers, and the operator had to
+# hand-patch the rendered .env back on-box every time. Compare the two goldens:
+#   tests/goldens/shapes/thor-lobe__orin.env -> MULTIMODAL_GPU_MEM_UTIL=0.3
+#   tests/goldens/orin.env                   -> MULTIMODAL_GPU_MEM_UTIL=0.45
+# An override the shape is SILENT on would flow the card value through, so
+# these two lines are not strictly required to render 0.45 / 262144 on the
+# `orin` card — they are what makes THIS shape carry the Orin budget as its own
+# declaration rather than as an accident of which card detection resolved.
+#
+# LOCKSTEP: these MUST equal builtin/orin.toml's [roles.senses] values.
+# tests/test_shape_budgets.py pins that equality, so the live boot that
+# backfills the card profile (a trimmed context is a legitimate outcome — see
+# that file) fails CI until this shape is backfilled with it too.
+#
+# NOT a reclaim. thor-lobe/spark-lobe raise the surviving lobe's budget with
+# the dropped lobe's freed share; there is nothing to reclaim here, because the
+# `orin` card never declared cortex feasible in the first place (NVFP4 W4A4
+# needs Blackwell; sm_87 is Ampere). Dropping cortex on this card frees no
+# budget — it only stops advertising a lobe the board could never serve.
+gpu_mem_util = 0.45
+max_model_len = 262144

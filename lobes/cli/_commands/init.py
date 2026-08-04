@@ -13,9 +13,10 @@ gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
-``--shape <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small>``
+``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|thor-worker|orin-small>``
 (brain-shapes t4, issue #113; ``orin-small`` added by the mesh-brain
-end-state's t2, issue #112; ``thor-muse`` added with the seventh role, muse)
+end-state's t2, issue #112; ``thor-muse`` added with the seventh role, muse;
+``orin-lobe`` added by the Orin variation)
 selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
 — composed on top of whichever per-machine
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
@@ -28,10 +29,14 @@ no-op over the profile, so a bare ``lobes init`` (no ``--shape`` at all) makes
 zero new decisions and renders byte-identically to before this flag existed.
 The mesh-brain alternatives drop one generate lobe to a peer box and reclaim
 its GPU-memory budget: ``spark-lobe`` (drops ``senses``), ``thor-lobe`` (drops
-``cortex``). ``orin-small`` drops BOTH heavy lobes and hosts the opt-in
-``minor`` gear instead — it is **declared, UNVALIDATED** data only (no
-physical Jetson AGX Orin has booted it; the #108 rule). An unknown
-``--shape`` value is a user error naming the valid (sorted) shapes.
+``cortex``). ``orin-lobe`` is ``thor-lobe``'s sm_87 sibling — senses + the
+pooling gears, no ``cortex`` (Ampere cannot run the NVFP4 primary) and no
+``stt``/``tts`` (the Parakeet base image carries no sm_87 kernels, so audio is
+forwarded to a peer via ``AUDIO_URL``). ``orin-small`` drops BOTH heavy lobes
+and hosts the opt-in ``minor`` gear instead. Both Orin shapes are **declared,
+UNVALIDATED** data only (no physical Jetson AGX Orin has booted either; the
+#108 rule). An unknown ``--shape`` value is a user error naming the valid
+(sorted) shapes.
 """
 
 from __future__ import annotations
@@ -45,7 +50,12 @@ from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import ROLES as CORE_ROLES
 from lobes.profiles.shape_render import GATEWAY_SERVICE, ROLE_SERVICE, render_shape
-from lobes.profiles.shapes import OPT_IN_CORE_ROLES, Shape, resolve_shape
+from lobes.profiles.shapes import (
+    OPT_IN_CORE_ROLES,
+    Shape,
+    builtin_shape_names,
+    resolve_shape,
+)
 from lobes.runtime import _compose, _env
 
 # The deployment shape a bare `lobes init` (no --shape) resolves: the
@@ -371,9 +381,12 @@ def _emit_apply(
         _sync_shape_override(target, shape)
     if audio:
         # Extend the fleet .env with the audio keys (NGC_API_KEY, ports, AUDIO_URL …).
-        # Independent of --shape: every built-in shape hosts stt/tts identically
-        # (see lobes/profiles/builtin_shapes/*.toml), so --audio stays the sole
-        # switch that scaffolds the overlay — passing both is harmless/idempotent.
+        # Independent of --shape: --audio is the sole switch that SCAFFOLDS the
+        # overlay, and passing both is harmless/idempotent. What a shape decides
+        # is whether the overlay's services RUN: every built-in shape hosts
+        # stt/tts except `orin-lobe`, whose board cannot serve them (no sm_87
+        # Parakeet image) — there the keys are still written, and AUDIO_URL
+        # forwards /v1/audio/* to a peer instead.
         _compose.append_audio_env(target)
     if json_mode:
         payload = {
@@ -506,7 +519,10 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--shape",
-        metavar="{machine-as-brain,spark-lobe,thor-lobe,thor-muse,thor-worker,orin-small}",
+        # Derived from the shipped shape TOMLs, never hand-listed — a new
+        # built-in shape shows up in --help the moment its file lands (and the
+        # resolver's own error message is derived the same way).
+        metavar="{" + ",".join(builtin_shape_names()) + "}",
         help="Deployment shape to render (brain-shapes, issue #113): which "
         "roles this box hosts, composed on top of whichever --profile/"
         "detection resolves. Default 'machine-as-brain' (host every "
@@ -514,7 +530,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         "behaviour; a bare 'lobes init' makes zero new decisions and renders "
         "byte-identically). Mesh-brain alternatives drop one generate lobe "
         "to a peer box and reclaim its GPU-memory budget: 'spark-lobe' "
-        "(drops senses), 'thor-lobe' (drops cortex). 'thor-muse' drops BOTH "
+        "(drops senses), 'thor-lobe' (drops cortex). 'orin-lobe' is "
+        "thor-lobe's sm_87 sibling (senses + pooling gears; no cortex, and no "
+        "stt/tts — the Parakeet image has no sm_87 kernels, so audio forwards "
+        "to a peer). 'thor-muse' drops BOTH "
         "heavy default lobes and hosts the opt-in 31B 'muse' creative lobe "
         "instead; 'thor-worker' drops BOTH and hosts the opt-in 35B-A3B "
         "multimodal 'worker' ground-work lobe instead. 'orin-small' (issue "

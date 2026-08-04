@@ -176,6 +176,13 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     Only the five Profile-machinery core roles (:data:`ROLES`) carry ``.env``
     knobs; ``stt``/``tts`` are audio-overlay sidecars handled by
     :func:`shape_services`, not here. Pure.
+
+    The card's non-role ``host_env`` declaration
+    (:attr:`~lobes.profiles.schema.Profile.host_env`) passes through UNCHANGED:
+    it states a fact about the BOX (its ``/proc/stat`` accounting, say), which
+    no hosting decision can alter — so every shape rendered over that card
+    inherits it, ``machine-as-brain`` included (which is what keeps the
+    identity-shape invariant true on a card that declares one).
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -193,6 +200,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         name=f"{shape.name}@{profile.name}",
         summary=f"shape={shape.name} card={profile.name}",
         roles=roles,
+        host_env=profile.host_env,
     )
 
 

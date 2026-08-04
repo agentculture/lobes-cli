@@ -246,7 +246,7 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
 # --- built-ins: the four shapes are expressible as pure data -----------------
 
 
-def test_builtin_shape_names_lists_all_six() -> None:
+def test_builtin_shape_names_lists_every_shipped_shape() -> None:
     names = builtin_shape_names()
     assert set(names) == {
         "machine-as-brain",
@@ -255,6 +255,7 @@ def test_builtin_shape_names_lists_all_six() -> None:
         "thor-muse",
         "thor-worker",
         "orin-small",
+        "orin-lobe",
     }
 
 
@@ -318,6 +319,21 @@ def test_orin_small_hosts_minor_embedder_reranker_and_audio_no_heavy_lobe() -> N
     assert set(orin_small.hosts) == {"minor", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in orin_small.hosts
     assert "senses" not in orin_small.hosts
+
+
+def test_orin_lobe_hosts_senses_and_pooling_but_no_cortex_and_no_audio() -> None:
+    # The Jetson AGX Orin 64GB mesh-lobe (orin-variation t7): senses + the two
+    # pooling gears, cortex dropped to a peer -- and, UNLIKE every other
+    # built-in shape, NO stt/tts: the Parakeet base image (scitrera/
+    # dgx-spark-vllm) ships a torch with no sm_87 kernels, measured live as 8
+    # container restarts with "no kernel image is available". Audio is
+    # forwarded to a peer via the operator-declared AUDIO_URL instead.
+    orin_lobe = load_builtin_shape("orin-lobe")
+    assert orin_lobe is not None
+    assert set(orin_lobe.hosts) == {"senses", "embedder", "reranker"}
+    assert "cortex" not in orin_lobe.hosts
+    for audio_role in AUDIO_ROLES:
+        assert audio_role not in orin_lobe.hosts
 
 
 def test_orin_small_carries_no_overrides() -> None:

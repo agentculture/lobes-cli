@@ -18,10 +18,21 @@ Every knob is optional (``None`` = "use the compose template's own default"):
 a profile only needs to *say* something about the knobs it actually diverges
 on — that is how :mod:`lobes.profiles.builtin` keeps the Thor profile down to
 its four validated divergences instead of restating Spark's whole table.
+
+Alongside the per-role tables a profile may also declare a small ``host_env``
+table: **card-level** ``.env`` keys that belong to no role at all (see
+:attr:`Profile.host_env`). Facts about the BOARD that the compose template
+reads box-wide — today only the gateway's pressure-policy thresholds — have
+nowhere else to live: they are not a vLLM knob on any lane, so they cannot be
+a :class:`RoleProfile` field, and they are not a HOSTING decision, so they do
+not belong on a :class:`~lobes.profiles.shapes.Shape` either (a shape-scoped
+fix would leave the default ``machine-as-brain`` shape on the same card
+broken).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -54,8 +65,49 @@ KNOB_NAMES: tuple[str, ...] = (
 )
 
 
+# A ``host_env`` key must be a plain env-var name (a POSIX shell identifier) —
+# the .env file is a KEY=VALUE surface, so anything else could not be written
+# there at all. Values are required to be STRINGS for the same reason: the
+# author writes the exact bytes that land in .env, with no int/float
+# formatting surprise (``100`` vs ``100.0``) between the TOML and the file.
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def _profile_error(message: str, remediation: str) -> ModelGearError:
     return ModelGearError(code=EXIT_USER_ERROR, message=message, remediation=remediation)
+
+
+def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
+    """Validate and build a profile's card-level ``host_env`` table.
+
+    Rejects a non-mapping, a key that is not a valid env-var name, and a
+    non-string value — the same loud-not-silent contract
+    :meth:`RoleProfile.from_dict` applies to knobs.
+    """
+    if not isinstance(raw, Mapping):
+        raise _profile_error(
+            message=f"profile {name!r}: 'host_env' must be a table/mapping",
+            remediation='declare it as a [host_env] table of KEY = "value" pairs',
+        )
+    host_env: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
+            raise _profile_error(
+                message=f"profile {name!r}: host_env key {key!r} is not a valid env-var name",
+                remediation="use a plain env-var name (letters, digits, underscore; "
+                "never starting with a digit)",
+            )
+        if not isinstance(value, str):
+            got = type(value).__name__
+            raise _profile_error(
+                message=(
+                    f"profile {name!r}: host_env value for {key!r} must be str, "
+                    f"got {got} ({value!r})"
+                ),
+                remediation=f'quote it — host_env values are written to .env verbatim: {key} = "…"',
+            )
+        host_env[key] = value
+    return host_env
 
 
 def _is_strict_bool(value: Any) -> bool:
@@ -176,14 +228,26 @@ class Profile:
     ``roles`` is read-only (a :class:`~types.MappingProxyType`) so a loaded
     profile can be shared freely without a caller accidentally mutating the
     built-in/operator source of truth.
+
+    ``host_env`` is the card's **non-role** ``.env`` declaration: box-wide keys
+    the compose template reads that belong to no lane — today only the
+    gateway's pressure-policy thresholds, where a card's own ``/proc/stat``
+    accounting quirk makes the shipped default wrong for that board (see
+    ``lobes/profiles/builtin/orin.toml``). Rendered verbatim by
+    :func:`lobes.profiles.render.profile_env`, BEFORE the role keys, so a role
+    knob can never be shadowed by a host_env entry; a card that declares none
+    (every profile but ``orin`` today) renders byte-identically to before this
+    field existed. Read-only, like ``roles``.
     """
 
     name: str
     summary: str = ""
     roles: Mapping[str, RoleProfile] = field(default_factory=dict)
+    host_env: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
+        object.__setattr__(self, "host_env", MappingProxyType(dict(self.host_env)))
 
     def role(self, name: str) -> RoleProfile:
         """The declaration for one role; an absent role is fully permissive.
@@ -196,11 +260,12 @@ class Profile:
         return self.roles.get(name, RoleProfile())
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain-dict view, ``{"name": ..., "summary": ..., "roles": {...}}``."""
+        """Plain-dict view, ``{"name", "summary", "roles", "host_env"}``."""
         return {
             "name": self.name,
             "summary": self.summary,
             "roles": {role: rp.to_dict() for role, rp in self.roles.items()},
+            "host_env": dict(self.host_env),
         }
 
     @staticmethod
@@ -210,9 +275,10 @@ class Profile:
         Validates the top-level shape and every role name before building
         each :class:`RoleProfile` (which validates its own knob names) — an
         unrecognised role (anything outside :data:`ROLES`) is a LOAD ERROR,
-        exactly like an unrecognised knob.
+        exactly like an unrecognised knob. The optional ``host_env`` table is
+        validated the same way (:func:`_host_env_from_dict`).
         """
-        known_top = {"name", "summary", "roles"}
+        known_top = {"name", "summary", "roles", "host_env"}
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
             raise _profile_error(
@@ -235,6 +301,7 @@ class Profile:
         roles = {
             role: RoleProfile.from_dict(role, role_data) for role, role_data in raw_roles.items()
         }
+        host_env = _host_env_from_dict(name, data.get("host_env", {}))
         # declared-name wins over an embedded "name" field (loader passes the
         # filename stem, which is the source of truth for a profile's identity).
         declared_name = data.get("name", name)
@@ -246,4 +313,4 @@ class Profile:
                 ),
                 remediation="rename the file or fix the 'name' field so they agree",
             )
-        return Profile(name=name, summary=summary, roles=roles)
+        return Profile(name=name, summary=summary, roles=roles, host_env=host_env)
