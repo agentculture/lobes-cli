@@ -2,7 +2,7 @@
   "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
   "schema_version": 1,
   "created": "2026-08-04T08:17:16Z",
-  "updated": "2026-08-04T08:23:26Z",
+  "updated": "2026-08-04T08:34:47Z",
   "deviations": [
     {
       "id": "d1",
@@ -41,6 +41,32 @@
       "origin": "llm",
       "status": "approved",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d4",
+      "what": "t10 (proxy wiring) is split: the cortex->Spark preservation check stays in the senses acceptance path; the NEW worker->Thor wiring is deferred out of this work item",
+      "task_ref": "t10",
+      "reason": "user priority ruling 2026-08-04: Gemma senses on this box is top priority; proxying from other devices is a later decision. Deferring worker->Thor also removes the plan's only external blocker (risk r3 \u2014 the Thor's inbound GATEWAY_API_KEY was an operator-provided secret the plan could not obtain), so the senses path no longer waits on a credential",
+      "affects": [
+        "c29",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t10 requires a gateway REBUILD (0.45.0 -> 0.54.9), not just env lines \u2014 the deployed gateway has no worker role and lacks the 0.54.8 peer-proxy fix",
+      "task_ref": "t10",
+      "reason": "VERIFIED LIVE 2026-08-04: GET /health on this box reports 0.45.0 and GET /capabilities advertises only ['cortex','embedder','reranker','senses','stt','tts'] \u2014 no 'worker', no 'muse'. The Thor side is fine (gateway 0.54.6, worker ready=True/feasible=True/loaded=True, model=unsloth/Qwen3.6-35B-A3B-NVFP4 at ctx 262144, answers keyless with NO Authorization header \u2014 confirming the user's c31). The gap is entirely on THIS box",
+      "affects": [
+        "t9",
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
     }
   ]
 }

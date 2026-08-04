@@ -131,3 +131,61 @@ Boot args : --gpu-memory-utilization=0.45 --max-model-len=131072
   c20 (before_state) amended to the measured reality per honesty condition h16.
 
 ================================================================================
+================================================================================
+PRE-BOOT — candidate checkpoint on disk + budget projection          [t9 prep]
+================================================================================
+Pulled 2026-08-04 (unauthenticated, repo not gated) to
+  ~/.cache/huggingface/hub/models--unsloth--gemma-4-12B-it-qat-w4a16
+  snapshot 626f3b2f8a3799cb2b64ca5fc09443c90fe2cbb2
+
+config.json read from the DOWNLOADED checkpoint (not the web card):
+  architectures        Gemma4UnifiedForConditionalGeneration
+  model_type           gemma4_unified
+  quantization         compressed-tensors / pack-quantized
+                       group_0 weights: num_bits=4, type=INT, strategy=group
+                       -> int4 W4A16, NOT the FP4 path the incumbent uses
+  text max_pos_embed   262144   (2x the incumbent's 131072)
+  vision_config        present        audio_config     present
+  audio_token_id       258881         video_token_id   258884  (video DECLARED)
+
+  model.safetensors    9.56 GiB   vs the incumbent's 7.65 GiB  (+1.91 GiB)
+
+--- projection (NOT a measurement — arithmetic from measured incumbent facts) --
+
+  Derived from this box's own numbers, so it inherits their assumptions:
+    KV cost/token   24.6 KiB      (incumbent: 11.29 GiB / 480,431 tok)
+    load overhead   +1.60 GiB     (incumbent: 9.25 loaded vs 7.65 on disk —
+                                   unquantized bf16 ViT + buffers)
+    projected new loaded footprint ~11.16 GiB
+    util budget @0.45 = 27.59 GiB of 61.3 GiB
+
+  boot order                     KV       tokens      @256K     @128K
+  senses FIRST (empty device)   16.43 GiB  698,987    2.67x     5.33x
+  gears boot first               9.38 GiB  398,983    1.52x     3.04x
+
+  READ THIS AS: the full 262144 window looks reachable at util 0.45 EITHER
+  way, but only comfortably if senses boots FIRST. Booting the gears first
+  costs ~43% of the KV pool and leaves 262144 at just 1.52x — enough to
+  serve, not enough to serve concurrently.
+
+  These are projections. The boot is the measurement, and a REFUSAL is the
+  more useful datum (repo discipline: thor-muse's 0.40 was refused -> 0.55;
+  thor-worker's 0.45 booted first try). Record both.
+
+--- peer state verified the same day (for the t10 wiring) ---------------------
+  Thor gateway  http://100.105.216.63:8000  and  thor.tail0be7e0.ts.net:8000
+    version 0.54.6, answers KEYLESS (no Authorization header) -> HTTP 200
+    worker: model=unsloth/Qwen3.6-35B-A3B-NVFP4 ready=True feasible=True
+            loaded=True context=262144
+  THIS box's gateway: version 0.45.0 — advertises only
+    ['cortex','embedder','reranker','senses','stt','tts'] — NO 'worker' role
+    at all, and predates the 0.54.8 server.py peer-proxy fix.
+    => worker->Thor needs a gateway REBUILD (0.45.0 -> 0.54.9), not env lines.
+    Recorded as blocking risk r5 / approved deviation d5.
+
+  Incidental, confirms the h20 probe discipline: the Thor's worker returned
+  content=None with 16 completion_tokens on a short max_tokens — the trace
+  lands in `reasoning` (NOT `reasoning_content`), exactly the playbook par.4
+  field trap. Dump sorted(message.keys()) before concluding anything.
+
+================================================================================

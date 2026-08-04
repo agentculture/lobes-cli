@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-04T07:27:40Z",
-  "updated": "2026-08-04T08:09:03Z",
+  "updated": "2026-08-04T08:34:47Z",
   "targets": [
     {
       "id": "c1",
@@ -613,14 +613,22 @@
       "text": "worker proxy needs the Thor's inbound GATEWAY_API_KEY, an operator-provided secret not derivable by the plan; t10 blocks until the user supplies it",
       "kind": "unknown_nonblocking",
       "task_id": "t10",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "VOID (user, 2026-08-04): the Thor's gateway takes no inbound key \u2014 it is free to use on the mesh, so a worker->Thor proxy needs only WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true and no credential. t10's deferral now rests solely on the senses-first priority ruling (c30/d4), not on a missing secret"
     },
     {
       "id": "r4",
       "text": "video and audio verdicts may be NO (vLLM path gaps #101-style) \u2014 the capability goal is then partially unmet and reported honestly; the swap still ships",
       "kind": "unknown_nonblocking",
       "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "this box's DEPLOYED gateway is 0.45.0 \u2014 it does not know the 'worker' role at all (it advertises only cortex/embedder/reranker/senses/stt/tts) and predates the 0.54.8 server.py peer-proxy fix that made WORKER_PEER_PROXY functional. So worker->Thor is NOT 'two env lines' on the current deployment: it requires rebuilding the gateway from the branch (0.54.9). t9's re-render+rebuild delivers that as a side effect, but it also means the deployment jumps 0.45.0 -> 0.54.9 in one step, which is a far larger change surface than the senses checkpoint swap alone \u2014 the t4 snapshot is the mitigation",
+      "kind": "unknown_blocking",
+      "task_id": "t10",
       "resolved": false,
       "resolution": ""
     }

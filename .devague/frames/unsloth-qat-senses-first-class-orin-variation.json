@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-04T06:34:20Z",
-  "updated": "2026-08-04T08:17:29Z",
+  "updated": "2026-08-04T08:32:27Z",
   "claims": [
     {
       "id": "c1",
@@ -368,7 +368,7 @@
       "kind": "before_state",
       "text": "today this box serves senses = coolthor via a hand-maintained OPERATOR profile: detection resolves UNKNOWN -> base (which vetoes senses), thor-lobe's Thor-measured overrides clobber the Orin-measured util so .env is hand-edited (0.45), the csv-mode runtime:nvidia edits revert on every re-init, and the checkpoint's video/audio/reasoning story has never been probed here. MEASURED LIVE 2026-08-04 (t3, deviation d1): the running engine at util 0.45 / 131072 holds KV 11.29 GiB = 480,431 tokens = 3.67x \u2014 NOT docs/orin-profiles.md's 18.86 GiB / 802,644 / 6.12x, because that figure came from a senses-FIRST boot while the live container booted after the pooling gears; host sits at 52/61 GiB with no swap. Incumbent baseline on this engine: TTFT 0.50-0.65 s warm, decode 9.99 tok/s (medium) / 6.39 tok/s (long, 512 tok), MTP avg draft acceptance 69-83% (mean acceptance length 1.69-2.00)",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h16",
@@ -542,8 +542,8 @@
     },
     {
       "id": "c29",
-      "kind": "requirement",
-      "text": "the activated orin deployment also proxies the two heavy roles it does not host (user statement 2026-08-04): worker -> the Jetson AGX Thor (NEW wiring on this box: WORKER_PEER_ORIGIN pointing at thor's gateway :8000 + WORKER_PEER_PROXY=true + WORKER_PEER_API_KEY = thor's inbound GATEWAY_API_KEY, operator-provided per the O(machines) key model; functional since the 0.54.8 server.py fix) and cortex -> the DGX Spark (the existing PRIMARY_PEER_* wiring, preserved) \u2014 so a caller on this box's gateway reaches senses locally, cortex from the Spark, and worker from the Thor",
+      "kind": "assumption",
+      "text": "the activated orin deployment PRESERVES the existing cortex->Spark proxy wiring (PRIMARY_PEER_ORIGIN/PROXY/API_KEY must survive the re-render byte-identical \u2014 this is a don't-break-it condition, still in scope). The worker->Thor proxy (WORKER_PEER_ORIGIN/PROXY/API_KEY) is DEFERRED per the user's 2026-08-04 priority ruling: possible, but a later decision that must not gate senses acceptance",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [
@@ -554,6 +554,48 @@
           "instruction": ""
         }
       ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "the activated orin deployment also proxies the two heavy roles it does not host (user statement 2026-08-04): worker -> the Jetson AGX Thor (NEW wiring on this box: WORKER_PEER_ORIGIN pointing at thor's gateway :8000 + WORKER_PEER_PROXY=true + WORKER_PEER_API_KEY = thor's inbound GATEWAY_API_KEY, operator-provided per the O(machines) key model; functional since the 0.54.8 server.py fix) and cortex -> the DGX Spark (the existing PRIMARY_PEER_* wiring, preserved) \u2014 so a caller on this box's gateway reaches senses locally, cortex from the Spark, and worker from the Thor",
+          "kind": "requirement",
+          "reason": "user priority ruling: proxy wiring is a later decision, not a requirement of this work item"
+        }
+      ]
+    },
+    {
+      "id": "c30",
+      "kind": "decision",
+      "text": "priority ruling (user, 2026-08-04): Gemma senses on this Orin is the TOP priority of this work. Proxying roles from other devices is possible but is a LATER decision \u2014 so the worker->Thor proxy wiring is deferred out of this work item's critical path and must not gate senses acceptance",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "decision",
+      "text": "the Thor's gateway requires NO inbound key \u2014 it is free to use on the mesh (user, 2026-08-04). So a worker->Thor proxy needs only WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true and NO WORKER_PEER_API_KEY. This VOIDS plan risk r3 (which assumed an operator-provided secret blocked t10) and corrects part of deviation d4's stated reasoning: worker proxy is deferred purely by the senses-first priority ruling (c30), NOT because a credential was missing",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "decision",
+      "text": "worker->Thor proxy is FOLDED BACK IN at t10 (user, 2026-08-04), superseding the deferral in d4: with the Thor keyless (c31) it costs only WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true and no credential exchange. Senses remains the top priority and the critical path (c30) \u2014 the proxy wiring rides along at the post-boot wiring step, and must still never gate senses acceptance",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
