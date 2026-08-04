@@ -12,9 +12,34 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from lobes.cli import main
 from lobes.cli._commands import logs as logs_cmd
-from lobes.runtime import _compose
+from lobes.runtime import _compose, _detect
+
+
+@pytest.fixture(autouse=True)
+def _pin_spark_detection(monkeypatch) -> None:
+    """Pin card detection to a fixed, resolvable card for every test in this
+    file — mirrors ``tests/test_init.py``'s identical fixture (same rationale:
+    this file's ``main(["init", ...])`` calls are scaffold-mechanics setup for
+    exercising ``lobes logs``, not a detection or profile test, so every test
+    here wants the same neutral card; without this, the suite's result
+    depended on which physical machine ran it — e.g. a real Jetson AGX Orin
+    dev box resolves a genuine ``orin`` card with no built-in profile yet).
+    """
+    card = _detect.DetectedCard(
+        resolved="spark",
+        device_name="NVIDIA GB10",
+        compute_capability="sm_121",
+        total_memory_gb=119.7,
+        hostname="test-host",
+        device_tree_model=None,
+        sources={},
+    )
+    monkeypatch.setattr(_detect, "detect_card", lambda: card)
+
 
 # --- log dir resolution ----------------------------------------------------
 
