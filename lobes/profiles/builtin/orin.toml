@@ -1,0 +1,145 @@
+# Jetson AGX Orin 64GB Developer Kit (Ampere sm_87, 61.3 GiB unified memory) —
+# the fleet profile for the one card in this mesh that is NOT Blackwell-class.
+#
+# Card DETECTION lives in lobes/machines/orin.py (hostname / device-tree marker
+# "orin", sm_87, 64 GB); this file is the fleet-shaped half — which roles the
+# board can serve at all, and with which knobs. It supersedes the hand-authored
+# operator profile docs/orin-profiles.md records at
+# <deploy-dir>/profiles/orin.toml (an operator file of the same name still wins
+# over this built-in, per lobes/profiles/loader.py).
+#
+# What this board serves: `senses` (the Gemma 4 12B multimodal gear) plus the
+# two ~0.6B pooling gears. The three NVFP4 generate lobes — cortex, muse,
+# worker — are feasible=false; see the shared rationale below.
+#
+# Two knobs are deliberately ABSENT from the pooling roles at the bottom
+# (embedder.attention_backend, reranker.attention_backend +
+# reranker.enforce_eager): lobes/profiles/loader.py overlays them from the live
+# lobes.machines chip-strategy registry rather than re-typing the literals here,
+# so the orin CardStrategy stays the single source of truth for WHY each one
+# holds (each Knob there carries its own provenance string). Same mechanism
+# thor.toml uses for its four sm_110 divergences.
+#
+# A knob left out of a role table means the profile takes no position on it
+# (the compose template's own ${VAR:-default} applies) — same convention as
+# spark.toml / thor.toml; see RoleProfile in lobes/profiles/schema.py.
+name = "orin"
+summary = "Jetson AGX Orin 64GB (Ampere sm_87, 64 GB unified) — senses + pooling gears; the NVFP4 lobes need Blackwell"
+
+# --- the three NVFP4 generate lobes: a HARD architecture line ----------------
+#
+# cortex (unsloth/Qwen3.6-27B-NVFP4), muse (nvidia/Gemma-4-31B-IT-NVFP4) and
+# worker (unsloth/Qwen3.6-35B-A3B-NVFP4) are all NVFP4 exports that quantize
+# ACTIVATIONS to FP4 (W4A4 on the MLP path). FP4 activations are executed by
+# BLACKWELL FP4 tensor cores; sm_87 is Ampere, one generation short. No
+# gpu_mem_util makes that work — this is a feasibility fact, NOT a memory
+# tradeoff (docs/orin-profiles.md "Why no cortex"; the same statement heads
+# lobes/machines/orin.py).
+#
+# Contrast the `senses` gear below, which DOES run here: weight-only int4
+# (W4A16). Its weights dequantize through vLLM's Marlin/int4 path (compute
+# capability >= 8.0) and its activations stay 16-bit — that is the whole reason
+# a 12B multimodal lobe serves on this Ampere board while a 27B NVFP4 primary
+# cannot.
+#
+# feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model,
+# no knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served.
+# A box on this profile reaches cortex by honest referral / proxy instead
+# (PRIMARY_PEER_ORIGIN + PRIMARY_PEER_PROXY -> the DGX Spark; validated live
+# 2026-07-17, docs/orin-profiles.md "Mesh wiring").
+[roles.cortex]
+feasible = false
+
+[roles.muse]
+feasible = false
+
+[roles.worker]
+feasible = false
+
+[roles.senses]
+feasible = true
+# unsloth/gemma-4-12B-it-qat-w4a16 — QAT (quantization-aware trained) int4
+# W4A16, compressed-tensors "pack-quantized". Read off the checkpoint's OWN
+# config.json (fetched 2026-08-04; the same facts are cited in lobes/catalog.py
+# and docs/gemma-4-12b-qat-w4a16.md), never off the model card:
+#   - architectures ["Gemma4UnifiedForConditionalGeneration"], model_type
+#     "gemma4_unified" — the SAME class the incumbent coolthor gear serves, so
+#     this repo's existing Dockerfile.vllm-gemma4 image already handles it;
+#   - text_config.max_position_embeddings = 262144 (see max_model_len below);
+#   - quantization_config: num_bits=4, type=int, strategy=group, group_size=32
+#     — INT4, not FP4 (that is what makes sm_87 plausible at all);
+#   - vision_config AND audio_config both present (audio_token_id 258881,
+#     video_token_id 258884). Audio is DECLARED, not proven: #101 found vLLM's
+#     gemma4_unified path silently DROPS input_audio on the coolthor gear, and
+#     that is a path gap, not a per-checkpoint one — probing it is a later task.
+# The checkpoint carries NO draft head of its own; the senses lane's MTP draft
+# is an env-level flag (MULTIMODAL_SPECULATIVE_CONFIG, with an off sentinel),
+# not a Profile knob — RoleProfile has exactly nine fields and none of them is
+# speculative_config.
+model = "unsloth/gemma-4-12B-it-qat-w4a16"
+# !!! BOTH VALUES BELOW ARE MEASURED-PENDING HYPOTHESES, NOT MEASUREMENTS !!!
+#
+# They are the STARTING POINT for the live boot that backfills them; nothing
+# here has booted this checkpoint on this board. Read this before copying either
+# number anywhere.
+#
+# 1. gpu_mem_util = 0.45 is INHERITED from the INCUMBENT coolthor gear's boot at
+#    max_model_len=131072 (docs/orin-profiles.md) — it is not a measurement of
+#    this checkpoint, and not a measurement at this window.
+# 2. The KV figure docs/orin-profiles.md reports for that incumbent is WRONG for
+#    a co-resident boot. Re-measured live on this box 2026-08-04 (approved
+#    deviation d1, issue #171): the running incumbent at 0.45 / 131072 holds
+#    11.29 GiB KV = 480,431 tokens = 3.67x concurrency — NOT the doc's
+#    18.86 GiB / 802,644 tokens / 6.12x.
+#    MECHANISM: gpu_memory_utilization is a fraction of the ENTIRE device, so
+#    every byte a co-resident engine already holds is deducted one-for-one from
+#    KV (KV is the only elastic term). The doc's figure came from a senses-FIRST
+#    boot into an empty device; the live one booted AFTER the two pooling gears
+#    had taken ~7 GiB. The accepted util therefore depends on BOOT ORDER — the
+#    boot-ordering caveat in docs/machine-profiles.md is not just about races.
+# 3. Consequence for max_model_len = 262144 (the checkpoint's full native 256K):
+#    at 480,431 tokens a 262,144-token window is only ~1.83x concurrency, and
+#    the full window may be REFUSED outright depending on boot order. A trimmed
+#    context is a legitimate outcome of the live boot.
+# 4. Also measured 2026-08-04: CUDA-graph capture took 1.20 GiB against an
+#    0.83 GiB estimate (a 31% under-count, because
+#    VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0); vLLM's own log suggests
+#    compensating by raising util 0.4500 -> 0.4635.
+#
+# Whatever boots is the answer, and a REFUSAL is the more useful datum, not a
+# failure: thor-muse's hypothesised 0.40 was refused and 0.55 measured;
+# thor-worker's 0.45 booted first try. Both outcomes get recorded, then these
+# two lines get backfilled with the measured values and this block rewritten to
+# say so. (Note the repo-wide caveat on any "Nx concurrency" figure above: those
+# are KV-POOL CEILINGS — how many full-context requests the cache could hold —
+# never measured throughput.)
+gpu_mem_util = 0.45
+max_model_len = 262144
+# compressed-tensors, matching the checkpoint's own quant_method. vLLM reads the
+# exact scheme (int4 pack-quantized here, nvfp4-pack-quantized on the coolthor
+# incumbent) off the checkpoint itself, so the FLAG is the same for both and the
+# KERNEL PATH is not — the int4 path is the unproven half on sm_87.
+quantization = "compressed-tensors"
+# TRITON_ATTN: every role that booted on this box (senses/embedder/reranker,
+# 2026-07-16/17) used it; FlashInfer is unvalidated here (docs/orin-profiles.md).
+attention_backend = "TRITON_ATTN"
+
+[roles.embedder]
+feasible = true
+model = "Qwen/Qwen3-Embedding-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend: overlaid from lobes.machines.get("orin") — TRITON_ATTN, a
+# conservative first-boot carry-over of Thor's sm_110 pooling divergence that
+# was NOT independently re-tested on sm_87. This gear booted healthy that way
+# (1024-dim embeddings, 2026-07-17).
+
+[roles.reranker]
+feasible = true
+model = "Qwen/Qwen3-Reranker-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend + enforce_eager: overlaid from lobes.machines.get("orin") —
+# TRITON_ATTN + enforce_eager=true, the same carried-over Jetson safe-boot
+# choice. This gear booted healthy that way and its ordering probe passed
+# (relevant document top-ranked, score 0.82 — 2026-07-17).
