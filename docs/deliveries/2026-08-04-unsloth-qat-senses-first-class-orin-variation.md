@@ -1,6 +1,9 @@
 # Delivery Summary — unsloth QAT senses + first-class orin variation
 
-plan: `unsloth-qat-senses-first-class-orin-variation` · run: `partial` · date: `2026-08-04`
+plan: `unsloth-qat-senses-first-class-orin-variation` · run: `complete` · date: `2026-08-04`
+revised: `2026-08-04` — the live boot the operator originally could not authorise was
+subsequently approved and run; `t9`/`t11` moved blocked → delivered, and the four
+`unverified` capability claims below were re-stated with evidence.
 baseline: `devague summary skeleton`
 
 ## Intent
@@ -10,9 +13,10 @@ baseline: `devague summary skeleton`
 This run executed that plan's 13 tasks via `/assign-to-workforce`: three wave-0
 repo tasks fanned out to isolated worktree agents in parallel, two box-side
 measurement tasks run by the main agent, then three sequential worktree agents
-for the profile/shape/compose layers. **All eight repo-side and measurement
-tasks delivered; the five tasks that require mutating the live deployment are
-blocked** — see Drift and Remaining Work.
+for the profile/shape/compose layers, then the live boot and probe matrix on the
+physical board. **Twelve of thirteen tasks delivered; `t10` is partial** — its
+cortex half is verified, its worker half is wired but gated on releasing 0.55.0.
+See Drift and Remaining Work.
 
 ## Planned Work
 
@@ -44,11 +48,11 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t6` | delivered | `lobes/profiles/builtin/orin.toml` (MEASURED-PENDING budgets) + `loader` now derives orin's overrides from the machines registry. Merged `0f98da1`. |
 | `t7` | delivered | `orin-lobe` shape (no local stt/tts) + `Profile.host_env` rendering the Tegra iowait threshold from the **card**. Merged `f752ed8`. |
 | `t8` | delivered | `Profile.gpu_access` + generated `docker-compose.gpu.yml` pair using `deploy: !reset null`; compose **merge** verified against real `docker compose config` on this csv-mode board. Merged `fb49eaa`. |
-| `t9` | blocked | Re-render fully rehearsed against copies and proven correct, but `lobes init --apply --force` was denied by the environment's permission classifier. No boot, no measured budget. (`d7`) |
-| `t10` | blocked | Depends on `t9`. Peer side verified reachable and keyless; this box's gateway rebuild is the prerequisite. (`d5`, `d7`) |
-| `t11` | blocked | Probe harness **built and validated against the incumbent**, but never run against the new checkpoint. (`d7`) |
-| `t12` | partial | Evidence transcript committed with the incumbent baseline, capability baseline, streaming contract, pre-boot checkpoint facts and projection. The **measured-value backfill** of `orin.toml`/`orin-lobe.toml` did not happen. (`d7`) |
-| `t13` | partial | Version bumped to 0.55.0, full suite green, untouched-proof verified, five follow-up issues filed. PR opened carrying the repo-side work only. |
+| `t9` | delivered | Re-rendered and **booted live**. `0.45` / `262144` accepted first try, no trim: weights 9.07 GiB, KV 11.81 GiB = 609,266 tokens = 2.32×. csv-mode `runtime: nvidia` proven at container **create**. Three blockers hit en route (`d6` shadowing, `d7` classifier, `d8`… plus #177). |
+| `t10` | partial | cortex→Spark **verified** (`proxied: true`) after the `--force` rewrite. worker→Thor **wired** in `.env` (keyless) but inactive: the gateway image installs the *published* wheel, so 0.55.0 is undeployable until this PR merges. (`d5`, `d8`) |
+| `t11` | delivered | Full matrix run against the new checkpoint, controlled against the incumbent baseline: image PASS, **video PASS** (incumbent FAILS the same reversed-motion control), reasoning PASS, tools PASS, audio FAIL (#101, vLLM-side). |
+| `t12` | delivered | Evidence transcript carries the incumbent baseline, capability baseline, streaming contract, pre-boot facts, and the live boot + probe results. Measured values **backfilled** into `orin.toml` and `orin-lobe.toml` (lockstep test enforced); `orin-lobe` marked validated. |
+| `t13` | delivered | Version 0.55.0, suite 2866 passed, untouched-proof verified, **six** issues filed, PR #176 open with all CI green and both Qodo findings fixed and resolved. |
 
 ## Mid-work Decisions
 
@@ -74,8 +78,17 @@ Quoted verbatim from the `devague summary` skeleton:
   wins by name, so `t9`'s apply would have been a silent **no-op**. Caught in the dry
   run (a missing `docker-compose.gpu.yml` line was the only tell). Archived on-box,
   not deleted. Filed as #175.
-- `d7` — the live re-render was **denied by the environment's permission classifier**,
-  blocking every remaining box-side task.
+- `d7` — the live re-render was initially **denied by the environment's permission
+  classifier**, blocking every box-side task. The operator subsequently approved it
+  and the boot ran; `t9`/`t11`/`t12` completed.
+- `d8` — worker→Thor cannot activate until 0.55.0 is **published**: the gateway image
+  installs `lobes-cli==${MODEL_GEAR_VERSION}` from PyPI, so a gateway-side feature on
+  a branch is undeployable. Structural, not a defect. The env wiring is already in
+  place and needs no further config after release.
+- Not covered by any deviation record: the checkpoint ships **without
+  `vision_config.num_soft_tokens`** and crash-loops vLLM every ~70 s. Exactly one key
+  of twenty differs from its sibling export. Patched locally (280) to boot; filed as
+  #177 because the patch lives in the HF cache and evaporates on a clear.
 - Not covered by any deviation record: `--force` was found to **silently destroy 12
   operator-typed `.env` keys**, including the cortex peer-proxy credential. Discovered
   by rehearsing the render against a copy rather than running it live. Filed as #174,
@@ -95,7 +108,9 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t10` (`d4`) | deferred then reinstated by user rulings; senses remained the critical path throughout | acceptable |
 | `t10` (`d5`) | requires a gateway rebuild (0.45.0 → 0.55.0), not the env-only change the plan assumed | risky |
 | `t9` (`d6`) | operator profile shadowed the builtin; would have rendered a silent no-op | risky |
-| `t9`, `t11`, `t12` (`d7`) | live mutation denied by the permission classifier — no boot, no measured budget, no probe run against the new checkpoint | needs-follow-up |
+| `t9`, `t11`, `t12` (`d7`) | live mutation initially denied by the permission classifier; subsequently approved and completed — measured budget and full probe matrix now recorded | acceptable |
+| `t10` (`d8`) | worker half gated on publishing 0.55.0 (the gateway installs the released wheel), so it ships wired-but-inactive | needs-follow-up |
+| `t9` (#177) | the checkpoint's own `config.json` is incomplete and crash-loops vLLM; required a local patch the plan did not anticipate | needs-follow-up |
 
 ## Evidence
 
@@ -120,25 +135,22 @@ Quoted verbatim from the `devague summary` skeleton:
 | a csv-mode board renders working GPU access with no hand editing | medium | real `docker compose config` exit 0, `runtime: nvidia → 12`, `driver: nvidia → 0` — compose **merge** proven, container create not |
 | thor/spark profiles and all pre-existing goldens are byte-identical | high | `git diff main` over those paths is empty; golden diff is additions-only |
 | the incumbent baseline is captured and unrecoverable-by-then metrics are preserved | high | `docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt` |
-| **senses serves the unsloth checkpoint on this box** | unverified | `t9` blocked — NOT claimed done |
-| **the 0.45 / 262144 budget holds on real hardware** | unverified | MEASURED-PENDING hypothesis; no boot occurred |
-| **image / video / audio / reasoning on the new checkpoint** | unverified | probe harness built and validated against the *incumbent* only |
-| **worker is reachable from this box via the Thor** | unverified | Thor side verified reachable + keyless; this box's gateway still 0.45.0 |
+| senses serves the unsloth checkpoint on this box | high | live `/capabilities`: `ready=True, ctx=262144`; evidence transcript t9 |
+| the 0.45 / 262144 budget holds on real hardware | high | boot log: KV 11.81 GiB / 609,266 tokens, accepted first try |
+| the new checkpoint understands VIDEO (the incumbent does not) | high | reversed-motion control: `LEFT-TO-RIGHT` vs `RIGHT-TO-LEFT`; incumbent answered `RIGHT-TO-LEFT` to both |
+| image, reasoning and tool calling work on the new checkpoint | high | probe matrix, t11 section of the evidence transcript |
+| the new checkpoint is faster than the incumbent | high | decode +8% medium, +79% long, measured from `usage.completion_tokens` |
+| audio is usable on `senses` | **disproven** | discrimination control fails 0/3; model denies hearing audio it carries — #101 |
+| **worker is reachable from this box via the Thor** | unverified | wired and peer-verified, but blocked on releasing 0.55.0 (`d8`) — NOT claimed done |
 
 ## Remaining Work / Follow-up
 
-- `t9` — an operator must run the re-render (the exact command and its safeguards are
-  in the PR description). Boot **senses first** — boot order materially changes the KV
-  pool. Record both the value that booted **and** any value refused.
-- `t9` follow-on — restore the 12 captured operator `.env` lines immediately after
-  `--force`, then verify `model=cortex` still answers with `X-Lobes-Proxied-By`.
-- `t11` — run the probe harness against the new checkpoint and compare to the
-  incumbent baseline already recorded. Remember `enable_thinking` or reasoning will
-  falsely read as absent.
-- `t12` — backfill the measured budget into `orin.toml` **and** `orin-lobe.toml`; a
-  lockstep test fails CI if only one moves.
-- `t10` — after the gateway rebuild, add `WORKER_PEER_ORIGIN` + `WORKER_PEER_PROXY=true`
-  (no credential needed) and verify `model=worker` answers with `X-Lobes-Proxied-By`.
+- `t10` (the only incomplete task) — **merge #176 → PyPI publishes 0.55.0 → rebuild the
+  gateway → `model=worker` answers with `X-Lobes-Proxied-By`.** The `.env` wiring is
+  already in place and needs no further configuration.
+- **#177 is the operational risk to watch**: the `num_soft_tokens` patch lives in this
+  box's HF cache. A cache clear, re-pull, or fresh machine reintroduces the crash-loop.
+  Needs an upstream fix or a pre-boot guard in `lobes doctor`.
 - #171 — correct `docs/orin-profiles.md`'s KV figure and strengthen the boot-ordering caveat.
 - #172 — the host-dependent-test class is fixed for two files; consider a conftest-level guard.
 - #173 — caller-facing help surface (`lobes help <role>`, `GET /help`).
