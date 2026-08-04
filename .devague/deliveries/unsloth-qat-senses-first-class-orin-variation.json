@@ -2,7 +2,7 @@
   "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
   "schema_version": 1,
   "created": "2026-08-04T08:17:16Z",
-  "updated": "2026-08-04T08:34:47Z",
+  "updated": "2026-08-04T09:41:17Z",
   "deviations": [
     {
       "id": "d1",
@@ -67,6 +67,32 @@
       "origin": "llm",
       "status": "approved",
       "classification": "risky"
+    },
+    {
+      "id": "d6",
+      "what": "the deployment carries an OPERATOR profile ~/.lobes/profiles/orin.toml that SHADOWS the new builtin orin.toml \u2014 operator profiles win over builtins by design (loader.py), so t9's re-render would have silently produced a NO-OP: senses staying on coolthor at 0.45/131072, gpu_access defaulting to 'devices' (no csv-mode override), and no [host_env] iowait fix",
+      "task_ref": "t9",
+      "reason": "caught in the t9 DRY RUN before any mutation: the plan output omitted the docker-compose.gpu.yml line that t8's mechanism promises, which was the tell. resolve_profile('orin', deploy_dir='~/.lobes') returns the OPERATOR file \u2014 model=coolthor, gpu_access='devices' \u2014 not the builtin. Resolution: rename the operator profile to a non-shadowing name (cite-don't-delete; it is also preserved in the t4 snapshot and documented in docs/orin-profiles.md) so the builtin resolves. This is exactly the failure the dry-run convention exists to catch",
+      "affects": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    },
+    {
+      "id": "d7",
+      "what": "t9/t11 (live boot + capability probes on the new checkpoint) and the measured-value backfill in t12 are BLOCKED \u2014 the destructive re-render 'lobes init --apply --force' was denied by the environment's permission classifier, so no agent-driven mutation of the live ~/.lobes deployment is possible in this session",
+      "task_ref": "t9",
+      "reason": "everything up to the mutation is complete and rehearsed: the render is proven correct against copies (builtin resolves unsloth/gemma-4-12B-it-qat-w4a16 at 0.45/262144, gpu_access=runtime, host_env iowait 100), the rollback snapshot is verified byte-identical, and the 12 operator-owned .env lines --force would destroy are captured verbatim. The PR ships the repo-side work with the orin variation honestly marked DECLARED/UNVALIDATED per #108; t9/t11/t12's measured backfill becomes a follow-up once an operator runs the render",
+      "affects": [
+        "t11",
+        "t12",
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
     }
   ]
 }

@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-04T07:27:40Z",
-  "updated": "2026-08-04T08:34:47Z",
+  "updated": "2026-08-04T09:41:17Z",
   "targets": [
     {
       "id": "c1",
@@ -629,6 +629,22 @@
       "text": "this box's DEPLOYED gateway is 0.45.0 \u2014 it does not know the 'worker' role at all (it advertises only cortex/embedder/reranker/senses/stt/tts) and predates the 0.54.8 server.py peer-proxy fix that made WORKER_PEER_PROXY functional. So worker->Thor is NOT 'two env lines' on the current deployment: it requires rebuilding the gateway from the branch (0.54.9). t9's re-render+rebuild delivers that as a side effect, but it also means the deployment jumps 0.45.0 -> 0.54.9 in one step, which is a far larger change surface than the senses checkpoint swap alone \u2014 the t4 snapshot is the mitigation",
       "kind": "unknown_blocking",
       "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "follow-up filed as #173: a caller-facing help surface (lobes help <role> + help stream/thinking/tools, and GET /help on the gateway) \u2014 the field traps this work measured (reasoning vs reasoning_content, delta.reasoning on streaming, opt-in enable_thinking, SSE chunk-count throughput trap, #101 audio) are discoverable today only via evidence transcripts",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "the orin card profile and orin-lobe shape carry MEASURED-PENDING budget hypotheses (0.45 / 262144) that this PR does NOT validate \u2014 a live boot must backfill them, and a refusal is the more useful datum. Lockstep test already forces both files to move together",
+      "kind": "follow_up",
+      "task_id": "t9",
       "resolved": false,
       "resolution": ""
     }
