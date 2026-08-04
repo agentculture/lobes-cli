@@ -1,0 +1,21 @@
+{
+  "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
+  "schema_version": 1,
+  "created": "2026-08-04T08:17:16Z",
+  "updated": "2026-08-04T08:17:28Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the frame's before-state cites docs/orin-profiles.md's KV pool of 18.86 GiB / 802,644 tokens / 6.12x at util 0.45 + 131072, but the LIVE running engine booted at exactly those knobs and has only 11.29 GiB / 480,431 tokens / 3.67x \u2014 a 1.67x overstatement in the documented before-state",
+      "task_ref": "t3",
+      "reason": "boot ORDER, not knobs, sets the measured KV pool on this unified-memory board: the documented figure came from a senses-FIRST boot (docs/orin-profiles.md's own reproduce steps prescribe that order), whereas the currently-running senses container booted 2026-07-17 07:33 AFTER embed (07-16 21:31) and rerank (07-16 21:33) had already taken their share. Host is at 52/61 GiB with NO swap. This directly moves t9's budget expectation: at 480,431 tokens a 262144-token window yields only ~1.83x concurrency, so the 262144 target may be refused or need a trim depending on boot order \u2014 plan risk r1 anticipated the possibility but not this cause",
+      "affects": [
+        "t9",
+        "c20"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

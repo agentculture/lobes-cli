@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-04T06:34:20Z",
-  "updated": "2026-08-04T07:41:05Z",
+  "updated": "2026-08-04T08:17:29Z",
   "claims": [
     {
       "id": "c1",
@@ -366,9 +366,9 @@
     {
       "id": "c20",
       "kind": "before_state",
-      "text": "today this box serves senses = coolthor via a hand-maintained OPERATOR profile: detection resolves UNKNOWN -> base (which vetoes senses), thor-lobe's Thor-measured overrides clobber the Orin-measured util so .env is hand-edited (0.45), the csv-mode runtime:nvidia edits revert on every re-init, and the checkpoint's video/audio/reasoning story has never been probed here",
+      "text": "today this box serves senses = coolthor via a hand-maintained OPERATOR profile: detection resolves UNKNOWN -> base (which vetoes senses), thor-lobe's Thor-measured overrides clobber the Orin-measured util so .env is hand-edited (0.45), the csv-mode runtime:nvidia edits revert on every re-init, and the checkpoint's video/audio/reasoning story has never been probed here. MEASURED LIVE 2026-08-04 (t3, deviation d1): the running engine at util 0.45 / 131072 holds KV 11.29 GiB = 480,431 tokens = 3.67x \u2014 NOT docs/orin-profiles.md's 18.86 GiB / 802,644 / 6.12x, because that figure came from a senses-FIRST boot while the live container booted after the pooling gears; host sits at 52/61 GiB with no swap. Incumbent baseline on this engine: TTFT 0.50-0.65 s warm, decode 9.99 tok/s (medium) / 6.39 tok/s (long, 512 tok), MTP avg draft acceptance 69-83% (mean acceptance length 1.69-2.00)",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "proposed",
       "honesty_conditions": [
         {
           "id": "h16",
@@ -380,7 +380,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "today this box serves senses = coolthor via a hand-maintained OPERATOR profile: detection resolves UNKNOWN -> base (which vetoes senses), thor-lobe's Thor-measured overrides clobber the Orin-measured util so .env is hand-edited (0.45), the csv-mode runtime:nvidia edits revert on every re-init, and the checkpoint's video/audio/reasoning story has never been probed here",
+          "kind": "before_state",
+          "reason": "t3 live measurement 2026-08-04 contradicted the documented before-state; h16 requires amending the frame rather than steamrolling reality"
+        }
+      ]
     },
     {
       "id": "c21",

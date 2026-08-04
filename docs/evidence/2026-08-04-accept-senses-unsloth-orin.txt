@@ -1,0 +1,107 @@
+================================================================================
+ACCEPTANCE TRANSCRIPT — senses -> unsloth/gemma-4-12B-it-qat-w4a16
+                        on the first-class `orin` variation
+================================================================================
+Box      : Jetson AGX Orin 64GB Developer Kit (Ampere sm_87, 61.3 GiB unified)
+Deploy   : ~/.lobes, gateway :8000, shape thor-lobe -> orin-lobe (this change)
+Plan     : docs/plans/2026-08-04-unsloth-qat-senses-first-class-orin-variation.md
+Frame    : unsloth-qat-senses-first-class-orin-variation
+Started  : 2026-08-04
+Keys     : every credential below is redacted as <...key> (boundary c28/h25,
+           following docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt)
+
+STATUS: IN PROGRESS — sections are appended as tasks complete. Sections not yet
+present have not been run; nothing here is claimed from a model card.
+
+================================================================================
+t4 — PRE-SWAP SNAPSHOT (rollback point)                            [COMPLETE]
+================================================================================
+Snapshot: ~/lobes-snapshots/2026-08-04-pre-unsloth-swap/  (112K, + RESTORE.md)
+Captured: .env (incl. PRIMARY_PEER_* proxy wiring + operator keys),
+          docker-compose.yml / .shape.yml / .audio.yml (WITH the hand-applied
+          csv-mode `runtime: nvidia` edits and the 0.50.0 gemma4 parser-pair
+          edits), profiles/orin.toml, Dockerfile.vllm-gemma4, Dockerfile.gateway
+
+Verified byte-identical against the live deployment before any mutation:
+    OK identical: .env
+    OK identical: docker-compose.yml
+    OK identical: docker-compose.shape.yml
+    OK identical: docker-compose.audio.yml
+    OK identical: profiles/orin.toml
+
+Incumbent weights remain in ~/.cache/huggingface (7.7 GiB) — restore needs no
+re-download. Disk: 1.6T free of 1.8T.
+
+================================================================================
+t3 — INCUMBENT BASELINE, current engine, BEFORE the swap        [COMPLETE]
+================================================================================
+Rationale: docs/model-switch-playbook.md par.1 — this baseline is unrecoverable
+once the checkpoint is swapped. Measured against the *currently serving* model
+on the *current* engine, so any post-swap comparison is controlled.
+
+Incumbent : coolthor/gemma-4-12B-it-NVFP4A16  (via the `senses` role alias)
+Engine    : as deployed since 2026-07-17 (gateway 0.45.0), container up 2 weeks
+Boot args : --gpu-memory-utilization=0.45 --max-model-len=131072
+            --quantization=compressed-tensors
+            --speculative-config={"method": "mtp",
+                "model": "google/gemma-4-12B-it-assistant",
+                "num_speculative_tokens": 1}
+
+--- throughput (decode from usage.completion_tokens, NEVER SSE chunk counts) ---
+
+  shape    TTFT      decode tok/s   completion_tokens   [chunk-count trap]
+  short    10.861 s  10.19          2                   (would say 5.09)
+  medium    0.651 s   9.99          119                 (would say 5.71)
+  long      0.504 s   6.39          512                 (would say 3.57)
+
+  The short shape's 10.86 s TTFT is a cold-start artifact (first request after
+  idle), not a steady-state number — the warm TTFT is 0.50-0.65 s.
+
+  TRAP CONFIRMED (playbook par.1): counting SSE chunks under-reports decode by
+  ~1.8x here, because speculative decoding delivers multiple tokens per chunk.
+  Both figures are printed above so the difference is auditable.
+
+  ANOMALY, recorded not explained: decode FALLS with generation length
+  (9.99 -> 6.39 tok/s) — the opposite of the playbook's GB10 observation that
+  decode climbs as fixed overheads amortise. Candidate causes not
+  distinguished by this run: Jetson thermal/clock throttling over an 80 s
+  generation, or MTP acceptance decay on longer outputs. Flagged for the
+  post-swap comparison to use like-for-like shapes.
+
+--- MTP (speculative decoding) acceptance, from the engine's own metrics -------
+
+  docker logs model-gear-vllm-multimodal | grep SpecDecoding   (last 5 windows)
+
+  mean acceptance length : 1.69 - 2.00
+  avg draft acceptance   : 69.2% - 82.8% - 100.0% (small-sample windows)
+  accepted / drafted     : e.g. 50/64, 48/58, 21/21, 10/14, 36/52 tokens
+
+  Note this runs HIGHER than the 57.9% recorded for the same draft on the GB10
+  (docs/vllm-nightly-migration.md par.7) — different board, different sample.
+
+--- KV pool / concurrency ceiling ---------------------------------------------
+
+  Available KV cache memory              : 11.29 GiB
+  GPU KV cache size                      : 480,431 tokens
+  Maximum concurrency @ 131,072 per req  : 3.67x
+  init engine (profile+kv+warmup)        : 287.46 s (compilation 114.32 s)
+
+  *** DEVIATION d1 (approved) — the documented before-state was wrong. ***
+  docs/orin-profiles.md records 18.86 GiB / 802,644 tokens / 6.12x at these
+  EXACT knobs. The live engine has 1.67x less. Cause: boot ORDER, not
+  configuration — on this unified-memory board vLLM measures free-at-boot, and
+  the live senses container booted 2026-07-17 07:33, AFTER embed (07-16 21:31,
+  3.12 GiB KV) and rerank (07-16 21:33, 2.08 GiB KV) had taken their share.
+  The documented figure came from a senses-FIRST boot, which is what that
+  page's own reproduce steps prescribe.
+
+  Host state at measurement: 52/61 GiB used, NO swap configured.
+
+  CONSEQUENCE for t9: at 480,431 tokens a 262,144-token window is only ~1.83x
+  concurrency. The new checkpoint's full 256K window may be refused or need a
+  trim depending on boot order — boot senses FIRST.
+
+  Filed upstream as issue #171; recorded as approved deviation d1; frame claim
+  c20 (before_state) amended to the measured reality per honesty condition h16.
+
+================================================================================
