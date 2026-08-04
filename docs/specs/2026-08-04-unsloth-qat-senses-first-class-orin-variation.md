@@ -56,6 +56,8 @@
   - honesty: proven by a compose recreate at the persisted threshold: senses answers through the gateway (no 429 shed) while /proc/stat still reports the inflated Tegra iowait
 - rollback is a snapshot, and it must exist BEFORE the swap: back up ~/.lobes (.env + both compose files) prior to re-render; restore = copy back + compose up (the coolthor weights stay in the HF cache — 7.7 GiB, disk has 1.6T free, verified). Re-init preserves .env per-key (`_apply_profile_env` merges into the existing file — operator lines like `PRIMARY_PEER_API_KEY`/`AUDIO_URL` survive) but pre-existing compose files need --force, which reverts hand edits
   - honesty: the snapshot's existence is verified BEFORE the swap step runs; restore is byte-for-byte (diff the restored files against the snapshot)
+- the activated orin deployment also proxies the two heavy roles it does not host (user statement 2026-08-04): worker -> the Jetson AGX Thor (NEW wiring on this box: `WORKER_PEER_ORIGIN` pointing at thor's gateway :8000 + `WORKER_PEER_PROXY`=true + `WORKER_PEER_API_KEY` = thor's inbound `GATEWAY_API_KEY`, operator-provided per the O(machines) key model; functional since the 0.54.8 server.py fix) and cortex -> the DGX Spark (the existing `PRIMARY_PEER_`\* wiring, preserved) — so a caller on this box's gateway reaches senses locally, cortex from the Spark, and worker from the Thor
+  - honesty: post-activation, model=worker and model=cortex requests through this box's gateway both answer 200 with X-Lobes-Proxied-By naming the thor/spark origin respectively — a 404 `role_infeasible` on worker means the wiring is absent, not proxied
 
 ## Honesty conditions
 

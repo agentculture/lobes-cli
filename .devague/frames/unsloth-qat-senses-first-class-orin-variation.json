@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-04T06:34:20Z",
-  "updated": "2026-08-04T07:26:38Z",
+  "updated": "2026-08-04T07:41:05Z",
   "claims": [
     {
       "id": "c1",
@@ -525,6 +525,25 @@
         {
           "id": "h25",
           "text": "reviewable in the PR: the committed transcript contains placeholders, never a literal key \u2014 same convention as the 2026-07-16 evidence file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "the activated orin deployment also proxies the two heavy roles it does not host (user statement 2026-08-04): worker -> the Jetson AGX Thor (NEW wiring on this box: WORKER_PEER_ORIGIN pointing at thor's gateway :8000 + WORKER_PEER_PROXY=true + WORKER_PEER_API_KEY = thor's inbound GATEWAY_API_KEY, operator-provided per the O(machines) key model; functional since the 0.54.8 server.py fix) and cortex -> the DGX Spark (the existing PRIMARY_PEER_* wiring, preserved) \u2014 so a caller on this box's gateway reaches senses locally, cortex from the Spark, and worker from the Thor",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "post-activation, model=worker and model=cortex requests through this box's gateway both answer 200 with X-Lobes-Proxied-By naming the thor/spark origin respectively \u2014 a 404 role_infeasible on worker means the wiring is absent, not proxied",
           "status": "confirmed",
           "instruction": ""
         }
