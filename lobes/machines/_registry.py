@@ -56,14 +56,25 @@ def get(name: str) -> CardStrategy | None:
     return _REGISTRY.get((name or "").strip().lower())
 
 
-def detect(gpu_name: str | None = None, hostname: str | None = None) -> CardStrategy | None:
-    """First strategy whose signature matches the GPU name / hostname, else ``None``.
+def detect(
+    gpu_name: str | None = None,
+    hostname: str | None = None,
+    compute_capability: str | None = None,
+    total_memory_gb: float | None = None,
+) -> CardStrategy | None:
+    """First strategy whose signature matches the supplied facts, else ``None``.
+
+    ``compute_capability`` / ``total_memory_gb`` are optional refinements: when
+    given, a strategy that *declares* the corresponding trait must agree with the
+    probed value or it is skipped. Omitting them reproduces the legacy
+    name-substring behaviour exactly, so a caller that cannot probe still
+    resolves a card rather than falling to UNKNOWN.
 
     Returns ``None`` — not ``generic`` — when nothing matches: the honest
     UNKNOWN resolution the future detector wants. Legacy callers keep their silent
     ``generic`` fallback by wrapping this.
     """
     for strategy in _REGISTRY.values():
-        if strategy.signature.matches(gpu_name, hostname):
+        if strategy.signature.matches(gpu_name, hostname, compute_capability, total_memory_gb):
             return strategy
     return None

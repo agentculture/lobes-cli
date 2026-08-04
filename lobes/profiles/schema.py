@@ -133,6 +133,21 @@ def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
                 ),
                 remediation=f'quote it — host_env values are written to .env verbatim: {key} = "…"',
             )
+        # `.env` is line-oriented KEY=VALUE and `_env.set_env` writes the value
+        # verbatim, so an embedded newline would not "escape" — it would SPLIT
+        # the entry into two physical lines, silently turning the tail into a
+        # bogus key or a parse error. Reject it here, where the operator still
+        # has the profile file in front of them, rather than letting a corrupt
+        # .env surface as an unrelated failure at boot.
+        if any(ch in value for ch in ("\n", "\r", "\x00")):
+            raise _profile_error(
+                message=(
+                    f"profile {name!r}: host_env value for {key!r} contains a newline "
+                    f"or NUL — it would corrupt .env, which is line-oriented KEY=VALUE"
+                ),
+                remediation="keep host_env values on a single line; move anything "
+                "multi-line into a file the service reads instead",
+            )
         host_env[key] = value
     return host_env
 

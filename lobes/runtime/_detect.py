@@ -214,9 +214,14 @@ def detect_card(
         hostname = None
     sources["hostname"] = "socket.gethostname" if hostname else "unavailable"
 
-    strategy = machines.detect(device_name, hostname)
+    # The probed facts are passed as CONSTRAINTS, not as additional evidence: a
+    # strategy that declares a trait must agree with what was actually probed.
+    # Without this, the broad "orin" marker would resolve every Jetson Orin
+    # variant (Nano/NX/32GB) to the 64GB card profile and hand it a senses budget
+    # it cannot hold. A probe that failed passes None and constrains nothing.
+    strategy = machines.detect(device_name, hostname, compute_capability, total_memory_gb)
     if strategy is None and device_tree_model:
-        strategy = machines.detect(device_tree_model, hostname)
+        strategy = machines.detect(device_tree_model, hostname, compute_capability, total_memory_gb)
     resolved = strategy.name if strategy is not None else UNKNOWN
 
     return DetectedCard(

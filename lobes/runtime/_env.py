@@ -84,6 +84,16 @@ def set_env(env_path: os.PathLike | str, key: str, value: str) -> None:
             message=f".env not found at {path}",
             remediation="run 'lobes init --apply' first",
         )
+    # Last-resort guardrail: this file is line-oriented, so a value carrying a
+    # newline would split one entry into two physical lines and corrupt every
+    # subsequent read. Callers should validate earlier (profile `host_env` does),
+    # but refusing here means no code path can write a malformed .env at all.
+    if any(ch in value for ch in ("\n", "\r", "\x00")):
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"refusing to write {key}: the value contains a newline or NUL",
+            remediation="`.env` is line-oriented KEY=VALUE — keep values on one line",
+        )
     prefix = key + "="
     out: list[str] = []
     seen = False

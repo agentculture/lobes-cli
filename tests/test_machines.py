@@ -274,3 +274,47 @@ def test_unregister_restores_prior_state(_clean_registry) -> None:
     machines.unregister("ephemeral")
     assert machines.get("ephemeral") is None
     assert isinstance(machines.SM_110, Trait)
+
+
+# --- Qodo #176: a name marker alone is not evidence of a VARIANT --------------
+
+
+def test_declared_traits_constrain_detection_when_probed_facts_are_supplied() -> None:
+    """A Jetson Orin Nano/NX must NOT resolve to the 64GB `orin` card.
+
+    Every board in the Orin family carries "orin" in its device-tree model
+    string, so the name marker hits for all of them. Resolving a smaller variant
+    to the 64GB profile would hand it a senses budget (util 0.45 at a 256K
+    window) it cannot hold — an OOM crash-loop on first boot.
+    """
+    orin = machines.get("orin")
+    assert orin is not None
+
+    # the real 64GB board: reports ~61.3 GB, inside the tolerance band
+    assert orin.signature.matches("Orin (nvgpu)", "orin", "sm_87", 61.3)
+
+    # smaller variants share the marker but are excluded by memory
+    assert not orin.signature.matches("Orin (nvgpu)", "orin-nano", "sm_87", 7.4)
+    assert not orin.signature.matches("Orin (nvgpu)", "orin-nx", "sm_87", 15.3)
+    assert not orin.signature.matches("Orin (nvgpu)", "orin32", "sm_87", 30.6)
+
+    # a different architecture that somehow carries the marker is excluded too
+    assert not orin.signature.matches("Orin (nvgpu)", "orin", "sm_110", 61.3)
+
+
+def test_unprobed_facts_impose_no_constraint_so_detection_degrades_gracefully() -> None:
+    """No probe (or a failed probe) must not turn a known card into UNKNOWN."""
+    orin = machines.get("orin")
+    assert orin is not None
+    # legacy two-arg call — the exact pre-existing behaviour
+    assert orin.signature.matches("Orin (nvgpu)", "orin")
+    # probes returned None (nvidia-smi unavailable, /proc/meminfo unreadable)
+    assert orin.signature.matches("Orin (nvgpu)", "orin", None, None)
+
+
+def test_a_card_declaring_no_traits_is_unaffected_by_probed_facts() -> None:
+    """spark declares no compute_capability, so no probed cc can exclude it."""
+    spark = machines.get("spark")
+    assert spark is not None
+    assert spark.signature.compute_capability is None
+    assert spark.signature.matches("NVIDIA GB10", "spark", "sm_121a", 119.7)

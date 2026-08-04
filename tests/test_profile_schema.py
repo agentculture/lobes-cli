@@ -600,3 +600,24 @@ def test_profiles_package_reexports_the_new_schema_and_loader_api() -> None:
 
 def test_schema_module_is_importable_directly() -> None:
     assert schema.Profile is Profile
+
+
+# --- Qodo #176: host_env values are written to .env verbatim ------------------
+
+
+def test_host_env_rejects_a_newline_that_would_corrupt_the_env_file() -> None:
+    """`.env` is line-oriented, so an embedded newline SPLITS the entry.
+
+    It does not escape — the tail becomes a bogus key or a parse error, and the
+    failure surfaces far from the profile that caused it. Reject it while the
+    operator still has the profile in front of them.
+    """
+    for bad in ("100\nEVIL=1", "100\rEVIL=1", "100\x00"):
+        with pytest.raises(ModelGearError) as excinfo:
+            Profile.from_dict("orin", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": bad}})
+        assert "newline" in str(excinfo.value).lower() or "nul" in str(excinfo.value).lower()
+
+
+def test_host_env_accepts_ordinary_single_line_values() -> None:
+    p = Profile.from_dict("orin", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}})
+    assert p.host_env == {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}
