@@ -2,7 +2,7 @@
   "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
   "schema_version": 1,
   "created": "2026-08-04T08:17:16Z",
-  "updated": "2026-08-04T08:17:28Z",
+  "updated": "2026-08-04T08:23:26Z",
   "deviations": [
     {
       "id": "d1",
@@ -12,6 +12,31 @@
       "affects": [
         "t9",
         "c20"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "t1 set role_hint='candidate' on the new catalog entry instead of the planned role_hint='multimodal'",
+      "task_ref": "t1",
+      "reason": "tests/test_catalog.py::test_exactly_one_gemma_multimodal_gear pins role_hint='multimodal' to exactly ONE entry (coolthor) because resolve_tier('multimodal'/'senses'/'normal') would otherwise be ambiguous; the existing sakamakismile Gemma-4-12B coder entry already uses 'candidate' for this exact reason. Following that precedent preserves the pinned invariant AND the plan's thor/spark-byte-identical guarantee \u2014 per-box selection of this checkpoint happens via the orin profile (t6), not via the catalog's tier field. Verified: full suite 2725 passed, 15 skipped after merge",
+      "affects": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t2's orin detection exposed 20 pre-existing HOST-DEPENDENT test failures in tests/test_init.py and tests/test_cli_logs.py \u2014 the suite's result depends on which physical machine runs it",
+      "task_ref": "t2",
+      "reason": "those tests call main(['init', ...]) without mocking hardware detection, so they inherit the host's real card. Before t2 this box detected UNKNOWN -> base and they passed by accident; with orin detection correct they resolve 'orin' and 404 because orin.toml is t6's deliverable. CI passes only because CI is not an Orin. Scope EXTENDED by the main agent rather than routed around: the honest fix is hermetic tests (inject the detected card, per the _inject_spark_detection precedent already in test_init.py), not waiting for t6 to paper over it. TDD gate held \u2014 the branch is NOT merged until the suite is green on this box",
+      "affects": [
+        "t6",
+        "t13"
       ],
       "origin": "llm",
       "status": "approved",

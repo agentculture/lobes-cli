@@ -88,14 +88,40 @@ Boot args : --gpu-memory-utilization=0.45 --max-model-len=131072
 
   *** DEVIATION d1 (approved) — the documented before-state was wrong. ***
   docs/orin-profiles.md records 18.86 GiB / 802,644 tokens / 6.12x at these
-  EXACT knobs. The live engine has 1.67x less. Cause: boot ORDER, not
-  configuration — on this unified-memory board vLLM measures free-at-boot, and
-  the live senses container booted 2026-07-17 07:33, AFTER embed (07-16 21:31,
-  3.12 GiB KV) and rerank (07-16 21:33, 2.08 GiB KV) had taken their share.
-  The documented figure came from a senses-FIRST boot, which is what that
+  EXACT knobs. The live engine has 1.67x less.
+
+  MECHANISM (derived from this same boot log, not assumed): `gpu_mem_util` is
+  a fraction of the ENTIRE device, not of what is free — so every byte another
+  process already holds is deducted one-for-one from this engine's KV cache.
+  KV is the only elastic term in the allocation, so it absorbs the whole
+  deficit. The arithmetic reconciles:
+
+      util budget      0.45 x 61.3 GiB  =  27.59 GiB
+      model weights                     -   9.25 GiB  (log: "Model loading
+                                           ─────────   took 9.25 GiB memory")
+      KV if alone on the device         ~  18.34 GiB  <- ~the documented 18.86
+      KV actually measured                 11.29 GiB
+                                           ─────────
+      deficit                           ~   7.05 GiB
+
+  ...and the deficit is the two gears already resident when senses booted:
+      vllm-embed   3.12 GiB KV + ~1.2 GiB weights   (booted 07-16 21:31)
+      vllm-rerank  2.08 GiB KV + ~1.2 GiB weights   (booted 07-16 21:33)
+                   ~7.6 GiB total                    senses booted 07-17 07:33
+
+  So the documented figure was NOT wrong when measured — it was measured with
+  senses booting FIRST into an effectively empty device, which is what that
   page's own reproduce steps prescribe.
 
   Host state at measurement: 52/61 GiB used, NO swap configured.
+
+  SECOND FINDING, same log — CUDA graph memory is under-accounted here:
+      Estimated CUDA graph memory: 0.83 GiB
+      Graph capturing ... took 1.20 GiB   (actual vs estimated: +0.37 GiB, 31%)
+  vLLM's own warning recommends re-enabling the estimator
+  (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS is 0 here) and raising util from
+  0.4500 to 0.4635 to compensate. That is ~0.37 GiB of unused headroom on a
+  board with no swap — worth testing at t9, tracked on issue #171.
 
   CONSEQUENCE for t9: at 480,431 tokens a 262,144-token window is only ~1.83x
   concurrency. The new checkpoint's full 256K window may be refused or need a
