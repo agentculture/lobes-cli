@@ -177,12 +177,14 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     knobs; ``stt``/``tts`` are audio-overlay sidecars handled by
     :func:`shape_services`, not here. Pure.
 
-    The card's non-role ``host_env`` declaration
-    (:attr:`~lobes.profiles.schema.Profile.host_env`) passes through UNCHANGED:
-    it states a fact about the BOX (its ``/proc/stat`` accounting, say), which
-    no hosting decision can alter — so every shape rendered over that card
-    inherits it, ``machine-as-brain`` included (which is what keeps the
-    identity-shape invariant true on a card that declares one).
+    The card's non-role ``host_env`` and ``gpu_access`` declarations
+    (:attr:`~lobes.profiles.schema.Profile.host_env` /
+    :attr:`~lobes.profiles.schema.Profile.gpu_access`) pass through UNCHANGED:
+    each states a fact about the BOX (its ``/proc/stat`` accounting, say, or
+    which compose syntax its container runtime accepts), which no hosting
+    decision can alter — so every shape rendered over that card inherits them,
+    ``machine-as-brain`` included (which is what keeps the identity-shape
+    invariant true on a card that declares either).
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -201,6 +203,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         summary=f"shape={shape.name} card={profile.name}",
         roles=roles,
         host_env=profile.host_env,
+        gpu_access=profile.gpu_access,
     )
 
 

@@ -28,6 +28,10 @@ a :class:`RoleProfile` field, and they are not a HOSTING decision, so they do
 not belong on a :class:`~lobes.profiles.shapes.Shape` either (a shape-scoped
 fix would leave the default ``machine-as-brain`` shape on the same card
 broken).
+
+A profile may also declare :attr:`Profile.gpu_access` — the one card fact that
+is not an ``.env`` value at all, but a choice of which compose SYNTAX the box's
+NVIDIA container runtime accepts. See that attribute's docstring.
 """
 
 from __future__ import annotations
@@ -72,9 +76,32 @@ KNOB_NAMES: tuple[str, ...] = (
 # formatting surprise (``100`` vs ``100.0``) between the TOML and the file.
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
+# How a card's container runtime is asked for the GPU. The compose templates
+# spell the modern form; a card whose NVIDIA container toolkit resolves to the
+# legacy CSV mode declares the other one and `lobes init` generates the
+# override that rewrites it (see Profile.gpu_access).
+GPU_ACCESS_DEVICES = "devices"
+GPU_ACCESS_RUNTIME = "runtime"
+GPU_ACCESS_MODES: tuple[str, ...] = (GPU_ACCESS_DEVICES, GPU_ACCESS_RUNTIME)
+
 
 def _profile_error(message: str, remediation: str) -> ModelGearError:
     return ModelGearError(code=EXIT_USER_ERROR, message=message, remediation=remediation)
+
+
+def _gpu_access_from_value(name: str, raw: Any) -> str:
+    """Validate a profile's ``gpu_access`` declaration (loud, never silent)."""
+    if not isinstance(raw, str) or raw not in GPU_ACCESS_MODES:
+        raise _profile_error(
+            message=f"profile {name!r}: gpu_access must be one of {list(GPU_ACCESS_MODES)}, "
+            f"got {raw!r}",
+            remediation=(
+                f'declare gpu_access = "{GPU_ACCESS_DEVICES}" (the default: '
+                f'deploy.resources GPU request) or "{GPU_ACCESS_RUNTIME}" '
+                "(csv-mode boards: runtime: nvidia)"
+            ),
+        )
+    return raw
 
 
 def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
@@ -238,12 +265,35 @@ class Profile:
     knob can never be shadowed by a host_env entry; a card that declares none
     (every profile but ``orin`` today) renders byte-identically to before this
     field existed. Read-only, like ``roles``.
+
+    ``gpu_access`` is the card's **container-runtime** declaration — how this
+    board's NVIDIA container toolkit must be asked for the GPU:
+
+    * ``"devices"`` (the DEFAULT, every profile but ``orin``) — the compose
+      templates' own ``deploy.resources.reservations.devices`` request, i.e.
+      today's behaviour. Nothing extra is generated and the deployment is
+      byte-identical to before this field existed.
+    * ``"runtime"`` — the board's toolkit resolves to the legacy **csv** mode,
+      where that request fails at container create ("invoking the NVIDIA
+      Container Runtime Hook directly … is not supported"). ``lobes init``
+      GENERATES a compose override that ``!reset``s each GPU service's
+      ``deploy:`` stanza and sets ``runtime: nvidia`` instead (see
+      ``lobes.cli._commands.init.render_gpu_overrides``).
+
+    It is deliberately NOT a ``host_env`` key: docker-compose has no
+    conditional-block syntax, so no ``${VAR}`` substitution can switch between
+    the two forms — only a second compose file can. And it is NOT a
+    :class:`~lobes.profiles.shapes.Shape` field: which syntax the runtime
+    accepts is a fact about the BOARD, true of every shape rendered over it
+    (a shape-scoped fix would leave a bare ``lobes init`` on the same board
+    broken — the same reasoning as ``host_env``).
     """
 
     name: str
     summary: str = ""
     roles: Mapping[str, RoleProfile] = field(default_factory=dict)
     host_env: Mapping[str, str] = field(default_factory=dict)
+    gpu_access: str = GPU_ACCESS_DEVICES
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
@@ -260,12 +310,13 @@ class Profile:
         return self.roles.get(name, RoleProfile())
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain-dict view, ``{"name", "summary", "roles", "host_env"}``."""
+        """Plain-dict view, ``{"name", "summary", "roles", "host_env", "gpu_access"}``."""
         return {
             "name": self.name,
             "summary": self.summary,
             "roles": {role: rp.to_dict() for role, rp in self.roles.items()},
             "host_env": dict(self.host_env),
+            "gpu_access": self.gpu_access,
         }
 
     @staticmethod
@@ -275,10 +326,11 @@ class Profile:
         Validates the top-level shape and every role name before building
         each :class:`RoleProfile` (which validates its own knob names) — an
         unrecognised role (anything outside :data:`ROLES`) is a LOAD ERROR,
-        exactly like an unrecognised knob. The optional ``host_env`` table is
-        validated the same way (:func:`_host_env_from_dict`).
+        exactly like an unrecognised knob. The optional ``host_env`` table and
+        ``gpu_access`` value are validated the same way
+        (:func:`_host_env_from_dict` / :func:`_gpu_access_from_value`).
         """
-        known_top = {"name", "summary", "roles", "host_env"}
+        known_top = {"name", "summary", "roles", "host_env", "gpu_access"}
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
             raise _profile_error(
@@ -302,6 +354,7 @@ class Profile:
             role: RoleProfile.from_dict(role, role_data) for role, role_data in raw_roles.items()
         }
         host_env = _host_env_from_dict(name, data.get("host_env", {}))
+        gpu_access = _gpu_access_from_value(name, data.get("gpu_access", GPU_ACCESS_DEVICES))
         # declared-name wins over an embedded "name" field (loader passes the
         # filename stem, which is the source of truth for a profile's identity).
         declared_name = data.get("name", name)
@@ -313,4 +366,10 @@ class Profile:
                 ),
                 remediation="rename the file or fix the 'name' field so they agree",
             )
-        return Profile(name=name, summary=summary, roles=roles, host_env=host_env)
+        return Profile(
+            name=name,
+            summary=summary,
+            roles=roles,
+            host_env=host_env,
+            gpu_access=gpu_access,
+        )

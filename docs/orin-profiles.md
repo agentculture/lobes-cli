@@ -132,9 +132,22 @@ therefore still DECLARED/UNVALIDATED.
    directly … is not supported. Please use the NVIDIA Container Runtime"*.
    Fix applied on-box: every GPU service's `deploy:` stanza in the deployed
    `docker-compose.yml`/`docker-compose.audio.yml` replaced with
-   `runtime: nvidia`. **A re-init reverts this hand edit** — a template knob or
-   machine-strategy overlay is the real fix. (Thor presumably works because
-   JetPack 7 ships CDI mode.)
+   `runtime: nvidia`. That hand edit did not survive a re-init. (Thor presumably
+   works because JetPack 7 ships CDI mode.)
+
+   **Now declared in-tree.** The built-in `orin` card profile carries
+   `gpu_access = "runtime"`, and `lobes init --apply` generates
+   `docker-compose.gpu.yml` + `docker-compose.gpu-audio.yml` — compose overrides
+   that `!reset` each GPU service's `deploy:` stanza and set `runtime: nvidia`
+   instead. Written on **every** render (and removed when the resolved card does
+   not declare it), so there is nothing left to patch by hand and a re-init is
+   now the thing that *restores* the fix rather than reverting it. Compose has
+   no conditional-block syntax, so a second compose file — the mechanism
+   `docker-compose.shape.yml` already proved — is the only form this can take;
+   `lobes fleet files` layers both halves into the `-f` chain automatically. See
+   [`machine-profiles.md`](machine-profiles.md) `gpu_access`. **UNVALIDATED
+   (#108):** `docker compose config` renders it correctly on this board, which
+   proves the compose merge, not a container create — that needs a live boot.
 2. **The Parakeet STT base image is Spark-specific.** `Dockerfile.parakeet`'s
    base `scitrera/dgx-spark-vllm:0.16.0-t4` ships a torch with no sm_87
    kernels — NeMo dies at model load with `CUDA error: no kernel image is
@@ -197,11 +210,15 @@ therefore still DECLARED/UNVALIDATED.
 uv tool install lobes-cli               # or: uv sync in a checkout
 mkdir -p ~/.lobes/profiles              # then write profiles/orin.toml (above)
 lobes init --profile orin --shape thor-lobe --apply
-# csv-mode boards: swap the deploy.resources GPU stanzas for `runtime: nvidia`
-# (divergence 1 above) until a template knob lands.
+# csv-mode GPU access (divergence 1) now needs NO hand edit: the built-in `orin`
+# profile declares gpu_access = "runtime", so the init above also generates
+# docker-compose.gpu{,-audio}.yml. A CDI-mode Orin overrides the built-in with
+# its own <deploy-dir>/profiles/orin.toml leaving gpu_access at the default.
 lobes up senses --apply                 # boot order: senses first, then gears
 lobes up embedder --apply && lobes up reranker --apply
-docker compose -f docker-compose.yml -f docker-compose.shape.yml up -d gateway
+# `lobes fleet files` prints the -f chain this deployment resolves to — use it
+# rather than hand-listing overlays:
+docker compose $(lobes fleet files) up -d gateway
 ```
 
 Boot sequentially — the machine-profiles boot-ordering caveat (concurrent

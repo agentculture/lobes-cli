@@ -374,6 +374,61 @@ the default `machine-as-brain` that a bare `lobes init` renders. No other card
 declares a `[host_env]`, so no other card's rendering moves by a single byte
 (pinned by `tests/goldens/` and `tests/test_orin_lobe_shape.py`).
 
+### `gpu_access` — how this board's container runtime is asked for the GPU
+
+The one card fact that is not an `.env` value at all. A second optional
+top-level key, alongside `[host_env]`:
+
+| value | meaning |
+|---|---|
+| `"devices"` | **default.** The compose templates' own `deploy.resources.reservations.devices` GPU request — today's behaviour, on every card but `orin`. Nothing extra is generated. |
+| `"runtime"` | The board's NVIDIA container toolkit resolves to the legacy **csv** mode. `lobes init --apply` generates `docker-compose.gpu.yml` + `docker-compose.gpu-audio.yml`, which `!reset` each GPU service's `deploy:` stanza and set `runtime: nvidia` instead. |
+
+```toml
+# lobes/profiles/builtin/orin.toml
+gpu_access = "runtime"
+```
+
+**Why:** on a csv-mode board the `deploy.resources` request fails at container
+**create** with *"invoking the NVIDIA Container Runtime Hook directly … is not
+supported. Please use the NVIDIA Container Runtime"* — measured live on the
+Jetson AGX Orin (toolkit 1.19.1, `mode = "auto"` resolving to csv;
+[`orin-profiles.md`](orin-profiles.md) divergence 1). csv mode wants the
+container told to use the `nvidia` runtime.
+
+**Why a generated compose file rather than an `.env` knob:** docker-compose has
+no conditional-block syntax, so no `${VAR}` substitution can pick between
+`deploy:` and `runtime:` — a service needs one form or the other, and only a
+second compose file can supply it. That is the same override mechanism
+`docker-compose.shape.yml` already uses, and `lobes fleet files` /
+`_compose.compose_file_args` layer it into the `-f` chain automatically.
+
+**Why two generated files:** a compose override may only name services that some
+file in the same `-f` chain declares (compose otherwise fails with *"service X
+has neither an image nor a build context specified"*). The audio sidecars live
+in the opt-in `docker-compose.audio.yml`, which `lobes up <non-audio-role>`
+deliberately leaves out — so their half is a separate file paired with that
+overlay, and the base half is paired with `docker-compose.yml`.
+
+**Why it is regenerated every render:** the deployed Orin ran the equivalent as
+a *hand edit* of its scaffolded compose files, and a re-init silently reverted
+it. `lobes init --apply` now rewrites the pair whenever the resolved card
+declares it — and **removes** it when the card does not, so a deployment moved
+onto a non-csv card stops asking the legacy way.
+
+Like `[host_env]`, it is declared on the **card**, not on a deployment shape: it
+is a fact about the board, true of every shape rendered over it (a shape-scoped
+fix would leave a bare `lobes init` on the same board broken). It renders **no
+`.env` key at all**, so every profile and shape golden — `orin`'s included — is
+byte-unchanged by it. An operator whose Orin runs CDI mode (JetPack 7) overrides
+the built-in with their own `<deploy-dir>/profiles/orin.toml` leaving
+`gpu_access` at the default.
+
+> **UNVALIDATED (#108).** The generated overrides render and merge correctly
+> (`docker compose config` on the real csv-mode board, plus
+> `tests/test_init_gpu_access.py`). That proves the compose merge, not a
+> container **create** — only a live boot can, and none has run yet.
+
 ## Writing your own profile
 
 Operator-defined profiles go in `<deployment-dir>/profiles/<name>.toml` (the
