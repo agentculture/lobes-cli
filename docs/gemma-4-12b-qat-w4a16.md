@@ -71,7 +71,7 @@ path specifically; the boot is the test.
 `text_config.max_position_embeddings = 262144` (256K), confirmed from the
 checkpoint's own config — **double** the coolthor incumbent's measured
 131072 (128K). The HF card's summary also claims 256K, but per this repo's
-#108 discipline ("a card earns its tuning data by booting it") the card is
+the #108 discipline ("a card earns its tuning data by booting it") means the card is
 the *attempt target*, not the evidence; `config.json`'s
 `max_position_embeddings` is what is cited here, and the number still needs
 a live boot on real hardware to prove it actually serves at that window
@@ -135,8 +135,8 @@ checkpoint on any machine as of this writing.
 | Image | `vision_config` (`gemma4_unified_vision`), `image_token_id=258880` | — | **pending-live-probe** |
 | Video | `video_token_id=258884` (new — not on the coolthor family's declared shape) | unknown whether `gemma4_unified` actually feeds video content vs. only declaring the token, mirroring the audio gap below | **pending-live-probe** |
 | Audio | `audio_config` (`gemma4_unified_audio`), `audio_token_id=258881` | **issue #101**: vLLM's `gemma4_unified` path silently **drops** `input_audio` content on the coolthor checkpoint (200 OK, fluent reply that ignored the audio) — a vLLM-path gap, not a per-checkpoint one, so it is expected to reproduce here until re-probed on the pinned nightly | **pending-live-probe** |
-| Reasoning (thinking trace) | Gemma 4 `<|channel>thought` markers, consumed by the paired `gemma4` reasoning parser | the gemma4 tool/reasoning parser PAIR is validated live only on the 31B `muse` gear (2026-07-17); 12B lanes inherit it as an UNVALIDATED family rule (#108) | **pending-live-probe** |
-| Tool calling | Native `<|tool_call>call:name{...}<tool_call|>` syntax, matched by `runtime._parser.infer_parser`'s `gemma-4*` rule → `tool_parser="gemma4"` | same family-rule caveat as reasoning, above | **pending-live-probe** |
+| Reasoning (thinking trace) | Gemma 4 `<\|channel>thought` markers, consumed by the paired `gemma4` reasoning parser | the gemma4 tool/reasoning parser PAIR is validated live only on the 31B `muse` gear (2026-07-17); 12B lanes inherit it as an UNVALIDATED family rule (#108) | **pending-live-probe** |
+| Tool calling | Native `<\|tool_call>call:name{...}<tool_call\|>` syntax, matched by the `gemma-4*` rule in `runtime._parser.infer_parser` → `tool_parser="gemma4"` | same family-rule caveat as reasoning, above | **pending-live-probe** |
 
 No capability claim in this table may be promoted to a verdict without a
 live probe on real hardware with a negative control where one exists (vision:
