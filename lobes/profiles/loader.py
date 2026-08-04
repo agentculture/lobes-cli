@@ -88,13 +88,14 @@ def _apply_machine_registry(profile: Profile) -> Profile:
     # ...)) so the declared return type matches what a static checker infers —
     # replace()'s generic signature resolves to the base DataclassInstance
     # protocol for some checkers, not the concrete Profile subtype.
-    # host_env carries through untouched: the machine registry overlays ROLE
-    # knobs only, so a card's non-role declaration survives the overlay.
+    # host_env and gpu_access carry through untouched: the machine registry
+    # overlays ROLE knobs only, so a card's non-role declarations survive it.
     return Profile(
         name=profile.name,
         summary=profile.summary,
         roles=MappingProxyType(updated_roles),
         host_env=profile.host_env,
+        gpu_access=profile.gpu_access,
     )
 
 

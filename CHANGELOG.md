@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.55.0] - 2026-08-04
+
+### Added
+
+- **`gpu_access` — a card-declared knob so csv-mode GPU access survives a re-render (Orin variation t8).** A `Profile` may now declare `gpu_access = "devices"` (the default: the compose templates' own `deploy.resources.reservations.devices` request) or `"runtime"`. On a board whose NVIDIA container toolkit resolves to the **legacy csv mode** — measured live on the Jetson AGX Orin (toolkit 1.19.1, `mode = "auto"`; `docs/orin-profiles.md` divergence 1) — the `deploy.resources` request fails at container **create** with *"invoking the NVIDIA Container Runtime Hook directly … is not supported"*. Declaring `"runtime"` makes `lobes init --apply` GENERATE two compose overrides, `docker-compose.gpu.yml` + `docker-compose.gpu-audio.yml`, which `!reset` each GPU service's `deploy:` stanza and set `runtime: nvidia` instead — the same override mechanism `docker-compose.shape.yml` already proved, chosen because docker-compose has **no conditional-block syntax**, so no `${VAR}` substitution in one template can express both forms. The `orin` built-in opts in; every other card is untouched. Two files rather than one because a compose override may only name services some file in the same `-f` chain declares, and the audio sidecars live in the opt-in audio overlay that `lobes up <non-audio-role>` deliberately leaves out. The pair is rewritten on **every** `--apply` and **removed** when the resolved card no longer declares it — which is the entire point: the deployed Orin had been running the equivalent as a hand edit of its scaffolded compose files since 2026-07-16, and a re-init silently reverted it. `gpu_access` renders **no `.env` key at all**, so every profile and shape golden — `orin`'s included — is byte-unchanged. **UNVALIDATED (#108):** `docker compose config` on the real csv-mode board renders and merges the overrides correctly, which proves the compose merge, not a container create; only a live boot can do that. See `docs/machine-profiles.md#gpu_access---how-this-boards-container-runtime-is-asked-for-the-gpu`.
+
+### Changed
+
+- `lobes.runtime._compose.compose_file_args` — the single `-f` chain authority (#137) — gained a `gpu` dimension, pairing each GPU-access override with the compose file whose services it patches (base half after `docker-compose.yml`, audio half after `docker-compose.audio.yml`). A csv-mode deployment with no other overlay is no longer a "plain" deployment: it now resolves an explicit chain rather than the bare argv, because the bare argv would silently drop the override and every gear would ask for the GPU the way that board refuses. With no `gpu_access` declaration anywhere — every pre-existing deployment — the chain is byte-identical to before.
+
+### Fixed
+
 ## [0.54.9] - 2026-07-31
 
 ### Changed

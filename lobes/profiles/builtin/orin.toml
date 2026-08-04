@@ -26,6 +26,41 @@
 name = "orin"
 summary = "Jetson AGX Orin 64GB (Ampere sm_87, 64 GB unified) — senses + pooling gears; the NVFP4 lobes need Blackwell"
 
+# --- csv-mode GPU access -----------------------------------------------------
+#
+# MEASURED LIVE on this box (docs/orin-profiles.md divergence 1): the NVIDIA
+# container toolkit here is 1.19.1 with `mode = "auto"` in
+# /etc/nvidia-container-runtime/config.toml, and auto RESOLVES TO THE LEGACY CSV
+# MODE on this Jetson. In csv mode the compose templates'
+# `deploy.resources.reservations.devices` GPU request fails at container CREATE:
+#
+#   "invoking the NVIDIA Container Runtime Hook directly ... is not supported.
+#    Please use the NVIDIA Container Runtime"
+#
+# csv mode wants the container told to use the `nvidia` runtime instead. Docker
+# Compose has no conditional-block syntax, so no ${VAR} substitution in the
+# shipped template can express both forms — declaring it here makes `lobes init`
+# GENERATE the compose overrides (docker-compose.gpu.yml +
+# docker-compose.gpu-audio.yml) that `!reset` the deploy stanza and set
+# `runtime: nvidia`, on EVERY render.
+#
+# That "every render" is the whole point. The deployed box has been running the
+# equivalent as a HAND EDIT of the scaffolded compose files since 2026-07-16 —
+# and a re-init silently reverts it, which is exactly what the next live boot is
+# about to do. Same posture as the LOBES_IOWAIT_DEGRADED_THRESHOLD host_env
+# declaration below: state the board fact in-tree rather than leave it in a shell
+# history.
+#
+# Scope + honesty: this is a fact about THIS board's toolkit installation, not
+# about sm_87 in general. A Jetson on JetPack 7 (CDI mode — Thor's presumed
+# situation, since the Thor fleet boots with the stock deploy stanza) should
+# leave this at the default "devices"; an operator profile of the same name
+# overrides this built-in wholesale (lobes/profiles/loader.py), which is the
+# escape hatch. The generated overrides are UNVALIDATED until a live boot on this
+# board consumes them (#108) — `docker compose config` renders them correctly,
+# which proves the compose merge, not the container create.
+gpu_access = "runtime"
+
 # --- the three NVFP4 generate lobes: a HARD architecture line ----------------
 #
 # cortex (unsloth/Qwen3.6-27B-NVFP4), muse (nvidia/Gemma-4-31B-IT-NVFP4) and

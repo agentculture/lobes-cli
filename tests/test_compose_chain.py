@@ -21,17 +21,21 @@ from lobes.cli import main
 from lobes.cli._commands import up as up_cmd
 from lobes.runtime import _compose
 
-# The overlay matrix: every combination of the two lobes-authored overlays,
-# each with and without the operator's own docker-compose.override.yml.
+# The overlay matrix: every combination of the three lobes-authored overlays
+# (audio, deployment shape, csv-mode GPU access), each with and without the
+# operator's own docker-compose.override.yml.
 MATRIX = [
-    pytest.param(audio, shape, local, id=f"audio={audio}-shape={shape}-override={local}")
+    pytest.param(
+        audio, shape, local, gpu, id=f"audio={audio}-shape={shape}-override={local}-gpu={gpu}"
+    )
     for audio in (False, True)
     for shape in (False, True)
     for local in (False, True)
+    for gpu in (False, True)
 ]
 
 
-def _deployment(tmp_path, *, audio: bool, shape: bool, local: bool):
+def _deployment(tmp_path, *, audio: bool, shape: bool, local: bool, gpu: bool = False):
     """A minimal deployment dir with exactly the requested overlay files."""
     (tmp_path / _compose.COMPOSE_FILE).write_text("services: {}\n", encoding="utf-8")
     if audio:
@@ -44,16 +48,26 @@ def _deployment(tmp_path, *, audio: bool, shape: bool, local: bool):
         )
     if local:
         (tmp_path / _compose.LOCAL_OVERRIDE).write_text("services: {}\n", encoding="utf-8")
+    if gpu:
+        for name in (_compose.GPU_OVERLAY, _compose.GPU_AUDIO_OVERLAY):
+            (tmp_path / name).write_text(
+                "services:\n  vllm-primary:\n    deploy: !reset null\n    runtime: nvidia\n",
+                encoding="utf-8",
+            )
     return tmp_path
 
 
-def _expected(*, audio: bool, shape: bool, local: bool) -> list[str]:
+def _expected(*, audio: bool, shape: bool, local: bool, gpu: bool = False) -> list[str]:
     """The chain the authority is expected to emit — spelled out once, here."""
-    if not audio and not shape:
+    if not audio and not shape and not gpu:
         return []
     files = ["-f", _compose.COMPOSE_FILE]
+    if gpu:
+        files += ["-f", _compose.GPU_OVERLAY]
     if audio:
         files += ["-f", _compose.AUDIO_OVERLAY]
+        if gpu:
+            files += ["-f", _compose.GPU_AUDIO_OVERLAY]
     if shape:
         files += ["-f", _compose.SHAPE_OVERLAY]
     if local:
@@ -73,22 +87,22 @@ def _record_runs(monkeypatch) -> list[list[str]]:
     return calls
 
 
-@pytest.mark.parametrize("audio,shape,local", MATRIX)
+@pytest.mark.parametrize("audio,shape,local,gpu", MATRIX)
 def test_every_caller_resolves_the_identical_file_set(
-    tmp_path, monkeypatch, capsys, audio, shape, local
+    tmp_path, monkeypatch, capsys, audio, shape, local, gpu
 ) -> None:
     """The equivalence gate: builder, up.py delegation, every compose verb, and
     the script-facing ``lobes fleet files`` all agree, byte for byte."""
-    deploy = _deployment(tmp_path, audio=audio, shape=shape, local=local)
-    expected = _expected(audio=audio, shape=shape, local=local)
+    deploy = _deployment(tmp_path, audio=audio, shape=shape, local=local, gpu=gpu)
+    expected = _expected(audio=audio, shape=shape, local=local, gpu=gpu)
 
     # 1. The authority itself, via the dir-probing wrapper.
     assert _compose._compose_files(deploy) == expected
 
     # 2. The pure form the role-targeted `lobes up` uses (audio forced to the
     #    overlay's presence makes its semantics coincide with the default).
-    assert _compose.compose_file_args(audio=audio, shape=shape, local=local) == expected
-    assert up_cmd._compose_file_args(audio, shape, local) == expected
+    assert _compose.compose_file_args(audio=audio, shape=shape, local=local, gpu=gpu) == expected
+    assert up_cmd._compose_file_args(audio, shape, local, gpu) == expected
 
     # 3. Every mutating compose verb: down and both ups carry the same chain.
     calls = _record_runs(monkeypatch)
@@ -108,13 +122,13 @@ def test_every_caller_resolves_the_identical_file_set(
     assert [line for line in out.splitlines() if line] == expected
 
 
-@pytest.mark.parametrize("audio,shape,local", MATRIX)
-def test_fleet_files_json_matches_the_authority(tmp_path, capsys, audio, shape, local) -> None:
-    deploy = _deployment(tmp_path, audio=audio, shape=shape, local=local)
+@pytest.mark.parametrize("audio,shape,local,gpu", MATRIX)
+def test_fleet_files_json_matches_the_authority(tmp_path, capsys, audio, shape, local, gpu) -> None:
+    deploy = _deployment(tmp_path, audio=audio, shape=shape, local=local, gpu=gpu)
     rc = main(["fleet", "files", "--compose-dir", str(deploy), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["files"] == _expected(audio=audio, shape=shape, local=local)
+    assert payload["files"] == _expected(audio=audio, shape=shape, local=local, gpu=gpu)
     assert payload["deployment_dir"] == str(deploy)
 
 
@@ -160,6 +174,43 @@ def test_targeted_audio_semantics_still_differ_by_design(tmp_path) -> None:
         _compose.SHAPE_OVERLAY,
     ]
     assert _compose._compose_files(deploy, audio=True) == _compose._compose_files(deploy)
+
+
+def test_gpu_audio_half_never_ships_without_the_audio_overlay(tmp_path) -> None:
+    """The csv-mode GPU override is TWO files for a reason: a compose override may
+    only name services some file in the same chain declares, and the audio
+    sidecars live in the opt-in audio overlay. So on an audio-scaffolded csv
+    deployment, a non-audio target gets the base GPU half and NOT the audio one
+    — otherwise compose would fail with "service chatterbox has neither an image
+    nor a build context specified"."""
+    deploy = _deployment(tmp_path, audio=True, shape=False, local=False, gpu=True)
+    targeted = _compose._compose_files(deploy, audio=False)
+    assert targeted == ["-f", _compose.COMPOSE_FILE, "-f", _compose.GPU_OVERLAY]
+    assert _compose.GPU_AUDIO_OVERLAY not in targeted
+    # ... and the whole-deployment chain pairs each half with its own base file.
+    assert _compose._compose_files(deploy) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.GPU_OVERLAY,
+        "-f",
+        _compose.AUDIO_OVERLAY,
+        "-f",
+        _compose.GPU_AUDIO_OVERLAY,
+    ]
+
+
+def test_gpu_only_deployment_still_gets_an_explicit_chain(tmp_path) -> None:
+    """A csv-mode board with NO other overlay is no longer a "plain" deployment:
+    the bare argv would silently drop the GPU override and every gear would ask
+    for the GPU the way this box refuses."""
+    deploy = _deployment(tmp_path, audio=False, shape=False, local=False, gpu=True)
+    assert _compose._compose_files(deploy) == [
+        "-f",
+        _compose.COMPOSE_FILE,
+        "-f",
+        _compose.GPU_OVERLAY,
+    ]
 
 
 # --- the scripts consume the chain, never re-implement it (#138) ------------
