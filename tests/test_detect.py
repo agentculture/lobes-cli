@@ -26,12 +26,21 @@ from lobes.runtime import _detect
 THOR_SMI_LINE = "NVIDIA Thor, 11.0"
 # The GB10 (DGX Spark), sm_121.
 SPARK_SMI_LINE = "NVIDIA GB10, 12.1"
+# The Jetson AGX Orin 64GB Developer Kit (Ampere sm_87) — ground truth measured
+# on the physical box: compute capability 8.7, CUDA 13.2 / driver 595.78.
+ORIN_SMI_LINE = "NVIDIA Orin, 8.7"
 
 THOR_DEVICE_TREE_MODEL_RAW = "NVIDIA Jetson AGX Thor Developer Kit\x00"
 # device_tree_fn is injected post-parse (as _read_device_tree_model itself would
 # return it, NUL already stripped) — the NUL-stripping test below exercises the
 # raw reader directly.
 THOR_DEVICE_TREE_MODEL = "NVIDIA Jetson AGX Thor Developer Kit"
+ORIN_DEVICE_TREE_MODEL = "NVIDIA Jetson AGX Orin Developer Kit"
+# The physical 64GB Developer Kit reports ~61.3 GB usable. The helper below
+# defaults to a 128 GB (Thor/Spark-class) board, which is NOT a fact any Orin
+# can produce -- detection now treats a declared total_memory_gb as a
+# constraint, so every Orin case must supply its real figure.
+ORIN_MEMINFO_GB = 61.3
 
 
 def _card(
@@ -79,6 +88,29 @@ def test_thor_and_gb10_are_distinguished_by_compute_capability_too() -> None:
     assert thor.resolved != spark.resolved
 
 
+def test_orin_fact_set_resolves_to_orin() -> None:
+    # Ground truth from the physical Jetson AGX Orin 64GB Developer Kit
+    # (docs/orin-profiles.md): Ampere sm_87, hostname "orin".
+    card = _card(
+        smi_line=ORIN_SMI_LINE,
+        meminfo_gb=ORIN_MEMINFO_GB,
+        device_tree=ORIN_DEVICE_TREE_MODEL,
+        hostname="orin",
+    )
+    assert card.resolved == "orin"
+    assert card.is_known
+    assert card.device_name == "NVIDIA Orin"
+    assert card.compute_capability == "sm_87"
+
+
+def test_orin_is_distinguished_from_thor_by_compute_capability() -> None:
+    orin = _card(smi_line=ORIN_SMI_LINE)
+    thor = _card(smi_line=THOR_SMI_LINE)
+    assert orin.compute_capability == "sm_87"
+    assert thor.compute_capability == "sm_110"
+    assert orin.resolved != thor.resolved
+
+
 def test_unrecognized_fact_set_yields_unknown_never_a_guess() -> None:
     card = _card(smi_line="NVIDIA H100, 9.0", device_tree=None, hostname="build-box")
     assert card.resolved == _detect.UNKNOWN
@@ -86,6 +118,14 @@ def test_unrecognized_fact_set_yields_unknown_never_a_guess() -> None:
     # raw facts are still surfaced even though resolution is UNKNOWN
     assert card.device_name == "NVIDIA H100"
     assert card.compute_capability == "sm_90"
+
+
+def test_unrelated_fact_set_still_resolves_unknown_with_orin_registered() -> None:
+    # Registering orin must not widen detection: an unrelated card/hostname
+    # still falls through to UNKNOWN, never a guessed match.
+    card = _card(smi_line="NVIDIA H100, 9.0", device_tree=None, hostname="build-box")
+    assert card.resolved == _detect.UNKNOWN
+    assert not card.is_known
 
 
 def test_all_probes_failing_yields_unknown_with_no_facts() -> None:
@@ -113,11 +153,26 @@ def test_device_tree_model_is_a_fallback_when_nvidia_smi_is_unavailable() -> Non
     assert card.device_tree_model == "NVIDIA Jetson AGX Thor Developer Kit"
 
 
+def test_device_tree_model_is_a_fallback_for_orin_too() -> None:
+    # Same headless path, but on the Orin — its device tree also carries a
+    # "Jetson AGX Orin"-style string.
+    card = _card(smi_line=None, meminfo_gb=ORIN_MEMINFO_GB, device_tree=ORIN_DEVICE_TREE_MODEL)
+    assert card.resolved == "orin"
+    assert card.device_name is None
+    assert card.device_tree_model == "NVIDIA Jetson AGX Orin Developer Kit"
+
+
 def test_hostname_alone_can_resolve_a_card() -> None:
     # DetectionSignature.matches() checks the hostname too; a host named after
     # its card should resolve even with no GPU probe data at all.
     card = _card(smi_line=None, device_tree=None, hostname="my-thor-01")
     assert card.resolved == "thor"
+
+
+def test_orin_hostname_alone_can_resolve_a_card() -> None:
+    # This box's real hostname is literally "orin" (docs/orin-profiles.md).
+    card = _card(smi_line=None, meminfo_gb=ORIN_MEMINFO_GB, device_tree=None, hostname="orin")
+    assert card.resolved == "orin"
 
 
 # ---------------------------------------------------------------------------
@@ -271,3 +326,26 @@ def test_detected_card_is_frozen_and_carries_sources() -> None:
         "device_tree_model",
         "hostname",
     }
+
+
+def test_a_smaller_orin_variant_does_not_resolve_to_the_64gb_card() -> None:
+    """Qodo #176: the "orin" marker alone would claim the whole Orin family.
+
+    An Orin Nano/NX carries "orin" in exactly the same places the 64GB Developer
+    Kit does, so name matching cannot separate them. Resolving a Nano to the
+    64GB card profile would hand it senses at util 0.45 on a 256K window — an
+    OOM crash-loop on first boot. The declared total_memory_gb is what keeps
+    them apart, and UNKNOWN (-> the conservative `base` profile) is the correct,
+    honest answer for a variant lobes has never booted.
+    """
+    nano = _card(
+        smi_line=ORIN_SMI_LINE,
+        meminfo_gb=7.4,
+        device_tree="NVIDIA Jetson Orin Nano Developer Kit",
+        hostname="orin-nano",
+    )
+    assert nano.resolved == _detect.UNKNOWN
+    assert not nano.is_known
+    # the facts are still reported honestly — only the resolution is withheld
+    assert nano.compute_capability == "sm_87"
+    assert nano.total_memory_gb == 7.4

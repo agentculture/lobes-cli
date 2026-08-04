@@ -9,7 +9,7 @@
 # deployment back.
 #
 # Usage:
-#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small> [OPTIONS]
+#   ./scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|orin-small> [OPTIONS]
 #   ./scripts/accept-shape.sh --restore [--deploy-dir DIR]
 #
 # Options:
@@ -63,7 +63,7 @@ _usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small) SHAPE="$1"; shift ;;
+    machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|orin-small) SHAPE="$1"; shift ;;
     --deploy-dir)  DEPLOY_DIR="$2"; shift 2 ;;
     --audio)       AUDIO=1; shift ;;
     --dev-version) DEV_VERSION="$2"; shift 2 ;;
@@ -185,7 +185,7 @@ if [[ "${RESTORE}" -eq 1 ]]; then
   exit 0
 fi
 
-[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small)\n' >&2; exit 2; }
+[[ -n "${SHAPE}" ]] || { printf 'error: shape required (machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|orin-small)\n' >&2; exit 2; }
 if [[ -n "${DEV_VERSION}" && -z "${DEV_INDEX}" ]]; then DEV_INDEX="https://test.pypi.org/simple/"; fi
 
 TRANSCRIPT="${HOME}/lobes-accept-${SHAPE}-${STAMP}.log"
@@ -214,6 +214,13 @@ case "${SHAPE}" in
     HEAVY_PREFIX="PRIMARY"; HEAVY_ALIAS="main"
     PROBES=(cortex embedder reranker); SENSES_CURL=0 ;;
   thor-lobe)
+    DROPPED_ROLES=(cortex); DROPPED_ALIASES=(cortex main hard)
+    HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
+    PROBES=(embedder reranker); SENSES_CURL=1 ;;
+  orin-lobe)
+    # thor-lobe's sm_87 sibling: same drops and same heavy lane, but this
+    # shape hosts no stt/tts at all (no sm_87 Parakeet image), so never pass
+    # --audio with it — audio is a peer's job on that board.
     DROPPED_ROLES=(cortex); DROPPED_ALIASES=(cortex main hard)
     HEAVY_PREFIX="MULTIMODAL"; HEAVY_ALIAS="multimodal"
     PROBES=(embedder reranker); SENSES_CURL=1 ;;

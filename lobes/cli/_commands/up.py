@@ -158,7 +158,9 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
     return True
 
 
-def _compose_file_args(needs_audio: bool, shape_present: bool, local_override: bool) -> list[str]:
+def _compose_file_args(
+    needs_audio: bool, shape_present: bool, local_override: bool, gpu_present: bool = False
+) -> list[str]:
     """The ``-f`` chain for the compose invocation — delegates to the single
     composition authority (:func:`lobes.runtime._compose.compose_file_args`,
     issue #137), so ``lobes up <role>`` and ``lobes fleet up`` cannot disagree
@@ -169,8 +171,16 @@ def _compose_file_args(needs_audio: bool, shape_present: bool, local_override: b
     booleans are passed in rather than probed from the deployment dir. This
     used to be a parallel hand-rolled builder; it drifted from
     ``_compose_files`` exactly once (#135/#136) before being folded in.
+
+    ``gpu_present`` (the csv-mode GPU-access override) is a deployment fact,
+    not a per-target one: EVERY targeted gear is a GPU gear on this board, so
+    it is probed rather than derived from the target. Its audio half is paired
+    with the audio overlay by the authority itself, so a non-audio target still
+    never pulls in a file naming services the chain does not declare.
     """
-    return _compose.compose_file_args(audio=needs_audio, shape=shape_present, local=local_override)
+    return _compose.compose_file_args(
+        audio=needs_audio, shape=shape_present, local=local_override, gpu=gpu_present
+    )
 
 
 def cmd_up(args: argparse.Namespace) -> int:
@@ -208,7 +218,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     shape_present = _shape_blocked_services(deploy_dir, services, target)
 
     compose_files = _compose_file_args(
-        needs_audio, shape_present, _compose.local_override_present(deploy_dir)
+        needs_audio,
+        shape_present,
+        _compose.local_override_present(deploy_dir),
+        _compose.gpu_overlay_present(deploy_dir),
     )
     argv = _compose.compose_service_argv(action, compose_files, services)
     command = " ".join(argv)

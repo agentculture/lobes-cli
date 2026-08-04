@@ -1,10 +1,14 @@
 """Per-chip hardware strategies — one module per card, one explicit registry.
 
 Each supported card is a :class:`CardStrategy` living in its own module
-(``spark``, ``thor``, ``blackwell``, ``generic``); importing that module registers
-it. This package imports the four built-ins **in detection-precedence order**
-(``spark`` before ``blackwell`` so the GB10 is never taken for a discrete
-Blackwell), then re-exports the registry API and the strategy vocabulary.
+(``spark``, ``thor``, ``orin``, ``blackwell``, ``generic``); importing that
+module registers it. This package imports the five built-ins **in
+detection-precedence order** (``spark`` before ``blackwell`` so the GB10 is
+never taken for a discrete Blackwell; ``orin`` slotted after ``thor`` — its
+sole marker, ``"orin"``, never overlaps ``spark``/``thor``/``blackwell``'s
+markers, so it cannot shadow them regardless of position, but it is kept next
+to its fellow Jetson board for readability), then re-exports the registry API
+and the strategy vocabulary.
 
 Adding a chip is one new module (with its own ``register(...)`` line) plus one
 import line here — nothing else in this file, and nothing in
@@ -26,7 +30,7 @@ from ._traits import SM_110
 # is never taken for the discrete Blackwell). Importing each chip module runs its
 # module-level register() call. Pinned order — kept off isort so it is never
 # alphabetised (which would swap spark and blackwell).
-from . import spark, thor, blackwell, generic  # noqa: F401  # isort: skip
+from . import spark, thor, orin, blackwell, generic  # noqa: F401  # isort: skip
 
 __all__ = [
     # registry API

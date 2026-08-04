@@ -64,6 +64,45 @@ FLEET_AUDIO_CONTAINERS = (FLEET_STT, FLEET_TTS, FLEET_REALTIME)
 # the GB10: spark-lobe still booted model-gear-vllm-multimodal). machine-as-brain /
 # bare init drop nothing, so no such file is written.
 SHAPE_OVERLAY = "docker-compose.shape.yml"
+
+# GPU-ACCESS override (`lobes init` on a card whose profile declares
+# gpu_access = "runtime"). GENERATED, like SHAPE_OVERLAY — never a packaged
+# template. A board whose NVIDIA container toolkit resolves to the legacy CSV
+# mode REFUSES the compose templates' `deploy.resources.reservations.devices`
+# GPU request at container create ("invoking the NVIDIA Container Runtime Hook
+# directly … is not supported"); these overrides `!reset` that stanza away and
+# ask for the GPU the way csv mode accepts, `runtime: nvidia`.
+#
+# TWO files, one per compose file they patch, because a compose override may
+# only name services that some file in the SAME `-f` chain declares (verified:
+# naming an absent service fails `docker compose config` with "service X has
+# neither an image nor a build context specified"). The audio sidecars live in
+# the opt-in AUDIO_OVERLAY, which `lobes up <non-audio-role>` deliberately
+# leaves out of the chain — so their half rides alongside that overlay and the
+# base half rides alongside the base file. Both are written/scrubbed together
+# by `lobes init`, so their content never depends on what happens to be
+# scaffolded.
+GPU_OVERLAY = "docker-compose.gpu.yml"
+GPU_AUDIO_OVERLAY = "docker-compose.gpu-audio.yml"
+# The compose SERVICES that request a GPU, per template file, in declaration
+# order. Constants mirroring the shipped templates exactly — same design as
+# ROLE_SERVICE / _CORE_SERVICE_CONTAINER, and verified against the real compose
+# files by tests/test_init_gpu_access.py (which re-derives them from the
+# template text, so a new GPU service cannot land without updating these).
+GPU_SERVICES: tuple[str, ...] = (
+    "vllm-primary",
+    "vllm-embed",
+    "vllm-embed-deep",
+    "vllm-rerank",
+    "vllm-minor",
+    "vllm-middle",
+    "vllm-multimodal",
+    "vllm-multimodal-coder",
+    "vllm-muse",
+    "vllm-worker",
+)
+GPU_SERVICES_AUDIO: tuple[str, ...] = ("chatterbox", "stt")
+
 # Operator-authored local override — `docker compose`'s OWN convention, never
 # scaffolded or written by lobes. Compose auto-discovers it only when it resolves
 # the project files itself (no `-f`); ANY explicit `-f` suppresses that discovery.
@@ -390,6 +429,18 @@ def shape_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / SHAPE_OVERLAY).is_file()
 
 
+def gpu_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the GPU-access override (``docker-compose.gpu.yml``) is scaffolded.
+
+    Present only for a deployment whose resolved card profile declares
+    ``gpu_access = "runtime"`` (a csv-mode board — see :data:`GPU_OVERLAY`);
+    every other card writes none. Mirrors :func:`shape_overlay_present`. The
+    audio half (:data:`GPU_AUDIO_OVERLAY`) is written and removed in the same
+    breath by ``lobes init``, so this one file answers for both.
+    """
+    return (Path(deploy_dir) / GPU_OVERLAY).is_file()
+
+
 def _override_service_keys(text: str) -> set[str]:
     """The top-level ``services:`` keys declared in an override file's YAML text.
 
@@ -461,7 +512,7 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     return containers
 
 
-def compose_file_args(*, audio: bool, shape: bool, local: bool) -> list[str]:
+def compose_file_args(*, audio: bool, shape: bool, local: bool, gpu: bool = False) -> list[str]:
     """The ``-f`` chain for a deployment made of the given overlays — THE single
     composition authority (issue #137). Every ``-f`` list lobes hands to
     ``docker compose`` — whole-deployment verbs via :func:`_compose_files`, the
@@ -474,11 +525,20 @@ def compose_file_args(*, audio: bool, shape: bool, local: bool) -> list[str]:
     docker-compose.override.yml, so naming either here would gain nothing and a
     plain fleet keeps its current argv unchanged.
 
+    Each GPU-access override (csv-mode boards, :data:`GPU_OVERLAY`) is placed
+    IMMEDIATELY AFTER the file whose services it patches — the base half after
+    ``docker-compose.yml``, the audio half after ``docker-compose.audio.yml`` —
+    because a compose override may only name services some file in the same
+    chain declares. That pairing is also why the audio half never appears
+    without the audio overlay, including under ``lobes up <non-audio-role>``.
+
     The shape override is placed LAST of the LOBES-AUTHORED files — its compose
     ``!reset`` on the gateway ``depends_on`` clears the dangling edge to a
     profile-disabled dropped service, and applying it after the audio overlay
     (which never touches ``depends_on``, only ``environment``) guarantees no later
-    lobes file re-introduces that edge.
+    lobes file re-introduces that edge. The GPU overrides touch only
+    ``deploy``/``runtime`` on the GPU gears, never ``depends_on``, so ordering
+    them before it changes nothing about that guarantee.
 
     :data:`LOCAL_OVERRIDE` comes after even the shape override, because that is what
     an override file MEANS to compose: last wins. Compose only auto-discovers it when
@@ -488,13 +548,17 @@ def compose_file_args(*, audio: bool, shape: bool, local: bool) -> list[str]:
     that re-introduces a dropped service's ``depends_on`` edge is the operator's own
     doing, and compose fails loudly rather than lobes ignoring their file.
     """
-    if not audio and not shape:
+    if not audio and not shape and not gpu:
         # No lobes overlay: compose's own resolution already layers base + override.
         # Passing -f here would change nothing except to break that convention.
         return []
     files = ["-f", COMPOSE_FILE]
+    if gpu:
+        files += ["-f", GPU_OVERLAY]
     if audio:
         files += ["-f", AUDIO_OVERLAY]
+        if gpu:
+            files += ["-f", GPU_AUDIO_OVERLAY]
     if shape:
         files += ["-f", SHAPE_OVERLAY]
     if local:
@@ -518,6 +582,7 @@ def _compose_files(deploy_dir: os.PathLike | str, *, audio: bool | None = None) 
         audio=audio_overlay_present(deploy_dir) if audio is None else audio,
         shape=shape_overlay_present(deploy_dir),
         local=local_override_present(deploy_dir),
+        gpu=gpu_overlay_present(deploy_dir),
     )
 
 

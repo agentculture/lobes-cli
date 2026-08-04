@@ -112,6 +112,17 @@ time; on this box the rendered `.env` needed `MULTIMODAL_GPU_MEM_UTIL=0.45`
 (the Orin-measured value above). `orin-small` itself remains unbooted and
 therefore still DECLARED/UNVALIDATED.
 
+> **Superseded by `orin-lobe`.** That hand-patch is exactly what the built-in
+> `orin-lobe` shape now removes: it hosts `senses + embedder + reranker`,
+> drops `cortex`, drops `stt`/`tts` (this board has no sm_87 Parakeet image —
+> see the divergences below), and carries the Orin card's own budget in its
+> `[overrides.senses]`, so `lobes init --profile orin --shape orin-lobe`
+> renders `MULTIMODAL_GPU_MEM_UTIL=0.45` / `MAX_MODEL_LEN=262144` with nothing
+> to patch afterwards. It is itself **DECLARED, UNVALIDATED** — no box has
+> booted it — and it renders against the built-in `orin` card profile, whose
+> two senses values are a MEASURED-PENDING hypothesis pending a live boot. The
+> same render also persists this board's Tegra iowait threshold (below).
+
 ## Jetson/sm_87 divergences found live (upstreaming candidates)
 
 1. **csv-mode GPU access.** This Orin's NVIDIA container toolkit (1.19.1,
@@ -121,9 +132,22 @@ therefore still DECLARED/UNVALIDATED.
    directly … is not supported. Please use the NVIDIA Container Runtime"*.
    Fix applied on-box: every GPU service's `deploy:` stanza in the deployed
    `docker-compose.yml`/`docker-compose.audio.yml` replaced with
-   `runtime: nvidia`. **A re-init reverts this hand edit** — a template knob or
-   machine-strategy overlay is the real fix. (Thor presumably works because
-   JetPack 7 ships CDI mode.)
+   `runtime: nvidia`. That hand edit did not survive a re-init. (Thor presumably
+   works because JetPack 7 ships CDI mode.)
+
+   **Now declared in-tree.** The built-in `orin` card profile carries
+   `gpu_access = "runtime"`, and `lobes init --apply` generates
+   `docker-compose.gpu.yml` + `docker-compose.gpu-audio.yml` — compose overrides
+   that `!reset` each GPU service's `deploy:` stanza and set `runtime: nvidia`
+   instead. Written on **every** render (and removed when the resolved card does
+   not declare it), so there is nothing left to patch by hand and a re-init is
+   now the thing that *restores* the fix rather than reverting it. Compose has
+   no conditional-block syntax, so a second compose file — the mechanism
+   `docker-compose.shape.yml` already proved — is the only form this can take;
+   `lobes fleet files` layers both halves into the `-f` chain automatically. See
+   [`machine-profiles.md`](machine-profiles.md) `gpu_access`. **UNVALIDATED
+   (#108):** `docker compose config` renders it correctly on this board, which
+   proves the compose merge, not a container create — that needs a live boot.
 2. **The Parakeet STT base image is Spark-specific.** `Dockerfile.parakeet`'s
    base `scitrera/dgx-spark-vllm:0.16.0-t4` ships a torch with no sm_87
    kernels — NeMo dies at model load with `CUDA error: no kernel image is
@@ -139,6 +163,21 @@ therefore still DECLARED/UNVALIDATED.
    gears the box sat at **54/61 GiB used with zero swap configured** — the
    util sum (0.57 ≈ 35 GiB) undercounts by ~19 GiB. Leave real headroom, or
    audio sidecars/host workloads will OOM-race the fleet.
+4. **Phantom iowait sheds the whole box.** `/proc/stat` here reports ~59%
+   iowait — 5 of 8 cores at ~97% — with **zero disk I/O** (`vmstat` bi/bo ≈ 0),
+   GPU 0%, cores at minimum clock: the Tegra `sugov:0`/`sugov:4`
+   cpufreq-governor kthreads flicker through D state and inflate `nr_iowait`.
+   The gateway's pressure policy reads that literally and, at the shipped
+   `LOBES_IOWAIT_DEGRADED_THRESHOLD=50`, enters busy mode and **429-sheds every
+   full-tier request indefinitely** — on this card, all of `senses`. The
+   deployed box survived on an *ephemeral* shell-env override of `100` that any
+   `docker compose up` reverts. This is now **declared on the built-in card
+   profile** (`lobes/profiles/builtin/orin.toml`'s `[host_env]`), so every
+   render writes `LOBES_IOWAIT_DEGRADED_THRESHOLD=100` into `.env` and
+   `lobes doctor` names the key on a deployment still carrying `50`. The swap
+   guard stays at its shipped `75` — swap is measured honestly here. A
+   repo-level fix (PSI-based or disk-I/O-corroborated sampling that does not
+   trust `nr_iowait` on Tegra) would retire the declaration.
 
 ## Mesh wiring (#127) from this box
 
@@ -171,11 +210,15 @@ therefore still DECLARED/UNVALIDATED.
 uv tool install lobes-cli               # or: uv sync in a checkout
 mkdir -p ~/.lobes/profiles              # then write profiles/orin.toml (above)
 lobes init --profile orin --shape thor-lobe --apply
-# csv-mode boards: swap the deploy.resources GPU stanzas for `runtime: nvidia`
-# (divergence 1 above) until a template knob lands.
+# csv-mode GPU access (divergence 1) now needs NO hand edit: the built-in `orin`
+# profile declares gpu_access = "runtime", so the init above also generates
+# docker-compose.gpu{,-audio}.yml. A CDI-mode Orin overrides the built-in with
+# its own <deploy-dir>/profiles/orin.toml leaving gpu_access at the default.
 lobes up senses --apply                 # boot order: senses first, then gears
 lobes up embedder --apply && lobes up reranker --apply
-docker compose -f docker-compose.yml -f docker-compose.shape.yml up -d gateway
+# `lobes fleet files` prints the -f chain this deployment resolves to — use it
+# rather than hand-listing overlays:
+docker compose $(lobes fleet files) up -d gateway
 ```
 
 Boot sequentially — the machine-profiles boot-ordering caveat (concurrent

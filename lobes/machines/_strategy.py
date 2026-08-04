@@ -54,26 +54,70 @@ class DetectionSignature:
     ``name_markers`` are lowercase substrings matched against the GPU name and
     hostname (the only signal the legacy :func:`~lobes.profiles.detect_machine`
     had, preserved exactly). ``compute_capability`` (e.g. ``"sm_110"``) and
-    ``total_memory_gb`` are declared traits carried for a future, richer detector
-    (``lobes/runtime/_detect.py``, a later task) — they are informational here and
-    do **not** participate in :meth:`matches`, so present-day detection behaviour
-    is unchanged.
+    ``total_memory_gb`` are declared traits that act as **constraints when — and
+    only when — the caller supplies the corresponding probed fact**.
+
+    That refinement exists because a name marker alone is not evidence of a
+    *variant*. ``orin`` is the motivating case: the Jetson Orin family spans
+    64GB / 32GB / NX / Nano boards that all carry "orin" in the device-tree
+    model string, and resolving a Nano to the 64GB card profile would hand it a
+    senses budget (util 0.45 at a 256K window) it cannot possibly hold. The
+    memory check is a **band, not equality** — a 64GB board reports ~61.3 GB
+    usable — so it separates variants without demanding an exact figure no real
+    board reports.
+
+    A caller that supplies no probed facts gets exactly the legacy
+    name-substring behaviour, which is why every existing call site and test
+    keeps working unchanged.
     """
 
     name_markers: tuple[str, ...]
     compute_capability: str | None = None
     total_memory_gb: int | None = None
 
-    def matches(self, gpu_name: str | None, hostname: str | None) -> bool:
-        """True when any marker is a substring of the GPU name or the hostname.
+    #: How far a probed memory figure may fall below / rise above the declared
+    #: one and still count as the same board. The lower bound is what a "64GB"
+    #: board reporting 61.3 GB needs (0.958); the upper bound leaves room for a
+    #: board that reports slightly more than its marketing name.
+    _MEMORY_TOLERANCE_LOW = 0.80
+    _MEMORY_TOLERANCE_HIGH = 1.25
+
+    def matches(
+        self,
+        gpu_name: str | None,
+        hostname: str | None,
+        compute_capability: str | None = None,
+        total_memory_gb: float | None = None,
+    ) -> bool:
+        """True when a name marker hits and no supplied probed fact contradicts.
 
         An empty ``name_markers`` never matches — that is how the ``generic``
         fallback stays out of auto-detection (it is only ever chosen explicitly).
+
+        ``compute_capability`` / ``total_memory_gb`` are **optional**: when a
+        caller does not probe them (or the probe failed and passed ``None``),
+        they impose no constraint, so detection degrades to the name-only
+        behaviour rather than refusing to identify the card.
         """
+        hit = False
         for hay in ((gpu_name or "").lower(), (hostname or "").lower()):
             if hay and any(marker in hay for marker in self.name_markers):
-                return True
-        return False
+                hit = True
+                break
+        if not hit:
+            return False
+
+        if self.compute_capability and compute_capability:
+            if self.compute_capability.lower() != compute_capability.lower():
+                return False
+
+        if self.total_memory_gb and total_memory_gb:
+            low = self.total_memory_gb * self._MEMORY_TOLERANCE_LOW
+            high = self.total_memory_gb * self._MEMORY_TOLERANCE_HIGH
+            if not low <= total_memory_gb <= high:
+                return False
+
+        return True
 
 
 @dataclass(frozen=True)

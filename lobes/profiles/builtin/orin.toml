@@ -1,0 +1,226 @@
+# Jetson AGX Orin 64GB Developer Kit (Ampere sm_87, 61.3 GiB unified memory) —
+# the fleet profile for the one card in this mesh that is NOT Blackwell-class.
+#
+# Card DETECTION lives in lobes/machines/orin.py (hostname / device-tree marker
+# "orin", sm_87, 64 GB); this file is the fleet-shaped half — which roles the
+# board can serve at all, and with which knobs. It supersedes the hand-authored
+# operator profile docs/orin-profiles.md records at
+# <deploy-dir>/profiles/orin.toml (an operator file of the same name still wins
+# over this built-in, per lobes/profiles/loader.py).
+#
+# What this board serves: `senses` (the Gemma 4 12B multimodal gear) plus the
+# two ~0.6B pooling gears. The three NVFP4 generate lobes — cortex, muse,
+# worker — are feasible=false; see the shared rationale below.
+#
+# Two knobs are deliberately ABSENT from the pooling roles at the bottom
+# (embedder.attention_backend, reranker.attention_backend +
+# reranker.enforce_eager): lobes/profiles/loader.py overlays them from the live
+# lobes.machines chip-strategy registry rather than re-typing the literals here,
+# so the orin CardStrategy stays the single source of truth for WHY each one
+# holds (each Knob there carries its own provenance string). Same mechanism
+# thor.toml uses for its four sm_110 divergences.
+#
+# A knob left out of a role table means the profile takes no position on it
+# (the compose template's own ${VAR:-default} applies) — same convention as
+# spark.toml / thor.toml; see RoleProfile in lobes/profiles/schema.py.
+name = "orin"
+summary = "Jetson AGX Orin 64GB (Ampere sm_87, 64 GB unified) — senses + pooling gears; the NVFP4 lobes need Blackwell"
+
+# --- csv-mode GPU access -----------------------------------------------------
+#
+# MEASURED LIVE on this box (docs/orin-profiles.md divergence 1): the NVIDIA
+# container toolkit here is 1.19.1 with `mode = "auto"` in
+# /etc/nvidia-container-runtime/config.toml, and auto RESOLVES TO THE LEGACY CSV
+# MODE on this Jetson. In csv mode the compose templates'
+# `deploy.resources.reservations.devices` GPU request fails at container CREATE:
+#
+#   "invoking the NVIDIA Container Runtime Hook directly ... is not supported.
+#    Please use the NVIDIA Container Runtime"
+#
+# csv mode wants the container told to use the `nvidia` runtime instead. Docker
+# Compose has no conditional-block syntax, so no ${VAR} substitution in the
+# shipped template can express both forms — declaring it here makes `lobes init`
+# GENERATE the compose overrides (docker-compose.gpu.yml +
+# docker-compose.gpu-audio.yml) that `!reset` the deploy stanza and set
+# `runtime: nvidia`, on EVERY render.
+#
+# That "every render" is the whole point. The deployed box has been running the
+# equivalent as a HAND EDIT of the scaffolded compose files since 2026-07-16 —
+# and a re-init silently reverts it, which is exactly what the next live boot is
+# about to do. Same posture as the LOBES_IOWAIT_DEGRADED_THRESHOLD host_env
+# declaration below: state the board fact in-tree rather than leave it in a shell
+# history.
+#
+# Scope + honesty: this is a fact about THIS board's toolkit installation, not
+# about sm_87 in general. A Jetson on JetPack 7 (CDI mode — Thor's presumed
+# situation, since the Thor fleet boots with the stock deploy stanza) should
+# leave this at the default "devices"; an operator profile of the same name
+# overrides this built-in wholesale (lobes/profiles/loader.py), which is the
+# escape hatch. The generated overrides are UNVALIDATED until a live boot on this
+# board consumes them (#108) — `docker compose config` renders them correctly,
+# which proves the compose merge, not the container create.
+gpu_access = "runtime"
+
+# --- the three NVFP4 generate lobes: a HARD architecture line ----------------
+#
+# cortex (unsloth/Qwen3.6-27B-NVFP4), muse (nvidia/Gemma-4-31B-IT-NVFP4) and
+# worker (unsloth/Qwen3.6-35B-A3B-NVFP4) are all NVFP4 exports that quantize
+# ACTIVATIONS to FP4 (W4A4 on the MLP path). FP4 activations are executed by
+# BLACKWELL FP4 tensor cores; sm_87 is Ampere, one generation short. No
+# gpu_mem_util makes that work — this is a feasibility fact, NOT a memory
+# tradeoff (docs/orin-profiles.md "Why no cortex"; the same statement heads
+# lobes/machines/orin.py).
+#
+# Contrast the `senses` gear below, which DOES run here: weight-only int4
+# (W4A16). Its weights dequantize through vLLM's Marlin/int4 path (compute
+# capability >= 8.0) and its activations stay 16-bit — that is the whole reason
+# a 12B multimodal lobe serves on this Ampere board while a 27B NVFP4 primary
+# cannot.
+#
+# feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model,
+# no knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served.
+# A box on this profile reaches cortex by honest referral / proxy instead
+# (PRIMARY_PEER_ORIGIN + PRIMARY_PEER_PROXY -> the DGX Spark; validated live
+# 2026-07-17, docs/orin-profiles.md "Mesh wiring").
+[roles.cortex]
+feasible = false
+
+[roles.muse]
+feasible = false
+
+[roles.worker]
+feasible = false
+
+[roles.senses]
+feasible = true
+# unsloth/gemma-4-12B-it-qat-w4a16 — QAT (quantization-aware trained) int4
+# W4A16, compressed-tensors "pack-quantized". Read off the checkpoint's OWN
+# config.json (fetched 2026-08-04; the same facts are cited in lobes/catalog.py
+# and docs/gemma-4-12b-qat-w4a16.md), never off the model card:
+#   - architectures ["Gemma4UnifiedForConditionalGeneration"], model_type
+#     "gemma4_unified" — the SAME class the incumbent coolthor gear serves, so
+#     this repo's existing Dockerfile.vllm-gemma4 image already handles it;
+#   - text_config.max_position_embeddings = 262144 (see max_model_len below);
+#   - quantization_config: num_bits=4, type=int, strategy=group, group_size=32
+#     — INT4, not FP4 (that is what makes sm_87 plausible at all);
+#   - vision_config AND audio_config both present (audio_token_id 258881,
+#     video_token_id 258884). Audio is DECLARED, not proven: #101 found vLLM's
+#     gemma4_unified path silently DROPS input_audio on the coolthor gear, and
+#     that is a path gap, not a per-checkpoint one — probing it is a later task.
+# The checkpoint carries NO draft head of its own; the senses lane's MTP draft
+# is an env-level flag (MULTIMODAL_SPECULATIVE_CONFIG, with an off sentinel),
+# not a Profile knob — RoleProfile has exactly nine fields and none of them is
+# speculative_config.
+model = "unsloth/gemma-4-12B-it-qat-w4a16"
+# *** BOTH VALUES BELOW ARE MEASURED — live boot on a physical Jetson AGX Orin
+# *** 64GB (sm_87), 2026-08-04. Transcript:
+# *** docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt
+#
+# The 0.45 / 262144 hypothesis BOOTED FIRST TRY at the full native window — no
+# trim, nothing refused (unlike thor-muse's 0.40, which was refused and became
+# 0.55). Measured, senses booted FIRST into an empty device:
+#
+#   model weights loaded          9.07 GiB   (incumbent coolthor: 9.25 GiB)
+#   Available KV cache memory    11.81 GiB
+#   GPU KV cache size           609,266 tokens
+#   max concurrency @ 262,144     2.32x      (a KV-pool CEILING, not throughput)
+#   init engine                   284.92 s   (compilation 120.05 s)
+#
+# BOOT ORDER STILL MATTERS — do not copy these numbers to a gears-first boot.
+# gpu_memory_utilization is a fraction of the ENTIRE device, so every byte a
+# co-resident engine already holds is deducted one-for-one from KV (KV is the
+# only elastic term). Measured on this same box the same day (approved deviation
+# d1, issue #171): the incumbent booted AFTER the pooling gears held 11.29 GiB /
+# 480,431 tokens, against the 18.86 GiB / 802,644 that docs/orin-profiles.md
+# records for a senses-FIRST boot of the same checkpoint at the same knobs.
+# Boot senses first.
+#
+# WHERE THE NON-KV MEMORY GOES, and why it is worth it: 0.45 x 61.3 GiB = 27.59
+# GiB of budget, minus 9.07 GiB of weights, leaves ~18.5 GiB — yet KV got 11.81.
+# The ~6.7 GiB difference is peak activation, which vLLM profiles here with
+# "1 video items of the maximum feature size" (boot log). That is the price of
+# the ViT actually working: this checkpoint PASSES the reversed-motion video
+# control that the incumbent FAILS. KV per token is also 17% cheaper than the
+# incumbent's (20.3 KiB vs 24.6 KiB), so the smaller pool still holds 609,266
+# tokens at DOUBLE the context window.
+#
+# One knob left on the table: CUDA-graph capture is under-accounted because
+# VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0, and vLLM's own log suggests
+# compensating by raising util 0.4500 -> 0.4551. Untested here.
+#
+# NOTE: this checkpoint's config.json ships WITHOUT vision_config.num_soft_tokens,
+# which crash-loops the served vLLM build (AttributeError in
+# multimodal/encoder_budget.py). The boot above required patching that one field
+# back in (280, the value its sibling coolthor export declares; every other
+# vision_config key is byte-identical). See the evidence transcript and #177.
+gpu_mem_util = 0.45
+max_model_len = 262144
+# compressed-tensors, matching the checkpoint's own quant_method. vLLM reads the
+# exact scheme (int4 pack-quantized here, nvfp4-pack-quantized on the coolthor
+# incumbent) off the checkpoint itself, so the FLAG is the same for both and the
+# KERNEL PATH is not — the int4 path is the unproven half on sm_87.
+quantization = "compressed-tensors"
+# TRITON_ATTN: every role that booted on this box (senses/embedder/reranker,
+# 2026-07-16/17) used it; FlashInfer is unvalidated here (docs/orin-profiles.md).
+attention_backend = "TRITON_ATTN"
+
+[roles.embedder]
+feasible = true
+model = "Qwen/Qwen3-Embedding-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend: overlaid from lobes.machines.get("orin") — TRITON_ATTN, a
+# conservative first-boot carry-over of Thor's sm_110 pooling divergence that
+# was NOT independently re-tested on sm_87. This gear booted healthy that way
+# (1024-dim embeddings, 2026-07-17).
+
+[roles.reranker]
+feasible = true
+model = "Qwen/Qwen3-Reranker-0.6B"
+gpu_mem_util = 0.06
+max_model_len = 8192
+# attention_backend + enforce_eager: overlaid from lobes.machines.get("orin") —
+# TRITON_ATTN + enforce_eager=true, the same carried-over Jetson safe-boot
+# choice. This gear booted healthy that way and its ordering probe passed
+# (relevant document top-ranked, score 0.82 — 2026-07-17).
+
+# --- card-level (non-role) .env: the Tegra iowait accounting quirk -----------
+#
+# !!! DO NOT "FIX" THIS BACK TO 50 — 50 MAKES THIS BOARD SHED EVERYTHING !!!
+#
+# MEASURED LIVE on this box (2026-07-17, re-confirmed 2026-08-04): /proc/stat
+# reports ~59% iowait — 5 of 8 cores at ~97% — with ZERO disk I/O (vmstat
+# bi/bo ≈ 0), GPU 0%, and every core idling at its minimum clock. The cause is
+# Tegra ACCOUNTING, not load: the cpufreq-governor kthreads `sugov:0` /
+# `sugov:4` flicker through D (uninterruptible) state, and the kernel counts a
+# core idling while any task is in D state as iowait — so nr_iowait is inflated
+# on a board doing no I/O at all.
+#
+# The gateway's pressure policy reads that number literally
+# (lobes/gateway/_pressure_policy.py: iowait% > LOBES_IOWAIT_DEGRADED_THRESHOLD
+# → busy) and, at the shipped default of 50, permanently 429-sheds EVERY
+# full-tier request — on this card that is all of `senses`, the only generate
+# lobe the board can serve. Not a degradation: a total, indefinite outage of
+# the box's one lobe, on an idle machine.
+#
+# 100 is "effectively disabled" (iowait% can never exceed 100), which is the
+# remedy env.example already documents for the DGX Spark GB10's own phantom
+# /proc/pressure/io reading (dgx-spark-cli#22) — the same knob, the same
+# posture, a different cause. It is also EXACTLY the value the deployed box has
+# been running since 2026-07-17, as an ephemeral shell-env override on the
+# gateway container that any `docker compose up` silently reverts; declaring it
+# here is what makes the live state survive a re-render. LOBES_SWAP_DEGRADED_-
+# THRESHOLD is deliberately left alone (75, the shipped default): swap is
+# measured honestly on this board and remains the real memory-pressure guard.
+#
+# Scope: this is a CARD fact (the board's own /proc/stat accounting), so it
+# lives on the card profile and every deployment shape rendered over `orin`
+# inherits it — machine-as-brain included. It is NOT on the orin-lobe shape:
+# a shape-scoped fix would leave a bare `lobes init` on this same board
+# shedding, which is the default path.
+#
+# A repo-level fix — PSI-based or disk-I/O-corroborated pressure sampling that
+# does not trust nr_iowait on Tegra — would retire this line. Until then it is
+# the honest declaration, not a workaround hidden in a shell history.
+[host_env]
+LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"

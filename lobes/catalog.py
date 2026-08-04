@@ -481,6 +481,88 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # docs/vllm-nightly-migration.md §7.
     ),
     SupportedModel(
+        id="unsloth/gemma-4-12B-it-qat-w4a16",
+        # Second candidate senses/multimodal checkpoint for the Gemma 4 12B
+        # UNIFIED family (unsloth-qat-senses-first-class-orin-variation plan,
+        # t1) — QAT (quantization-aware trained), finetuned from
+        # google/gemma-4-12B-it, compressed-tensors serialized explicitly for
+        # vLLM. A later task in the same plan wires a first-class Orin card
+        # profile/shape to boot this as its `senses` gear; here it is only
+        # cataloged as a switchable gear, NOT yet booted.
+        #
+        # Verified against the checkpoint's ACTUAL config.json (fetched
+        # unauthenticated 2026-08-04 — the repo is not gated), NOT card prose:
+        #   https://huggingface.co/unsloth/gemma-4-12B-it-qat-w4a16/resolve/main/config.json
+        #     - architectures: ["Gemma4UnifiedForConditionalGeneration"],
+        #       model_type "gemma4_unified" — the SAME class the coolthor
+        #       gear above serves (this repo's existing
+        #       Dockerfile.vllm-gemma4 image already handles it).
+        #     - text_config.max_position_embeddings = 262144 (256K) — DOUBLE
+        #       the coolthor incumbent's 131072. The HF card summary also
+        #       claims 256K, but per this repo's #108 discipline the card is
+        #       the ATTEMPT target, not the evidence — config.json is what is
+        #       cited here, and the number still needs a live boot to prove
+        #       it actually serves at that window (a later plan task does
+        #       that boot).
+        #     - quantization_config: quant_method "compressed-tensors",
+        #       format "pack-quantized", num_bits=4, strategy "group",
+        #       group_size=32, symmetric=true — i.e. INT4 weight-only
+        #       (W4A16), NOT the coolthor/coder gears' FP4
+        #       ("nvfp4-pack-quantized"). Both resolve to the same vLLM
+        #       --quantization=compressed-tensors flag (vLLM reads the exact
+        #       scheme off the checkpoint's own config), but the KERNEL PATH
+        #       differs — int4 pack-quantized vs NVFP4 — and is UNPROVEN on
+        #       any of this fleet's hardware until a live boot exercises it.
+        #       (int4-weight-only is what makes an Ampere sm_87 target
+        #       plausible at all — no Blackwell FP4 tensor cores needed for
+        #       16-bit activations — but plausible is not proven.)
+        #     - vision_config (gemma4_unified_vision) AND audio_config
+        #       (gemma4_unified_audio) both present; image_token_id=258880,
+        #       audio_token_id=258881, video_token_id=258884 — VIDEO is
+        #       natively declared here, which this repo's existing
+        #       "text+image+audio" Gemma capability shape
+        #       (_SHAPE_GEMMA4_UNIFIED) predates and does not mention.
+        #     - no mtp_num_hidden_layers / draft-head field anywhere in the
+        #       config — unlike the coolthor gear's wired native MTP
+        #       (google/gemma-4-12B-it-assistant draft), this checkpoint
+        #       ships no draft head, so speculative_config stays empty.
+        #
+        # role_hint is DELIBERATELY "candidate", not the literal
+        # role_hint="multimodal" the covering plan's requirement text names:
+        # test_exactly_one_gemma_multimodal_gear (tests/test_catalog.py) pins
+        # role_hint="multimodal" to EXACTLY [coolthor] — a second entry with
+        # that role_hint would make resolve_tier("multimodal")/("senses")/
+        # ("normal") ambiguous by first-match. This mirrors the exact
+        # reasoning the sakamakismile coder entry above already uses
+        # (role_hint="candidate", not "multimodal", for the identical
+        # singular-tier-owner reason). Keeping this entry a candidate leaves
+        # the fleet-wide tier default — and every thor/spark profile that
+        # pins the raw coolthor id — untouched, consistent with the covering
+        # plan's own "thor/spark render byte-identical" requirement. A
+        # per-box operator profile (not this catalog field) is how a
+        # deployment actually selects this checkpoint for its `senses` role.
+        #
+        # STATUS: "configured" — nothing below is live-probed. No boot, no
+        # gpu_mem_util, no measured KV pool; image/video/audio/reasoning/
+        # tool-calling are all PENDING LIVE PROBE (a later plan task runs
+        # them against real hardware; see docs/gemma-4-12b-qat-w4a16.md). The
+        # one already-filed risk worth flagging up front: issue #101 found
+        # vLLM's gemma4_unified silently DROPS input_audio content (200 OK,
+        # fluent reply that ignored the audio) on the coolthor checkpoint —
+        # config.json declaring audio_config here is NOT evidence this
+        # checkpoint's audio will be served; #101 is a vLLM-path gap, not a
+        # per-checkpoint one, so it is expected to reproduce until re-probed.
+        role_hint="candidate",
+        shape="unified multimodal (text+image+audio+video declared, QAT int4 W4A16)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="gemma4",
+        quantization="compressed-tensors",
+        status="configured",  # un-booted candidate — see docs/gemma-4-12b-qat-w4a16.md
+        doc="gemma-4-12b-qat-w4a16.md",
+        task="generate",
+    ),
+    SupportedModel(
         id="nvidia/Gemma-4-31B-IT-NVFP4",
         # Gemma 4 31B IT (Google DeepMind), NVIDIA's official NVFP4 export — the
         # `muse` gear: the fleet's OPT-IN creative/ideation generate lobe (the

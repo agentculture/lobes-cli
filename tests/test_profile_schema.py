@@ -1,10 +1,12 @@
 """The new per-role Profile schema + loader (lobes/profiles/schema.py, loader.py).
 
 Guards: (1) a Profile round-trips load -> serialise -> identical; an unknown
-role/knob is a load error, never a silent drop; (2) the two shipped built-ins
-(spark, thor) carry the exact values the plan requires — spark mirrors the
+role/knob is a load error, never a silent drop; (2) the shipped built-ins
+carry the exact values the plan requires — spark mirrors the
 fleet compose template byte-for-byte, thor encodes exactly its 4 validated
-sm_110 divergences and is otherwise identical to spark; (3) an operator
+sm_110 divergences and is otherwise identical to spark, and orin (the one
+non-Blackwell card) serves senses on the QAT int4 W4A16 checkpoint while
+vetoing every NVFP4 generate lobe; (3) an operator
 profile dropped in a deployment dir is discovered and overrides a built-in of
 the same name, and nothing here mutates a profile at runtime.
 """
@@ -12,6 +14,7 @@ the same name, and nothing here mutates a profile at runtime.
 from __future__ import annotations
 
 import dataclasses
+from importlib.resources import files
 
 import pytest
 
@@ -61,6 +64,61 @@ def test_profile_round_trips_through_dict() -> None:
     again = Profile.from_dict("custom", p.to_dict())
     assert again == p
     assert again.to_dict() == p.to_dict()
+
+
+# --- host_env: the card-level (non-role) .env table -------------------------
+
+
+def test_profile_round_trips_with_a_host_env_table() -> None:
+    p = Profile(
+        name="custom",
+        roles={"cortex": RoleProfile(model="x")},
+        host_env={"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"},
+    )
+    again = Profile.from_dict("custom", p.to_dict())
+    assert again == p
+    assert again.host_env["LOBES_IOWAIT_DEGRADED_THRESHOLD"] == "100"
+
+
+def test_profile_without_host_env_defaults_to_empty_and_is_read_only() -> None:
+    p = Profile.from_dict("custom", {"roles": {}})
+    assert dict(p.host_env) == {}
+    with pytest.raises(TypeError):
+        p.host_env["X"] = "1"  # type: ignore[index]
+
+
+def test_profile_from_dict_rejects_non_mapping_host_env() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": ["LOBES_X=1"]})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "host_env" in exc.value.message
+
+
+def test_profile_from_dict_rejects_a_non_env_var_name_key() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": {"not a var": "1"}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not a var" in exc.value.message
+
+
+def test_profile_from_dict_rejects_a_non_string_host_env_value() -> None:
+    # Values are written to .env verbatim, so the author must spell the exact
+    # bytes -- an int/float would introduce a formatting question (100 vs
+    # 100.0) between the TOML and the rendered file.
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": 100}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "LOBES_IOWAIT_DEGRADED_THRESHOLD" in exc.value.message
+    assert "str" in exc.value.message
+
+
+def test_profile_from_dict_still_rejects_an_unknown_top_level_key() -> None:
+    # host_env widened the known top-level set by exactly one key -- an
+    # arbitrary top-level table is still a load error.
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"env": {"LOBES_X": "1"}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "env" in exc.value.message
 
 
 def test_profile_from_dict_rejects_unknown_role() -> None:
@@ -288,6 +346,118 @@ def test_loading_builtins_never_mutates_the_shared_machines_registry() -> None:
     assert before == after
 
 
+# --- builtins: orin serves senses on Ampere and vetoes every NVFP4 lobe -----
+
+
+def _orin_toml_text() -> str:
+    """The packaged builtin/orin.toml source — read for its COMMENTS.
+
+    The knob VALUES are asserted through the loader like every other profile;
+    this reads the file itself only where the contract is about what the file
+    SAYS (the measured-pending marking), which no loaded Profile can carry.
+    """
+    return (files(loader.BUILTIN_PACKAGE) / "orin.toml").read_text(encoding="utf-8")
+
+
+def test_orin_builtin_serves_senses_on_the_qat_w4a16_checkpoint() -> None:
+    orin = loader.load_builtin("orin")
+    assert orin is not None
+    assert orin.name == "orin"
+
+    senses = orin.role("senses")
+    assert senses.feasible is True
+    # The QAT int4 W4A16 checkpoint — weight-only int4 is what makes an Ampere
+    # sm_87 board a candidate at all (the NVFP4 lobes below are not).
+    assert senses.model == "unsloth/gemma-4-12B-it-qat-w4a16"
+    assert senses.quantization == "compressed-tensors"
+    assert senses.attention_backend == "TRITON_ATTN"
+    # MEASURED-PENDING hypotheses — the live boot backfills both (see the next
+    # test, which pins that they are MARKED as hypotheses in the file itself).
+    assert senses.gpu_mem_util == 0.45
+    assert senses.max_model_len == 262144
+
+
+def test_orin_builtin_records_the_measured_budget_with_its_boot_order_caveat() -> None:
+    # The two senses budget knobs ARE measurements now (live boot on a physical
+    # Orin, 2026-08-04) — but they are senses-FIRST measurements, and a
+    # gears-first boot gets materially less KV because gpu_mem_util is a fraction
+    # of the whole device. A future reader copying either number without that
+    # caveat is exactly the failure this pins against.
+    text = _orin_toml_text()
+    assert "MEASURED-PENDING" not in text, "backfilled — the pre-boot marker must be gone"
+    assert "docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt" in text
+    assert "#171" in text  # the deviation/issue that re-measured the KV pool
+    measured_block = text.split("MEASURED", 1)[1].split("[roles.embedder]", 1)[0]
+    assert "gpu_mem_util = 0.45" in measured_block
+    assert "max_model_len = 262144" in measured_block
+    # the measured KV figures, so a silent edit of one number is caught
+    assert "609,266" in measured_block
+    assert "11.81 GiB" in measured_block
+    # and the caveat that makes them safe to reuse
+    assert "BOOT ORDER" in measured_block
+
+
+def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:
+    # cortex/muse/worker are all NVFP4 exports that quantize ACTIVATIONS to FP4,
+    # which needs Blackwell tensor cores; sm_87 is Ampere. A hard architecture
+    # line, not a memory tradeoff — so they carry no model and no knobs either.
+    orin = loader.load_builtin("orin")
+    for role in ("cortex", "muse", "worker"):
+        rp = orin.role(role)
+        assert rp.feasible is False, f"{role} must be infeasible on Ampere sm_87"
+        assert rp == RoleProfile(feasible=False), f"{role} leaked a model/knob opinion"
+    # The rationale is recorded next to the declaration, not only here.
+    text = _orin_toml_text()
+    assert "Blackwell" in text
+    assert "W4A16" in text  # the contrasting weight-only scheme senses uses
+
+
+def test_orin_builtin_pooling_gears_are_single_sourced_from_machines_registry() -> None:
+    # Same contract as thor's: the carried-over Jetson pooling divergences
+    # (embedder/reranker TRITON_ATTN, reranker enforce_eager) are declared once
+    # in lobes/machines/orin.py and overlaid at load time, never re-typed in the
+    # TOML — so the two can never drift apart.
+    orin = loader.load_builtin("orin")
+    strategy = machines.get("orin")
+    assert strategy is not None
+    overlaid = strategy.role_knobs()
+    assert set(overlaid) == {"embedder", "reranker"}
+    for role, knobs in overlaid.items():
+        role_profile = orin.role(role)
+        for knob_name, knob in knobs.items():
+            assert getattr(role_profile, knob_name) == knob.value
+    # ...and the literals really are absent from the file (the "don't re-type
+    # it" half of the contract, which the value assertions above cannot see).
+    pooling_text = _orin_toml_text().split("[roles.embedder]", 1)[1]
+    assert "attention_backend =" not in pooling_text
+    assert "enforce_eager =" not in pooling_text
+
+    # The pooling gears themselves stay the fleet-standard 0.6B pair.
+    assert orin.role("embedder").model == "Qwen/Qwen3-Embedding-0.6B"
+    assert orin.role("reranker").model == "Qwen/Qwen3-Reranker-0.6B"
+    assert orin.role("embedder").gpu_mem_util == 0.06
+    assert orin.role("reranker").gpu_mem_util == 0.06
+
+
+def test_orin_builtin_round_trips() -> None:
+    orin = loader.load_builtin("orin")
+    again = Profile.from_dict("orin", orin.to_dict())
+    assert again == orin
+
+
+def test_orin_builtin_leaves_spark_and_thor_untouched() -> None:
+    # The plan boundary: adding a card must not move another card's rendering.
+    # (tests/goldens/ pins this byte-for-byte; this is the cheap in-suite echo.)
+    spark = loader.load_builtin("spark")
+    thor = loader.load_builtin("thor")
+    orin = loader.load_builtin("orin")
+    assert spark.role("senses").model == "coolthor/gemma-4-12B-it-NVFP4A16"
+    assert thor.role("senses").model == "coolthor/gemma-4-12B-it-NVFP4A16"
+    assert orin.role("senses").model != spark.role("senses").model
+    assert spark.role("cortex").feasible is True
+    assert thor.role("cortex").feasible is True
+
+
 # --- loader: resolution + operator overrides --------------------------------
 
 
@@ -295,6 +465,10 @@ def test_builtin_names_lists_spark_and_thor() -> None:
     names = loader.builtin_names()
     assert "spark" in names
     assert "thor" in names
+
+
+def test_builtin_names_includes_orin() -> None:
+    assert "orin" in loader.builtin_names()
 
 
 def test_load_builtin_unknown_name_returns_none() -> None:
@@ -426,3 +600,41 @@ def test_profiles_package_reexports_the_new_schema_and_loader_api() -> None:
 
 def test_schema_module_is_importable_directly() -> None:
     assert schema.Profile is Profile
+
+
+# --- Qodo #176: host_env values are written to .env verbatim ------------------
+
+
+def test_host_env_rejects_a_newline_that_would_corrupt_the_env_file() -> None:
+    """`.env` is line-oriented, so an embedded newline SPLITS the entry.
+
+    It does not escape — the tail becomes a bogus key or a parse error, and the
+    failure surfaces far from the profile that caused it. Reject it while the
+    operator still has the profile in front of them.
+    """
+    for bad in ("100\nEVIL=1", "100\rEVIL=1", "100\x00"):
+        with pytest.raises(ModelGearError) as excinfo:
+            Profile.from_dict("orin", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": bad}})
+        assert "newline" in str(excinfo.value).lower() or "nul" in str(excinfo.value).lower()
+
+
+def test_host_env_accepts_ordinary_single_line_values() -> None:
+    p = Profile.from_dict("orin", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}})
+    assert p.host_env == {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}
+
+
+def test_host_env_key_pattern_stays_ascii_not_unicode_word_chars() -> None:
+    """SonarCloud S6353 suggests `\\w` for `[A-Za-z0-9_]`. It is NOT equivalent.
+
+    Python's `\\w` is Unicode-aware by default, so swapping it in would widen the
+    accepted key set to include non-ASCII names — which would then be written
+    verbatim into `.env`. This pins the ASCII-only contract so the "concise
+    character class" refactor cannot land silently.
+    """
+    for bad_key in ("CAFÉ_VAR", "Aπ", "ПЕРЕМЕННАЯ"):
+        with pytest.raises(ModelGearError) as exc:
+            Profile.from_dict("x", {"host_env": {bad_key: "1"}})
+        assert exc.value.code == EXIT_USER_ERROR
+        assert bad_key in exc.value.message
+    # the ASCII form still works
+    assert Profile.from_dict("x", {"host_env": {"LOBES_OK_1": "1"}}).host_env == {"LOBES_OK_1": "1"}

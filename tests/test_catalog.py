@@ -491,8 +491,21 @@ def test_gemma_base_mtp_speculative_config_round_trips_through_helper() -> None:
 
     # This item must ALSO appear verbatim in the fleet compose template — the
     # single source of truth (catalog) must not drift from the packaged YAML.
+    #
+    # Since t5 (the senses MTP off-switch) the flag is env-parameterized, so the
+    # guard pins it as the knob's DEFAULT rather than as a bare list item: the
+    # whole `--speculative-config=<json>` token is the default of
+    # MULTIMODAL_SPECULATIVE_CONFIG, single-quoted so the JSON's spaces survive
+    # compose's shell-lexing as one argv token. Matching the full substitution —
+    # not just the item text — is what keeps this a real drift guard: the item
+    # string now also appears in that lane's prose comments, which a substring
+    # check alone would happily match after someone deleted the actual flag.
     fleet_text = (_TEMPLATES / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
-    assert item in fleet_text, f"{item!r} missing from templates/fleet/docker-compose.yml (drift)"
+    parameterized = "${MULTIMODAL_SPECULATIVE_CONFIG-'" + item + "'}"
+    assert parameterized in fleet_text, (
+        f"{parameterized!r} missing from templates/fleet/docker-compose.yml "
+        "(drift between the catalog entry and the senses lane's shipped default)"
+    )
 
 
 def test_speculative_config_item_matches_27b_primarys_mtp_item() -> None:
@@ -631,3 +644,94 @@ def test_resolve_tier_worker_returns_the_worker_gear() -> None:
     assert model.id == _WORKER_ID
     assert model.role_hint == "worker"
     assert model.task == "generate"
+
+
+# ---------------------------------------------------------------------------
+# `unsloth/gemma-4-12B-it-qat-w4a16` — QAT int4 W4A16 candidate for the Gemma
+# 4 12B unified family (unsloth-qat-senses-first-class-orin-variation plan, t1)
+# ---------------------------------------------------------------------------
+# A SECOND candidate senses/multimodal checkpoint, mirroring the coolthor gear
+# in architecture (same Gemma4UnifiedForConditionalGeneration class, same
+# gemma4 tool-call parser, same compressed-tensors quantization flag) but a
+# DIFFERENT quant scheme (int4 pack-quantized weight-only, not FP4) and DOUBLE
+# the native context. Verified against the checkpoint's own config.json
+# (fetched unauthenticated 2026-08-04), not card prose.
+
+_QAT_W4A16_ID = "unsloth/gemma-4-12B-it-qat-w4a16"
+
+
+def test_qat_w4a16_gear_exists_with_correct_fields() -> None:
+    gear = next((m for m in SUPPORTED_MODELS if m.id == _QAT_W4A16_ID), None)
+    assert gear is not None, f"{_QAT_W4A16_ID} not found in catalog"
+    assert gear.tool_parser == "gemma4"
+    assert gear.quantization == "compressed-tensors"
+    assert gear.native_max_model_len == 262144  # config.json max_position_embeddings
+    assert gear.status in {"configured", "load-tested"}
+    assert gear.status == "configured", (
+        f"{_QAT_W4A16_ID}: nothing is live-probed yet — status must not claim " "load-tested"
+    )
+    assert gear.doc == "gemma-4-12b-qat-w4a16.md"
+    assert gear.task == "generate"
+    assert gear.dimension == 0
+    assert gear.hf_overrides == ""
+    assert gear.moe_backend == ""
+    # No MTP/draft head ships in this checkpoint (config.json carries no
+    # mtp_num_hidden_layers or draft-head fields) — unlike the coolthor gear's
+    # wired google/gemma-4-12B-it-assistant draft.
+    assert gear.speculative_config == ""
+
+
+def test_qat_w4a16_shape_mentions_every_declared_modality() -> None:
+    # config.json declares vision_config, audio_config, AND a video_token_id —
+    # video is a genuinely new declaration this checkpoint's export makes that
+    # the shared _SHAPE_GEMMA4_UNIFIED literal (text+image+audio) predates.
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _QAT_W4A16_ID)
+    shape = gear.shape.lower()
+    for modality in ("text", "image", "audio", "video"):
+        assert modality in shape, f"{_QAT_W4A16_ID}: shape must mention {modality!r}"
+
+
+def test_qat_w4a16_tool_parser_matches_infer_parser() -> None:
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _QAT_W4A16_ID)
+    assert infer_parser(gear.id) == "gemma4"
+    assert gear.tool_parser == infer_parser(gear.id)
+
+
+def test_qat_w4a16_context_is_double_the_coolthor_incumbent() -> None:
+    # config.json max_position_embeddings=262144 vs the coolthor gear's
+    # measured 131072 — the QAT export doubles the native window.
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _QAT_W4A16_ID)
+    coolthor = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_BASE_ID)
+    assert gear.native_max_model_len == 2 * coolthor.native_max_model_len
+
+
+def test_qat_w4a16_does_not_hijack_the_multimodal_tier_default() -> None:
+    # DELIBERATE deviation from the covering plan's "role_hint=multimodal"
+    # wording: tests/test_catalog.py's test_exactly_one_gemma_multimodal_gear
+    # pins role_hint="multimodal" to EXACTLY [coolthor] — a second entry with
+    # that role_hint would make resolve_tier("multimodal")/("senses")/("normal")
+    # ambiguous by first-match. Mirrors the same reasoning the sakamakismile
+    # coder entry already uses (role_hint="candidate", not "multimodal"). This
+    # keeps the fleet-wide tier default, and every thor/spark profile pinning
+    # the raw coolthor id, untouched — a per-box profile is how a deployment
+    # actually selects this checkpoint for its senses role, not this field.
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _QAT_W4A16_ID)
+    assert gear.role_hint == "candidate"
+    assert resolve_tier("multimodal").id == _GEMMA_BASE_ID
+    assert resolve_tier("senses").id == _GEMMA_BASE_ID
+    assert resolve_tier("normal").id == _GEMMA_BASE_ID
+
+
+@pytest.mark.skipif(not _DOCS.is_dir(), reason="docs/ not shipped (wheel install)")
+def test_qat_w4a16_doc_records_the_honesty_bar() -> None:
+    # Structural guard (mirrors the byte-guard tests above, but for prose
+    # honesty): the per-model doc must actually record the facts that make
+    # this entry NOT a copy-paste of the coolthor gear — the int4-vs-FP4 quant
+    # difference, the doubled context, and the known #101 audio-drop risk —
+    # rather than silently inheriting coolthor's capability claims.
+    text = (_DOCS / "gemma-4-12b-qat-w4a16.md").read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "int4" in lowered
+    assert "262144" in text
+    assert "pending-live-probe" in lowered or "pending live probe" in lowered
+    assert "#101" in text

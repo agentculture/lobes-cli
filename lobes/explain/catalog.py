@@ -817,7 +817,7 @@ profiles`) but "which of the seven Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
-## The five built-in shapes
+## The built-in shapes
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
   serve (the six DEFAULT_HOSTED_ROLES — never the opt-in `muse`, below).
@@ -835,6 +835,20 @@ render time — `shape × card` — never a per-shape code fork.
   `gpu_mem_util=0.30` / `max_model_len=131072` (its full native 128K).
   Validated live on the Jetson AGX Thor (2026-07-14): measured KV pool
   1,418,554 tokens, 10.82× concurrency at 131072.
+- **`orin-lobe`** — `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin
+  64GB: keeps `senses` + `embedder` + `reranker`, drops `cortex` (the
+  NVFP4 primary quantizes activations to FP4, which needs Blackwell — the
+  `orin` card profile marks it infeasible too) and, uniquely among the
+  built-ins, drops `stt`/`tts` as well: the Parakeet image is built from
+  `scitrera/dgx-spark-vllm`, whose torch has no sm_87 kernels (measured
+  live — 8 container restarts, "no kernel image is available"), so audio
+  is forwarded to a peer via `AUDIO_URL` instead. Its `[overrides.senses]`
+  carries the Orin card's OWN budget (`gpu_mem_util=0.45` /
+  `max_model_len=262144`) so a sibling shape's values can never clobber
+  it — running `--shape thor-lobe` on this card silently rendered Thor's
+  0.30 / 131072. **Declared, UNVALIDATED** — no box has booted this shape,
+  and the budget it carries is the card profile's own MEASURED-PENDING
+  hypothesis.
 - **`orin-small`** — drops BOTH `cortex` and `senses`, keeps the opt-in
   `minor` gear (`vllm-minor`) + `embedder` + `reranker` + `stt`/`tts`. The
   Jetson AGX Orin 64GB reference shape (mesh-brain end-state, issue #112,
@@ -865,7 +879,7 @@ carries the value that fit, with a provenance comment.
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse> [--apply]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-small|thor-muse> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,

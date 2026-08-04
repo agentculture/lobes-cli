@@ -5,17 +5,35 @@ from __future__ import annotations
 import json
 import stat
 
+import pytest
+
 from lobes.cli import main
 from lobes.runtime import _compose, _detect
 
 
-def _inject_spark_detection(monkeypatch) -> None:
-    """Pin detection to the GB10 so fleet-scaffold assertions are host-independent.
+@pytest.fixture(autouse=True)
+def _pin_spark_detection(monkeypatch) -> None:
+    """Pin detection to the GB10 so EVERY test in this file is host-independent.
 
     Bare fleet init now resolves a machine profile; on an unrecognized host
     (e.g. a GPU-less CI runner) that is the conservative ``base`` profile,
     which swaps the 27B for a 4B and disables senses — not what these
-    scaffold-mechanics tests are about.
+    scaffold-mechanics tests are about. Autouse (rather than the per-test
+    ``_patch_detect`` pattern tests/test_init_profile.py and
+    tests/test_init_shape.py use) because every test in *this* file wants the
+    exact same neutral, resolvable card — the injected card's identity is
+    incidental here, unlike those two files where it is the very thing under
+    test. Mirrors ``tests/conftest.py``'s ``offline_runtime`` autouse fixture
+    for the same reason: a suite whose result depends on which physical
+    machine runs it is broken (this pins it even on a real, detected card —
+    e.g. a physical Jetson AGX Orin dev box, where the bare hostname/GPU
+    now resolve a real ``orin`` card with no built-in profile yet).
+
+    A test that specifically wants to exercise a DIFFERENT card overrides
+    this by re-monkeypatching ``_detect.detect_card`` itself, same as always
+    (see ``test_detection_pin_drives_the_resolved_profile_not_the_host``
+    below for exactly that, and as proof this fixture — not the host — is
+    what drives the outcome).
     """
     card = _detect.DetectedCard(
         resolved="spark",
@@ -27,6 +45,42 @@ def _inject_spark_detection(monkeypatch) -> None:
         sources={},
     )
     monkeypatch.setattr(_detect, "detect_card", lambda: card)
+
+
+@pytest.mark.parametrize(
+    "resolved,device_name,compute_capability,total_memory_gb",
+    [
+        ("spark", "NVIDIA GB10", "sm_121", 119.7),
+        ("thor", "NVIDIA Thor", "sm_110", 128.0),
+    ],
+)
+def test_detection_pin_drives_the_resolved_profile_not_the_host(
+    tmp_path, monkeypatch, capsys, resolved, device_name, compute_capability, total_memory_gb
+) -> None:
+    """Host-independence proof: the resolved profile tracks the INJECTED card,
+    not whatever real hardware happens to run this suite. Overriding
+    ``_pin_spark_detection`` above with a different card (here: thor, then
+    re-confirming spark) changes the dry-run output accordingly — evidence
+    that these tests' outcomes are driven entirely by the fixture, never by
+    ``socket.gethostname()`` / ``nvidia-smi`` / ``/proc/device-tree/model``
+    on the box actually running pytest.
+    """
+    card = _detect.DetectedCard(
+        resolved=resolved,
+        device_name=device_name,
+        compute_capability=compute_capability,
+        total_memory_gb=total_memory_gb,
+        hostname="test-host",
+        device_tree_model=None,
+        sources={},
+    )
+    monkeypatch.setattr(_detect, "detect_card", lambda: card)
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target)])  # dry run — no --apply needed
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"Profile: {resolved} (" in out
+    assert f"device_name={device_name!r}" in out
 
 
 def test_init_dry_run_writes_nothing(tmp_path, capsys) -> None:
@@ -170,10 +224,9 @@ def test_init_local_folder(tmp_path, monkeypatch) -> None:
 # --- fleet scaffold -------------------------------------------------------
 
 
-def test_init_fleet_apply_writes_three_files(tmp_path, monkeypatch) -> None:
+def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     from lobes import __version__
 
-    _inject_spark_detection(monkeypatch)
     target = tmp_path / "fleet"
     rc = main(["init", "--fleet", str(target), "--apply"])
     assert rc == 0
@@ -245,8 +298,7 @@ def test_init_fleet_dry_run_lists_plugin_file(tmp_path, capsys) -> None:
     assert not target.exists()
 
 
-def test_init_fleet_apply_writes_plugin_file(tmp_path, monkeypatch) -> None:
-    _inject_spark_detection(monkeypatch)
+def test_init_fleet_apply_writes_plugin_file(tmp_path) -> None:
     target = tmp_path / "fleet"
     rc = main(["init", "--fleet", str(target), "--apply"])
     assert rc == 0
@@ -257,10 +309,9 @@ def test_init_fleet_apply_writes_plugin_file(tmp_path, monkeypatch) -> None:
     assert plugin_path.read_text(encoding="utf-8") == _compose.plugin_source()
 
 
-def test_init_default_apply_writes_plugin_file(tmp_path, monkeypatch) -> None:
+def test_init_default_apply_writes_plugin_file(tmp_path) -> None:
     # The default topology is the fleet duo (issue #69); a bare `lobes init
     # --apply` (no --fleet needed) must materialise the plugin file too.
-    _inject_spark_detection(monkeypatch)
     target = tmp_path / "deploy"
     rc = main(["init", str(target), "--apply"])
     assert rc == 0
@@ -282,10 +333,9 @@ def test_init_single_apply_does_not_write_plugin_file(tmp_path) -> None:
     assert not (target / _compose.PLUGIN_DEST_NAME).exists()
 
 
-def test_init_fleet_audio_apply_writes_plugin_file_too(tmp_path, monkeypatch) -> None:
+def test_init_fleet_audio_apply_writes_plugin_file_too(tmp_path) -> None:
     # "for the fleet scaffold (and audio variant)" — the audio overlay layers
     # on top of the fleet, so the plugin file must still land.
-    _inject_spark_detection(monkeypatch)
     target = tmp_path / "fa"
     rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
     assert rc == 0
@@ -315,8 +365,7 @@ def test_init_audio_incompatible_with_single(capsys) -> None:
     assert "--audio" in err and "--single" in err
 
 
-def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path, monkeypatch) -> None:
-    _inject_spark_detection(monkeypatch)
+def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None:
     target = tmp_path / "fa"
     rc = main(["init", "--fleet", "--audio", str(target), "--apply"])
     assert rc == 0

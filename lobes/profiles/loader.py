@@ -41,9 +41,13 @@ BUILTIN_PACKAGE = "lobes.profiles.builtin"
 PROFILE_SUFFIX = ".toml"
 OPERATOR_SUBDIR = "profiles"
 
-# The one built-in whose knobs are partly DERIVED (not re-typed) from the
-# lobes.machines registry — see _apply_machine_registry below.
-_MACHINE_DERIVED_BUILTINS = ("thor",)
+# The built-ins whose knobs are partly DERIVED (not re-typed) from the
+# lobes.machines registry — see _apply_machine_registry below. `orin` joins
+# `thor` on exactly the same footing: its pooling-lane divergences
+# (embedder/reranker TRITON_ATTN, reranker enforce_eager) are declared once, as
+# lobes/machines/orin.py's role_overrides, and builtin/orin.toml stays silent on
+# them rather than restating the literals.
+_MACHINE_DERIVED_BUILTINS = ("thor", "orin")
 
 
 def _parse(text: str, *, source: str) -> dict:
@@ -60,9 +64,10 @@ def _parse(text: str, *, source: str) -> dict:
 def _apply_machine_registry(profile: Profile) -> Profile:
     """Overlay live :mod:`lobes.machines` knobs onto a built-in profile.
 
-    Keeps a machine-validated divergence (e.g. Thor's sm_110 pooling quirks)
-    SINGLE-SOURCED in the chip-strategy registry rather than re-typed as a
-    literal in a ``builtin/*.toml`` file: ``builtin/thor.toml`` on disk only
+    Keeps a machine-validated divergence (e.g. Thor's sm_110 pooling quirks, or
+    Orin's carried-over sm_87 pooling choices) SINGLE-SOURCED in the
+    chip-strategy registry rather than re-typed as a literal in a
+    ``builtin/*.toml`` file: ``builtin/thor.toml`` on disk only
     carries the template-shared baseline (same models/util/context/quant as
     Spark); this function fills in the knobs the matching
     :class:`~lobes.machines.CardStrategy` actually measured, straight from
@@ -83,8 +88,14 @@ def _apply_machine_registry(profile: Profile) -> Profile:
     # ...)) so the declared return type matches what a static checker infers —
     # replace()'s generic signature resolves to the base DataclassInstance
     # protocol for some checkers, not the concrete Profile subtype.
+    # host_env and gpu_access carry through untouched: the machine registry
+    # overlays ROLE knobs only, so a card's non-role declarations survive it.
     return Profile(
-        name=profile.name, summary=profile.summary, roles=MappingProxyType(updated_roles)
+        name=profile.name,
+        summary=profile.summary,
+        roles=MappingProxyType(updated_roles),
+        host_env=profile.host_env,
+        gpu_access=profile.gpu_access,
     )
 
 

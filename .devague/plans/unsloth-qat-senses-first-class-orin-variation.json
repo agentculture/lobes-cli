@@ -1,0 +1,652 @@
+{
+  "slug": "unsloth-qat-senses-first-class-orin-variation",
+  "title": "unsloth QAT senses + first-class orin variation",
+  "frame_slug": "unsloth-qat-senses-first-class-orin-variation",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-04T07:27:40Z",
+  "updated": "2026-08-04T09:41:17Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "senses serves unsloth/gemma-4-12B-it-qat-w4a16, live-validated on this Jetson AGX Orin as a first-class orin variation, while the thor/spark machine profiles stay intact so moving the setup to another architecture stays a profile pick, not a rework",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the announcement is claimable only when this box actually serves the unsloth checkpoint via the orin variation AND the acceptance evidence exists under docs/evidence/ \u2014 a rendered .env alone is not shipped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains a SupportedModel entry for unsloth/gemma-4-12B-it-qat-w4a16 modeled on the coolthor/gemma-4-12B-it-NVFP4A16 gear entry: role_hint=multimodal, tool_parser=gemma4 (runtime._parser returns gemma4 for gemma-4* ids), quantization=compressed-tensors (the HF card declares compressed-tensors QAT W4A16, explicitly vLLM-targeted), plus a per-model doc page per the doc= convention",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the catalog entry states only what the checkpoint's own config.json declares (quant_method, modalities, context) plus what live probes proved \u2014 no capability copied from marketing text",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "W4A16 weight-only quantization is what makes this checkpoint plausible on Ampere sm_87 (activations stay 16-bit, no Blackwell FP4 tensor cores needed) \u2014 but the unsloth export is compressed-tensors INT4 pack-quantized, a DIFFERENT kernel path than the coolthor NVFP4A16 (FP4) precedent this box actually booted; the int4 path is unproven on this box and the boot is the test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the W4A16-fits-sm_87 claim is proven only by the boot itself \u2014 the coolthor precedent makes it plausible, the unsloth checkpoint's own weights loading and serving on this box makes it true",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "the orin variation becomes first-class: a builtin lobes/profiles/builtin/orin.toml plus a lobes/machines/orin.py CardStrategy (per _registry.py: adding a chip is one new module + one register line; detection reads nvidia-smi name/compute_cap, Jetson device-tree model string, hostname \u2014 today Orin resolves UNKNOWN -> base.toml, which vetoes senses). The #108 earn-by-booting bar is met by the 2026-07-17 live validation in docs/orin-profiles.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "detection resolves THIS box to orin (verified live via lobes doctor/whoami on this hardware) and an unrecognised card still falls to base \u2014 no other card's resolution changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "goldens expand automatically: tests/test_profile_goldens.py and tests/test_shape_goldens.py parametrize over builtin_names(), so a builtin orin profile requires orin.env plus one golden per shape x orin pairing, regenerated via tests/goldens/regen.py",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "goldens are REGENERATED via tests/goldens/regen.py, never hand-typed, and the diff shows only orin-related additions \u2014 zero byte changes to existing base/spark/thor goldens",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "the senses lane's --speculative-config (google/gemma-4-12B-it-assistant MTP draft) is a hardcoded literal in lobes/templates/fleet/docker-compose.yml, byte-guarded against the coolthor catalog entry by tests/test_catalog.py, and RoleProfile (lobes/profiles/schema.py) has no speculative knob \u2014 swapping the senses checkpoint requires parameterizing it (env var with default) or updating it in lockstep",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "with no env override the rendered senses lane is byte-identical to today's (the coolthor speculative-config literal remains the default) and an explicit off value omits the flag entirely \u2014 proven by the template-defaults golden and a new test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "thor-lobe's [overrides.senses] (gpu_mem_util=0.30 / max_model_len=131072, Thor-measured) overlay the card profile at render time and clobbered Orin's measured 0.45 \u2014 today patched by hand-editing MULTIMODAL_GPU_MEM_UTIL in .env (docs/orin-profiles.md). The first-class orin variation needs a structural answer: an orin-fit shape, or a precedence/override rule, not a hand edit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "thor-lobe stays byte-identical for thor (its goldens unchanged); orin-lobe's senses overrides carry ONLY live-measured Orin values, and the shape hosts no stt/tts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "live-test means: boot the new checkpoint on this box, measure the accepted util/KV pool, then pass the senses probes lobes assess encodes (known-answer via the gateway alias, vision red-image intake) \u2014 end state is this box's deployment serving MULTIMODAL_MODEL=unsloth/gemma-4-12B-it-qat-w4a16 through the orin variation, matching the probes docs/orin-profiles.md records for the incumbent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "probes run on THIS box against the NEW checkpoint through the gateway alias \u2014 reusing the 2026-07-17 coolthor transcript as evidence for the unsloth checkpoint would be fabrication",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "activation must survive re-render: this box's NVIDIA toolkit runs csv mode, so the deployed compose files carry hand-edited runtime:nvidia stanzas that a re-init REVERTS (docs/orin-profiles.md divergence 1, flagged there as needing a template knob or machine-strategy overlay) \u2014 the orin variation either lands that knob in-repo or documents re-applying the edit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "after the change, a fresh render on this csv-mode box boots WITHOUT hand-editing GPU stanzas, or the manual step is documented as a numbered known divergence \u2014 silence is the failure mode",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "thor.toml and spark.toml stay intact as the per-card portability mechanism (the user's explicit constraint): tests/test_profile_schema.py pins spark senses model == coolthor/gemma-4-12B-it-NVFP4A16 and thor senses identical to spark (exactly-four-divergences contract) \u2014 those pins change only if the user decides the fleet-wide senses checkpoint moves too",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "proven by diff: zero byte changes to spark.toml, thor.toml, their goldens, and the test_profile_schema pins \u2014 reviewable in the PR",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "audio intake is a user-stated goal, but it is gated on vLLM, not the checkpoint: issue #101 found gemma4_unified silently drops input_audio (200 OK, fluent answer that ignored the audio) even though the config declares audio support \u2014 the live-test must re-probe audio on the pinned nightly, and if still dropped, audio stays honestly unserved (stt remains the speech path) until vLLM fixes it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the audio probe must be able to DETECT the silent drop (#101's signature: 200 OK with the audio ignored) \u2014 a fluent reply alone proves nothing; outcome reported either way, doc updated to match",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "cortex stays infeasible on Orin (the 27B primary quantizes activations to FP4 \u2014 modelopt/compressed-tensors W4A4 needs Blackwell tensor cores; a hard architecture line per docs/orin-profiles.md) and this box's cortex proxy wiring to the Spark (PRIMARY_PEER_ORIGIN/PROXY/API_KEY in ~/.lobes/.env) is untouched by the senses swap",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "after re-render, .env still carries the PRIMARY_PEER_* trio and a model=cortex request through this box's gateway still answers from the Spark with X-Lobes-Proxied-By",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "the swap's capability goal (user-stated 2026-08-04): the unsloth QAT checkpoint should give senses image, video, audio, and reasoning \u2014 each capability claim is honest only if probed live on this box, not inferred from the HF card",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "each capability is claimed only from its own live probe with a negative control where one exists (vision: wrong-colour; video: reversed-motion; audio: silent-drop detection; reasoning: thought-trace present in reasoning_content) \u2014 the model card is the guide for what to ATTEMPT, never the evidence",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "audience",
+      "text": "the operator of this Orin box and every Colleague-facing caller that addresses model=senses/multimodal through a lobes gateway; downstream bystanders: the thor/spark deployments, which must stay byte-identical",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "no caller-visible contract changes: model=senses/multimodal aliases, capabilities fields, and endpoint paths all answer exactly as before the swap",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "before_state",
+      "text": "today this box serves senses = coolthor via a hand-maintained OPERATOR profile: detection resolves UNKNOWN -> base (which vetoes senses), thor-lobe's Thor-measured overrides clobber the Orin-measured util so .env is hand-edited (0.45), the csv-mode runtime:nvidia edits revert on every re-init, and the checkpoint's video/audio/reasoning story has never been probed here",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "the before-state is cited from docs/orin-profiles.md and the live .env read on 2026-08-04 \u2014 if implementation finds reality diverged, the frame is amended, not steamrolled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "after_state",
+      "text": "this box detects as orin, renders the orin-lobe shape over the builtin orin profile, and serves senses = unsloth/gemma-4-12B-it-qat-w4a16 at a live-measured budget (context per the model card, re-measured); image/video/audio/reasoning are each probed and honestly reported; thor/spark render byte-identical to before",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "every element is command-checkable: detection via lobes doctor/whoami on this box, the rendered .env against the orin-lobe golden, probes via assess, thor/spark via unchanged goldens",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "why_it_matters",
+      "text": "portability is the point: moving this setup to another architecture becomes a profile pick instead of a rework of hand edits, and the fleet's first Ampere box gets reproducible, evidence-backed senses capabilities instead of a deployment only this box's .env remembers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the portability claim is demonstrated, not asserted: the zero-hand-edit reproduce command in the success signal is its test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "success_signal",
+      "text": "lobes init --profile orin --shape orin-lobe --apply reproduces the deployment on this box with ZERO hand edits; senses answers the assess probes (known-answer + vision) on the new checkpoint through the gateway alias; an acceptance transcript lands under docs/evidence/; the full pytest suite including regenerated goldens is green; thor/spark goldens unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "every listed signal is command-checkable and recorded in the evidence transcript; a failed signal is reported as failed, never silently dropped from the list",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "config.json VERIFIED (fetched unauthenticated 2026-08-04, not a gated repo): text_config.max_position_embeddings=262144 \u2014 the 256K claim is the checkpoint's own declaration, double the incumbent's 131072; video_token_id=258884 and audio_config both present (video is DECLARED natively \u2014 the repo's text+image+audio Gemma capability line predates this export); architecture Gemma4UnifiedForConditionalGeneration (the existing Dockerfile.vllm-gemma4 image serves this class); quantization = compressed-tensors INT4 pack-quantized symmetric, NOT FP4",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "wired knobs are read from the DOWNLOADED checkpoint's config.json at implementation time, not from this network fetch or the card prose",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "playbook ordering (docs/model-switch-playbook.md par.1): benchmark the INCUMBENT coolthor on THIS box on the current engine BEFORE the swap \u2014 TTFT, decode tok/s from usage.completion_tokens (NEVER SSE chunk counts: the chunk-count trap under-reported 2x on 2026-07-31), MTP acceptance from the SpecDecoding engine logs, KV pool from the boot log \u2014 across short/medium/long request shapes; that baseline is unrecoverable after the swap",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "the pre-swap transcript records the incumbent's metric table (TTFT / completion_tokens decode / MTP acceptance / KV pool) on the current engine \u2014 any post-swap comparison cites it, and a comparison against numbers from a different engine build is called out as uncontrolled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "activation must PERSIST the Tegra iowait fix: the deployed .env still reads LOBES_IOWAIT_DEGRADED_THRESHOLD=50 (verified live 2026-08-04) while the running gateway survives only on an ephemeral shell-env override of 100 \u2014 this box's sugov kthreads inflate iowait to ~59% with zero disk I/O, so ANY compose recreate at threshold 50 resurrects indefinite 429-shedding of senses and would falsely fail the live-test; the orin variation must render or document the raised threshold (verify the exact env override name against lobes/gateway/_pressure_policy.py at implementation)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "proven by a compose recreate at the persisted threshold: senses answers through the gateway (no 429 shed) while /proc/stat still reports the inflated Tegra iowait",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "rollback is a snapshot, and it must exist BEFORE the swap: back up ~/.lobes (.env + both compose files) prior to re-render; restore = copy back + compose up (the coolthor weights stay in the HF cache \u2014 7.7 GiB, disk has 1.6T free, verified). Re-init preserves .env per-key (_apply_profile_env merges into the existing file \u2014 operator lines like PRIMARY_PEER_API_KEY/AUDIO_URL survive) but pre-existing compose files need --force, which reverts hand edits",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "the snapshot's existence is verified BEFORE the swap step runs; restore is byte-for-byte (diff the restored files against the snapshot)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "boundary",
+      "text": "the acceptance evidence transcript redacts key material \u2014 GATEWAY_API_KEY/peer-key values appear as <...key> placeholders, following the recorded precedent in docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "reviewable in the PR: the committed transcript contains placeholders, never a literal key \u2014 same convention as the 2026-07-16 evidence file",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "the activated orin deployment also proxies the two heavy roles it does not host (user statement 2026-08-04): worker -> the Jetson AGX Thor (NEW wiring on this box: WORKER_PEER_ORIGIN pointing at thor's gateway :8000 + WORKER_PEER_PROXY=true + WORKER_PEER_API_KEY = thor's inbound GATEWAY_API_KEY, operator-provided per the O(machines) key model; functional since the 0.54.8 server.py fix) and cortex -> the DGX Spark (the existing PRIMARY_PEER_* wiring, preserved) \u2014 so a caller on this box's gateway reaches senses locally, cortex from the Spark, and worker from the Thor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "post-activation, model=worker and model=cortex requests through this box's gateway both answer 200 with X-Lobes-Proxied-By naming the thor/spark origin respectively \u2014 a 404 role_infeasible on worker means the wiring is absent, not proxied",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Catalog entry + per-model doc for unsloth/gemma-4-12B-it-qat-w4a16",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "SupportedModel entry mirrors the coolthor gear (role_hint=multimodal, tool_parser=gemma4, quantization=compressed-tensors, doc=) with knobs cited from the downloaded config.json (262144 ctx, int4 pack-quantized, video+audio token ids); docs/gemma-4-12b-qat-w4a16.md exists with capability table marked pending-live-probe; uv run pytest tests/test_catalog.py tests/test_catalog_tiers.py green"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c24",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Orin card detection strategy (lobes/machines/orin.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "detect() resolves this box's facts (nvidia-smi name containing Orin / compute_cap 8.7 / device-tree Jetson AGX Orin) to orin; UNKNOWN cards still fall to base (existing detection tests untouched and green); one module + one register line per the _registry convention"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "BOX: benchmark the incumbent coolthor on the current engine (BEFORE any swap)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "metric table recorded on this box against the running deployment: TTFT, decode tok/s from usage.completion_tokens (never chunk counts), MTP acceptance from SpecDecoding logs, KV pool from boot log \u2014 short/medium/long request shapes; saved as the baseline section of the evidence transcript draft"
+      ],
+      "deps": [],
+      "covers": [
+        "c25",
+        "h22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "BOX: snapshot ~/.lobes before any mutation",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a dated copy of .env + docker-compose.yml + docker-compose.shape.yml + docker-compose.audio.yml exists outside ~/.lobes and its existence is verified (diff empty against live) before t9 runs; restore procedure written into the runbook section"
+      ],
+      "deps": [],
+      "covers": [
+        "c27",
+        "h24"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Parameterize the senses lane --speculative-config (MTP off-switch)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "MULTIMODAL_SPECULATIVE_CONFIG env var with the current google-assistant literal as default; unset renders byte-identical (template-defaults golden unchanged); an explicit off sentinel omits the flag entirely (new test); test_catalog.py byte-guard updated; the off value is the recorded drop-MTP-if-unsupported path"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Builtin orin.toml profile (hypothesis knobs, measured-pending)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "senses model=unsloth/gemma-4-12B-it-qat-w4a16, TRITON_ATTN, compressed-tensors, gpu_mem_util=0.45 hypothesis, max_model_len=262144 target \u2014 comments mark both MEASURED-PENDING until the live boot backfills; cortex/muse/worker feasible=false with the W4A4-needs-Blackwell rationale; test_profile_schema gains orin asserts; spark/thor asserts byte-untouched"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Builtin orin-lobe shape + iowait persistence + goldens regen",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "orin-lobe.toml hosts senses+embedder+reranker only (no stt/tts); overrides.senses carries the orin profile values so nothing clobbers; the Tegra iowait threshold renders persistently (exact knob name verified against lobes/gateway/_pressure_policy.py); goldens regenerated via regen.py; diff shows ONLY additions \u2014 zero byte changes to existing base/spark/thor goldens"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c7",
+        "h6",
+        "c5",
+        "h4",
+        "c26",
+        "h23"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "csv-mode GPU access knob (runtime:nvidia survives re-render)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a template knob or machine-strategy overlay emits runtime:nvidia GPU stanzas for csv-mode boards (orin opts in); default render for non-csv cards byte-identical per goldens; docs/machine-profiles.md documents the knob"
+      ],
+      "deps": [
+        "t5",
+        "t7"
+      ],
+      "covers": [
+        "c10",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "BOX: re-render from the branch checkout + boot + measure the budget",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "uv run lobes init --profile orin --shape orin-lobe --apply renders from the branch (detection resolves orin unforced); boot records BOTH accepted and refused gpu_mem_util values and the KV pool at the measured max_model_len (262144 target); the MTP draft is attempted and dropped via the off sentinel if vLLM refuses it, with the refusal captured; the int4-pack-quantized path booting on sm_87 is the c3 proof; before-state divergences found live amend the frame, not get steamrolled"
+      ],
+      "deps": [
+        "t1",
+        "t3",
+        "t4",
+        "t5",
+        "t6",
+        "t7",
+        "t8"
+      ],
+      "covers": [
+        "c3",
+        "h12",
+        "c9",
+        "c20",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "BOX: proxy wiring \u2014 worker to Thor (new) + cortex to Spark (preserved)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "WORKER_PEER_ORIGIN (thor gateway :8000) + WORKER_PEER_PROXY=true + WORKER_PEER_API_KEY (thor's inbound key, operator-provided) set in .env; model=worker AND model=cortex through this gateway answer 200 with X-Lobes-Proxied-By naming thor/spark respectively; the pre-existing PRIMARY_PEER_* lines survived the re-render byte-identical"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c29",
+        "h26",
+        "c13",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "BOX: capability probe matrix + pressure check on the live checkpoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "image: colour probe WITH opposite-colour negative control; video: same clip forwards vs reversed, directional answer required; audio: silent-drop-detecting probe (token-count delta + content assertion); reasoning: thinking request with sorted(message.keys()) dumped and completion_tokens reconciled against visible fields before any verdict (h20 discipline); tool-call smoke via the gemma4 parser; senses answers with NO 429 shed at the persisted iowait threshold while /proc/stat still shows inflated iowait; every verdict recorded pass OR fail"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c15",
+        "h10",
+        "c12",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Evidence transcript + docs + measured-value backfill",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt committed with the incumbent baseline, boot measurements (accepted AND refused), per-capability verdicts incl. failures, proxy validations \u2014 keys redacted per the 2026-07-16 placeholder convention; orin.toml + orin-lobe.toml backfilled with MEASURED values and goldens re-regenerated; docs/orin-profiles.md updated to the new checkpoint; the per-model doc's capability table carries live verdicts, not card claims"
+      ],
+      "deps": [
+        "t9",
+        "t10",
+        "t11"
+      ],
+      "covers": [
+        "c9",
+        "h7",
+        "c23",
+        "h19",
+        "c28",
+        "h25",
+        "c22",
+        "h18",
+        "c21",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "PR: version bump, full suite, untouched-proof, consumer coordination + follow-up issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped per the every-PR rule; uv run pytest -n auto green; git diff proves zero byte changes to spark.toml/thor.toml/their goldens (orin-small untouched too); a follow-up issue files the role-name consumer migration (q3 decision) and the swap window is coordinated with the raw-id consumers; the announcement holds end-to-end: lobes status shows senses serving the unsloth id via the orin variation with the evidence committed"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c11",
+        "h13",
+        "c19",
+        "h15"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "KV arithmetic at the doubled window: the incumbent's 18.86 GiB pool held ~6x concurrency at 131072 but only ~3x at 262144 per request \u2014 util 0.45 at the full 262144 may be refused outright or the measured outcome may be a trimmed context; the plan treats whatever boots as the answer",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "the swap window is mesh-visible downtime: the Spark forwards model=senses to this box, so its callers 404/timeout during the reboot; sequence the downtime and boot lobes sequentially per the Orin boot-ordering caveat",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "worker proxy needs the Thor's inbound GATEWAY_API_KEY, an operator-provided secret not derivable by the plan; t10 blocks until the user supplies it",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": true,
+      "resolution": "VOID (user, 2026-08-04): the Thor's gateway takes no inbound key \u2014 it is free to use on the mesh, so a worker->Thor proxy needs only WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true and no credential. t10's deferral now rests solely on the senses-first priority ruling (c30/d4), not on a missing secret"
+    },
+    {
+      "id": "r4",
+      "text": "video and audio verdicts may be NO (vLLM path gaps #101-style) \u2014 the capability goal is then partially unmet and reported honestly; the swap still ships",
+      "kind": "unknown_nonblocking",
+      "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "this box's DEPLOYED gateway is 0.45.0 \u2014 it does not know the 'worker' role at all (it advertises only cortex/embedder/reranker/senses/stt/tts) and predates the 0.54.8 server.py peer-proxy fix that made WORKER_PEER_PROXY functional. So worker->Thor is NOT 'two env lines' on the current deployment: it requires rebuilding the gateway from the branch (0.54.9). t9's re-render+rebuild delivers that as a side effect, but it also means the deployment jumps 0.45.0 -> 0.54.9 in one step, which is a far larger change surface than the senses checkpoint swap alone \u2014 the t4 snapshot is the mitigation",
+      "kind": "unknown_blocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "follow-up filed as #173: a caller-facing help surface (lobes help <role> + help stream/thinking/tools, and GET /help on the gateway) \u2014 the field traps this work measured (reasoning vs reasoning_content, delta.reasoning on streaming, opt-in enable_thinking, SSE chunk-count throughput trap, #101 audio) are discoverable today only via evidence transcripts",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "the orin card profile and orin-lobe shape carry MEASURED-PENDING budget hypotheses (0.45 / 262144) that this PR does NOT validate \u2014 a live boot must backfill them, and a refusal is the more useful datum. Lockstep test already forces both files to move together",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

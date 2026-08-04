@@ -1,0 +1,110 @@
+{
+  "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
+  "schema_version": 1,
+  "created": "2026-08-04T08:17:16Z",
+  "updated": "2026-08-04T10:30:22Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the frame's before-state cites docs/orin-profiles.md's KV pool of 18.86 GiB / 802,644 tokens / 6.12x at util 0.45 + 131072, but the LIVE running engine booted at exactly those knobs and has only 11.29 GiB / 480,431 tokens / 3.67x \u2014 a 1.67x overstatement in the documented before-state",
+      "task_ref": "t3",
+      "reason": "boot ORDER, not knobs, sets the measured KV pool on this unified-memory board: the documented figure came from a senses-FIRST boot (docs/orin-profiles.md's own reproduce steps prescribe that order), whereas the currently-running senses container booted 2026-07-17 07:33 AFTER embed (07-16 21:31) and rerank (07-16 21:33) had already taken their share. Host is at 52/61 GiB with NO swap. This directly moves t9's budget expectation: at 480,431 tokens a 262144-token window yields only ~1.83x concurrency, so the 262144 target may be refused or need a trim depending on boot order \u2014 plan risk r1 anticipated the possibility but not this cause",
+      "affects": [
+        "t9",
+        "c20"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "t1 set role_hint='candidate' on the new catalog entry instead of the planned role_hint='multimodal'",
+      "task_ref": "t1",
+      "reason": "tests/test_catalog.py::test_exactly_one_gemma_multimodal_gear pins role_hint='multimodal' to exactly ONE entry (coolthor) because resolve_tier('multimodal'/'senses'/'normal') would otherwise be ambiguous; the existing sakamakismile Gemma-4-12B coder entry already uses 'candidate' for this exact reason. Following that precedent preserves the pinned invariant AND the plan's thor/spark-byte-identical guarantee \u2014 per-box selection of this checkpoint happens via the orin profile (t6), not via the catalog's tier field. Verified: full suite 2725 passed, 15 skipped after merge",
+      "affects": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t2's orin detection exposed 20 pre-existing HOST-DEPENDENT test failures in tests/test_init.py and tests/test_cli_logs.py \u2014 the suite's result depends on which physical machine runs it",
+      "task_ref": "t2",
+      "reason": "those tests call main(['init', ...]) without mocking hardware detection, so they inherit the host's real card. Before t2 this box detected UNKNOWN -> base and they passed by accident; with orin detection correct they resolve 'orin' and 404 because orin.toml is t6's deliverable. CI passes only because CI is not an Orin. Scope EXTENDED by the main agent rather than routed around: the honest fix is hermetic tests (inject the detected card, per the _inject_spark_detection precedent already in test_init.py), not waiting for t6 to paper over it. TDD gate held \u2014 the branch is NOT merged until the suite is green on this box",
+      "affects": [
+        "t6",
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d4",
+      "what": "t10 (proxy wiring) is split: the cortex->Spark preservation check stays in the senses acceptance path; the NEW worker->Thor wiring is deferred out of this work item",
+      "task_ref": "t10",
+      "reason": "user priority ruling 2026-08-04: Gemma senses on this box is top priority; proxying from other devices is a later decision. Deferring worker->Thor also removes the plan's only external blocker (risk r3 \u2014 the Thor's inbound GATEWAY_API_KEY was an operator-provided secret the plan could not obtain), so the senses path no longer waits on a credential",
+      "affects": [
+        "c29",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t10 requires a gateway REBUILD (0.45.0 -> 0.54.9), not just env lines \u2014 the deployed gateway has no worker role and lacks the 0.54.8 peer-proxy fix",
+      "task_ref": "t10",
+      "reason": "VERIFIED LIVE 2026-08-04: GET /health on this box reports 0.45.0 and GET /capabilities advertises only ['cortex','embedder','reranker','senses','stt','tts'] \u2014 no 'worker', no 'muse'. The Thor side is fine (gateway 0.54.6, worker ready=True/feasible=True/loaded=True, model=unsloth/Qwen3.6-35B-A3B-NVFP4 at ctx 262144, answers keyless with NO Authorization header \u2014 confirming the user's c31). The gap is entirely on THIS box",
+      "affects": [
+        "t9",
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    },
+    {
+      "id": "d6",
+      "what": "the deployment carries an OPERATOR profile ~/.lobes/profiles/orin.toml that SHADOWS the new builtin orin.toml \u2014 operator profiles win over builtins by design (loader.py), so t9's re-render would have silently produced a NO-OP: senses staying on coolthor at 0.45/131072, gpu_access defaulting to 'devices' (no csv-mode override), and no [host_env] iowait fix",
+      "task_ref": "t9",
+      "reason": "caught in the t9 DRY RUN before any mutation: the plan output omitted the docker-compose.gpu.yml line that t8's mechanism promises, which was the tell. resolve_profile('orin', deploy_dir='~/.lobes') returns the OPERATOR file \u2014 model=coolthor, gpu_access='devices' \u2014 not the builtin. Resolution: rename the operator profile to a non-shadowing name (cite-don't-delete; it is also preserved in the t4 snapshot and documented in docs/orin-profiles.md) so the builtin resolves. This is exactly the failure the dry-run convention exists to catch",
+      "affects": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    },
+    {
+      "id": "d7",
+      "what": "t9/t11 (live boot + capability probes on the new checkpoint) and the measured-value backfill in t12 are BLOCKED \u2014 the destructive re-render 'lobes init --apply --force' was denied by the environment's permission classifier, so no agent-driven mutation of the live ~/.lobes deployment is possible in this session",
+      "task_ref": "t9",
+      "reason": "everything up to the mutation is complete and rehearsed: the render is proven correct against copies (builtin resolves unsloth/gemma-4-12B-it-qat-w4a16 at 0.45/262144, gpu_access=runtime, host_env iowait 100), the rollback snapshot is verified byte-identical, and the 12 operator-owned .env lines --force would destroy are captured verbatim. The PR ships the repo-side work with the orin variation honestly marked DECLARED/UNVALIDATED per #108; t9/t11/t12's measured backfill becomes a follow-up once an operator runs the render",
+      "affects": [
+        "t11",
+        "t12",
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d8",
+      "what": "t10's worker->Thor proxy cannot be activated on this box until 0.55.0 is PUBLISHED \u2014 the gateway image installs 'lobes-cli==${MODEL_GEAR_VERSION}' from PyPI, and 0.55.0 exists only on this unmerged branch, so 'docker compose build gateway' fails at pip install",
+      "task_ref": "t10",
+      "reason": "structural, not a defect in this work: the deployed gateway is built from the RELEASED wheel (Dockerfile.gateway line 28), so any gateway-side feature on a branch is undeployable until the PR merges and publish.yml ships it. The env wiring (WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true, no credential \u2014 the Thor is keyless) is IN PLACE in .env and will take effect on the first rebuild after release. The running 0.45.0 gateway was untouched by the failed build and still serves senses/embedder/reranker plus the cortex proxy. Resolution order: merge #176 -> PyPI publishes 0.55.0 -> rebuild gateway -> model=worker answers with X-Lobes-Proxied-By",
+      "affects": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}
