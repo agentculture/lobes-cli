@@ -377,17 +377,24 @@ def test_orin_builtin_serves_senses_on_the_qat_w4a16_checkpoint() -> None:
     assert senses.max_model_len == 262144
 
 
-def test_orin_builtin_marks_the_hypothesis_knobs_measured_pending() -> None:
-    # The two senses budget knobs are NOT measurements: 0.45 is inherited from
-    # the incumbent coolthor gear's boot at a DIFFERENT window, and 262144 is a
-    # target the live boot may refuse. A future reader copying either number
-    # without that caveat is exactly the failure this pins against.
+def test_orin_builtin_records_the_measured_budget_with_its_boot_order_caveat() -> None:
+    # The two senses budget knobs ARE measurements now (live boot on a physical
+    # Orin, 2026-08-04) — but they are senses-FIRST measurements, and a
+    # gears-first boot gets materially less KV because gpu_mem_util is a fraction
+    # of the whole device. A future reader copying either number without that
+    # caveat is exactly the failure this pins against.
     text = _orin_toml_text()
-    assert "MEASURED-PENDING" in text
+    assert "MEASURED-PENDING" not in text, "backfilled — the pre-boot marker must be gone"
+    assert "docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt" in text
     assert "#171" in text  # the deviation/issue that re-measured the KV pool
-    hypothesis_block = text.split("MEASURED-PENDING", 1)[1].split("[roles.embedder]", 1)[0]
-    assert "gpu_mem_util = 0.45" in hypothesis_block
-    assert "max_model_len = 262144" in hypothesis_block
+    measured_block = text.split("MEASURED", 1)[1].split("[roles.embedder]", 1)[0]
+    assert "gpu_mem_util = 0.45" in measured_block
+    assert "max_model_len = 262144" in measured_block
+    # the measured KV figures, so a silent edit of one number is caught
+    assert "609,266" in measured_block
+    assert "11.81 GiB" in measured_block
+    # and the caveat that makes them safe to reuse
+    assert "BOOT ORDER" in measured_block
 
 
 def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:

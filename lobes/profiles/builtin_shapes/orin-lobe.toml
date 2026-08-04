@@ -5,13 +5,17 @@
 # Structurally this is `thor-lobe` for a DIFFERENT card, with two deliberate
 # divergences — the audio pair and the senses budget, both below.
 #
-# DECLARED-BUT-UNVALIDATED (the #108 rule, mirrored exactly from orin-small.toml
-# and thor-muse.toml): NO physical box has booted THIS shape. No doc, support
-# table, or `lobes capabilities` output may claim it validated until an
-# acceptance transcript lands under docs/evidence/. Its senses budget below is
-# inherited from lobes/profiles/builtin/orin.toml's own MEASURED-PENDING
-# hypothesis, which is itself pending the live boot that backfills it — read
-# that file's provenance block before copying either number anywhere.
+# VALIDATED on a physical Jetson AGX Orin 64GB (sm_87), 2026-08-04 — acceptance
+# transcript: docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt. This shape
+# rendered and booted `senses` + `embedder` + `reranker` with no local audio, and
+# the senses budget below (inherited from lobes/profiles/builtin/orin.toml, which
+# a lockstep test pins) booted FIRST TRY at the full native window: KV 11.81 GiB
+# = 609,266 tokens = 2.32x at 262,144. Read that file's provenance block for the
+# boot-order caveat before copying either number anywhere — they are senses-FIRST
+# measurements and a gears-first boot gets materially less KV.
+#
+# NOT yet validated in this shape: the pressure/shed behaviour under real load,
+# and any co-resident audio path (there is none here, by design).
 #
 # --- why no stt/tts (the divergence from thor-lobe) --------------------------
 #

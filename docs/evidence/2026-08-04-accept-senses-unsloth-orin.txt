@@ -266,3 +266,130 @@ crossing a black field, plus the SAME clip reversed; 16 kHz mono WAVs.
   (playbook par.4), in streaming form. Tool calls likewise arrive as
   delta.tool_calls chunks, never as content.
 
+================================================================================
+t9 — LIVE RE-RENDER + BOOT + MEASURED BUDGET                      [COMPLETE]
+================================================================================
+Box: physical Jetson AGX Orin 64GB (Ampere sm_87), 2026-08-04.
+Render: `lobes init --fleet --profile orin --shape orin-lobe --apply --force`
+        (operator-approved; the t4 snapshot is the rollback point)
+
+--- BLOCKER 1, before the render: an operator profile shadowed the builtin ----
+  ~/.lobes/profiles/orin.toml (hand-written 2026-07-16) WINS over builtins by
+  name, so the render would have been a silent NO-OP — senses staying on
+  coolthor, gpu_access defaulting to 'devices', no [host_env] iowait fix.
+  Caught in the DRY RUN: the plan omitted the docker-compose.gpu.yml line the
+  t8 mechanism promises. Archived to ~/.lobes/profiles-archive/ (preserved, not
+  deleted) with a README. Deviation d6; filed as issue #175.
+  After archiving, resolve_profile('orin', deploy_dir=~/.lobes) returns:
+    model=unsloth/gemma-4-12B-it-qat-w4a16, 0.45/262144,
+    gpu_access=runtime, host_env={'LOBES_IOWAIT_DEGRADED_THRESHOLD': '100'}
+
+--- BLOCKER 2, during the render: --force destroys operator .env lines --------
+  Rehearsed against a COPY first: 69 keys in, 64 out — 12 lost, including
+  PRIMARY_PEER_ORIGIN / PRIMARY_PEER_PROXY / PRIMARY_PEER_API_KEY (the cortex
+  proxy would have silently started 404ing) and AUDIO_URL. Captured verbatim
+  before the apply and restored immediately after. Filed as issue #174.
+  VERIFIED after restore: all 4 critical keys present; cortex reports
+  proxied=True on /capabilities.
+
+--- BLOCKER 3, at boot: the checkpoint's config.json is incomplete ------------
+  CRASH LOOP, ~70 s period:
+    AttributeError: 'Gemma4UnifiedVisionConfig' object has no attribute
+    'num_soft_tokens'   (vllm/multimodal/encoder_budget.py:25)
+  Diffed vision_config against the sibling coolthor export: exactly ONE key
+  missing (num_soft_tokens = 280); all 19 others byte-identical. Patched the
+  field back into the downloaded config.json (blob backed up first as
+  .orig-unpatched). Filed as issue #177 — the patch lives in the HF cache and
+  will evaporate on a cache clear, so it needs an upstream or fleet-side fix.
+
+--- MEASURED, senses booted FIRST into an empty device (51 GiB free) ----------
+  gpu_mem_util = 0.45, max_model_len = 262144   -> BOOTED FIRST TRY, NO TRIM
+  (nothing was refused; contrast thor-muse, whose 0.40 was refused -> 0.55)
+
+    model weights loaded          9.07 GiB
+    Available KV cache memory    11.81 GiB
+    GPU KV cache size           609,266 tokens
+    max concurrency @ 262,144     2.32x    <- a KV-POOL CEILING, not throughput
+    init engine                   284.92 s (compilation 120.05 s)
+    csv-mode GPU access           WORKED at container CREATE — this is the live
+                                  proof t8 could not get from `compose config`
+
+  Where the non-KV memory goes: 0.45 x 61.3 = 27.59 GiB budget, minus 9.07 GiB
+  weights leaves ~18.5 GiB, but KV got 11.81. The ~6.7 GiB gap is peak
+  activation, which the boot log says is profiled "with 1 video items of the
+  maximum feature size" — the price of the ViT actually working (see the video
+  probe below, which the incumbent FAILS).
+
+--- HEAD-TO-HEAD vs the incumbent (same box, same engine, same day) -----------
+
+  memory / capacity            incumbent coolthor      new unsloth QAT
+    weights loaded             9.25 GiB                9.07 GiB
+    context window             131,072                 262,144        (2x)
+    KV per token               24.6 KiB                20.3 KiB       (-17%)
+    KV pool (senses-first)     18.86 GiB (documented)  11.81 GiB
+    KV tokens (senses-first)   802,644 (documented)    609,266
+    concurrency @ full ctx     6.12x @131,072          2.32x @262,144
+
+  throughput (decode from usage.completion_tokens, never SSE chunk counts)
+    TTFT warm                  0.50-0.65 s             0.38-0.47 s
+    decode, medium (~130 tok)  9.99 tok/s              10.81 tok/s    (+8%)
+    decode, long (512 tok)     6.39 tok/s              11.45 tok/s    (+79%)
+    MTP avg draft acceptance   69-83%                  61-77%
+
+  The incumbent's decode ANOMALY is gone: it fell from 9.99 -> 6.39 tok/s as
+  generation lengthened; the new checkpoint holds 10.81 -> 11.45. Whatever
+  caused that decay (thermal, or MTP decay on long outputs) does not reproduce.
+
+  HONEST READING: the new checkpoint is lighter, ~17% cheaper per KV token,
+  faster (dramatically so on long generations), and serves DOUBLE the context.
+  It does NOT win on raw concurrency headroom: 2.32x at 262,144 vs 6.12x at
+  131,072, because the video-capable activation profile costs ~6.7 GiB. It
+  fits the machine BETTER for capability, context and speed; WORSE for
+  simultaneous full-context streams.
+
+================================================================================
+t11 — CAPABILITY PROBE MATRIX on the new checkpoint               [COMPLETE]
+================================================================================
+Same harness and same media as the t3b incumbent baseline, so every row is a
+controlled comparison. Media: 64x64 red/blue PNG; 128x128 24-frame mpef clip of
+a white square crossing a black field, plus the SAME clip reversed; 16 kHz WAVs.
+
+  probe        incumbent coolthor          new unsloth QAT
+  image        PASS (control held)         PASS (control held)
+  video        FAIL (both -> RIGHT-TO-LEFT) **PASS** (lr -> LEFT-TO-RIGHT,
+                                              rl -> RIGHT-TO-LEFT)
+  audio        FAIL (encoded, unusable)    FAIL (encoded, unusable)
+  reasoning    PASS w/ enable_thinking     PASS w/ enable_thinking
+  tools        PASS ('Get_weather')        PASS ('get_weather', correct case)
+
+--- video: the headline gain ---------------------------------------------------
+  The forward clip answers LEFT-TO-RIGHT and the REVERSED clip answers
+  RIGHT-TO-LEFT. A single-frame read cannot pass this. The incumbent answered
+  RIGHT-TO-LEFT for BOTH — i.e. it was guessing, which only the reversed
+  control exposed. This is real temporal understanding, newly available.
+
+--- audio: unchanged, and #101's conclusion still holds -------------------------
+  Tokens scale with duration exactly as on the incumbent (+27 for 1 s, +252 for
+  10 s, ~25 tok/s), so the audio IS encoded — the "~19 placeholder tokens"
+  signature in #101/CLAUDE.md is wrong on this build for BOTH checkpoints.
+  But the discrimination control still fails, and slightly worse (0/3 vs 1/3):
+      200 Hz tone   -> 'NOISE'                              (wrong)
+      3000 Hz tone  -> 'NOISE'                              (wrong)
+      white noise   -> 'I cannot hear any sound. Please...' (denies hearing it)
+  VERDICT: audio remains effectively UNSERVED for senses. This is a vLLM path
+  gap (#101), not a checkpoint gap — the checkpoint declares audio_config and
+  an audio_token_id. `stt` stays the supported speech path.
+
+--- reasoning: opt-in, and clean when enabled ----------------------------------
+  Plain request        -> reasoning 0 chars   (a probe stopping here reports
+                                               "does not reason" — wrongly)
+  enable_thinking=true -> reasoning 664 chars, content 0, NO <|channel> leak
+  Trace lands in `reasoning`, NOT `reasoning_content` (playbook par.4).
+
+--- against the four capabilities asked for -------------------------------------
+  image      DELIVERED (was already working)
+  video      DELIVERED — newly working, and the reason to take this checkpoint
+  reasoning  DELIVERED (opt-in per request)
+  audio      NOT DELIVERED — blocked by vLLM, not by the checkpoint (#101)
+
+================================================================================

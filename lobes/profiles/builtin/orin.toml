@@ -112,42 +112,47 @@ feasible = true
 # not a Profile knob — RoleProfile has exactly nine fields and none of them is
 # speculative_config.
 model = "unsloth/gemma-4-12B-it-qat-w4a16"
-# !!! BOTH VALUES BELOW ARE MEASURED-PENDING HYPOTHESES, NOT MEASUREMENTS !!!
+# *** BOTH VALUES BELOW ARE MEASURED — live boot on a physical Jetson AGX Orin
+# *** 64GB (sm_87), 2026-08-04. Transcript:
+# *** docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt
 #
-# They are the STARTING POINT for the live boot that backfills them; nothing
-# here has booted this checkpoint on this board. Read this before copying either
-# number anywhere.
+# The 0.45 / 262144 hypothesis BOOTED FIRST TRY at the full native window — no
+# trim, nothing refused (unlike thor-muse's 0.40, which was refused and became
+# 0.55). Measured, senses booted FIRST into an empty device:
 #
-# 1. gpu_mem_util = 0.45 is INHERITED from the INCUMBENT coolthor gear's boot at
-#    max_model_len=131072 (docs/orin-profiles.md) — it is not a measurement of
-#    this checkpoint, and not a measurement at this window.
-# 2. The KV figure docs/orin-profiles.md reports for that incumbent is WRONG for
-#    a co-resident boot. Re-measured live on this box 2026-08-04 (approved
-#    deviation d1, issue #171): the running incumbent at 0.45 / 131072 holds
-#    11.29 GiB KV = 480,431 tokens = 3.67x concurrency — NOT the doc's
-#    18.86 GiB / 802,644 tokens / 6.12x.
-#    MECHANISM: gpu_memory_utilization is a fraction of the ENTIRE device, so
-#    every byte a co-resident engine already holds is deducted one-for-one from
-#    KV (KV is the only elastic term). The doc's figure came from a senses-FIRST
-#    boot into an empty device; the live one booted AFTER the two pooling gears
-#    had taken ~7 GiB. The accepted util therefore depends on BOOT ORDER — the
-#    boot-ordering caveat in docs/machine-profiles.md is not just about races.
-# 3. Consequence for max_model_len = 262144 (the checkpoint's full native 256K):
-#    at 480,431 tokens a 262,144-token window is only ~1.83x concurrency, and
-#    the full window may be REFUSED outright depending on boot order. A trimmed
-#    context is a legitimate outcome of the live boot.
-# 4. Also measured 2026-08-04: CUDA-graph capture took 1.20 GiB against an
-#    0.83 GiB estimate (a 31% under-count, because
-#    VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0); vLLM's own log suggests
-#    compensating by raising util 0.4500 -> 0.4635.
+#   model weights loaded          9.07 GiB   (incumbent coolthor: 9.25 GiB)
+#   Available KV cache memory    11.81 GiB
+#   GPU KV cache size           609,266 tokens
+#   max concurrency @ 262,144     2.32x      (a KV-pool CEILING, not throughput)
+#   init engine                   284.92 s   (compilation 120.05 s)
 #
-# Whatever boots is the answer, and a REFUSAL is the more useful datum, not a
-# failure: thor-muse's hypothesised 0.40 was refused and 0.55 measured;
-# thor-worker's 0.45 booted first try. Both outcomes get recorded, then these
-# two lines get backfilled with the measured values and this block rewritten to
-# say so. (Note the repo-wide caveat on any "Nx concurrency" figure above: those
-# are KV-POOL CEILINGS — how many full-context requests the cache could hold —
-# never measured throughput.)
+# BOOT ORDER STILL MATTERS — do not copy these numbers to a gears-first boot.
+# gpu_memory_utilization is a fraction of the ENTIRE device, so every byte a
+# co-resident engine already holds is deducted one-for-one from KV (KV is the
+# only elastic term). Measured on this same box the same day (approved deviation
+# d1, issue #171): the incumbent booted AFTER the pooling gears held 11.29 GiB /
+# 480,431 tokens, against the 18.86 GiB / 802,644 that docs/orin-profiles.md
+# records for a senses-FIRST boot of the same checkpoint at the same knobs.
+# Boot senses first.
+#
+# WHERE THE NON-KV MEMORY GOES, and why it is worth it: 0.45 x 61.3 GiB = 27.59
+# GiB of budget, minus 9.07 GiB of weights, leaves ~18.5 GiB — yet KV got 11.81.
+# The ~6.7 GiB difference is peak activation, which vLLM profiles here with
+# "1 video items of the maximum feature size" (boot log). That is the price of
+# the ViT actually working: this checkpoint PASSES the reversed-motion video
+# control that the incumbent FAILS. KV per token is also 17% cheaper than the
+# incumbent's (20.3 KiB vs 24.6 KiB), so the smaller pool still holds 609,266
+# tokens at DOUBLE the context window.
+#
+# One knob left on the table: CUDA-graph capture is under-accounted because
+# VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0, and vLLM's own log suggests
+# compensating by raising util 0.4500 -> 0.4551. Untested here.
+#
+# NOTE: this checkpoint's config.json ships WITHOUT vision_config.num_soft_tokens,
+# which crash-loops the served vLLM build (AttributeError in
+# multimodal/encoder_budget.py). The boot above required patching that one field
+# back in (280, the value its sibling coolthor export declares; every other
+# vision_config key is byte-identical). See the evidence transcript and #177.
 gpu_mem_util = 0.45
 max_model_len = 262144
 # compressed-tensors, matching the checkpoint's own quant_method. vLLM reads the
