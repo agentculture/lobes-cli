@@ -112,6 +112,17 @@ time; on this box the rendered `.env` needed `MULTIMODAL_GPU_MEM_UTIL=0.45`
 (the Orin-measured value above). `orin-small` itself remains unbooted and
 therefore still DECLARED/UNVALIDATED.
 
+> **Superseded by `orin-lobe`.** That hand-patch is exactly what the built-in
+> `orin-lobe` shape now removes: it hosts `senses + embedder + reranker`,
+> drops `cortex`, drops `stt`/`tts` (this board has no sm_87 Parakeet image —
+> see the divergences below), and carries the Orin card's own budget in its
+> `[overrides.senses]`, so `lobes init --profile orin --shape orin-lobe`
+> renders `MULTIMODAL_GPU_MEM_UTIL=0.45` / `MAX_MODEL_LEN=262144` with nothing
+> to patch afterwards. It is itself **DECLARED, UNVALIDATED** — no box has
+> booted it — and it renders against the built-in `orin` card profile, whose
+> two senses values are a MEASURED-PENDING hypothesis pending a live boot. The
+> same render also persists this board's Tegra iowait threshold (below).
+
 ## Jetson/sm_87 divergences found live (upstreaming candidates)
 
 1. **csv-mode GPU access.** This Orin's NVIDIA container toolkit (1.19.1,
@@ -139,6 +150,21 @@ therefore still DECLARED/UNVALIDATED.
    gears the box sat at **54/61 GiB used with zero swap configured** — the
    util sum (0.57 ≈ 35 GiB) undercounts by ~19 GiB. Leave real headroom, or
    audio sidecars/host workloads will OOM-race the fleet.
+4. **Phantom iowait sheds the whole box.** `/proc/stat` here reports ~59%
+   iowait — 5 of 8 cores at ~97% — with **zero disk I/O** (`vmstat` bi/bo ≈ 0),
+   GPU 0%, cores at minimum clock: the Tegra `sugov:0`/`sugov:4`
+   cpufreq-governor kthreads flicker through D state and inflate `nr_iowait`.
+   The gateway's pressure policy reads that literally and, at the shipped
+   `LOBES_IOWAIT_DEGRADED_THRESHOLD=50`, enters busy mode and **429-sheds every
+   full-tier request indefinitely** — on this card, all of `senses`. The
+   deployed box survived on an *ephemeral* shell-env override of `100` that any
+   `docker compose up` reverts. This is now **declared on the built-in card
+   profile** (`lobes/profiles/builtin/orin.toml`'s `[host_env]`), so every
+   render writes `LOBES_IOWAIT_DEGRADED_THRESHOLD=100` into `.env` and
+   `lobes doctor` names the key on a deployment still carrying `50`. The swap
+   guard stays at its shipped `75` — swap is measured honestly here. A
+   repo-level fix (PSI-based or disk-I/O-corroborated sampling that does not
+   trust `nr_iowait` on Tegra) would retire the declaration.
 
 ## Mesh wiring (#127) from this box
 

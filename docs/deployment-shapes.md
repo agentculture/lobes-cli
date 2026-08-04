@@ -38,10 +38,11 @@ Four families exist:
   byte-identical to the pre-shape behaviour, muse or no muse: a non-hosted
   opt-in core role renders nothing at all (see "Opt-in core roles" below).
   A single-box operator makes no new decisions.
-- **mesh-brain shapes** (`spark-lobe`, `thor-lobe`) — a box drops one heavy
-  generate lobe to a peer box in the mesh and reclaims that lobe's freed
-  GPU-memory budget for the lobe(s) it keeps. Opt-in, per box, via `lobes
-  init --shape <name>`.
+- **mesh-brain shapes** (`spark-lobe`, `thor-lobe`, `orin-lobe`) — a box drops
+  one heavy generate lobe to a peer box in the mesh and reclaims that lobe's
+  freed GPU-memory budget for the lobe(s) it keeps. Opt-in, per box, via `lobes
+  init --shape <name>`. `orin-lobe` is the sm_87 member of this family and the
+  one shape that hosts **no audio pair** — see its row in the support table.
 - **small-model reference shape** (`orin-small`) — a box with NEITHER heavy
   generate lobe at all, hosting the opt-in `minor` gear (`vllm-minor`)
   instead, plus the two pooling gears and the audio overlay. Declared as
@@ -71,17 +72,17 @@ Four families exist:
 | **machine-as-brain** (default) | `cortex`, `senses`, `embedder`, `reranker`, `stt`, `tts` — every role the card can serve | goldens | Zero overrides; composing it onto any card profile is a byte-identical no-op (pinned by `tests/goldens/shapes/` and `tests/test_shape_goldens.py`). This is the shape a bare `lobes init` has always rendered. |
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
+| **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or `STT_PEER_ORIGIN`/`TTS_PEER_ORIGIN`), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
 | **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED, DORMANT** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) never passed and no transcript landed under `docs/evidence/` (#108). **Now additionally DORMANT** (thor-worker-lobe plan, operator decision): the physical Thor that measured this shape's budget moved to hosting `thor-worker` instead, and no box in the mesh currently renders `thor-muse`. The file, its TOML, and its goldens stay in-tree (cite-don't-delete) — do not read this row as a "muse is served" claim, now more than ever. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
 | **thor-worker** (**forthcoming**) | `worker`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `worker` lobe instead | **not yet committed** | Mirrors `thor-muse`'s structure (thor-worker-lobe plan task t7): hosts the eighth Colleague role — `unsloth/Qwen3.6-35B-A3B-NVFP4`, the fast ground-work DOER — with the FULL worker declaration in its own `[overrides.worker]` (see "Opt-in core roles" below). The shape-machinery plumbing that would host it (`OPT_IN_CORE_ROLES`, `base.toml`'s veto, `shape_render.py`'s activation-env mapping) is already shipped; the shape TOML itself, its compose service, and its `gpu_mem_util`/`max_model_len` budget are committed only after a live boot on the physical Jetson AGX Thor measures them — no number is declared here. See [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md). |
 
 All shipped shapes are pure data over the `#108` `Profile` schema
 — no per-shape Python branch exists anywhere in `lobes/profiles/shapes.py` or
-`shape_render.py`; the five built-in TOML files
-(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-small,thor-muse}.toml`)
+`shape_render.py`; the built-in TOML files
+(`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-lobe,orin-small,thor-muse,thor-worker}.toml`)
 differ from each other only in their `hosts` role subset and their
-`overrides` budget re-derivation (a sixth, `thor-worker`, is forthcoming —
-see the support table above). `orin-small` adds one
+`overrides` budget re-derivation. `orin-small` adds one
 new hostable role beyond the eight first-class Colleague roles: the opt-in
 `minor` gear (`lobes/profiles/shapes.py`'s `OPT_IN_ROLES`), which carries no
 Profile knobs of its own — re-using the `cortex` role slot for a 4B model
@@ -158,16 +159,13 @@ machine-as-brain. Concretely:
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-small|thor-muse> [TARGET]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-small|thor-muse|thor-worker> [TARGET]
 ```
 
-(`thor-worker` joins this list once its shape TOML lands — task t7; there is
-no sixth choice yet.)
-
-`orin-small` and `thor-muse` resolve and render exactly like the other three
+`orin-lobe`, `orin-small` and `thor-muse` resolve and render exactly like the others
 (they are pure data, proven by the same goldens/tests) — but as of this
-writing both are **declared, not validated**: nothing here or in `lobes
-capabilities` claims a physical Orin has run `orin-small`; a physical Thor's
+writing all three are **declared, not validated**: nothing here or in `lobes
+capabilities` claims a physical Orin has run `orin-small` or `orin-lobe`; a physical Thor's
 2026-07-17 live boot measured `thor-muse`'s budget (util 0.55 at the full
 262144 window), but nothing claims it *validated* until the acceptance
 transcript lands under `docs/evidence/` (#108) — and, separately from
@@ -449,12 +447,13 @@ other dependency from real PyPI, avoids that entirely.
 ## The acceptance script
 
 ```bash
-scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|thor-muse|orin-small> [--audio] \
+scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|orin-small> [--audio] \
   [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
   [--dev-index URL] [--timeout SECS]
 scripts/accept-shape.sh --restore [--deploy-dir DIR]
-# `thor-worker` joins this shape list once its TOML lands (task t7) — this is
-# the same script that will produce its own acceptance transcript.
+# `thor-worker` joins this shape list once someone runs it — this is the same
+# script that produces every acceptance transcript. Never pass `--audio` with
+# `orin-lobe`: that shape hosts no stt/tts (no sm_87 Parakeet image).
 ```
 
 One unattended, fail-not-skip command: back up the current deployment,

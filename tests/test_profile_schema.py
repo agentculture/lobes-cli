@@ -66,6 +66,61 @@ def test_profile_round_trips_through_dict() -> None:
     assert again.to_dict() == p.to_dict()
 
 
+# --- host_env: the card-level (non-role) .env table -------------------------
+
+
+def test_profile_round_trips_with_a_host_env_table() -> None:
+    p = Profile(
+        name="custom",
+        roles={"cortex": RoleProfile(model="x")},
+        host_env={"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"},
+    )
+    again = Profile.from_dict("custom", p.to_dict())
+    assert again == p
+    assert again.host_env["LOBES_IOWAIT_DEGRADED_THRESHOLD"] == "100"
+
+
+def test_profile_without_host_env_defaults_to_empty_and_is_read_only() -> None:
+    p = Profile.from_dict("custom", {"roles": {}})
+    assert dict(p.host_env) == {}
+    with pytest.raises(TypeError):
+        p.host_env["X"] = "1"  # type: ignore[index]
+
+
+def test_profile_from_dict_rejects_non_mapping_host_env() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": ["LOBES_X=1"]})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "host_env" in exc.value.message
+
+
+def test_profile_from_dict_rejects_a_non_env_var_name_key() -> None:
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": {"not a var": "1"}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not a var" in exc.value.message
+
+
+def test_profile_from_dict_rejects_a_non_string_host_env_value() -> None:
+    # Values are written to .env verbatim, so the author must spell the exact
+    # bytes -- an int/float would introduce a formatting question (100 vs
+    # 100.0) between the TOML and the rendered file.
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": 100}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "LOBES_IOWAIT_DEGRADED_THRESHOLD" in exc.value.message
+    assert "str" in exc.value.message
+
+
+def test_profile_from_dict_still_rejects_an_unknown_top_level_key() -> None:
+    # host_env widened the known top-level set by exactly one key -- an
+    # arbitrary top-level table is still a load error.
+    with pytest.raises(ModelGearError) as exc:
+        Profile.from_dict("bogus", {"env": {"LOBES_X": "1"}})
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "env" in exc.value.message
+
+
 def test_profile_from_dict_rejects_unknown_role() -> None:
     with pytest.raises(ModelGearError) as exc:
         Profile.from_dict("bogus", {"roles": {"not_a_role": {"model": "x"}}})

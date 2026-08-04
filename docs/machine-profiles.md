@@ -340,6 +340,40 @@ latency (higher tail latency per request).
 - `thor` senses/embedder/reranker: omitted (same as spark).
 - `base` cortex/senses/embedder/reranker: omitted.
 
+### `[host_env]` — card-level keys that belong to no role
+
+Everything above is a per-role knob. A profile may also carry one optional
+top-level table, `[host_env]`: `.env` keys the compose template reads
+**box-wide**, for cards whose HOST behaviour makes a shipped default wrong.
+Values must be quoted strings — they are written into `.env` verbatim, so the
+author spells the exact bytes — and a key that collides with a role knob loses
+to the role table (`host_env` is rendered first, precisely so it can never
+shadow a measured budget).
+
+Exactly one built-in uses it today:
+
+```toml
+# lobes/profiles/builtin/orin.toml
+[host_env]
+LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+```
+
+**Why:** `/proc/stat` on the Jetson AGX Orin reports ~59% iowait with zero disk
+I/O — the Tegra `sugov:*` cpufreq-governor kthreads flicker through D state and
+inflate `nr_iowait`. The gateway's pressure policy reads that literally, so at
+the shipped default of `50` the box enters busy mode and **429-sheds every
+full-tier request indefinitely** — on that card, its only generate lobe, while
+idle. `100` is "effectively disabled" (iowait% can never exceed it), the same
+remedy `env.example` already documents for the DGX Spark GB10's phantom
+`/proc/pressure/io` reading. `LOBES_SWAP_DEGRADED_THRESHOLD` is deliberately
+left at `75`: swap is measured honestly there and stays the real guard.
+
+It is declared on the **card**, not on a deployment shape, because it is a fact
+about the board — so every shape rendered over `orin` inherits it, including
+the default `machine-as-brain` that a bare `lobes init` renders. No other card
+declares a `[host_env]`, so no other card's rendering moves by a single byte
+(pinned by `tests/goldens/` and `tests/test_orin_lobe_shape.py`).
+
 ## Writing your own profile
 
 Operator-defined profiles go in `<deployment-dir>/profiles/<name>.toml` (the
