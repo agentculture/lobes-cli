@@ -248,3 +248,21 @@ crossing a black field, plus the SAME clip reversed; 16 kHz mono WAVs.
   a known quirk of this lane, harmless to the parser.
 
 ================================================================================
+--- streaming (SSE) across every senses mode, incumbent baseline ---------------
+  All four exercised through the GATEWAY (not the engine directly), with
+  stream_options.include_usage so usage arrives in the final chunk — which is
+  what makes the decode tok/s figures above measurable at all.
+
+  mode          TTFT     content deltas   other deltas          usage
+  text          0.50 s   4                -                     yes
+  image+text    1.49 s   1                -                     yes
+  thinking      -        0                reasoning: 522 chars  yes
+  tools         -        0                tool_calls: 4 chunks  yes
+
+  TRAP for consumers: with thinking ON, the trace streams on `delta.reasoning`
+  and `delta.content` stays EMPTY for the whole trace. A client that reads only
+  delta.content sees an empty stream and will look like a hung/broken lane.
+  Same hazard as the non-streaming `reasoning` vs `reasoning_content` field trap
+  (playbook par.4), in streaming form. Tool calls likewise arrive as
+  delta.tool_calls chunks, never as content.
+
