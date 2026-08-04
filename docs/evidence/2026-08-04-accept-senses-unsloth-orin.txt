@@ -393,3 +393,41 @@ a white square crossing a black field, plus the SAME clip reversed; 16 kHz WAVs.
   audio      NOT DELIVERED — blocked by vLLM, not by the checkpoint (#101)
 
 ================================================================================
+================================================================================
+t10 — PROXY WIRING                                    [PARTIAL — see below]
+================================================================================
+cortex -> Spark  (preserved)          VERIFIED
+  The 3 PRIMARY_PEER_* lines that `init --force` destroyed were captured before
+  the render and restored after it. GET /capabilities now reports
+  cortex: ready=True, feasible=False, proxied=True — the pre-existing referral
+  survived the 0.45.0-era .env being rewritten. (feasible=false is BY DESIGN:
+  it means "this box does not HOST it"; proxied+ready is what says it is usable.)
+
+worker -> Thor  (new)                 WIRED, NOT YET ACTIVE
+  Peer side verified live and keyless: thor.tail0be7e0.ts.net:8000 answers
+  a chat request with NO Authorization header, worker ready=True/feasible=True/
+  loaded=True, model=unsloth/Qwen3.6-35B-A3B-NVFP4 at ctx 262144. So no
+  WORKER_PEER_API_KEY is needed and none was set.
+  .env now carries WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true.
+
+  BLOCKED on a RELEASE, not a defect (deviation d8): this box's gateway image is
+  built from the PUBLISHED wheel —
+      Dockerfile.gateway:28   pip install "lobes-cli==${MODEL_GEAR_VERSION}"
+  MODEL_GEAR_VERSION is now 0.55.0, which exists only on this unmerged branch,
+  so `docker compose build gateway` fails at pip install. The deployed gateway
+  therefore stays 0.45.0, which predates the `worker` role entirely (it
+  advertises only cortex/embedder/reranker/senses/stt/tts) and predates the
+  0.54.8 server.py peer-proxy fix.
+
+  The failed build did NOT disturb the running fleet: all four containers
+  remained healthy throughout and the gateway kept serving.
+
+  RESOLUTION ORDER: merge #176 -> publish.yml ships 0.55.0 to PyPI -> rebuild
+  the gateway -> `model=worker` answers with X-Lobes-Proxied-By from the Thor.
+  The wiring is already in place, so that last step needs no further config.
+
+  GENERAL LESSON worth carrying: any GATEWAY-side feature on a branch is
+  undeployable on a real box until it is released. Engine-side changes (models,
+  budgets, compose knobs) deploy straight from a branch; gateway changes do not.
+
+================================================================================

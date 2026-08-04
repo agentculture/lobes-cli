@@ -2,7 +2,7 @@
   "plan_slug": "unsloth-qat-senses-first-class-orin-variation",
   "schema_version": 1,
   "created": "2026-08-04T08:17:16Z",
-  "updated": "2026-08-04T09:41:17Z",
+  "updated": "2026-08-04T10:30:22Z",
   "deviations": [
     {
       "id": "d1",
@@ -89,6 +89,18 @@
         "t11",
         "t12",
         "t13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d8",
+      "what": "t10's worker->Thor proxy cannot be activated on this box until 0.55.0 is PUBLISHED \u2014 the gateway image installs 'lobes-cli==${MODEL_GEAR_VERSION}' from PyPI, and 0.55.0 exists only on this unmerged branch, so 'docker compose build gateway' fails at pip install",
+      "task_ref": "t10",
+      "reason": "structural, not a defect in this work: the deployed gateway is built from the RELEASED wheel (Dockerfile.gateway line 28), so any gateway-side feature on a branch is undeployable until the PR merges and publish.yml ships it. The env wiring (WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true, no credential \u2014 the Thor is keyless) is IN PLACE in .env and will take effect on the first rebuild after release. The running 0.45.0 gateway was untouched by the failed build and still serves senses/embedder/reranker plus the cortex proxy. Resolution order: merge #176 -> PyPI publishes 0.55.0 -> rebuild gateway -> model=worker answers with X-Lobes-Proxied-By",
+      "affects": [
+        "t12"
       ],
       "origin": "llm",
       "status": "approved",
