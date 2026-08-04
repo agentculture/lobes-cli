@@ -145,9 +145,12 @@ Quoted verbatim from the `devague summary` skeleton:
 
 ## Remaining Work / Follow-up
 
-- `t10` (the only incomplete task) — **merge #176 → PyPI publishes 0.55.0 → rebuild the
-  gateway → `model=worker` answers with `X-Lobes-Proxied-By`.** The `.env` wiring is
-  already in place and needs no further configuration.
+- `t10` (the only incomplete task) — tracked as **#178**: merge #176 → PyPI publishes
+  0.55.0 → rebuild the gateway → `model=worker` answers with `X-Lobes-Proxied-By`. The
+  `.env` wiring is already in place and needs no further configuration. #178 also
+  carries the underlying gap: a gateway-side change cannot be deployed — and therefore
+  cannot be live-validated — from a branch, because the image installs the published
+  wheel.
 - **#177 is the operational risk to watch**: the `num_soft_tokens` patch lives in this
   box's HF cache. A cache clear, re-pull, or fresh machine reintroduces the crash-loop.
   Needs an upstream fix or a pre-boot guard in `lobes doctor`.
