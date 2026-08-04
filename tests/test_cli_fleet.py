@@ -503,14 +503,21 @@ def test_fleet_compose_multimodal_vision_active_has_native_mtp_spec_decode() -> 
     assert (
         "--language-model-only" not in block
     ), "vllm-multimodal must NOT pass --language-model-only: vision+audio must stay active"
-    assert "--speculative-config" in block, (
-        "vllm-multimodal must carry --speculative-config: native MTP is default-on for "
-        "the NVFP4 base gear (§7, 28.6 tok/s @ 57.9% draft acceptance)"
-    )
+    # Since t5 the flag is env-parameterized (MULTIMODAL_SPECULATIVE_CONFIG — the
+    # MTP off-switch), and this lane's comment block now discusses
+    # --speculative-config in prose. So assert the whole SUBSTITUTION rather than a
+    # bare substring: `"--speculative-config" in block` would be satisfied by the
+    # comments alone, long after someone deleted the flag itself.
     assert (
+        "${MULTIMODAL_SPECULATIVE_CONFIG-'--speculative-config="
         '{"method": "mtp", "model": "google/gemma-4-12B-it-assistant",'
-        ' "num_speculative_tokens": 1}' in block
-    ), "vllm-multimodal --speculative-config must be the exact native-MTP config measured in §7"
+        ' "num_speculative_tokens": 1}\'}' in block
+    ), (
+        "vllm-multimodal must carry --speculative-config as MULTIMODAL_SPECULATIVE_"
+        "CONFIG's default: native MTP is default-on for the NVFP4 base gear (§7, "
+        "28.6 tok/s @ 57.9% draft acceptance), and the exact native-MTP config "
+        "measured in §7 is what ships"
+    )
 
 
 def test_fleet_compose_multimodal_coder_is_opt_in_with_no_spec_decode() -> None:
