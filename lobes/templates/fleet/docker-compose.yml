@@ -622,46 +622,93 @@ services:
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
-    command:
-      - vllm
-      - serve
-      - ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
-      - --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
-      - --host=0.0.0.0
-      - --port=8000
-      # compressed-tensors (nvfp4-pack-quantized), NOT modelopt — the checkpoint's
-      # config.json quant_method; modelopt_fp4 fails with a method mismatch (#71).
-      - --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
-      # Trimmed to 32K (from a 128K/util-0.22 pairing) to free KV headroom for
-      # the 27B primary to serve its full 128K native context — the always-on
-      # duo's context rebalance. See docs/vllm-nightly-migration.md §8.
-      - --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-32768}
-      # util 0.14 (~18 GiB) is PROVISIONAL — validated live on the GB10 (plan
-      # task t12). DO NOT go lower: Gemma-12B weights+CUDA-graph are ~13.4 GiB
-      # (~util 0.105 floor), so 0.10 would OOM before any KV cache; 0.14 leaves
-      # ~4.6 GiB KV for the 32K context — fits the 0.56 default-fleet budget.
-      # Requires the VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see
-      # note there).
-      - --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.14}
-      - --enable-auto-tool-choice
-      - --tool-call-parser=gemma4
-      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
-      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
-      # markers — the tool parser has no business stripping those, so without the
-      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
-      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
-      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
-      - --reasoning-parser=gemma4
-      # Native MTP, default-on (docs/vllm-nightly-migration.md §7, measured
-      # 2026-07-02): the public google/gemma-4-12B-it-assistant draft against this
-      # NVFP4 base target — 57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6
-      # tok/s), the fastest Gemma config measured. MUST match
-      # lobes.catalog.SUPPORTED_MODELS' coolthor/gemma-4-12B-it-NVFP4A16 entry byte
-      # for byte (tests/test_catalog.py guards the two against drift). Note the
-      # "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig rejects
-      # that outdated key (verified live, §6).
-      - '--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'
-      - --trust-remote-code
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # This is the only lane whose `command:` is a string, and the MTP off-switch
+    # below is the whole reason. `docker compose` CANNOT conditionally omit a
+    # LIST item: an item that substitutes to "" renders as an empty argv element,
+    # and `vllm serve` reads that as a second positional and dies with
+    #   usage: vllm serve [model_tag] [options]
+    #   error: unrecognized arguments:
+    # (exit 2 — verified by parsing that exact argv through the served build's own
+    # serve parser, vLLM 0.23.1rc1.dev672+g93d8f834d). A STRING command is
+    # shell-lexed by compose AFTER substitution, so a variable that expands to
+    # nothing leaves no token at all — the flag is omitted ENTIRELY, which is the
+    # only "off" rendering vLLM accepts. Every other lane keeps its list; nothing
+    # else about this one moved. The default render is byte-identical to the pre-t5
+    # argv and is pinned by tests/test_senses_speculative_config.py, which
+    # reimplements compose's substitution + lexing offline (cross-checked against
+    # real `docker compose config` on Compose v5.3.1).
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  compressed-tensors (nvfp4-pack-quantized), NOT modelopt —
+    #     the checkpoint's config.json quant_method; modelopt_fp4 fails with a
+    #     method mismatch (#71).
+    #
+    #   --max-model-len  Trimmed to 32K (from a 128K/util-0.22 pairing) to free KV
+    #     headroom for the 27B primary to serve its full 128K native context — the
+    #     always-on duo's context rebalance. See docs/vllm-nightly-migration.md §8.
+    #
+    #   --gpu-memory-utilization  util 0.14 (~18 GiB) is PROVISIONAL — validated
+    #     live on the GB10 (plan task t12). DO NOT go lower: Gemma-12B
+    #     weights+CUDA-graph are ~13.4 GiB (~util 0.105 floor), so 0.10 would OOM
+    #     before any KV cache; 0.14 leaves ~4.6 GiB KV for the 32K context — fits
+    #     the 0.56 default-fleet budget. Requires the
+    #     VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see note there).
+    #
+    #   --reasoning-parser  Gemma 4 needs the PAIR: the tool parser forces
+    #     skip_special_tokens=False (that is how it sees <|tool_call>), which also
+    #     exposes Gemma's <|channel> markers — the tool parser has no business
+    #     stripping those, so without the matching reasoning parser they leak into
+    #     `content`. Mirrors the cortex lane pairing --reasoning-parser=qwen3 with
+    #     its qwen3_coder tool parser. Measured live on the 31B muse lane
+    #     2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+    #
+    #   MULTIMODAL_SPECULATIVE_CONFIG  Native MTP, default-on
+    #     (docs/vllm-nightly-migration.md §7, measured 2026-07-02): the public
+    #     google/gemma-4-12B-it-assistant draft against this NVFP4 base target —
+    #     57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6 tok/s), the fastest
+    #     Gemma config measured. The DEFAULT must match
+    #     lobes.catalog.SUPPORTED_MODELS' coolthor/gemma-4-12B-it-NVFP4A16 entry
+    #     byte for byte (tests/test_catalog.py guards the two against drift). Note
+    #     the "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig
+    #     rejects that outdated key (verified live, §6).
+    #
+    #     OFF-SWITCH: put `MULTIMODAL_SPECULATIVE_CONFIG=` (set, but empty) in .env
+    #     to serve this lane with NO speculative decoding at all. That is the
+    #     recorded fallback for a checkpoint shipping no MTP draft head (e.g.
+    #     unsloth/gemma-4-12B-it-qat-w4a16): attempt the draft, and if vLLM refuses
+    #     it, drop speculative decoding rather than block the swap.
+    #
+    #     The dash-only default form used below is deliberate. Compose's OTHER
+    #     default operator, the colon-dash one every knob in this file uses, treats
+    #     an EMPTY value as unset — it would substitute the draft straight back and
+    #     put the off-switch out of reach. The single quotes inside the default
+    #     are part of the string, not YAML — they survive substitution and make the
+    #     JSON (which contains spaces) lex as ONE argv token.
+    #
+    #     RETARGETING the draft (rather than switching it off) needs BOTH quoting
+    #     layers, because the value passes through compose's dotenv parser first
+    #     and its shell-lexer second. This exact .env line works (verified live on
+    #     Compose v5.3.1) — double quotes for dotenv, single quotes for the lexer,
+    #     the JSON's own quotes escaped:
+    #       MULTIMODAL_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"ngram\", \"num_speculative_tokens\": 2}'"
+    #     Bare single quotes instead yield `--speculative-config={method:` plus a
+    #     stray token — silently MANGLED, not rejected. Off and default need no
+    #     quoting at all.
+    command: >-
+      vllm serve ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
+      --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
+      --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.14}
+      --enable-auto-tool-choice
+      --tool-call-parser=gemma4
+      --reasoning-parser=gemma4
+      ${MULTIMODAL_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'}
+      --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

@@ -55,6 +55,18 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed 2026-08-04 for the senses MTP off-switch (unsloth-QAT-senses plan,
+    # t5): ONLY `vllm-multimodal` moved. Its `command:` changed shape from a YAML
+    # list to a single shell-lexed STRING so the `--speculative-config` flag can be
+    # dropped ENTIRELY from argv via `MULTIMODAL_SPECULATIVE_CONFIG=` in .env — a
+    # list item cannot be conditionally omitted (an empty substitution renders as
+    # an empty argv element, and `vllm serve` exits 2 on it). The RENDERED argv
+    # with the knob unset is byte-identical to before; only the template's
+    # representation of it changed, which is why this hash moves and no golden
+    # does. See tests/test_senses_speculative_config.py and the lane's own comment
+    # block. Every other service — the two other Gemma lanes included — is
+    # byte-identical, which is this tripwire proving the blast radius.
+    #
     # Recomputed 2026-07-31 for the multimodal-cortex promotion: the GATEWAY
     # service's PRIMARY_SERVED_NAME passthrough default moved from the outgoing
     # sakamakismile/…-Text-NVFP4-MTP to unsloth/Qwen3.6-27B-NVFP4, matching
@@ -106,7 +118,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
-    "vllm-multimodal": "31cd10820f2411c6401a97ba84c54603ecde5434b5a7be6e309390047d847e11",
+    "vllm-multimodal": "64c129b764059c3e78ed248da60634cd2ecf4a0af26c61e3508c5676ddb11134",
     "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
     "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
     "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",

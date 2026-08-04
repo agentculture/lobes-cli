@@ -269,9 +269,13 @@ class TestLegacy14BProfileSelectability:
         assert (
             "profiles" not in multimodal_svc
         ), "vllm-multimodal must NOT declare a compose profile (it is default-on)"
-        # Confirm it references the Gemma served name.
+        # Confirm it references the Gemma served name. This lane's `command:` is a
+        # STRING, not a list (t5: only a shell-lexed string lets the MTP flag be
+        # omitted entirely when MULTIMODAL_SPECULATIVE_CONFIG is empty — see
+        # tests/test_senses_speculative_config.py), so normalise both shapes rather
+        # than joining a str character by character.
         command = multimodal_svc.get("command", [])
-        cmd_str = " ".join(str(c) for c in command)
+        cmd_str = command if isinstance(command, str) else " ".join(str(c) for c in command)
         assert (
             _GEMMA_ID in cmd_str
         ), f"vllm-multimodal command should reference {_GEMMA_ID!r}; got: {cmd_str!r}"

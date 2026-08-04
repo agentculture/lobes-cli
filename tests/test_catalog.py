@@ -491,8 +491,21 @@ def test_gemma_base_mtp_speculative_config_round_trips_through_helper() -> None:
 
     # This item must ALSO appear verbatim in the fleet compose template — the
     # single source of truth (catalog) must not drift from the packaged YAML.
+    #
+    # Since t5 (the senses MTP off-switch) the flag is env-parameterized, so the
+    # guard pins it as the knob's DEFAULT rather than as a bare list item: the
+    # whole `--speculative-config=<json>` token is the default of
+    # MULTIMODAL_SPECULATIVE_CONFIG, single-quoted so the JSON's spaces survive
+    # compose's shell-lexing as one argv token. Matching the full substitution —
+    # not just the item text — is what keeps this a real drift guard: the item
+    # string now also appears in that lane's prose comments, which a substring
+    # check alone would happily match after someone deleted the actual flag.
     fleet_text = (_TEMPLATES / "fleet" / "docker-compose.yml").read_text(encoding="utf-8")
-    assert item in fleet_text, f"{item!r} missing from templates/fleet/docker-compose.yml (drift)"
+    parameterized = "${MULTIMODAL_SPECULATIVE_CONFIG-'" + item + "'}"
+    assert parameterized in fleet_text, (
+        f"{parameterized!r} missing from templates/fleet/docker-compose.yml "
+        "(drift between the catalog entry and the senses lane's shipped default)"
+    )
 
 
 def test_speculative_config_item_matches_27b_primarys_mtp_item() -> None:
