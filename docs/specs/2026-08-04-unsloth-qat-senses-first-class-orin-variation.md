@@ -21,7 +21,7 @@
 - lobes/catalog.py gains a SupportedModel entry for unsloth/gemma-4-12B-it-qat-w4a16 modeled on the coolthor/gemma-4-12B-it-NVFP4A16 gear entry: `role_hint`=multimodal, `tool_parser`=gemma4 (runtime.`_parser` returns gemma4 for gemma-4\* ids), quantization=compressed-tensors (the HF card declares compressed-tensors QAT W4A16, explicitly vLLM-targeted), plus a per-model doc page per the doc= convention
   - instruction: add SupportedModel entry mirroring the coolthor gear: `role_hint`=multimodal, `tool_parser`=gemma4, quantization=compressed-tensors, doc page under docs/; read config.json first for context/modality literals
   - honesty: the catalog entry states only what the checkpoint's own config.json declares (`quant_method`, modalities, context) plus what live probes proved — no capability copied from marketing text
-- W4A16 is what makes this checkpoint fit the AGX Orin: 4-bit weights dequantize through vLLM Marlin (compute capability >= 8.0), activations stay 16-bit, no Blackwell FP4 tensor cores needed — the exact rationale docs/orin-profiles.md records for the coolthor NVFP4A16 export already running on this `sm_87` box
+- W4A16 weight-only quantization is what makes this checkpoint plausible on Ampere `sm_87` (activations stay 16-bit, no Blackwell FP4 tensor cores needed) — but the unsloth export is compressed-tensors INT4 pack-quantized, a DIFFERENT kernel path than the coolthor NVFP4A16 (FP4) precedent this box actually booted; the int4 path is unproven on this box and the boot is the test
   - instruction: boot is the test; if vLLM refuses the quant path on `sm_87`, that refusal is recorded as the finding
   - honesty: the W4A16-fits-`sm_87` claim is proven only by the boot itself — the coolthor precedent makes it plausible, the unsloth checkpoint's own weights loading and serving on this box makes it true
 - the orin variation becomes first-class: a builtin lobes/profiles/builtin/orin.toml plus a lobes/machines/orin.py CardStrategy (per `_registry.py`: adding a chip is one new module + one register line; detection reads nvidia-smi name/`compute_cap`, Jetson device-tree model string, hostname — today Orin resolves UNKNOWN -> base.toml, which vetoes senses). The #108 earn-by-booting bar is met by the 2026-07-17 live validation in docs/orin-profiles.md
@@ -48,18 +48,27 @@
 - the swap's capability goal (user-stated 2026-08-04): the unsloth QAT checkpoint should give senses image, video, audio, and reasoning — each capability claim is honest only if probed live on this box, not inferred from the HF card
   - instruction: build the four-probe acceptance matrix into the live-test; record per-capability verdicts in the evidence transcript and mirror them into the catalog entry + doc page
   - honesty: each capability is claimed only from its own live probe with a negative control where one exists (vision: wrong-colour; video: reversed-motion; audio: silent-drop detection; reasoning: thought-trace present in `reasoning_content`) — the model card is the guide for what to ATTEMPT, never the evidence
+- config.json VERIFIED (fetched unauthenticated 2026-08-04, not a gated repo): `text_config`.`max_position_embeddings`=262144 — the 256K claim is the checkpoint's own declaration, double the incumbent's 131072; `video_token_id`=258884 and `audio_config` both present (video is DECLARED natively — the repo's text+image+audio Gemma capability line predates this export); architecture Gemma4UnifiedForConditionalGeneration (the existing Dockerfile.vllm-gemma4 image serves this class); quantization = compressed-tensors INT4 pack-quantized symmetric, NOT FP4
+  - honesty: wired knobs are read from the DOWNLOADED checkpoint's config.json at implementation time, not from this network fetch or the card prose
+- playbook ordering (docs/model-switch-playbook.md par.1): benchmark the INCUMBENT coolthor on THIS box on the current engine BEFORE the swap — TTFT, decode tok/s from usage.`completion_tokens` (NEVER SSE chunk counts: the chunk-count trap under-reported 2x on 2026-07-31), MTP acceptance from the SpecDecoding engine logs, KV pool from the boot log — across short/medium/long request shapes; that baseline is unrecoverable after the swap
+  - honesty: the pre-swap transcript records the incumbent's metric table (TTFT / `completion_tokens` decode / MTP acceptance / KV pool) on the current engine — any post-swap comparison cites it, and a comparison against numbers from a different engine build is called out as uncontrolled
+- activation must PERSIST the Tegra iowait fix: the deployed .env still reads `LOBES_IOWAIT_DEGRADED_THRESHOLD`=50 (verified live 2026-08-04) while the running gateway survives only on an ephemeral shell-env override of 100 — this box's sugov kthreads inflate iowait to ~59% with zero disk I/O, so ANY compose recreate at threshold 50 resurrects indefinite 429-shedding of senses and would falsely fail the live-test; the orin variation must render or document the raised threshold (verify the exact env override name against lobes/gateway/`_pressure_policy.py` at implementation)
+  - honesty: proven by a compose recreate at the persisted threshold: senses answers through the gateway (no 429 shed) while /proc/stat still reports the inflated Tegra iowait
+- rollback is a snapshot, and it must exist BEFORE the swap: back up ~/.lobes (.env + both compose files) prior to re-render; restore = copy back + compose up (the coolthor weights stay in the HF cache — 7.7 GiB, disk has 1.6T free, verified). Re-init preserves .env per-key (`_apply_profile_env` merges into the existing file — operator lines like `PRIMARY_PEER_API_KEY`/`AUDIO_URL` survive) but pre-existing compose files need --force, which reverts hand edits
+  - honesty: the snapshot's existence is verified BEFORE the swap step runs; restore is byte-for-byte (diff the restored files against the snapshot)
 
 ## Honesty conditions
 
 - the announcement is claimable only when this box actually serves the unsloth checkpoint via the orin variation AND the acceptance evidence exists under docs/evidence/ — a rendered .env alone is not shipped
 - proven by diff: zero byte changes to spark.toml, thor.toml, their goldens, and the `test_profile_schema` pins — reviewable in the PR
 - after re-render, .env still carries the `PRIMARY_PEER_`\* trio and a model=cortex request through this box's gateway still answers from the Spark with X-Lobes-Proxied-By
-- reasoning is validated on THIS 12B checkpoint only when a live request returns `reasoning_content` with the thought markers consumed (no <|channel> leakage into content)
+- reasoning is validated on THIS 12B checkpoint only when a live thinking request returns the trace in whichever field this vLLM build uses — playbook par.4: this build returns 'reasoning', and a probe reading only '`reasoning_content`' produces a FALSE stopped-thinking verdict — so the probe dumps sorted(message.keys()) and reconciles usage.`completion_tokens` against the visible field lengths before any verdict
 - no caller-visible contract changes: model=senses/multimodal aliases, capabilities fields, and endpoint paths all answer exactly as before the swap
 - the before-state is cited from docs/orin-profiles.md and the live .env read on 2026-08-04 — if implementation finds reality diverged, the frame is amended, not steamrolled
 - every element is command-checkable: detection via lobes doctor/whoami on this box, the rendered .env against the orin-lobe golden, probes via assess, thor/spark via unchanged goldens
 - the portability claim is demonstrated, not asserted: the zero-hand-edit reproduce command in the success signal is its test
 - every listed signal is command-checkable and recorded in the evidence transcript; a failed signal is reported as failed, never silently dropped from the list
+- reviewable in the PR: the committed transcript contains placeholders, never a literal key — same convention as the 2026-07-16 evidence file
 
 ## Success signals
 
@@ -69,6 +78,7 @@
 
 - thor.toml and spark.toml stay intact as the per-card portability mechanism (the user's explicit constraint): tests/`test_profile_schema.py` pins spark senses model == coolthor/gemma-4-12B-it-NVFP4A16 and thor senses identical to spark (exactly-four-divergences contract) — those pins change only if the user decides the fleet-wide senses checkpoint moves too
 - cortex stays infeasible on Orin (the 27B primary quantizes activations to FP4 — modelopt/compressed-tensors W4A4 needs Blackwell tensor cores; a hard architecture line per docs/orin-profiles.md) and this box's cortex proxy wiring to the Spark (`PRIMARY_PEER_ORIGIN`/PROXY/`API_KEY` in ~/.lobes/.env) is untouched by the senses swap
+- the acceptance evidence transcript redacts key material — `GATEWAY_API_KEY`/peer-key values appear as <...key> placeholders, following the recorded precedent in docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt
 
 ## Non-goals
 
@@ -108,6 +118,20 @@
   - seeds: `c14`
 - `s13` — `user capability statement (2026-08-04) + lobes/catalog.py _SHAPE_GEMMA4_UNIFIED + spark.toml cortex ViT-probe comments`: user wants image+video+audio+reasoning from the QAT checkpoint; repo's own Gemma 4 capability claim is text+image+audio (no video anywhere); audio is blocked by vLLM #101 not the checkpoint; reasoning parser already hardcoded on the lane (muse-validated, 12B-unvalidated); image is the one capability already live-validated on this box (red-image probe, docs/orin-profiles.md)
   - seeds: `c15`, `c16`, `c12`
+- `s14` — `challenge pass / counter-evidence lens: HF config.json of unsloth/gemma-4-12B-it-qat-w4a16`: fetched unauthenticated (repo not gated): `max_position_embeddings`=262144, `video_token_id` AND `audio_config` declared, Gemma4UnifiedForConditionalGeneration (existing custom image serves the class), quant = compressed-tensors int4 pack-quantized — NOT the FP4 path this box live-proved; c3 amended accordingly
+  - seeds: `c24`, `c3`
+- `s15` — `challenge pass / lifecycle + measurement lens: docs/model-switch-playbook.md par.1/4/5/6`: incumbent-first benchmark ordering adopted (c25); the reasoning-vs-`reasoning_content` field trap invalidated h11 as written — rejected and replaced by h20; the par.5 probe designs (reversed-motion video, negative controls) already match h10; par.6 record-refused-utils discipline applies to the c9 live-test
+  - seeds: `c25`, `c16`
+- `s16` — `challenge pass / adjacent-systems lens: docs/model-switch-playbook.md par.2 + the Spark's senses proxy to this box`: every audited mesh consumer pins the RAW served id (reachy-mini-cli, colleague config, culture.yaml), and the Spark forwards model=senses here — swapping the served name 404s them; the three deliberate options are recorded as q3 for the user
+  - seeds: `c11`
+- `s17` — `challenge pass / operations lens: ~/.lobes/.env (live read) + orin-box deployment memory`: `LOBES_IOWAIT_DEGRADED_THRESHOLD`=50 persisted on disk while the running gateway holds an ephemeral 100 override — any recreate resurrects the Tegra spurious-iowait 429-shedding of senses; persistence requirement seeded (verify exact knob name in lobes/gateway/`_pressure_policy.py` at implementation)
+  - seeds: `c26`
+- `s18` — `challenge pass / reversibility lens: lobes/cli/_commands/init.py (_apply_profile_env + scaffold plan)`: .env is merged per-key (operator lines survive a re-render); pre-existing compose files require --force which reverts the csv-mode hand edits (c10's territory); snapshot-based rollback seeded as c27
+  - seeds: `c27`, `c10`
+- `s19` — `challenge pass / security lens: docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt`: the redaction convention exists — keys appear as <...key> placeholders in committed evidence; boundary c28 makes it binding for this swap's transcript
+  - seeds: `c28`
+- `s20` — `challenge pass / clean lenses: disk capacity, HF gating, .env data-loss`: clean: 1.6T free vs a ~7.7GiB checkpoint (du on the incumbent); config.json fetched without auth so no license gate blocks the pull; .env per-key merge verified in code — residual risk that remains: boot-order memory race on unified boards (parked v7) and everything gated on the live boot itself
+  - seeds: `c27`
 
 ## Decisions
 
@@ -118,6 +142,7 @@
 
 - [unknown_nonblocking] video intake verdict on the unsloth checkpoint: pending the live reversed-motion probe (c15) — unknown until the acceptance run
 - [unknown_nonblocking] audio serving verdict on the pinned vLLM nightly: pending the live #101 silent-drop re-probe (c12) — unknown until the acceptance run
+- [unknown_nonblocking] the senses swap window is mesh-visible downtime: the Spark forwards model=senses here, so its callers 404/timeout during the reboot; sequence per playbook par.7 and boot sequentially per the Orin boot-ordering caveat — an ops-runbook concern for the plan, not a spec change
 
 ## Resolved vagueness
 

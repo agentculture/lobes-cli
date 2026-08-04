@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-04T06:34:20Z",
-  "updated": "2026-08-04T07:14:49Z",
+  "updated": "2026-08-04T07:26:38Z",
   "claims": [
     {
       "id": "c1",
@@ -47,7 +47,7 @@
     {
       "id": "c3",
       "kind": "requirement",
-      "text": "W4A16 is what makes this checkpoint fit the AGX Orin: 4-bit weights dequantize through vLLM Marlin (compute capability >= 8.0), activations stay 16-bit, no Blackwell FP4 tensor cores needed \u2014 the exact rationale docs/orin-profiles.md records for the coolthor NVFP4A16 export already running on this sm_87 box",
+      "text": "W4A16 weight-only quantization is what makes this checkpoint plausible on Ampere sm_87 (activations stay 16-bit, no Blackwell FP4 tensor cores needed) \u2014 but the unsloth export is compressed-tensors INT4 pack-quantized, a DIFFERENT kernel path than the coolthor NVFP4A16 (FP4) precedent this box actually booted; the int4 path is unproven on this box and the boot is the test",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -61,7 +61,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "boot is the test; if vLLM refuses the quant path on sm_87, that refusal is recorded as the finding",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "W4A16 is what makes this checkpoint fit the AGX Orin: 4-bit weights dequantize through vLLM Marlin (compute capability >= 8.0), activations stay 16-bit, no Blackwell FP4 tensor cores needed \u2014 the exact rationale docs/orin-profiles.md records for the coolthor NVFP4A16 export already running on this sm_87 box",
+          "kind": "requirement",
+          "reason": "challenge pass: config.json shows int4 pack-quantized, not FP4 \u2014 the coolthor precedent covers weight-only-4bit-on-sm_87 generally but NOT this exact kernel path"
+        }
+      ]
     },
     {
       "id": "c4",
@@ -299,6 +305,12 @@
         {
           "id": "h11",
           "text": "reasoning is validated on THIS 12B checkpoint only when a live request returns reasoning_content with the thought markers consumed (no <|channel> leakage into content)",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h20",
+          "text": "reasoning is validated on THIS 12B checkpoint only when a live thinking request returns the trace in whichever field this vLLM build uses \u2014 playbook par.4: this build returns 'reasoning', and a probe reading only 'reasoning_content' produces a FALSE stopped-thinking verdict \u2014 so the probe dumps sorted(message.keys()) and reconciles usage.completion_tokens against the visible field lengths before any verdict",
           "status": "confirmed",
           "instruction": ""
         }
@@ -426,6 +438,101 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "config.json VERIFIED (fetched unauthenticated 2026-08-04, not a gated repo): text_config.max_position_embeddings=262144 \u2014 the 256K claim is the checkpoint's own declaration, double the incumbent's 131072; video_token_id=258884 and audio_config both present (video is DECLARED natively \u2014 the repo's text+image+audio Gemma capability line predates this export); architecture Gemma4UnifiedForConditionalGeneration (the existing Dockerfile.vllm-gemma4 image serves this class); quantization = compressed-tensors INT4 pack-quantized symmetric, NOT FP4",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "wired knobs are read from the DOWNLOADED checkpoint's config.json at implementation time, not from this network fetch or the card prose",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "playbook ordering (docs/model-switch-playbook.md par.1): benchmark the INCUMBENT coolthor on THIS box on the current engine BEFORE the swap \u2014 TTFT, decode tok/s from usage.completion_tokens (NEVER SSE chunk counts: the chunk-count trap under-reported 2x on 2026-07-31), MTP acceptance from the SpecDecoding engine logs, KV pool from the boot log \u2014 across short/medium/long request shapes; that baseline is unrecoverable after the swap",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the pre-swap transcript records the incumbent's metric table (TTFT / completion_tokens decode / MTP acceptance / KV pool) on the current engine \u2014 any post-swap comparison cites it, and a comparison against numbers from a different engine build is called out as uncontrolled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "activation must PERSIST the Tegra iowait fix: the deployed .env still reads LOBES_IOWAIT_DEGRADED_THRESHOLD=50 (verified live 2026-08-04) while the running gateway survives only on an ephemeral shell-env override of 100 \u2014 this box's sugov kthreads inflate iowait to ~59% with zero disk I/O, so ANY compose recreate at threshold 50 resurrects indefinite 429-shedding of senses and would falsely fail the live-test; the orin variation must render or document the raised threshold (verify the exact env override name against lobes/gateway/_pressure_policy.py at implementation)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "proven by a compose recreate at the persisted threshold: senses answers through the gateway (no 429 shed) while /proc/stat still reports the inflated Tegra iowait",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "rollback is a snapshot, and it must exist BEFORE the swap: back up ~/.lobes (.env + both compose files) prior to re-render; restore = copy back + compose up (the coolthor weights stay in the HF cache \u2014 7.7 GiB, disk has 1.6T free, verified). Re-init preserves .env per-key (_apply_profile_env merges into the existing file \u2014 operator lines like PRIMARY_PEER_API_KEY/AUDIO_URL survive) but pre-existing compose files need --force, which reverts hand edits",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the snapshot's existence is verified BEFORE the swap step runs; restore is byte-for-byte (diff the restored files against the snapshot)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "boundary",
+      "text": "the acceptance evidence transcript redacts key material \u2014 GATEWAY_API_KEY/peer-key values appear as <...key> placeholders, following the recorded precedent in docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "reviewable in the PR: the committed transcript contains placeholders, never a literal key \u2014 same convention as the 2026-07-16 evidence file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -479,6 +586,15 @@
       "text": "audio serving verdict on the pinned vLLM nightly: pending the live #101 silent-drop re-probe (c12) \u2014 unknown until the acceptance run",
       "kind": "unknown_nonblocking",
       "claim_id": "c12",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v7",
+      "text": "the senses swap window is mesh-visible downtime: the Spark forwards model=senses here, so its callers 404/timeout during the reboot; sequence per playbook par.7 and boot sequentially per the Orin boot-ordering caveat \u2014 an ops-runbook concern for the plan, not a spec change",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
       "resolved": false,
       "resolution": "",
       "resolution_claim_id": null
@@ -599,6 +715,65 @@
         "c15",
         "c16",
         "c12"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / counter-evidence lens: HF config.json of unsloth/gemma-4-12B-it-qat-w4a16",
+      "finding": "fetched unauthenticated (repo not gated): max_position_embeddings=262144, video_token_id AND audio_config declared, Gemma4UnifiedForConditionalGeneration (existing custom image serves the class), quant = compressed-tensors int4 pack-quantized \u2014 NOT the FP4 path this box live-proved; c3 amended accordingly",
+      "seeds": [
+        "c24",
+        "c3"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / lifecycle + measurement lens: docs/model-switch-playbook.md par.1/4/5/6",
+      "finding": "incumbent-first benchmark ordering adopted (c25); the reasoning-vs-reasoning_content field trap invalidated h11 as written \u2014 rejected and replaced by h20; the par.5 probe designs (reversed-motion video, negative controls) already match h10; par.6 record-refused-utils discipline applies to the c9 live-test",
+      "seeds": [
+        "c25",
+        "c16"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / adjacent-systems lens: docs/model-switch-playbook.md par.2 + the Spark's senses proxy to this box",
+      "finding": "every audited mesh consumer pins the RAW served id (reachy-mini-cli, colleague config, culture.yaml), and the Spark forwards model=senses here \u2014 swapping the served name 404s them; the three deliberate options are recorded as q3 for the user",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / operations lens: ~/.lobes/.env (live read) + orin-box deployment memory",
+      "finding": "LOBES_IOWAIT_DEGRADED_THRESHOLD=50 persisted on disk while the running gateway holds an ephemeral 100 override \u2014 any recreate resurrects the Tegra spurious-iowait 429-shedding of senses; persistence requirement seeded (verify exact knob name in lobes/gateway/_pressure_policy.py at implementation)",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / reversibility lens: lobes/cli/_commands/init.py (_apply_profile_env + scaffold plan)",
+      "finding": ".env is merged per-key (operator lines survive a re-render); pre-existing compose files require --force which reverts the csv-mode hand edits (c10's territory); snapshot-based rollback seeded as c27",
+      "seeds": [
+        "c27",
+        "c10"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / security lens: docs/evidence/2026-07-16-proxy-lobes-live-spark-thor.txt",
+      "finding": "the redaction convention exists \u2014 keys appear as <...key> placeholders in committed evidence; boundary c28 makes it binding for this swap's transcript",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / clean lenses: disk capacity, HF gating, .env data-loss",
+      "finding": "clean: 1.6T free vs a ~7.7GiB checkpoint (du on the incumbent); config.json fetched without auth so no license gate blocks the pull; .env per-key merge verified in code \u2014 residual risk that remains: boot-order memory race on unified boards (parked v7) and everything gated on the live boot itself",
+      "seeds": [
+        "c27"
       ]
     }
   ],
