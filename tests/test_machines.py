@@ -36,8 +36,11 @@ def _clean_registry():
 
 def test_builtins_registered_in_detection_precedence_order() -> None:
     # spark before blackwell: the GB10 (a Grace *Blackwell* part) must be matched
-    # by its specific marker before the discrete Blackwell profile.
-    assert machines.names() == ("spark", "thor", "blackwell", "generic")
+    # by its specific marker before the discrete Blackwell profile. orin's
+    # markers ("orin") don't overlap any other card's, so its exact slot is not
+    # load-bearing for correctness — it is asserted here anyway so a future
+    # registration-order edit is a deliberate, reviewed change, not a silent one.
+    assert machines.names() == ("spark", "thor", "orin", "blackwell", "generic")
 
 
 def test_get_is_honest_none_for_unknown() -> None:
@@ -96,6 +99,51 @@ def test_pooling_provenance_names_sm110_as_the_cause() -> None:
     knobs = machines.get("thor").role_knobs()
     assert "sm_110" in knobs["embedder"]["attention_backend"].provenance
     assert "sm_110" in knobs["reranker"]["enforce_eager"].provenance
+
+
+# --- orin: the live-validated sm_87 values ---------------------------------
+
+
+def test_orin_is_load_tested_with_sm87_signature() -> None:
+    orin = machines.get("orin")
+    assert orin is not None
+    assert orin.status == "load-tested"
+    assert orin.signature.compute_capability == "sm_87"
+    assert "orin" in orin.signature.name_markers
+
+
+def test_orin_registration_does_not_shadow_spark_or_thor() -> None:
+    # Verified by test, not assumption: orin's markers must never intercept a
+    # spark or thor fact set, in either detection order.
+    assert machines.detect("NVIDIA GB10", "spark").name == "spark"
+    assert machines.detect("NVIDIA Thor", "thor-01").name == "thor"
+    assert machines.detect("NVIDIA Orin", "orin").name == "orin"
+    # and the reverse: spark/thor markers never intercept an orin fact set
+    assert machines.detect("NVIDIA Orin", "my-orin-01").name == "orin"
+
+
+def test_orin_role_overrides_are_conservative_carried_over_choices() -> None:
+    # docs/orin-profiles.md: the pooling divergences mirror Thor's sm_110
+    # findings as a conservative first-boot choice, NOT an sm_87-proven fact —
+    # the provenance must say so honestly (it may still CITE sm_110 as the
+    # origin of the carried-over pattern; it must not claim sm_110 as orin's
+    # own compute capability, and must flag the choice as unproven on sm_87).
+    knobs = machines.get("orin").role_knobs()
+    assert knobs["embedder"]["attention_backend"].value == "TRITON_ATTN"
+    assert knobs["reranker"]["attention_backend"].value == "TRITON_ATTN"
+    assert knobs["reranker"]["enforce_eager"].value is True
+    for role_knobs in knobs.values():
+        for knob in role_knobs.values():
+            assert knob.provenance
+            assert "orin sm_87" in knob.provenance  # names orin's OWN sm number
+            assert "NOT independently proven" in knob.provenance
+            assert "orin-profiles.md" in knob.provenance
+
+
+def test_orin_does_not_compose_the_sm110_trait() -> None:
+    # Composing SM_110 on an sm_87 board would misattribute causation — orin's
+    # knobs must be its OWN role_overrides, not a shared trait named "sm_110".
+    assert machines.SM_110 not in machines.get("orin").traits
 
 
 # --- shared trait: sm_110 reused without copy-paste -----------------------
