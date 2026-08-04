@@ -189,3 +189,62 @@ config.json read from the DOWNLOADED checkpoint (not the web card):
   field trap. Dump sorted(message.keys()) before concluding anything.
 
 ================================================================================
+================================================================================
+t3b — INCUMBENT CAPABILITY BASELINE (probe harness validation)    [COMPLETE]
+================================================================================
+Run against the STILL-RUNNING incumbent (coolthor/gemma-4-12B-it-NVFP4A16) via
+model=senses, BEFORE the swap. Two purposes: prove the t11 probe harness works,
+and give every post-swap capability verdict a controlled comparison point.
+Media: 64x64 solid red/blue PNG; 128x128 24-frame 8fps mp4 of a white square
+crossing a black field, plus the SAME clip reversed; 16 kHz mono WAVs.
+
+  image      PASS   red->'Red', blue->'Blue'; opposite-colour control held
+  video      FAIL   both clips answered 'RIGHT-TO-LEFT'
+  audio      FAIL   (see the refined signature below)
+  reasoning  PASS   but ONLY with chat_template_kwargs.enable_thinking=true
+  tools      PASS   finish_reason=tool_calls, {"city": "Paris"}
+
+--- video: INGESTED but not TEMPORALLY understood ------------------------------
+  Frames are genuinely tokenized — this is not a dropped modality:
+      text-only prompt_tokens                 20
+      with 24-frame clip                   1,771     (+1,751, ~73 tok/frame)
+      both clips cost identically 1,771 (same frame count) — as expected
+  But the forward clip and its REVERSED control both answered 'RIGHT-TO-LEFT'.
+  Identical answers for opposite stimuli = no directional discrimination.
+  Without the reversed control this would have scored as a PASS on the forward
+  clip alone — which is precisely why playbook par.5 mandates the control.
+
+--- audio: #101's CONCLUSION holds; its stated SIGNATURE does not --------------
+  CLAUDE.md/#101 describe the failure as "~19 placeholder tokens, no content".
+  That is NOT what this build does. Audio tokens scale with duration:
+      text-only control                       23 prompt_tokens
+      1 s tone                                50   (+27)
+      10 s tone                              275  (+252)   ~10x, i.e. ~25 tok/s
+  So the audio IS being encoded into the prompt. But a DISCRIMINATION control
+  (3 s clips, one question, one word out) shows the model cannot use it:
+      200 Hz tone      -> 'NOISE'                                  (wrong)
+      3000 Hz tone     -> 'I cannot hear any sound because you...' (explicitly
+                          reports NO audio present, while 112 audio tokens
+                          were in its own prompt)
+      white noise      -> 'Noise'                                  (right)
+  VERDICT: audio remains effectively UNSERVED for senses — #101's practical
+  conclusion is correct — but anyone diagnosing it by looking for a fixed ~19
+  placeholder tokens will not find that signature on this build. The honest
+  test is discrimination, not token count.
+
+--- reasoning: opt-in per request, not default-on -------------------------------
+  Same prompt, same lane:
+      plain request                  reasoning=   0 chars, content= 666 chars
+      chat_template_kwargs
+        {"enable_thinking": true}    reasoning= 756 chars, content=   0 chars
+  The trace lands in `reasoning` (NOT `reasoning_content` — playbook par.4) and
+  NO <|channel> markers leak into content, i.e. the gemma4 reasoning parser
+  pairing is doing its job. A probe that omits enable_thinking will wrongly
+  conclude the model does not reason.
+
+--- tools ----------------------------------------------------------------------
+  finish_reason=tool_calls with arguments {"city": "Paris"}. Note the model
+  capitalises the function name ('Get_weather' for a declared 'get_weather') —
+  a known quirk of this lane, harmless to the parser.
+
+================================================================================
