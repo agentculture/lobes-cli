@@ -621,3 +621,20 @@ def test_host_env_rejects_a_newline_that_would_corrupt_the_env_file() -> None:
 def test_host_env_accepts_ordinary_single_line_values() -> None:
     p = Profile.from_dict("orin", {"host_env": {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}})
     assert p.host_env == {"LOBES_IOWAIT_DEGRADED_THRESHOLD": "100"}
+
+
+def test_host_env_key_pattern_stays_ascii_not_unicode_word_chars() -> None:
+    """SonarCloud S6353 suggests `\\w` for `[A-Za-z0-9_]`. It is NOT equivalent.
+
+    Python's `\\w` is Unicode-aware by default, so swapping it in would widen the
+    accepted key set to include non-ASCII names — which would then be written
+    verbatim into `.env`. This pins the ASCII-only contract so the "concise
+    character class" refactor cannot land silently.
+    """
+    for bad_key in ("CAFÉ_VAR", "Aπ", "ПЕРЕМЕННАЯ"):
+        with pytest.raises(ModelGearError) as exc:
+            Profile.from_dict("x", {"host_env": {bad_key: "1"}})
+        assert exc.value.code == EXIT_USER_ERROR
+        assert bad_key in exc.value.message
+    # the ASCII form still works
+    assert Profile.from_dict("x", {"host_env": {"LOBES_OK_1": "1"}}).host_env == {"LOBES_OK_1": "1"}

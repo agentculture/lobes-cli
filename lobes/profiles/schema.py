@@ -74,6 +74,13 @@ KNOB_NAMES: tuple[str, ...] = (
 # there at all. Values are required to be STRINGS for the same reason: the
 # author writes the exact bytes that land in .env, with no int/float
 # formatting surprise (``100`` vs ``100.0``) between the TOML and the file.
+# NOTE for future readers (and for SonarCloud's S6353, which suggests `\w`):
+# the explicit ASCII class is DELIBERATE and `\w` is NOT equivalent here.
+# Python's `\w` is Unicode-aware by default, so `[A-Za-z_]\w*` also accepts
+# names like "CAFE\u0301_VAR" or "A\u03c0" — verified. Env-var names written into
+# .env must stay ASCII, so widening this would let a profile smuggle a
+# non-ASCII key into the file. Keep the class explicit rather than pairing
+# `\w` with a re.ASCII flag: the constraint belongs where it is read.
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # How a card's container runtime is asked for the GPU. The compose templates

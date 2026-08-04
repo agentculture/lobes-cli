@@ -34,6 +34,7 @@ import yaml
 
 from lobes.cli import main
 from lobes.cli._commands import init as init_cmd
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import builtin_names, load_builtin, resolve_profile
 from lobes.profiles.schema import GPU_ACCESS_DEVICES, GPU_ACCESS_RUNTIME, Profile
 from lobes.profiles.shape_render import compose_profile
@@ -94,9 +95,11 @@ def test_gpu_access_round_trips_through_to_dict() -> None:
 def test_unknown_gpu_access_is_a_load_error(bad) -> None:
     """Loud, not silent — a typo must not quietly fall back to the default and
     leave a csv board asking for the GPU the way it refuses."""
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ModelGearError) as exc:
         Profile.from_dict("x", {"gpu_access": bad})
-    assert "gpu_access" in str(exc.value)
+    # a load error, not an incidental TypeError from a bug elsewhere
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "gpu_access" in exc.value.message
 
 
 def test_only_the_measured_card_declares_csv_mode() -> None:
