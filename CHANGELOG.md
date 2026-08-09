@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.55.1] - 2026-08-10
+
+**Three surfaces still named the checkpoint 0.54.9 demoted.** The multimodal
+`cortex` promotion swapped the served id to `unsloth/Qwen3.6-27B-NVFP4` and left
+`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` behind as a text-only *candidate* —
+but `whoami`'s fallback, the agent's own system prompt, and two README passages
+kept describing the demoted one as what this box serves. Docs-and-fallback only;
+no runtime routing changed.
+
+### Fixed
+
+- **`lobes whoami` reported a model the box 404s on.** `_DEFAULT_MODEL` — what `whoami` prints as "served" when there is no scaffold, or when `VLLM_SERVED_NAME` is unset — still named the demoted `sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`, while the gateway's own fallback (`lobes.gateway._config._DEFAULT_PRIMARY`) had moved to `unsloth/Qwen3.6-27B-NVFP4` in 0.54.9. On an unscaffolded box the two answers disagreed, and `whoami`'s was the wrong one: a caller pinning the id it printed gets `model_not_found`. The two constants must track each other; the comment now says so.
+- **`AGENTS.md` told the deployed agent it was text-only.** The runtime paragraph — the `acp` system prompt the lobes agent actually runs on — described the demoted checkpoint, its grafted MTP head, and a text-only capability set. It now describes the promoted one (self-hosted MTP baked into the checkpoint, compressed-tensors NVFP4) and states the capability that changed: the agent takes **image and video** input through the checkpoint's own ViT, so "look at this screenshot" is work it can do rather than hand off. An agent that does not know it can see will keep referring vision away.
+- **`README.md` taught callers the addressing pattern that just broke.** The fleet-routing example pinned a raw checkpoint id — the exact id 0.54.9 retired — so copying it yielded a 404; it now addresses the stable role name (`model: "cortex"`) and says why. The example's comment also claimed an unknown model "defaults to the primary"; only a **missing** `model` field does that, an unknown id 404s `model_not_found`. The `culture.yaml` snippet in the identity section was updated to the served id as well.
+
 ## [0.55.0] - 2026-08-04
 
 **The Jetson AGX Orin becomes a first-class card.** `orin` joins `spark`/`thor`
