@@ -238,8 +238,10 @@ lobes fleet status                # container states + gateway /health + /v1/mod
 
 ```bash
 curl -s http://localhost:8000/v1/models       # the WARM backend(s) (not the full catalog — see below)
-# an unknown/missing model defaults to the primary; route explicitly by name:
-curl -s http://localhost:8000/v1/chat/completions -d '{"model":"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP","messages":[...]}'
+# a MISSING model field defaults to the primary; an UNKNOWN id 404s (model_not_found).
+# Address the fleet by stable role/tier name — never a raw checkpoint id, which a
+# model swap retires out from under you (0.54.9 did exactly that):
+curl -s http://localhost:8000/v1/chat/completions -d '{"model":"cortex","messages":[...]}'
 ```
 
 The fleet runs a **default-on `cortex` + `senses` duo** (the `main` + `multimodal`
@@ -425,7 +427,7 @@ auth/exposure — or `lobes explain api`.
 `lobes` is one identity, not two: it is the repo/tool that serves the model
 *and* the local thinking agent deployed on it. The agent's runtime identity lives
 in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: lobes`,
-`backend: acp`, `model: vllm-local/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`) — the same
+`backend: acp`, `model: vllm-local/unsloth/Qwen3.6-27B-NVFP4`) — the same
 lobes that runs the engine consumes it over the `acp` `vllm-local` provider.
 
 ## Acknowledgements

@@ -18,7 +18,11 @@ from lobes.cli._output import emit_result
 from lobes.runtime import _compose, _env, _health
 
 _FALLBACK_AGENT = "lobes"
-_DEFAULT_MODEL = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+# What `whoami` reports as "served" when there is no scaffold, or when
+# VLLM_SERVED_NAME is unset. Must track the gateway's own fallback
+# (``lobes.gateway._config._DEFAULT_PRIMARY``) — reporting a DEMOTED checkpoint
+# here tells an operator the box serves a model it 404s on.
+_DEFAULT_MODEL = "unsloth/Qwen3.6-27B-NVFP4"
 
 
 def _find_culture_yaml() -> Path | None:
