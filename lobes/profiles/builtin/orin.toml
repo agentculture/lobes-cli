@@ -175,7 +175,7 @@ attention_backend = "TRITON_ATTN"
 # --quantization ENTIRELY. Declaring it here — even as an empty string — would
 # render a flag that corrupts bf16 weights.
 #
-# BUDGET: MEASURED on a physical Jetson AGX Orin, 2026-08-10 — see
+# BUDGET: DECLARED. One live observation, NOT a reproducible measurement — see
 # docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt. This value was
 # DECLARED at 0.10 and the box refuted it TWICE, which is exactly why t10
 # exists:
@@ -184,19 +184,24 @@ attention_backend = "TRITON_ATTN"
 #     (4.67/61.34 GiB) on startup is less than desired GPU memory utilization
 #     (0.1, 6.13 GiB)". The orin-lobe shape's committed lanes plus the box's
 #     other workload simply do not leave 6.13 GiB.
-#   * at 0.06 it boots and profiles HEALTHY: Available KV cache memory 2.7 GiB,
-#     GPU KV cache size 235,721 tokens, maximum concurrency 7.19x at the served
-#     32768 window.
+#   * at 0.06 it booted ONCE and profiled healthy (available KV 2.7 GiB, pool
+#     235,721 tokens, 7.19x at the served 32768 window) — and then FAILED TWICE
+#     at the identical util, profiling 0.14 GiB and 0.09 GiB. One success, two
+#     refusals.
 #
-# So 0.10 was both too big to fit AND unnecessary. The reasoning behind it —
-# "0.06 of 64 GB leaves too little KV after the weights" — was plausible and
-# WRONG: 0.06 yields 7.19x concurrency here, which is more headroom than the
-# 27B cortex has ever had on any card. Recorded because the arithmetic looked
-# convincing right up until the box disagreed.
+# So 0.10 was too big to fit, and 0.06 is not reliably big enough. This box is
+# SHARED (senses at 0.45, the pooling gears, unrelated production containers)
+# and vLLM clamps its budget against actual free memory at startup, which moved
+# by ~2.7 GiB across the three runs. A util leaving ~1 GiB of margin on a 61 GiB
+# card sits inside that noise.
 #
-# NOTE this is the ONE card where hand's util was actually measured, and it
-# landed on the same 0.06 the 128 GB cards declare — so the per-card mechanism
-# is retained (see schema.py) but currently carries no divergence.
+# 0.06 is kept as the best available single data point, explicitly DECLARED.
+# An operator whose Orin refuses it should raise this value until the boot log
+# reports comfortable KV, or trim max_model_len (vLLM names the length that
+# would fit — 7984 in the tightest run). Tracked as issue #183.
+#
+# The per-card util mechanism (see schema.py) is retained and currently carries
+# no divergence: every card declares 0.06.
 feasible = true
 model = "LiquidAI/LFM2.5-1.2B-Instruct"
 gpu_mem_util = 0.06

@@ -2,7 +2,7 @@
   "plan_slug": "hand-lobe-lfm2-5-1-2b",
   "schema_version": 1,
   "created": "2026-08-10T03:38:10Z",
-  "updated": "2026-08-10T03:39:00Z",
+  "updated": "2026-08-10T03:56:55Z",
   "deviations": [
     {
       "id": "d1",
@@ -88,6 +88,32 @@
         "h1",
         "c33",
         "h18"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d8",
+      "what": "A second dead-knob defect shipped and was caught only by booting the real compose lane: HAND_ATTENTION_BACKEND was rendered into .env by the orin card profile and substituted by nothing",
+      "task_ref": "t6",
+      "reason": "builtin/orin.toml declares attention_backend='TRITON_ATTN' for hand, so lobes init renders HAND_ATTENTION_BACKEND=TRITON_ATTN, but the vllm-hand lane never referenced the variable \u2014 the operator reads a configured backend the engine never receives. Same class as d5 (the cudagraph knob) and same detection story: valid compose, green suite, wrong behaviour only visible when an engine runs it. It also explains why my earlier hand-rolled docker-run probe and the committed lane disagreed \u2014 the probe set the backend manually, the lane could not. Fixed via --attention-config (VLLM_ATTENTION_BACKEND is gone on this nightly) plus a test asserting EVERY profile-rendered key is substituted by the template, verified to fail with the fix reverted.",
+      "affects": [
+        "t8",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d9",
+      "what": "RETRACTED the Orin VALIDATED claim before the branch became a PR \u2014 the budget does not reproduce",
+      "task_ref": "t12",
+      "reason": "The acceptance transcript was written after ONE successful boot at gpu_mem_util=0.06 (available KV 2.7 GiB, pool 235,721 tokens, 7.19x). Two later boots of the same configuration on the same box profiled 0.14 GiB and 0.09 GiB and refused to start \u2014 vLLM clamps its budget against actual free memory at startup, and this is a SHARED box whose free memory moved ~2.7 GiB across the runs. One success against two refusals is an unstable budget, not a validated one. The functional results survive (they were observed on a real serving engine and do not depend on the budget): the lfm2 parser, the structured tool_calls array, the bf16 sentinel, the unknown-id 404. The budget claim does not. Transcript renamed to ...-partial-... with the retraction at its head; orin.toml, the per-model doc and machine-profiles.md all now read DECLARED. NO card is validated for hand.",
+      "affects": [
+        "t8",
+        "t10"
       ],
       "origin": "user",
       "status": "approved",

@@ -18,7 +18,7 @@ Both are recorded below with the raw engine output that produced them.
 
 This file covers the DERIVATION runs only — the three findings below are all
 refutations. The subsequent successful Orin boot at the corrected budget is a
-separate transcript: docs/evidence/2026-08-10-accept-hand-orin.txt.
+separate transcript: docs/evidence/2026-08-10-partial-hand-orin.txt.
 
 -----------------------------------------------------------------------------
 0. What the engine confirms about the checkpoint (both boxes)
@@ -125,7 +125,7 @@ Per #108, and stated plainly because a partial run invites over-reading.
 SCOPE NOTE: this transcript covers the DERIVATION runs only — the three
 findings above, all of which are refutations. A SUBSEQUENT run on the Orin at
 the corrected 0.06 succeeded and is recorded separately in
-docs/evidence/2026-08-10-accept-hand-orin.txt. The list below is what THESE
+docs/evidence/2026-08-10-partial-hand-orin.txt. The list below is what THESE
 runs did not establish; several items were settled by that later run and are
 marked accordingly, so this file is not read as denying it.
 

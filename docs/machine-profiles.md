@@ -166,28 +166,28 @@ compose template passes the served name to vLLM's `--served-model-name`
 separately from the model id it downloads; the two must agree for the gateway
 to route correctly.
 
-> **`hand` is VALIDATED on the Jetson AGX Orin and DECLARED everywhere else
-> (#108).**
+> **`hand` is DECLARED on every card and VALIDATED on none (#108).**
 >
-> - **Orin — VALIDATED, 2026-08-10**
->   (`docs/evidence/2026-08-10-accept-hand-orin.txt`): `gpu_mem_util = 0.06`
->   at the full served `max_model_len = 32768`, MEASURED — available KV 2.7 GiB,
->   KV pool 235,721 tokens, 7.19x concurrency, co-resident with the orin-lobe
->   shape's existing lanes. Tool calling through the `lfm2` parser returns a
->   structured `tool_calls` array.
-> - **Spark / Thor / base — DECLARED.** `0.06` on the two 128 GB cards is a
->   hypothesis, not a measurement; no boot has confirmed it there. Per the #108
->   rule this holds **per card**: the Orin's successful boot promotes nothing
->   else, and each card is promoted only when its own acceptance transcript
->   lands under `docs/evidence/`.
+> - **Orin** — the lane *served* once and every functional check passed
+>   (`docs/evidence/2026-08-10-partial-hand-orin.txt`), but the BUDGET does not
+>   reproduce: three boots at the identical `gpu_mem_util = 0.06` /
+>   `max_model_len = 32768` profiled 2.7 GiB, 0.14 GiB and 0.09 GiB of
+>   available KV — one success, two refusals. The committed 0.06 is therefore
+>   one data point, not a measurement.
+> - **Thor** — boot failed in LoRA embedding-slot allocation, cause
+>   unattributed ([#181](https://github.com/agentculture/lobes-cli/issues/181)).
+> - **Spark / base** — never exercised.
 >
-> The Orin number is worth reading closely, because it was **declared at 0.10
-> and the box refused it twice** — see
-> `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`. The reasoning
-> behind 0.10 ("0.06 of 64 GB leaves too little KV after the weights") was
-> plausible and wrong: 0.06 yields 7.19x concurrency there. That is the whole
-> argument for measuring rather than computing a budget on this class of
-> unified-memory board.
+> Two lessons are worth carrying, both learned the expensive way here:
+>
+> 1. **A computed budget is a hypothesis.** The Orin was declared at 0.10 on
+>    the reasoning that "0.06 of 64 GB leaves too little KV after the weights".
+>    The box refused 0.10 outright — see
+>    `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`.
+> 2. **A single measurement on a SHARED box is also a hypothesis.** vLLM clamps
+>    its budget against actual free memory at startup, so a util leaving only
+>    ~1 GiB of margin on a 61 GiB card sits inside the noise of whatever else
+>    the box is doing. A budget is only measured once it reproduces.
 
 **When set:**
 

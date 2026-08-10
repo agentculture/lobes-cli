@@ -174,20 +174,38 @@ Per the #108 rule, `hand` is **DECLARED** on every card and becomes **VALIDATED*
 only on the cards whose acceptance transcript has landed under `docs/evidence/`.
 One box's successful boot never promotes another card.
 
+**No card is validated.** `hand` is DECLARED everywhere.
+
 | card | status | evidence |
 |---|---|---|
-| **Jetson AGX Orin** (sm_87, 64 GB) | **VALIDATED 2026-08-10** | `docs/evidence/2026-08-10-accept-hand-orin.txt` |
-| Jetson AGX Thor (sm_110, 128 GB) | DECLARED | boot failed — [#181](https://github.com/agentculture/lobes-cli/issues/181) |
-| DGX Spark GB10 (128 GB) | DECLARED | not yet exercised — [#183](https://github.com/agentculture/lobes-cli/issues/183) |
+| Jetson AGX Orin (sm_87, 64 GB) | DECLARED — *served once, budget not reproducible* | `docs/evidence/2026-08-10-partial-hand-orin.txt` |
+| Jetson AGX Thor (sm_110, 128 GB) | DECLARED — boot failed | [#181](https://github.com/agentculture/lobes-cli/issues/181) |
+| DGX Spark GB10 (128 GB) | DECLARED — not yet exercised | [#183](https://github.com/agentculture/lobes-cli/issues/183) |
 | `base` (unrecognised card) | DECLARED | untestable by construction |
 
-What the Orin run established: `gpu_mem_util = 0.06` at the full 32768 window
-(available KV 2.7 GiB, pool 235,721 tokens, 7.19x concurrency), the bf16
-sentinel and the text-only / no-reasoning-parser flags all plumbed correctly, a
-correct known-answer completion, and — the check this lane exists to pass — a
-**tool call returning a structured `tool_calls` array**, with the tokenizer's
-`<|tool_call_start|>` / `<|tool_call_end|>` confirmed present as special tokens
-(ids 10 and 11).
+**What the Orin runs established — and what they did not.** The lane *served*
+once, and everything observed on that live engine holds: the bf16 sentinel and
+the text-only / no-reasoning-parser flags plumbed correctly, a correct
+known-answer completion, an unknown model id refused with 404, and — the check
+this lane exists to pass — a **tool call returning a structured `tool_calls`
+array**, with the tokenizer's `<|tool_call_start|>` / `<|tool_call_end|>`
+confirmed present as special tokens (ids 10 and 11).
+
+The **budget** did not hold. Three boots at the identical
+`gpu_mem_util = 0.06` / `max_model_len = 32768` on the same box profiled
+2.7 GiB, 0.14 GiB and 0.09 GiB of available KV — one success, two refusals.
+The Orin is shared (senses at 0.45, the pooling gears, unrelated production
+containers) and vLLM clamps its budget against actual free memory at startup,
+which moved by ~2.7 GiB across the runs. A util leaving ~1 GiB of margin on a
+61 GiB card sits inside that noise. **0.06 is one data point, not a
+measurement**, and the card is DECLARED accordingly.
+
+The practical reading for an operator: `hand` at the full 32 K window wants
+more headroom than this Orin has while it also hosts `senses`. Either raise
+`HAND_GPU_MEM_UTIL` until the profile reports comfortable KV on *your* box, or
+trim `HAND_MAX_MODEL_LEN` (vLLM names the length that would fit — 7984 in the
+tightest run). Tracked in
+[#183](https://github.com/agentculture/lobes-cli/issues/183).
 
 Two things it deliberately does **not** establish: adapter serving end to end
 (v1 ships zero adapters, so `hand:<domain>` resolution and the adapter-honesty
