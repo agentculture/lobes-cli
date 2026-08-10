@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-10T00:10:52Z",
-  "updated": "2026-08-10T02:14:18Z",
+  "updated": "2026-08-10T03:36:45Z",
   "targets": [
     {
       "id": "c1",
@@ -845,8 +845,8 @@
       "text": "hand's per-card gpu_mem_util is unmeasured \u2014 0.06 is 7.7 GiB on a 128 GB Spark but 3.84 GiB on a 64 GB Orin against ~2.4 GiB of weights, leaving little KV at 32K",
       "kind": "unknown_nonblocking",
       "task_id": null,
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "MEASURED and REFUTED on a physical Jetson AGX Orin 2026-08-10 (docs/evidence/2026-08-10-accept-hand-orin.txt). The concern was that 0.06 on a 64 GB card leaves too little KV after the ~2.4 GiB of weights; the box says otherwise \u2014 0.06 yields available KV 2.7 GiB, a 235,721-token pool and 7.19x concurrency at the full 32768 window. The DECLARED 0.10 that this risk motivated was in fact BOTH too big to fit beside the orin-lobe shape's committed lanes AND unnecessary, so the Orin card profile moved 0.10 -> 0.06. The per-card util mechanism is retained (schema.py) but currently carries no divergence: every card declares 0.06, and only the Orin's is measured."
     },
     {
       "id": "r3",
@@ -860,6 +860,22 @@
       "id": "r4",
       "text": "Adapter production is cross-repo (agentculture/unsloth-cli#16) and unsloth-cli 0.5.0 ships only scaffold verbs, so the muscle-memory loop cannot be exercised end-to-end from this plan alone",
       "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "The vllm-hand lane shipped without VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0, which every other lane on the same nightly image sets. Live boot profiled available KV to -9.25 GiB (negative). Fixed; a compose-lane env-parity check would have caught it offline and does not exist",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Thor's LoRA embedding-slot allocation failed with 'CUDA error: device not ready' on a loaded box (108/122 GiB, load avg 4.30). Unattributed between the pre-fix cudagraph over-reservation, a unified-memory allocation race, and an sm_110 LoRA-embedding problem. Needs a re-run on a quiet Thor with the fix in place",
+      "kind": "unknown_nonblocking",
       "task_id": null,
       "resolved": false,
       "resolution": ""
