@@ -103,3 +103,9 @@
 {"ts":"2026-08-10T06:50:52.682664+00:00","type":"pr_read","pr":184,"comment_count":3,"threads_unresolved":0,"ci_state":"failure"}
 {"ts":"2026-08-10T07:16:51.792749+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
 {"ts":"2026-08-10T07:16:57.343496+00:00","type":"pr_read","pr":184,"comment_count":6,"threads_unresolved":2,"ci_state":"ok"}
+{"ts":"2026-08-10T07:27:31.383799+00:00","type":"pr_reply","pr":184,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-10T07:27:32.459631+00:00","type":"pr_reply","pr":184,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-10T07:27:32.463044+00:00","type":"pr_batch_replied","pr":184,"count":2,"resolved":0}
+{"ts":"2026-08-10T07:27:33.257550+00:00","type":"pr_webhook_posted","pr":184,"event":"pr_replied"}
+{"ts":"2026-08-10T07:28:07.155009+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
+{"ts":"2026-08-10T07:28:12.425961+00:00","type":"pr_read","pr":184,"comment_count":8,"threads_unresolved":0,"ci_state":"failure"}

@@ -4,26 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.4] - 2026-08-10
+
+### Fixed
+
+- CI lint: two markdownlint errors in my own CHANGELOG entries — `hand:<domain>` parsed as inline HTML (MD033) and bare snake_case identifiers parsed as emphasis markers (MD037). Both came from writing changelog prose with unbackticked code. My local markdownlint run had passed because I ran it BEFORE the version bump appended the entry.
+- Sonar S8997 x2: the adapter-probe test swapped a module global by hand; it now uses the monkeypatch fixture, and a sibling test drops its inline contextlib/io redirect for the capsys fixture the rest of the module already uses.
+
 ## [0.56.3] - 2026-08-10
 
 ### Added
 
-- Collision detection now covers LoRA adapter names, not just served names (Qodo #184-1): _backend_for matches `requested in backend.adapters`, so an adapter name is an ownership claim exactly like a served name — a collision between the two resolved silently by backend order. The warning also names the right remedy (HAND_LORA_MODULES vs *_SERVED_NAME) for whichever kind of duplicate it found.
-- A new warning for an adapter name shadowed by an alias: resolve_model checks aliases FIRST, so an adapter named after a tier, role or operator alias is unreachable by its own name — a total shadow rather than an order-dependent race.
+- Collision detection now covers LoRA adapter names, not just served names (Qodo #184-1): `_backend_for` matches `requested in backend.adapters`, so an adapter name is an ownership claim exactly like a served name — a collision between the two resolved silently by backend order. The warning also names the right remedy (`HAND_LORA_MODULES` vs `*_SERVED_NAME`) for whichever kind of duplicate it found.
+- A new warning for an adapter name shadowed by an alias: `resolve_model` checks aliases FIRST, so an adapter named after a tier, role or operator alias is unreachable by its own name — a total shadow rather than an order-dependent race.
 
 ### Changed
 
-- build_config cognitive complexity 18 -> well under the 15 limit (Sonar S3776) by extracting three alias derivations into named helpers: _hand_adapter_aliases, _add_self_named_opt_in_aliases and _add_pooling_role_aliases. Behaviour-preserving — the existing alias tests pass unchanged.
+- `build_config` cognitive complexity 18 -> well under the 15 limit (Sonar S3776) by extracting three alias derivations into named helpers: `_hand_adapter_aliases`, `_add_self_named_opt_in_aliases` and `_add_pooling_role_aliases`. Behaviour-preserving — the existing alias tests pass unchanged.
 
 ### Fixed
 
-- The hand backend comment claimed HAND_SERVED_NAME alone wires the lane (Qodo #184-2). It does not — _optional_backend requires *_BASE_URL, by its own documented contract, since a served name with no URL describes a model rather than a reachable backend.
+- The hand backend comment claimed `HAND_SERVED_NAME` alone wires the lane (Qodo #184-2). It does not — `_optional_backend` requires `*_BASE_URL`, by its own documented contract, since a served name with no URL describes a model rather than a reachable backend.
 
 ## [0.56.2] - 2026-08-10
 
 ### Added
 
-- 29 tests over the hand LoRA-adapter honesty surface — the declaration parser (HAND_LORA_MODULES: partition-not-split so a path keeps an =, malformed segments dropped, dedupe, whitespace), the engine probe (intersection, undeclared ids ignored, empty declaration opens no socket, correct path, no API key, and every fail-closed mode: non-200, unreachable, malformed body), the ReadinessCache background refresh (empty seed, copy isolation, a raising probe degrading to empty without aborting the pass), the hand:<domain> alias derivation, and the /v1/models filter (declared-but-unconfirmed is invisible; an adapter cannot outlive its lane).
+- 29 tests over the hand LoRA-adapter honesty surface — the declaration parser (HAND_LORA_MODULES: partition-not-split so a path keeps an =, malformed segments dropped, dedupe, whitespace), the engine probe (intersection, undeclared ids ignored, empty declaration opens no socket, correct path, no API key, and every fail-closed mode: non-200, unreachable, malformed body), the ReadinessCache background refresh (empty seed, copy isolation, a raising probe degrading to empty without aborting the pass), the `hand:<domain>` alias derivation, and the `/v1/models` filter (declared-but-unconfirmed is invisible; an adapter cannot outlive its lane).
 
 ### Changed
 

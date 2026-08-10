@@ -33,6 +33,8 @@ import json
 import threading
 import time
 
+import pytest
+
 from lobes.gateway import _config as C
 from lobes.gateway import _readiness as R
 from lobes.gateway._routing import Backend, RoutingTable, list_models_payload
@@ -392,21 +394,16 @@ def test_an_adapter_colliding_with_another_backends_served_name_warns(capsys) ->
     assert "HAND_LORA_MODULES" in err, "the remedy must name the knob the duplicate came from"
 
 
-def test_a_served_name_collision_still_recommends_served_name() -> None:
+def test_a_served_name_collision_still_recommends_served_name(capsys) -> None:
     # The pre-existing message must not regress into adapter advice when no
     # adapter is involved.
-    import contextlib
-    import io
-
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        C._warn_on_served_name_collisions(
-            [
-                Backend("embed", "http://e:8000", "same/id", task="embed"),
-                Backend("embed_deep", "http://d:8000", "same/id", task="embed"),
-            ]
-        )
-    err = buf.getvalue()
+    C._warn_on_served_name_collisions(
+        [
+            Backend("embed", "http://e:8000", "same/id", task="embed"),
+            Backend("embed_deep", "http://d:8000", "same/id", task="embed"),
+        ]
+    )
+    err = capsys.readouterr().err
     assert "*_SERVED_NAME" in err
     assert "HAND_LORA_MODULES" not in err
     assert "WRONG " in err and "VECTOR SPACE" in err, "the embed-specific detail must survive"
@@ -450,7 +447,7 @@ def test_hand_adapter_aliases_helper_is_empty_without_a_hand_backend() -> None:
     ) == {f"hand{C.HAND_ADAPTER_SEP}legal": "legal"}
 
 
-def test_default_adapter_probe_uses_the_local_timeout() -> None:
+def test_default_adapter_probe_uses_the_local_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     # The default probe binds the LOCAL timeout, never the peer thread's
     # cross-box budget: these are co-resident lanes on the compose network.
     seen: dict[str, object] = {}
@@ -460,12 +457,8 @@ def test_default_adapter_probe_uses_the_local_timeout() -> None:
         return frozenset({"legal"})
 
     cache = R.ReadinessCache({}, timeout=1.25, start=False)
-    original = R.probe_backend_adapters
-    R.probe_backend_adapters = fake_probe  # type: ignore[assignment]
-    try:
-        got = cache._default_adapter_probe("http://vllm-hand:8000", ("legal",))
-    finally:
-        R.probe_backend_adapters = original  # type: ignore[assignment]
+    monkeypatch.setattr(R, "probe_backend_adapters", fake_probe)
+    got = cache._default_adapter_probe("http://vllm-hand:8000", ("legal",))
     assert got == frozenset({"legal"})
     assert seen == {
         "base_url": "http://vllm-hand:8000",
