@@ -123,12 +123,14 @@ Lane under test (the committed vllm-hand lane's rendered flags):
 -----------------------------------------------------------------------------
 7. WHAT THIS TRANSCRIPT DOES NOT ESTABLISH
 -----------------------------------------------------------------------------
-  - Any card other than this Orin. Thor and the Spark stay UNVALIDATED (#108).
+  - Any card other than this Orin. Thor and the Spark stay UNVALIDATED (#108);
+    the remaining validation work is issue #183, and Thor's own boot failure
+    is issue #181.
   - Adapter SERVING end to end. v1 ships zero adapters by decision, so
     `hand:<domain>` resolution, the adapter-honesty filter, and the
     rank-ceiling failure path are all covered by offline tests only. They
     become live-testable when unsloth-cli can produce an LFM2.5 adapter
-    (agentculture/unsloth-cli#16).
+    (agentculture/unsloth-cli#16); tracked here as issue #183.
   - Anything through the lobes GATEWAY. These calls went straight to the
     engine; the gateway's alias/tier/pressure layer is offline-tested.
   - Throughput, concurrency, or any correctness claim beyond the two

@@ -521,6 +521,7 @@ services:
       # disable it, matching every sibling lane, so the util knob maps back to
       # true usage instead of a padded guess. Raising util instead would make
       # `hand` cost 4.6x more memory on every card to buy nothing.
+      # No test asserts this parity across lanes — that gap is issue #182.
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${HAND_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=hand   # → /logs/model-gear/hand-<boot>.log

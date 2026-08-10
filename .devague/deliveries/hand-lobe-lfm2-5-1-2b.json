@@ -1,0 +1,97 @@
+{
+  "plan_slug": "hand-lobe-lfm2-5-1-2b",
+  "schema_version": 1,
+  "created": "2026-08-10T03:38:10Z",
+  "updated": "2026-08-10T03:39:00Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t1 also repointed lobes/cli/_commands/route.py and run.py, both outside t1's declared FILES scope",
+      "task_ref": "t1",
+      "reason": "Both modules resolved the cheap-tier gear by role_hint=='minor', which no catalog entry carries after the repoint \u2014 they would have raised 'no model with role_hint=minor found in the catalog' at runtime. Leaving them stale to respect the FILES line would have shipped a live regression. route.py's _KNOWN_GEARS and classifier prompt needed the same treatment.",
+      "affects": [
+        "t7"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "t4 also added a probe surface to lobes/gateway/_readiness.py (probe_backend_adapters, AdapterProbe, ReadinessCache adapter store + current_adapters), outside t4's declared FILES",
+      "task_ref": "t4",
+      "reason": "t4's acceptance requires a declared-but-unloaded adapter to be absent from /v1/models AND capabilities. The obvious implementation \u2014 stat the adapter path \u2014 is WRONG here: adapter paths are mounted into the vllm-hand container, not the gateway's, so a filesystem check would false-negative every correctly-configured adapter while still missing the failures that matter (unreadable file, rank above --max-lora-rank, a checkpoint vLLM refused). The honest evidence is the lane's OWN /v1/models, which is a readiness-layer concern and could not live in the four declared gateway files.",
+      "affects": [
+        "c19",
+        "h14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t6 also added an empty-flag drop rule to lobes/templates/mg-logwrap.sh, outside t6's declared FILES (templates/fleet/{docker-compose.yml,env.example})",
+      "task_ref": "t6",
+      "reason": "v1 ships --enable-lora armed with an EMPTY inventory, so --lora-modules=${HAND_LORA_MODULES:-} renders as a bare '--lora-modules=' and vLLM would parse the empty string as a malformed name=path pair, killing the default boot. A compose command list cannot omit an argument conditionally, so the only place to express this is the shared entrypoint. Rule is narrow by construction (matches --flag= exactly) and tested against bare flags, lone --, short flags and non-flag args.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "t9 also touched lobes/runtime/_compose.py (GPU_SERVICES) and t3 also touched lobes/profiles/shape_render.py (ROLE_SERVICE), both outside their declared FILES",
+      "task_ref": "t9",
+      "reason": "Two role->compose-service maps exist outside the declared file sets and both raise KeyError on an unmapped role: shape_render.ROLE_SERVICE (crashed the goldens regenerator) and _compose.GPU_SERVICES (a shipped-template mirror asserted by test_init_gpu_access). Neither could be deferred \u2014 the goldens do not regenerate without the first, and the second fails CI.",
+      "affects": [
+        "t3"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t6's committed lane changed AFTER t6 was complete: VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 was added when t10's live boot found it missing",
+      "task_ref": "t6",
+      "reason": "MEASURED on a physical Orin 2026-08-10: without the knob the lane profiles to 'Available KV cache memory: -9.25 GiB' \u2014 negative, so no boot at any util. Every other lane on the same nightly image already sets it; the hand lane was the sole omission. Nothing about the rendered compose is detectably wrong until an engine profiles memory with it, so no offline test could have caught this at t6 time. Also re-baselined the vllm-hand service hash and the template-defaults golden.",
+      "affects": [
+        "t10",
+        "t8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "t8's committed Orin budget changed AFTER t8 was complete: gpu_mem_util 0.10 -> 0.06, regenerating its goldens a second time",
+      "task_ref": "t8",
+      "reason": "This is r1 firing as designed and t10 exercising its authorisation to re-apportion, but it does mean t8's output was not final when t8 closed. The Orin refused 0.10 twice live ('Free memory on device cuda:0 (4.67/61.34 GiB) ... less than desired (0.1, 6.13 GiB)') and boots healthy at 0.06 (KV pool 235,721 tokens, 7.19x concurrency). The reasoning behind 0.10 was plausible and wrong. Net effect: the per-card util mechanism is retained but now carries no divergence \u2014 every card declares 0.06 and only the Orin's is measured.",
+      "affects": [
+        "t10",
+        "c11",
+        "h8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d7",
+      "what": "t12 delivered ORIN ONLY. Its acceptance says 'Live validation on Thor AND Orin'; Thor is not validated and the plan's scope is therefore not fully met",
+      "task_ref": "t12",
+      "reason": "Thor's boot died in LoRA embedding-slot allocation (vllm/lora/layers/vocal_parallel_embedding.py:49, torch.AcceleratorError: CUDA error: device not ready) on a box at 108/122 GiB used with load avg 4.30, and that run predated the cudagraph fix. Three candidate causes remain unseparated: the pre-fix over-reservation, a unified-memory allocation race (the same class as Thor's documented boot-ordering caveat), or an sm_110-specific LoRA-embedding problem. Distinguishing them needs a quiet Thor with the fix in place, which was not available without displacing production containers. Recorded as a scope shortfall rather than presented as a pass: Orin is VALIDATED, Thor and Spark stay DECLARED per #108.",
+      "affects": [
+        "c1",
+        "h1",
+        "c33",
+        "h18"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

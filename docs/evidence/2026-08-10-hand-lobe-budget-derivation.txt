@@ -60,7 +60,8 @@ Root cause: every other lane on this nightly image sets
 VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 (primary, embed, rerank,
 multimodal, multimodal-coder, muse, worker). The hand lane was the only
 omission. No offline test could have caught it: the rendered compose is
-perfectly valid right up until an engine profiles memory with it.
+perfectly valid right up until an engine profiles memory with it. The missing
+cross-lane parity test is tracked as issue #182.
 
 Resolution: disable the estimate, matching every sibling lane, plus a
 HAND_CUDAGRAPH_ESTIMATE escape hatch (default 0). vLLM's alternative remedy —
@@ -110,7 +111,7 @@ NOT YET ATTRIBUTED. Candidate causes, none confirmed:
       Thor in docs/machine-profiles.md;
   (c) an sm_110-specific problem in the LoRA embedding path.
 Distinguishing them needs a re-run on a quiet Thor with the fix in place. It is
-recorded here rather than guessed at.
+recorded here rather than guessed at, and tracked as issue #181.
 
 -----------------------------------------------------------------------------
 4. What is NOT claimed

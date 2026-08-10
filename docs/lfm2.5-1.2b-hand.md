@@ -177,8 +177,8 @@ One box's successful boot never promotes another card.
 | card | status | evidence |
 |---|---|---|
 | **Jetson AGX Orin** (sm_87, 64 GB) | **VALIDATED 2026-08-10** | `docs/evidence/2026-08-10-accept-hand-orin.txt` |
-| Jetson AGX Thor (sm_110, 128 GB) | DECLARED | — |
-| DGX Spark GB10 (128 GB) | DECLARED | — |
+| Jetson AGX Thor (sm_110, 128 GB) | DECLARED | boot failed — [#181](https://github.com/agentculture/lobes-cli/issues/181) |
+| DGX Spark GB10 (128 GB) | DECLARED | not yet exercised — [#183](https://github.com/agentculture/lobes-cli/issues/183) |
 | `base` (unrecognised card) | DECLARED | untestable by construction |
 
 What the Orin run established: `gpu_mem_util = 0.06` at the full 32768 window
@@ -192,7 +192,8 @@ correct known-answer completion, and — the check this lane exists to pass — 
 Two things it deliberately does **not** establish: adapter serving end to end
 (v1 ships zero adapters, so `hand:<domain>` resolution and the adapter-honesty
 filter are covered by offline tests only), and anything reached through the
-lobes gateway rather than the engine directly.
+lobes gateway rather than the engine directly. Both are tracked in
+[#183](https://github.com/agentculture/lobes-cli/issues/183).
 
 **A budget was refuted here.** The Orin was declared at `0.10` and the box
 refused it twice — once because the lane was missing the cudagraph-estimate
