@@ -1,0 +1,868 @@
+{
+  "slug": "hand-lobe-lfm2-5-1-2b",
+  "title": "hand lobe LFM2.5-1.2B",
+  "frame_slug": "hand-lobe-lfm2-5-1-2b",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-10T00:10:52Z",
+  "updated": "2026-08-10T02:14:18Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves 'hand' \u2014 a 1.2B LFM2.5 lobe cheap enough to run on every machine in the mesh, and the fleet's designated fine-tuning base",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "VERIFIED on the physical Jetson AGX Thor against the exact pinned nightly digest 7c5a10e9a8b3 (vLLM 0.23.1rc1.dev672+g93d8f834d): ModelRegistry lists Lfm2ForCausalLM, and vllm/tool_parsers/__init__.py maps the key 'lfm2' -> Lfm2ToolParser. The same digest is present on the Orin. This is image-grade, not documentation-grade \u2014 the engine hand needs is already on the boxes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains an LFM2.5-1.2B-Instruct SupportedModel entry: 32K native (native_max_model_len=32768, reuse _CONTEXT_32K_NATIVE), shape 'hybrid conv + GQA (10 double-gated conv + 6 GQA of 16 layers)', and quantization='none' \u2014 the bf16/unquantized SENTINEL the Qwen3.5-4B minor gear already uses (catalog.py:368), asserted by tests/test_catalog.py::test_minor_gear_quantization_is_none_sentinel. The sentinel means VLLM_QUANTIZATION is NOT written on switch and the compose lane must omit --quantization outright.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The catalog entry round-trips: every existing test_catalog.py invariant still passes with it present \u2014 unique id, all fields non-empty, doc file resolves, native_max_model_len positive, generate-task models carry zero dimension and empty hf_overrides, and the 'none' quantization sentinel behaves exactly as the 4B minor's does under lobes switch.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "lobes/runtime/_parser.py::_RULES needs an lfm2-scoped family rule, or tests/test_catalog.py:76::test_tool_parser_matches_infer_parser fails the moment the catalog entry lands \u2014 the catalog's tool_parser field is asserted equal to infer_parser(id) for every gear.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "After adding the rule, infer_parser('LiquidAI/LFM2.5-1.2B-Instruct') returns exactly 'lfm2', tests/test_catalog.py::test_tool_parser_matches_infer_parser passes, and the new markers do not change infer_parser's answer for ANY existing catalog id (assert the full catalog round-trips unchanged).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "hand's compose lane must ride the vLLM NIGHTLY image (${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9...} = 0.23.1rc1.dev672), NOT the NGC pin. Lfm2ForCausalLM ships in vLLM >= 0.23.0, and docs/vllm-nightly-migration.md section 1 records vllm-minor/vllm-middle still pinned to nvcr.io/nvidia/vllm:26.04-py3 = vLLM 0.19.0+nv26.04 \u2014 the cheapest existing lane is precisely the one that cannot load this architecture.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "VERIFIED on both target boxes: 'docker images' on Thor and Orin each list vllm/vllm-openai at digest 7c5a10e9a8b3, and python3 -c 'import vllm' inside it reports 0.23.1rc1.dev672 \u2014 above LFM2's >= 0.23.0 floor. No new image pull is required for either card.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "lobes/templates/fleet/docker-compose.yml gains a vllm-hand service and lobes/templates/fleet/env.example gains its HAND_* keys, following the vllm-minor block (docker-compose.yml:413-463) for structure: mg-logwrap entrypoint, HF cache + /logs mounts, expose 8000 with no host port, /health healthcheck.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "docker compose config renders the vllm-hand service with no unresolved variables, and 'lobes up hand' starts it and reaches /health on a real box; the lane omits --quantization entirely (not an empty flag) and carries no --language-model-only.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "IF hand lands as a ninth first-class Colleague role, the role vocabulary must be extended in lockstep across every table that enumerates roles: lobes/roles.py (ROLES, ROLE_BACKEND, ROLE_ROLE_HINT, ROLE_PATH, ROLE_RESPONSIBILITIES, ROLE_FORBIDDEN, ROLE_MAX_MODEL_LEN_ENV), lobes/profiles/schema.py:57 ROLES, lobes/profiles/render.py:76 ROLE_ENV_PREFIX, lobes/profiles/shapes.py (SHAPE_ROLES/DEFAULT_HOSTED_ROLES), lobes/gateway/_config.py (FEASIBLE_ENV, peer origin/proxy/key tables), lobes/gateway/server.py (_PEER_SERVED_NAME_ENV, _PEER_ROLE_HINT), lobes/gateway/_pressure_policy.py, lobes/catalog.py TIER_ROLE, lobes/runtime/_compose.py (role->service name), lobes/roles_measure.py, and lobes/cli/_commands/{capabilities,up,measure,overview,init}.py.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "A single parametrised test iterates lobes.roles.ROLES and asserts every per-role table has an entry for all nine roles \u2014 so a future tenth role cannot half-land either. Today that test would fail on hand; after the change it passes with no role missing from any table.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "server.py's peer tables are the KNOWN silent-failure point for a newly added role: 0.54.8 fixed exactly this \u2014 worker was wired into _config.py's peer dicts in 0.54.6 but missing from server.py's _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT, so peer_specs_from_table silently dropped it and WORKER_PEER_PROXY=true did nothing. hand must land in BOTH files or its proxy/referral surface is inert with no error.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "HAND_PEER_PROXY=true against a declared HAND_PEER_ORIGIN actually forwards and returns X-Lobes-Proxied-By \u2014 proven by the same test shape that guards worker, plus tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name extended to hand so the 0.54.8 silent-drop cannot recur.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "'runs on all machines' means hand is declared across the whole profile+shape matrix, not one file: all four card profiles (lobes/profiles/builtin/{base,spark,thor,orin}.toml) and all seven shape TOMLs (lobes/profiles/builtin_shapes/), which in turn regenerates the four card goldens (tests/goldens/*.env) and all 24 shape x card goldens (tests/goldens/shapes/*.env) via tests/goldens/regen.py, plus tests/test_shape_contract_matrix.py.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "A byte-diff of the 28 regenerated goldens shows changes ONLY on lines introducing HAND_* keys \u2014 no unrelated key, value or ordering drift in any of the 4 card or 24 shape x card files. Any other delta means the render changed something it should not have.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Docs that enumerate the role set must all move together: docs/colleague-stack.md (the role contract), docs/gateway-fleet.md, docs/deployment-shapes.md, docs/machine-profiles.md, docs/openai-api.md, a new per-model docs/<lfm2.5-1.2b>.md (tests/test_catalog.py::test_every_doc_file_exists asserts the catalog's doc field resolves), lobes/explain/catalog.py, CLAUDE.md and README.md.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "tests/test_catalog.py::test_every_doc_file_exists passes with the new per-model doc present, and a grep for the role-count phrasing ('eight', 'EIGHT') across docs/ and CLAUDE.md returns no stale occurrence describing the role set.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "hand is NOT an OPT_IN_CORE_ROLE. muse and worker are opt-in precisely because they are too heavy to co-reside (lobes/profiles/shapes.py: OPT_IN_CORE_ROLES = muse, worker); a 1.2B bf16 (~2.4 GiB weights) is the opposite case. 'Runs on all machines' places hand in DEFAULT_HOSTED_ROLES \u2014 the first role added to the default-hosted set since issue #81.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "shapes.py's OPT_IN_CORE_ROLES remains exactly ('muse','worker') after the change \u2014 hand is absent from it \u2014 and DEFAULT_HOSTED_ROLES contains hand. Assert both, so a later refactor cannot quietly demote hand to opt-in.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "Adding hand to DEFAULT_HOSTED_ROLES deliberately BREAKS the machine-as-brain byte-identical invariant that muse/worker were designed to preserve. shapes.py documents it explicitly: DEFAULT_HOSTED_ROLES excludes the opt-in core roles so 'machine-as-brain stays byte-identical to the bare card profile', and tests/goldens/regen.py::_shape_needs_goldens is defined against that set. hand renders on machine-as-brain, so this invariant must be knowingly re-baselined, not silently regenerated.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The machine-as-brain re-baseline is explicit and reviewed: the goldens diff for machine-as-brain contains ONLY HAND_* additions, and shapes.py's docstring + tests/goldens/regen.py's _shape_needs_goldens are updated to state that the identity-shape invariant now includes a default-hosted cheap role. A silent regeneration that merely makes the tests pass does NOT satisfy this.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "base.toml's OOM veto does NOT extend to hand. base.toml marks senses/muse/worker feasible=false because a heavy checkpoint on an unrecognised card risks an OOM crash-loop; a 1.2B bf16 is the first generate lobe cheap enough that the conservative fallback can host it honestly.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Rendering the base profile produces HAND_FEASIBLE unset (i.e. feasible) with a declared model and budget, while senses/muse/worker stay FEASIBLE=false \u2014 proven by the regenerated tests/goldens/base.env, not by reading the TOML.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "v1 must not foreclose LoRA even though it defers it: the served checkpoint stays bf16/unquantized. This is the same reason the 4B minor is served bf16 rather than the cosmicproc NVFP4 export \u2014 unsloth LoRA needs the bf16 base (docs/specs/2026-06-26-lobes-ships-a-minor-lobe-a-cheap-warm-co-resident.md). A quantized hand would make the 'fine-tuning base' half of the announcement undeliverable later.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The rendered vllm-hand command contains no --quantization token at all, and the catalog entry's quantization field is the 'none' sentinel \u2014 checked against the rendered compose, since an empty --quantization= would break vLLM exactly as the 4B minor's comment warns.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "hand is TEXT-ONLY. LFM2.5-1.2B-Instruct carries no ViT (LiquidAI ships separate VL/audio variants), so hand must not advertise image_understanding/video_understanding, and \u2014 unlike the 4B minor \u2014 its compose lane needs no --language-model-only flag to strip a vision tower it does not have.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "hand's ROLE_RESPONSIBILITIES contains neither image_understanding nor video_understanding, the rendered lane carries no --language-model-only, and posting an image part to model=hand fails cleanly rather than being silently dropped.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "The Qwen3.5-4B minor gear is NOT deleted (cite-don't-delete). Whether hand supersedes it in practice is a separate decision from whether its catalog entry, docs/qwen3.5-4b-minor.md, and the vllm-minor compose service stay in-tree \u2014 they do.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "After the change, the Qwen3.5-4B catalog entry still exists, docs/qwen3.5-4b-minor.md still resolves, and the vllm-minor compose service is still present behind COMPOSE_PROFILES=minor \u2014 a grep proves all three survive the repointing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "No live/validated claim without an evidence transcript (#108). Every doc, support table, and lobes capabilities output must read hand as declared/UNVALIDATED until a transcript lands under docs/evidence/ per card actually booted. Precedent in-tree: thor-muse's budget was measured but the shape stayed UNVALIDATED because the acceptance transcript never landed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "Before any evidence transcript lands, lobes capabilities and every doc/support table describe hand as declared/UNVALIDATED on every card; after a per-card transcript is committed, only THAT card reads validated. No blanket promotion from a single box's run.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "hand joins lobes.roles.ROLES as the NINTH role with backend name 'hand', env prefix HAND_, compose service vllm-hand, and entries in every table enumerated in c6 \u2014 including gateway/server.py's _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT so HAND_PEER_PROXY is not silently inert (the 0.54.8 trap).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "GET /capabilities returns exactly nine role keys with hand among them, and 'lobes capabilities' agrees field-for-field with the gateway \u2014 the shared-core contract in roles.py holds for the new role with no CLI/gateway divergence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "The tier/alias space becomes DYNAMIC for the first time. Every alias today is a compile-time constant: catalog.TIER_ROLE is a literal dict and _tier_request.py:37 freezes _KNOWN_TIERS = frozenset(TIER_ROLE) at import. A per-deployment set of domain adapters cannot live in a module-level frozen constant \u2014 alias resolution must learn to admit names that exist only in this deployment's adapter inventory.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "A request for model=hand:<domain> naming an adapter present in HAND_LORA_MODULES resolves and is served, while a name absent from the inventory is refused with a clear error rather than silently falling back to the base or to another lane. Prove BOTH directions.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "Adapter advertisement must obey the #92 honesty rule end to end: GET /v1/models lists each LOADED adapter, GET /capabilities and 'lobes capabilities' report hand's adapter inventory, and an adapter that is declared but not loaded is never advertised as usable \u2014 the same feasible/ready/loaded discipline the eight existing roles already carry, applied one level deeper (per-adapter, not just per-role).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "With HAND_LORA_MODULES declaring an adapter whose path does not exist (so vLLM cannot load it), GET /v1/models does NOT list it and GET /capabilities does NOT advertise it as usable \u2014 declared-but-unloaded must never read as available. This is the #92 rule at adapter granularity and is the single most likely place to get it wrong.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "catalog.TIER_ROLE repoints 'minor'/'cheap' to hand and gains a 'hand' alias; the capability order becomes hand < multimodal < worker < muse < main. The dict's ORDER is load-bearing \u2014 catalog.py:776-787 documents that tier_aliases derives ascending capability order from each role's LAST occurrence position, so this is an ordered edit, not a key swap.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "resolve_tier('minor') and resolve_tier('cheap') both return the hand gear, resolve_tier('hand') returns it too, and tier_aliases still derives the ascending order hand < multimodal < worker < muse < main from the reordered dict \u2014 assert the derived ORDER, not just the mapping.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "gateway/_pressure_policy.py's servable floor moves from the 4B minor to hand: hand is never shed, always served regardless of swap/iowait pressure, and the shed set stays exactly cortex/senses/worker/muse.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Under synthetic swap>75% / iowait>50% pressure, model=hand is served 200 while model=cortex/senses/worker/muse each return 429 with Retry-After \u2014 hand never sheds, and the shed set is unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "The vllm-hand compose lane carries --enable-lora plus its sizing knobs (max_loras / max_lora_rank / max_cpu_loras) over a bf16 base with no --quantization flag \u2014 vLLM LoRA needs the unquantized base, which is the same constraint that already forces the bf16 sentinel.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "VERIFIED at source: vllm/model_executor/models/lfm2.py declares 'class Lfm2ForCausalLM(nn.Module, HasInnerState, SupportsLoRA, SupportsPP, IsHybrid, SupportsQuant)' with packed_modules_mapping (qkv_proj, w13, in_proj), embedding_modules, and an hf_to_vllm_mapper shared with quantization. --enable-lora is a supported flag for this architecture. Must still be confirmed to BOOT with the flag armed on our digest \u2014 registration is not the same as a clean start.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "hand REPLACING minor is a repointing, not a removal: Qwen3.5-4B's catalog entry, docs/qwen3.5-4b-minor.md and the vllm-minor compose service all stay in-tree (cite-don't-delete). What changes is what the fleet POINTS AT \u2014 the tier target, the LoRA base, and the pressure floor.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "resolve_tier('minor') returns the hand gear while the Qwen3.5-4B entry remains in SUPPORTED_MODELS \u2014 proving the change is a repointing of what the fleet resolves, not a removal of what the catalog knows.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "audience",
+      "text": "Colleague and every mesh consumer that addresses lobes by ROLE name rather than model id, plus the operator running lobes init/up on each box. Secondary: the future fine-tuning workflow that will train domain adapters against this base.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "The role is discoverable the way the audience is told to discover it: a caller resolving capabilities by ROLE NAME finds hand in GET /capabilities and lobes capabilities without parsing any model id, per the standing consumer contract that #361 punished cortex for violating.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "after_state",
+      "text": "Every machine in the mesh \u2014 Spark, Thor, Orin, and any unrecognised card \u2014 hosts a hand: a 1.2B LFM2.5 lobe served bf16 with --enable-lora armed, addressable as model=hand for the base and model=hand:<domain> for a learned adapter. hand is the fleet's always-servable floor (never shed under pressure) and has replaced the 4B minor as the cheap tier target and the LoRA base. Its adapter inventory is operator-declared in .env and honestly advertised: /v1/models and GET /capabilities list exactly the adapters actually loaded, and none that are not.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "An acceptance transcript per validated card is committed under docs/evidence/ showing hand serving on that box; any card without one reads DECLARED/UNVALIDATED in every doc, support table and capabilities output (#108). Thor and Orin are ssh-reachable and already carry the pinned image, so both are obtainable; the Spark and the base fallback are not covered by those runs.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "why_it_matters",
+      "text": "Today the fleet's cheap lane does not work at all: the 4B minor gear pins vLLM 0.19.0, the image on which its own Qwen3.5 architecture hits the FLA/Gated-DeltaNet bug and emits gibberish, so 'minor' has never served correctly and no box has a working small lobe. Separately, every specialization the mesh wants must be paid for in prompt tokens against a big general model, because nothing in the tree can serve a fine-tuned adapter \u2014 grepping for LoRA returns zero hits. hand fixes both: a small lobe that actually runs on the nightly engine, and the first surface where a learned skill can be served instead of prompted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "The two motivating facts are re-verified at implementation time rather than trusted from this frame: that the 4B minor still cannot serve correctly on its pinned image, and that no LoRA surface exists in-tree. If either has changed, the justification is restated.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "success_signal",
+      "text": "A caller on any box in the mesh gets a 200 from model=hand with no pressure-based 429, on a card whose acceptance transcript is committed under docs/evidence/; lobes capabilities reports hand feasible/ready with lora_enabled true and an adapter list matching exactly what vLLM has loaded; a tool call through the lfm2 parser returns a structured tool_calls array rather than prose; and the full test suite passes with the 28 regenerated goldens.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Every clause of the success signal is demonstrated by committed artefacts \u2014 an evidence transcript for the live clauses and a green CI run for the test-suite clause \u2014 not asserted in prose.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "before_state",
+      "text": "Eight Colleague roles, all of which are either heavy (cortex/senses/muse/worker) or non-generate (embedder/reranker/stt/tts). The only small generate gear, minor, is an opt-in unnamed gear on a broken image, is not a Colleague role, and is not hosted by any shape by default. No LoRA surface exists anywhere in the tree and there is no lobes train verb.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "The before-state is checked against the tree at implementation time \u2014 eight roles in lobes.roles.ROLES, zero LoRA hits, no train verb \u2014 so the spec is not describing a repo that has moved on.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "boundary",
+      "text": "Training is OWNED BY unsloth-cli, a sibling repo (/home/spark/git/unsloth-cli, dist unsloth-cli v0.5.0, console script 'sloth'), NOT by lobes. lobes never trains: there is no lobes train verb and there will not be one. The contract between the two is an ADAPTER ON DISK \u2014 unsloth-cli produces a LoRA/QLoRA adapter directory, the operator declares its path in HAND_LORA_MODULES, and lobes serves it. This is a cleaner boundary than 'training is deferred': the capability is not missing, it lives on the other side of a file-path interface.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "Nothing in lobes imports, shells out to, or version-pins unsloth-cli; a grep for 'unsloth' across lobes/ returns hits only in comments and docs, never in code. The dependency is one-directional and documentary.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "roles_measure.py must gain hand or 'lobes measure' CRASHES. _FAMILY_BY_ROLE (roles_measure.py:116) is indexed unguarded at line 419 while iterating lobes.roles.ROLES, and _LLM_ROLES (line 112) lists only cortex/senses/muse/worker. Adding hand to ROLES without touching this file is a KeyError, not a silent omission \u2014 louder than the 0.54.8 drop but the same class of lockstep failure, and c6's table list does not name _FAMILY_BY_ROLE or _LLM_ROLES specifically.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "A test iterates lobes.roles.ROLES and asserts _FAMILY_BY_ROLE covers every role, so the KeyError class of bug cannot recur for a tenth role either; 'lobes measure' completes for hand and reports it in the generate family.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "Every deployment shape's GPU budget must be RE-DERIVED with hand co-resident, or hand's allocation taken out of an existing lane rather than added on top. Each mesh-lobe reclaim was MEASURED on hardware with no hand present: spark-lobe cortex gpu_mem_util=0.44 (and the naive reclaim-sum was REFUSED live before 0.44 was found), thor-worker 0.45, orin 0.45 \u2014 each already sums to ~0.56-0.57 with the pooling gears. 'Runs on all machines' silently adds a tenth consumer to budgets that were measured to the edge. No claim in this frame re-derives them.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "For EVERY shape that hosts hand, the committed budget is either (a) re-measured on real hardware with the hand lane running, with the transcript under docs/evidence/, or (b) explicitly re-apportioned so the total is unchanged from the pre-hand measured value. A shape whose budget is left at its pre-hand number with hand added on top does NOT satisfy this \u2014 that is the exact arithmetic that was refused live on spark-lobe, thor-lobe and thor-muse.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "boundary",
+      "text": "Adding hand to the role contract is effectively IRREVERSIBLE and that is accepted knowingly. The same additive/subtractive asymmetry that justified withholding repo_action (#180) applies to the role itself: once consumers resolve model=hand by name, removing it breaks them. There is no rollback path beyond a breaking change, so the decision to make hand a role rather than an unnamed gear should be treated as one-way.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "The irreversibility is stated in docs/colleague-stack.md so a future maintainer reads it before proposing a tenth role or a retirement, rather than rediscovering it from the #361 consumer contract.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "lobes/minor/governance.py and the 'lobes eval minor' verb must be reconciled with the repoint. governance.py is keyed to the ROLE NAME 'minor' (its own docstring: 'never to a specific model identifier') and carries allowed/forbidden duty lists plus a confidence threshold written for a general-purpose 4B. Once the minor tier resolves to hand, that policy silently governs a different model with different characteristics \u2014 and a DOMAIN-SPECIALIZED one, whose competence is adapter-dependent rather than uniform. Decide whether the policy transfers, is re-derived for hand, or is retired with the tier.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "After the change there is exactly one answer to 'what governs the minor tier': either governance.py names hand and its duty lists are re-derived for an adapter-dependent specialist, or the module and 'lobes eval minor' are retired with the tier. A state where governance.py still says ROLE='minor' while the minor tier serves hand does not satisfy this.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "up.py's COLLEAGUE_STACK bundle must gain hand. Its docstring defines colleague-stack as 'the FULL six-role Colleague set = the default fleet roles (cortex/senses/embedder/reranker) PLUS the audio-overlay roles (stt/tts)' and the constant's comment says 'the six roles machine-as-brain hosts'. hand is default-hosted, so both the count and the target list are wrong the moment it lands \u2014 and 'lobes up colleague-stack' would silently bring up a stack missing the role the spec claims runs everywhere.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h37",
+      "kind": "honesty",
+      "text": "'lobes up colleague-stack --apply' starts the hand lane along with the others, and up.py's docstring and constant comment state the correct role count \u2014 proven by running the target, not by reading the source.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "The vllm-hand lane carries MG_LOG_NAME=hand for durable logs (the #50 convention every other lane follows via mg-logwrap), and hand is reachable by 'lobes measure' as a generate-family role. Without the log name the lane's boot output is not recoverable after a restart \u2014 which is precisely what would be needed to debug a co-residency OOM introduced by the budget gap above.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "After a container restart, the hand lane's boot log is still readable under the durable log dir with the hand name \u2014 the same check the other lanes' MG_LOG_NAME wiring already satisfies.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "--max-lora-rank has a documented default and a legible failure path. An adapter trained above the armed rank fails to LOAD at serve time, and vLLM's error for that is not self-explanatory to an operator who only knows they trained something with unsloth-cli. Since the trainer is a SEPARATE repo (unsloth-cli#16) the rank is chosen on the far side of a boundary lobes does not control, making mismatch the single most likely day-two failure.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h39",
+      "kind": "honesty",
+      "text": "Declaring an adapter whose rank exceeds --max-lora-rank produces an operator-legible failure that names the rank mismatch \u2014 in the lane's logs and, if the lane still starts, absent from /v1/models rather than half-advertised. The chosen default rank is documented in the per-model doc so unsloth-cli#16 can train against it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "boundary",
+      "text": "hand is NEVER PROXIED and never referred: it carries no HAND_PEER_ORIGIN / _PEER_PROXY / _PEER_API_KEY, and lobes/gateway/server.py's _PEER_SERVED_NAME_ENV / _PEER_ROLE_HINT tables deliberately OMIT it. This narrows c7 and c18, which assumed hand would ride the peer tables by symmetry with the other eight roles \u2014 for hand the correct entry in those tables is no entry at all, and a test should assert its absence so a future symmetry-minded refactor does not add it back.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h41",
+      "kind": "honesty",
+      "text": "A test asserts hand is ABSENT from server.py's peer tables and from the FEASIBLE/peer env channels, so the never-proxied decision is enforced rather than merely documented.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c50",
+      "kind": "requirement",
+      "text": "Because hand is never proxied and never referred, NO deployment shape may drop it \u2014 hand appears in the hosts list of ALL seven built-in shapes, including the mesh-lobe shapes that drop heavy lobes. A dropped hand would have no referral and no proxy, so model=hand would 404 role_infeasible with no hosted_by and no recourse anywhere in the mesh: the one lobe state the honest-referral work (#112) exists to prevent. This is what makes 'runs on every host' a structural invariant rather than a default.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h40",
+      "kind": "honesty",
+      "text": "A test asserts hand is present in the hosts list of every built-in shape TOML, so adding an eighth shape that omits it fails CI rather than silently creating an unreachable role.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Catalog gear + lfm2 tool-parser rule + per-model doc + minor/cheap tier repoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "infer_parser('LiquidAI/LFM2.5-1.2B-Instruct') == 'lfm2' and the full existing catalog round-trips through infer_parser unchanged",
+        "the entry carries quantization='none', native_max_model_len=32768, and every existing tests/test_catalog.py invariant still passes",
+        "resolve_tier('minor'), resolve_tier('cheap') and resolve_tier('hand') all return the hand gear while the Qwen3.5-4B entry remains in SUPPORTED_MODELS",
+        "tier_aliases derives the ascending order hand < multimodal < worker < muse < main (assert the ORDER, not just the mapping)",
+        "docs/lfm2.5-1.2b-hand.md exists so test_every_doc_file_exists resolves; FILES: catalog.py, runtime/_parser.py, the new doc only"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h6",
+        "c3",
+        "h5",
+        "c14",
+        "h23",
+        "c16",
+        "h25",
+        "c21",
+        "h16",
+        "c25",
+        "h27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Role registry: hand as the ninth role in lobes/roles.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes.roles.ROLES has nine entries including hand, and every per-role table in roles.py resolves for all nine",
+        "a parametrised test iterates ROLES and asserts each per-role dict has an entry, so a tenth role cannot half-land",
+        "hand's responsibilities are domain_mastery/learned_skill/specialized_task/tool_use and its forbidden list is final_decision/repo_action/security_decision",
+        "hand advertises neither image_understanding nor video_understanding",
+        "FILES: lobes/roles.py + tests/test_roles.py only"
+      ],
+      "deps": [],
+      "covers": [
+        "c18",
+        "h13",
+        "c15",
+        "h24",
+        "c32",
+        "h28"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Profile schema, render and shape vocabulary learn hand",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "OPT_IN_CORE_ROLES remains exactly ('muse','worker') and DEFAULT_HOSTED_ROLES contains hand \u2014 both asserted",
+        "a test asserts hand appears in the hosts list of every built-in shape, so a future shape omitting it fails CI",
+        "ROLE_ENV_PREFIX maps hand -> HAND and renders HAND_MODEL/HAND_GPU_MEM_UTIL/HAND_MAX_MODEL_LEN",
+        "FILES: profiles/{schema,render,shapes}.py + their tests only"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h21",
+        "c50",
+        "h40"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Gateway wiring: backend, dynamic adapter aliases, adapter honesty, never-proxied",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model=hand:<domain> naming a declared adapter resolves and is served; a name absent from the inventory is refused with a clear error and never silently falls back to the base or another lane",
+        "an adapter declared in HAND_LORA_MODULES whose path does not exist is absent from GET /v1/models AND from capabilities \u2014 declared-but-unloaded never reads as usable",
+        "a test asserts hand is ABSENT from server.py's _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT and from the peer origin/proxy/key channels, so a symmetry-minded refactor cannot add it back",
+        "GET /capabilities returns nine role keys and 'lobes capabilities' agrees field-for-field",
+        "FILES: gateway/{_config,server,_routing,_tier_request}.py + their tests only"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h11",
+        "c7",
+        "h9",
+        "c19",
+        "h14",
+        "c20",
+        "h15",
+        "c49",
+        "h41"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Pressure policy: hand becomes the servable floor",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "under synthetic swap>75%/iowait>50%, model=hand returns 200 while cortex/senses/worker/muse each return 429 with Retry-After",
+        "the shed set is unchanged and hand is never in it",
+        "FILES: gateway/_pressure_policy.py + tests/test_pressure_policy.py only"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "vllm-hand compose lane on the nightly digest with --enable-lora",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docker compose config renders vllm-hand with no unresolved variables; the lane omits --quantization entirely (not an empty flag) and carries no --language-model-only",
+        "the lane pins VLLM_NIGHTLY_IMAGE, carries --enable-lora, --lora-modules=${HAND_LORA_MODULES}, --max-loras and --max-lora-rank, and MG_LOG_NAME=hand",
+        "the chosen default --max-lora-rank is documented in the per-model doc, and a rank-exceeding adapter fails legibly rather than half-advertising",
+        "FILES: templates/fleet/{docker-compose.yml,env.example} + a new compose test only"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h4",
+        "c5",
+        "h10",
+        "c23",
+        "h3",
+        "c47",
+        "h38",
+        "c48",
+        "h39"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Reconcile lobes/minor governance and 'lobes eval minor' with the repoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "there is exactly one answer to 'what governs the minor tier': either governance.py names hand with duty lists re-derived for an adapter-dependent specialist, or the module and 'lobes eval minor' are retired with the tier",
+        "no state remains where governance.py says ROLE='minor' while the minor tier serves hand",
+        "FILES: lobes/minor/governance.py, cli/_commands/eval.py + their tests only"
+      ],
+      "deps": [],
+      "covers": [
+        "c45",
+        "h36"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Declare hand across all 4 card profiles and all 7 shape TOMLs, regenerate goldens",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a byte-diff of the 28 regenerated goldens shows changes ONLY on lines introducing HAND_* keys \u2014 no unrelated key, value or ordering drift",
+        "the machine-as-brain re-baseline is explicit: shapes.py's docstring and tests/goldens/regen.py's _shape_needs_goldens are updated to state the identity-shape invariant now includes a default-hosted cheap role \u2014 a silent regeneration that merely makes tests pass does NOT satisfy this",
+        "the regenerated base.env shows hand feasible with a declared model and budget while senses/muse/worker stay FEASIBLE=false",
+        "hand's gpu_mem_util is declared PER CARD, not once globally",
+        "FILES: profiles/builtin/*.toml, profiles/builtin_shapes/*.toml, tests/goldens/** only"
+      ],
+      "deps": [
+        "t3",
+        "t6"
+      ],
+      "covers": [
+        "c8",
+        "h7",
+        "c11",
+        "h8",
+        "c12",
+        "h22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "CLI surfaces: roles_measure family map, colleague-stack bundle, capabilities, overview",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "'lobes measure' completes for hand and reports it in the generate family \u2014 today _FAMILY_BY_ROLE[role] at roles_measure.py:419 would raise KeyError",
+        "a test iterates ROLES and asserts _FAMILY_BY_ROLE covers every role, so the KeyError class cannot recur",
+        "'lobes up colleague-stack --apply' starts the hand lane, and up.py's docstring and COLLEAGUE_STACK comment state the corrected role count",
+        "FILES: roles_measure.py, cli/_commands/{measure,up,capabilities,overview}.py + their tests only"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c41",
+        "h32",
+        "c46",
+        "h37"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Re-derive every hosting shape's GPU budget with hand co-resident",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "for EVERY shape hosting hand the committed budget is either re-measured on real hardware with the hand lane running (transcript under docs/evidence/) or explicitly re-apportioned so the pre-hand measured total is unchanged",
+        "no shape is left at its pre-hand number with hand simply added on top \u2014 that is the arithmetic vLLM refused live on spark-lobe, thor-lobe and thor-muse",
+        "the Orin value is validated by an actual boot at the served max_model_len, not inferred from the Spark's"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c42",
+        "h33"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Documentation sweep: role contract, UNVALIDATED discipline, irreversibility, unsloth boundary",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a grep for the role-count phrasing ('eight'/'EIGHT') across docs/ and CLAUDE.md returns no stale occurrence describing the role set",
+        "every surface reads hand as declared/UNVALIDATED per card until that card's transcript lands; no blanket promotion from one box's run",
+        "docs/colleague-stack.md states that adding a role is effectively irreversible, so a future maintainer reads it before proposing a tenth",
+        "a grep for 'unsloth' across lobes/ returns hits only in comments and docs, never in code \u2014 the dependency is one-directional",
+        "the two motivating facts (minor still broken on its pinned image; no LoRA surface in-tree) and the eight-role before-state are re-verified against the tree at implementation time",
+        "FILES: docs/*.md except the new per-model doc, CLAUDE.md, README.md, explain/catalog.py"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c9",
+        "h12",
+        "c17",
+        "h26",
+        "c39",
+        "h31",
+        "c44",
+        "h35",
+        "c34",
+        "h29",
+        "c36",
+        "h30"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Live validation on Thor and Orin; commit acceptance transcripts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a caller gets 200 from model=hand on each validated box with no pressure 429, and the transcript is committed under docs/evidence/",
+        "a tool call through the lfm2 parser returns a structured tool_calls array rather than prose, against the actually-pulled tokenizer revision (confirm it carries <|tool_call_start|>/<|tool_call_end|>)",
+        "capabilities reports hand feasible/ready with lora_enabled true and an adapter list matching exactly what vLLM loaded",
+        "the full suite passes with the 28 regenerated goldens",
+        "cards without a transcript (Spark, base fallback) remain explicitly UNVALIDATED"
+      ],
+      "deps": [
+        "t4",
+        "t6",
+        "t8",
+        "t10"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c33",
+        "h18",
+        "c35",
+        "h19"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Every mesh-lobe reclaim (spark-lobe cortex 0.44, thor-worker worker 0.45, orin 0.45, all at 262144) was measured with NO hand co-resident; t10 may find that no headroom exists on one or more cards and force a re-apportionment that changes another lane's already-committed, measured budget",
+      "kind": "unknown_blocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "Operator accepts the re-apportionment exposure rather than deferring the plan. t10 owns re-deriving every hosting shape's GPU budget with hand co-resident, and is explicitly authorised to LOWER another lane's committed budget if a card has no headroom \u2014 the new number lands as measured evidence under docs/evidence/, never as a declared guess (#108), and t8's goldens are regenerated against it. The graph already sequences this safely: t10 follows t8 (goldens exist to regenerate) and t12 (live validation on Thor + Orin) follows t10, so any re-apportionment is measured and re-goldened BEFORE anything is validated live. If a card turns out to have no headroom at all, the honest outcome is HAND_FEASIBLE=false on that card's profile per #92 \u2014 hand is a sleeping lobe by design, so a card that cannot host it is a supported end state, not a plan failure."
+    },
+    {
+      "id": "r2",
+      "text": "hand's per-card gpu_mem_util is unmeasured \u2014 0.06 is 7.7 GiB on a 128 GB Spark but 3.84 GiB on a 64 GB Orin against ~2.4 GiB of weights, leaving little KV at 32K",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Downstream mesh consumers (culture, daria, reachy-mini-cli, colleague) may parse model ids in a way the new 'hand:<domain>' shape breaks; every existing id is org/name and lobes itself is clean",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Adapter production is cross-repo (agentculture/unsloth-cli#16) and unsloth-cli 0.5.0 ships only scaffold verbs, so the muscle-memory loop cannot be exercised end-to-end from this plan alone",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
