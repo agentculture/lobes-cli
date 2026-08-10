@@ -1,0 +1,138 @@
+=============================================================================
+hand lobe (LiquidAI/LFM2.5-1.2B-Instruct) — ACCEPTANCE, Jetson AGX Orin
+=============================================================================
+Date:       2026-08-10
+Box:        Jetson AGX Orin 64GB (sm_87), 61.34 GiB unified, orin-lobe shape
+            (senses 0.45 + embed 0.06 + rerank 0.06 already resident)
+Image:      vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+Engine:     vLLM 0.23.1rc1.dev672+g93d8f834d
+Plan:       docs/plans/2026-08-10-hand-lobe-lfm2-5-1-2b.md, task t12
+Companion:  docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt (t10 —
+            how this budget was arrived at, including the two refuted attempts)
+
+SCOPE OF THIS TRANSCRIPT: the Jetson AGX Orin ONLY. Per #108 it promotes no
+other card. Thor and the DGX Spark remain UNVALIDATED for `hand`; the base
+fallback profile is untested by construction.
+
+Lane under test (the committed vllm-hand lane's rendered flags):
+    --model LiquidAI/LFM2.5-1.2B-Instruct
+    --served-model-name LiquidAI/LFM2.5-1.2B-Instruct
+    --max-model-len 32768
+    --gpu-memory-utilization 0.06
+    --enable-lora --max-loras 4 --max-lora-rank 32
+    --enable-auto-tool-choice --tool-call-parser lfm2
+    env VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+    env VLLM_ATTENTION_BACKEND=TRITON_ATTN      (the orin card divergence)
+  NO --quantization        (bf16; the catalog's "none" sentinel)
+  NO --language-model-only (text-only checkpoint; there is no ViT to drop)
+  NO --reasoning-parser    (no thinking mode on this checkpoint)
+
+-----------------------------------------------------------------------------
+1. BUDGET — MEASURED
+-----------------------------------------------------------------------------
+    INFO [gpu_worker.py:538]    Available KV cache memory: 2.7 GiB
+    INFO [kv_cache_utils.py:2146] GPU KV cache size: 235,721 tokens
+    INFO [kv_cache_utils.py:2147] Maximum concurrency for 32,768 tokens
+                                  per request: 7.19x
+
+  Healthy at the FULL served 32768 window, co-resident with the orin-lobe
+  shape's existing lanes. 0.06 is therefore the Orin's committed value —
+  measured, replacing the DECLARED 0.10 the box refused (see the companion
+  transcript).
+
+  Read 7.19x as a KV-pool CEILING, not measured throughput — the standing
+  caveat in CLAUDE.md. Usable concurrency was not measured here.
+
+-----------------------------------------------------------------------------
+2. ARCHITECTURE + FLAG PLUMBING — CONFIRMED
+-----------------------------------------------------------------------------
+    Resolved architecture: Lfm2ForCausalLM
+    dtype=torch.bfloat16, quantization=None, speculative_config=None,
+    reasoning_parser='', max_seq_len=32768
+    Loading weights took 1.84 seconds
+    Using PunicaWrapperGPU                     (the LoRA path, armed)
+
+  quantization=None is the bf16 sentinel proving out end to end: the lane
+  omitted --quantization entirely and vLLM served native precision.
+
+-----------------------------------------------------------------------------
+3. SERVING — 200, correct answer
+-----------------------------------------------------------------------------
+  GET /health -> 200
+
+  GET /v1/models ->
+    {"object":"list","data":[{"id":"LiquidAI/LFM2.5-1.2B-Instruct",...,
+      "max_model_len":32768,...}]}
+  EXACTLY one id. No phantom adapter is advertised — the inventory is empty in
+  v1 and nothing invented one.
+
+  POST /v1/chat/completions  "What is the capital of France? Answer with one
+  word."  (max_tokens=16, temperature=0) ->
+    content        : "Paris"
+    finish_reason  : "stop"
+    reasoning      : null          <- no thinking mode, as designed
+    usage          : 21 prompt / 2 completion
+
+-----------------------------------------------------------------------------
+4. TOOL CALLING THROUGH THE lfm2 PARSER — THE CRITICAL CHECK
+-----------------------------------------------------------------------------
+  Tokenizer, read from the ACTUALLY-PULLED revision inside the container:
+    <|tool_call_start|>: id=10
+    <|tool_call_end|>:   id=11
+    name_or_path: LiquidAI/LFM2.5-1.2B-Instruct
+
+  Both delimiters present as special tokens. This is what Lfm2ToolParser's
+  __init__ resolves via self.vocab.get() and RAISES on when missing — so the
+  parser loading at all is itself evidence, and the ids make it explicit.
+
+  POST /v1/chat/completions with one `get_weather(city)` tool, tool_choice=auto:
+    finish_reason : "tool_calls"
+    content       : null
+    tool_calls    : [{"id":"chatcmpl-tool-9b51ce3641de023d","type":"function",
+                      "function":{"name":"get_weather",
+                                  "arguments":"{\"city\": \"Paris\"}"}}]
+
+  A STRUCTURED tool_calls array — not prose. This is the exact failure mode the
+  parser choice was made to avoid: with a parser that cannot see special-token
+  delimiters (the `pythonic`-on-Gemma-4 mistake), vLLM relays a well-formed
+  call as assistant CONTENT with tool_calls=null and finish_reason="stop". The
+  response above is the opposite of that on every field.
+
+-----------------------------------------------------------------------------
+5. UNKNOWN MODEL ID — REFUSED, not silently substituted
+-----------------------------------------------------------------------------
+  POST /v1/chat/completions {"model":"nosuch-adapter"} ->
+    404 {"error":{"message":"The model `nosuch-adapter` does not exist.",
+                  "type":"NotFoundError","param":"model","code":404}}
+
+  The engine refuses an unknown id rather than serving it under the base
+  weights — the upstream half of the gateway's own `hand:<domain>` contract
+  (an undeclared adapter must never be silently downgraded to the base).
+
+-----------------------------------------------------------------------------
+6. DECODE — indicative only
+-----------------------------------------------------------------------------
+  200-token cap, "count from 1 to 60": 179 completion tokens in 5.22 s wall
+  (~34 tok/s single-stream, INCLUDING request overhead).
+
+  NOT a benchmark: one untimed-prefill request, on a box concurrently serving
+  senses + the pooling gears + unrelated production containers. Recorded as an
+  order-of-magnitude sanity check ("this lane is not pathologically slow"),
+  nothing more.
+
+-----------------------------------------------------------------------------
+7. WHAT THIS TRANSCRIPT DOES NOT ESTABLISH
+-----------------------------------------------------------------------------
+  - Any card other than this Orin. Thor and the Spark stay UNVALIDATED (#108).
+  - Adapter SERVING end to end. v1 ships zero adapters by decision, so
+    `hand:<domain>` resolution, the adapter-honesty filter, and the
+    rank-ceiling failure path are all covered by offline tests only. They
+    become live-testable when unsloth-cli can produce an LFM2.5 adapter
+    (agentculture/unsloth-cli#16).
+  - Anything through the lobes GATEWAY. These calls went straight to the
+    engine; the gateway's alias/tier/pressure layer is offline-tested.
+  - Throughput, concurrency, or any correctness claim beyond the two
+    known-answer probes above.
+
+Probe container removed afterwards; every production container on the box was
+verified still running.

@@ -175,17 +175,31 @@ attention_backend = "TRITON_ATTN"
 # --quantization ENTIRELY. Declaring it here — even as an empty string — would
 # render a flag that corrupts bf16 weights.
 #
-# BUDGET: DECLARED, NOT MEASURED (#108), and deliberately HIGHER than the
-# 128 GB cards' 0.06 — this is why the schema declares hand's util PER CARD
-# rather than once globally. On a 64 GB Orin 0.06 is only ~3.84 GiB, which
-# leaves ~1.4 GiB of KV after the ~2.4 GiB of weights: servable, but thin enough
-# that a couple of concurrent 32K requests could exhaust it. 0.10 (~6.4 GiB)
-# restores a comparable KV margin. Total 0.57 -> 0.67. The Orin value must be
-# validated by an ACTUAL BOOT at the served max_model_len (t10/t12), never
-# inferred from the Spark's.
+# BUDGET: MEASURED on a physical Jetson AGX Orin, 2026-08-10 — see
+# docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt. This value was
+# DECLARED at 0.10 and the box refuted it TWICE, which is exactly why t10
+# exists:
+#
+#   * at 0.10 the boot died before profiling — "Free memory on device cuda:0
+#     (4.67/61.34 GiB) on startup is less than desired GPU memory utilization
+#     (0.1, 6.13 GiB)". The orin-lobe shape's committed lanes plus the box's
+#     other workload simply do not leave 6.13 GiB.
+#   * at 0.06 it boots and profiles HEALTHY: Available KV cache memory 2.7 GiB,
+#     GPU KV cache size 235,721 tokens, maximum concurrency 7.19x at the served
+#     32768 window.
+#
+# So 0.10 was both too big to fit AND unnecessary. The reasoning behind it —
+# "0.06 of 64 GB leaves too little KV after the weights" — was plausible and
+# WRONG: 0.06 yields 7.19x concurrency here, which is more headroom than the
+# 27B cortex has ever had on any card. Recorded because the arithmetic looked
+# convincing right up until the box disagreed.
+#
+# NOTE this is the ONE card where hand's util was actually measured, and it
+# landed on the same 0.06 the 128 GB cards declare — so the per-card mechanism
+# is retained (see schema.py) but currently carries no divergence.
 feasible = true
 model = "LiquidAI/LFM2.5-1.2B-Instruct"
-gpu_mem_util = 0.10
+gpu_mem_util = 0.06
 max_model_len = 32768
 # TRITON_ATTN: the conservative sm_87 carry-over every role that booted on this
 # box uses. FlashInfer is unvalidated here (docs/orin-profiles.md).

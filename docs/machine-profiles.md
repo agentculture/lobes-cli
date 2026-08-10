@@ -166,17 +166,28 @@ compose template passes the served name to vLLM's `--served-model-name`
 separately from the model id it downloads; the two must agree for the gateway
 to route correctly.
 
-> **`hand` is DECLARED on every card and VALIDATED on none of them yet
-> (#108).** The per-card `[roles.hand]` blocks in
-> `lobes/profiles/builtin/*.toml` carry real budget numbers — 0.06 on the
-> 128 GB Spark/Thor, 0.10 on the 64 GB Orin — but they are *hypotheses*, not
-> measurements: no physical box has booted the lane. Per the #108 rule this
-> holds **per card**, so a successful boot on one board never promotes another;
-> each card is promoted only when its own acceptance transcript lands under
-> `docs/evidence/`. The Orin value in particular must be validated by an actual
-> boot at the served `max_model_len` rather than inferred from the Spark's,
-> since 0.06 of 64 GB leaves markedly less KV headroom than 0.06 of 128 GB —
-> which is exactly why the two cards declare different numbers.
+> **`hand` is VALIDATED on the Jetson AGX Orin and DECLARED everywhere else
+> (#108).**
+>
+> - **Orin — VALIDATED, 2026-08-10**
+>   (`docs/evidence/2026-08-10-accept-hand-orin.txt`): `gpu_mem_util = 0.06`
+>   at the full served `max_model_len = 32768`, MEASURED — available KV 2.7 GiB,
+>   KV pool 235,721 tokens, 7.19x concurrency, co-resident with the orin-lobe
+>   shape's existing lanes. Tool calling through the `lfm2` parser returns a
+>   structured `tool_calls` array.
+> - **Spark / Thor / base — DECLARED.** `0.06` on the two 128 GB cards is a
+>   hypothesis, not a measurement; no boot has confirmed it there. Per the #108
+>   rule this holds **per card**: the Orin's successful boot promotes nothing
+>   else, and each card is promoted only when its own acceptance transcript
+>   lands under `docs/evidence/`.
+>
+> The Orin number is worth reading closely, because it was **declared at 0.10
+> and the box refused it twice** — see
+> `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`. The reasoning
+> behind 0.10 ("0.06 of 64 GB leaves too little KV after the weights") was
+> plausible and wrong: 0.06 yields 7.19x concurrency there. That is the whole
+> argument for measuring rather than computing a budget on this class of
+> unified-memory board.
 
 **When set:**
 

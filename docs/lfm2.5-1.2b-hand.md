@@ -172,8 +172,38 @@ yet be exercised end to end. Verifying/adding LFM2.5 support there is tracked as
 
 Per the #108 rule, `hand` is **DECLARED** on every card and becomes **VALIDATED**
 only on the cards whose acceptance transcript has landed under `docs/evidence/`.
-One box's successful boot never promotes another card. See
-`docs/machine-profiles.md` and `docs/deployment-shapes.md` for the per-card
+One box's successful boot never promotes another card.
+
+| card | status | evidence |
+|---|---|---|
+| **Jetson AGX Orin** (sm_87, 64 GB) | **VALIDATED 2026-08-10** | `docs/evidence/2026-08-10-accept-hand-orin.txt` |
+| Jetson AGX Thor (sm_110, 128 GB) | DECLARED | — |
+| DGX Spark GB10 (128 GB) | DECLARED | — |
+| `base` (unrecognised card) | DECLARED | untestable by construction |
+
+What the Orin run established: `gpu_mem_util = 0.06` at the full 32768 window
+(available KV 2.7 GiB, pool 235,721 tokens, 7.19x concurrency), the bf16
+sentinel and the text-only / no-reasoning-parser flags all plumbed correctly, a
+correct known-answer completion, and — the check this lane exists to pass — a
+**tool call returning a structured `tool_calls` array**, with the tokenizer's
+`<|tool_call_start|>` / `<|tool_call_end|>` confirmed present as special tokens
+(ids 10 and 11).
+
+Two things it deliberately does **not** establish: adapter serving end to end
+(v1 ships zero adapters, so `hand:<domain>` resolution and the adapter-honesty
+filter are covered by offline tests only), and anything reached through the
+lobes gateway rather than the engine directly.
+
+**A budget was refuted here.** The Orin was declared at `0.10` and the box
+refused it twice — once because the lane was missing the cudagraph-estimate
+off-switch (available KV profiled to **-9.25 GiB**, negative), and once because
+`0.10` simply does not fit beside the orin-lobe shape's committed lanes. Both
+runs are recorded in
+`docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`. The reasoning
+behind `0.10` was plausible and wrong, which is the argument for measuring
+rather than computing a budget on this class of board.
+
+See `docs/machine-profiles.md` and `docs/deployment-shapes.md` for the per-card
 picture.
 
 ## See also

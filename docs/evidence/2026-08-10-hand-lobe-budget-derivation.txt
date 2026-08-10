@@ -1,0 +1,134 @@
+=============================================================================
+hand lobe (LiquidAI/LFM2.5-1.2B-Instruct) — BUDGET DERIVATION, t10
+=============================================================================
+Date:       2026-08-10
+Plan:       docs/plans/2026-08-10-hand-lobe-lfm2-5-1-2b.md, task t10
+Risk:       r1 (unknown_blocking) — "every mesh-lobe reclaim was measured with
+            NO hand co-resident; t10 may find that no headroom exists on one or
+            more cards and force a re-apportionment"
+Boxes:      Jetson AGX Thor (sm_110, 122 GiB unified) — thor-worker shape
+            Jetson AGX Orin (sm_87,   61 GiB unified) — orin-lobe shape
+Image:      vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+            (the pinned fleet nightly; already present on both boxes — no pull)
+Engine:     vLLM 0.23.1rc1.dev672+g93d8f834d
+
+VERDICT: r1 MATERIALISED. The declared budgets did not hold, for two distinct
+reasons — one a bug in the lane, one a genuine capacity limit on a shared box.
+Both are recorded below with the raw engine output that produced them.
+
+-----------------------------------------------------------------------------
+0. What the engine confirms about the checkpoint (both boxes)
+-----------------------------------------------------------------------------
+    Resolved architecture: Lfm2ForCausalLM
+    version 0.23.1rc1.dev672+g93d8f834d
+    model   LiquidAI/LFM2.5-1.2B-Instruct
+    dtype=torch.bfloat16, quantization=None, speculative_config=None,
+    reasoning_parser='', trust_remote_code=False, max_seq_len=32768
+
+  - quantization=None confirms the catalog's `quantization="none"` bf16
+    sentinel works end to end: the lane omits --quantization ENTIRELY and vLLM
+    serves native precision. (Passing it empty would have been a parse error;
+    passing modelopt would corrupt the weights.)
+  - reasoning_parser='' confirms the deliberate absence of a --reasoning-parser
+    on this lane: LFM2.5-1.2B-Instruct has no thinking mode.
+  - The `lfm2` tool parser was ACCEPTED at startup on both boxes. That is a
+    real signal, not a null one: Lfm2ToolParser.__init__ resolves
+    <|tool_call_start|> / <|tool_call_end|> through self.vocab.get() and RAISES
+    when either is missing. The actually-pulled tokenizer revision carries both.
+  - LoRA initialised: "Using PunicaWrapperGPU" (Thor). --enable-lora with an
+    empty inventory is a valid configuration; the engine arms the LoRA path.
+  - Loading weights took 0.57 s (Thor) / 1.84 s (Orin) — the ~2.4 GiB bf16
+    footprint the role's whole premise rests on.
+
+-----------------------------------------------------------------------------
+1. FINDING A — the lane was missing the cudagraph-estimate off-switch (FIXED)
+-----------------------------------------------------------------------------
+Orin, util 0.10, lane exactly as first committed:
+
+    INFO [gpu_worker.py:538] Available KV cache memory: -9.25 GiB
+    INFO [gpu_worker.py:553] CUDA graph memory profiling is enabled (default
+      since v0.21.0). The current --gpu-memory-utilization=0.1000 is equivalent
+      to --gpu-memory-utilization=-0.0762 without CUDA graph memory profiling.
+      To maintain the same effective KV cache size as before, increase
+      --gpu-memory-utilization to 0.2762. To disable, set
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+
+NEGATIVE available KV. The engine cannot allocate a cache at all, so the boot
+dies — at ANY util the estimate dominates.
+
+Root cause: every other lane on this nightly image sets
+VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 (primary, embed, rerank,
+multimodal, multimodal-coder, muse, worker). The hand lane was the only
+omission. No offline test could have caught it: the rendered compose is
+perfectly valid right up until an engine profiles memory with it.
+
+Resolution: disable the estimate, matching every sibling lane, plus a
+HAND_CUDAGRAPH_ESTIMATE escape hatch (default 0). vLLM's alternative remedy —
+raising util to 0.2762 — was refused: it would cost 4.6x the memory on every
+card to buy nothing.
+
+-----------------------------------------------------------------------------
+2. FINDING B — the Orin has no headroom for hand at the declared 0.10
+-----------------------------------------------------------------------------
+Orin, util 0.10, WITH the estimate disabled:
+
+    ValueError: Free memory on device cuda:0 (4.67/61.34 GiB) on startup is
+      less than desired GPU memory utilization (0.1, 6.13 GiB). Decrease GPU
+      memory utilization or reduce GPU memory used by other processes.
+
+This is r1 exactly as written. The 0.10 figure was a DECLARED hypothesis,
+reasoned from "0.06 of 64 GB leaves too little KV after the weights"; the box
+disagrees. The orin-lobe shape's committed lanes (senses 0.45 + embed 0.06 +
+rerank 0.06 = 0.57 = ~35 GiB) plus the box's non-lobes workload leave 4.67 GiB
+free — less than 0.10 asks for.
+
+Note what this measurement is and is not. "Free memory at startup" is a
+property of a SHARED box at an instant, not of the card; the honest reading is
+that hand cannot be added on top of the Orin's current committed total, not
+that an Orin categorically cannot host it.
+
+-----------------------------------------------------------------------------
+3. FINDING C — Thor: LoRA embedding-slot allocation failed under load
+-----------------------------------------------------------------------------
+Thor, util 0.06, with --enable-lora, on a box at 108/122 GiB used and load avg
+4.30:
+
+    File ".../vllm/lora/layers/vocal_parallel_embedding.py", line 49,
+      in create_lora_weights
+        self.lora_a_stacked = torch.zeros(
+    torch.AcceleratorError: CUDA error: device not ready
+
+The failure is in LoRA slot allocation, not in loading the model — weights had
+already loaded (0.57 s) and PunicaWrapperGPU had initialised. This box also
+ran the FIRST of the two runs above, i.e. before Finding A was understood, so
+it carried the same inflated cudagraph reservation.
+
+NOT YET ATTRIBUTED. Candidate causes, none confirmed:
+  (a) the Finding-A over-reservation leaving nothing for the LoRA slots;
+  (b) memory pressure / a concurrent-allocation race on a loaded unified-memory
+      Jetson — the same class as the boot-ordering caveat already recorded for
+      Thor in docs/machine-profiles.md;
+  (c) an sm_110-specific problem in the LoRA embedding path.
+Distinguishing them needs a re-run on a quiet Thor with the fix in place. It is
+recorded here rather than guessed at.
+
+-----------------------------------------------------------------------------
+4. What is NOT claimed
+-----------------------------------------------------------------------------
+Per #108, and stated plainly because a partial run invites over-reading:
+
+  - NO card is VALIDATED for `hand`. Not Thor, not Orin, not the Spark (which
+    was not exercised at all), not the base fallback.
+  - The per-card gpu_mem_util values in lobes/profiles/builtin/*.toml remain
+    DECLARED. This run REFUTED the Orin's 0.10; it did not establish a
+    replacement, which requires a boot that reaches "Application startup
+    complete" and reports a positive KV pool.
+  - No throughput, concurrency, or acceptance number is claimed. None was
+    measured.
+  - The tool-call ROUND TRIP (a request returning a structured tool_calls
+    array) was not exercised. What is established is narrower and worth
+    separating: the parser LOADS, which proves the tokenizer carries the two
+    special-token delimiters it requires.
+
+Both probe containers were removed afterwards; every production container on
+both boxes was verified still running.
