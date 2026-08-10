@@ -96,3 +96,8 @@
 {"ts":"2026-07-25T04:45:47.866069+00:00","type":"pr_webhook_posted","pr":157,"event":"pr_replied"}
 {"ts":"2026-07-25T04:45:57.235287+00:00","type":"readiness_arrived","pr":157,"waited_secs":0}
 {"ts":"2026-07-25T04:46:01.607351+00:00","type":"pr_read","pr":157,"comment_count":6,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-10T06:46:40.854177+00:00","type":"pr_opened","pr":184,"title":"feat: hand \u2014 the ninth Colleague role and the fleet's fine-tuning base, on LiquidAI LFM2.5-1.2B (0.56.1)"}
+{"ts":"2026-08-10T06:46:41.881031+00:00","type":"pr_review_triggered","pr":184,"command":"/agentic_review"}
+{"ts":"2026-08-10T06:50:45.373614+00:00","type":"pr_webhook_posted","pr":184,"event":"pr_opened"}
+{"ts":"2026-08-10T06:50:46.870979+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
+{"ts":"2026-08-10T06:50:52.682664+00:00","type":"pr_read","pr":184,"comment_count":3,"threads_unresolved":0,"ci_state":"failure"}
