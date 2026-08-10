@@ -41,7 +41,7 @@ _VERBS = [
     "whoami — tool, machine, served model, container health",
     "explain <path> — markdown docs for a topic",
     "doctor — diagnose docker / compose / .env / health",
-    "capabilities [--json] — read-only: the eight first-class roles (cortex/senses/muse/"
+    "capabilities [--json] — read-only: the nine first-class roles (cortex/senses/muse/"
     "worker/embedder/reranker/stt/tts) resolved to live endpoint + metadata (issue #81)",
     "endpoint <role> — read-only: print one role's base URL",
     "measure [--role <role>] [--json] — read-only: per-role RUNTIME metrics "

@@ -184,4 +184,4 @@ the 0.6B. The deep gear surfaces on `GET /v1/models` when wired.
 
 - [`qwen3-embedding-0.6b.md`](qwen3-embedding-0.6b.md) — the hot-path gear
 - [`gateway-fleet.md`](gateway-fleet.md) — backend wiring and alias resolution
-- [`colleague-stack.md`](colleague-stack.md) — the eight-role contract
+- [`colleague-stack.md`](colleague-stack.md) — the nine-role contract

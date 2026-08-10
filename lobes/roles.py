@@ -95,12 +95,12 @@ ROLES: tuple[str, ...] = (
 )
 
 # role → the internal gateway backend NAME that serves it — the key space the
-# RoutingTable's feasibility/peer channels use. The six gateway-fronted roles
+# RoutingTable's feasibility/peer channels use. The seven gateway-fronted roles
 # map to their vLLM backends; ``stt``/``tts`` (first-class since issue #129)
 # map to themselves — they are path-routed audio lanes, not model-routed
 # backends (still resolved from ``ServerConfig.audio_url`` below), but their
 # names now ride the SAME ``FEASIBLE_ENV`` / peer origin/proxy/key channels,
-# so :func:`annotate_peer_referrals` covers all eight roles uniformly.
+# so :func:`annotate_peer_referrals` covers all nine roles uniformly.
 # NOTE the name↔role_hint mismatch for the pooling lane: the *backend* is named
 # ``embed``/``rerank`` while the *catalog* role_hint is ``embedding``/``reranker``.
 # ``muse`` and ``worker`` each use their own name as their backend name.
@@ -154,7 +154,7 @@ _STT_MODEL = "nvidia/parakeet-tdt-0.6b-v2"  # Parakeet TDT 0.6B, NeMo ASR
 _STT_RUNTIME = "parakeet"
 _TTS_MODEL = "ResembleAI/chatterbox"  # Chatterbox, Resemble AI 0.5B, Apache-2.0
 _TTS_RUNTIME = "chatterbox"
-_VLLM_RUNTIME = "vllm"  # the six gateway-fronted roles all serve on vLLM
+_VLLM_RUNTIME = "vllm"  # the seven gateway-fronted roles all serve on vLLM
 
 # Canonical responsibilities per role (issue #81 worked examples — PROVISIONAL,
 # see the module docstring). A role's responsibilities are what it is EXPECTED to
@@ -379,7 +379,7 @@ class RoleInfo:
     # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
     # for the six gateway-fronted roles, `audio_ready` for stt/tts (issue
     # #89). Generalised from the stt/tts-only split (issue #89/#90) to all
-    # eight roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
+    # nine roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
     #
     # `backend_ready` is TRI-STATE PER BACKEND but resolves to `ready` under a
     # SUPPLIED-vs-OMITTED rule the builder self-enforces (issue #92 / honesty
@@ -403,7 +403,7 @@ class RoleInfo:
     # `False` (task t6) can never report `ready=True`, no matter what signal a
     # caller passes in. This mirrors — and is enforced by the same code path
     # as — the stt/tts clamp on `audio_configured` (issue #89/#90 review
-    # finding), now applied to all eight roles by build_role_registry itself,
+    # finding), now applied to all nine roles by build_role_registry itself,
     # not left to caller discipline. The `feasible` clamp is what makes an
     # infeasible-but-HEALTHY role (a live `backend_ready=True` signal) still
     # report `ready=False` — a healthy PROCESS is not evidence this MACHINE
@@ -661,7 +661,7 @@ def build_role_registry(
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
-    """Resolve the eight first-class roles to live metadata — the #81 contract.
+    """Resolve the nine first-class roles to live metadata — the #81 contract.
 
     This is the ONE canonical builder both the CLI (t5) and gateway (t6) call.
     Its inputs are exactly what :func:`lobes.gateway._config.build_config`
@@ -736,14 +736,14 @@ def build_role_registry(
         and every deployment with no proxied roles) leaves every role's
         ``ready`` exactly as before: a proxied role without a live peer
         signal is honestly not-ready, never hardcoded true.
-    :returns: an ordered ``dict`` keyed by role name with EXACTLY the eight roles.
+    :returns: an ordered ``dict`` keyed by role name with EXACTLY the nine roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
 
     Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
     (issue #81 t5 — generalising the stt/tts split from issue #89/#90 to all
-    eight roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
+    nine roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
     AUTHORITATIVE (a present ``None``/``False`` or a missing key ⇒ not ready);
     only an OMITTED signal falls back to the coarse "configured/wired"
     ``loaded`` proxy. Either way it is CLAMPED, here, to ``False`` whenever a

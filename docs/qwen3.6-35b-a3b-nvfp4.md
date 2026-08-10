@@ -115,7 +115,7 @@ direction; it never makes the final call or a security decision on its own
 authority. This is a materially different contract from `senses` (perceives,
 never acts) and `muse` (proposes via tool calls, never acts) — see
 [`docs/colleague-stack.md`](colleague-stack.md) for the full division of
-labour across all eight roles.
+labour across all nine roles.
 
 ### Tool calling: the Qwen-family parser pair
 
@@ -173,7 +173,7 @@ box).
 
 ### Related docs
 
-- [`docs/colleague-stack.md`](colleague-stack.md) — the eight-role Colleague
+- [`docs/colleague-stack.md`](colleague-stack.md) — the nine-role Colleague
   contract, `worker`'s `responsibilities`/`forbidden_responsibilities`
   exactly as declared, and the "first non-`cortex` actor" division of labour.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the opt-in-core-role
@@ -182,7 +182,7 @@ box).
   inverted feasibility default, peer channels, pressure policy.
 - [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md) — `muse`, the sibling
   opt-in core role, now DORMANT on the box `worker` is moving onto.
-- `CLAUDE.md`'s "Colleague roles" section — the eight-role summary and the
+- `CLAUDE.md`'s "Colleague roles" section — the nine-role summary and the
   muse-to-worker mesh migration in one place.
 
 ---

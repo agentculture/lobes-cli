@@ -1,6 +1,6 @@
 """Per-role RUNTIME measurement — issue #81, task t8.
 
-Probes each of the seven first-class roles (:data:`lobes.roles.ROLES`) on its own
+Probes each of the nine first-class roles (:data:`lobes.roles.ROLES`) on its own
 live endpoint and reports **runtime/serving** metrics, organised BY ROLE and
 grouped by the metric family its ``runtime`` implies:
 

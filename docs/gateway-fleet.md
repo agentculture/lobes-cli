@@ -10,7 +10,7 @@ creative/ideation lobe, Gemma 4 31B NVFP4 — **currently DORMANT/unhosted
 mesh-wide**, see [`docs/colleague-stack.md`](colleague-stack.md) for the
 callout), and `worker` (the opt-in-hosted fast ground-work DOER, Qwen3.6
 35B-A3B — thor-worker-lobe plan, its hosting shape forthcoming) — these are
-the EIGHT first-class Colleague-facing roles (issue #81) — see
+the NINE first-class Colleague-facing roles (issue #81) — see
 [`docs/colleague-stack.md`](colleague-stack.md) for the full role contract
 (`lobes capabilities`, `GET /capabilities`, `lobes up <role>`, `lobes
 measure`). This doc covers the fleet's Docker topology, tuning, and memory
@@ -167,11 +167,12 @@ same backends, same fallback contract, just the Colleague-facing role name
 `model=muse` and `model=worker` are role names that ARE their own tier and
 backend name — no extra alias layer, for either. `minor` has no role-name
 alias — it is not one of the
-eight first-class
+nine first-class
 Colleague roles; it is the servable floor under pressure (an explicit `minor`
 request is always served, while full tiers are shed — see "Pressure policy and
 busy backpressure" below). See [`docs/colleague-stack.md`](colleague-stack.md)
-for the full eight-role contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`),
+for the full nine-role contract
+(`cortex`/`senses`/`muse`/`worker`/`hand`/`embedder`/`reranker`/`stt`/`tts`),
 their `responsibilities`/`forbidden_responsibilities`, and `GET /capabilities`.
 
 **Fallback contract:** when a tier's own backend is absent, the alias falls back

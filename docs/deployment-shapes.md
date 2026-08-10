@@ -2,14 +2,14 @@
 
 A **deployment shape** answers a question the #108/#110 machine profile
 deliberately does not: not "how is each role *tuned* on this card?" but
-"which of the eight Colleague roles does *this box* host **at all**?" A shape
+"which of the nine Colleague roles does *this box* host **at all**?" A shape
 is composed as pure data **over** the machine profile at render time — the
 two axes are orthogonal: **shape × card**. This document is the deep
 reference; `lobes explain shapes` is the brief in-CLI version.
 
 ## What a deployment shape is
 
-The fleet exposes eight first-class Colleague roles (issue #81): `cortex`,
+The fleet exposes nine first-class Colleague roles (issue #81): `cortex`,
 `senses`, `muse`, `worker`, `embedder`, `reranker`, `stt`, `tts` — `muse`
 being the opt-in-hosted seventh and `worker` the opt-in-hosted eighth
 (thor-worker-lobe plan), both below. **`muse` is currently DORMANT/unhosted
@@ -83,7 +83,7 @@ All shipped shapes are pure data over the `#108` `Profile` schema
 (`lobes/profiles/builtin_shapes/{machine-as-brain,spark-lobe,thor-lobe,orin-lobe,orin-small,thor-muse,thor-worker}.toml`)
 differ from each other only in their `hosts` role subset and their
 `overrides` budget re-derivation. `orin-small` adds one
-new hostable role beyond the eight first-class Colleague roles: the opt-in
+new hostable role beyond the nine first-class Colleague roles: the opt-in
 `minor` gear (`lobes/profiles/shapes.py`'s `OPT_IN_ROLES`), which carries no
 Profile knobs of its own — re-using the `cortex` role slot for a 4B model
 instead would mean the box advertises the 27B Colleague role while actually
@@ -113,7 +113,7 @@ machine-as-brain. Concretely:
 
 - **The machine-as-brain identity set is `DEFAULT_HOSTED_ROLES`** (the six:
   `cortex`/`senses`/`embedder`/`reranker`/`stt`/`tts`); the Colleague
-  *contract* set capabilities reports (`COLLEAGUE_ROLES`) is eight. On every
+  *contract* set capabilities reports (`COLLEAGUE_ROLES`) is nine. On every
   non-hosting shape — machine-as-brain included — muse and worker each render
   *nothing*: the card's own declaration for each passes through verbatim,
   which is exactly what keeps machine-as-brain a byte-identical no-op over
@@ -619,7 +619,7 @@ elsewhere:
   data-plane mechanics: marker headers, the loop guard, peer failure modes
 - `docs/machine-profiles.md` — the per-machine (card) tuning axis this
   composes with
-- `docs/colleague-stack.md` — the eight-role Colleague contract, including the
+- `docs/colleague-stack.md` — the nine-role Colleague contract, including the
   proxied role state
 - `lobes/profiles/shapes.py` — the `Shape` schema + built-in loader
   (`COLLEAGUE_ROLES` / `DEFAULT_HOSTED_ROLES` / `OPT_IN_CORE_ROLES` /

@@ -1,7 +1,24 @@
-# Qwen/Qwen3.5-4B — "minor" small-brain gear
+# Qwen/Qwen3.5-4B — the demoted small-brain gear
 
-**Role:** `minor` — the fleet's 4B small-brain companion to the 27B primary.  
-**Status:** `configured` (not yet load-tested on the DGX Spark).
+**Role:** `candidate` — DEMOTED 2026-08-10, kept not deleted.  
+**Status:** `configured` (never load-tested on the DGX Spark).
+
+> **This is no longer the `minor`/`cheap` tier.** The **`hand` lobe**
+> (`LiquidAI/LFM2.5-1.2B-Instruct`) replaced it in that slot and inherited both
+> of the duties described below — the cheap-tier gear AND the LoRA fine-tune
+> target — as a first-class Colleague role. See
+> [`docs/lfm2.5-1.2b-hand.md`](lfm2.5-1.2b-hand.md).
+>
+> Nothing about *this* checkpoint changed; only which gear the tier resolves to.
+> It stays in the catalog (cite-don't-delete) as a plain candidate, still
+> selectable via `lobes switch` and still runnable as the opt-in `vllm-minor`
+> compose service (`COMPOSE_PROFILES=minor`) — but it is now addressable **only
+> by explicit model id**, exactly like the legacy 14B `middle` gear. No tier
+> alias resolves to it.
+>
+> Read the rest of this document in the past tense: the "will be" statements
+> about LoRA below were never realised on this checkpoint, and that is precisely
+> why the role moved.
 
 ## What it is
 

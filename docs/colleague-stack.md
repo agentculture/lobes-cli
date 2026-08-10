@@ -1,12 +1,13 @@
-# The Colleague stack: eight roles, one contract
+# The Colleague stack: nine roles, one contract
 
-> The eight first-class, Colleague-facing roles lobes exposes over the fleet —
-> `cortex` / `senses` / `muse` / `worker` / `embedder` / `reranker` / `stt` /
-> `tts` — how a caller discovers them, drives them, measures them, and the
-> before→after context migration that shipped alongside this contract (issue
-> #81; `muse` joined as the seventh, opt-in-hosted role, and `worker` as the
-> eighth, thor-worker-lobe plan). **`muse` is currently DORMANT/unhosted
-> mesh-wide** — see the callout below the role table.
+> The nine first-class, Colleague-facing roles lobes exposes over the fleet —
+> `cortex` / `senses` / `muse` / `worker` / `hand` / `embedder` / `reranker` /
+> `stt` / `tts` — how a caller discovers them, drives them, measures them, and
+> the before→after context migration that shipped alongside this contract
+> (issue #81; `muse` joined as the seventh, opt-in-hosted role, `worker` as the
+> eighth, thor-worker-lobe plan, and `hand` as the ninth, hand-lobe plan).
+> **`muse` is currently DORMANT/unhosted mesh-wide** — see the callout below
+> the role table.
 
 This doc is the **role contract** reference. For the fleet's Docker topology,
 tuning knobs, and memory budget, see [`docs/gateway-fleet.md`](gateway-fleet.md);
@@ -25,7 +26,7 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The eight roles
+## The nine roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
@@ -33,6 +34,7 @@ below.
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
 | `muse` | `muse` (generate, **opt-in hosting, currently DORMANT/unhosted**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
 | `worker` | `worker` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, image/video understanding — **and repo actions**, under `cortex`'s direction. Never the final decision or a security call. |
+| `hand` | `hand` (generate, **default-hosted everywhere**) | `POST /v1/chat/completions` | The fine-tuning base and trained specialist — domain mastery via LoRA adapters. Also the `minor`/`cheap` tier and the pressure-policy **servable floor**. Never decides, acts on the repo, or makes a security call. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
@@ -71,7 +73,7 @@ per the callout above, but it never decides).
 > either.** The `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` and the
 > `unsloth/Qwen3.6-35B-A3B-NVFP4` checkpoint behind `worker` are both too
 > heavy to co-reside with the default `cortex`+`senses` duo on a 128 GB box,
-> so the default shape's hosted set stays the SIX default roles
+> so the default shape's hosted set stays the SEVEN default-hosted roles
 > (`DEFAULT_HOSTED_ROLES` in `lobes/profiles/shapes.py`) while the contract
 > set capabilities reports (`COLLEAGUE_ROLES`) is eight. Only an explicit
 > hosting shape serves either: `lobes init --shape thor-muse` for `muse` —
@@ -165,6 +167,76 @@ authority stays `cortex`'s alone. `senses` has no `tool_use` at all: it is
 intake/perception, even though its Gemma lane *can* serve tool calls (see `tools`,
 below — a capability of the lane, not a licence for the role).
 
+### `hand` — the ninth role, the trained specialist
+
+`hand` (LiquidAI `LFM2.5-1.2B-Instruct`) is the fleet's **designated
+fine-tuning base**. The metaphor is **muscle memory**: one cheap base, many
+LoRA adapters, each mastering a domain.
+
+The distinction from `worker` is the point of having both:
+
+| | `worker` | `hand` |
+|---|---|---|
+| what it is | an untrained **generalist doer** | a trained **specialist** |
+| how it gets good | it is already big (35B-A3B) | someone taught it (a LoRA adapter) |
+| breadth | anything, adequately | a few things, extremely well |
+| may act on the repo | **yes**, under cortex's direction | no (v1 — see below) |
+| hosting | opt-in, one box | **default, every box** |
+
+At ~1.2B parameters (~2.4 GiB bf16) it is cheap enough to co-reside on *every*
+card, which is what makes it different in kind from the other generate lobes.
+That has three consequences worth stating plainly:
+
+- It is **default-hosted by every built-in shape**, including the mesh-lobe
+  shapes that drop a heavy lobe. A caller always has a local generate lane.
+- It is **never proxied**. `hand` is deliberately absent from the peer
+  origin/proxy/key channels (`NEVER_PROXIED_BACKENDS`): referral exists so a
+  box that *cannot* host a lobe can still reach it, and that situation does not
+  arise here.
+- It is the **servable floor**. Under pressure `cortex`/`senses`/`worker`/`muse`
+  all shed with 429; `hand` is served regardless.
+
+It also **replaced `Qwen/Qwen3.5-4B` as the `minor`/`cheap` tier**. Those tier
+spellings still work and now resolve to `hand`; the 4B stays in the catalog as
+a plain candidate (cite-don't-delete), selectable via `lobes switch`, but no
+tier resolves to it.
+
+**Addressing an adapter.** `model=hand` serves the base — it never 404s just
+because the inventory is empty. `model=hand:<domain>` serves that adapter. An
+*undeclared* `hand:<domain>` is refused with `model_not_found`; it is never
+silently downgraded to the base, because a caller who asked for the legal
+specialist and got the generalist has been lied to. Adapters are declared once
+in `HAND_LORA_MODULES` (read by both the engine and the gateway, so they cannot
+disagree), fixed at boot — there is no runtime hot-load.
+
+**v1 ships zero adapters**, with `--enable-lora` armed and the inventory empty.
+The serving half of muscle memory is here; the training half is `unsloth-cli`,
+out of tree (`agentculture/unsloth-cli#16`). lobes **serves** adapters and
+never trains them — nothing under `lobes/` imports or shells out to unsloth.
+
+`repo_action` is **forbidden** for v1 even though `worker` has it. That is a
+deliberate asymmetry, not an oversight: granting it later is
+contract-compatible, revoking it is a break, so the conservative list ships
+first and `agentculture/lobes-cli#180` tracks granting it once adapters exist.
+
+> ### Adding a role is effectively irreversible
+>
+> Every name in `lobes.roles.ROLES` becomes a public address: a key on
+> `GET /capabilities` and `lobes capabilities`, a `model=` alias, a
+> `lobes up <role>` target, a `<PREFIX>_*` env vocabulary, an entry in six
+> per-role tables, a row in every card profile and every deployment shape, and
+> a line in 28 golden `.env` files. **Removing one later breaks every caller
+> that learned to use it** — and by the honesty rule (#92) you cannot soften
+> the break by half-serving it.
+>
+> `hand` was worth that cost because it is a *kind* of lobe the fleet did not
+> have: cheap enough to be everywhere, and the only one meant to be taught. A
+> tenth role should have to clear the same bar. If what you want is a different
+> checkpoint, that is a catalog change; if it is a different budget, that is a
+> profile or shape change; if it is a different behaviour on an existing lane,
+> that is a responsibilities token. Reach for a new role only when none of
+> those can express it.
+
 ## cortex/senses ↔ primary/multimodal — one mapping, three vocabularies
 
 `cortex` and `senses` are **new names layered on the existing `primary` /
@@ -195,7 +267,7 @@ base URL. Everything else — which model backs a role, whether it's loaded,
 what context it's served at — comes from the contract itself.
 
 ```bash
-lobes capabilities              # human-readable table, all eight roles
+lobes capabilities              # human-readable table, all nine roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # the same contract, over HTTP
@@ -267,7 +339,7 @@ RESPONSIBILITY of the role. `senses` has `tools: true` and no `tool_use`: its
 Gemma lane can serve tool calls, but the division of labour doesn't ask it to.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
-it directly (issue #87). All eight roles (`cortex`/`senses`/`muse`/`worker`/
+it directly (issue #87). All nine roles (`cortex`/`senses`/`muse`/`worker`/`hand`/
 `embedder`/`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
 `model` field / the OpenAI `path`, not distinct per-role URLs; the internal
 upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
@@ -313,7 +385,7 @@ Example (`cortex`, fully wired, default fleet):
 An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
-client can always render all eight roles. (An unwired `muse` or `worker`
+client can always render all nine roles. (An unwired `muse` or `worker`
 additionally defaults to `feasible: false` — the opt-in-hosting honesty rule
 above.)
 
@@ -427,7 +499,7 @@ lobes up embedder --apply           # docker compose up -d vllm-embed
 lobes up reranker --apply           # docker compose up -d vllm-rerank
 lobes up stt --apply                # requires the --audio overlay
 lobes up tts --apply                # requires the --audio overlay
-lobes up colleague-stack --apply    # the SIX default roles at once (requires --audio scaffolded)
+lobes up colleague-stack --apply    # the SEVEN default roles at once (requires --audio scaffolded)
 ```
 
 Dry-run by default (prints the exact `docker compose …` command); `--apply`
@@ -437,8 +509,9 @@ tag, because tagging the already-default-on services with a profile would
 demote them out of the default fleet (a regression). If the audio overlay
 isn't scaffolded, `colleague-stack` (and `up stt`/`up tts`) fail with a
 remediation pointing at `lobes init --fleet --audio --apply`, rather than
-silently starting only four of the six roles. **`colleague-stack` stays the
-six default-hosted roles — `muse` and `worker` are deliberately excluded**
+silently starting only some of them. **`colleague-stack` stays the
+seven default-hosted roles — `muse` and `worker` are deliberately excluded,
+while `hand` IS included (default-hosted, no compose-profile gate)**
 (their services are compose-profile-gated, so bundling either would break the
 target on every non-hosting deployment). `lobes up muse` works on a
 muse-hosting deployment and errors helpfully — naming the fix — when the
@@ -453,8 +526,8 @@ claim (lobes measures serving performance; whether an *answer* was good is
 Colleague's call):
 
 ```bash
-lobes measure              # all eight roles, table
-lobes measure --json       # all eight roles, JSON
+lobes measure              # all nine roles, table
+lobes measure --json       # all nine roles, JSON
 lobes measure --role cortex --json
 ```
 
@@ -590,7 +663,7 @@ and live-validation history behind this rebalance.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
-  deployment-shape axis: which of these eight roles a given box hosts at all,
+  deployment-shape axis: which of these nine roles a given box hosts at all,
   the cross-box honest-referral surface for a role it doesn't, and the
   opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
   key contract, a worked example).

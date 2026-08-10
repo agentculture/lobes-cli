@@ -24,7 +24,7 @@ These are the compose SERVICE names (top-level keys under ``services:``), NOT th
 ``container_name:`` values — ``docker compose up -d <service>`` addresses services.
 
 **r4 (issue #81) — colleague-stack bundles audio.** ``colleague-stack`` is a
-first-class target that brings up the FULL six-role Colleague set = the default
+first-class target that brings up the FULL seven-role default-hosted set = the default
 fleet roles (cortex/senses/embedder/reranker) PLUS the audio-overlay roles
 (stt/tts). It therefore REQUIRES the audio overlay compose file
 (``docker-compose.audio.yml``), scaffolded by ``lobes init --fleet --audio``; if

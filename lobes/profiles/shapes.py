@@ -108,7 +108,7 @@ DEFAULT_HOSTED_ROLES: tuple[str, ...] = tuple(
 # The opt-in `minor` compose service (`vllm-minor`, gated in the fleet
 # template by the "minor" Docker Compose profile -- see env.example's
 # `COMPOSE_PROFILES=minor`) -- a light 4B bf16 generate gear that is
-# DELIBERATELY NOT one of the six first-class Colleague roles (issue #81;
+# DELIBERATELY NOT one of the nine first-class Colleague roles (issue #81;
 # see CLAUDE.md's "Colleague roles" section: "the 4B minor ... are opt-in
 # gears and not first-class Colleague roles"). Added to the Shape schema's
 # hostable vocabulary for the mesh-brain end-state's t2 (issue #112): a box
@@ -129,7 +129,7 @@ _NO_OVERRIDE_ROLES: tuple[str, ...] = AUDIO_ROLES + OPT_IN_ROLES
 
 # Every role a Shape may declare hosted: :data:`COLLEAGUE_ROLES` (the seven
 # first-class, Colleague-facing roles) plus the opt-in `minor` gear
-# (:data:`OPT_IN_ROLES`) -- the one addition beyond that seven-role vocabulary.
+# (:data:`OPT_IN_ROLES`) -- the one addition beyond that nine-role vocabulary.
 SHAPE_ROLES: tuple[str, ...] = COLLEAGUE_ROLES + OPT_IN_ROLES
 
 BUILTIN_SHAPES_PACKAGE = "lobes.profiles.builtin_shapes"

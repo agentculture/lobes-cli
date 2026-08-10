@@ -601,7 +601,7 @@ def _role_infeasible_body(
     """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
 
     Distinct ``type``/``code`` from :func:`_model_not_found_body`: the
-    requested id/role IS part of the six-role contract (it may even be
+    requested id/role IS part of the role contract (it may even be
     wired — the primary is unconditionally wired regardless of feasibility)
     but this machine's per-machine profile declared its owning backend
     (``backend_name``) unable to serve it at all. Never a reason to
@@ -1857,7 +1857,7 @@ def capabilities_payload(
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict:
-    """The seven first-class roles (issue #81), resolved via the shared registry.
+    """The nine first-class roles (issue #81), resolved via the shared registry.
 
     ``env`` defaults to ``os.environ``. The fleet compose passes the served
     ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` /
@@ -2219,7 +2219,7 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def _get_capabilities(self) -> None:
-        # The #81 role→endpoint contract: SEVEN first-class roles resolved to
+        # The #81 role→endpoint contract: NINE first-class roles resolved to
         # live metadata via the shared lobes.roles registry. The endpoint is
         # the client-reachable origin this request actually dialed (#87),
         # stt/tts readiness is a live probe of the audio backend (#89), and the

@@ -134,9 +134,10 @@ not reproduce).
 
 ### Colleague roles: cortex / senses / muse / worker / embedder / reranker / stt / tts
 
-Beyond `cortex`, the **fleet** exposes EIGHT first-class, Colleague-facing
-**roles** (issue #81; `worker` joined as the eighth — thor-worker-lobe plan)
-— the primary contract callers should address, not raw model ids: `cortex`
+Beyond `cortex`, the **fleet** exposes NINE first-class, Colleague-facing
+**roles** (issue #81; `worker` joined as the eighth — thor-worker-lobe plan —
+and `hand` as the ninth — hand-lobe plan) — the primary contract callers
+should address, not raw model ids: `cortex`
 (the 27B primary — reasoning/deciding/final authority), `senses` (the Gemma 4
 12B multimodal gear — vision intake/perception; never decides or takes repo
 actions; the checkpoint declares audio support but it is **not currently
@@ -145,7 +146,10 @@ practice, and the purpose-built `stt` role, below, is the supported path for
 speech), `muse` (the opt-in-hosted creative/ideation lobe — **currently
 DORMANT/unhosted mesh-wide**, see the paragraph below), `worker` (the
 opt-in-hosted fast ground-work DOER, and the first non-`cortex` role allowed
-to act on the repo — see the paragraph below), `embedder`
+to act on the repo — see the paragraph below), `hand` (the 1.2B LFM2.5
+fine-tuning base and trained specialist — default-hosted on EVERY card, the
+`minor`/`cheap` tier, and the pressure-policy servable floor; see the
+paragraph below), `embedder`
 (`Qwen/Qwen3-Embedding-0.6B` → `POST /v1/embeddings`), `reranker`
 (`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`), and the
 opt-in audio overlay's `stt`/`tts`. Roles are routed by **task family**
@@ -161,36 +165,43 @@ run at `*_GPU_MEM_UTIL=0.06` each — default budget `0.30 + 0.14 + 0.06 + 0.06 
 0.56` on the 128 GB GB10. These are the **machine-as-brain** (default)
 values — one box hosting every role it can serve; a mesh-brain **deployment
 shape** (below) drops one heavy lobe to a peer box and reclaims its budget
-instead of merely co-residing it. The 4B `minor` (back-compat `cheap`,
-`COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
+instead of merely co-residing it. `hand` is default-hosted too, at a per-card
+util (0.06 on the 128 GB Spark/Thor, 0.10 on the 64 GB Orin). The legacy 4B
+`vllm-minor` gear (`COMPOSE_PROFILES=minor`, util 0.10) and the legacy 14B Qwen
 (`COMPOSE_PROFILES=middle`, util 0.12) are **opt-in** gears and are not
-first-class Colleague roles. Callers address the generate lane by
-**capability-tier alias** — `model=main|minor|multimodal|worker|muse`
-(back-compat: `hard|cheap|normal`; capability order `minor` < `multimodal` <
-`worker` < `muse` < `main`), or the Colleague-role names `model=cortex|senses`
-layered on top of `main`/`multimodal` (`muse`'s and `worker`'s role names ARE
-their tier/backend names); `normal`/`multimodal` maps to the Gemma gear, not
-the demoted 14B. A swap/iowait **pressure policy** SHEDS full-tier `cortex`,
+first-class Colleague roles — and since `hand` took over the `minor`/`cheap`
+tier, the 4B is addressable only by explicit model id, exactly like the 14B.
+Callers address the generate lane by **capability-tier alias** —
+`model=main|hand|multimodal|worker|muse` (back-compat: `hard|minor|cheap|normal`;
+capability order `hand` < `multimodal` < `worker` < `muse` < `main`), or the
+Colleague-role names `model=cortex|senses` layered on top of
+`main`/`multimodal` (`hand`'s, `muse`'s and `worker`'s role names ARE their
+tier/backend names); `minor`/`cheap` map to `hand`, and `normal`/`multimodal`
+to the Gemma gear, not the demoted 14B. A `hand` LoRA adapter is addressed as
+`model=hand:<domain>`. A swap/iowait **pressure policy** SHEDS full-tier `cortex`,
 `senses`, `worker`, and `muse` requests with **HTTP 429 + `Retry-After`**
 rather than substituting a different model (swap > 75 % or iowait > 50 % →
 busy — the former degrade-to-`minor` substitution path was removed outright,
 so there is no cheaper-rung fallback for any of the four); an explicit
-`minor` request is the servable floor and is always served regardless of
-pressure. `lobes status --pressure` shows the current busy/warm state.
-Start/stop one role at a time with `lobes up <role>` (or the six-default-role
-bundle, `lobes up colleague-stack` — `muse` and `worker` are deliberately
-excluded from the bundle, both being opt-in-hosted; `lobes up muse` works on
+`hand` request (or its `minor`/`cheap` spellings) is the servable floor and is
+always served regardless of pressure. `lobes status --pressure` shows the current busy/warm state.
+Start/stop one role at a time with `lobes up <role>` (or the
+seven-default-role bundle, `lobes up colleague-stack` — `muse` and `worker` are
+deliberately excluded from the bundle, both being opt-in-hosted, while `hand`
+IS included, being default-hosted and un-gated; `lobes up muse` works on
 a muse-hosting deployment and errors helpfully when `COMPOSE_PROFILES`
 doesn't include `muse`, and `lobes up worker` is landing alongside the
 worker-hosting shape, below, to mirror that exact mechanic); measure
-per-role runtime with `lobes measure` (muse and worker ride the llm family)
+per-role runtime with `lobes measure` (hand, muse and worker ride the llm
+family)
 and compare fleet profiles with `lobes benchmark --profile {cortex-only,
 cortex+senses,senses-direct,qwen-nvfp4-vs-bf16,all}`. LoRA adapter training
 targets the 4B bf16 `minor` only — the 14B NVFP4 is inference-only, and there
 is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
 `docs/qwen3-reranker-0.6b.md`, `docs/gemma-4-12b-nvfp4.md`,
 `docs/gemma-4-31b-nvfp4.md`, `docs/qwen3.6-35b-a3b-nvfp4.md`,
-`docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the eight-role
+`docs/lfm2.5-1.2b-hand.md`,
+`docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the nine-role
 contract).
 
 **`muse` — the seventh role, currently DORMANT/unhosted mesh-wide.**
@@ -280,6 +291,60 @@ in 0.54.6 but missing from `server.py`'s `_PEER_SERVED_NAME_ENV` /
 `_PEER_ROLE_HINT`, so `peer_specs_from_table` silently dropped it and
 `WORKER_PEER_PROXY=true` did nothing. See
 `docs/evidence/2026-07-31-accept-worker-proxy-spark.txt`.
+
+**`hand` — the ninth role, the fleet's FINE-TUNING BASE (default-hosted
+everywhere).** Checkpoint: `LiquidAI/LFM2.5-1.2B-Instruct` (a ~1.2B hybrid
+short-conv + GQA `Lfm2ForCausalLM`; 32768 native; bf16 — the catalog's
+`quantization="none"` sentinel, so the lane omits `--quantization` ENTIRELY;
+**text-only** — no ViT, hence no `--language-model-only`, and no thinking mode,
+hence no `--reasoning-parser`; LiquidAI ships `LFM2.5-1.2B-Thinking` and a
+vision variant as SEPARATE checkpoints). Requires vLLM >= 0.23.0, so the lane
+pins the nightly digest, never the NGC 26.04 tag `vllm-minor` rides — verified
+against the pinned digest on a physical Thor 2026-08-10 (`VLLM_VERSION
+0.23.1rc1.dev672+g93d8f834d`, `LFM2_REGISTERED True`).
+
+The metaphor is **muscle memory**: one cheap base, many LoRA adapters, each
+mastering a domain. `worker` is an untrained generalist doer; `hand` is a
+trained specialist. Responsibilities: `domain_mastery`, `learned_skill`,
+`specialized_task`, `tool_use` (forbidden: `final_decision`, `repo_action`,
+`security_decision` — v1 withholds `repo_action` deliberately, since ADDING a
+responsibility later is contract-compatible while REMOVING one is a break;
+granting it once adapters exist is issue #180).
+
+Three things follow from it being cheap (~2.4 GiB bf16): it is **hosted by
+every built-in shape** including the mesh-lobe ones, it is **never proxied**
+(deliberately absent from all three peer channels — `NEVER_PROXIED_BACKENDS`
+names that absence so a symmetry-minded refactor must delete a constant to
+break it), and it is the **pressure-policy servable floor**. It also
+**replaced `Qwen/Qwen3.5-4B` as the `minor`/`cheap` tier**; the 4B stays in the
+catalog as a plain candidate (cite-don't-delete), still selectable via `lobes
+switch`, but no tier resolves to it.
+
+**Tool calling** uses LFM2's own `<|tool_call_start|>`/`<|tool_call_end|>`
+delimiters, which are **special tokens** — the same trap that made `pythonic`
+silently wrong for Gemma 4. vLLM ships a purpose-built **`lfm2`** parser whose
+`__init__` RESOLVES both delimiters and **raises** when either is missing, so a
+bad tokenizer revision fails loudly at startup instead of relaying a well-formed
+call as prose.
+
+**LoRA serving** ships ARMED (`--enable-lora`) with the inventory **EMPTY** —
+v1 has zero adapters. Adapters are declared once in `HAND_LORA_MODULES`
+(`name=path`, comma-separated), read by BOTH the engine's `--lora-modules` and
+the gateway's `hand:<domain>` alias derivation so the two cannot disagree, and
+fixed at boot — there is no runtime hot-load. `model=hand` serves the base and
+never 404s on an empty inventory; `model=hand:<domain>` serves that adapter; an
+UNdeclared `hand:<domain>` is refused with `model_not_found`, never silently
+downgraded to the base. An adapter vLLM did not actually load is absent from
+both `/v1/models` and `/capabilities` — verified by probing the lane's OWN
+`/v1/models` rather than the gateway's filesystem, since adapter paths are
+mounted into `vllm-hand`, not the gateway. Adapter PRODUCTION is `unsloth-cli`,
+out of tree and one-directional (nothing under `lobes/` imports it);
+`agentculture/unsloth-cli#16` tracks LFM2.5 support there.
+
+Budgets are **DECLARED, not measured** (#108) on every card. See
+`docs/lfm2.5-1.2b-hand.md` and `docs/colleague-stack.md`, whose `hand` section
+also records why **adding a role is effectively irreversible** — read it before
+proposing a tenth.
 
 An opt-in **realtime audio overlay** (`lobes init --fleet --audio`) adds an OpenAI
 `/v1/audio/*` facade — a `realtime` bridge container (shipped in the wheel as
