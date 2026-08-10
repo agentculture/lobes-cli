@@ -164,6 +164,52 @@ quantization = "compressed-tensors"
 # 2026-07-16/17) used it; FlashInfer is unvalidated here (docs/orin-profiles.md).
 attention_backend = "TRITON_ATTN"
 
+[roles.hand]
+# The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
+# base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
+# ViT, no thinking mode; served with --enable-lora ARMED and (in v1) an EMPTY
+# adapter inventory. See docs/lfm2.5-1.2b-hand.md.
+#
+# quantization is DELIBERATELY ABSENT from this block, on every card: the
+# catalog's quantization="none" bf16 sentinel means the lane must omit
+# --quantization ENTIRELY. Declaring it here — even as an empty string — would
+# render a flag that corrupts bf16 weights.
+#
+# BUDGET: DECLARED. One live observation, NOT a reproducible measurement — see
+# docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt. This value was
+# DECLARED at 0.10 and the box refuted it TWICE, which is exactly why t10
+# exists:
+#
+#   * at 0.10 the boot died before profiling — "Free memory on device cuda:0
+#     (4.67/61.34 GiB) on startup is less than desired GPU memory utilization
+#     (0.1, 6.13 GiB)". The orin-lobe shape's committed lanes plus the box's
+#     other workload simply do not leave 6.13 GiB.
+#   * at 0.06 it booted ONCE and profiled healthy (available KV 2.7 GiB, pool
+#     235,721 tokens, 7.19x at the served 32768 window) — and then FAILED TWICE
+#     at the identical util, profiling 0.14 GiB and 0.09 GiB. One success, two
+#     refusals.
+#
+# So 0.10 was too big to fit, and 0.06 is not reliably big enough. This box is
+# SHARED (senses at 0.45, the pooling gears, unrelated production containers)
+# and vLLM clamps its budget against actual free memory at startup, which moved
+# by ~2.7 GiB across the three runs. A util leaving ~1 GiB of margin on a 61 GiB
+# card sits inside that noise.
+#
+# 0.06 is kept as the best available single data point, explicitly DECLARED.
+# An operator whose Orin refuses it should raise this value until the boot log
+# reports comfortable KV, or trim max_model_len (vLLM names the length that
+# would fit — 7984 in the tightest run). Tracked as issue #183.
+#
+# The per-card util mechanism (see schema.py) is retained and currently carries
+# no divergence: every card declares 0.06.
+feasible = true
+model = "LiquidAI/LFM2.5-1.2B-Instruct"
+gpu_mem_util = 0.06
+max_model_len = 32768
+# TRITON_ATTN: the conservative sm_87 carry-over every role that booted on this
+# box uses. FlashInfer is unvalidated here (docs/orin-profiles.md).
+attention_backend = "TRITON_ATTN"
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

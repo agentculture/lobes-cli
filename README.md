@@ -252,14 +252,18 @@ native MTP default-on — the coder fine-tune, `sakamakismile/gemma-4-12B-coder-
 is kept as an opt-in `multimodal-coder` gear; see
 [`docs/vllm-nightly-migration.md` §7](docs/vllm-nightly-migration.md))
 — plus the tiny embedding + reranker gears (`0.06` each), for a default budget of
-`0.30 + 0.14 + 0.06 + 0.06 = 0.56` on the 128 GB GB10. The 4B
-`minor` companion and the legacy 14B Qwen are opt-in compose profiles
-(`COMPOSE_PROFILES=minor` / `COMPOSE_PROFILES=middle`). Callers address the
-generate lane by role/tier alias — `model=cortex|senses|muse` (or
-`main|minor|multimodal|muse`; back-compat `hard|cheap|normal`; `muse` — the
-opt-in-hosted 31B creative lobe, declared/unvalidated — is served only by a
-muse-hosting shape, never the default fleet); see
-[`docs/colleague-stack.md`](docs/colleague-stack.md) for the seven-role contract. `lobes switch` drives the single-model deployment (it can
+`0.30 + 0.14 + 0.06 + 0.06 = 0.56` on the 128 GB GB10 — plus the 1.2B `hand`
+lobe (`0.06` on a 128 GB card, `0.10` on a 64 GB Orin), the fleet's
+fine-tuning base, which is default-hosted on every card. The legacy 4B
+`vllm-minor` gear and the legacy 14B Qwen are opt-in compose profiles
+(`COMPOSE_PROFILES=minor` / `COMPOSE_PROFILES=middle`) and are addressable only
+by explicit model id — `hand` took over the `minor`/`cheap` tier. Callers
+address the generate lane by role/tier alias — `model=cortex|senses|hand|muse|worker`
+(or `main|multimodal|hand`; back-compat `hard|normal|minor|cheap`; a `hand` LoRA
+adapter is `model=hand:<domain>`; `muse` — the opt-in-hosted 31B creative lobe,
+declared/unvalidated — and `worker` — the opt-in-hosted 35B-A3B doer — are
+served only by their own hosting shapes, never the default fleet); see
+[`docs/colleague-stack.md`](docs/colleague-stack.md) for the nine-role contract. `lobes switch` drives the single-model deployment (it can
 also serve an embed/score gear solo — auto-detected from the catalog, or forced
 with `--task embed|score`); change the fleet primary by editing the fleet `.env`
 and re-running `lobes fleet up --apply`. See `lobes explain fleet` / `lobes
@@ -269,7 +273,8 @@ explain gateway` for the routing semantics,
 gears, [`docs/gemma-4-12b-nvfp4.md`](docs/gemma-4-12b-nvfp4.md) for the
 multimodal gear, [`docs/gateway-fleet.md`](docs/gateway-fleet.md) for the
 full topology, and [`docs/colleague-stack.md`](docs/colleague-stack.md) for
-the seven-role Colleague contract (`cortex`/`senses`/`muse`/`embedder`/`reranker`/`stt`/`tts`,
+the nine-role Colleague contract
+(`cortex`/`senses`/`muse`/`worker`/`hand`/`embedder`/`reranker`/`stt`/`tts`,
 `lobes capabilities`, `GET /capabilities`).
 
 ### Per-model notes
@@ -311,6 +316,12 @@ results, and caveats:
   **MoE fallback** (`mmangkad/Qwen3.6-35B-A3B-NVFP4`), now a candidate. It does
   **not** load reliably on a GB10 shared with other services, and two ~30B models
   do not co-reside there — see [`docs/gateway-fleet.md`](docs/gateway-fleet.md).
+- [`docs/lfm2.5-1.2b-hand.md`](docs/lfm2.5-1.2b-hand.md) — the **`hand` lobe**
+  (`LiquidAI/LFM2.5-1.2B-Instruct`), the fleet's designated **fine-tuning base**
+  and the ninth Colleague role. bf16, 32K native, text-only, no thinking mode;
+  served with `--enable-lora` armed and (in v1) an empty adapter inventory.
+  Default-hosted on every card, the `minor`/`cheap` tier, and the
+  pressure-policy servable floor. DECLARED, not yet validated live (#108).
 
 The numbers in each doc come from `lobes switch <model> --apply` then `lobes
 assess` (correctness) and `lobes benchmark` (throughput). `lobes overview --list`

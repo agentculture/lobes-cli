@@ -4,6 +4,80 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.5] - 2026-08-10
+
+### Fixed
+
+- Sonar S9073: a composite assertion in the collision-message test is now a single substring check — the two halves were only separate because the expected text wraps across two source lines.
+
+## [0.56.4] - 2026-08-10
+
+### Fixed
+
+- CI lint: two markdownlint errors in my own CHANGELOG entries — `hand:<domain>` parsed as inline HTML (MD033) and bare snake_case identifiers parsed as emphasis markers (MD037). Both came from writing changelog prose with unbackticked code. My local markdownlint run had passed because I ran it BEFORE the version bump appended the entry.
+- Sonar S8997 x2: the adapter-probe test swapped a module global by hand; it now uses the monkeypatch fixture, and a sibling test drops its inline contextlib/io redirect for the capsys fixture the rest of the module already uses.
+
+## [0.56.3] - 2026-08-10
+
+### Added
+
+- Collision detection now covers LoRA adapter names, not just served names (Qodo #184-1): `_backend_for` matches `requested in backend.adapters`, so an adapter name is an ownership claim exactly like a served name — a collision between the two resolved silently by backend order. The warning also names the right remedy (`HAND_LORA_MODULES` vs `*_SERVED_NAME`) for whichever kind of duplicate it found.
+- A new warning for an adapter name shadowed by an alias: `resolve_model` checks aliases FIRST, so an adapter named after a tier, role or operator alias is unreachable by its own name — a total shadow rather than an order-dependent race.
+
+### Changed
+
+- `build_config` cognitive complexity 18 -> well under the 15 limit (Sonar S3776) by extracting three alias derivations into named helpers: `_hand_adapter_aliases`, `_add_self_named_opt_in_aliases` and `_add_pooling_role_aliases`. Behaviour-preserving — the existing alias tests pass unchanged.
+
+### Fixed
+
+- The hand backend comment claimed `HAND_SERVED_NAME` alone wires the lane (Qodo #184-2). It does not — `_optional_backend` requires `*_BASE_URL`, by its own documented contract, since a served name with no URL describes a model rather than a reachable backend.
+
+## [0.56.2] - 2026-08-10
+
+### Added
+
+- 29 tests over the hand LoRA-adapter honesty surface — the declaration parser (HAND_LORA_MODULES: partition-not-split so a path keeps an =, malformed segments dropped, dedupe, whitespace), the engine probe (intersection, undeclared ids ignored, empty declaration opens no socket, correct path, no API key, and every fail-closed mode: non-200, unreachable, malformed body), the ReadinessCache background refresh (empty seed, copy isolation, a raising probe degrading to empty without aborting the pass), the `hand:<domain>` alias derivation, and the `/v1/models` filter (declared-but-unconfirmed is invisible; an adapter cannot outlive its lane).
+
+### Changed
+
+- SonarCloud new-code coverage 51.2% -> 100%. The gate exposed a real gap rather than a metric one: the adapter surface — the honesty machinery this release is largely about — had NO direct tests. The delivery summary claim that it was covered offline was overstated and is corrected.
+
+## [0.56.1] - 2026-08-10
+
+### Added
+
+- docs/evidence/2026-08-10-partial-hand-spark.txt — hand on the DGX Spark GB10: functional PASS on a third card (Lfm2ForCausalLM, bf16 sentinel, no reasoning parser, LoRA armed, known-answer, structured tool_calls, empty-inventory /v1/models, undeclared adapter 404), plus the first live confirmation that the d8 --attention-config fix resolves.
+
+### Changed
+
+- hand budget guidance now names the MECHANISM behind every non-reproducing budget: on a unified-memory card with co-resident tenants vLLM profiles against memory free AT THAT INSTANT, so the same gpu_mem_util yields a different KV pool run to run. Three Spark boots at the identical 0.06 gave 6.21 / 3.34 / 3.54 GiB. This retro-explains the Orin retraction as a property, not a fluke — and it is not a tight-margin artifact, since the Spark reproduced the 2x spread with several GiB of headroom. All four cards stay DECLARED (#183).
+
+## [0.56.0] - 2026-08-10
+
+### Added
+
+- **`hand` — the NINTH Colleague role** (`LiquidAI/LFM2.5-1.2B-Instruct`), the fleet's designated **fine-tuning base**. "Muscle memory": one cheap base, many LoRA adapters, each mastering a domain. Where `worker` is an untrained generalist doer, `hand` is a trained specialist. At ~1.2B (~2.4 GiB bf16) it is cheap enough to co-reside on **every card**, so unlike `muse`/`worker` it is **default-hosted by every built-in shape** and **never proxied to a peer** (`NEVER_PROXIED_BACKENDS` names that absence so a symmetry-minded refactor must delete a constant to break it). Responsibilities `domain_mastery`/`learned_skill`/`specialized_task`/`tool_use`; forbidden `final_decision`/`repo_action`/`security_decision`. See `docs/lfm2.5-1.2b-hand.md`
+- **LoRA adapter serving** — the `vllm-hand` lane ships **armed** (`--enable-lora`, `--max-loras=4`, `--max-lora-rank=32`) with the inventory **empty**: v1 has zero adapters. Adapters are declared once in `HAND_LORA_MODULES` (`name=path`, comma-separated), read by BOTH the engine's `--lora-modules` and the gateway's alias derivation so the two cannot disagree, and fixed at boot — there is no runtime hot-load. `model=hand` serves the base and never 404s on an empty inventory; `model=hand:<domain>` serves that adapter; an UNdeclared `hand:<domain>` is refused with `model_not_found`, never silently downgraded to the base
+- **Adapter honesty (#92 for adapters)** — a declared adapter is advertised on `GET /v1/models` and `/capabilities` only once the lane's OWN `/v1/models` confirms the engine loaded it (`_readiness.probe_backend_adapters`). Deliberately asks the ENGINE, not the filesystem: adapter paths are mounted into `vllm-hand`, not the gateway, so a path check there would false-negative every correct config while still missing the failures that matter (unreadable file, rank above `--max-lora-rank`, a checkpoint vLLM refused)
+- **`lfm2` tool-call parser** — LFM2 emits `<|tool_call_start|>…<|tool_call_end|>`, whose delimiters are **special tokens**: the same trap that made `pythonic` silently wrong for Gemma 4. vLLM's purpose-built `lfm2` parser resolves both delimiters in `__init__` and **raises** when either is missing, so a bad tokenizer revision fails loudly at startup rather than relaying a well-formed call as prose. No `--reasoning-parser`: this checkpoint has no thinking mode (LiquidAI ships `LFM2.5-1.2B-Thinking` separately), so unlike the cortex and Gemma 4 lanes there is no second half to pair with
+- `docs/lfm2.5-1.2b-hand.md` — the per-model reference, and an **"adding a role is effectively irreversible"** callout in `docs/colleague-stack.md` enumerating the surfaces a role name lands on
+- **VALIDATION STATUS: `hand` is DECLARED on every card and VALIDATED on NONE (#108).** Stated here rather than left unsaid, because two live findings in this release were *only* visible on hardware. The Orin **served** and passed every functional check — a structured `tool_calls` array through the `lfm2` parser, the tokenizer's `<|tool_call_start|>`/`<|tool_call_end|>` confirmed as special tokens (ids 10/11), the bf16 sentinel, a correct known-answer completion, an unknown id refused 404 — but its **budget did not reproduce**: three boots at the identical `gpu_mem_util=0.06` / `max_model_len=32768` profiled 2.7 GiB, 0.14 GiB and 0.09 GiB of available KV (one success, two refusals), because vLLM clamps against actual free memory on a box that also hosts `senses` and unrelated workloads. The Thor boot failed outright in LoRA embedding-slot allocation, cause unattributed. `docs/evidence/2026-08-10-partial-hand-orin.txt` (a PARTIAL record carrying its own retraction), `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`, and issues #181/#182/#183
+
+### Changed
+
+- **`hand` replaced `Qwen/Qwen3.5-4B` as the `minor`/`cheap` tier.** Both spellings still work and now resolve to `hand`; the 4B stays in the catalog as a plain `candidate` (cite-don't-delete), still selectable via `lobes switch` and still runnable as the opt-in `vllm-minor` compose service, but no tier alias resolves to it any more — it is addressable only by explicit model id, exactly like the legacy 14B `middle` gear. Capability order is now `hand` < `multimodal` < `worker` < `muse` < `main`
+- **`hand` is the pressure-policy servable floor.** Under swap > 75 % / iowait > 50 %, `cortex`/`senses`/`worker`/`muse` still shed with 429 + `Retry-After` and `hand` is always served — the floor's PROMISE is unchanged, only its name (a `minor`/`cheap` request normalizes to `hand`). `servable_tier` therefore reports `"hand"` where it previously reported `"minor"`
+- `colleague-stack` is the **seven** default-hosted roles (`hand` joins; `muse`/`worker` stay excluded, both being opt-in-hosted and compose-profile-gated)
+- `mg-logwrap` now drops an argument that is exactly `--flag=` with an empty value. A compose `command:` list cannot omit an argument conditionally, so an unset templated flag renders as a bare `--flag=` — and vLLM would parse `--lora-modules=` as a malformed `name=path` pair. The rule is narrow by construction: a flag with a value, a bare `--flag`, a lone `--`, a short `-x`, and every non-flag argument all pass through untouched
+- Role-count prose swept to nine across `docs/`, `CLAUDE.md` and `README.md`. The sweep also corrected counts that were **already stale before this change** and had never caught up with `worker` — `lobes/explain/catalog.py` said SEVEN throughout, and several `capabilities`/`measure`/`learn` strings said six or seven
+- `docs/qwen3.5-4b-minor.md` re-headed as the DEMOTED gear, with a note to read its (never-realised) LoRA promises in the past tense — that unfulfilled plan is precisely why the role moved
+
+### Fixed
+
+- **The `vllm-hand` lane shipped unbootable AND silently misconfigured — two defects no offline test could see.** (1) It omitted `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`, which every other lane on the same nightly image sets; live, the lane profiled to **`Available KV cache memory: -9.25 GiB`** — negative, so no boot at any util. (2) It never substituted `HAND_ATTENTION_BACKEND`, a **dead knob**: `builtin/orin.toml` declares `attention_backend = "TRITON_ATTN"` and `lobes init` renders it into `.env`, where nothing read it — the operator sees a configured backend the engine never receives. Both were caught by booting the real committed compose lane; both rendered valid compose and passed the full suite. The second now has a class-level guard (`test_every_rendered_profile_knob_is_substituted_by_the_fleet_template`, verified to fail with the fix reverted); the first's equivalent is #182 and does not exist yet
+- `lobes measure` would have raised `KeyError` on any role missing from `roles_measure._FAMILY_BY_ROLE` — a crash, not a degraded reading. Both that map and `_MEASURE_FN` now cover every role, and a parametrised test iterates `ROLES` so the class cannot recur
+- `build_role_registry` iterated a **hand-typed copy** of the gateway-fronted roles instead of deriving them from `ROLES`, so a new role could be registered in all six per-role tables yet be silently missing from the registry the CLI and `GET /capabilities` both read. Now derived (`GATEWAY_FRONTED_ROLES`), with a parametrised completeness test per table — the same half-landed-role failure mode that made `WORKER_PEER_PROXY=true` inert in 0.54.6
+
 ## [0.55.1] - 2026-08-10
 
 **Three surfaces still named the checkpoint 0.54.9 demoted.** The multimodal

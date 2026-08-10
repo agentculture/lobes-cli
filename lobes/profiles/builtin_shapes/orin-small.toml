@@ -29,7 +29,7 @@
 # hardware).
 #
 # WHY `minor`, NOT `cortex`, hosts the generate lane here: the Shape schema's
-# `hosts` vocabulary (SHAPE_ROLES) is normally exactly the six first-class
+# `hosts` vocabulary (SHAPE_ROLES) is normally exactly the nine first-class
 # Colleague roles (issue #81) -- cortex/senses/embedder/reranker/stt/tts.
 # `minor` is deliberately NOT one of those six (see CLAUDE.md's "Colleague
 # roles" section: "the 4B minor ... are opt-in gears and not first-class
@@ -56,4 +56,12 @@
 name = "orin-small"
 summary = "Jetson AGX Orin 64GB reference (DECLARED, UNVALIDATED) -- minor + embedder + reranker + audio, no cortex/senses"
 
-hosts = ["minor", "embedder", "reranker", "stt", "tts"]
+
+# `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY built-in
+# shape, including the mesh-lobe shapes that drop a heavy lobe. That is the
+# point of the role: at ~2.4 GiB it is cheap enough to keep resident on every
+# box, so a caller always has a local generate lane and a local fine-tuning
+# base — and unlike muse/worker there is never a reason to refer it to a peer.
+# Its budget comes from the CARD profile (per-card, see builtin/*.toml), not
+# from a shape override: dropping another lobe does not change what hand needs.
+hosts = ["minor", "hand", "embedder", "reranker", "stt", "tts"]

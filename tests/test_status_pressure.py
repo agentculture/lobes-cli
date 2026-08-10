@@ -33,7 +33,10 @@ from lobes.runtime import _pressure as _pressure_mod
 
 # Tier model IDs — mirrors test_catalog_tiers.py constants so that any catalog
 # change that renames an ID also breaks *this* test (intentional coupling).
-_MINOR_ID = "Qwen/Qwen3.5-4B"  # minor tier (the servable floor under pressure)
+# The cheap tier's gear — the servable floor under pressure. The `hand` lobe
+# replaced Qwen/Qwen3.5-4B here; `minor`/`cheap` remain accepted request
+# spellings but the tier RESOLVES to this model and REPORTS itself as "hand".
+_HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
 _PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"  # main tier (full)
 
 _KEYS = {"mode", "shed", "servable_tier", "model", "reason", "retry_after", "pressure"}
@@ -67,8 +70,8 @@ def test_status_pressure_json_high_swap_busy(capsys, monkeypatch) -> None:
     assert set(payload.keys()) == _KEYS
     assert payload["mode"] == "busy"
     assert payload["shed"] is True
-    assert payload["servable_tier"] == "minor"
-    assert payload["model"] == _MINOR_ID
+    assert payload["servable_tier"] == "hand"
+    assert payload["model"] == _HAND_ID
     assert payload["reason"] == "pressure"
     assert payload["retry_after"] == BUSY_RETRY_AFTER_SECONDS
     assert payload["pressure"] == {"swap_used_percent": 80.0, "iowait_percent": 5.0}
@@ -132,8 +135,8 @@ def test_status_pressure_json_high_iowait_busy(capsys, monkeypatch) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "busy"
     assert payload["shed"] is True
-    assert payload["servable_tier"] == "minor"
-    assert payload["model"] == _MINOR_ID
+    assert payload["servable_tier"] == "hand"
+    assert payload["model"] == _HAND_ID
     assert payload["reason"] == "pressure"
     assert payload["retry_after"] == BUSY_RETRY_AFTER_SECONDS
 
@@ -171,7 +174,7 @@ def test_status_pressure_text_output_busy_shows_shed(capsys, monkeypatch) -> Non
     out = capsys.readouterr().out
     assert "busy" in out
     assert "429" in out  # the shed line names the busy status
-    assert "minor" in out
+    assert "hand" in out
     assert "pressure" in out
 
 

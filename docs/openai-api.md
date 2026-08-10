@@ -21,7 +21,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/realtime` | GET (WebSocket upgrade) | realtime bridge, tunneled through the gateway | server_vad session; base64 PCM16 mono LE JSON events both ways, 24000 Hz default / 16000 Hz accepted. Transcription-only by default; opt in with `response.create` for a spoken, interruptible reply on the same socket (issues #149, #151) — see below |
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
-| `/capabilities` | GET | gateway | the eight-role Colleague contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
+| `/capabilities` | GET | gateway | the nine-role Colleague contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
 | `/health` | GET | gateway | liveness |
 
 Embeddings, rerank, score, and audio (including the `/v1/realtime` WebSocket
@@ -525,9 +525,9 @@ the gateway defaults to). This is the HTTP equivalent of `lobes overview --list`
 curl -s http://localhost:8000/v1/models/supported
 ```
 
-### Capabilities (the eight-role Colleague contract)
+### Capabilities (the nine-role Colleague contract)
 
-`GET /capabilities` — the EIGHT first-class, Colleague-facing roles (`cortex`,
+`GET /capabilities` — the NINE first-class, Colleague-facing roles (`cortex`,
 `senses`, `muse`, `worker`, `embedder`, `reranker`, `stt`, `tts` — issue #81;
 `worker` joined as the eighth, thor-worker-lobe plan), each
 resolved to
@@ -574,7 +574,7 @@ curl -s http://localhost:8000/capabilities
 }
 ```
 
-**All eight roles** report this **one** client-reachable gateway `endpoint` —
+**All nine roles** report this **one** client-reachable gateway `endpoint` —
 including `stt`/`tts` — because routing is by the `model` field / OpenAI `path`,
 not by distinct URLs (issue #87). The gateway advertises the origin you dialed
 (the request `Host` header; override with `GATEWAY_PUBLIC_URL` for a tunnel), so
@@ -687,13 +687,13 @@ two-step provisioning flow (`cultureflare` + `lobes tunnel`).
 
 - `lobes explain gateway` — routing semantics (name / default / failover / SSE)
 - `lobes explain fleet` — the multi-container fleet topology
-- `lobes explain roles` — the eight-role Colleague contract (`GET /capabilities`)
+- `lobes explain roles` — the nine-role Colleague contract (`GET /capabilities`)
 - `lobes explain embeddings` — `/v1/embeddings` request/response detail
 - `lobes explain rerank` — `/v1/rerank` request/response detail
 - `lobes explain score` — `/v1/score` request/response detail
 - `lobes explain tunnel` — Cloudflare Tunnel bring-up
 - `lobes explain realtime` — the `/v1/realtime` session surface, in-CLI
 - [`docs/gateway-fleet.md`](gateway-fleet.md) — full fleet topology, memory guidance, live validation findings
-- [`docs/colleague-stack.md`](colleague-stack.md) — the eight-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
+- [`docs/colleague-stack.md`](colleague-stack.md) — the nine-role Colleague contract, `GET /capabilities` JSON shape, `lobes up`/`measure`/`benchmark --profile`
 - [`docs/realtime-pipeline.md`](realtime-pipeline.md) — audio overlay bring-up (STT + TTS), the `/v1/realtime` session contract, health/readiness, runbooks
 - [`docs/chatterbox-tts.md`](chatterbox-tts.md) — Chatterbox TTS details, voice prompting

@@ -95,6 +95,7 @@ GPU_SERVICES: tuple[str, ...] = (
     "vllm-embed-deep",
     "vllm-rerank",
     "vllm-minor",
+    "vllm-hand",
     "vllm-middle",
     "vllm-multimodal",
     "vllm-multimodal-coder",

@@ -426,16 +426,18 @@ def test_endpoint_json_shape(tmp_path, capsys) -> None:
 
 def test_endpoint_works_for_every_role(tmp_path, capsys) -> None:
     _scaffold_fleet(tmp_path)
-    # The five gateway-fronted roles resolve to the reachable gateway URL
+    # The seven gateway-fronted roles resolve to the reachable gateway URL
     # (worker is opt-in-core like muse — unwired/infeasible here, but its
-    # endpoint still resolves to the gateway URL, same as muse); the
-    # audio roles (stt/tts) are unwired here (no --audio overlay) → blank, but
-    # 'lobes endpoint' still exits 0 for every known role, wired or not.
+    # endpoint still resolves to the gateway URL, same as muse; `hand` is
+    # default-hosted and resolves the same way); the audio roles (stt/tts) are
+    # unwired here (no --audio overlay) → blank, but 'lobes endpoint' still
+    # exits 0 for every known role, wired or not.
     expected = {
         "cortex": "http://localhost:8000",
         "senses": "http://localhost:8000",
         "muse": "http://localhost:8000",
         "worker": "http://localhost:8000",
+        "hand": "http://localhost:8000",
         "embedder": "http://localhost:8000",
         "reranker": "http://localhost:8000",
         "stt": "",

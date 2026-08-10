@@ -66,6 +66,10 @@ ROLE_SERVICE: dict[str, str] = {
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
     "worker": "vllm-worker",
+    # `hand` is DEFAULT-ON in the fleet template (no compose profile gate), so
+    # unlike `minor`/`muse`/`worker` it needs no OPT_IN_*_ACTIVATION_ENV entry —
+    # hosting it is simply naming its service.
+    "hand": "vllm-hand",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",

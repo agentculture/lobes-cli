@@ -95,7 +95,7 @@ Every knob is optional (`None` = "profile takes no position, template default
 applies"). Only knobs the profile diverges on appear in the TOML or env; the
 rest are inherited from the template.
 
-The six roles and seven knobs map to env vars via `lobes/profiles/render.py`:
+The seven roles and seven knobs map to env vars via `lobes/profiles/render.py`:
 
 | role | env prefix | feasible | model | gpu_mem_util | max_model_len | quantization | kv_cache_dtype | attention_backend | enforce_eager | max_num_seqs |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -145,13 +145,15 @@ no `<PREFIX>_FEASIBLE` key is emitted — "feasible" is the assumed default.
 **When set:**
 
 - `spark` profile (GB10): all four default roles `feasible=true` (all
-  load-tested here); silent on `muse` and `worker` (both shape-declared —
+  load-tested here); `hand=true` but **DECLARED, not load-tested here** (see
+  the note below); silent on `muse` and `worker` (both shape-declared —
   see above).
 - `thor` profile (Jetson AGX Thor): all four default roles `feasible=true`
-  (validated live 2026-07-13); silent on `muse` and `worker` (both
-  shape-declared — see above).
+  (validated live 2026-07-13); `hand=true` but **DECLARED, not load-tested
+  here**; silent on `muse` and `worker` (both shape-declared — see above).
 - `base` profile (unknown card): `cortex=true`, `senses=false`, `muse=false`,
-  `worker=false`, `embedder=true`, `reranker=true` — the multimodal gear, the
+  `worker=false`, `hand=true`, `embedder=true`, `reranker=true` — the
+  multimodal gear, the
   31B muse lobe, and the 35B-A3B worker lobe are all disabled to save memory
   on unknown hardware.
 
@@ -163,6 +165,39 @@ no `<PREFIX>_FEASIBLE` key is emitted — "feasible" is the assumed default.
 compose template passes the served name to vLLM's `--served-model-name`
 separately from the model id it downloads; the two must agree for the gateway
 to route correctly.
+
+> **`hand` is DECLARED on every card and VALIDATED on none (#108).**
+>
+> - **Orin** — the lane *served* once and every functional check passed
+>   (`docs/evidence/2026-08-10-partial-hand-orin.txt`), but the BUDGET does not
+>   reproduce: three boots at the identical `gpu_mem_util = 0.06` /
+>   `max_model_len = 32768` profiled 2.7 GiB, 0.14 GiB and 0.09 GiB of
+>   available KV — one success, two refusals. The committed 0.06 is therefore
+>   one data point, not a measurement.
+> - **Thor** — boot failed in LoRA embedding-slot allocation, cause
+>   unattributed ([#181](https://github.com/agentculture/lobes-cli/issues/181)).
+> - **Spark** — same split as the Orin, on a bigger card
+>   (`docs/evidence/2026-08-10-partial-hand-spark.txt`): the lane served three
+>   times with every functional check passing, and the budget still did not
+>   reproduce — 6.21 / 3.34 / 3.54 GiB of available KV at the identical 0.06.
+>   Two of the three agree within 6% and were taken at the same free-memory
+>   level, which is what identifies the mechanism rather than just the noise.
+> - **base** — never exercised, and untestable by construction.
+>
+> Two lessons are worth carrying, both learned the expensive way here:
+>
+> 1. **A computed budget is a hypothesis.** The Orin was declared at 0.10 on
+>    the reasoning that "0.06 of 64 GB leaves too little KV after the weights".
+>    The box refused 0.10 outright — see
+>    `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`.
+> 2. **A single measurement on a SHARED box is also a hypothesis.** vLLM
+>    profiles against memory that is free *at that instant*, so on a
+>    unified-memory card with co-resident tenants the same util yields a
+>    different KV pool run to run. This is not a tight-margin artifact: the
+>    Orin showed it with ~1 GiB of margin on a 61 GiB card, and the Spark
+>    showed the same 2x spread with several GiB of margin on a 121 GiB one.
+>    A single boot's KV number measures the box's state, not the card's
+>    capacity for the role. **A budget is only measured once it reproduces.**
 
 **When set:**
 
@@ -481,7 +516,7 @@ max_model_len = 8192
   confusion from stale copies).
 - **Roles are optional.** A role omitted from the TOML means "take no position
   — use the template's defaults for this role." You don't have to restate all
-  six roles; a minimal profile might only touch `cortex`. (Staying silent on
+  seven roles; a minimal profile might only touch `cortex`. (Staying silent on
   `muse`/`worker` is the norm — the built-in card profiles do; a
   muse-/worker-hosting *shape* carries each role's own declaration.)
 - **Knobs within a role are optional.** A knob omitted means "no opinion" (the

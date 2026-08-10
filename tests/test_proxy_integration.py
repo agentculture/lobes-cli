@@ -786,6 +786,41 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "hand": {
+        "role": "hand",
+        # The ninth Colleague role. DEFAULT-HOSTED, so unlike muse/worker above
+        # it is NOT in OPT_IN_BACKENDS — a no-knob deployment that has not been
+        # re-inited reads it as the SLEEPING LOBE: feasible true (this card can
+        # obviously serve 2.4 GiB of bf16), ready/loaded false (the lane is not
+        # actually up). Advertising it ready would be the #92 defect; declaring
+        # it infeasible would be the opposite lie.
+        "model": "LiquidAI/LFM2.5-1.2B-Instruct",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/chat/completions",
+        "context": 32768,
+        # bf16 — the catalog's "none" sentinel, meaning the lane omits
+        # --quantization entirely rather than passing it empty.
+        "quant": "none",
+        "mtp": False,
+        "tools": True,
+        "responsibilities": [
+            "domain_mastery",
+            "learned_skill",
+            "specialized_task",
+            "tool_use",
+        ],
+        # v1 withholds repo_action: adding a responsibility later is
+        # contract-compatible, removing one is a break (issue #180).
+        "forbidden_responsibilities": [
+            "final_decision",
+            "repo_action",
+            "security_decision",
+        ],
+        "feasible": True,
+        "ready": False,
+        "loaded": False,
+    },
     "embedder": {
         "role": "embedder",
         "model": _EMBED_ID,

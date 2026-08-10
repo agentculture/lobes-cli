@@ -21,6 +21,24 @@ class Backend:
     base_url: str  # e.g. "http://vllm-primary:8000"
     served_name: str  # the OpenAI model id this backend serves
     task: str = "generate"  # task family: "generate" | "embed" | "score"
+    # EXTRA served model ids this backend owns beyond ``served_name`` — the
+    # LoRA adapter names a `--enable-lora` lane serves alongside its base
+    # checkpoint (the `hand` lobe; hand-lobe plan t4). vLLM advertises each
+    # ``--lora-modules <name>=<path>`` entry as its OWN model id on the
+    # backend's ``/v1/models``, so an adapter is a second served name on ONE
+    # backend, not a second backend.
+    #
+    # These are the DECLARED names (parsed from ``HAND_LORA_MODULES``), which
+    # is deliberately a WIRING fact, not a liveness one — the same distinction
+    # :func:`is_unknown_model` draws for backends. A declared adapter is KNOWN
+    # (so ``hand:<domain>`` routes to its owner and yields that owner's honest
+    # error if vLLM never loaded it) while an UNdeclared one is unknown (404
+    # ``model_not_found``, never a silent fall-back to the base weights).
+    # Whether an adapter actually LOADED is a separate, live question answered
+    # by the readiness layer and applied in :func:`list_models_payload`.
+    #
+    # Defaults to empty so every existing backend construction is unaffected.
+    adapters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -203,7 +221,7 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
         if requested in table.aliases:
             return table.aliases[requested]
         for backend in table.backends:
-            if backend.served_name == requested:
+            if requested == backend.served_name or requested in backend.adapters:
                 return requested
     return table.default_model
 
@@ -249,12 +267,15 @@ def is_unknown_model(table: RoutingTable, requested: str | None) -> bool:
         return False  # the declared default identity is known (see docstring)
     if requested in table.aliases:
         return False
-    return not any(backend.served_name == requested for backend in table.backends)
+    return not any(
+        requested == backend.served_name or requested in backend.adapters
+        for backend in table.backends
+    )
 
 
 def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
     for backend in table.backends:
-        if backend.served_name == served_name:
+        if served_name == backend.served_name or served_name in backend.adapters:
             return backend
     return None
 
@@ -368,6 +389,7 @@ def list_models_payload(
     table: RoutingTable,
     ready: Mapping[str, "bool | None"] | None = None,
     peer_served: Mapping[str, str] | None = None,
+    loaded_adapters: Mapping[str, frozenset[str]] | None = None,
 ) -> dict:
     """OpenAI ``/v1/models`` shape listing the fleet's served models.
 
@@ -406,6 +428,23 @@ def list_models_payload(
     local backend — #92 extended across the box boundary, never a hardcoded
     reachability claim (h2). ``peer_served=None`` (the default) changes
     nothing for every existing caller.
+
+    **LoRA adapters** (hand-lobe plan t4): ``loaded_adapters`` maps a backend
+    NAME to the set of its declared adapters that the LIVE probe confirmed the
+    backend's OWN ``/v1/models`` actually lists — the same "the engine says it
+    serves this id" evidence ``peer_served`` demands across a box boundary,
+    applied here to a second served name on a local backend. An adapter is
+    listed IFF its owning backend survived the filters above AND the probe
+    confirmed it.
+
+    Declaring an adapter in ``HAND_LORA_MODULES`` is therefore NOT enough to
+    advertise it: a path vLLM could not read, a rank above ``--max-lora-rank``,
+    or a typo'd name each leave the adapter out of the engine's own model list,
+    so it stays out of this payload too. That is #92 for adapters — a
+    declared-but-unloaded adapter must never read as usable. Omitting
+    ``loaded_adapters`` (the default) advertises NO adapters, which is the
+    honest answer for a caller holding no live evidence and keeps every
+    pre-adapter caller byte-identical.
     """
     backends = table.backends
     if ready is not None:
@@ -415,6 +454,14 @@ def list_models_payload(
     data = [
         {"id": backend.served_name, "object": "model", "owned_by": "lobes"} for backend in backends
     ]
+    if loaded_adapters:
+        for backend in backends:
+            confirmed = loaded_adapters.get(backend.name) or frozenset()
+            data.extend(
+                {"id": adapter, "object": "model", "owned_by": "lobes"}
+                for adapter in backend.adapters
+                if adapter in confirmed
+            )
     if peer_served and ready is not None:
         listed = {entry["id"] for entry in data}
         for name in sorted(table.peer_proxied):

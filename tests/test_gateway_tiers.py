@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._config import (
+    _DEFAULT_HAND,
     _DEFAULT_MIDDLE,
-    _DEFAULT_MINOR,
     _DEFAULT_MULTIMODAL,
     _DEFAULT_MULTIMODAL_CODER,
     _DEFAULT_PRIMARY,
@@ -215,8 +215,8 @@ def test_main_alias_resolves_to_primary() -> None:
 
 def test_minor_alias_resolves_to_minor_gear() -> None:
     # model=minor resolves to the 4B minor gear when it is wired.
-    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
-    assert resolve_model(table, "minor") == _DEFAULT_MINOR
+    table, _ = build_config({"HAND_BASE_URL": "http://vllm-hand:8000"})
+    assert resolve_model(table, "minor") == _DEFAULT_HAND
 
 
 def test_multimodal_alias_resolves_to_gemma_backend() -> None:
@@ -243,8 +243,8 @@ def test_normal_resolves_to_multimodal_back_compat() -> None:
 
 def test_cheap_resolves_to_minor_back_compat() -> None:
     # cheap is the back-compat alias for minor.
-    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
-    assert resolve_model(table, "cheap") == _DEFAULT_MINOR
+    table, _ = build_config({"HAND_BASE_URL": "http://vllm-hand:8000"})
+    assert resolve_model(table, "cheap") == _DEFAULT_HAND
 
 
 # --- tier-alias resolution: full fleet (all three tiers wired) ---------------
@@ -253,16 +253,16 @@ def test_cheap_resolves_to_minor_back_compat() -> None:
 def test_three_tier_aliases_resolve_to_their_gears_when_all_wired() -> None:
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         }
     )
     # Back-compat aliases: cheap → 4B minor, normal → 12B multimodal, hard → 27B primary.
-    assert resolve_model(table, "cheap") == _DEFAULT_MINOR
+    assert resolve_model(table, "cheap") == _DEFAULT_HAND
     assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
     # Primary vocabulary resolves the same gears.
-    assert resolve_model(table, "minor") == _DEFAULT_MINOR
+    assert resolve_model(table, "minor") == _DEFAULT_HAND
     assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "main") == _DEFAULT_PRIMARY
 
@@ -270,17 +270,17 @@ def test_three_tier_aliases_resolve_to_their_gears_when_all_wired() -> None:
 def test_tier_aliases_track_custom_served_names() -> None:
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
-            "MINOR_SERVED_NAME": "my/minor",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
+            "HAND_SERVED_NAME": "my/hand",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "MULTIMODAL_SERVED_NAME": "my/multimodal",
             "PRIMARY_SERVED_NAME": "my/primary",
         }
     )
-    assert resolve_model(table, "cheap") == "my/minor"
+    assert resolve_model(table, "cheap") == "my/hand"
     assert resolve_model(table, "normal") == "my/multimodal"
     assert resolve_model(table, "hard") == "my/primary"
-    assert resolve_model(table, "minor") == "my/minor"
+    assert resolve_model(table, "minor") == "my/hand"
     assert resolve_model(table, "multimodal") == "my/multimodal"
     assert resolve_model(table, "main") == "my/primary"
 
@@ -291,9 +291,9 @@ def test_tier_aliases_track_custom_served_names() -> None:
 def test_normal_falls_back_to_primary_when_multimodal_absent() -> None:
     # minor wired, multimodal NOT wired → normal/multimodal escalate UPWARD to primary
     # (no multimodal gear → the next available higher tier is hard/primary).
-    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
-    assert resolve_model(table, "cheap") == _DEFAULT_MINOR  # minor present
-    assert resolve_model(table, "minor") == _DEFAULT_MINOR  # primary vocab
+    table, _ = build_config({"HAND_BASE_URL": "http://vllm-hand:8000"})
+    assert resolve_model(table, "cheap") == _DEFAULT_HAND  # minor present
+    assert resolve_model(table, "minor") == _DEFAULT_HAND  # primary vocab
     assert resolve_model(table, "normal") == _DEFAULT_PRIMARY  # multimodal absent → primary
     assert resolve_model(table, "multimodal") == _DEFAULT_PRIMARY  # primary vocab fallback
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
@@ -313,7 +313,7 @@ def test_cheap_falls_back_to_multimodal_when_minor_absent() -> None:
 def test_multimodal_falls_back_to_primary_when_multimodal_absent() -> None:
     # Only minor + primary wired (no multimodal gear) → multimodal/normal → primary
     # (upward, skipping the lower minor tier).
-    table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
+    table, _ = build_config({"HAND_BASE_URL": "http://vllm-hand:8000"})
     assert resolve_model(table, "multimodal") == _DEFAULT_PRIMARY
     assert resolve_model(table, "normal") == _DEFAULT_PRIMARY
 
@@ -328,7 +328,7 @@ def test_all_tiers_fall_back_to_primary_when_only_primary_wired() -> None:
 def test_hard_always_resolves_to_primary_even_with_full_fleet() -> None:
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         }
     )
@@ -346,7 +346,7 @@ def test_embed_request_never_fails_over_to_generate_with_tiers_wired() -> None:
     embed_name = "Qwen/Qwen3-Embedding-0.6B"
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "EMBED_URL": "http://vllm-embed:8000",
             "EMBED_SERVED_NAME": embed_name,
@@ -370,7 +370,7 @@ def test_generate_tier_failover_excludes_pooling_backends() -> None:
     embed_name = "Qwen/Qwen3-Embedding-0.6B"
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "EMBED_URL": "http://vllm-embed:8000",
             "EMBED_SERVED_NAME": embed_name,
@@ -388,7 +388,7 @@ def test_generate_tier_failover_excludes_pooling_backends() -> None:
 def test_tier_aliases_helper_is_pure_and_uses_backend_role_names() -> None:
     backends = (
         Backend("primary", "http://p:8000", "P"),
-        Backend("minor", "http://m:8000", "MIN"),
+        Backend("hand", "http://m:8000", "HAND"),
         Backend("multimodal", "http://mm:8000", "MM"),
         # An embed backend is ignored — tier aliases are generate-only.
         Backend("embed", "http://e:8000", "E", task="embed"),
@@ -396,10 +396,10 @@ def test_tier_aliases_helper_is_pure_and_uses_backend_role_names() -> None:
     aliases = tier_aliases(backends, TIER_ROLE)
     # Primary vocabulary.
     assert aliases["main"] == "P"
-    assert aliases["minor"] == "MIN"
+    assert aliases["minor"] == "HAND"
     assert aliases["multimodal"] == "MM"
     # Back-compat aliases resolve identically.
-    assert aliases["cheap"] == "MIN"
+    assert aliases["cheap"] == "HAND"
     assert aliases["normal"] == "MM"
     assert aliases["hard"] == "P"
 
@@ -434,20 +434,20 @@ def test_tier_aliases_helper_multimodal_absent_escalates_minor_to_multimodal() -
 def test_explicit_gateway_aliases_coexist_with_tier_aliases() -> None:
     table, _ = build_config(
         {
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
+            "HAND_BASE_URL": "http://vllm-hand:8000",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
-            "GATEWAY_ALIASES": "fast=" + _DEFAULT_MINOR,
+            "GATEWAY_ALIASES": "fast=" + _DEFAULT_HAND,
         }
     )
     # The hand-set alias resolves...
-    assert resolve_model(table, "fast") == _DEFAULT_MINOR
+    assert resolve_model(table, "fast") == _DEFAULT_HAND
     # ...and the tier aliases are still present alongside it.
     assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
     assert resolve_model(table, "main") == _DEFAULT_PRIMARY
     # A non-tier custom alias is left untouched (no synonym expansion).
-    assert "fast" in table.aliases and table.aliases["fast"] == _DEFAULT_MINOR
+    assert "fast" in table.aliases and table.aliases["fast"] == _DEFAULT_HAND
 
 
 def test_legacy_keyed_override_expands_to_canonical_synonym() -> None:

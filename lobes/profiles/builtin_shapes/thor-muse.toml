@@ -24,7 +24,15 @@
 name = "thor-muse"
 summary = "Jetson AGX Thor muse-lobe -- Gemma 4 31B muse + embedder + reranker + audio, no cortex/senses"
 
-hosts = ["muse", "embedder", "reranker", "stt", "tts"]
+
+# `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY built-in
+# shape, including the mesh-lobe shapes that drop a heavy lobe. That is the
+# point of the role: at ~2.4 GiB it is cheap enough to keep resident on every
+# box, so a caller always has a local generate lane and a local fine-tuning
+# base — and unlike muse/worker there is never a reason to refer it to a peer.
+# Its budget comes from the CARD profile (per-card, see builtin/*.toml), not
+# from a shape override: dropping another lobe does not change what hand needs.
+hosts = ["muse", "hand", "embedder", "reranker", "stt", "tts"]
 
 [overrides.muse]
 # The full muse declaration lives HERE (not in a card profile) — see the

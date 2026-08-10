@@ -1,0 +1,181 @@
+=============================================================================
+hand lobe (LiquidAI/LFM2.5-1.2B-Instruct) — PARTIAL, Jetson AGX Orin
+                          *** NOT AN ACCEPTANCE — SEE THE RETRACTION BELOW ***
+=============================================================================
+
+RETRACTION (appended 2026-08-10, same session, before this branch was opened
+as a PR). This file was first written as an ACCEPTANCE transcript claiming the
+Orin VALIDATED at gpu_mem_util=0.06. That claim is WITHDRAWN. Two later boots
+of the SAME configuration on the SAME box failed at the memory gate:
+
+    run 1 (docker run,      util 0.06): Available KV cache memory: 2.7 GiB
+                                        -> served; every functional result
+                                           in sections 2-6 below came from it
+    run 2 (compose,         util 0.06): Available KV cache memory: 0.14 GiB
+                                        -> ValueError, needs 0.38 GiB for 32768
+    run 3 (compose, clean,  util 0.06): Available KV cache memory: 0.09 GiB
+                                        -> ValueError, "estimated maximum model
+                                           length is 7984"
+
+One success and two failures at an identical util is not a validated budget —
+it is an unstable one. The Orin is a SHARED box (senses at 0.45, the pooling
+gears, and unrelated production containers), and vLLM clamps its budget against
+actual free memory at startup, which moved from ~9 GiB to ~6.3 GiB across these
+runs. A util that leaves ~1 GiB of margin on a 61 GiB card is inside that noise.
+
+WHAT SURVIVES the retraction, because it was observed on a real serving engine
+(run 1) and does not depend on the budget:
+  - the architecture/flag plumbing in section 2
+  - the correct known-answer completion in section 3
+  - the STRUCTURED tool_calls array and the tokenizer delimiters in section 4
+  - the unknown-model 404 in section 5
+These are behaviours of the lane, not of its memory budget.
+
+WHAT DOES NOT SURVIVE:
+  - "Orin VALIDATED". The card is DECLARED, like every other.
+  - the 0.06 / 235,721-token / 7.19x figures in section 1 as a COMMITTED budget.
+    They are one observation, not a reproducible measurement.
+
+Consequence: NO card is validated for `hand`. See issue #183, which now also
+carries the Orin. The committed Orin util stays 0.06 as the best available
+single data point, explicitly DECLARED — see lobes/profiles/builtin/orin.toml.
+==============================================================================
+Date:       2026-08-10
+Box:        Jetson AGX Orin 64GB (sm_87), 61.34 GiB unified, orin-lobe shape
+            (senses 0.45 + embed 0.06 + rerank 0.06 already resident)
+Image:      vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+Engine:     vLLM 0.23.1rc1.dev672+g93d8f834d
+Plan:       docs/plans/2026-08-10-hand-lobe-lfm2-5-1-2b.md, task t12
+Companion:  docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt (t10 —
+            how this budget was arrived at, including the two refuted attempts)
+
+SCOPE OF THIS TRANSCRIPT: the Jetson AGX Orin ONLY, and per the retraction
+above it is a PARTIAL record, not an acceptance. Per #108 it promotes no card
+at all — not even this one. Thor, the DGX Spark and the base fallback are
+likewise UNVALIDATED.
+
+Lane under test (the committed vllm-hand lane's rendered flags):
+    --model LiquidAI/LFM2.5-1.2B-Instruct
+    --served-model-name LiquidAI/LFM2.5-1.2B-Instruct
+    --max-model-len 32768
+    --gpu-memory-utilization 0.06
+    --enable-lora --max-loras 4 --max-lora-rank 32
+    --enable-auto-tool-choice --tool-call-parser lfm2
+    env VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+    env VLLM_ATTENTION_BACKEND=TRITON_ATTN      (the orin card divergence)
+  NO --quantization        (bf16; the catalog's "none" sentinel)
+  NO --language-model-only (text-only checkpoint; there is no ViT to drop)
+  NO --reasoning-parser    (no thinking mode on this checkpoint)
+
+-----------------------------------------------------------------------------
+1. BUDGET — MEASURED
+-----------------------------------------------------------------------------
+    INFO [gpu_worker.py:538]    Available KV cache memory: 2.7 GiB
+    INFO [kv_cache_utils.py:2146] GPU KV cache size: 235,721 tokens
+    INFO [kv_cache_utils.py:2147] Maximum concurrency for 32,768 tokens
+                                  per request: 7.19x
+
+  *** SEE THE RETRACTION AT THE TOP OF THIS FILE. *** This reading is ONE
+  observation out of three at the same util; the other two profiled 0.14 and
+  0.09 GiB and refused to boot. It is recorded because it is real and because
+  it is the best single data point available, NOT as a committed measurement.
+  0.06 remains the Orin's declared value for want of a better one.
+
+  Read 7.19x as a KV-pool CEILING, not measured throughput — the standing
+  caveat in CLAUDE.md. Usable concurrency was not measured here.
+
+-----------------------------------------------------------------------------
+2. ARCHITECTURE + FLAG PLUMBING — CONFIRMED
+-----------------------------------------------------------------------------
+    Resolved architecture: Lfm2ForCausalLM
+    dtype=torch.bfloat16, quantization=None, speculative_config=None,
+    reasoning_parser='', max_seq_len=32768
+    Loading weights took 1.84 seconds
+    Using PunicaWrapperGPU                     (the LoRA path, armed)
+
+  quantization=None is the bf16 sentinel proving out end to end: the lane
+  omitted --quantization entirely and vLLM served native precision.
+
+-----------------------------------------------------------------------------
+3. SERVING — 200, correct answer
+-----------------------------------------------------------------------------
+  GET /health -> 200
+
+  GET /v1/models ->
+    {"object":"list","data":[{"id":"LiquidAI/LFM2.5-1.2B-Instruct",...,
+      "max_model_len":32768,...}]}
+  EXACTLY one id. No phantom adapter is advertised — the inventory is empty in
+  v1 and nothing invented one.
+
+  POST /v1/chat/completions  "What is the capital of France? Answer with one
+  word."  (max_tokens=16, temperature=0) ->
+    content        : "Paris"
+    finish_reason  : "stop"
+    reasoning      : null          <- no thinking mode, as designed
+    usage          : 21 prompt / 2 completion
+
+-----------------------------------------------------------------------------
+4. TOOL CALLING THROUGH THE lfm2 PARSER — THE CRITICAL CHECK
+-----------------------------------------------------------------------------
+  Tokenizer, read from the ACTUALLY-PULLED revision inside the container:
+    <|tool_call_start|>: id=10
+    <|tool_call_end|>:   id=11
+    name_or_path: LiquidAI/LFM2.5-1.2B-Instruct
+
+  Both delimiters present as special tokens. This is what Lfm2ToolParser's
+  __init__ resolves via self.vocab.get() and RAISES on when missing — so the
+  parser loading at all is itself evidence, and the ids make it explicit.
+
+  POST /v1/chat/completions with one `get_weather(city)` tool, tool_choice=auto:
+    finish_reason : "tool_calls"
+    content       : null
+    tool_calls    : [{"id":"chatcmpl-tool-9b51ce3641de023d","type":"function",
+                      "function":{"name":"get_weather",
+                                  "arguments":"{\"city\": \"Paris\"}"}}]
+
+  A STRUCTURED tool_calls array — not prose. This is the exact failure mode the
+  parser choice was made to avoid: with a parser that cannot see special-token
+  delimiters (the `pythonic`-on-Gemma-4 mistake), vLLM relays a well-formed
+  call as assistant CONTENT with tool_calls=null and finish_reason="stop". The
+  response above is the opposite of that on every field.
+
+-----------------------------------------------------------------------------
+5. UNKNOWN MODEL ID — REFUSED, not silently substituted
+-----------------------------------------------------------------------------
+  POST /v1/chat/completions {"model":"nosuch-adapter"} ->
+    404 {"error":{"message":"The model `nosuch-adapter` does not exist.",
+                  "type":"NotFoundError","param":"model","code":404}}
+
+  The engine refuses an unknown id rather than serving it under the base
+  weights — the upstream half of the gateway's own `hand:<domain>` contract
+  (an undeclared adapter must never be silently downgraded to the base).
+
+-----------------------------------------------------------------------------
+6. DECODE — indicative only
+-----------------------------------------------------------------------------
+  200-token cap, "count from 1 to 60": 179 completion tokens in 5.22 s wall
+  (~34 tok/s single-stream, INCLUDING request overhead).
+
+  NOT a benchmark: one untimed-prefill request, on a box concurrently serving
+  senses + the pooling gears + unrelated production containers. Recorded as an
+  order-of-magnitude sanity check ("this lane is not pathologically slow"),
+  nothing more.
+
+-----------------------------------------------------------------------------
+7. WHAT THIS TRANSCRIPT DOES NOT ESTABLISH
+-----------------------------------------------------------------------------
+  - Any card other than this Orin. Thor and the Spark stay UNVALIDATED (#108);
+    the remaining validation work is issue #183, and Thor's own boot failure
+    is issue #181.
+  - Adapter SERVING end to end. v1 ships zero adapters by decision, so
+    `hand:<domain>` resolution, the adapter-honesty filter, and the
+    rank-ceiling failure path are all covered by offline tests only. They
+    become live-testable when unsloth-cli can produce an LFM2.5 adapter
+    (agentculture/unsloth-cli#16); tracked here as issue #183.
+  - Anything through the lobes GATEWAY. These calls went straight to the
+    engine; the gateway's alias/tier/pressure layer is offline-tested.
+  - Throughput, concurrency, or any correctness claim beyond the two
+    known-answer probes above.
+
+Probe container removed afterwards; every production container on the box was
+verified still running.

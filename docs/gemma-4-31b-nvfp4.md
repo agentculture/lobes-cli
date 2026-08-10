@@ -273,7 +273,7 @@ the status callout at the top of this document.
 
 ## Related docs
 
-- [`colleague-stack.md`](colleague-stack.md) — the eight-role contract,
+- [`colleague-stack.md`](colleague-stack.md) — the nine-role contract,
   `muse`'s responsibilities/forbidden lists, and the dormant-role callout.
 - [`deployment-shapes.md`](deployment-shapes.md) — the `thor-muse` shape, the
   opt-in-core-role concept (now shared with `worker`), referral/proxy for the

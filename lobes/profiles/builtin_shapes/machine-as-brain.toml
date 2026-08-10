@@ -4,7 +4,7 @@
 # later task, t4, wires the flag; this file only needs to exist and round-trip
 # so t3's shape-x-card renderer has a first, whole-brain shape to compose).
 #
-# Carries every one of the six first-class Colleague roles (issue #81) --
+# Carries every one of the seven DEFAULT-HOSTED Colleague roles (issue #81) --
 # the four Profile-machinery core roles (cortex/senses/embedder/reranker,
 # lobes/profiles/schema.py) plus the audio-overlay pair (stt/tts,
 # lobes/templates/fleet/docker-compose.audio.yml). Whether a hosted role is
@@ -21,4 +21,12 @@
 name = "machine-as-brain"
 summary = "The whole brain on one box -- every role this card can serve, hosted here"
 
-hosts = ["cortex", "senses", "embedder", "reranker", "stt", "tts"]
+
+# `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY built-in
+# shape, including the mesh-lobe shapes that drop a heavy lobe. That is the
+# point of the role: at ~2.4 GiB it is cheap enough to keep resident on every
+# box, so a caller always has a local generate lane and a local fine-tuning
+# base — and unlike muse/worker there is never a reason to refer it to a peer.
+# Its budget comes from the CARD profile (per-card, see builtin/*.toml), not
+# from a shape override: dropping another lobe does not change what hand needs.
+hosts = ["cortex", "senses", "hand", "embedder", "reranker", "stt", "tts"]

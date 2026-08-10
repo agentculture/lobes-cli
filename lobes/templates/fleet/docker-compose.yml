@@ -462,6 +462,140 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- `hand` co-resident generate backend (DEFAULT-ON) ---------------------
+  # The NINTH Colleague role: LiquidAI LFM2.5-1.2B-Instruct, the fleet's
+  # designated FINE-TUNING BASE. "Muscle memory" — one cheap base, many LoRA
+  # adapters, each mastering a domain. See docs/lfm2.5-1.2b-hand.md.
+  #
+  # DEFAULT-ON (no `profiles:` key), unlike vllm-minor above and
+  # vllm-muse/vllm-worker below: ~2.4 GiB of bf16 weights co-reside on every
+  # supported card, which is the entire reason the role exists. A card that
+  # genuinely cannot host it says so honestly via HAND_FEASIBLE=false in its
+  # own profile, not by hiding behind a compose profile.
+  #
+  # bf16 (NO --quantization flag): quantization="none" in the catalog means the
+  # weights are served at native precision. Do NOT add --quantization here —
+  # passing --quantization=modelopt to a bf16 checkpoint corrupts it. Note this
+  # is the flag being OMITTED ENTIRELY, not passed empty.
+  #
+  # NO --language-model-only: LFM2.5-1.2B-Instruct is text-only and ships no
+  # ViT, so unlike vllm-minor above there is no vision tower to drop. (LiquidAI's
+  # vision variant is a different architecture, Lfm2VlForConditionalGeneration.)
+  #
+  # NO --reasoning-parser: this checkpoint has no thinking mode — LiquidAI ships
+  # LFM2.5-1.2B-Thinking separately. The cortex (qwen3) and Gemma 4 (gemma4)
+  # lanes must enable their reasoning parser as a PAIR with their tool parser;
+  # this lane has no second half to pair with.
+
+  vllm-hand:
+    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}}
+    container_name: model-gear-vllm-hand
+    # Lfm2ForCausalLM needs vLLM >= 0.23.0, so this lane pins the NIGHTLY image
+    # (like primary/embed/rerank/worker), never the NGC 26.04 tag vllm-minor
+    # uses — that engine is 0.19.0 and does not know the architecture. Verified
+    # against the pinned digest on a physical Thor 2026-08-10: VLLM_VERSION
+    # 0.23.1rc1.dev672+g93d8f834d, LFM2_REGISTERED True.
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # The nightly's cudagraph memory ESTIMATE, disabled here as it is on every
+      # other lane on this image (primary, embed, rerank, multimodal, muse,
+      # worker). MEASURED on a physical Jetson AGX Orin 2026-08-10: with the
+      # estimate ON, this lane profiles to **Available KV cache memory:
+      # -9.25 GiB** at util 0.10 — NEGATIVE, so the engine cannot allocate a KV
+      # cache at all and the boot dies. vLLM's own log names the cause and
+      # suggests either raising util to 0.2762 or disabling the estimate; we
+      # disable it, matching every sibling lane, so the util knob maps back to
+      # true usage instead of a padded guess. Raising util instead would make
+      # `hand` cost 4.6x more memory on every card to buy nothing.
+      # No test asserts this parity across lanes — that gap is issue #182.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${HAND_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=hand   # → /logs/model-gear/hand-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # LoRA adapters, read-only. The host path is where `unsloth-cli` writes a
+      # trained adapter; HAND_LORA_MODULES names paths UNDER the in-container
+      # mount point, not host paths. Mounted unconditionally (an absent host
+      # directory is created empty by Docker) so declaring an adapter later
+      # needs no compose edit — only a lane restart.
+      - ${HAND_ADAPTER_DIR:-./adapters}:/adapters:ro
+    # No host port — reachable only as http://vllm-hand:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${HAND_MODEL:-LiquidAI/LFM2.5-1.2B-Instruct}
+      - --served-model-name=${HAND_SERVED_NAME:-LiquidAI/LFM2.5-1.2B-Instruct}
+      - --host=0.0.0.0
+      - --port=8000
+      # bf16 — NO --quantization flag (quantization="none" in catalog).
+      - --max-model-len=${HAND_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${HAND_GPU_MEM_UTIL:-0.06}
+      # Attention backend, via AttentionConfig — NOT the VLLM_ATTENTION_BACKEND
+      # env var, which is GONE on this nightly (see the vllm-embed lane's own
+      # note). "auto" is byte-equivalent to omitting the flag: vLLM treats the
+      # string as its automatic-selection sentinel.
+      #
+      # This line exists because the orin card profile DECLARES
+      # attention_backend = "TRITON_ATTN" for hand and the lane originally had
+      # nowhere to receive it — `lobes init --profile orin` rendered
+      # HAND_ATTENTION_BACKEND into .env and the lane silently ignored it. A
+      # profile knob that reaches no flag is exactly the kind of dead
+      # declaration #92 exists to prevent: it reads as configured and does
+      # nothing.
+      - '--attention-config={"backend": "${HAND_ATTENTION_BACKEND:-auto}"}'
+      # LoRA serving: ARMED by default with an EMPTY inventory (v1 ships zero
+      # adapters). --enable-lora costs a small fixed amount of memory and makes
+      # the lane able to serve an adapter the moment one is declared; arming it
+      # later would be a restart anyway, so it is armed from the start.
+      - --enable-lora
+      # Comma-separated `name=path`. vLLM advertises each adapter as its OWN
+      # model id on this backend's /v1/models — which is exactly how the gateway
+      # verifies an adapter really loaded before advertising it (a
+      # declared-but-unloaded adapter is absent from /v1/models AND from
+      # /capabilities; see lobes/gateway/_readiness.probe_backend_adapters).
+      - --lora-modules=${HAND_LORA_MODULES:-}
+      - --max-loras=${HAND_MAX_LORAS:-4}
+      # Rank ceiling. 32 covers the ranks unsloth's defaults produce at this
+      # model size. An adapter above it FAILS TO LOAD rather than being served
+      # degraded — and then, per the honesty rule above, is simply not
+      # advertised. Raise this knob and restart the lane to serve higher ranks.
+      - --max-lora-rank=${HAND_MAX_LORA_RANK:-32}
+      # LFM2's own <|tool_call_start|>/<|tool_call_end|> delimiters are SPECIAL
+      # TOKENS; the purpose-built `lfm2` parser decodes with
+      # skip_special_tokens=False so it can see them. The generic `pythonic`
+      # parser cannot — that exact mistake silently broke Gemma 4 tool calling
+      # (see lobes/runtime/_parser.py). This parser's __init__ RAISES if the
+      # tokenizer lacks either delimiter, so a bad revision fails loudly here
+      # rather than degrading to prose at request time.
+      - --enable-auto-tool-choice
+      - --tool-call-parser=lfm2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   # --- Opt-in (legacy) middle co-resident generate backend ------------------
   # LEGACY CANDIDATE: the 14B NVFP4 "middle" is no longer the fleet's "normal"
   # tier — that role is now filled by the default-on vllm-multimodal (Gemma 4
@@ -1129,6 +1263,21 @@ services:
       # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
       - WORKER_BASE_URL=${WORKER_BASE_URL:-}
       - WORKER_SERVED_NAME=${WORKER_SERVED_NAME:-}
+      # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
+      # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
+      # every supported card, which is the whole point of the role, so it is
+      # wired unconditionally like the multimodal gear rather than behind a
+      # compose profile. It is also what `model=minor`/`model=cheap` resolve to
+      # (it replaced Qwen3.5-4B in that tier) and the pressure-policy servable
+      # floor.
+      - HAND_BASE_URL=${HAND_BASE_URL:-http://vllm-hand:8000}
+      - HAND_SERVED_NAME=${HAND_SERVED_NAME:-LiquidAI/LFM2.5-1.2B-Instruct}
+      # The LoRA adapter inventory, declared ONCE and read by BOTH the engine
+      # (vllm-hand's --lora-modules) and the gateway (which derives the
+      # `hand:<domain>` aliases from it) — so the two can never disagree about
+      # which adapters exist. Empty by default: v1 ships the lane ARMED with
+      # --enable-lora and the inventory EMPTY.
+      - HAND_LORA_MODULES=${HAND_LORA_MODULES:-}
       # Empty default = follow the primary gear's served name (see _config.py's
       # `or primary.served_name` fallback) — stays correct when a profile swaps
       # the cortex model instead of routing no-model requests to an unserved id.

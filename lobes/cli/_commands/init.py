@@ -22,7 +22,7 @@ selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
 per-machine TUNING axis, issue #110). Fleet topology only (a fleet-scaffold
 axis — incompatible with ``--single``). The default, ``machine-as-brain``,
-hosts every one of the six default-hosted Colleague roles this card can serve —
+hosts every one of the seven default-hosted Colleague roles this card can serve —
 today's behaviour, unchanged — and t3's
 :func:`~lobes.profiles.shape_render.render_shape` composes it as a strict
 no-op over the profile, so a bare ``lobes init`` (no ``--shape`` at all) makes

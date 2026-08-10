@@ -10,7 +10,7 @@ Usage::
     lobes route "<task description>" --base-url http://other:8000/v1
     lobes route "<task description>" --model <model-id>
 
-The minor lobe model (``role_hint == "minor"``) is asked to classify the task
+The cheap-tier lobe model (``role_hint == "hand"``) is asked to classify the task
 into one of the catalog gear roles. Governance is overlaid via
 :func:`lobes.minor.decide` so any escalation condition forces ``escalate=True``
 regardless of the model's suggestion. Routing targets are **only** lobes catalog
@@ -67,8 +67,9 @@ _ROUTE_SYSTEM: str = (
     "You are a routing classifier for the lobes model fleet. "
     "Given a task description, classify it into the most appropriate catalog gear role.\n\n"
     "Available catalog gear roles:\n"
-    '- "minor": Small 4B model. Best for: quick formatting, validation, '
-    "classification, suggestion, summarization.\n"
+    '- "hand": Small 1.2B fine-tuning base (LFM2.5), the cheap-tier floor. '
+    "Best for: quick formatting, validation, classification, suggestion, "
+    "summarization, and any domain a LoRA adapter has been trained for.\n"
     '- "primary": Default 27B primary (text-only, MTP speculative decoding). '
     "Best for: complex reasoning, generation, code, most tasks.\n"
     '- "candidate": Alternative 27B/32B models. Best for: vision tasks or '
@@ -103,19 +104,24 @@ _ROUTE_SYSTEM: str = (
 
 
 def _resolve_model(args: argparse.Namespace) -> str:
-    """Resolve the minor model id: ``--model`` wins, else catalog lookup by role_hint.
+    """Resolve the cheap-tier model id: ``--model`` wins, else catalog lookup by role_hint.
 
     Raises :class:`~lobes.cli._errors.ModelGearError` when no ``--model`` was
-    given and the catalog has no entry with ``role_hint == "minor"``.
+    given and the catalog has no entry with ``role_hint == "hand"``.
+
+    The hint is ``"hand"``, not ``"minor"``: the ``hand`` lobe replaced
+    ``Qwen/Qwen3.5-4B`` in the cheap-tier slot, and no catalog entry carries
+    ``role_hint == "minor"`` any more (the tier *name* survives as a back-compat
+    spelling in :data:`~lobes.catalog.TIER_ROLE`; the *role* does not).
     """
     explicit = getattr(args, "model", None)
     if explicit:
         return explicit
-    models = [m for m in supported_models() if m.role_hint == "minor"]
+    models = [m for m in supported_models() if m.role_hint == "hand"]
     if not models:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="no model with role_hint='minor' found in the catalog",
+            message="no model with role_hint='hand' found in the catalog",
             remediation="pass --model <model-id> to target a specific model id",
         )
     return models[0].id
@@ -159,8 +165,11 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 # Known catalog gear roles a routing decision may target. An out-of-set
 # suggestion from the model is clamped to "primary" (the safe default target).
+# "hand" replaced "minor" as the cheap-tier role_hint; "minor" is RETAINED here
+# so a model that still answers with the old spelling is honoured rather than
+# silently clamped to the 27B primary — the two names mean the same lane.
 _KNOWN_GEARS: frozenset[str] = frozenset(
-    {"minor", "primary", "candidate", "fallback", "embedding", "reranker"}
+    {"hand", "minor", "primary", "candidate", "fallback", "embedding", "reranker"}
 )
 
 
@@ -312,7 +321,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         default=None,
         help=(
             "Override the model id used for classification "
-            "(default: resolved from the catalog by role_hint='minor')."
+            "(default: resolved from the catalog by role_hint='hand')."
         ),
     )
     p.add_argument(

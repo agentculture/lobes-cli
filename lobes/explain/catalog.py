@@ -64,7 +64,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain tuning` (purpose + machine profiles)
 - `lobes explain fleet`
 - `lobes explain gateway`
-- `lobes explain roles` (the seven-role Colleague contract:
+- `lobes explain roles` (the nine-role Colleague contract:
   cortex/senses/muse/embedder/reranker/stt/tts)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
@@ -747,13 +747,14 @@ Built-in profiles:
 
 ## Knobs per role
 
-Each of the five core roles (cortex, senses, muse, embedder, reranker) carries
-tunable
+Each of the seven core roles (cortex, senses, muse, worker, hand, embedder,
+reranker) carries tunable
 knobs (each optional — "no opinion" = template default applies):
 `feasible`, `model`, `gpu_mem_util`, `max_model_len`, `quantization`,
 `kv_cache_dtype`, `attention_backend`, `enforce_eager`, `max_num_seqs`.
 
-Render to env vars via role→prefix (`cortex` → `PRIMARY_`, `senses` →
+Render to env vars via role→prefix (`cortex` → `PRIMARY_`, `hand` → `HAND_`,
+`senses` →
 `MULTIMODAL_`, `muse` → `MUSE_`, `embedder` → `EMBED_`, `reranker` →
 `RERANK_`), so `cortex.gpu_mem_util=0.30` → `PRIMARY_GPU_MEM_UTIL=0.30`.
 
@@ -813,14 +814,14 @@ _SHAPES = """\
 
 A **deployment shape** is the axis orthogonal to the machine profile: not
 "how is each role tuned on this card?" (that's the profile, `lobes explain
-profiles`) but "which of the seven Colleague roles does this box host at
+profiles`) but "which of the nine Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
 ## The built-in shapes
 
 - **`machine-as-brain`** (the default) — hosts every role the card can
-  serve (the six DEFAULT_HOSTED_ROLES — never the opt-in `muse`, below).
+  serve (the seven DEFAULT_HOSTED_ROLES — never the opt-in `muse`/`worker`).
   Carries zero overrides and renders byte-identically to the bare card
   profile: a non-hosted opt-in core role renders nothing at all. No
   `MUSE_FEASIBLE=false` marker is needed — the gateway already treats an
@@ -937,7 +938,7 @@ its own follow-up.
   co-residency tax numbers, the mesh-brain end-state decisions, the
   acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
-- `lobes explain roles` — the seven-role Colleague contract
+- `lobes explain roles` — the nine-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
 - `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
@@ -1152,7 +1153,7 @@ serves the generate endpoints; the fleet adds embeddings, reranking, and (with
 | `/v1/realtime` | GET (WS upgrade) | the realtime bridge, tunneled (audio overlay) |
 | `/v1/models` | GET | the backends loaded now (what's hot) |
 | `/v1/models/supported` | GET | the supported catalog (what you can switch to) |
-| `/capabilities` | GET | the seven-role Colleague contract (`lobes explain roles`) |
+| `/capabilities` | GET | the nine-role Colleague contract (`lobes explain roles`) |
 | `/health` | GET | gateway liveness |
 
 ## Routing
@@ -1177,14 +1178,14 @@ keyless. Unset = today's no-auth behaviour. See `lobes explain gateway`.
 
 See `lobes explain gateway` (routing), `lobes explain embeddings|rerank|score`
 (per-endpoint shapes), `lobes explain realtime` (audio), `lobes explain roles`
-(the seven-role Colleague contract), and `docs/openai-api.md` for the full
+(the nine-role Colleague contract), and `docs/openai-api.md` for the full
 reference with `curl` examples and auth/exposure.
 """
 
 _ROLES = """\
-# lobes explain roles — the seven-role Colleague contract
+# lobes explain roles — the nine-role Colleague contract
 
-lobes exposes the fleet as SEVEN first-class, Colleague-facing **roles**
+lobes exposes the fleet as NINE first-class, Colleague-facing **roles**
 (issue #81) — a caller addresses a *capability*, never a hardcoded model id:
 
 | Role | Backend | Endpoint path |
@@ -1192,6 +1193,8 @@ lobes exposes the fleet as SEVEN first-class, Colleague-facing **roles**
 | `cortex` | `primary` (27B MTP) | `/v1/chat/completions` |
 | `senses` | `multimodal` (Gemma 4 12B) | `/v1/chat/completions` |
 | `muse` | `muse` (Gemma 4 31B NVFP4, opt-in hosting) | `/v1/chat/completions` |
+| `worker` | `worker` (Qwen3.6-35B-A3B NVFP4, opt-in hosting) | `/v1/chat/completions` |
+| `hand` | `hand` (LFM2.5-1.2B, default-hosted everywhere) | `/v1/chat/completions` |
 | `embedder` | `embed` (Qwen3-Embedding-0.6B) | `/v1/embeddings` |
 | `reranker` | `rerank` (Qwen3-Reranker-0.6B) | `/v1/rerank` (+ `/v1/score`) |
 | `stt` | Parakeet (audio overlay, opt-in) | `/v1/audio/transcriptions` |
@@ -1205,15 +1208,25 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
   prepare_context_packet, speak_back. Forbidden: final_decision,
   repo_action, security_decision.
 - `muse` — creative_generation, long_form_writing, ideation,
-  style_variation, divergent_second_opinion. Forbidden: final_decision,
-  repo_action, security_decision (muse proposes, cortex decides).
+  style_variation, divergent_second_opinion, tool_use. Forbidden:
+  final_decision, repo_action, security_decision (muse proposes, cortex
+  decides).
+- `worker` — execution, ground_work, bulk_transform, drafting,
+  image_understanding, video_understanding, tool_use, repo_action. Forbidden:
+  final_decision, security_decision — the only non-cortex role that may ACT on
+  the repo, under cortex's direction.
+- `hand` — domain_mastery, learned_skill, specialized_task, tool_use.
+  Forbidden: final_decision, repo_action, security_decision. The fleet's
+  fine-tuning base: one cheap base, many LoRA adapters, each mastering a
+  domain. `model=hand` serves the base, `model=hand:<domain>` an adapter.
 - `embedder` — vectorization, memory_retrieval_input. Forbidden: *(none)*.
 - `reranker` — retrieval_ordering, relevance_refinement. Forbidden: *(none)*.
 - `stt` — transcribe, audio_input_to_text. Forbidden: *(none)*.
 - `tts` — speech_output, synthesize. Forbidden: *(none)*.
 
-`cortex`/`senses`/`muse`/`embedder`/`reranker` are always enumerated (present
-with `loaded: false` if unwired); `stt`/`tts` need `lobes init --fleet --audio`.
+`cortex`/`senses`/`muse`/`worker`/`hand`/`embedder`/`reranker` are always
+enumerated (present with `loaded: false` if unwired); `stt`/`tts` need
+`lobes init --fleet --audio`.
 **`muse` is opt-in for HOSTING** — machine-as-brain never hosts the 31B
 (it cannot co-reside with the cortex+senses duo on a 128 GB box); only a
 muse-hosting shape (`thor-muse`, DECLARED/UNVALIDATED — budget measured
@@ -1229,14 +1242,16 @@ silently falling back to cortex (see `docs/gemma-4-31b-nvfp4.md`).
 `senses` == the `multimodal` backend == tier alias `multimodal` (back-compat
 `normal`). All four names resolve to the SAME warm backend — no internal
 service/container/env var was renamed; this is additive vocabulary. `muse`
-is the first role whose name IS its backend and tier name (`model=muse`, no
-back-compat alias); the tier capability order is
-minor < multimodal < muse < main.
+was the first role whose name IS its backend and tier name (`model=muse`, no
+back-compat alias); `worker` and `hand` are the same way. The tier capability
+order is hand < multimodal < worker < muse < main, and `hand` also answers to
+the back-compat `minor`/`cheap` spellings it inherited when it replaced
+Qwen3.5-4B in that tier.
 
 ## Discovery: `lobes capabilities` / `lobes endpoint` / `GET /capabilities`
 
 ```bash
-lobes capabilities              # human table, all seven roles
+lobes capabilities              # human table, all nine roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # same contract, over HTTP
@@ -1259,12 +1274,15 @@ local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
 ## Serving and measuring
 
 - `lobes up <role> [--apply]` — start (or `--down`: stop) ONE role's gear;
-  `lobes up colleague-stack --apply` brings up the SIX default roles
-  (requires the audio overlay scaffolded; `muse` is deliberately excluded —
-  `lobes up muse` works on a muse-hosting deployment and errors helpfully
-  when COMPOSE_PROFILES doesn't include muse). Dry-run by default.
+  `lobes up colleague-stack --apply` brings up the SEVEN default-hosted roles
+  (requires the audio overlay scaffolded; `muse` and `worker` are deliberately
+  excluded, both being opt-in-hosted and compose-profile-gated — `lobes up
+  muse` works on a muse-hosting deployment and errors helpfully when
+  COMPOSE_PROFILES doesn't include muse. `hand` IS included). Dry-run by
+  default.
 - `lobes measure [--role <role>] [--json]` — read-only per-role RUNTIME
-  metrics (ttft/decode/prefill for cortex/senses/muse; reqs-per-sec/latency
+  metrics (ttft/decode/prefill for cortex/senses/muse/worker/hand;
+  reqs-per-sec/latency
   for embedder/reranker; RTF/latency for stt/tts). Never a correctness claim.
 - `lobes benchmark --profile {cortex-only,cortex+senses,senses-direct,
   qwen-nvfp4-vs-bf16,all}` — RUNTIME-ONLY side-by-side comparison across a

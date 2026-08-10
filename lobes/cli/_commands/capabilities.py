@@ -2,7 +2,7 @@
 (issue #81; the gateway-client rewrite is issue #96, plan "advertised implies
 reachable" task t7).
 
-Both verbs used to REBUILD the six-role registry from the deployment's
+Both verbs used to REBUILD the role registry from the deployment's
 ``.env`` and call that the truth — this module's docstring used to claim the
 CLI and the gateway share "exactly one source of truth" because both called
 the same pure builder, :func:`lobes.roles.role_registry_from_env` /
@@ -50,13 +50,13 @@ of the gateway:
   of health — this generalises issue #96's fix past stt/tts to all six
   roles), and the mode is always discoverable — but NOT by adding a key to
   the JSON payload. A prior revision of this module added a top-level
-  ``source`` sibling next to the six role keys in ``--json`` output; a Qodo
+  ``source`` sibling next to the role keys in ``--json`` output; a Qodo
   action-required finding on PR #102 correctly flagged that as a second,
   new divergence from the gateway's own contract (``GET /capabilities``
   returns *exactly* ``{cortex, senses, embedder, reranker, stt, tts}``, so a
   caller doing ``set(payload) == ROLES`` broke on the extra key — ironic,
   since t7's whole point was to make the CLI and gateway agree). The fix:
-  ``--json`` output is now, in EVERY mode, the bare six-role dict and
+  ``--json`` output is now, in EVERY mode, the bare role-keyed dict and
   nothing else — byte-for-byte what the gateway would return in gateway
   mode. The offline/gateway distinction is instead surfaced out-of-band: the
   human-readable table keeps its ``# source: ...`` header line (stdout,
@@ -127,7 +127,7 @@ _GATEWAY_TIMEOUT_SECONDS = 2.0
 
 # The full RoleInfo field set — used to sanity-check a gateway response before
 # trusting it. A 200 from *something* listening on the resolved port whose
-# body happens to be a dict keyed by all six role names but missing fields a
+# body happens to be a dict keyed by all nine role names but missing fields a
 # real /capabilities response always carries is treated as malformed, not
 # authoritative (see _fetch_gateway_capabilities).
 _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
@@ -146,7 +146,7 @@ _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 # The core field set below is already conclusive for the check's ACTUAL job —
 # telling a real gateway from a stray daemon on a guessed port (see the
 # lobes.roles._gateway_base_url docstring for why that hazard is real on this
-# rig). Nothing that answers with every core field, keyed by all seven role
+# rig). Nothing that answers with every core field, keyed by all nine role
 # names, is a stray uvicorn. `_render_table` already `.get`s both keys with
 # safe defaults, so an older payload renders without fabricating either.
 _ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible"})
@@ -248,7 +248,7 @@ def _role_payload(info: RoleInfo) -> dict[str, object]:
 
 
 def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
-    """Resolve the six-role payload, preferring the live gateway.
+    """Resolve the role-keyed payload, preferring the live gateway.
 
     Returns ``(payload, source)``: ``payload`` is a dict keyed by all six
     :data:`ROLES` (each value the role's JSON metadata), and ``source`` is
@@ -348,7 +348,7 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
     with _runtime_ops.friendly_unauthorized_errors(deploy_dir):
         payload, source = _capabilities_view(args)
     if json_mode:
-        # The JSON payload is the bare six-role dict in EVERY mode — no
+        # The JSON payload is the bare role-keyed dict in EVERY mode — no
         # "source"/mode key is ever mixed into it. In gateway mode this is
         # the live GET /capabilities body rendered verbatim; in offline mode
         # it is the .env-derived fallback (every role's ready forced False),
@@ -395,7 +395,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     cap = sub.add_parser(
         "capabilities",
-        help="Read-only: the eight first-class roles (cortex/senses/muse/worker/embedder/"
+        help="Read-only: the nine first-class roles (cortex/senses/muse/worker/hand/embedder/"
         "reranker/stt/tts) resolved to live endpoint + metadata (issue #81).",
     )
     _add_common_args(cap)

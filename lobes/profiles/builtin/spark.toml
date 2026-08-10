@@ -50,6 +50,35 @@ max_model_len = 32768
 quantization = "compressed-tensors"
 attention_backend = "TRITON_ATTN"
 
+[roles.hand]
+# The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
+# base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
+# ViT, no thinking mode; served with --enable-lora ARMED and (in v1) an EMPTY
+# adapter inventory. See docs/lfm2.5-1.2b-hand.md.
+#
+# quantization is DELIBERATELY ABSENT from this block, on every card: the
+# catalog's quantization="none" bf16 sentinel means the lane must omit
+# --quantization ENTIRELY. Declaring it here — even as an empty string — would
+# render a flag that corrupts bf16 weights.
+#
+# BUDGET: DECLARED, NOT MEASURED (#108). 0.06 of a 128 GB GB10 is ~7.7 GiB —
+# ~2.4 GiB of weights leaves ~5 GiB of KV at the 32K window, comfortable. The
+# arithmetic is not the evidence, though: every co-residency number on this card
+# was MEASURED because vLLM refused the computed one at least once. This card's
+# total goes 0.56 -> 0.62 with hand added.
+#
+# The lane DID serve here at 0.06, three times, with every functional probe
+# passing (docs/evidence/2026-08-10-partial-hand-spark.txt). The budget still
+# stays DECLARED, because those three boots profiled three DIFFERENT KV pools —
+# 6.21 / 3.34 / 3.54 GiB — tracking free memory at that instant rather than the
+# util. On a unified-memory card with co-resident tenants a single boot's KV
+# number measures the box's state, not the card's capacity; promoting one of
+# them to MEASURED is exactly the error retracted on the Orin. See #183.
+feasible = true
+model = "LiquidAI/LFM2.5-1.2B-Instruct"
+gpu_mem_util = 0.06
+max_model_len = 32768
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

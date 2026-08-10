@@ -54,6 +54,27 @@ feasible = false
 [roles.worker]
 feasible = false
 
+[roles.hand]
+# The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
+# base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
+# ViT, no thinking mode; served with --enable-lora ARMED and (in v1) an EMPTY
+# adapter inventory. See docs/lfm2.5-1.2b-hand.md.
+#
+# quantization is DELIBERATELY ABSENT from this block, on every card: the
+# catalog's quantization="none" bf16 sentinel means the lane must omit
+# --quantization ENTIRELY. Declaring it here — even as an empty string — would
+# render a flag that corrupts bf16 weights.
+#
+# BUDGET: conservative, matching this profile's whole premise — an unrecognised
+# card must not OOM on first boot. 0.06 at a 32K window on ~2.4 GiB of weights
+# is the smallest generate lane lobes can serve, which is precisely why `hand`
+# is FEASIBLE here while senses/muse/worker are vetoed: it is the one generate
+# role whose footprint is safe to assume on unknown hardware.
+feasible = true
+model = "LiquidAI/LFM2.5-1.2B-Instruct"
+gpu_mem_util = 0.06
+max_model_len = 32768
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

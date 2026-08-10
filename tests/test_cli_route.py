@@ -520,3 +520,29 @@ def test_unknown_gear_clamped_to_primary(capsys: pytest.CaptureFixture[str]) -> 
     with patch("lobes.cli._commands.route.chat_completion", return_value=canned):
         route.cmd_route(args)
     assert json.loads(capsys.readouterr().out)["chosen_gear"] == "primary"
+
+
+# --- _resolve_model: the cheap tier is `hand`, not the demoted 4B -----------
+
+
+def test_resolve_model_prefers_an_explicit_flag() -> None:
+    """``--model`` wins outright — no catalog lookup happens."""
+    args = argparse.Namespace(model="some/explicit-id")
+    assert route._resolve_model(args) == "some/explicit-id"
+
+
+def test_resolve_model_falls_back_to_the_hand_role() -> None:
+    """With no ``--model``, the cheap-tier lobe is resolved by ``role_hint``.
+
+    This is the tier hand-over made concrete: `hand` replaced `Qwen/Qwen3.5-4B`
+    as the cheap tier, and the 4B stays in the catalog as a plain candidate
+    (cite-don't-delete) that no role_hint resolves to any more.
+    """
+    from lobes.catalog import supported_models
+
+    args = argparse.Namespace(model=None)
+    resolved = route._resolve_model(args)
+    hand_ids = [m.id for m in supported_models() if m.role_hint == "hand"]
+    assert resolved in hand_ids
+    assert resolved == "LiquidAI/LFM2.5-1.2B-Instruct"
+    assert resolved != "Qwen/Qwen3.5-4B"

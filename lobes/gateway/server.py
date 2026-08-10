@@ -601,7 +601,7 @@ def _role_infeasible_body(
     """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
 
     Distinct ``type``/``code`` from :func:`_model_not_found_body`: the
-    requested id/role IS part of the six-role contract (it may even be
+    requested id/role IS part of the role contract (it may even be
     wired — the primary is unconditionally wired regardless of feasibility)
     but this machine's per-machine profile declared its owning backend
     (``backend_name``) unable to serve it at all. Never a reason to
@@ -1857,7 +1857,7 @@ def capabilities_payload(
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
 ) -> dict:
-    """The seven first-class roles (issue #81), resolved via the shared registry.
+    """The nine first-class roles (issue #81), resolved via the shared registry.
 
     ``env`` defaults to ``os.environ``. The fleet compose passes the served
     ``PRIMARY_MAX_MODEL_LEN`` / ``MULTIMODAL_MAX_MODEL_LEN`` /
@@ -2200,10 +2200,26 @@ class _Handler(BaseHTTPRequestHandler):
             if self.peer_specs
             else None
         )
-        self._send_json(200, list_models_payload(self.table, ready, peer_served))
+        # LoRA adapters (hand-lobe plan t4): only those the owning engine's own
+        # /v1/models confirmed it loaded. A declared-but-unloaded adapter must
+        # never read as usable (#92 for adapters) — see
+        # ReadinessCache.current_adapters.
+        self._send_json(
+            200,
+            list_models_payload(
+                self.table,
+                ready,
+                peer_served,
+                (
+                    self.readiness_cache.current_adapters()
+                    if self.readiness_cache is not None
+                    else None
+                ),
+            ),
+        )
 
     def _get_capabilities(self) -> None:
-        # The #81 role→endpoint contract: SEVEN first-class roles resolved to
+        # The #81 role→endpoint contract: NINE first-class roles resolved to
         # live metadata via the shared lobes.roles registry. The endpoint is
         # the client-reachable origin this request actually dialed (#87),
         # stt/tts readiness is a live probe of the audio backend (#89), and the
@@ -2385,8 +2401,17 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # dials exactly what the probe verified). No proxy config → empty specs →
     # no peer thread, no proxy branch, byte-identical pre-proxy behaviour.
     peer_specs = peer_specs_from_table(table)
+    # LoRA-bearing backends (hand-lobe plan t4): the cache additionally probes
+    # each one's OWN /v1/models to learn which declared adapters the engine
+    # actually loaded. Empty for every backend with no declared adapters — i.e.
+    # every deployment that has not declared HAND_LORA_MODULES — so this adds
+    # no probe traffic and changes nothing until an operator declares one.
+    adapter_targets = {b.name: (b.base_url, b.adapters) for b in table.backends if b.adapters}
     readiness_cache = ReadinessCache.from_backends(
-        table.backends, peer_specs=tuple(peer_specs.values()), start=False
+        table.backends,
+        peer_specs=tuple(peer_specs.values()),
+        adapter_targets=adapter_targets,
+        start=False,
     )
     readiness_cache.refresh()
     readiness_cache.start()

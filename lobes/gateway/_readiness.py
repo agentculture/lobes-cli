@@ -266,6 +266,59 @@ def probe_peer_ready(
     return served_name in ids
 
 
+def probe_backend_adapters(
+    base_url: str,
+    declared: Iterable[str],
+    *,
+    timeout: float = _READINESS_PROBE_TIMEOUT,
+    opener: PeerOpener | None = None,
+) -> frozenset[str]:
+    """Which of a backend's ``declared`` LoRA adapters its engine ACTUALLY serves.
+
+    Reads the backend's OWN ``GET /v1/models`` and returns the intersection of
+    ``declared`` with the ids it lists. This is the #92 "advertised implies
+    reachable" rule applied to adapters, and it deliberately asks the ENGINE
+    rather than the filesystem: an adapter path is mounted into the vLLM
+    container, not the gateway's, so a ``os.path.exists`` check here would
+    false-negative every correctly-configured adapter while still missing the
+    failures that matter (an unreadable file, a rank above ``--max-lora-rank``,
+    a checkpoint vLLM refused). Those all end the same observable way — the
+    adapter is absent from the engine's model list — which is exactly what this
+    probe reads.
+
+    Returns an EMPTY set on every failure mode (non-200, unreachable, timeout,
+    malformed/non-JSON body, unexpected shape) rather than raising or degrading
+    to "assume loaded". Empty means "advertise nothing", which is the honest
+    answer when the engine has not confirmed anything — the same fail-closed
+    direction :func:`probe_peer_ready` takes. It is intersected with
+    ``declared`` so an engine listing an id lobes never declared cannot inject
+    it into this box's advertised surface.
+
+    Mirrors :func:`probe_peer_ready`'s structure and reuses its
+    :data:`PeerOpener` shape (status + body, since this needs the payload, not
+    just a status code) with no API key: this dials a co-resident fleet backend
+    on the internal compose network, not a cross-box peer.
+    """
+    wanted = frozenset(declared)
+    if not wanted:
+        return frozenset()
+    get_models = opener or _default_peer_opener
+    try:
+        status, body = get_models(base_url.rstrip("/") + _MODELS_PATH, timeout, None)
+    except (OSError, http.client.HTTPException, ValueError):
+        return frozenset()
+    if status != 200:
+        return frozenset()
+    try:
+        payload = json.loads(body)
+        ids = {entry.get("id") for entry in payload.get("data", []) if isinstance(entry, dict)}
+    except (ValueError, TypeError, AttributeError):
+        # Malformed JSON or an unexpected shape — advertise nothing rather than
+        # crash the caller that folds this into /v1/models and /capabilities.
+        return frozenset()
+    return frozenset(wanted & ids)
+
+
 def probe_audio_peer_ready(
     origin: str,
     role: str,
@@ -340,6 +393,13 @@ class PeerSpec:
 # unit-testable without sockets, mirroring Probe above.
 PeerProbe = Callable[[PeerSpec], bool]
 
+# An adapter probe maps (base_url, declared adapter names) to the subset the
+# backend's engine actually serves. Never None: an empty set IS the answer for
+# "nothing confirmed", so the tri-state the readiness Probe needs does not
+# apply here. Injectable so ReadinessCache stays unit-testable without sockets,
+# mirroring Probe / PeerProbe above.
+AdapterProbe = Callable[[str, tuple[str, ...]], frozenset[str]]
+
 
 class ReadinessCache:
     """A non-blocking, background readiness provider for the fleet's backends.
@@ -382,6 +442,8 @@ class ReadinessCache:
         peer_specs: Iterable[PeerSpec] | None = None,
         peer_probe: PeerProbe | None = None,
         peer_timeout: float = _PEER_PROBE_TIMEOUT,
+        adapter_targets: Mapping[str, tuple[str, tuple[str, ...]]] | None = None,
+        adapter_probe: "AdapterProbe | None" = None,
         start: bool = True,
     ) -> None:
         # Copy the targets so a caller mutating theirs cannot change what we probe.
@@ -408,6 +470,19 @@ class ReadinessCache:
         # :meth:`current` for where they are merged for reading.
         self._value: dict[str, bool | None] = dict.fromkeys(self._targets, None)
         self._peer_value: dict[str, bool | None] = dict.fromkeys(self._peer_specs, None)
+        # LoRA adapter inventory per backend name -> (base_url, declared names).
+        # A THIRD independent store, seeded EMPTY rather than None: "no adapter
+        # confirmed" is the honest pre-probe state and the honest failure state
+        # alike, so this one needs no unknown sentinel — an unprobed cache
+        # advertises no adapters, exactly like a probe that found none.
+        # Refreshed on the LOCAL thread (these are co-resident fleet backends
+        # on the internal network, sharing the local socket budget — never the
+        # peer thread's cross-box budget).
+        self._adapter_targets: dict[str, tuple[str, tuple[str, ...]]] = dict(adapter_targets or {})
+        self._adapter_probe: AdapterProbe = adapter_probe or self._default_adapter_probe
+        self._adapter_value: dict[str, frozenset[str]] = {
+            name: frozenset() for name in self._adapter_targets
+        }
         if start:
             self.start()
 
@@ -441,10 +516,36 @@ class ReadinessCache:
                 result[name] = None
         return result
 
+    def _default_adapter_probe(self, base_url: str, declared: tuple[str, ...]) -> frozenset[str]:
+        """The default adapter probe: :func:`probe_backend_adapters` bound to
+        our LOCAL ``timeout`` — these are co-resident fleet backends on the
+        internal compose network, so they share the local probe's budget, never
+        the peer thread's cross-box one."""
+        return probe_backend_adapters(base_url, declared, timeout=self._timeout)
+
+    def _read_adapters(self) -> dict[str, frozenset[str]]:
+        """Probe every adapter-bearing backend once, degrading a raiser to empty.
+
+        Per-backend ``try`` so one misbehaving probe cannot abort the pass or
+        crash the daemon — the offending backend simply advertises no adapters,
+        which is the fail-closed direction (#92). Runs on the local background
+        thread only, never the request path.
+        """
+        result: dict[str, frozenset[str]] = {}
+        for name, (base_url, declared) in self._adapter_targets.items():
+            try:
+                result[name] = frozenset(self._adapter_probe(base_url, declared))
+            except Exception:  # nosec B110 — best-effort; never crash the daemon
+                result[name] = frozenset()
+        return result
+
     def _refresh_once(self) -> None:
         value = self._read()
+        adapters = self._read_adapters() if self._adapter_targets else None
         with self._lock:
             self._value = value
+            if adapters is not None:
+                self._adapter_value = adapters
 
     def _default_peer_probe(self, spec: PeerSpec) -> bool:
         """The default peer probe: :func:`probe_peer_ready` bound to OUR OWN
@@ -528,6 +629,19 @@ class ReadinessCache:
             merged = dict(self._value)
             merged.update(self._peer_value)
             return merged
+
+    def current_adapters(self) -> dict[str, frozenset[str]]:
+        """Backend name → the LoRA adapters its engine confirmed it serves.
+
+        Never probes, never blocks — the same O(1) read-a-copy contract as
+        :meth:`current`. An unprobed or failing backend maps to an empty set
+        (see :meth:`_read_adapters`), and a backend with no declared adapters
+        is absent entirely. Feeds
+        :func:`lobes.gateway._routing.list_models_payload`'s ``loaded_adapters``
+        and the ``hand`` role's ``adapters`` field on ``/capabilities``.
+        """
+        with self._lock:
+            return dict(self._adapter_value)
 
     def start(self) -> None:
         """Start the background refresh thread(s) (idempotent).

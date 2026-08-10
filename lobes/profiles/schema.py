@@ -54,7 +54,21 @@ from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 # carries the full per-machine knob set — but are hosted only by an explicit
 # muse-/worker-hosting deployment shape, never by machine-as-brain (see
 # lobes.profiles.shapes.OPT_IN_CORE_ROLES).
-ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "embedder", "reranker")
+ROLES: tuple[str, ...] = (
+    "cortex",
+    "senses",
+    "muse",
+    "worker",
+    # `hand` (LiquidAI LFM2.5-1.2B, the fine-tuning base) is in scope and
+    # carries the full per-machine knob set like every other generate lane —
+    # but unlike muse/worker it is DEFAULT-HOSTED: ~2.4 GiB of bf16 weights fit
+    # beside any other lane on any supported card, which is the entire point of
+    # the role. Its per-card gpu_mem_util is declared PER CARD, never once
+    # globally: 0.06 is 7.7 GiB on a 128 GB Spark but 3.84 GiB on a 64 GB Orin.
+    "hand",
+    "embedder",
+    "reranker",
+)
 
 # The machine knobs a compose template substitutes per role/gear. Order here
 # is the canonical field order on RoleProfile below (minus feasible/model).

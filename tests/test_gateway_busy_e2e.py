@@ -25,8 +25,9 @@ def _fleet_cfg():
     return build_config(
         {
             "PRIMARY_SERVED_NAME": "PRIMARY",
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
-            "MINOR_SERVED_NAME": "MINOR",
+            # The cheap tier resolves to the `hand` backend now.
+            "HAND_BASE_URL": "http://vllm-hand:8000",
+            "HAND_SERVED_NAME": "HAND",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
@@ -74,7 +75,7 @@ _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 def test_cortex_request_under_pressure_is_shed_with_429() -> None:
     """model=cortex under HIGH pressure → 429 busy, no upstream dialed."""
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"cortex"}', opener, pressure=_HIGH_SWAP
     )
@@ -95,7 +96,7 @@ def test_senses_request_under_pressure_is_shed_with_429() -> None:
     Busy covers both cortex AND senses (main + multimodal tiers).
     """
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"senses"}', opener, pressure=_HIGH_SWAP
     )
@@ -121,7 +122,7 @@ def test_cortex_request_after_pressure_clears_gets_200_from_real_cortex() -> Non
     table, cfg = _fleet_cfg()
 
     # Phase 1: under pressure → shed
-    opener1, calls1 = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener1, calls1 = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp1 = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"cortex"}', opener1, pressure=_HIGH_SWAP
     )
@@ -129,7 +130,7 @@ def test_cortex_request_after_pressure_clears_gets_200_from_real_cortex() -> Non
     assert calls1 == []
 
     # Phase 2: pressure clears → served from the real cortex (primary) backend
-    opener2, calls2 = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener2, calls2 = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp2 = S.handle_post(
         table,
         cfg,
@@ -157,13 +158,13 @@ def test_minor_request_served_even_under_pressure() -> None:
     The floor tier is never shed.
     """
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"minor"}', opener, pressure=_HIGH_SWAP
     )
     assert resp.status == 200
     assert resp.upstream is not None
-    assert calls[0][0] == "minor"  # served, not shed
+    assert calls[0][0] == "hand"  # served, not shed
     headers = dict(resp.headers)
-    assert headers["X-Lobes-Tier"] == "minor"
+    assert headers["X-Lobes-Tier"] == "hand"
     assert headers["X-Lobes-Tier-Reason"] == "default"

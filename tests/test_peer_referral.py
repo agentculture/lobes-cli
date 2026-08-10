@@ -38,7 +38,12 @@ import pytest
 
 from lobes.cli import main
 from lobes.gateway import server as S
-from lobes.gateway._config import FEASIBLE_ENV, PEER_ORIGIN_ENV, build_config
+from lobes.gateway._config import (
+    FEASIBLE_ENV,
+    NEVER_PROXIED_BACKENDS,
+    PEER_ORIGIN_ENV,
+    build_config,
+)
 from lobes.gateway._routing import list_models_payload
 from lobes.roles import ROLES, annotate_peer_referrals, build_role_registry
 from lobes.runtime import _compose, _env
@@ -119,7 +124,9 @@ def _post(table, cfg, model: str, path: str = "/v1/chat/completions"):
 def test_peer_origin_env_mirrors_feasible_env_prefixes() -> None:
     # One "<PREFIX>_<KNOB>" convention to learn: the peer-origin channel names
     # exactly the backends the feasibility channel names.
-    assert set(PEER_ORIGIN_ENV) == set(FEASIBLE_ENV)
+    # Minus the never-proxied set: `hand` runs on every box, so it has no peer
+    # channel at all (lobes.gateway._config.NEVER_PROXIED_BACKENDS).
+    assert set(PEER_ORIGIN_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
     assert PEER_ORIGIN_ENV["multimodal"] == "MULTIMODAL_PEER_ORIGIN"
     assert PEER_ORIGIN_ENV["primary"] == "PRIMARY_PEER_ORIGIN"
 

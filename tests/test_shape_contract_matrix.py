@@ -89,6 +89,7 @@ _MODEL_ID: dict[str, str] = {
     "senses": "coolthor/gemma-4-12B-it-NVFP4A16",
     "muse": "nvidia/Gemma-4-31B-IT-NVFP4",
     "worker": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+    "hand": "LiquidAI/LFM2.5-1.2B-Instruct",
     "embedder": "Qwen/Qwen3-Embedding-0.6B",
     "reranker": "Qwen/Qwen3-Reranker-0.6B",
 }
@@ -102,6 +103,7 @@ _WIRE_ENV: dict[str, tuple[str, str]] = {
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
     "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
     "worker": ("WORKER_BASE_URL", "WORKER_SERVED_NAME"),
+    "hand": ("HAND_BASE_URL", "HAND_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
 }
@@ -398,8 +400,8 @@ def test_cell_concrete_model_id_is_never_served_4xx_without_a_dial(
 @pytest.mark.parametrize("shape_name", sorted({shape for shape, _ in CELLS}))
 def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) -> None:
     """Whatever generate gear a shape hosts still answers: cortex on spark-lobe,
-    senses on thor-lobe, and the opt-in 4B minor on orin-small (both tier
-    vocabularies)."""
+    senses on thor-lobe, and `hand` — which EVERY shape hosts — under all three
+    of its tier spellings."""
     shape = resolve_shape(shape_name)
     table, cfg = build_config(_gateway_env(shape))
     expected: list[tuple[str, str]] = []
@@ -415,8 +417,16 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
         expected += [("muse", "muse")]
     if shape.hosts_role("worker"):
         expected += [("worker", "worker")]
-    if shape.hosts_role("minor"):
-        expected += [("minor", "minor"), ("cheap", "minor")]
+    if shape.hosts_role("hand"):
+        # All three spellings land on the `hand` backend: `hand` is the role
+        # name, `minor`/`cheap` are the back-compat tier names it inherited when
+        # it replaced Qwen3.5-4B in that slot.
+        expected += [("hand", "hand"), ("minor", "hand"), ("cheap", "hand")]
+    # NOTE: `shape.hosts_role("minor")` is deliberately NOT checked here. The
+    # opt-in `minor` GEAR (the 4B, hosted by orin-small) is no longer what the
+    # `minor` TIER resolves to — that alias belongs to `hand` now. The 4B gear
+    # remains addressable by its explicit model id, exactly like the legacy 14B
+    # `middle` gear, so there is no alias of its own left to assert.
     assert expected, f"{shape_name} hosts no generate lane at all?"
     for alias, backend in expected:
         resp, calls = _post(table, cfg, alias)

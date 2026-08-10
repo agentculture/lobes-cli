@@ -29,7 +29,9 @@ from lobes.minor.governance import (
 
 def test_role_constant_is_minor():
     """ROLE must be the string 'minor', not a model identifier."""
-    assert ROLE == "minor"
+    # `hand` — the role that took over the cheap tier. `minor`/`cheap` survive
+    # as back-compat TIER spellings (catalog.TIER_ROLE) but name no role.
+    assert ROLE == "hand"
 
 
 def test_governance_module_has_no_model_id():

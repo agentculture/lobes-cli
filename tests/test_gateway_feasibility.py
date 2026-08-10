@@ -92,6 +92,9 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
         "multimodal": "MULTIMODAL_FEASIBLE",
         "muse": "MUSE_FEASIBLE",
         "worker": "WORKER_FEASIBLE",
+        # `hand` is feasibility-tracked but NEVER proxied — see
+        # NEVER_PROXIED_BACKENDS and test_gateway_config_proxy.py.
+        "hand": "HAND_FEASIBLE",
         "embed": "EMBED_FEASIBLE",
         "rerank": "RERANK_FEASIBLE",
         "stt": "STT_FEASIBLE",

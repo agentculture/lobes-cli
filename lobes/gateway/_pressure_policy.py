@@ -96,18 +96,21 @@ import os
 #: The capability-ROLE names (``cortex``/``senses``) alias the same backends as
 #: ``main``/``multimodal``, so they normalize (and shed) identically.
 _TIER_ROLE: dict[str, str] = {
-    # Primary vocabulary.
+    # Primary vocabulary. `minor`/`cheap` name the `hand` BACKEND since the
+    # hand lobe replaced Qwen3.5-4B in that slot — the tier spellings survive
+    # for back-compat, the `minor` backend role does not.
     "main": "primary",
-    "minor": "minor",
+    "minor": "hand",
     "multimodal": "multimodal",
     # Back-compat aliases.
-    "cheap": "minor",
+    "cheap": "hand",
     "normal": "multimodal",
     "hard": "primary",
     # Capability-ROLE names (alias the same backends as main / multimodal;
-    # muse/worker are their own backends). Kept in the same order as
-    # catalog.TIER_ROLE (senses, then worker, then muse, then cortex) so the
-    # two dicts stay identical — the mirror guard test asserts equality.
+    # hand/muse/worker are their own backends). Kept in the same order as
+    # catalog.TIER_ROLE (hand, senses, worker, muse, cortex) so the two dicts
+    # stay identical — the mirror guard test asserts equality.
+    "hand": "hand",
     "senses": "multimodal",
     "worker": "worker",
     "muse": "muse",
@@ -115,14 +118,22 @@ _TIER_ROLE: dict[str, str] = {
 }
 
 #: Backend role → canonical new-vocabulary tier name (the inverse of the primary
-#: vocabulary rows above; muse's/worker's role IS its tier name).
+#: vocabulary rows above; hand's/muse's/worker's role IS its tier name).
 _ROLE_TO_TIER: dict[str, str] = {
     "primary": "main",
-    "minor": "minor",
+    "hand": "hand",
     "multimodal": "multimodal",
     "worker": "worker",
     "muse": "muse",
 }
+
+#: The SERVABLE FLOOR tier — the one tier never shed, whatever the pressure.
+#: Named once here rather than spelled inline at each comparison so the floor
+#: cannot drift between the shed test and the ``servable_tier`` it reports.
+#: It moved from ``minor`` to ``hand`` with the tier repoint; a caller still
+#: sending ``model=minor``/``model=cheap`` normalizes to ``hand`` and is served
+#: exactly as before, so the floor's PROMISE is unchanged — only its name.
+_FLOOR_TIER = "hand"
 
 _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)
 
@@ -267,10 +278,12 @@ def decide(
     )
     mode = "busy" if under_pressure else "warm"
 
-    # minor is the floor: never shed even under pressure
-    shed = under_pressure and normalized != "minor"
+    # `hand` is the floor: never shed even under pressure. A `minor`/`cheap`
+    # request normalizes to `hand` above, so the back-compat spellings keep the
+    # floor's protection unchanged.
+    shed = under_pressure and normalized != _FLOOR_TIER
     reason = "pressure" if shed else "default"
-    servable_tier = "minor" if under_pressure else normalized
+    servable_tier = _FLOOR_TIER if under_pressure else normalized
 
     return {
         "mode": mode,

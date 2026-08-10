@@ -21,6 +21,33 @@
 # exec — logging can never stop the model from serving.
 set -u
 
+# --- Drop explicitly-empty flags -------------------------------------------
+# A compose `command:` list is static: it cannot omit an argument conditionally.
+# So a templated flag whose variable is unset renders as a bare `--flag=` — one
+# argv element carrying an empty value — and an arg parser that expects a real
+# value there fails at startup. The live case is the `hand` lane's
+# `--lora-modules=${HAND_LORA_MODULES:-}`: v1 ships the lane ARMED
+# (`--enable-lora`) with an EMPTY inventory, and vLLM would try to parse "" as a
+# `name=path` pair.
+#
+# The rule is deliberately narrow: drop an argument ONLY when it matches
+# `--<flag>=` exactly — a long flag, an `=`, and nothing after it. A flag with a
+# value, a bare `--flag`, a lone `--`, a short `-x`, and every non-flag argument
+# (the model id, `serve`, …) all pass through untouched. Empty is not a value
+# any vLLM flag wants, so this can only ever remove an argument that would have
+# errored; it can never change one that would have worked.
+#
+# Done here rather than per-lane because it is a property of compose's static
+# arg lists, not of any one model.
+_args=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --*=) continue ;;  # e.g. `--lora-modules=` — an unset templated flag
+        *) _args+=("$_arg") ;;
+    esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
 name="${MG_LOG_NAME:-server}"
 dir="${MG_LOG_DIR:-/logs/model-gear}"
 ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo boot)"

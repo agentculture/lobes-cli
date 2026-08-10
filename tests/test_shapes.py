@@ -100,6 +100,7 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "hand",
         "embedder",
         "reranker",
         "stt",
@@ -118,7 +119,18 @@ def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
-    assert DEFAULT_HOSTED_ROLES == ("cortex", "senses", "embedder", "reranker", "stt", "tts")
+    # NOTE `hand` IS here — it is the first DEFAULT-HOSTED cheap role. Before
+    # it, this set happened to coincide with "the expensive lobes plus the
+    # gears"; it no longer does. See shapes.py's own re-baseline note.
+    assert DEFAULT_HOSTED_ROLES == (
+        "cortex",
+        "senses",
+        "hand",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    )
 
 
 def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
@@ -132,6 +144,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "hand",
         "embedder",
         "reranker",
         "stt",
@@ -280,14 +293,14 @@ def test_machine_as_brain_carries_no_overrides() -> None:
 def test_spark_lobe_hosts_cortex_embedder_reranker_and_audio_no_senses() -> None:
     spark_lobe = load_builtin_shape("spark-lobe")
     assert spark_lobe is not None
-    assert set(spark_lobe.hosts) == {"cortex", "embedder", "reranker", "stt", "tts"}
+    assert set(spark_lobe.hosts) == {"cortex", "hand", "embedder", "reranker", "stt", "tts"}
     assert "senses" not in spark_lobe.hosts
 
 
 def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:
     thor_lobe = load_builtin_shape("thor-lobe")
     assert thor_lobe is not None
-    assert set(thor_lobe.hosts) == {"senses", "embedder", "reranker", "stt", "tts"}
+    assert set(thor_lobe.hosts) == {"senses", "hand", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in thor_lobe.hosts
 
 
@@ -297,7 +310,7 @@ def test_thor_muse_hosts_muse_pooling_and_audio_no_default_heavy_lobe() -> None:
     # senses to a peer box, e.g. an Orin — declared via MULTIMODAL_PEER_*).
     thor_muse = load_builtin_shape("thor-muse")
     assert thor_muse is not None
-    assert set(thor_muse.hosts) == {"muse", "embedder", "reranker", "stt", "tts"}
+    assert set(thor_muse.hosts) == {"muse", "hand", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in thor_muse.hosts
     assert "senses" not in thor_muse.hosts
     # The FULL muse declaration lives in the shape's overrides (the card
@@ -316,7 +329,7 @@ def test_orin_small_hosts_minor_embedder_reranker_and_audio_no_heavy_lobe() -> N
     # are both absent -- and hosts the opt-in `minor` gear instead.
     orin_small = load_builtin_shape("orin-small")
     assert orin_small is not None
-    assert set(orin_small.hosts) == {"minor", "embedder", "reranker", "stt", "tts"}
+    assert set(orin_small.hosts) == {"minor", "hand", "embedder", "reranker", "stt", "tts"}
     assert "cortex" not in orin_small.hosts
     assert "senses" not in orin_small.hosts
 
@@ -330,7 +343,7 @@ def test_orin_lobe_hosts_senses_and_pooling_but_no_cortex_and_no_audio() -> None
     # forwarded to a peer via the operator-declared AUDIO_URL instead.
     orin_lobe = load_builtin_shape("orin-lobe")
     assert orin_lobe is not None
-    assert set(orin_lobe.hosts) == {"senses", "embedder", "reranker"}
+    assert set(orin_lobe.hosts) == {"senses", "hand", "embedder", "reranker"}
     assert "cortex" not in orin_lobe.hosts
     for audio_role in AUDIO_ROLES:
         assert audio_role not in orin_lobe.hosts

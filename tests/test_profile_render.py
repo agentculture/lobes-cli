@@ -22,6 +22,7 @@ def test_role_env_prefix_covers_all_six_roles() -> None:
         "senses": "MULTIMODAL",
         "muse": "MUSE",
         "worker": "WORKER",
+        "hand": "HAND",
         "embedder": "EMBED",
         "reranker": "RERANK",
     }

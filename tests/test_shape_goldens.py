@@ -486,3 +486,36 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
             rendered = render_shape(shape, resolve_profile(card))
             assert rendered.env, f"{shape_name}/{card} rendered no env"
             assert rendered.services
+
+
+# ---------------------------------------------------------------------------
+# Rendered-knob reachability (hand-lobe plan, live finding 2026-08-10)
+# ---------------------------------------------------------------------------
+# A card profile that DECLARES a knob renders `<PREFIX>_<KNOB>=value` into the
+# deployment's .env. If the compose template never substitutes that variable,
+# the declaration is DEAD: `lobes init` writes it, the operator reads it as
+# configured, and the lane ignores it.
+#
+# This is not hypothetical. The `hand` lane shipped consuming HAND_MODEL,
+# HAND_SERVED_NAME, HAND_MAX_MODEL_LEN and HAND_GPU_MEM_UTIL but NOT
+# HAND_ATTENTION_BACKEND — which builtin/orin.toml declares as TRITON_ATTN. The
+# Orin therefore rendered an attention-backend choice the engine never saw.
+# Caught by a live compose boot, not by any test; this is that test.
+
+
+@pytest.mark.parametrize("card_name", sorted(builtin_names()))
+def test_every_rendered_profile_knob_is_substituted_by_the_fleet_template(card_name):
+    """Every KEY a card profile renders must appear as ${KEY...} in the template.
+
+    Guards the dead-knob class: a profile declaration that reaches no compose
+    flag is silently inert, which reads as configured and is not.
+    """
+    template = FLEET_COMPOSE.read_text(encoding="utf-8")
+    rendered = profile_env(resolve_profile(card_name))
+    dead = [
+        key for key in rendered if f"${{{key}" not in template and f"${{{key}}}" not in template
+    ]
+    assert not dead, (
+        f"{card_name}: these profile-rendered keys are never substituted by "
+        f"templates/fleet/docker-compose.yml, so the declaration is dead: {dead}"
+    )
