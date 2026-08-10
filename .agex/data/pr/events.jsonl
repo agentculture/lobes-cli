@@ -101,3 +101,5 @@
 {"ts":"2026-08-10T06:50:45.373614+00:00","type":"pr_webhook_posted","pr":184,"event":"pr_opened"}
 {"ts":"2026-08-10T06:50:46.870979+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
 {"ts":"2026-08-10T06:50:52.682664+00:00","type":"pr_read","pr":184,"comment_count":3,"threads_unresolved":0,"ci_state":"failure"}
+{"ts":"2026-08-10T07:16:51.792749+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
+{"ts":"2026-08-10T07:16:57.343496+00:00","type":"pr_read","pr":184,"comment_count":6,"threads_unresolved":2,"ci_state":"ok"}

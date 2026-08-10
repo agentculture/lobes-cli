@@ -371,6 +371,85 @@ def test_empty_inventory_yields_no_adapter_aliases_but_still_serves_the_base() -
     assert table.aliases.get("hand") is not None, "model=hand must still resolve to the base"
 
 
+# --- collision + shadowing warnings (Qodo review, PR #184) ------------------
+
+
+def test_an_adapter_colliding_with_another_backends_served_name_warns(capsys) -> None:
+    # _backend_for matches `requested in backend.adapters` as well as
+    # served_name, so an adapter name is an ownership claim exactly like a
+    # served name — and the collision resolves by backend order, silently.
+    C._warn_on_served_name_collisions(
+        [
+            Backend("primary", "http://p:8000", "some/model"),
+            Backend(
+                "hand", "http://h:8000", "LiquidAI/LFM2.5-1.2B-Instruct", adapters=("some/model",)
+            ),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert "'some/model'" in err
+    assert "order-dependent" in err
+    assert "HAND_LORA_MODULES" in err, "the remedy must name the knob the duplicate came from"
+
+
+def test_a_served_name_collision_still_recommends_served_name() -> None:
+    # The pre-existing message must not regress into adapter advice when no
+    # adapter is involved.
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        C._warn_on_served_name_collisions(
+            [
+                Backend("embed", "http://e:8000", "same/id", task="embed"),
+                Backend("embed_deep", "http://d:8000", "same/id", task="embed"),
+            ]
+        )
+    err = buf.getvalue()
+    assert "*_SERVED_NAME" in err
+    assert "HAND_LORA_MODULES" not in err
+    assert "WRONG " in err and "VECTOR SPACE" in err, "the embed-specific detail must survive"
+
+
+def test_no_warning_when_every_claimed_id_is_distinct(capsys) -> None:
+    C._warn_on_served_name_collisions(
+        [
+            Backend("primary", "http://p:8000", "some/model"),
+            Backend("hand", "http://h:8000", "base/id", adapters=("legal", "sql")),
+        ]
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_an_adapter_shadowed_by_an_alias_warns(capsys) -> None:
+    # resolve_model checks aliases FIRST, so this adapter is unreachable by its
+    # own name — a total shadow, not an order-dependent race.
+    C._warn_on_adapter_alias_shadowing(
+        [Backend("hand", "http://h:8000", "base/id", adapters=("cortex",))],
+        {"cortex": "unsloth/Qwen3.6-27B-NVFP4"},
+    )
+    err = capsys.readouterr().err
+    assert "'cortex'" in err
+    assert "unreachable by name" in err
+
+
+def test_the_hand_adapter_alias_itself_is_not_reported_as_shadowing(capsys) -> None:
+    # `hand:legal -> legal` is the alias we deliberately mint; it must not warn
+    # about the adapter it exists to reach.
+    backends = [Backend("hand", "http://h:8000", "base/id", adapters=("legal",))]
+    C._warn_on_adapter_alias_shadowing(backends, C._hand_adapter_aliases(backends))
+    assert capsys.readouterr().err == ""
+
+
+def test_hand_adapter_aliases_helper_is_empty_without_a_hand_backend() -> None:
+    assert C._hand_adapter_aliases([]) == {}
+    assert C._hand_adapter_aliases([Backend("primary", "http://p:8000", "m")]) == {}
+    assert C._hand_adapter_aliases(
+        [Backend("hand", "http://h:8000", "base/id", adapters=("legal",))]
+    ) == {f"hand{C.HAND_ADAPTER_SEP}legal": "legal"}
+
+
 def test_default_adapter_probe_uses_the_local_timeout() -> None:
     # The default probe binds the LOCAL timeout, never the peer thread's
     # cross-box budget: these are co-resident lanes on the compose network.

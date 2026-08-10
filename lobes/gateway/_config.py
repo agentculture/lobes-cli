@@ -569,11 +569,30 @@ def _optional_backend(
     )
 
 
+def _claimed_model_ids(backend: Backend) -> tuple[str, ...]:
+    """Every model id ``backend`` answers to: its served name AND its adapters.
+
+    Both are routable. :func:`~lobes.gateway._routing._backend_for` matches
+    ``served_name == requested or requested in backend.adapters``, so an adapter
+    name is an ownership claim exactly like a served name is, and a collision
+    between the two kinds is as order-dependent as a collision between two
+    served names.
+    """
+    return (backend.served_name, *backend.adapters)
+
+
 def _warn_on_served_name_collisions(backends: list[Backend]) -> None:
-    """Emit a stderr warning for any served name claimed by more than one backend."""
+    """Emit a stderr warning for any model id claimed by more than one backend.
+
+    Covers served names *and* LoRA adapter names — see
+    :func:`_claimed_model_ids` for why the two are the same kind of claim. A
+    backend claiming the same id twice (an adapter named after its own base) is
+    also reported, since that too resolves by first match.
+    """
     by_name: dict[str, list[Backend]] = {}
     for backend in backends:
-        by_name.setdefault(backend.served_name, []).append(backend)
+        for claimed in _claimed_model_ids(backend):
+            by_name.setdefault(claimed, []).append(backend)
     for served, owners in sorted(by_name.items()):
         if len(owners) < 2:
             continue
@@ -585,12 +604,108 @@ def _warn_on_served_name_collisions(backends: list[Backend]) -> None:
             if tasks == {"embed"}
             else ""
         )
-        sys.stderr.write(
-            f"[gateway] WARNING: served name {served!r} is claimed by {len(owners)} "
-            f"backends ({names}); routing resolves it to the first match, so "
-            f"ownership is order-dependent.{detail} Give each backend a distinct "
-            f"*_SERVED_NAME.\n"
+        # A LoRA adapter name is an ownership claim too, so a collision can be
+        # adapter-vs-served-name or even a single backend claiming an id twice.
+        # Name the remedy for whichever kind this is: *_SERVED_NAME is useless
+        # advice when the duplicate came from HAND_LORA_MODULES.
+        remedy = (
+            "Give each backend a distinct *_SERVED_NAME."
+            if all(served == b.served_name for b in owners)
+            else "Rename the colliding LoRA adapter in HAND_LORA_MODULES, or give "
+            "the backend a distinct *_SERVED_NAME."
         )
+        sys.stderr.write(
+            f"[gateway] WARNING: model id {served!r} is claimed by {len(owners)} "
+            f"backend claim(s) ({names}); routing resolves it to the first match, "
+            f"so ownership is order-dependent.{detail} {remedy}\n"
+        )
+
+
+def _hand_adapter_aliases(backends: list[Backend]) -> dict[str, str]:
+    """``{"hand:<domain>": "<domain>"}`` for a WIRED hand backend's adapters.
+
+    Extracted from :func:`build_config` so the alias derivation is testable on
+    its own and does not add branching to an already-large builder.
+
+    Note what is NOT here: ``hand`` itself. That comes from ``tier_aliases`` as
+    a capability tier, so the bare role name resolves to the BASE checkpoint and
+    never 404s just because the adapter inventory is empty — an armed-but-empty
+    lane is a working lane. An UNdeclared ``hand:<domain>`` gets no alias, is
+    not any backend's served name or adapter, and therefore takes the
+    :func:`~lobes.gateway._routing.is_unknown_model` 404 ``model_not_found`` —
+    never a silent fall-back to the base weights or to another lane, which
+    would hand a caller who asked for the legal specialist a generalist answer
+    and call it success.
+    """
+    hand = next((b for b in backends if b.name == "hand"), None)
+    if hand is None:
+        return {}
+    return {f"hand{HAND_ADAPTER_SEP}{adapter}": adapter for adapter in hand.adapters}
+
+
+def _warn_on_adapter_alias_shadowing(backends: list[Backend], aliases: Mapping[str, str]) -> None:
+    """Warn when an adapter name is also an alias key — the alias WINS.
+
+    :func:`~lobes.gateway._routing.resolve_model` checks ``table.aliases``
+    first, so an adapter named after a tier or role (``cortex``, ``main``,
+    ``senses``, an operator's ``GATEWAY_ALIASES`` key) is unreachable by its own
+    name: the request silently routes to the alias target instead. Unlike the
+    served-name collision above this is not order-dependent — it is a total
+    shadow — which makes it worth its own message.
+    """
+    for backend in backends:
+        for adapter in backend.adapters:
+            if adapter in aliases and aliases[adapter] != adapter:
+                sys.stderr.write(
+                    f"[gateway] WARNING: LoRA adapter {adapter!r} on backend "
+                    f"{backend.name!r} is ALSO an alias for "
+                    f"{aliases[adapter]!r}; the alias wins in resolve_model, so "
+                    f"this adapter is unreachable by name. Rename it in "
+                    f"HAND_LORA_MODULES.\n"
+                )
+
+
+def _add_self_named_opt_in_aliases(aliases: dict[str, str], backends: list[Backend]) -> None:
+    """Alias each wired opt-in backend to its own name.
+
+    ``multimodal-coder`` and ``embed-deep`` are addressed by their backend name
+    rather than a capability tier. ``embed-deep`` in particular gets **no**
+    upward fallback: it serves ``task="embed"`` and ``tier_aliases`` is
+    generate-only, so an absent deep gear means the alias is simply absent —
+    never a silent downgrade to the 0.6B, which would answer in the WRONG
+    VECTOR SPACE.
+
+    Only a WIRED backend earns an alias; an alias must never point at a served
+    name nothing actually serves. Extracted from :func:`build_config` to keep
+    that builder's branching down.
+    """
+    for name in ("multimodal-coder", "embed-deep"):
+        backend = next((b for b in backends if b.name == name), None)
+        if backend is not None:
+            aliases[name] = backend.served_name
+
+
+def _add_pooling_role_aliases(aliases: dict[str, str], backends: list[Backend]) -> None:
+    """Give the embed/rerank lanes the stable role names the generate lane has.
+
+    A caller that names a role survives a checkpoint swap; a caller that
+    hardcodes a served id does not. Before this, ``embedder``/``reranker`` were
+    not addressable at all — the only working address was the raw served id,
+    because ``tier_aliases`` is generate-only. Both the Colleague-facing ROLE
+    name and the internal BACKEND name are accepted, exactly as the generate
+    lane takes ``senses``/``multimodal``.
+
+    ``setdefault``, so an operator alias already in ``aliases`` still wins. An
+    unwired lane gets nothing — absent (404) rather than substituted, since an
+    embedding from a different model answers in the WRONG VECTOR SPACE and a
+    rerank from the wrong head returns meaningless orderings. Extracted from
+    :func:`build_config` to keep that builder's branching down.
+    """
+    for role_name, backend_name in (("embedder", "embed"), ("reranker", "rerank")):
+        backend = next((b for b in backends if b.name == backend_name), None)
+        if backend is not None:
+            aliases.setdefault(role_name, backend.served_name)
+            aliases.setdefault(backend_name, backend.served_name)
 
 
 def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, ServerConfig]:
@@ -619,14 +734,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         # gear the minor/cheap capability tier resolves to since it replaced
         # Qwen3.5-4B in that slot (lobes.catalog.TIER_ROLE).
         #
-        # Wired when HAND_BASE_URL or HAND_SERVED_NAME is present. It is
-        # default-HOSTED (every rendered card profile declares it), so on a
-        # freshly-inited deployment these are always set; it stays an
-        # _optional_backend anyway so a pre-hand `.env` — which has neither —
-        # simply renders no hand backend rather than pointing at a container
-        # that isn't running. `hand` is NOT in OPT_IN_BACKENDS, so that unwired
-        # state reads feasible:true / ready:false (the sleeping lobe), not
-        # role_infeasible.
+        # Wired when HAND_BASE_URL is present — that env var ALONE, per
+        # _optional_backend's contract: HAND_SERVED_NAME only names the
+        # backend once a URL has wired it, and never activates it on its own
+        # (a served name with no URL describes a model, not a reachable
+        # backend). It is default-HOSTED (every rendered card profile declares
+        # it), so on a freshly-inited deployment the URL is always set; it
+        # stays an _optional_backend anyway so a pre-hand `.env` — which has
+        # neither — simply renders no hand backend rather than pointing at a
+        # container that isn't running. `hand` is NOT in OPT_IN_BACKENDS, so
+        # that unwired state reads feasible:true / ready:false (the sleeping
+        # lobe), not role_infeasible.
         _optional_backend(
             env,
             name="hand",
@@ -788,10 +906,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # serves task="embed", and tier_aliases is generate-only), so it gets no
     # upward fallback — an absent deep gear means the alias is absent, never a
     # silent downgrade to the 0.6B, which would answer in the WRONG VECTOR SPACE.
-    for _opt_in in ("multimodal-coder", "embed-deep"):
-        _opt_in_backend = next((b for b in backends if b.name == _opt_in), None)
-        if _opt_in_backend is not None:
-            aliases[_opt_in] = _opt_in_backend.served_name
+    _add_self_named_opt_in_aliases(aliases, backends)
     # HAND ADAPTER aliases (hand-lobe plan t4): the caller-facing
     # ``hand:<domain>`` spelling for each declared LoRA adapter, resolving to
     # the bare name vLLM itself serves the adapter under (its
@@ -803,21 +918,10 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # Added only for a WIRED hand backend, mirroring the opt-in-alias contract
     # directly above: an alias must never point at a served name nothing
     # actually serves. Declared BEFORE the GATEWAY_ALIASES merge so an explicit
-    # operator override still wins.
-    #
-    # Note what is NOT here: ``hand`` itself. That comes from ``tier_aliases``
-    # as a capability tier, so the bare role name resolves to the BASE
-    # checkpoint and never 404s just because the adapter inventory is empty —
-    # an armed-but-empty lane is a working lane. An UNdeclared
-    # ``hand:<domain>`` gets no alias, is not any backend's served name or
-    # adapter, and therefore takes the ``is_unknown_model`` 404
-    # ``model_not_found`` — never a silent fall-back to the base weights or to
-    # another lane, which would hand a caller who asked for the legal
-    # specialist a generalist answer and call it success.
-    _hand_backend = next((b for b in backends if b.name == "hand"), None)
-    if _hand_backend is not None:
-        for _adapter in _hand_backend.adapters:
-            aliases[f"hand{HAND_ADAPTER_SEP}{_adapter}"] = _adapter
+    # operator override still wins. See _hand_adapter_aliases for what is
+    # deliberately NOT derived here (the bare ``hand``, and any UNdeclared
+    # ``hand:<domain>``).
+    aliases.update(_hand_adapter_aliases(backends))
     # POOLING ROLE IDENTITY aliases — the stable address for the embed/rerank
     # lanes, mirroring what `cortex`/`senses` already give the generate lane.
     #
@@ -838,11 +942,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # SPACE, and a rerank from the wrong head returns meaningless orderings.
     # Both the Colleague-facing ROLE name and the internal BACKEND name are
     # accepted, exactly as the generate lane takes `senses` and `multimodal`.
-    for _role_name, _backend_name in (("embedder", "embed"), ("reranker", "rerank")):
-        _pool_backend = next((b for b in backends if b.name == _backend_name), None)
-        if _pool_backend is not None:
-            aliases.setdefault(_role_name, _pool_backend.served_name)
-            aliases.setdefault(_backend_name, _pool_backend.served_name)
+    _add_pooling_role_aliases(aliases, backends)
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually
@@ -862,6 +962,9 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # do not refuse to start — taking the fleet down over a name clash is worse
     # than serving it — but it must never be SILENT.
     _warn_on_served_name_collisions(backends)
+    # After the GATEWAY_ALIASES merge above, so an operator alias that shadows
+    # an adapter is caught too — not just the built-in tier/role ones.
+    _warn_on_adapter_alias_shadowing(backends, aliases)
     wired_names = frozenset(b.name for b in backends)
     infeasible = frozenset(
         name for name in FEASIBLE_ENV if not _is_feasible(env, name, wired=name in wired_names)
