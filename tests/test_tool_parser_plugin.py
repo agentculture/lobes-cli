@@ -20,8 +20,9 @@ vllm-primary (the cortex/main generate lane) gains three things in
 
 This is scoped to vllm-primary ONLY — every other fleet-compose service
 (vllm-multimodal, vllm-multimodal-coder, vllm-embed, vllm-rerank, vllm-minor,
-vllm-middle, gateway) must be byte-for-byte unchanged, proven below with a
-sha256 hash of each service's sorted YAML subtree. These hashes were captured
+vllm-hand, vllm-middle, vllm-muse, vllm-worker, gateway) must be
+byte-for-byte unchanged, proven below with a sha256 hash of each service's
+sorted YAML subtree. These hashes were captured
 from the SAME edit that added the vllm-primary changes above (t2's diff
 touched only vllm-primary, so the non-primary services' rendering is
 identical whether captured before or after) — if a FUTURE change to one of
@@ -55,6 +56,25 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed 2026-08-10 for the `hand` lobe (hand-lobe plan t6). TWO
+    # services moved and both are deliberate:
+    #
+    #  * `vllm-hand` is NEW — the ninth Colleague role's lane (LFM2.5-1.2B, the
+    #    fine-tuning base). DEFAULT-ON, so it carries no `profiles:` gate,
+    #    unlike vllm-minor/vllm-muse/vllm-worker: at ~2.4 GiB it co-resides on
+    #    every card, which is the point of the role. Served bf16 (NO
+    #    --quantization), text-only (NO --language-model-only — there is no ViT
+    #    to drop), no --reasoning-parser (no thinking mode), and ARMED for LoRA
+    #    with an EMPTY inventory.
+    #  * `gateway` gained the HAND_* passthroughs (BASE_URL / SERVED_NAME /
+    #    LORA_MODULES). Note the deliberate ABSENCE of HAND_PEER_ORIGIN /
+    #    _PEER_PROXY / _PEER_API_KEY, which every other role's block carries:
+    #    `hand` is never proxied (lobes.gateway._config.NEVER_PROXIED_BACKENDS)
+    #    because it runs on every box, so there is no peer to refer it to.
+    #
+    # Every other service is byte-identical, which is this tripwire proving the
+    # blast radius.
+    #
     # Recomputed 2026-08-04 for the senses MTP off-switch (unsloth-QAT-senses plan,
     # t5): ONLY `vllm-multimodal` moved. Its `command:` changed shape from a YAML
     # list to a single shell-lexed STRING so the `--speculative-config` flag can be
@@ -113,9 +133,10 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
     # byte-identical — this tripwire firing on exactly the intended services, and
     # NOTHING else, is itself the proof of each change's blast radius.
-    "gateway": "079f50f67e47cf09f31fd960b5fd6dd831eb6099f9eddb8978434626e0d23211",
+    "gateway": "88448c70bf43f4b757c3a6f4f86c428c040fbf4321ffa75f2e5fe35e0bb2f5b8",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
+    "vllm-hand": "832a9aef512acfb2911f7925d483754f4d0bd012e1082b10aa91d9c236d5233e",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "64c129b764059c3e78ed248da60634cd2ecf4a0af26c61e3508c5676ddb11134",

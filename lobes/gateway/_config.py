@@ -58,6 +58,14 @@ _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
 # WORKER_BASE_URL is set — and, like muse above, it is INFEASIBLE by default
 # when unwired (see OPT_IN_BACKENDS).
 _DEFAULT_WORKER = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+# The `hand` gear (LiquidAI LFM2.5-1.2B-Instruct) — the NINTH Colleague role's
+# backend and the fleet's designated fine-tuning base. Unlike muse/worker this
+# one is DEFAULT-HOSTED on every card (~2.4 GiB bf16 is cheap enough to always
+# co-reside), so it is deliberately NOT in OPT_IN_BACKENDS: an unwired hand is
+# the sleeping-lobe posture (feasible:true / ready:false), not infeasible.
+# It also took over the `minor`/`cheap` capability tier from Qwen/Qwen3.5-4B —
+# see lobes.catalog.TIER_ROLE.
+_DEFAULT_HAND = "LiquidAI/LFM2.5-1.2B-Instruct"
 
 # Per-backend "this machine's per-machine profile declares it CANNOT be served
 # AT ALL" signal (issue #92's "advertised implies reachable" extended to the
@@ -79,6 +87,14 @@ FEASIBLE_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse — see OPT_IN_BACKENDS below.
     "worker": "WORKER_FEASIBLE",
+    # The `hand` role (hand-lobe plan, t4) rides the same channel, but is NOT
+    # in OPT_IN_BACKENDS: it is default-hosted, so an ABSENT HAND_FEASIBLE
+    # means feasible. That is the deliberate sleeping-lobe posture for a wheel
+    # upgrade — a pre-hand `.env` reads hand as feasible:true / ready:false
+    # until the operator re-inits and the lane actually comes up, rather than
+    # advertising a lane that is running (it isn't) or denying a lane the card
+    # can obviously serve (it can).
+    "hand": "HAND_FEASIBLE",
     "embed": "EMBED_FEASIBLE",
     "rerank": "RERANK_FEASIBLE",
     # First-class audio roles (issue #129): stt/tts joined the same channel so
@@ -148,6 +164,27 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 # for a name that ALSO carries the truthy ``<PREFIX>_PEER_PROXY`` knob; origin
 # without that knob never gets dialed. Unset everywhere (the default) ⇒ every
 # response is byte-identical to the pre-referral contract.
+# Backend names that carry a ``<PREFIX>_FEASIBLE`` knob but DELIBERATELY no
+# peer origin/proxy/key channel — so the peer dicts below are
+# ``FEASIBLE_ENV`` minus exactly this set, and that relationship is asserted in
+# tests/test_gateway_config_proxy.py rather than left to a hand-typed copy.
+#
+# ``hand`` (hand-lobe plan t4) is the only member. Referral and proxying exist
+# because a HEAVY lobe cannot fit on every box, so a dropped role has to be
+# reachable somewhere else. `hand` is ~1.2B — it runs on every host in the mesh
+# by design, which is the entire reason the role exists. A box that cannot
+# serve 2.4 GiB of bf16 weights is not a box that should be dialing a peer to
+# find them, and a `hand:<domain>` adapter is meaningless on a peer that was
+# never given that adapter's path.
+#
+# The absence is load-bearing, not an oversight, which is why it is named here
+# instead of simply omitted: a symmetry-minded refactor ("every other role is
+# in these dicts…") has to delete this constant to break the rule. The inverse
+# mistake is on record — in 0.54.6 ``worker`` was wired into these dicts but
+# MISSING from server.py's _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT, and
+# ``WORKER_PEER_PROXY=true`` went silently inert.
+NEVER_PROXIED_BACKENDS: frozenset[str] = frozenset({"hand"})
+
 PEER_ORIGIN_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_ORIGIN",
     "multimodal": "MULTIMODAL_PEER_ORIGIN",
@@ -440,6 +477,62 @@ def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
         return int(default)
 
 
+# The `hand` lobe's LoRA adapter inventory, declared once at boot (hand-lobe
+# plan t4). Operator-typed as a comma-separated ``name=path`` list — the SAME
+# string vLLM's own ``--lora-modules`` consumes verbatim on the vllm-hand lane,
+# so there is exactly one place an adapter is declared and the gateway can
+# never disagree with the engine about which names exist.
+#
+# There is deliberately NO runtime hot-load: adding an adapter is a lane
+# restart. A mutable-adapter API would put changeable state on the one lane
+# whose value is being cheap and predictable.
+HAND_LORA_MODULES_ENV = "HAND_LORA_MODULES"
+
+# The separator between the role name and the adapter domain in the
+# caller-facing spelling (``hand:legal``). Colon, not slash or dot: every
+# existing model id in the catalog is ``org/name``, so a slash would be
+# ambiguous with an HF repo path, and dots appear inside version numbers
+# (``Qwen3.6``). Nothing in the gateway, roles.py or capabilities.py parses a
+# model id by delimiter, so this shape passes through the whole stack unharmed.
+HAND_ADAPTER_SEP = ":"
+
+
+def _hand_adapter_names(env: Mapping[str, str]) -> tuple[str, ...]:
+    """Adapter NAMES declared in ``HAND_LORA_MODULES``, in declaration order.
+
+    The value is a comma-separated ``name=path`` list. Only the names are read
+    here — the paths are vLLM's business, and the gateway deliberately never
+    stats them: an adapter path is mounted into the ``vllm-hand`` container, not
+    into the gateway's, so a filesystem check here would false-negative every
+    correctly-configured adapter. Whether an adapter actually LOADED is
+    answered by the live probe against the hand backend's own ``/v1/models``
+    (see :func:`lobes.gateway._readiness.probe_backend_adapters`), which is the
+    engine's own evidence rather than the gateway's guess.
+
+    Malformed entries are skipped rather than raising: a blank segment, a
+    segment with no ``=``, or one with an empty name cannot name a servable
+    adapter, and a typo in one entry must not take down a gateway that would
+    otherwise serve the base model and every other adapter fine. Duplicate
+    names collapse to the first occurrence, preserving order.
+
+    ``partition("=")`` (not ``split("=")``) so an adapter path containing an
+    ``=`` — a query string, a padded base64 segment — keeps its full value; the
+    same convention this module already uses for its other list-valued knobs.
+    """
+    raw = (env.get(HAND_LORA_MODULES_ENV) or "").strip()
+    if not raw:
+        return ()
+    names: list[str] = []
+    for segment in raw.split(","):
+        name, sep, path = segment.strip().partition("=")
+        name = name.strip()
+        if not sep or not name or not path.strip():
+            continue
+        if name not in names:
+            names.append(name)
+    return tuple(names)
+
+
 def _optional_backend(
     env: Mapping[str, str],
     *,
@@ -449,6 +542,7 @@ def _optional_backend(
     default_url: str,
     default_name: str,
     task: str = "generate",
+    adapters: tuple[str, ...] = (),
 ) -> Backend | None:
     """A fleet backend wired only when its ``url_key`` env var is non-empty.
 
@@ -471,6 +565,7 @@ def _optional_backend(
         base_url=(env.get(url_key) or default_url).rstrip("/"),
         served_name=env.get(name_key) or default_name,
         task=task,
+        adapters=adapters,
     )
 
 
@@ -519,11 +614,34 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-fallback:8000",
             default_name=_DEFAULT_FALLBACK,
         ),
-        # The minor co-resident generate backend (Qwen/Qwen3.5-4B, bf16).
-        # Wired only when MINOR_BASE_URL or MINOR_SERVED_NAME is present in
-        # the environment — i.e. when the operator has activated the compose
-        # "minor" profile and set these vars (they are absent by default so
-        # the routing table is unchanged on a standard fleet startup).
+        # The `hand` co-resident generate backend (LiquidAI LFM2.5-1.2B, bf16)
+        # — the ninth Colleague role, the fleet's fine-tuning base, and the
+        # gear the minor/cheap capability tier resolves to since it replaced
+        # Qwen3.5-4B in that slot (lobes.catalog.TIER_ROLE).
+        #
+        # Wired when HAND_BASE_URL or HAND_SERVED_NAME is present. It is
+        # default-HOSTED (every rendered card profile declares it), so on a
+        # freshly-inited deployment these are always set; it stays an
+        # _optional_backend anyway so a pre-hand `.env` — which has neither —
+        # simply renders no hand backend rather than pointing at a container
+        # that isn't running. `hand` is NOT in OPT_IN_BACKENDS, so that unwired
+        # state reads feasible:true / ready:false (the sleeping lobe), not
+        # role_infeasible.
+        _optional_backend(
+            env,
+            name="hand",
+            url_key="HAND_BASE_URL",
+            name_key="HAND_SERVED_NAME",
+            default_url="http://vllm-hand:8000",
+            default_name=_DEFAULT_HAND,
+            adapters=_hand_adapter_names(env),
+        ),
+        # The LEGACY minor co-resident generate backend (Qwen/Qwen3.5-4B, bf16).
+        # KEPT (cite-don't-delete) but no longer a TIER backend: the minor/cheap
+        # tiers now resolve to `hand` above. Like the 14B "middle" gear below,
+        # it stays addressable by explicit model id when its own env pair is
+        # set — `COMPOSE_PROFILES=minor` still works, it is simply no longer
+        # what `model=minor` selects.
         _optional_backend(
             env,
             name="minor",
@@ -674,6 +792,32 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         _opt_in_backend = next((b for b in backends if b.name == _opt_in), None)
         if _opt_in_backend is not None:
             aliases[_opt_in] = _opt_in_backend.served_name
+    # HAND ADAPTER aliases (hand-lobe plan t4): the caller-facing
+    # ``hand:<domain>`` spelling for each declared LoRA adapter, resolving to
+    # the bare name vLLM itself serves the adapter under (its
+    # ``--lora-modules <name>=<path>`` key). ``handle_post`` already rewrites
+    # the forwarded body's ``model`` field to the resolved served name, so the
+    # engine receives a name it knows without any adapter-specific code on the
+    # data path.
+    #
+    # Added only for a WIRED hand backend, mirroring the opt-in-alias contract
+    # directly above: an alias must never point at a served name nothing
+    # actually serves. Declared BEFORE the GATEWAY_ALIASES merge so an explicit
+    # operator override still wins.
+    #
+    # Note what is NOT here: ``hand`` itself. That comes from ``tier_aliases``
+    # as a capability tier, so the bare role name resolves to the BASE
+    # checkpoint and never 404s just because the adapter inventory is empty —
+    # an armed-but-empty lane is a working lane. An UNdeclared
+    # ``hand:<domain>`` gets no alias, is not any backend's served name or
+    # adapter, and therefore takes the ``is_unknown_model`` 404
+    # ``model_not_found`` — never a silent fall-back to the base weights or to
+    # another lane, which would hand a caller who asked for the legal
+    # specialist a generalist answer and call it success.
+    _hand_backend = next((b for b in backends if b.name == "hand"), None)
+    if _hand_backend is not None:
+        for _adapter in _hand_backend.adapters:
+            aliases[f"hand{HAND_ADAPTER_SEP}{_adapter}"] = _adapter
     # POOLING ROLE IDENTITY aliases — the stable address for the embed/rerank
     # lanes, mirroring what `cortex`/`senses` already give the generate lane.
     #

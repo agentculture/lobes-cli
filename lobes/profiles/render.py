@@ -78,6 +78,7 @@ ROLE_ENV_PREFIX: dict[str, str] = {
     "senses": "MULTIMODAL",
     "muse": "MUSE",
     "worker": "WORKER",
+    "hand": "HAND",
     "embedder": "EMBED",
     "reranker": "RERANK",
 }

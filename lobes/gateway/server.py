@@ -2200,7 +2200,23 @@ class _Handler(BaseHTTPRequestHandler):
             if self.peer_specs
             else None
         )
-        self._send_json(200, list_models_payload(self.table, ready, peer_served))
+        # LoRA adapters (hand-lobe plan t4): only those the owning engine's own
+        # /v1/models confirmed it loaded. A declared-but-unloaded adapter must
+        # never read as usable (#92 for adapters) — see
+        # ReadinessCache.current_adapters.
+        self._send_json(
+            200,
+            list_models_payload(
+                self.table,
+                ready,
+                peer_served,
+                (
+                    self.readiness_cache.current_adapters()
+                    if self.readiness_cache is not None
+                    else None
+                ),
+            ),
+        )
 
     def _get_capabilities(self) -> None:
         # The #81 role→endpoint contract: SEVEN first-class roles resolved to
@@ -2385,8 +2401,17 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # dials exactly what the probe verified). No proxy config → empty specs →
     # no peer thread, no proxy branch, byte-identical pre-proxy behaviour.
     peer_specs = peer_specs_from_table(table)
+    # LoRA-bearing backends (hand-lobe plan t4): the cache additionally probes
+    # each one's OWN /v1/models to learn which declared adapters the engine
+    # actually loaded. Empty for every backend with no declared adapters — i.e.
+    # every deployment that has not declared HAND_LORA_MODULES — so this adds
+    # no probe traffic and changes nothing until an operator declares one.
+    adapter_targets = {b.name: (b.base_url, b.adapters) for b in table.backends if b.adapters}
     readiness_cache = ReadinessCache.from_backends(
-        table.backends, peer_specs=tuple(peer_specs.values()), start=False
+        table.backends,
+        peer_specs=tuple(peer_specs.values()),
+        adapter_targets=adapter_targets,
+        start=False,
     )
     readiness_cache.refresh()
     readiness_cache.start()

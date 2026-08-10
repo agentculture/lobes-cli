@@ -65,6 +65,7 @@ ROLE_SERVICE: dict[str, str] = {
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
     "worker": "vllm-worker",
+    "hand": "vllm-hand",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -75,14 +76,17 @@ ROLE_SERVICE: dict[str, str] = {
 # any target that includes one needs the ``-f`` overlay AND the file scaffolded.
 _AUDIO_ROLES: frozenset[str] = frozenset({"stt", "tts"})
 
-# The colleague-stack bundle (r4): the DEFAULT-HOSTED Colleague set — the six
-# roles machine-as-brain hosts. Deliberately NOT all of :data:`lobes.roles.ROLES`:
-# the opt-in ``muse`` lobe is hosted only by a muse-hosting shape and its service
-# is compose-profile-gated, so bundling it here would break colleague-stack on
-# every default deployment. Not a role itself — ``up``'s own composite target.
+# The colleague-stack bundle (r4): the DEFAULT-HOSTED Colleague set — the SEVEN
+# roles machine-as-brain hosts (cortex, senses, hand, embedder, reranker, stt,
+# tts). Deliberately NOT all of :data:`lobes.roles.ROLES`: the opt-in ``muse``
+# and ``worker`` lobes are hosted only by their own hosting shapes and their
+# services are compose-profile-gated, so bundling them here would break
+# colleague-stack on every default deployment. `hand` IS bundled — it is
+# default-hosted and its service carries no profile gate. Not a role itself —
+# ``up``'s own composite target.
 COLLEAGUE_STACK = "colleague-stack"
 
-# Every valid ``up`` target: the seven roles (canonical order) + the bundle. Keyed
+# Every valid ``up`` target: the NINE roles (canonical order) + the bundle. Keyed
 # off :data:`lobes.roles.ROLES` so this and the role registry never drift.
 TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK,)
 

@@ -210,7 +210,12 @@ def test_run_no_catalog_minor_and_no_model_flag_raises() -> None:
 
 
 def test_run_minor_resolves_catalog_model_id(capsys) -> None:
-    """With the real catalog (t1's minor gear) and no --model, the id resolves."""
+    """With the real catalog and no --model, the cheap-tier id resolves.
+
+    ``lobes run minor`` keeps its CLI spelling for back-compat, but the gear it
+    resolves to is now the `hand` lobe — the 4B was demoted to a candidate when
+    hand took over the cheap-tier slot.
+    """
     p = _make_parser()
     args = p.parse_args(["run", "minor", "hello", "--base-url", "http://localhost/v1"])
     args.model = None  # force catalog resolution
@@ -219,7 +224,7 @@ def test_run_minor_resolves_catalog_model_id(capsys) -> None:
         rc = run.cmd_run_minor(args)
 
     assert rc == 0
-    assert mock_ct.call_args.kwargs.get("model") == "Qwen/Qwen3.5-4B"
+    assert mock_ct.call_args.kwargs.get("model") == "LiquidAI/LFM2.5-1.2B-Instruct"
 
 
 # ---------------------------------------------------------------------------

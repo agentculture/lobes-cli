@@ -96,8 +96,8 @@ class TestNoPressure:
         r = _decide(0.0, 0.0, "minor")
         assert r["mode"] == "warm"
         assert r["shed"] is False
-        assert r["servable_tier"] == "minor"
-        assert r["requested_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
+        assert r["requested_tier"] == "hand"
         assert r["reason"] == "default"
 
     def test_mild_pressure_below_degraded_does_not_shed(self):
@@ -121,7 +121,7 @@ class TestBusySwap:
         r = _decide(80.0, 5.0, "main")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
@@ -130,7 +130,7 @@ class TestBusySwap:
         r = _decide(80.0, 5.0, "multimodal")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
@@ -139,8 +139,8 @@ class TestBusySwap:
         r = _decide(80.0, 5.0, "minor")
         assert r["mode"] == "busy"
         assert r["shed"] is False
-        assert r["servable_tier"] == "minor"
-        assert r["requested_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
+        assert r["requested_tier"] == "hand"
         assert r["reason"] == "default"
 
 
@@ -156,7 +156,7 @@ class TestBusyIowait:
         r = _decide(5.0, 60.0, "main")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
@@ -164,7 +164,7 @@ class TestBusyIowait:
         r = _decide(5.0, 60.0, "multimodal")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
@@ -172,7 +172,7 @@ class TestBusyIowait:
         r = _decide(5.0, 60.0, "minor")
         assert r["mode"] == "busy"
         assert r["shed"] is False
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["reason"] == "default"
 
 
@@ -199,15 +199,15 @@ class TestBackCompatVocabulary:
 
     def test_cheap_normalizes_to_minor_no_pressure(self):
         r = _decide(0.0, 0.0, "cheap")
-        assert r["servable_tier"] == "minor"
-        assert r["requested_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
+        assert r["requested_tier"] == "hand"
         assert r["reason"] == "default"
 
     def test_hard_shed_under_pressure(self):
         r = _decide(80.0, 0.0, "hard")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
@@ -215,7 +215,7 @@ class TestBackCompatVocabulary:
         r = _decide(80.0, 0.0, "normal")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
@@ -246,7 +246,7 @@ class TestCortexSensesVocabulary:
         r = _decide(80.0, 0.0, "cortex")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "main"
         assert r["reason"] == "pressure"
 
@@ -256,7 +256,7 @@ class TestCortexSensesVocabulary:
         r = _decide(80.0, 0.0, "senses")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "multimodal"
         assert r["reason"] == "pressure"
 
@@ -264,7 +264,7 @@ class TestCortexSensesVocabulary:
         r = _decide(0.0, 60.0, "senses")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["reason"] == "pressure"
 
 
@@ -291,7 +291,7 @@ class TestWorkerVocabulary:
         r = _decide(80.0, 5.0, "worker")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "worker"
         assert r["reason"] == "pressure"
 
@@ -299,7 +299,7 @@ class TestWorkerVocabulary:
         r = _decide(5.0, 60.0, "worker")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
         assert r["requested_tier"] == "worker"
         assert r["reason"] == "pressure"
 
@@ -354,7 +354,7 @@ class TestBoundaries:
         r = _decide(SWAP_DEGRADED_THRESHOLD + 0.001, 0.0, "main")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
 
     def test_iowait_exactly_at_threshold_not_busy(self):
         """iowait == 50 → NOT busy (50 > 50 is False) → warm."""
@@ -368,7 +368,7 @@ class TestBoundaries:
         r = _decide(0.0, IOWAIT_DEGRADED_THRESHOLD + 0.001, "main")
         assert r["mode"] == "busy"
         assert r["shed"] is True
-        assert r["servable_tier"] == "minor"
+        assert r["servable_tier"] == "hand"
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +427,11 @@ class TestReturnShape:
     def test_tier_values_in_new_vocab(self, tier: str):
         """servable_tier / requested_tier are always emitted in the new vocab."""
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert r["servable_tier"] in ("main", "minor", "multimodal")
-        assert r["requested_tier"] in ("main", "minor", "multimodal")
+        # The OUTPUT vocabulary is the canonical role-derived tier names
+        # (_ROLE_TO_TIER). `minor`/`cheap` are accepted INPUTS that normalize to
+        # `hand` — the floor's role name — so they never appear on the way out.
+        assert r["servable_tier"] in ("main", "hand", "multimodal")
+        assert r["requested_tier"] in ("main", "hand", "multimodal")
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_shed_is_bool(self, tier: str):

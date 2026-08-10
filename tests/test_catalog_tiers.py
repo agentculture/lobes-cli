@@ -26,6 +26,9 @@ from lobes.runtime._parser import infer_parser
 
 _MIDDLE_ID = "nvidia/Qwen3-14B-NVFP4"
 _MINOR_ID = "Qwen/Qwen3.5-4B"
+# The gear the cheap tier resolves to since the `hand` lobe replaced the 4B in
+# that slot. `_MINOR_ID` above is retained: the 4B is demoted, not deleted.
+_HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
 _PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
 
 
@@ -113,8 +116,13 @@ def test_tier_role_map_exists_and_has_three_tiers() -> None:
 
 
 def test_tier_role_map_values() -> None:
-    """Post-#69 back-compat values: cheap->minor / normal->multimodal / hard->primary."""
-    assert TIER_ROLE["cheap"] == "minor"
+    """Back-compat values: cheap->hand / normal->multimodal / hard->primary.
+
+    ``cheap`` pointed at a ``minor`` backend role from #69 until the `hand` lobe
+    replaced Qwen3.5-4B in that slot. The tier SPELLING is unchanged — callers
+    passing ``model=cheap`` are unaffected — but the role it names is ``hand``.
+    """
+    assert TIER_ROLE["cheap"] == "hand"
     assert TIER_ROLE["normal"] == "multimodal"
     assert TIER_ROLE["hard"] == "primary"
 
@@ -124,11 +132,11 @@ def test_tier_role_map_values() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_tier_cheap_returns_minor_gear() -> None:
-    """resolve_tier('cheap') must return the 4B minor gear."""
+def test_resolve_tier_cheap_returns_the_hand_gear() -> None:
+    """resolve_tier('cheap') must return the 1.2B hand gear (it replaced the 4B)."""
     model = resolve_tier("cheap")
-    assert model.id == _MINOR_ID
-    assert model.role_hint == "minor"
+    assert model.id == _HAND_ID
+    assert model.role_hint == "hand"
 
 
 def test_resolve_tier_normal_returns_multimodal_gear() -> None:
@@ -207,7 +215,8 @@ def test_tier_role_capability_order_is_ascending_with_muse_and_worker() -> None:
     for i, role in enumerate(TIER_ROLE.values()):
         last_pos[role] = i
     roles_asc = sorted(last_pos, key=last_pos.__getitem__)
-    assert roles_asc == ["minor", "multimodal", "worker", "muse", "primary"]
+    # `hand` replaced `minor` at the bottom rung — same position, new name.
+    assert roles_asc == ["hand", "multimodal", "worker", "muse", "primary"]
 
 
 # ---------------------------------------------------------------------------

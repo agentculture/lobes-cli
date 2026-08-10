@@ -307,7 +307,14 @@ def test_shape_dry_run_json_reports_shape_and_hosts(tmp_path, monkeypatch, capsy
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["shape"] == "spark-lobe"
-    assert set(payload["shape_hosts"]) == {"cortex", "embedder", "reranker", "stt", "tts"}
+    assert set(payload["shape_hosts"]) == {
+        "cortex",
+        "hand",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    }
     assert not target.exists()
 
 

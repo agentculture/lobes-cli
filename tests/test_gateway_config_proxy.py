@@ -33,6 +33,7 @@ import pytest
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._config import (
     FEASIBLE_ENV,
+    NEVER_PROXIED_BACKENDS,
     PEER_API_KEY_ENV,
     PEER_ORIGIN_ENV,
     PEER_PROXY_ENV,
@@ -81,8 +82,16 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
     # One channel vocabulary: the proxy knob names exactly the backends the
     # feasibility / peer-origin channels name — the five core roles, the
     # opt-in worker role (thor-worker-lobe plan, t3), plus the first-class
-    # stt/tts audio roles (issue #129).
-    assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) == set(PEER_ORIGIN_ENV)
+    # stt/tts audio roles (issue #129) — MINUS the never-proxied set.
+    #
+    # `hand` is feasibility-tracked but has no peer channel at all: it is cheap
+    # enough to run on every box, so there is never a peer to refer it to (see
+    # NEVER_PROXIED_BACKENDS). Asserted as a derivation, not a hand-typed copy,
+    # so adding a role to FEASIBLE_ENV without a peer channel fails here unless
+    # the omission is DECLARED.
+    assert set(PEER_PROXY_ENV) == set(PEER_ORIGIN_ENV)
+    assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
+    assert NEVER_PROXIED_BACKENDS == {"hand"}
     assert PEER_PROXY_ENV == {
         "primary": "PRIMARY_PEER_PROXY",
         "multimodal": "MULTIMODAL_PEER_PROXY",
@@ -96,7 +105,7 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
 
 
 def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
-    assert set(PEER_API_KEY_ENV) == set(FEASIBLE_ENV)
+    assert set(PEER_API_KEY_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
     assert PEER_API_KEY_ENV == {
         "primary": "PRIMARY_PEER_API_KEY",
         "multimodal": "MULTIMODAL_PEER_API_KEY",

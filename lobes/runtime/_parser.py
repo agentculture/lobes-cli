@@ -9,6 +9,8 @@ guidance in ``templates/env.example`` (the single source of truth):
 * Qwen3-Coder / Qwen3.5 / Qwen3.6 checkpoints emit the XML function format → ``qwen3_coder``
 * Qwen3 dense models emit Hermes-style JSON tool calls → ``hermes``
 * Mistral checkpoints emit the ``[TOOL_CALLS]`` format → ``mistral``
+* Gemma 4 checkpoints emit ``<|tool_call>call:name{…}<tool_call|>`` → ``gemma4``
+* LiquidAI LFM2 / LFM2.5 emit ``<|tool_call_start|>…<|tool_call_end|>`` → ``lfm2``
 * anything else → ``None`` (unknown; leave the configured parser untouched and
   let the caller pass ``--tool-call-parser`` explicitly)
 
@@ -73,6 +75,29 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     # have NOT been booted against it; they were on a parser proven wrong for the
     # family, so this is a strictly better default, not a validated claim.
     (("gemma-4", "gemma4"), "gemma4"),
+    # LiquidAI LFM2 / LFM2.5 (the `hand` lobe's family) emits its own
+    # `<|tool_call_start|>[func(arg=val)]<|tool_call_end|>` syntax, whose
+    # delimiters are SPECIAL TOKENS — the same shape of trap that made
+    # `pythonic` silently wrong for Gemma 4 above. vLLM ships a purpose-built
+    # parser: `lfm2` -> vllm.tool_parsers.lfm2_tool_parser.Lfm2ToolParser,
+    # registered under that key in vllm/tool_parsers/__init__.py.
+    #
+    # This one is strictly safer to get wrong than the gemma4 case was: the
+    # parser's __init__ resolves BOTH delimiters through `self.vocab.get()` and
+    # RAISES when either is absent, so a tokenizer revision that dropped them
+    # fails loudly at server startup rather than degrading to the gemma4 failure
+    # mode (200 OK, well-formed call relayed as prose, tool_calls=null).
+    #
+    # Markers stay scoped to the "lfm2" family spelling in all three separator
+    # forms, matching how the Qwen3.x rule above is written. LFM2.5-1.2B-Instruct
+    # has NO thinking mode (LiquidAI ships LFM2.5-1.2B-Thinking separately), so
+    # this lane needs no --reasoning-parser companion — unlike the qwen3 and
+    # gemma4 lanes, where the parsers must be enabled as a PAIR.
+    # VALIDATION SCOPE (#108): the parser key and its special-token requirement
+    # were read from the pinned nightly image's own source; the served round-trip
+    # is validated per card as each acceptance transcript lands under
+    # docs/evidence/.
+    (("lfm2", "lfm-2"), "lfm2"),
 ]
 
 

@@ -11,7 +11,7 @@ Usage::
     lobes run minor "<prompt>" --json
 
 The minor lobe model is resolved from the supported-model catalog
-(``role_hint == "minor"``).  Override with ``--model <id>`` when the
+(``role_hint == "hand"``).  Override with ``--model <id>`` when the
 catalog entry does not yet exist or you want to target a specific model id.
 
 The gateway base URL defaults to ``http://localhost:8000/v1`` (the local
@@ -34,16 +34,21 @@ def _resolve_model(args: argparse.Namespace) -> str:
     """Resolve the model id: ``--model`` wins, else catalog lookup by role_hint.
 
     Raises :class:`~lobes.cli._errors.ModelGearError` when no ``--model`` was
-    given and the catalog has no entry with ``role_hint == "minor"``.
+    given and the catalog has no entry with ``role_hint == "hand"``.
+
+    The hint is ``"hand"``, not ``"minor"``: the ``hand`` lobe replaced
+    ``Qwen/Qwen3.5-4B`` in the cheap-tier slot, and no catalog entry carries
+    ``role_hint == "minor"`` any more (the tier *name* survives as a back-compat
+    spelling in :data:`~lobes.catalog.TIER_ROLE`; the *role* does not).
     """
     explicit = getattr(args, "model", None)
     if explicit:
         return explicit
-    models = [m for m in supported_models() if m.role_hint == "minor"]
+    models = [m for m in supported_models() if m.role_hint == "hand"]
     if not models:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="no model with role_hint='minor' found in the catalog",
+            message="no model with role_hint='hand' found in the catalog",
             remediation="pass --model <model-id> to target a specific model id",
         )
     return models[0].id
@@ -122,7 +127,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--model",
         default=None,
-        help="Override the model id (default: resolved from the catalog by role_hint='minor').",
+        help="Override the model id (default: resolved from the catalog by role_hint='hand').",
     )
     p.add_argument(
         "--system",

@@ -87,16 +87,34 @@ def _parse(argv: list[str]):
 # ---------------------------------------------------------------------------
 
 
-def test_catalog_has_minor_gear_qwen3_5_4b() -> None:
-    """The catalog has at least one role_hint='minor' entry with id='Qwen/Qwen3.5-4B'."""
-    minor_models = [m for m in supported_models() if m.role_hint == "minor"]
-    assert minor_models, "catalog must have at least one role_hint='minor' entry"
-    ids = [m.id for m in minor_models]
-    assert "Qwen/Qwen3.5-4B" in ids, f"expected 'Qwen/Qwen3.5-4B' in minor-role models; got {ids}"
+def test_catalog_has_cheap_tier_gear_with_the_hand_role_hint() -> None:
+    """The cheap tier's gear is the `hand` lobe, LiquidAI/LFM2.5-1.2B-Instruct.
+
+    This asserted ``role_hint='minor'`` / ``Qwen/Qwen3.5-4B`` until the hand lobe
+    replaced the 4B in that slot. The 4B is still in the catalog (see
+    ``test_demoted_4b_is_kept_as_a_candidate`` below) — it is just no longer the
+    gear any tier resolves to.
+    """
+    hand_models = [m for m in supported_models() if m.role_hint == "hand"]
+    assert hand_models, "catalog must have at least one role_hint='hand' entry"
+    ids = [m.id for m in hand_models]
+    assert "LiquidAI/LFM2.5-1.2B-Instruct" in ids, f"expected the hand gear; got {ids}"
 
 
-def test_infer_parser_minor_gear_is_qwen3_coder() -> None:
-    """infer_parser for 'Qwen/Qwen3.5-4B' resolves to 'qwen3_coder'."""
+def test_demoted_4b_is_kept_as_a_candidate() -> None:
+    """cite-don't-delete: the 4B survives the repoint as a plain candidate."""
+    four_b = next((m for m in supported_models() if m.id == "Qwen/Qwen3.5-4B"), None)
+    assert four_b is not None, "Qwen/Qwen3.5-4B was deleted rather than demoted"
+    assert four_b.role_hint == "candidate"
+
+
+def test_infer_parser_cheap_tier_gear_is_lfm2() -> None:
+    """infer_parser for the hand gear resolves to the purpose-built 'lfm2' parser."""
+    assert infer_parser("LiquidAI/LFM2.5-1.2B-Instruct") == "lfm2"
+
+
+def test_infer_parser_demoted_4b_is_still_qwen3_coder() -> None:
+    """The demoted 4B keeps its own parser — demotion changes the tier, not the model."""
     assert infer_parser("Qwen/Qwen3.5-4B") == "qwen3_coder"
 
 

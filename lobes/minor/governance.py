@@ -1,14 +1,26 @@
-"""Governance and escalation model for the **minor** role.
+"""Governance and escalation model for the **hand** role (the cheap tier).
 
-This module encodes *what* the minor lobe MAY do vs MUST escalate, keyed
-entirely to the *role name* ``"minor"`` — never to a specific model identifier.
-Swapping the underlying model is a catalog-only change; nothing here needs to
-change.
+This module encodes *what* the cheap-tier lobe MAY do vs MUST escalate, keyed
+entirely to the *role name* — never to a specific model identifier. Swapping the
+underlying model is a catalog-only change; nothing here needs to change.
+
+That claim was TESTED and held when the `hand` lobe took over this tier: the
+model swap itself needed nothing here. What DID change is the role NAME —
+`minor` is now a back-compat tier spelling, not a role — so :data:`ROLE` reads
+``"hand"``. The duty lists below were re-derived for an adapter-dependent
+specialist and came out unchanged; see :data:`ALLOWED` for why that is a
+decision and not an oversight. (Which checkpoint `hand` serves is deliberately
+not stated anywhere in this module — see :data:`ROLE`.)
+
+The module keeps its ``lobes.minor`` package path. That is deliberate
+cite-don't-delete: ``lobes run minor``, ``lobes route`` and ``lobes.bench`` all
+import from it, and renaming the package would break every one of them to
+express a fact the ``ROLE`` constant already states.
 
 Public API
 ----------
 ROLE : str
-    The role name this governance policy applies to (``"minor"``).
+    The role name this governance policy applies to (``"hand"``).
 ALLOWED : frozenset[str]
     Duties the minor lobe may perform locally without escalation.
 FORBIDDEN : frozenset[str]
@@ -30,11 +42,20 @@ from typing import Iterable
 # Role identity
 # ---------------------------------------------------------------------------
 
-ROLE: str = "minor"
+ROLE: str = "hand"
 """The role name this governance policy applies to.
 
 Governance is role-keyed, not model-keyed, so that the underlying model can be
 swapped in the catalog without touching this file.
+
+``"hand"``, not ``"minor"``: the `hand` lobe took over the cheap tier, and
+``minor``/``cheap`` survive only as back-compat TIER spellings that resolve to
+this same role (see :data:`lobes.catalog.TIER_ROLE`). Leaving this at
+``"minor"`` would have left exactly one authority disagreeing with every other
+surface about what governs this lane.
+
+The catalog owns which checkpoint this role serves; this module never names
+one, and ``tests/test_minor_governance.py`` asserts that.
 """
 
 # ---------------------------------------------------------------------------
@@ -52,7 +73,26 @@ ALLOWED: frozenset[str] = frozenset(
         "route",
     }
 )
-"""Duties the minor lobe may perform locally (no escalation required)."""
+"""Duties the cheap-tier lobe may perform locally (no escalation required).
+
+RE-DERIVED for an adapter-dependent specialist and deliberately UNCHANGED.
+`hand` is a trained specialist — a loaded LoRA adapter is meant to make it
+genuinely good at one domain — and the tempting move is to widen this set when
+an adapter is present. That is refused, for two reasons:
+
+* **Competence is not authority.** An adapter makes `hand` better at the duties
+  it already has; it does not grant it new ones. A legal-trained 1.2B that can
+  draft a clause well is still not the lobe that APPROVES one.
+* **Governance must be decidable without asking the engine.** Keying the
+  allowed set to which adapters happen to be loaded would make the same duty
+  legal on one box and forbidden on another, and would make this pure stdlib
+  module depend on live serving state.
+
+So the policy is flat: every `hand` request is governed identically, base or
+adapter. Widening a duty later is contract-compatible; narrowing one is a
+break — the same asymmetry that keeps ``repo_action`` in the role's forbidden
+list for v1 (see ``lobes.roles.ROLE_FORBIDDEN``, issue #180).
+"""
 
 FORBIDDEN: frozenset[str] = frozenset(
     {
@@ -63,8 +103,16 @@ FORBIDDEN: frozenset[str] = frozenset(
         "architectural_decision",
     }
 )
-"""Actions the minor lobe must NEVER perform; they always escalate to the
-primary lobe (or a human reviewer), regardless of any other conditions."""
+"""Actions the cheap-tier lobe must NEVER perform; they always escalate to the
+primary lobe (or a human reviewer), regardless of any other conditions.
+
+These are the DUTY-level spelling of ``ROLE_FORBIDDEN["hand"]`` in
+``lobes.roles`` (``final_decision`` / ``repo_action`` / ``security_decision``):
+``approve``/``finalize`` are the final decision, ``delete``/``deploy`` are repo
+and infrastructure actions, and ``architectural_decision`` is both. The two
+lists are different vocabularies — a runtime duty check here, a Colleague-facing
+contract there — describing one boundary, and neither may quietly outgrow the
+other."""
 
 # ---------------------------------------------------------------------------
 # Escalation conditions
@@ -92,8 +140,9 @@ UNCERTAINTY_THRESHOLD: float = 0.25
 """Confidence floor below which a routing/classification decision escalates.
 
 Mirrors issue #64's ``escalation.uncertainty_threshold``: when a caller supplies
-a ``confidence`` to :func:`decide` and it falls *below* this value, the minor
-lobe is too unsure to handle the task locally and the decision escalates.
+a ``confidence`` to :func:`decide` and it falls *below* this value, the
+cheap-tier lobe is too unsure to handle the task locally and the decision
+escalates.
 """
 
 # ---------------------------------------------------------------------------

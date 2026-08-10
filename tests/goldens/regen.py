@@ -134,18 +134,32 @@ def _shape_needs_goldens(shape) -> bool:
     """Whether a shape gets its own ``shapes/`` goldens.
 
     The whole-brain identity shape (hosts every :data:`DEFAULT_HOSTED_ROLES`
-    role -- the six default-hosted Colleague roles, NOT the broader
+    role -- the SEVEN default-hosted Colleague roles, NOT the broader
     :data:`~lobes.profiles.shapes.SHAPE_ROLES`, which also admits the opt-in
-    `minor` gear and the opt-in core `muse` lobe that machine-as-brain
-    deliberately never hosts -- with no overrides) renders identically to the
-    bare card profile (a non-hosted opt-in core role renders nothing at all,
-    see ``shape_render.compose_profile``), so it is validated against the
-    existing ``tests/goldens/<card>.env`` (see ``tests/test_shape_goldens.py``)
-    rather than copied into a drifting duplicate. Every shape that DROPS a
-    role, hosts `minor`/`muse`, or carries an override diverges from the bare
-    profile and gets per-card goldens of its own. General by construction: a
-    future identity shape is auto-excluded, a future mesh-lobe (or
-    small-model reference shape) auto-included.
+    `minor` gear and the opt-in core `muse`/`worker` lobes that
+    machine-as-brain deliberately never hosts -- with no overrides) renders
+    identically to the bare card profile (a non-hosted opt-in core role renders
+    nothing at all, see ``shape_render.compose_profile``), so it is validated
+    against the existing ``tests/goldens/<card>.env`` (see
+    ``tests/test_shape_goldens.py``) rather than copied into a drifting
+    duplicate. Every shape that DROPS a role, hosts `minor`/`muse`/`worker`, or
+    carries an override diverges from the bare profile and gets per-card
+    goldens of its own. General by construction: a future identity shape is
+    auto-excluded, a future mesh-lobe (or small-model reference shape)
+    auto-included.
+
+    **RE-BASELINED by the `hand` lobe (hand-lobe plan t8).**
+    :data:`DEFAULT_HOSTED_ROLES` now contains a DEFAULT-HOSTED CHEAP ROLE for
+    the first time: before `hand`, every member was a heavy lobe or a
+    pooling/audio gear, so "the whole brain" and "the expensive parts of the
+    brain" happened to name the same set. They no longer do. The identity-shape
+    invariant is unchanged in MEANING -- machine-as-brain still renders
+    byte-identically to the bare card profile, and this predicate still tests
+    exactly that -- but the byte-identical BASELINE moved, because every card
+    profile now declares `hand`. Consequently the 28 shape goldens and the
+    per-card goldens all shifted in the same commit. A regeneration that merely
+    makes the tests pass does NOT satisfy that: the diff must show ``HAND_*``
+    keys and nothing else -- no unrelated key, value, or ordering drift.
     """
     return set(shape.hosts) != set(DEFAULT_HOSTED_ROLES) or bool(shape.overrides)
 

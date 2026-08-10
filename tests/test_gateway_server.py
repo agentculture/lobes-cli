@@ -663,8 +663,9 @@ def _fleet_cfg():
     return build_config(
         {
             "PRIMARY_SERVED_NAME": "PRIMARY",
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
-            "MINOR_SERVED_NAME": "MINOR",
+            # The cheap tier resolves to the `hand` backend now.
+            "HAND_BASE_URL": "http://vllm-hand:8000",
+            "HAND_SERVED_NAME": "HAND",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
@@ -680,7 +681,7 @@ def test_handle_post_sheds_main_with_429_busy_under_pressure() -> None:
     # with a 429 busy response; the request is NOT forwarded to any backend
     # (degrade-to-minor is removed; #85). No upstream is dialed (h10).
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
     )
@@ -700,7 +701,7 @@ def test_handle_post_sheds_senses_with_429_busy_under_pressure() -> None:
     # model=normal (multimodal/senses) is ALSO shed under pressure — not degraded
     # to minor. Busy applies to any cross-capability substitution (cortex + senses).
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"normal"}', opener, pressure=_HIGH_SWAP
     )
@@ -714,14 +715,14 @@ def test_handle_post_sheds_senses_with_429_busy_under_pressure() -> None:
 def test_handle_post_minor_still_served_under_pressure() -> None:
     # An explicit minor request is the floor — served as requested, never shed.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"minor"}', opener, pressure=_HIGH_SWAP
     )
     assert resp.status == 200
-    assert calls[0][0] == "minor"  # served, not shed
+    assert calls[0][0] == "hand"  # served, not shed
     headers = dict(resp.headers)
-    assert headers["X-Lobes-Tier"] == "minor"
+    assert headers["X-Lobes-Tier"] == "hand"
     assert headers["X-Lobes-Tier-Reason"] == "default"
 
 
@@ -733,7 +734,7 @@ def test_busy_429_is_distinguishable_from_503_owner_down() -> None:
     # and both are distinct from the terminal 502 (malformed table) and from a
     # relayed upstream 404 ("model does not exist").
     table, cfg = _fleet_cfg()
-    opener, _ = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, _ = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     busy = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_HIGH_SWAP
     )
@@ -754,7 +755,7 @@ def test_busy_429_is_distinguishable_from_503_owner_down() -> None:
 def test_handle_post_override_forces_main_under_pressure() -> None:
     # X-Lobes-Override forces the requested tier despite degraded pressure.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table,
         cfg,
@@ -775,7 +776,7 @@ def test_handle_post_override_forces_main_under_pressure() -> None:
 
 def test_handle_post_no_pressure_keeps_main_reason_default() -> None:
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener, pressure=_NO_PRESSURE
     )
@@ -789,7 +790,7 @@ def test_handle_post_plain_model_gets_no_tier_headers() -> None:
     # A concrete model id is never downgraded and carries no tier headers, even
     # under high pressure — the existing routing path is untouched.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', opener, pressure=_HIGH_SWAP
     )
@@ -803,7 +804,7 @@ def test_handle_post_without_pressure_skips_downgrade_layer() -> None:
     # pressure=None (no cache wired) → tier aliases resolve via the static table
     # (t5 behaviour), no tier headers, no downgrade.
     table, cfg = _fleet_cfg()
-    opener, calls = _opener({"minor": 200, "multimodal": 200, "primary": 200})
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"hard"}', opener)
     assert calls[0][0] == "primary"  # hard → primary via static alias
     assert "X-Lobes-Tier" not in dict(resp.headers)

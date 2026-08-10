@@ -46,7 +46,7 @@ import yaml
 from lobes.assess import _trace_field
 from lobes.catalog import SUPPORTED_MODELS, resolve_tier
 from lobes.gateway._config import (
-    _DEFAULT_MINOR,
+    _DEFAULT_HAND,
     _DEFAULT_MULTIMODAL,
     _DEFAULT_PRIMARY,
     build_config,
@@ -66,7 +66,8 @@ _LEGACY_14B_ID = "nvidia/Qwen3-14B-NVFP4"
 # (coolthor/…); the coder fine-tune (sakamakismile/…) is kept but demoted to a
 # candidate — see tests/test_catalog.py for the dedicated coder coverage.
 _GEMMA_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
-_MINOR_ID = "Qwen/Qwen3.5-4B"
+# The gear the cheap tier resolves to since the hand lobe replaced the 4B.
+_HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
 _PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
 
 # Tiny 1×1 RGB PNG (valid PNG, useful as a minimal image payload). Used only by
@@ -129,7 +130,7 @@ _TINY_WAV_B64 = _build_tiny_wav_b64()
 
 # A three-tier fleet env (primary always wired; minor + multimodal explicit).
 _FULL_FLEET_ENV = {
-    "MINOR_BASE_URL": "http://vllm-minor:8000",
+    "HAND_BASE_URL": "http://vllm-hand:8000",
     "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
 }
 
@@ -158,21 +159,22 @@ class TestTierResolutionGateway:
         table, _ = build_config({"MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000"})
         assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
 
-    def test_minor_resolves_to_4b_via_gateway(self) -> None:
-        # model=minor must route to the Qwen 4B served name when wired.
-        table, _ = build_config({"MINOR_BASE_URL": "http://vllm-minor:8000"})
-        assert resolve_model(table, "minor") == _DEFAULT_MINOR
+    def test_minor_resolves_to_the_hand_gear_via_gateway(self) -> None:
+        # model=minor routes to the `hand` served name — the hand lobe replaced
+        # the Qwen 4B in this tier; `minor` is a back-compat spelling for it.
+        table, _ = build_config({"HAND_BASE_URL": "http://vllm-hand:8000"})
+        assert resolve_model(table, "minor") == _DEFAULT_HAND
 
     def test_full_fleet_three_tier_aliases_all_resolve(self) -> None:
         # With both optional backends wired, all six tier aliases resolve correctly.
         table = _build_full_fleet()
         assert resolve_model(table, "main") == _DEFAULT_PRIMARY
         assert resolve_model(table, "multimodal") == _DEFAULT_MULTIMODAL
-        assert resolve_model(table, "minor") == _DEFAULT_MINOR
+        assert resolve_model(table, "minor") == _DEFAULT_HAND
         # Back-compat aliases agree.
         assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
         assert resolve_model(table, "normal") == _DEFAULT_MULTIMODAL
-        assert resolve_model(table, "cheap") == _DEFAULT_MINOR
+        assert resolve_model(table, "cheap") == _DEFAULT_HAND
 
     def test_default_primary_constant_matches_catalog(self) -> None:
         # The gateway's _DEFAULT_PRIMARY constant must agree with the catalog
@@ -184,9 +186,9 @@ class TestTierResolutionGateway:
         gemma = resolve_tier("multimodal")
         assert gemma.id == _DEFAULT_MULTIMODAL
 
-    def test_default_minor_constant_matches_catalog(self) -> None:
-        minor = resolve_tier("minor")
-        assert minor.id == _DEFAULT_MINOR
+    def test_default_cheap_tier_constant_matches_catalog(self) -> None:
+        hand = resolve_tier("minor")
+        assert hand.id == _DEFAULT_HAND
 
 
 class TestCatalogTierResolution:
@@ -204,11 +206,11 @@ class TestCatalogTierResolution:
         assert m.task == "generate"
         assert m.id == _GEMMA_ID
 
-    def test_minor_resolve_tier_returns_4b(self) -> None:
+    def test_minor_resolve_tier_returns_the_hand_gear(self) -> None:
         m = resolve_tier("minor")
-        assert m.role_hint == "minor"
+        assert m.role_hint == "hand"
         assert m.task == "generate"
-        assert m.id == _MINOR_ID
+        assert m.id == _HAND_ID
 
 
 class TestLegacy14BProfileSelectability:

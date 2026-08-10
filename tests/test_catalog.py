@@ -313,11 +313,14 @@ _MINOR_ID = "Qwen/Qwen3.5-4B"
 
 
 def test_minor_gear_exists_with_correct_fields() -> None:
-    # The minor gear must be present in the catalog with exactly the fields the
-    # acceptance criteria specify — any field drift is a misconfiguration bug.
+    # The 4B gear must STILL be present in the catalog with exactly the fields
+    # the original acceptance criteria specify — any field drift is a
+    # misconfiguration bug. Only its role_hint moved: the `hand` lobe took over
+    # the cheap-tier slot and the 4B was demoted to a plain candidate
+    # (cite-don't-delete), so the checkpoint stays selectable via `lobes switch`.
     minor = next((m for m in SUPPORTED_MODELS if m.id == _MINOR_ID), None)
     assert minor is not None, f"{_MINOR_ID} not found in catalog"
-    assert minor.role_hint == "minor"
+    assert minor.role_hint == "candidate"
     assert minor.shape == "hybrid linear-attn + ViT (multimodal)"
     assert minor.context == "256K native"
     assert minor.native_max_model_len == 262144
@@ -526,12 +529,18 @@ def test_14b_is_demoted_to_candidate() -> None:
 
 def test_tier_role_map_uses_new_vocabulary() -> None:
     # Primary vocabulary: main/minor/multimodal. Back-compat aliases retained.
+    # `minor`/`cheap` point at the `hand` BACKEND since the hand lobe replaced
+    # Qwen3.5-4B in that slot — the tier NAMES survive for back-compat, the
+    # `minor` backend role does not.
     assert TIER_ROLE["main"] == "primary"
-    assert TIER_ROLE["minor"] == "minor"
+    assert TIER_ROLE["minor"] == "hand"
     assert TIER_ROLE["multimodal"] == "multimodal"
-    assert TIER_ROLE["cheap"] == "minor"
+    assert TIER_ROLE["cheap"] == "hand"
     assert TIER_ROLE["normal"] == "multimodal"
     assert TIER_ROLE["hard"] == "primary"
+    assert TIER_ROLE["hand"] == "hand"
+    # No tier resolves to a "minor" backend role any more.
+    assert "minor" not in set(TIER_ROLE.values())
 
 
 def test_resolve_tier_multimodal_and_normal_return_gemma() -> None:
@@ -552,16 +561,74 @@ def test_resolve_tier_main_and_hard_return_primary() -> None:
         assert model.task == "generate"
 
 
-def test_resolve_tier_minor_and_cheap_return_4b_minor() -> None:
-    for tier in ("minor", "cheap"):
+def test_resolve_tier_minor_cheap_and_hand_all_return_the_hand_gear() -> None:
+    # The hand lobe REPLACED Qwen3.5-4B in the cheap-tier slot, so all three
+    # spellings resolve to the same lane. `minor`/`cheap` are back-compat names
+    # for it, not a second gear.
+    for tier in ("minor", "cheap", "hand"):
         model = resolve_tier(tier)
-        assert model.role_hint == "minor"
-        assert model.id == _MINOR_ID
+        assert model.role_hint == "hand", f"resolve_tier({tier!r}) -> {model.role_hint}"
+        assert model.id == _HAND_ID, f"resolve_tier({tier!r}) -> {model.id}"
+
+
+def test_demoted_4b_remains_in_catalog_after_the_hand_repoint() -> None:
+    # cite-don't-delete: repointing the tier must not remove the checkpoint.
+    # It stays selectable via `lobes switch` even though no tier resolves to it.
+    assert any(m.id == _MINOR_ID for m in SUPPORTED_MODELS), f"{_MINOR_ID} was deleted, not demoted"
 
 
 def test_resolve_tier_unknown_still_raises_value_error() -> None:
     with pytest.raises(ValueError, match="unknown tier"):
         resolve_tier("ultra")
+
+
+# ---------------------------------------------------------------------------
+# `hand` gear: LiquidAI/LFM2.5-1.2B-Instruct — the ninth Colleague role and the
+# fleet's designated fine-tuning base (hand-lobe plan, t1).
+# ---------------------------------------------------------------------------
+
+_HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
+
+
+def test_hand_gear_exists_with_correct_fields() -> None:
+    hand = next((m for m in SUPPORTED_MODELS if m.id == _HAND_ID), None)
+    assert hand is not None, f"{_HAND_ID} not found in catalog"
+    assert hand.role_hint == "hand"
+    assert hand.native_max_model_len == 32768
+    # bf16 sentinel: the vllm-hand lane omits --quantization entirely rather
+    # than passing it empty, which would corrupt the weights.
+    assert hand.quantization == "none"
+    assert hand.tool_parser == "lfm2"
+    assert hand.task == "generate"
+    assert hand.doc == "lfm2.5-1.2b-hand.md"
+    # Text-only: no ViT, no MoE, no speculative draft head in v1.
+    assert hand.dimension == 0
+    assert hand.moe_backend == ""
+    assert hand.speculative_config == ""
+    assert hand.hf_overrides == ""
+
+
+def test_hand_is_the_only_gear_carrying_the_hand_role_hint() -> None:
+    # `resolve_tier` returns the FIRST generate model matching the role, so a
+    # second hand-hinted entry would silently decide the tier by list order.
+    hand_hinted = [m.id for m in SUPPORTED_MODELS if m.role_hint == "hand"]
+    assert hand_hinted == [_HAND_ID], f"role_hint='hand' models: {hand_hinted}"
+
+
+def test_tier_aliases_capability_order_is_hand_multimodal_worker_muse_primary() -> None:
+    """Assert the ORDER, not just the mapping.
+
+    ``tier_aliases`` derives ascending capability order from each role's *last*
+    occurrence position in ``TIER_ROLE``'s values sequence, so the dict's key
+    ORDER is load-bearing: it decides which lane an unwired tier falls back
+    upward to. A reorder that still maps every key correctly can silently
+    invert the ladder, which is why this asserts the sequence.
+    """
+    last_pos: dict[str, int] = {}
+    for index, role in enumerate(TIER_ROLE.values()):
+        last_pos[role] = index
+    ascending = sorted(last_pos, key=lambda role: last_pos[role])
+    assert ascending == ["hand", "multimodal", "worker", "muse", "primary"]
 
 
 # ---------------------------------------------------------------------------

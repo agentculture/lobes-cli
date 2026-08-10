@@ -1,12 +1,13 @@
 """Tests for the role registry + capability-metadata core (issue #81, task t4).
 
-``lobes.roles`` defines the EIGHT first-class Colleague-facing roles and
+``lobes.roles`` defines the NINE first-class Colleague-facing roles and
 resolves each to live metadata from the gateway config + the catalog:
 
     cortex   → primary generate backend   (Qwen 27B MTP) — reasoning/authority
     senses   → multimodal generate backend (Gemma 4 12B)  — intake/perception
     muse     → muse generate backend       (Gemma 4 31B)  — creative/ideation
     worker   → worker generate backend     (Qwen3.6-35B-A3B) — fast ground-work
+    hand     → hand generate backend       (LFM2.5-1.2B) — fine-tuning base
     embedder → embed pooling backend       (Qwen3-Embedding-0.6B, /v1/embeddings)
     reranker → score/rerank backend        (Qwen3-Reranker-0.6B, /v1/rerank)
     stt      → Parakeet audio sidecar       (/v1/audio/transcriptions) — opt-in
@@ -19,6 +20,9 @@ one builder feeds both the CLI (t5) and the gateway ``GET /capabilities`` (t6).
 
 from __future__ import annotations
 
+import pytest
+
+from lobes import roles as roles_mod
 from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import build_config
 from lobes.roles import (
@@ -44,7 +48,17 @@ _MULTIMODAL_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 
-_EXPECTED_ROLES = {"cortex", "senses", "muse", "worker", "embedder", "reranker", "stt", "tts"}
+_EXPECTED_ROLES = {
+    "cortex",
+    "senses",
+    "muse",
+    "worker",
+    "hand",
+    "embedder",
+    "reranker",
+    "stt",
+    "tts",
+}
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
 _WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
@@ -104,14 +118,14 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 
 
 # ---------------------------------------------------------------------------
-# Acceptance 1 — exactly the eight roles, each with the full metadata block
+# Acceptance 1 — exactly the nine roles, each with the full metadata block
 # ---------------------------------------------------------------------------
 
 
-def test_registry_returns_exactly_the_eight_roles() -> None:
+def test_registry_returns_exactly_the_nine_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 8
+    assert len(registry) == 9
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -367,7 +381,7 @@ def test_senses_has_tools_but_not_the_tool_use_responsibility() -> None:
     assert "tool_use" not in senses.responsibilities
 
 
-def test_static_responsibility_maps_cover_all_eight_roles() -> None:
+def test_static_responsibility_maps_cover_all_nine_roles() -> None:
     assert set(ROLE_RESPONSIBILITIES) == _EXPECTED_ROLES
     assert set(ROLE_FORBIDDEN) == _EXPECTED_ROLES
     assert ROLE_RESPONSIBILITIES["muse"] == (
@@ -640,6 +654,7 @@ def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "hand",
         "embedder",
         "reranker",
     }
@@ -852,6 +867,7 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
         "multimodal",
         "muse",
         "worker",
+        "hand",
         "embed",
         "rerank",
         "stt",
@@ -861,15 +877,106 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# All eight roles expose the identical key set
+# All nine roles expose the identical key set
 # ---------------------------------------------------------------------------
 
 
-def test_all_eight_roles_expose_identical_key_set() -> None:
+def test_all_nine_roles_expose_identical_key_set() -> None:
     """Every role's asdict keys are identical — no role has extra or missing fields."""
     import dataclasses
 
     registry = _registry(_full_env())
     first_keys = set(dataclasses.asdict(registry["cortex"]).keys())
-    for name in ("senses", "muse", "worker", "embedder", "reranker", "stt", "tts"):
+    for name in ("senses", "muse", "worker", "hand", "embedder", "reranker", "stt", "tts"):
         assert set(dataclasses.asdict(registry[name]).keys()) == first_keys
+
+
+# ---------------------------------------------------------------------------
+# The per-role table completeness guard (hand-lobe plan t2)
+# ---------------------------------------------------------------------------
+# `hand` landed as the ninth role by adding an entry to six separate per-role
+# tables. Nothing structural forced all six — a role added to ROLES but missed
+# in one table fails only wherever that table is indexed, which is exactly how
+# `worker` shipped half-wired in 0.54.6 (present in _config.py's peer dicts,
+# absent from server.py's, so its proxy went silently inert). These tests
+# iterate ROLES so a TENTH role cannot half-land the same way.
+
+# Tables keyed by EVERY role in ROLES.
+_ALL_ROLE_TABLES = {
+    "ROLE_BACKEND": roles_mod.ROLE_BACKEND,
+    "ROLE_PATH": roles_mod.ROLE_PATH,
+    "ROLE_RESPONSIBILITIES": roles_mod.ROLE_RESPONSIBILITIES,
+    "ROLE_FORBIDDEN": roles_mod.ROLE_FORBIDDEN,
+}
+
+# Tables scoped to the gateway-fronted (non-audio) roles only: stt/tts are
+# path-routed sidecars with no catalog entry and no token context, so their
+# absence here is by design, not an omission.
+_GATEWAY_ROLE_TABLES = {
+    "ROLE_ROLE_HINT": roles_mod.ROLE_ROLE_HINT,
+    "ROLE_MAX_MODEL_LEN_ENV": roles_mod.ROLE_MAX_MODEL_LEN_ENV,
+}
+
+_AUDIO = ("stt", "tts")
+
+
+@pytest.mark.parametrize("table_name", sorted(_ALL_ROLE_TABLES))
+def test_every_role_has_an_entry_in_every_all_role_table(table_name: str) -> None:
+    table = _ALL_ROLE_TABLES[table_name]
+    missing = [role for role in roles_mod.ROLES if role not in table]
+    assert not missing, f"{table_name} is missing: {missing}"
+    extra = [key for key in table if key not in roles_mod.ROLES]
+    assert not extra, f"{table_name} has entries for non-roles: {extra}"
+
+
+@pytest.mark.parametrize("table_name", sorted(_GATEWAY_ROLE_TABLES))
+def test_every_gateway_role_has_an_entry_in_every_gateway_role_table(table_name: str) -> None:
+    table = _GATEWAY_ROLE_TABLES[table_name]
+    expected = [role for role in roles_mod.ROLES if role not in _AUDIO]
+    missing = [role for role in expected if role not in table]
+    assert not missing, f"{table_name} is missing: {missing}"
+    extra = [key for key in table if key not in expected]
+    assert not extra, f"{table_name} has entries for non-roles: {extra}"
+
+
+def test_roles_has_nine_entries_including_hand() -> None:
+    assert len(roles_mod.ROLES) == 9
+    assert "hand" in roles_mod.ROLES
+
+
+def test_hand_responsibilities_and_forbidden_match_the_v1_contract() -> None:
+    assert roles_mod.ROLE_RESPONSIBILITIES["hand"] == (
+        "domain_mastery",
+        "learned_skill",
+        "specialized_task",
+        "tool_use",
+    )
+    # v1 withholds repo_action: ADDING a responsibility later is
+    # contract-compatible, REMOVING one is a break (issue #180 tracks granting
+    # it once adapters exist).
+    assert roles_mod.ROLE_FORBIDDEN["hand"] == (
+        "final_decision",
+        "repo_action",
+        "security_decision",
+    )
+
+
+def test_hand_advertises_no_vision_tokens() -> None:
+    """LFM2.5-1.2B-Instruct is text-only — the vision variant is a different arch."""
+    responsibilities = roles_mod.ROLE_RESPONSIBILITIES["hand"]
+    assert "image_understanding" not in responsibilities
+    assert "video_understanding" not in responsibilities
+
+
+def test_measure_family_map_covers_every_role() -> None:
+    """Guards the documented KeyError class at roles_measure.py's family lookup.
+
+    A role in ROLES but absent from _FAMILY_BY_ROLE raises KeyError the moment
+    `lobes measure` reaches it — a crash, not a degraded reading.
+    """
+    from lobes import roles_measure
+
+    missing = [role for role in roles_mod.ROLES if role not in roles_measure._FAMILY_BY_ROLE]
+    assert not missing, f"_FAMILY_BY_ROLE is missing: {missing}"
+    assert roles_measure._FAMILY_BY_ROLE["hand"] == "llm"
+    assert "hand" in roles_measure._LLM_ROLES

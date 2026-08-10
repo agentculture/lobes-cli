@@ -23,7 +23,18 @@ from lobes.cli import _build_parser, main
 from lobes.cli._commands import up as up_cmd
 from lobes.runtime import _compose
 
-_SIX = ["vllm-primary", "vllm-multimodal", "vllm-embed", "vllm-rerank", "stt", "chatterbox"]
+# The colleague-stack bundle: DEFAULT_HOSTED_ROLES in canonical role order.
+# SEVEN since the `hand` lobe landed — it is default-hosted and its service
+# carries no compose-profile gate, unlike the opt-in muse/worker lobes.
+_STACK = [
+    "vllm-primary",
+    "vllm-multimodal",
+    "vllm-hand",
+    "vllm-embed",
+    "vllm-rerank",
+    "stt",
+    "chatterbox",
+]
 
 
 def _ok() -> types.SimpleNamespace:
@@ -102,32 +113,32 @@ def test_up_fleet_role_ignores_audio_overlay_even_when_present(tmp_path, capsys)
     assert "docker-compose.audio.yml" not in payload["command"]
 
 
-# --- acceptance 1: colleague-stack = all six across both compose files -----
+# --- acceptance 1: colleague-stack = every default role, both compose files -
 
 
-def test_up_colleague_stack_dry_run_covers_all_six(tmp_path, capsys) -> None:
+def test_up_colleague_stack_dry_run_covers_every_default_role(tmp_path, capsys) -> None:
     _scaffold_fleet_audio(tmp_path)
     rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["dry_run"] is True
     assert payload["target"] == "colleague-stack"
-    # cortex+senses+embedder+reranker AND stt+tts (r4), canonical role order.
-    assert payload["services"] == _SIX
+    # cortex+senses+hand+embedder+reranker AND stt+tts, canonical role order.
+    assert payload["services"] == _STACK
     # ...across the fleet + audio compose files.
     assert payload["command"] == (
         "docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d "
-        "vllm-primary vllm-multimodal vllm-embed vllm-rerank stt chatterbox"
+        "vllm-primary vllm-multimodal vllm-hand vllm-embed vllm-rerank stt chatterbox"
     )
 
 
-def test_up_colleague_stack_text_plan_names_the_six(tmp_path, capsys) -> None:
+def test_up_colleague_stack_text_plan_names_every_default_role(tmp_path, capsys) -> None:
     _scaffold_fleet_audio(tmp_path)
     rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path)])
     assert rc == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out
-    for service in _SIX:
+    for service in _STACK:
         assert service in out
 
 
@@ -216,7 +227,7 @@ def test_up_apply_colleague_stack_runs_full_argv(tmp_path, monkeypatch) -> None:
         "docker-compose.audio.yml",
         "up",
         "-d",
-        *_SIX,
+        *_STACK,
     ]
 
 
@@ -330,19 +341,19 @@ def test_up_muse_with_activation_targets_vllm_muse(tmp_path, capsys) -> None:
 
 
 def test_up_colleague_stack_excludes_the_opt_in_muse_lobe(tmp_path, capsys) -> None:
-    """colleague-stack stays the SIX default roles — bundling the opt-in,
-    profile-gated muse service would break the bundle on every default
-    deployment."""
+    """colleague-stack stays the DEFAULT-HOSTED roles — bundling an opt-in,
+    profile-gated service (muse or worker) would break the bundle on every
+    default deployment."""
     _scaffold_fleet_audio(tmp_path)
     rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert "vllm-muse" not in payload["services"]
-    assert set(payload["services"]) == set(_SIX)
+    assert set(payload["services"]) == set(_STACK)
 
 
 def test_up_colleague_stack_on_mesh_lobe_scaffold_errors(tmp_path, capsys) -> None:
-    """The six-role bundle needs every role — a mesh-lobe box that drops one
+    """The bundle needs every default role — a mesh-lobe box that drops one
     refuses the bundle instead of silently starting a subset."""
     templates = {**_compose.FLEET_TEMPLATES, **_compose.AUDIO_TEMPLATES}
     _compose.write_scaffold(tmp_path, force=True, templates=templates)

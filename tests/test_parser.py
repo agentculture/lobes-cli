@@ -55,6 +55,18 @@ from lobes.runtime import _parser
         ("coolthor/gemma-4-12B-it-NVFP4A16", "gemma4"),
         ("some/gemma-4-27b-it", "gemma4"),
         ("some/gemma4-9b", "gemma4"),
+        # LiquidAI LFM2 / LFM2.5 (the `hand` lobe) → the purpose-built "lfm2"
+        # parser (Lfm2ToolParser). Its delimiters
+        # <|tool_call_start|>/<|tool_call_end|> are special tokens — the same
+        # trap that disproved "pythonic" for Gemma 4 above.
+        ("LiquidAI/LFM2.5-1.2B-Instruct", "lfm2"),
+        ("LiquidAI/LFM2-1.2B", "lfm2"),
+        ("some/lfm2.5-1.2b-legal-lora", "lfm2"),
+        ("some/lfm-2-350m", "lfm2"),
+        # Unrelated ids containing neither marker stay unknown — "liquid" alone
+        # must not match, or an unrelated checkpoint gets a parser it can't use.
+        ("LiquidAI/LFM1-7B", None),
+        ("some/liquid-neural-net", None),
     ],
 )
 def test_infer_parser(model, expected) -> None:

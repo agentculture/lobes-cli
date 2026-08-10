@@ -164,6 +164,33 @@ quantization = "compressed-tensors"
 # 2026-07-16/17) used it; FlashInfer is unvalidated here (docs/orin-profiles.md).
 attention_backend = "TRITON_ATTN"
 
+[roles.hand]
+# The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
+# base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
+# ViT, no thinking mode; served with --enable-lora ARMED and (in v1) an EMPTY
+# adapter inventory. See docs/lfm2.5-1.2b-hand.md.
+#
+# quantization is DELIBERATELY ABSENT from this block, on every card: the
+# catalog's quantization="none" bf16 sentinel means the lane must omit
+# --quantization ENTIRELY. Declaring it here — even as an empty string — would
+# render a flag that corrupts bf16 weights.
+#
+# BUDGET: DECLARED, NOT MEASURED (#108), and deliberately HIGHER than the
+# 128 GB cards' 0.06 — this is why the schema declares hand's util PER CARD
+# rather than once globally. On a 64 GB Orin 0.06 is only ~3.84 GiB, which
+# leaves ~1.4 GiB of KV after the ~2.4 GiB of weights: servable, but thin enough
+# that a couple of concurrent 32K requests could exhaust it. 0.10 (~6.4 GiB)
+# restores a comparable KV margin. Total 0.57 -> 0.67. The Orin value must be
+# validated by an ACTUAL BOOT at the served max_model_len (t10/t12), never
+# inferred from the Spark's.
+feasible = true
+model = "LiquidAI/LFM2.5-1.2B-Instruct"
+gpu_mem_util = 0.10
+max_model_len = 32768
+# TRITON_ATTN: the conservative sm_87 carry-over every role that booted on this
+# box uses. FlashInfer is unvalidated here (docs/orin-profiles.md).
+attention_backend = "TRITON_ATTN"
+
 [roles.embedder]
 feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"

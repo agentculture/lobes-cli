@@ -350,9 +350,55 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
     ),
     SupportedModel(
+        id="LiquidAI/LFM2.5-1.2B-Instruct",
+        # The `hand` lobe — the fleet's NINTH Colleague role and its designated
+        # fine-tuning base (issue #81 role set; the hand-lobe spec/plan under
+        # docs/specs + docs/plans). "Muscle memory": one cheap base, many LoRA
+        # adapters, each mastering a domain. This is the gear the `minor`/`cheap`
+        # tier now resolves to — it REPLACES Qwen/Qwen3.5-4B below in that slot
+        # (which stays in the catalog as a plain candidate, cite-don't-delete).
+        #
+        # Architecture: LFM2.5 is a short-conv + GQA hybrid (Lfm2ForCausalLM),
+        # registered in vLLM >= 0.23.0. Verified live against the exact pinned
+        # nightly digest on a physical Jetson AGX Thor (2026-08-10):
+        # VLLM_VERSION 0.23.1rc1.dev672+g93d8f834d, LFM2_REGISTERED True.
+        #
+        # quantization="none" is the bf16/unquantized sentinel — VLLM_QUANTIZATION
+        # is NOT written on switch, and the `vllm-hand` fleet lane omits the
+        # --quantization flag entirely rather than passing it empty. At ~1.2B
+        # params (~2.4 GiB bf16) that is the point: cheap enough to co-reside on
+        # every card in the mesh.
+        #
+        # TEXT-ONLY: no ViT, so the lane carries no --language-model-only (there is
+        # nothing to switch off) and `hand` advertises neither image_understanding
+        # nor video_understanding. No thinking mode either — LiquidAI ships
+        # LFM2.5-1.2B-Thinking as a SEPARATE checkpoint — so unlike the cortex
+        # (qwen3) and Gemma 4 (gemma4) lanes this one needs NO --reasoning-parser.
+        #
+        # Tool calls use LFM2's own <|tool_call_start|>/<|tool_call_end|> delimiters,
+        # which are SPECIAL TOKENS — the same trap that made `pythonic` silently
+        # wrong for Gemma 4. vLLM ships a purpose-built "lfm2" parser
+        # (vllm/tool_parsers/lfm2_tool_parser.py, registered as "lfm2"); its
+        # __init__ resolves both delimiters via self.vocab.get() and RAISES if
+        # either is missing, so a tokenizer revision without them fails loudly at
+        # startup instead of degrading to prose. See docs/lfm2.5-1.2b-hand.md.
+        role_hint="hand",
+        shape="hybrid short-conv + GQA (text-only)",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="lfm2",
+        quantization="none",
+        status="configured",
+        doc="lfm2.5-1.2b-hand.md",
+        task="generate",
+    ),
+    SupportedModel(
         id="Qwen/Qwen3.5-4B",
-        # bf16 base (the unsloth-LoRA fine-tune target): the fleet's first LoRA
-        # target and "minor" small-brain companion to the 27B primary. Multimodal
+        # DEMOTED to a plain candidate (cite-don't-delete) when the `hand` lobe
+        # above took over the minor/cheap tier and the LoRA-base duty. It was the
+        # fleet's first LoRA target and "minor" small-brain companion to the 27B
+        # primary; nothing about the checkpoint changed, only which gear the tier
+        # resolves to. Still selectable via `lobes switch`. Multimodal
         # (hybrid linear-attn + ViT) — serve text-only via --language-model-only.
         # Built-in MTP head not used in v1 (no speculative_config carried).
         # quantization="none" is the bf16/unquantized sentinel — VLLM_QUANTIZATION
@@ -360,7 +406,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # flag from the compose command: by hand (the single-model template defaults
         # to --quantization=modelopt when VLLM_QUANTIZATION is absent, which would
         # corrupt bf16 weights). See docs/qwen3.5-4b-minor.md.
-        role_hint="minor",
+        role_hint="candidate",
         shape="hybrid linear-attn + ViT (multimodal)",
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
@@ -764,22 +810,31 @@ MTP_TOKENIZER_OVERRIDE = "mmangkad/Qwen3.6-27B-NVFP4"
 #:   muse   → muse       (Gemma 4 31B creative/ideation lobe — role IS the
 #:                        backend name; opt-in, hosted only by a muse-hosting
 #:                        deployment shape)
+#:   hand   → hand       (LiquidAI LFM2.5-1.2B fine-tuning base — role IS the
+#:                        backend name; default-hosted on every card, and the
+#:                        gear the minor/cheap tier resolves to since the hand
+#:                        lobe replaced Qwen3.5-4B in that slot)
 TIER_ROLE: dict[str, str] = {
-    # Primary vocabulary.
+    # Primary vocabulary. ``minor`` (and its ``cheap`` alias) point at the
+    # ``hand`` backend: hand REPLACED the 4B in the cheap-tier slot, so the two
+    # spellings are the same lane, not two lanes. There is no ``minor`` backend
+    # role any more — the tier name survives for back-compat, the role does not.
     "main": "primary",
-    "minor": "minor",
+    "minor": "hand",
     "multimodal": "multimodal",
     # Back-compat aliases.
-    "cheap": "minor",
+    "cheap": "hand",
     "normal": "multimodal",
     "hard": "primary",
     # Capability-ROLE names (alias the same backends as main / multimodal;
-    # muse/worker are their own backends). Order matters: ``tier_aliases``
+    # hand/muse/worker are their own backends). Order matters: ``tier_aliases``
     # derives ascending capability order from each role's *last* occurrence
-    # position here, so a multimodal-role alias must appear before the worker
-    # one, worker before the muse one, and muse before a primary-role one
-    # (senses < worker < muse < cortex) to keep the last-occurrence sequence
-    # ascending (minor < multimodal < worker < muse < primary).
+    # position here, so the hand-role alias must appear before a multimodal one,
+    # multimodal before the worker one, worker before the muse one, and muse
+    # before a primary-role one (hand < senses < worker < muse < cortex) to keep
+    # the last-occurrence sequence ascending
+    # (hand < multimodal < worker < muse < primary).
+    "hand": "hand",
     "senses": "multimodal",
     "worker": "worker",
     "muse": "muse",
@@ -794,9 +849,11 @@ def resolve_tier(tier: str) -> "SupportedModel":
     :param tier: A tier alias — one of the :data:`TIER_ROLE` keys. The primary
         vocabulary is ``"main"`` / ``"minor"`` / ``"multimodal"``; the legacy
         ``"cheap"`` / ``"normal"`` / ``"hard"`` names are retained as aliases.
-        ``"main"`` and ``"hard"`` resolve to the primary; ``"minor"`` and
-        ``"cheap"`` to the 4B minor; ``"multimodal"`` and ``"normal"`` to the
-        Gemma 4 multimodal gear.
+        ``"main"`` and ``"hard"`` resolve to the primary; ``"minor"``,
+        ``"cheap"`` and ``"hand"`` all resolve to the 1.2B ``hand`` gear (which
+        replaced the 4B in that slot — the 4B is still in the catalog as a
+        candidate, but no tier resolves to it); ``"multimodal"`` and ``"normal"``
+        to the Gemma 4 multimodal gear.
     :raises ValueError: If *tier* is not a known key in :data:`TIER_ROLE`.
     """
     role = TIER_ROLE.get(tier)

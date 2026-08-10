@@ -1,10 +1,10 @@
-"""The role registry — the eight first-class, Colleague-facing lobes (issue #81).
+"""The role registry — the nine first-class, Colleague-facing lobes (issue #81).
 
-lobes exposes the fleet not as a bag of model ids but as EIGHT discoverable
+lobes exposes the fleet not as a bag of model ids but as NINE discoverable
 *roles*, each resolved to a live endpoint + metadata so a caller (Colleague)
 can address a capability by role — ``cortex``, ``senses``, ``muse``,
-``worker``, ``embedder``, ``reranker``, ``stt``, ``tts`` — without hardcoding
-any single model endpoint:
+``worker``, ``hand``, ``embedder``, ``reranker``, ``stt``, ``tts`` — without
+hardcoding any single model endpoint:
 
 * ``cortex``   → the ``primary`` generate backend (Qwen 3.6 27B NVFP4 MTP).
   The authoritative reasoning/action/decision layer — the final authority.
@@ -26,6 +26,16 @@ any single model endpoint:
   from ``senses``, which perceives but must not act. OPT-IN like ``muse``:
   hosted only by a worker-hosting deployment shape, never by the default
   ``machine-as-brain``.
+* ``hand``     → the ``hand`` generate backend (LiquidAI LFM2.5-1.2B-Instruct).
+  The fleet's designated FINE-TUNING BASE and its trained specialist: one cheap
+  base, many LoRA adapters, each mastering a domain ("muscle memory"). Where
+  ``worker`` is an untrained generalist doer, ``hand`` knows a few things
+  extremely well because someone taught it. At ~1.2B it is cheap enough to
+  co-reside on EVERY card, so unlike ``muse``/``worker`` it is default-hosted
+  and never proxied to a peer. It is also the ``minor``/``cheap`` capability
+  tier (it replaced Qwen3.5-4B there) and the pressure-policy SERVABLE FLOOR —
+  the one generate lane never shed under load. Addressed as ``model=hand`` for
+  the base and ``model=hand:<domain>`` for an adapter.
 * ``embedder`` → the ``embed`` pooling backend (Qwen3-Embedding-0.6B) →
   ``POST /v1/embeddings``.
 * ``reranker`` → the ``score``/rerank backend (Qwen3-Reranker-0.6B) →
@@ -63,14 +73,21 @@ from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._routing import RoutingTable
 
-# The eight first-class roles, in canonical order: generate lanes (cortex,
-# senses, muse, worker), pooling lanes, then the opt-in audio overlay.
+# The nine first-class roles, in canonical order: generate lanes (cortex,
+# senses, muse, worker, hand), pooling lanes, then the opt-in audio overlay.
 # Downstream (CLI/gateway) iterate this for a stable ordering.
+#
+# ADDING A ROLE IS EFFECTIVELY IRREVERSIBLE. Every name here becomes a public
+# address on `GET /capabilities`, `lobes capabilities`, the `model=` alias
+# space and the `lobes up <role>` surface — and removing one later breaks every
+# caller that learned to use it. Nine is the count today; read
+# docs/colleague-stack.md before proposing a tenth.
 ROLES: tuple[str, ...] = (
     "cortex",
     "senses",
     "muse",
     "worker",
+    "hand",
     "embedder",
     "reranker",
     "stt",
@@ -92,6 +109,7 @@ ROLE_BACKEND: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
+    "hand": "hand",
     "embedder": "embed",
     "reranker": "rerank",
     "stt": "stt",
@@ -106,6 +124,7 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
+    "hand": "hand",
     "embedder": "embedding",
     "reranker": "reranker",
 }
@@ -120,6 +139,7 @@ ROLE_PATH: dict[str, str] = {
     "senses": _CHAT_PATH,
     "muse": _CHAT_PATH,
     "worker": _CHAT_PATH,
+    "hand": _CHAT_PATH,
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
@@ -210,6 +230,18 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "tool_use",
         "repo_action",
     ),
+    # The `hand` lobe: a TRAINED SPECIALIST, not a generalist doer. Its value
+    # is the LoRA adapter riding on it, so its responsibilities describe mastery
+    # of a taught domain rather than raw capability. Deliberately NO
+    # image_understanding / video_understanding — LFM2.5-1.2B-Instruct is
+    # text-only (LiquidAI ships the vision variant as a separate architecture,
+    # Lfm2VlForConditionalGeneration, which this checkpoint is not).
+    "hand": (
+        "domain_mastery",
+        "learned_skill",
+        "specialized_task",
+        "tool_use",
+    ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
     # NOTE: this base tuple deliberately does NOT list the realtime/VAD
@@ -249,6 +281,10 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "senses": ("final_decision", "repo_action", "security_decision"),
     "muse": ("final_decision", "repo_action", "security_decision"),
     "worker": ("final_decision", "security_decision"),
+    # `hand` withholds repo_action deliberately for v1: ADDING a responsibility
+    # later is contract-compatible, REMOVING one is a break, so the conservative
+    # list ships first. Granting it once adapters exist is issue #180.
+    "hand": ("final_decision", "repo_action", "security_decision"),
     "embedder": (),
     "reranker": (),
     "stt": (),
@@ -265,9 +301,24 @@ ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "senses": "MULTIMODAL_MAX_MODEL_LEN",
     "muse": "MUSE_MAX_MODEL_LEN",
     "worker": "WORKER_MAX_MODEL_LEN",
+    "hand": "HAND_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
 }
+
+# The roles the GATEWAY fronts as model-routed vLLM backends — every role
+# except the two path-routed audio sidecars, which :func:`_resolve_audio_role`
+# handles on a separate branch.
+#
+# DERIVED from :data:`ROLES`, deliberately: this was a hand-typed tuple inside
+# ``build_role_registry`` until the ninth role landed, and a hand-typed copy of
+# ROLES is precisely the thing that lets a new role half-land — it would be
+# registered in every table above yet silently missing from the registry the
+# CLI and ``GET /capabilities`` both read. Membership keys off
+# :data:`ROLE_ROLE_HINT` (which the audio roles deliberately do not appear in,
+# having no catalog entry), so adding a generate/pooling role to ROLES picks it
+# up here automatically and adding an audio-style role does not.
+GATEWAY_FRONTED_ROLES: tuple[str, ...] = tuple(r for r in ROLES if r in ROLE_ROLE_HINT)
 
 
 @dataclass(frozen=True)
@@ -707,7 +758,7 @@ def build_role_registry(
     gateway = (gateway_url or _gateway_base_url(server)).rstrip("/")
     registry: dict[str, RoleInfo] = {}
 
-    for role in ("cortex", "senses", "muse", "worker", "embedder", "reranker"):
+    for role in GATEWAY_FRONTED_ROLES:
         if backend_ready is None:
             # NOT SUPPLIED → back-compat: no live signal at all, so fall back to
             # the coarse `loaded` proxy (the original t4 behaviour). `None` here

@@ -898,7 +898,10 @@ def proxy_gateway(monkeypatch):
 
     monkeypatch.setattr(S, "open_upstream", fake_open)
     ready = {"primary": True, "embed": True, "rerank": True, "multimodal": True}
-    cache = SimpleNamespace(current=lambda: dict(ready))
+    # Duck-typed ReadinessCache stand-in. `current_adapters` is part of the
+    # contract the /v1/models handler reads (hand-lobe plan t4): an empty map
+    # means "no adapter confirmed loaded", which is what this fixture wants.
+    cache = SimpleNamespace(current=lambda: dict(ready), current_adapters=dict)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg, None, cache, specs))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     host, port = httpd.server_address

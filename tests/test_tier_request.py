@@ -40,8 +40,12 @@ def _full_fleet():
     table, _ = build_config(
         {
             "PRIMARY_SERVED_NAME": "PRIMARY",
-            "MINOR_BASE_URL": "http://vllm-minor:8000",
-            "MINOR_SERVED_NAME": "MINOR",
+            # The cheap tier is the `hand` backend now — `minor`/`cheap` are
+            # back-compat spellings that resolve to it. Wiring only a `minor`
+            # backend would leave the tier UNWIRED and upward-fall-back to
+            # multimodal, which is what this fixture is here to rule out.
+            "HAND_BASE_URL": "http://vllm-hand:8000",
+            "HAND_SERVED_NAME": "HAND",
             "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
             "MULTIMODAL_SERVED_NAME": "MULTIMODAL",
         }
@@ -54,7 +58,7 @@ def _primary_only():
     return table
 
 
-# Primary + multimodal wired, but MINOR is UNWIRED.
+# Primary + multimodal wired, but the cheap-tier (HAND) backend is UNWIRED.
 # This is the DEFAULT fleet shape (no minor profile activated).
 # Regression fixture for issue #85: under pressure, a cortex/main request
 # must NOT silently fall back to the multimodal/gemma served name.
@@ -249,10 +253,10 @@ def test_minor_request_under_high_pressure_is_served() -> None:
     out = resolve_tier_request("minor", _HIGH_SWAP, override=False, table=table)
     assert out == {
         "busy": False,
-        "served_name": "MINOR",
-        "served_tier": "minor",
+        "served_name": "HAND",
+        "served_tier": "hand",
         "reason": "default",
-        "requested_tier": "minor",
+        "requested_tier": "hand",
     }
 
 
@@ -380,8 +384,8 @@ def test_minor_request_below_degraded_is_not_marked_pressure() -> None:
     pressure = {"swap_used_percent": 60.0, "iowait_percent": 0.0}
     out = resolve_tier_request("minor", pressure, override=False, table=table)
     assert out["busy"] is False
-    assert out["served_name"] == "MINOR"
-    assert out["served_tier"] == "minor"
+    assert out["served_name"] == "HAND"
+    assert out["served_tier"] == "hand"
     assert out["reason"] == "default"
 
 

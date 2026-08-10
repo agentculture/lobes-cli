@@ -62,7 +62,7 @@ from lobes.profiles.schema import RoleProfile
 # dependency stays lobes.profiles.schema, per the brain-shapes t1 scope.
 AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
-# The seven first-class, Colleague-facing roles (issue #81): the five
+# The nine first-class, Colleague-facing roles (issue #81): the seven
 # Profile-machinery core roles plus the two audio-overlay sidecars. This is
 # the Colleague CONTRACT set (`lobes capabilities` / GET /capabilities key
 # exactly these roles).
@@ -86,11 +86,21 @@ OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker")
 # invariant (see shape_render.py's module docstring and
 # tests/goldens/regen.py's `_shape_needs_goldens`) is defined against THIS
 # set, not :data:`COLLEAGUE_ROLES` or the broader :data:`SHAPE_ROLES` below:
-# the opt-in `minor` gear and the opt-in core roles (`muse`) are deliberately
-# excluded from "every role this card can serve" -- machine-as-brain never
-# hosts them, and a NON-hosted opt-in core role renders nothing at all (the
+# the opt-in `minor` gear and the opt-in core roles (`muse`, `worker`) are
+# deliberately excluded from "every role this card can serve" -- machine-as-brain
+# never hosts them, and a NON-hosted opt-in core role renders nothing at all (the
 # gateway's OPT_IN_BACKENDS unwired-by-default rule carries the honesty), so
 # machine-as-brain stays byte-identical to the bare card profile.
+#
+# RE-BASELINED by the hand lobe (hand-lobe plan t8). This set now contains a
+# DEFAULT-HOSTED CHEAP ROLE (`hand`) for the first time: every prior member was
+# either a heavy lobe or a pooling/audio gear, so "the whole brain" and "the
+# expensive parts of the brain" happened to coincide. They no longer do. The
+# identity-shape invariant is unchanged in MEANING -- machine-as-brain still
+# renders byte-identically to the bare card profile -- but the byte-identical
+# baseline itself MOVED, because every card profile now declares `hand`. A
+# regeneration that merely makes the goldens pass does not satisfy this: the
+# 28 goldens' diff must show HAND_* keys and nothing else.
 DEFAULT_HOSTED_ROLES: tuple[str, ...] = tuple(
     role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
 )
