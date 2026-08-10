@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.0] - 2026-08-10
+
+### Added
+
+- **`hand` — the NINTH Colleague role** (`LiquidAI/LFM2.5-1.2B-Instruct`), the fleet's designated **fine-tuning base**. "Muscle memory": one cheap base, many LoRA adapters, each mastering a domain. Where `worker` is an untrained generalist doer, `hand` is a trained specialist. At ~1.2B (~2.4 GiB bf16) it is cheap enough to co-reside on **every card**, so unlike `muse`/`worker` it is **default-hosted by every built-in shape** and **never proxied to a peer** (`NEVER_PROXIED_BACKENDS` names that absence so a symmetry-minded refactor must delete a constant to break it). Responsibilities `domain_mastery`/`learned_skill`/`specialized_task`/`tool_use`; forbidden `final_decision`/`repo_action`/`security_decision`. See `docs/lfm2.5-1.2b-hand.md`
+- **LoRA adapter serving** — the `vllm-hand` lane ships **armed** (`--enable-lora`, `--max-loras=4`, `--max-lora-rank=32`) with the inventory **empty**: v1 has zero adapters. Adapters are declared once in `HAND_LORA_MODULES` (`name=path`, comma-separated), read by BOTH the engine's `--lora-modules` and the gateway's alias derivation so the two cannot disagree, and fixed at boot — there is no runtime hot-load. `model=hand` serves the base and never 404s on an empty inventory; `model=hand:<domain>` serves that adapter; an UNdeclared `hand:<domain>` is refused with `model_not_found`, never silently downgraded to the base
+- **Adapter honesty (#92 for adapters)** — a declared adapter is advertised on `GET /v1/models` and `/capabilities` only once the lane's OWN `/v1/models` confirms the engine loaded it (`_readiness.probe_backend_adapters`). Deliberately asks the ENGINE, not the filesystem: adapter paths are mounted into `vllm-hand`, not the gateway, so a path check there would false-negative every correct config while still missing the failures that matter (unreadable file, rank above `--max-lora-rank`, a checkpoint vLLM refused)
+- **`lfm2` tool-call parser** — LFM2 emits `<|tool_call_start|>…<|tool_call_end|>`, whose delimiters are **special tokens**: the same trap that made `pythonic` silently wrong for Gemma 4. vLLM's purpose-built `lfm2` parser resolves both delimiters in `__init__` and **raises** when either is missing, so a bad tokenizer revision fails loudly at startup rather than relaying a well-formed call as prose. No `--reasoning-parser`: this checkpoint has no thinking mode (LiquidAI ships `LFM2.5-1.2B-Thinking` separately), so unlike the cortex and Gemma 4 lanes there is no second half to pair with
+- `docs/lfm2.5-1.2b-hand.md` — the per-model reference, and an **"adding a role is effectively irreversible"** callout in `docs/colleague-stack.md` enumerating the surfaces a role name lands on
+
+### Changed
+
+- **`hand` replaced `Qwen/Qwen3.5-4B` as the `minor`/`cheap` tier.** Both spellings still work and now resolve to `hand`; the 4B stays in the catalog as a plain `candidate` (cite-don't-delete), still selectable via `lobes switch` and still runnable as the opt-in `vllm-minor` compose service, but no tier alias resolves to it any more — it is addressable only by explicit model id, exactly like the legacy 14B `middle` gear. Capability order is now `hand` < `multimodal` < `worker` < `muse` < `main`
+- **`hand` is the pressure-policy servable floor.** Under swap > 75 % / iowait > 50 %, `cortex`/`senses`/`worker`/`muse` still shed with 429 + `Retry-After` and `hand` is always served — the floor's PROMISE is unchanged, only its name (a `minor`/`cheap` request normalizes to `hand`). `servable_tier` therefore reports `"hand"` where it previously reported `"minor"`
+- `colleague-stack` is the **seven** default-hosted roles (`hand` joins; `muse`/`worker` stay excluded, both being opt-in-hosted and compose-profile-gated)
+- `mg-logwrap` now drops an argument that is exactly `--flag=` with an empty value. A compose `command:` list cannot omit an argument conditionally, so an unset templated flag renders as a bare `--flag=` — and vLLM would parse `--lora-modules=` as a malformed `name=path` pair. The rule is narrow by construction: a flag with a value, a bare `--flag`, a lone `--`, a short `-x`, and every non-flag argument all pass through untouched
+- Role-count prose swept to nine across `docs/`, `CLAUDE.md` and `README.md`. The sweep also corrected counts that were **already stale before this change** and had never caught up with `worker` — `lobes/explain/catalog.py` said SEVEN throughout, and several `capabilities`/`measure`/`learn` strings said six or seven
+- `docs/qwen3.5-4b-minor.md` re-headed as the DEMOTED gear, with a note to read its (never-realised) LoRA promises in the past tense — that unfulfilled plan is precisely why the role moved
+
+### Fixed
+
+- `lobes measure` would have raised `KeyError` on any role missing from `roles_measure._FAMILY_BY_ROLE` — a crash, not a degraded reading. Both that map and `_MEASURE_FN` now cover every role, and a parametrised test iterates `ROLES` so the class cannot recur
+- `build_role_registry` iterated a **hand-typed copy** of the gateway-fronted roles instead of deriving them from `ROLES`, so a new role could be registered in all six per-role tables yet be silently missing from the registry the CLI and `GET /capabilities` both read. Now derived (`GATEWAY_FRONTED_ROLES`), with a parametrised completeness test per table — the same half-landed-role failure mode that made `WORKER_PEER_PROXY=true` inert in 0.54.6
+
 ## [0.55.1] - 2026-08-10
 
 **Three surfaces still named the checkpoint 0.54.9 demoted.** The multimodal

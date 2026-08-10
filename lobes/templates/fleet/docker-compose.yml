@@ -511,6 +511,17 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
+      # The nightly's cudagraph memory ESTIMATE, disabled here as it is on every
+      # other lane on this image (primary, embed, rerank, multimodal, muse,
+      # worker). MEASURED on a physical Jetson AGX Orin 2026-08-10: with the
+      # estimate ON, this lane profiles to **Available KV cache memory:
+      # -9.25 GiB** at util 0.10 — NEGATIVE, so the engine cannot allocate a KV
+      # cache at all and the boot dies. vLLM's own log names the cause and
+      # suggests either raising util to 0.2762 or disabling the estimate; we
+      # disable it, matching every sibling lane, so the util knob maps back to
+      # true usage instead of a padded guess. Raising util instead would make
+      # `hand` cost 4.6x more memory on every card to buy nothing.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${HAND_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=hand   # → /logs/model-gear/hand-<boot>.log
     volumes:
