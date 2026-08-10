@@ -176,7 +176,13 @@ to route correctly.
 >   one data point, not a measurement.
 > - **Thor** — boot failed in LoRA embedding-slot allocation, cause
 >   unattributed ([#181](https://github.com/agentculture/lobes-cli/issues/181)).
-> - **Spark / base** — never exercised.
+> - **Spark** — same split as the Orin, on a bigger card
+>   (`docs/evidence/2026-08-10-partial-hand-spark.txt`): the lane served three
+>   times with every functional check passing, and the budget still did not
+>   reproduce — 6.21 / 3.34 / 3.54 GiB of available KV at the identical 0.06.
+>   Two of the three agree within 6% and were taken at the same free-memory
+>   level, which is what identifies the mechanism rather than just the noise.
+> - **base** — never exercised, and untestable by construction.
 >
 > Two lessons are worth carrying, both learned the expensive way here:
 >
@@ -184,10 +190,14 @@ to route correctly.
 >    the reasoning that "0.06 of 64 GB leaves too little KV after the weights".
 >    The box refused 0.10 outright — see
 >    `docs/evidence/2026-08-10-hand-lobe-budget-derivation.txt`.
-> 2. **A single measurement on a SHARED box is also a hypothesis.** vLLM clamps
->    its budget against actual free memory at startup, so a util leaving only
->    ~1 GiB of margin on a 61 GiB card sits inside the noise of whatever else
->    the box is doing. A budget is only measured once it reproduces.
+> 2. **A single measurement on a SHARED box is also a hypothesis.** vLLM
+>    profiles against memory that is free *at that instant*, so on a
+>    unified-memory card with co-resident tenants the same util yields a
+>    different KV pool run to run. This is not a tight-margin artifact: the
+>    Orin showed it with ~1 GiB of margin on a 61 GiB card, and the Spark
+>    showed the same 2x spread with several GiB of margin on a 121 GiB one.
+>    A single boot's KV number measures the box's state, not the card's
+>    capacity for the role. **A budget is only measured once it reproduces.**
 
 **When set:**
 

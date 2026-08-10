@@ -513,9 +513,7 @@ def test_every_rendered_profile_knob_is_substituted_by_the_fleet_template(card_n
     template = FLEET_COMPOSE.read_text(encoding="utf-8")
     rendered = profile_env(resolve_profile(card_name))
     dead = [
-        key
-        for key in rendered
-        if f"${{{key}" not in template and f"${{{key}}}" not in template
+        key for key in rendered if f"${{{key}" not in template and f"${{{key}}}" not in template
     ]
     assert not dead, (
         f"{card_name}: these profile-rendered keys are never substituted by "

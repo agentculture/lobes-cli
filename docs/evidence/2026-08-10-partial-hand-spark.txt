@@ -1,0 +1,189 @@
+=============================================================================
+hand lobe (LiquidAI/LFM2.5-1.2B-Instruct) — DGX Spark GB10, PARTIAL
+=============================================================================
+Date:       2026-08-10
+Plan:       docs/plans/2026-08-10-hand-lobe-lfm2-5-1-2b.md, task t12
+Issue:      #183 (no card has a reproducible budget)
+Box:        DGX Spark GB10 (Grace Blackwell, 121 GiB unified) — the production
+            spark-lobe box, full fleet co-resident (cortex 0.30 + embed x2 +
+            rerank + stt + tts + gateway, all healthy throughout)
+Image:      vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+Engine:     vLLM 0.23.1rc1.dev672+g93d8f834d
+Lane:       the COMMITTED fleet lane (lobes/templates/fleet/docker-compose.yml,
+            service vllm-hand) extracted verbatim; the only additions are
+            HF_HUB_OFFLINE=1, a probe-only container_name, and a probe log dir.
+            Deliberately NOT a hand-rolled `docker run` — an earlier hand-rolled
+            probe is exactly what hid the dead-knob defect d8 (it set the
+            attention backend manually and so disagreed with the real lane).
+
+VERDICT — split, and the split is the point:
+
+  FUNCTIONAL:  PASS. Every functional probe passes, across two independent
+               boots. The lane serves correctly on the GB10.
+  BUDGET:      NOT REPRODUCIBLE. Three boots at identical settings produced
+               three different KV pools. spark.toml's hand budget therefore
+               stays DECLARED, per #108 — this transcript does not promote it.
+
+The budget half is not a new disappointment; it EXPLAINS the Orin retraction
+recorded in docs/evidence/2026-08-10-partial-hand-orin.txt. See section 3.
+
+-----------------------------------------------------------------------------
+0. What the engine confirms about the checkpoint
+-----------------------------------------------------------------------------
+    Resolved architecture: Lfm2ForCausalLM
+    version 0.23.1rc1.dev672+g93d8f834d
+    dtype=torch.bfloat16, quantization=None, reasoning_parser='',
+    trust_remote_code=False, max_seq_len=32768
+    Using FLASH_ATTN attention backend out of potential backends:
+      ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION']
+    punica_selector.py:20] Using PunicaWrapperGPU.
+    Model loading took 2.41 GiB memory and 11.17 seconds
+
+  - quantization=None — the catalog's `quantization="none"` bf16 sentinel
+    works on a third card. The lane omits --quantization entirely.
+  - reasoning_parser='' — the deliberate absence of --reasoning-parser holds;
+    LFM2.5-1.2B-Instruct has no thinking mode.
+  - PunicaWrapperGPU — --enable-lora with an EMPTY inventory is a valid
+    configuration and the engine arms the LoRA path.
+  - HAND_ATTENTION_BACKEND=auto resolved through the '--attention-config'
+    flag that fix d8 introduced. This is the first confirmation that the
+    replacement knob is live on the Spark, not merely non-fatal.
+  - 2.41 GiB — the cheap-base premise the whole role rests on.
+
+-----------------------------------------------------------------------------
+1. The empty-flag strip (deviation d3) — confirmed on a THIRD machine
+-----------------------------------------------------------------------------
+The lane templates `--lora-modules=${HAND_LORA_MODULES:-}`, and a compose
+command list cannot omit an argument conditionally. mg-logwrap drops any
+argument matching `--*=`, so vLLM never sees an empty --lora-modules.
+
+The wrapper's own boot header records the post-strip argv:
+
+    === lobes hand :: boot 20260810T054840Z :: vllm serve
+        LiquidAI/LFM2.5-1.2B-Instruct
+        --served-model-name=LiquidAI/LFM2.5-1.2B-Instruct
+        --host=0.0.0.0 --port=8000 --max-model-len=32768
+        --gpu-memory-utilization=0.06
+        --attention-config={"backend": "auto"}
+        --enable-lora --max-loras=4 --max-lora-rank=32
+        --enable-auto-tool-choice --tool-call-parser=lfm2 ===
+
+No --lora-modules. Thor, Orin, Spark — three for three.
+
+-----------------------------------------------------------------------------
+2. Functional probes — ALL PASS
+-----------------------------------------------------------------------------
+2a. Known-answer correctness
+    prompt: "What is the capital of France? Answer with one word."
+    -> 'Paris'
+
+2b. Adapter honesty with an EMPTY inventory — GET /v1/models
+    {"object":"list","data":[{"id":"LiquidAI/LFM2.5-1.2B-Instruct",
+      "max_model_len":32768,...}]}
+    Exactly one entry: the base. No phantom adapter is advertised. This is
+    the #92 honesty rule holding on the surface that matters — the probe asks
+    the ENGINE's own /v1/models, not the gateway's filesystem, because
+    adapter paths are mounted into vllm-hand and not into the gateway.
+
+2c. Undeclared adapter is REFUSED, never downgraded
+    model="hand:nonexistent-domain" -> HTTP 404
+    An adapter nobody declared does not silently fall back to the base.
+
+2d. Tool-call ROUND TRIP — a structured call, not prose
+    finish_reason: tool_calls
+    content: 'Checking the current weather in Paris.'
+    tool_calls: [
+      {"id":"chatcmpl-tool-99b9c81accac0f91","type":"function",
+       "function":{"name":"get_weather","arguments":"{\"city\": \"Paris\"}"}}
+    ]
+
+    This is the probe that earns its place. The gemma4 precedent
+    (docs/gemma-4-31b-nvfp4.md) is a family whose delimiters are SPECIAL
+    tokens, where a guessed generic parser matched nothing and vLLM relayed
+    a well-formed call as ordinary assistant content with tool_calls: null.
+    LFM2's <|tool_call_start|>/<|tool_call_end|> are the same trap. A
+    structured tool_calls array with finish_reason "tool_calls" is the
+    positive result that trap would have denied.
+
+2e. The delimiters the lfm2 parser requires are present
+    <|tool_call_start|> = 10
+    <|tool_call_end|>   = 11
+    Identical to the Orin. Lfm2ToolParser.__init__ RAISES when either is
+    missing, so a bad tokenizer revision fails loudly at startup rather than
+    degrading to prose — strictly better than the gemma4 failure mode.
+
+-----------------------------------------------------------------------------
+3. The budget does NOT reproduce — and WHY (this supersedes the Orin puzzle)
+-----------------------------------------------------------------------------
+Three boots, identical lane, identical HAND_GPU_MEM_UTIL=0.06, same box, same
+co-resident fleet, minutes apart:
+
+    run | free RAM before | Available KV | KV tokens | pool/32768
+    ----|-----------------|--------------|-----------|-----------
+      1 |      ~28 GiB    |   6.21 GiB   |  541,886  |   16.54x
+      2 |      ~18 GiB    |   3.34 GiB   |  291,970  |    8.91x
+      3 |      ~18 GiB    |   3.54 GiB   |  308,754  |    9.42x
+
+Runs 2 and 3 agree with each other to within 6% and were both taken at ~18 GiB
+free. Run 1 was taken minutes after 31.7 GiB was freed on the box. The KV pool
+tracks FREE MEMORY AT PROFILING TIME, not a fixed fraction of the card.
+
+That is the mechanism, and it retro-explains the Orin. The Orin's three runs
+(2.7 GiB, then 0.14 GiB, then 0.09 GiB — recorded in the retraction header of
+docs/evidence/2026-08-10-partial-hand-orin.txt) were read at the time as an
+unexplained non-reproduction. They are the same effect with a smaller card and
+a tighter margin: the first run caught a transient window of free memory, and
+the later ones did not.
+
+The generalisable finding, stated plainly because it outlives this role:
+
+    On a unified-memory card with co-resident tenants, gpu_mem_util does not
+    name a stable budget. The engine profiles against memory that is free at
+    that instant, so the SAME util yields a different KV pool depending on
+    what else is resident. A single boot's KV number is a measurement of the
+    box's state, not of the card's capacity for the role.
+
+Note this does not make the declared 0.06 wrong — hand booted and served at
+0.06 on all three runs, and the arithmetic 0.06 x 121 GiB = 7.3 GiB brackets
+run 1 sensibly. What it makes unsupportable is any claim of a MEASURED pool
+size or concurrency figure for this role on this card.
+
+Also worth recording, because it cost the previous session four failed
+attempts: this box was in its own pressure-policy `busy` state throughout
+those attempts (swap 15/15 GiB, 100% full; 16 GiB available; 273 Chrome
+processes holding 31.7 GiB). Under that pressure a `docker compose up -d`
+took over ten minutes and the engine never finished profiling. After Chrome
+was closed the identical command returned in ten seconds and the engine
+reached "Application startup complete" in 71.75 s. The earlier inability to
+boot hand on the Spark was memory exhaustion on a shared workstation, not a
+defect in the lane.
+
+-----------------------------------------------------------------------------
+4. What is NOT claimed
+-----------------------------------------------------------------------------
+Per #108, and stated plainly because a split verdict invites over-reading.
+
+  - The Spark's hand budget is NOT validated. lobes/profiles/builtin/spark.toml
+    keeps gpu_mem_util = 0.06 as DECLARED. No pool size and no concurrency
+    figure from section 3 may be quoted as this card's capacity.
+  - NO card is validated for budget. Orin retracted, Thor never booted
+    (issue #181), Spark split here, base fallback never exercised. #183 stays
+    open and now names all three cards.
+  - No throughput (tok/s) was measured. None was attempted.
+  - Adapter SERVING is still unexercised everywhere. v1 ships zero adapters,
+    so 2b/2c prove the empty-inventory and refusal contracts only. Nothing
+    here shows a real LoRA adapter loading and answering — that remains the
+    open half of #183.
+  - Nothing here exercises the gateway. Every probe in section 2 addressed
+    the vllm-hand engine directly. The gateway's hand:<domain> alias
+    derivation and its /capabilities surface are covered by the offline
+    suite, not by this transcript.
+  - The pressure-floor behaviour (hand always served under swap/iowait
+    pressure) was not exercised, despite the box having been genuinely in
+    that state. Sections 3's pressure notes are box observations, not a
+    test of the policy.
+
+Fleet integrity: all twelve production containers (model-gear-gateway,
+vllm-primary, vllm-embed, vllm-embed-deep, vllm-rerank, realtime, stt,
+chatterbox, and the non-lobes tenants) were verified Up and healthy before,
+during and after the probe. The probe container was removed afterwards.

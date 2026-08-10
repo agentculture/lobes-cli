@@ -2,7 +2,7 @@
   "plan_slug": "hand-lobe-lfm2-5-1-2b",
   "schema_version": 1,
   "created": "2026-08-10T03:38:10Z",
-  "updated": "2026-08-10T03:56:55Z",
+  "updated": "2026-08-10T06:26:20Z",
   "deviations": [
     {
       "id": "d1",
@@ -113,6 +113,18 @@
       "reason": "The acceptance transcript was written after ONE successful boot at gpu_mem_util=0.06 (available KV 2.7 GiB, pool 235,721 tokens, 7.19x). Two later boots of the same configuration on the same box profiled 0.14 GiB and 0.09 GiB and refused to start \u2014 vLLM clamps its budget against actual free memory at startup, and this is a SHARED box whose free memory moved ~2.7 GiB across the runs. One success against two refusals is an unstable budget, not a validated one. The functional results survive (they were observed on a real serving engine and do not depend on the budget): the lfm2 parser, the structured tool_calls array, the bf16 sentinel, the unknown-id 404. The budget claim does not. Transcript renamed to ...-partial-... with the retraction at its head; orin.toml, the per-model doc and machine-profiles.md all now read DECLARED. NO card is validated for hand.",
       "affects": [
         "t8",
+        "t10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d10",
+      "what": "t12 live validation extends to the DGX Spark: functional PASS on a third card, budget again NOT reproducible (6.21/3.34/3.54 GiB at identical 0.06) \u2014 the three-run spread identifies the MECHANISM (vLLM profiles against free-memory-at-that-instant on unified memory), which retro-explains the Orin retraction as a property rather than a fluke; all four cards stay DECLARED",
+      "task_ref": "t12",
+      "reason": "the user asked for a Spark answer; the box's earlier boot failures turned out to be memory exhaustion (swap 100% full, browser holding 31.7 GiB), not a lane defect \u2014 with memory freed the committed lane booted in 71.75s and served correctly",
+      "affects": [
         "t10"
       ],
       "origin": "user",

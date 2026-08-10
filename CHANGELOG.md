@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.1] - 2026-08-10
+
+### Added
+
+- docs/evidence/2026-08-10-partial-hand-spark.txt — hand on the DGX Spark GB10: functional PASS on a third card (Lfm2ForCausalLM, bf16 sentinel, no reasoning parser, LoRA armed, known-answer, structured tool_calls, empty-inventory /v1/models, undeclared adapter 404), plus the first live confirmation that the d8 --attention-config fix resolves.
+
+### Changed
+
+- hand budget guidance now names the MECHANISM behind every non-reproducing budget: on a unified-memory card with co-resident tenants vLLM profiles against memory free AT THAT INSTANT, so the same gpu_mem_util yields a different KV pool run to run. Three Spark boots at the identical 0.06 gave 6.21 / 3.34 / 3.54 GiB. This retro-explains the Orin retraction as a property, not a fluke — and it is not a tight-margin artifact, since the Spark reproduced the 2x spread with several GiB of headroom. All four cards stay DECLARED (#183).
+
 ## [0.56.0] - 2026-08-10
 
 ### Added

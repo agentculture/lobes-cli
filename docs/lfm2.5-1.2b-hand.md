@@ -180,8 +180,12 @@ One box's successful boot never promotes another card.
 |---|---|---|
 | Jetson AGX Orin (sm_87, 64 GB) | DECLARED — *served once, budget not reproducible* | `docs/evidence/2026-08-10-partial-hand-orin.txt` |
 | Jetson AGX Thor (sm_110, 128 GB) | DECLARED — boot failed | [#181](https://github.com/agentculture/lobes-cli/issues/181) |
-| DGX Spark GB10 (128 GB) | DECLARED — not yet exercised | [#183](https://github.com/agentculture/lobes-cli/issues/183) |
+| DGX Spark GB10 (128 GB) | DECLARED — *functionally sound, budget not reproducible* | `docs/evidence/2026-08-10-partial-hand-spark.txt` |
 | `base` (unrecognised card) | DECLARED | untestable by construction |
+
+The Orin and the Spark both land in the same split state, and for the same
+reason — see **"Why no budget reproduces"** below, which is the finding that
+matters more than either card's numbers.
 
 **What the Orin runs established — and what they did not.** The lane *served*
 once, and everything observed on that live engine holds: the bf16 sentinel and
@@ -191,23 +195,55 @@ this lane exists to pass — a **tool call returning a structured `tool_calls`
 array**, with the tokenizer's `<|tool_call_start|>` / `<|tool_call_end|>`
 confirmed present as special tokens (ids 10 and 11).
 
-The **budget** did not hold. Three boots at the identical
-`gpu_mem_util = 0.06` / `max_model_len = 32768` on the same box profiled
-2.7 GiB, 0.14 GiB and 0.09 GiB of available KV — one success, two refusals.
-The Orin is shared (senses at 0.45, the pooling gears, unrelated production
-containers) and vLLM clamps its budget against actual free memory at startup,
-which moved by ~2.7 GiB across the runs. A util leaving ~1 GiB of margin on a
-61 GiB card sits inside that noise. **0.06 is one data point, not a
-measurement**, and the card is DECLARED accordingly.
+**The Spark reproduced every one of those functional results** on a third card
+and added two: `HAND_ATTENTION_BACKEND=auto` resolving through the
+`--attention-config` flag (the first live confirmation that the `d8` dead-knob
+fix actually works, rather than merely not crashing), and `GET /v1/models`
+returning exactly one entry — the base — so an empty adapter inventory
+advertises no phantom adapter. The container also reached compose `healthy`.
+Full transcript: `docs/evidence/2026-08-10-partial-hand-spark.txt`.
 
-The practical reading for an operator: `hand` at the full 32 K window wants
-more headroom than this Orin has while it also hosts `senses`. Either raise
-`HAND_GPU_MEM_UTIL` until the profile reports comfortable KV on *your* box, or
+### Why no budget reproduces
+
+Both cards that served `hand` produced a **different KV pool on every boot** at
+identical settings. On the Spark, three boots minutes apart:
+
+| run | free RAM before | available KV | KV tokens |
+|---|---|---|---|
+| 1 | ~28 GiB | 6.21 GiB | 541,886 |
+| 2 | ~18 GiB | 3.34 GiB | 291,970 |
+| 3 | ~18 GiB | 3.54 GiB | 308,754 |
+
+Runs 2 and 3 agree within 6% and were taken at the same free-memory level; run
+1 was taken minutes after 31.7 GiB was freed on the box. The Orin's spread
+(2.7 GiB, then 0.14 GiB, then 0.09 GiB) is the same effect on a smaller card
+with a tighter margin. The mechanism:
+
+> On a unified-memory card with co-resident tenants, `gpu_mem_util` does not
+> name a stable budget. vLLM profiles against memory that is **free at that
+> instant**, so the same util yields a different KV pool depending on what else
+> is resident. A single boot's KV number measures the box's state, not the
+> card's capacity for the role.
+
+This does not make `0.06` wrong — `hand` booted and served at `0.06` on every
+run of both cards. It makes any **measured** pool or concurrency figure for
+this role unsupportable, which is why all four cards stay DECLARED.
+
+The practical reading for an operator: raise `HAND_GPU_MEM_UTIL` until the
+profile reports comfortable KV on *your* box under *your* steady-state load, or
 trim `HAND_MAX_MODEL_LEN` (vLLM names the length that would fit — 7984 in the
-tightest run). Tracked in
-[#183](https://github.com/agentculture/lobes-cli/issues/183).
+Orin's tightest run). Do not treat a number from one boot as a budget. Tracked
+in [#183](https://github.com/agentculture/lobes-cli/issues/183).
 
-Two things it deliberately does **not** establish: adapter serving end to end
+One operational note the Spark runs paid for: four earlier attempts on that box
+failed to boot at all, and the cause was **memory exhaustion on a shared
+workstation**, not the lane. The box was in its own pressure-policy `busy`
+state (swap 100% full, 16 GiB available, a browser holding 31.7 GiB); a
+`docker compose up -d` took over ten minutes and the engine never finished
+profiling. With the browser closed, the identical command returned in ten
+seconds and the engine was serving in 71.75 s.
+
+Two things these runs deliberately do **not** establish: adapter serving end to end
 (v1 ships zero adapters, so `hand:<domain>` resolution and the adapter-honesty
 filter are covered by offline tests only), and anything reached through the
 lobes gateway rather than the engine directly. Both are tracked in

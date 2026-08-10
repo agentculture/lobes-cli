@@ -65,7 +65,15 @@ attention_backend = "TRITON_ATTN"
 # ~2.4 GiB of weights leaves ~5 GiB of KV at the 32K window, comfortable. The
 # arithmetic is not the evidence, though: every co-residency number on this card
 # was MEASURED because vLLM refused the computed one at least once. This card's
-# total goes 0.56 -> 0.62 with hand added; t10 re-derives and t12 validates.
+# total goes 0.56 -> 0.62 with hand added.
+#
+# The lane DID serve here at 0.06, three times, with every functional probe
+# passing (docs/evidence/2026-08-10-partial-hand-spark.txt). The budget still
+# stays DECLARED, because those three boots profiled three DIFFERENT KV pools —
+# 6.21 / 3.34 / 3.54 GiB — tracking free memory at that instant rather than the
+# util. On a unified-memory card with co-resident tenants a single boot's KV
+# number measures the box's state, not the card's capacity; promoting one of
+# them to MEASURED is exactly the error retracted on the Orin. See #183.
 feasible = true
 model = "LiquidAI/LFM2.5-1.2B-Instruct"
 gpu_mem_util = 0.06
