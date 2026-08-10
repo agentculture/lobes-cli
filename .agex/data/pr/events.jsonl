@@ -109,3 +109,5 @@
 {"ts":"2026-08-10T07:27:33.257550+00:00","type":"pr_webhook_posted","pr":184,"event":"pr_replied"}
 {"ts":"2026-08-10T07:28:07.155009+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
 {"ts":"2026-08-10T07:28:12.425961+00:00","type":"pr_read","pr":184,"comment_count":8,"threads_unresolved":0,"ci_state":"failure"}
+{"ts":"2026-08-10T07:38:52.888182+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
+{"ts":"2026-08-10T07:38:58.375296+00:00","type":"pr_read","pr":184,"comment_count":8,"threads_unresolved":0,"ci_state":"ok"}

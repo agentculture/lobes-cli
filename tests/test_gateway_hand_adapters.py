@@ -406,7 +406,7 @@ def test_a_served_name_collision_still_recommends_served_name(capsys) -> None:
     err = capsys.readouterr().err
     assert "*_SERVED_NAME" in err
     assert "HAND_LORA_MODULES" not in err
-    assert "WRONG " in err and "VECTOR SPACE" in err, "the embed-specific detail must survive"
+    assert "WRONG VECTOR SPACE" in err, "the embed-specific detail must survive"
 
 
 def test_no_warning_when_every_claimed_id_is_distinct(capsys) -> None:

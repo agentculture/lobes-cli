@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.5] - 2026-08-10
+
+### Fixed
+
+- Sonar S9073: a composite assertion in the collision-message test is now a single substring check — the two halves were only separate because the expected text wraps across two source lines.
+
 ## [0.56.4] - 2026-08-10
 
 ### Fixed
