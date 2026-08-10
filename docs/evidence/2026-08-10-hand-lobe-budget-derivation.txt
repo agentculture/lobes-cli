@@ -16,6 +16,10 @@ VERDICT: r1 MATERIALISED. The declared budgets did not hold, for two distinct
 reasons — one a bug in the lane, one a genuine capacity limit on a shared box.
 Both are recorded below with the raw engine output that produced them.
 
+This file covers the DERIVATION runs only — the three findings below are all
+refutations. The subsequent successful Orin boot at the corrected budget is a
+separate transcript: docs/evidence/2026-08-10-accept-hand-orin.txt.
+
 -----------------------------------------------------------------------------
 0. What the engine confirms about the checkpoint (both boxes)
 -----------------------------------------------------------------------------
@@ -116,20 +120,29 @@ recorded here rather than guessed at, and tracked as issue #181.
 -----------------------------------------------------------------------------
 4. What is NOT claimed
 -----------------------------------------------------------------------------
-Per #108, and stated plainly because a partial run invites over-reading:
+Per #108, and stated plainly because a partial run invites over-reading.
 
-  - NO card is VALIDATED for `hand`. Not Thor, not Orin, not the Spark (which
-    was not exercised at all), not the base fallback.
-  - The per-card gpu_mem_util values in lobes/profiles/builtin/*.toml remain
-    DECLARED. This run REFUTED the Orin's 0.10; it did not establish a
-    replacement, which requires a boot that reaches "Application startup
-    complete" and reports a positive KV pool.
-  - No throughput, concurrency, or acceptance number is claimed. None was
-    measured.
-  - The tool-call ROUND TRIP (a request returning a structured tool_calls
-    array) was not exercised. What is established is narrower and worth
-    separating: the parser LOADS, which proves the tokenizer carries the two
-    special-token delimiters it requires.
+SCOPE NOTE: this transcript covers the DERIVATION runs only — the three
+findings above, all of which are refutations. A SUBSEQUENT run on the Orin at
+the corrected 0.06 succeeded and is recorded separately in
+docs/evidence/2026-08-10-accept-hand-orin.txt. The list below is what THESE
+runs did not establish; several items were settled by that later run and are
+marked accordingly, so this file is not read as denying it.
+
+  - NO card is VALIDATED by these runs. The Orin was subsequently VALIDATED by
+    the acceptance transcript above; Thor (issue #181) and the DGX Spark (never
+    exercised) and the base fallback remain DECLARED.
+  - The per-card gpu_mem_util values remain DECLARED except the Orin's. These
+    runs REFUTED the Orin's 0.10 without establishing a replacement; the later
+    run measured 0.06 (available KV 2.7 GiB, pool 235,721 tokens, 7.19x), and
+    lobes/profiles/builtin/orin.toml now carries that measured value.
+  - No throughput, concurrency, or acceptance number is claimed HERE. None was
+    measured in these runs.
+  - The tool-call ROUND TRIP was not exercised HERE. What these runs establish
+    is narrower and worth separating: the parser LOADS, which proves the
+    tokenizer carries the two special-token delimiters it requires. The round
+    trip itself — a structured tool_calls array — was confirmed in the later
+    Orin run.
 
 Both probe containers were removed afterwards; every production container on
 both boxes was verified still running.
