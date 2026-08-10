@@ -136,7 +136,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "gateway": "88448c70bf43f4b757c3a6f4f86c428c040fbf4321ffa75f2e5fe35e0bb2f5b8",
     "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
     "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
-    "vllm-hand": "abc870186791cd8d443f165c94031abde451f309cded279a3221bcaa05f72636",
+    "vllm-hand": "cc07d34320aacf2bce52e6cded64b4ad7240931ad8f966545142e6f17311e7ec",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "64c129b764059c3e78ed248da60634cd2ecf4a0af26c61e3508c5676ddb11134",
