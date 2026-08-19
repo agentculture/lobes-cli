@@ -531,13 +531,18 @@ def _golden_env(name: str) -> dict[str, str]:
 
 
 def test_spark_lobe_golden_pins_cortex_full_native_reclaim() -> None:
-    """spark-lobe on the GB10: cortex serves its full native 256K, with a GPU
-    budget STRICTLY above the co-resident 0.30 (measured reclaim 0.44 — the
-    2026-07-14 live validation; issue #113). Asserted against the golden file's
-    own bytes, on top of the golden byte-diff, so `regen.py` cannot silently
-    regress the shipped values."""
+    """spark-lobe on the GB10: cortex serves a DECLARED 1M-token YaRN
+    hypothesis (1048576, via an hf_overrides rope-scaling override past the
+    Qwen3.8 checkpoint's own 262144 native ceiling), with a GPU budget
+    STRICTLY above the co-resident 0.30. The 2026-07-14 live-validated 0.44 /
+    262144 reclaim pair (full native, no YaRN) was the value here before the
+    qwen3.8-cortex-upgrade plan's t5; it is retained as the shape TOML's
+    documented rollback if the 1M hypothesis's live t7 boot refuses it
+    (#108). Asserted against the golden file's own bytes, on top of the
+    golden byte-diff, so `regen.py` cannot silently regress the shipped
+    values."""
     env = _golden_env("spark-lobe__spark")
-    assert env["PRIMARY_MAX_MODEL_LEN"] == "262144"
+    assert env["PRIMARY_MAX_MODEL_LEN"] == "1048576"
     util = float(env["PRIMARY_GPU_MEM_UTIL"])
     assert util > 0.30  # the non-negotiable floor: strictly above co-resident
     # ... and strictly above whatever the card profile currently ships, so the

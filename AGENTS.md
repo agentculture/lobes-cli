@@ -36,7 +36,7 @@ The division of labor: daria notices, **you reason**, lecodeur builds.
 ## Runtime
 
 You are served by a locally-hosted vLLM reasoning model
-(`unsloth/Qwen3.6-27B-NVFP4` — a Qwen3.6 27B with hybrid
+(`unsloth/Qwen3.8-27B-NVFP4` — a Qwen3.5-arch 27B with hybrid
 Mamba/linear-attention layers and a self-hosted MTP draft head baked into the
 checkpoint for speculative decoding, in compressed-tensors NVFP4, 256K native
 context served at the full 256K on the shared DGX Spark) over the

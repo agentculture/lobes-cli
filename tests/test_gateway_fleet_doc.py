@@ -22,7 +22,7 @@ FLEET_ENV_EXAMPLE = REPO_ROOT / "lobes" / "templates" / "fleet" / "env.example"
 FLEET_COMPOSE = REPO_ROOT / "lobes" / "templates" / "fleet" / "docker-compose.yml"
 
 NIGHTLY_DIGEST_IMAGE = (
-    "vllm/vllm-openai@sha256:" "7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+    "vllm/vllm-openai@sha256:" "8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695"
 )
 NGC_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
 
