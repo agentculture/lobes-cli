@@ -1,0 +1,54 @@
+# t2 engine spike — unsloth/Qwen3.8-27B-NVFP4 on the OFFICIAL vLLM nightly, DGX Spark GB10
+# 2026-08-19, plan qwen3-8-cortex-upgrade task t2. Verdict: GO — official image, no fallback.
+
+## Image (official-first order followed; no third-party image was needed or tried)
+
+  pulled: vllm/vllm-openai:nightly  (Docker Hub, built 2026-08-19T05:34Z)
+  digest: vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+  resolved vLLM version: 0.26.1rc1.dev942+g5a4c8d992
+  (forum 380244 claimed stock vllm-openai lacks NVFP4 kernels for sm_121a and used a
+   custom 0.26.1rc1.dev244 build — DISPROVEN for this nightly: FlashInfer autotune ran
+   with an sm 121a cache path and the NVFP4 checkpoint served.)
+
+## Boot — standalone container, incumbent primary stopped for headroom
+
+  checkpoint: unsloth/Qwen3.8-27B-NVFP4, snapshot 7d6f8d4d72f56b92b3cdbf22f156b90e1bab0108
+    (22.6 GB model.safetensors + 849 MB separate model_mtp.safetensors;
+     tokenizer.json "truncation": null VERIFIED on the downloaded revision)
+  flags (mirroring the incumbent lane): --max-model-len 262144 --gpu-memory-utilization 0.44
+    --quantization compressed-tensors --kv-cache-dtype fp8 --max-num-seqs 2
+    --enable-prefix-caching --reasoning-parser qwen3 --tool-call-parser qwen3_coder
+    --enable-auto-tool-choice --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+    --trust-remote-code   (env VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0)
+  NOTE: generic method "mtp" accepted; drafter loaded from the checkpoint's own mtp module.
+
+  BOOTED FIRST TRY at 0.44/262144:
+    Available KV cache memory: 26.71 GiB
+    GPU KV cache size: 752,748 tokens -> 2.87x ceiling at full 256K (arithmetic, not
+      measured concurrency)
+    init engine 137.25 s (compilation 47.21 s)
+
+## Probes — same bench harness as the t1 baseline (usage.completion_tokens, unique prefixes)
+
+shape   prompt_toks  completion_toks  TTFT (s)        decode tok/s (single-stream)
+short   74-75        30-51            0.268 (warm)    30.28-30.41
+medium  486-488      235-256          0.252-0.360     23.56-27.15
+long    105-106      700              0.263-0.264     20.61-22.13
+(first-ever request: TTFT 7.083s — cold compile path; excluded, noted for honesty)
+
+vs t1 incumbent baseline (same harness, same box, same day): 23.9-29.1 tok/s.
+Level on short/medium; ~2 tok/s lower on long gen. Prompt token counts differ for the
+same text (different tokenizer) — cross-model prompt_tokens are not comparable.
+
+## MTP acceptance (SpecDecoding logs during probes)
+
+  Mean acceptance length: 2.24-2.43
+  Per-position: ~0.63-0.69 / 0.38-0.43 / 0.23-0.31
+  Avg draft acceptance: 41.3-47.8%   <-- NOTABLY LOWER than the incumbent's 61-63%
+  Open item for t8: acceptance is generated-text-dependent; measure across more prompts
+  and consider num_speculative_tokens tuning (forum measured n=5 best decode on 3.8).
+
+## Decision
+
+  q3 resolved as decided: official nightly FIRST — it works; spark-arena fallback NOT used.
+  The committed pin (t5) is the digest above with the resolved version recorded.
