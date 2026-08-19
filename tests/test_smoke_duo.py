@@ -68,7 +68,7 @@ _LEGACY_14B_ID = "nvidia/Qwen3-14B-NVFP4"
 _GEMMA_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 # The gear the cheap tier resolves to since the hand lobe replaced the 4B.
 _HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
-_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
+_PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"
 
 # Tiny 1×1 RGB PNG (valid PNG, useful as a minimal image payload). Used only by
 # the *wire-check* tests below — it proves nothing about perception because a
@@ -378,7 +378,7 @@ def _synthesize_speech(base_url: str, text: str) -> bytes:
 def test_live_main_text_returns_nonempty_content() -> None:
     """model=main (27B primary) responds with non-empty text to a plain prompt.
 
-    The cortex model (unsloth/Qwen3.6-27B-NVFP4) is a
+    The cortex model (unsloth/Qwen3.8-27B-NVFP4) is a
     *reasoning* model: on every turn it emits a ``reasoning``/``reasoning_content``
     trace before ``content``, and with ``preserve_thinking`` (issue #93) that
     trace is populated by default rather than trimmed. A tight ``max_tokens``

@@ -8,8 +8,9 @@ real hostname is literally that, and its device-tree model string
 it (``"NVIDIA Jetson AGX Orin Developer Kit"``).
 
 **Ampere cannot serve the `cortex` primary.** The 27B checkpoint
-(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` / the promoted
-`unsloth/Qwen3.6-27B-NVFP4`) quantizes *activations* to FP4, which needs
+(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` / the current primary
+`unsloth/Qwen3.8-27B-NVFP4`, and its predecessor `unsloth/Qwen3.6-27B-NVFP4`)
+quantizes *activations* to FP4, which needs
 Blackwell-class tensor cores — sm_87 is Ampere, one generation short. That is
 a hard architecture line, not a memory tradeoff, and it is a per-role
 *feasibility* fact (declared in a fleet ``Profile`` TOML — out of scope here;

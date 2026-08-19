@@ -21,7 +21,7 @@ from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 # changes the id callers must name, and NO consumer in this mesh addresses by
 # role name (they all send the raw id), so a swap 404s them until they migrate
 # to the stable `cortex`/`main` aliases. See docs/model-switch-playbook.md §2.
-_DEFAULT_PRIMARY = "unsloth/Qwen3.6-27B-NVFP4"
+_DEFAULT_PRIMARY = "unsloth/Qwen3.8-27B-NVFP4"
 _DEFAULT_FALLBACK = "RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4"
 _DEFAULT_EMBED = "Qwen/Qwen3-Embedding-0.6B"
 # The opt-in "deep" embedding slot — the higher-fidelity companion to _DEFAULT_EMBED,

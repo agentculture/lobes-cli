@@ -22,7 +22,7 @@ _FALLBACK_AGENT = "lobes"
 # VLLM_SERVED_NAME is unset. Must track the gateway's own fallback
 # (``lobes.gateway._config._DEFAULT_PRIMARY``) — reporting a DEMOTED checkpoint
 # here tells an operator the box serves a model it 404s on.
-_DEFAULT_MODEL = "unsloth/Qwen3.6-27B-NVFP4"
+_DEFAULT_MODEL = "unsloth/Qwen3.8-27B-NVFP4"
 
 
 def _find_culture_yaml() -> Path | None:

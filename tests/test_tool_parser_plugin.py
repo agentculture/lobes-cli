@@ -133,17 +133,26 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # pair + *_PEER_PROXY / *_PEER_API_KEY knobs.) Every other service is
     # byte-identical — this tripwire firing on exactly the intended services, and
     # NOTHING else, is itself the proof of each change's blast radius.
-    "gateway": "88448c70bf43f4b757c3a6f4f86c428c040fbf4321ffa75f2e5fe35e0bb2f5b8",
-    "vllm-embed": "63db52dc1121c1b861b5559c03d1b2c76699af86a575718908306f2440bd4b85",
-    "vllm-embed-deep": "532b5b24c76c6cb90d06a4336ec42e6cc856a18ee112186aeff1141403f1143e",
-    "vllm-hand": "cc07d34320aacf2bce52e6cded64b4ad7240931ad8f966545142e6f17311e7ec",
+    #
+    # Recomputed 2026-08-19 for the qwen3.8-cortex-upgrade plan (t5): the shared
+    # vLLM nightly digest bumped (sha256:7c5a10e9... -> sha256:8bd082c2...),
+    # which moved every service whose image defaults off VLLM_NIGHTLY_IMAGE
+    # (gateway's OPENAI_MODEL/env passthroughs plus vllm-embed, vllm-embed-deep,
+    # vllm-hand, vllm-rerank, vllm-worker); the Gemma-lane services
+    # (vllm-multimodal, vllm-multimodal-coder, vllm-muse, vllm-middle,
+    # vllm-minor) stay on their own image and are unaffected, byte-identical to
+    # the prior recompute.
+    "gateway": "884e7a609f48f5c2cb2a886909f2e9d99d96f591837fa44d73ef1c95b6258b31",
+    "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
+    "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
+    "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",
     "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
     "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
     "vllm-multimodal": "64c129b764059c3e78ed248da60634cd2ecf4a0af26c61e3508c5676ddb11134",
     "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
     "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
-    "vllm-rerank": "5929a5e6732c459ccd765ee629e04c8b32e1cc5fedf634e4cce2075d6ba49914",
-    "vllm-worker": "c749aa3782f55bf855d4cf4d329418626d6d4709998ddb9e6963049f3a2b6910",
+    "vllm-rerank": "6d9b3aa91863c05e2592716db85cb2110a49523ba99a74b521ed84913c0e530e",
+    "vllm-worker": "fbe72dfaaaa6ee7fc69325c548110b084e3e5107890cdd7c1d07634aec2923eb",
 }
 
 

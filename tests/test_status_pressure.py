@@ -37,7 +37,7 @@ from lobes.runtime import _pressure as _pressure_mod
 # replaced Qwen/Qwen3.5-4B here; `minor`/`cheap` remain accepted request
 # spellings but the tier RESOLVES to this model and REPORTS itself as "hand".
 _HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
-_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"  # main tier (full)
+_PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"  # main tier (full)
 
 _KEYS = {"mode", "shed", "servable_tier", "model", "reason", "retry_after", "pressure"}
 
