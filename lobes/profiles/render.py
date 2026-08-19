@@ -96,6 +96,14 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     "attention_backend": "ATTENTION_BACKEND",
     "enforce_eager": "ENFORCE_EAGER",
     "max_num_seqs": "MAX_NUM_SEQS",
+    # hf_overrides -> PRIMARY_HF_OVERRIDES (t5): threaded to the compose
+    # command's --hf-overrides flag. allow_long_max_model_len ->
+    # PRIMARY_ALLOW_LONG_MAX_MODEL_LEN: threaded to the vllm-primary
+    # container's VLLM_ALLOW_LONG_MAX_MODEL_LEN environment entry. Both are
+    # plain str knobs, so no special-case branch is needed below (only
+    # "model" and "enforce_eager" get one).
+    "hf_overrides": "HF_OVERRIDES",
+    "allow_long_max_model_len": "ALLOW_LONG_MAX_MODEL_LEN",
 }
 
 # The two argparse.BooleanOptionalAction tokens vLLM's --enforce-eager /

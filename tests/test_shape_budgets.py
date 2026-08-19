@@ -72,13 +72,20 @@ _THOR_SENSES_MAX_LEN = _THOR_PROFILE.role("senses").max_model_len
 _CORTEX_FULL_NATIVE_MAX_LEN = 262144  # 256K
 _SENSES_FULL_NATIVE_MAX_LEN = 131072  # 128K
 
-# spark-lobe's cortex gpu_mem_util override is the co-resident reclaim-sum:
-# 0.30 (cortex) + 0.14 (dropped senses) = 0.44. The historical 0.60 solo value
-# was tried first (t2b) and REFUSED by vLLM on the live GB10: unified memory is
-# shared with the host OS/services, and the 2026-07-14 boot measured only
-# 59.35 GiB free at primary startup vs the 73.01 GiB util 0.60 demands. 0.44
-# (53.5 GiB) fits the measured reality (live transcript, issue #113).
-_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.44
+# spark-lobe's cortex gpu_mem_util override, pre-t5 (qwen3.8-cortex-upgrade
+# plan), was the co-resident reclaim-sum: 0.30 (cortex) + 0.14 (dropped
+# senses) = 0.44 -- the 0.60 solo value was tried first (t2b) and REFUSED by
+# vLLM on the live GB10 (unified memory shared with the host OS/services; the
+# 2026-07-14 boot measured only 59.35 GiB free at primary startup vs the
+# 73.01 GiB util 0.60 demands). That measured 0.44/262144 pair is retained in
+# the shape TOML as the documented rollback value.
+#
+# t5 (2026-08-19) swaps the primary checkpoint to unsloth/Qwen3.8-27B-NVFP4
+# and DECLARES a 1M-token YaRN hypothesis on top of it: gpu_mem_util=0.60,
+# max_model_len=1048576 (via an hf_overrides rope-scaling override past the
+# checkpoint's own 262144 native ceiling). This is a DECLARED HYPOTHESIS, not
+# a measured value (#108) -- pending the plan's live t7 boot.
+_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.58
 
 
 def _compose(base: RoleProfile, override: RoleProfile) -> RoleProfile:
@@ -118,28 +125,37 @@ def test_spark_lobe_cortex_override_is_strictly_larger_than_co_resident_budget()
 
 
 def test_spark_lobe_cortex_util_is_the_reclaim_sum_that_fits_the_box() -> None:
-    # The reclaim-sum 0.30 + 0.14 = 0.44: the exact budget the dropped senses
-    # lobe frees. The 0.60 solo value was measured NOT to fit the live GB10
-    # (59.35 GiB free at boot vs 73.01 GiB demanded — unified memory shared
-    # with the host); see the TOML provenance comment.
+    # Pre-t5 the override was the reclaim-sum 0.30 + 0.14 = 0.44: the exact
+    # budget the dropped senses lobe frees (0.60 was REFUSED live twice on
+    # the live GB10). As of t5 (qwen3.8-cortex-upgrade), the shape instead
+    # 2026-08-19; 0.58 is the MEASURED value that booted, with the embed-deep
+    # gear reclaimed per the operator decision -- see
+    # the new Qwen3.8 checkpoint's own footprint at the wider 1M window --
+    # UNVALIDATED pending the live t7 boot (#108); see the TOML provenance
+    # comment for the rollback value (0.44) if that boot refuses it.
     override = load_builtin_shape("spark-lobe").override("cortex")
     assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_FULL_NATIVE_UTIL)
-    assert override.gpu_mem_util == pytest.approx(0.44)
-    # Strictly larger than the co-resident value, and exactly the reclaim-sum.
+    assert override.gpu_mem_util == pytest.approx(0.58)
+    # Strictly larger than the co-resident value.
     assert override.gpu_mem_util > _SPARK_CORTEX_UTIL
-    assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_UTIL + _SPARK_SENSES_UTIL)
 
 
 def test_spark_lobe_cortex_max_model_len_rises_to_full_native() -> None:
     # t2b (issue #113, user decision): the co-resident lobe (senses) this
     # shape drops is GONE from the box entirely, so the trim's original
-    # reason is gone too -- cortex now gets its full native 262144 (256K) in
-    # THIS task, not deferred to #112.
+    # reason is gone too -- cortex got its full native 262144 (256K) from
+    # that task. t5 (qwen3.8-cortex-upgrade, 2026-08-19) goes further and
+    # DECLARES a 1M-token (1048576) YaRN hypothesis on top of that -- reached
+    # only via an hf_overrides rope-scaling override past the Qwen3.8
+    # checkpoint's own 262144 native ceiling, DECLARED not measured (#108).
     override = load_builtin_shape("spark-lobe").override("cortex")
-    assert override.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN == 262144
+    assert override.max_model_len == 1048576
     composed = _compose(_SPARK_PROFILE.role("cortex"), override)
-    assert composed.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN
+    assert composed.max_model_len == 1048576
     assert composed.max_model_len > _SPARK_CORTEX_MAX_LEN  # strictly > co-resident 131072
+    assert (
+        composed.max_model_len > _CORTEX_FULL_NATIVE_MAX_LEN
+    )  # strictly > checkpoint native 262144
 
 
 # --- thor-lobe: senses reclaims the dropped cortex's budget, symmetrically ---

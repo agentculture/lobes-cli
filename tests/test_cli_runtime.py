@@ -108,7 +108,7 @@ def test_switch_dry_run_changes_nothing(tmp_path, capsys) -> None:
     assert "DRY RUN" in out
     assert "VLLM_MODEL=foo/bar" in out
     # .env untouched
-    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "unsloth/Qwen3.6-27B-NVFP4"
+    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == "unsloth/Qwen3.8-27B-NVFP4"
 
 
 def test_switch_apply_recreates_and_writes_env(tmp_path, monkeypatch) -> None:
@@ -313,7 +313,7 @@ def test_switch_to_mtp_primary_needs_no_compose_edit(tmp_path, capsys) -> None:
     rc = main(
         [
             "switch",
-            "unsloth/Qwen3.6-27B-NVFP4",
+            "unsloth/Qwen3.8-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -450,7 +450,7 @@ def test_switch_to_mtp_primary_still_needs_no_compose_edit_regression(tmp_path, 
     rc = main(
         [
             "switch",
-            "unsloth/Qwen3.6-27B-NVFP4",
+            "unsloth/Qwen3.8-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -490,7 +490,7 @@ def test_switch_no_clamp_when_model_fits_machine_default(tmp_path, capsys) -> No
     rc = main(
         [
             "switch",
-            "unsloth/Qwen3.6-27B-NVFP4",
+            "unsloth/Qwen3.8-27B-NVFP4",
             "--machine",
             "spark",
             "--compose-dir",
@@ -919,5 +919,5 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["container"] == "model-gear-vllm"
     assert payload["state"] == "not created"  # offline _probe → None
     assert payload["health"] == "not responding"  # offline is_healthy → False
-    assert payload["model"] == "unsloth/Qwen3.6-27B-NVFP4"
+    assert payload["model"] == "unsloth/Qwen3.8-27B-NVFP4"
     assert payload["tool_call_parser"] == "qwen3_coder"  # scaffolded default

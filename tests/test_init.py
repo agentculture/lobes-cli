@@ -248,7 +248,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     for svc in ("primary", "embed", "rerank"):
         assert f"MG_LOG_NAME={svc}" in compose
     env = (target / ".env").read_text()
-    assert "PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4" in env
+    assert "PRIMARY_MODEL=unsloth/Qwen3.8-27B-NVFP4" in env
     assert "FALLBACK_MODEL=" not in env
     # The primary serves its full 128K context at util 0.30 (util-bound, not
     # context-bound); the always-on Gemma multimodal gear is trimmed to 32K to
@@ -258,7 +258,64 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
     # init --fleet pins the gateway image to the running lobes-cli version.
     assert f"MODEL_GEAR_VERSION={__version__}" in env
     # coherence mirror keeps the single-model read-only verbs sensible.
-    assert "VLLM_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4" in env
+    assert "VLLM_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4" in env
+
+
+# --- t5: the shared-digest bump (six Qwen-lane services, ONLY six) ---------
+
+_NEW_DIGEST = "sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695"
+_OLD_DIGEST = "sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+
+
+def test_init_fleet_apply_pins_the_new_digest_on_all_six_qwen_lanes_only(tmp_path) -> None:
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    compose = (target / "docker-compose.yml").read_text()
+    # Exactly six defaults reference the new digest: vllm-primary, vllm-embed,
+    # vllm-embed-deep, vllm-rerank, vllm-hand (via HAND_IMAGE fallback), and
+    # vllm-worker (via WORKER_IMAGE fallback) — see the vllm-primary comment
+    # block for the t5 rationale.
+    assert compose.count(_NEW_DIGEST) == 6
+    # The old digest is gone from every VLLM_NIGHTLY_IMAGE default line.
+    assert f"VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@{_OLD_DIGEST}" not in compose
+
+
+def test_init_fleet_apply_leaves_the_gemma4_dockerfile_pinned_old(tmp_path) -> None:
+    # Regression guard for the operator decision: Dockerfile.vllm-gemma4 stays
+    # pinned to the OLD digest deliberately — it is NOT bumped alongside the
+    # six VLLM_NIGHTLY_IMAGE lanes.
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    dockerfile = (target / "Dockerfile.vllm-gemma4").read_text()
+    assert _OLD_DIGEST in dockerfile
+    assert _NEW_DIGEST not in dockerfile
+
+
+def test_init_fleet_apply_pins_the_new_env_example_digest(tmp_path) -> None:
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    env = (target / ".env").read_text()
+    assert f"VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@{_NEW_DIGEST}" in env
+    # The active default line is the new digest — the old digest may still
+    # appear in a "pre-bump digest was" provenance comment, which is fine.
+    assert f"VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@{_OLD_DIGEST}" not in env
+
+
+def test_init_fleet_apply_declares_no_mutable_image_tag_on_the_qwen_lanes(tmp_path) -> None:
+    # grep-shaped guard: no committed default anywhere in the rendered compose
+    # floats a mutable tag (:nightly / :latest) for the cortex/Qwen lanes —
+    # every default is pinned by digest.
+    target = tmp_path / "fleet"
+    rc = main(["init", "--fleet", str(target), "--apply"])
+    assert rc == 0
+    compose = (target / "docker-compose.yml").read_text()
+    for line in compose.splitlines():
+        if "VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai" in line or "HAND_IMAGE:-" in line:
+            assert ":nightly" not in line
+            assert "vllm-openai:latest" not in line
 
 
 def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
@@ -384,7 +441,7 @@ def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None
         assert (target / name).is_file(), name
     env = (target / ".env").read_text()
     # fleet keys still present, audio keys appended (not clobbered).
-    assert "PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4" in env
+    assert "PRIMARY_MODEL=unsloth/Qwen3.8-27B-NVFP4" in env
     assert "CHATTERBOX_PORT=9000" in env
     assert "AUDIO_URL=http://realtime:8080" in env
 

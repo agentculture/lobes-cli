@@ -5,7 +5,7 @@
 agents:
 - suffix: lobes
   backend: acp
-  model: vllm-local/unsloth/Qwen3.6-27B-NVFP4
+  model: vllm-local/unsloth/Qwen3.8-27B-NVFP4
   # Mirrors AGENTS.md verbatim (the runtime system prompt source of truth).
   system_prompt: |
     You are lobes, the local thinking agent of the Culture mesh. You reason,
@@ -40,7 +40,7 @@ agents:
     ## Runtime
 
     You are served by a locally-hosted vLLM reasoning model
-    (`unsloth/Qwen3.6-27B-NVFP4` — a Qwen3.6 27B with hybrid
+    (`unsloth/Qwen3.8-27B-NVFP4` — a Qwen3.5-arch 27B with hybrid
     Mamba/linear-attention layers and a self-hosted MTP draft head for speculative
     decoding, MULTIMODAL (image and video intake through its own ViT), in NVFP4,
     256K native context, running on DGX Spark) over the `acp` backend — not a Claude-backed

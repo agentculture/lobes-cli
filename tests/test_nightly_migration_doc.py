@@ -31,7 +31,7 @@ PINNED_TODAY_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
 # (0.23.1rc1.dev672). See docs/vllm-nightly-migration.md §4/§5 (t2/t3 GO
 # verdicts) for the live validation that preceded this flip.
 NIGHTLY_DIGEST_IMAGE = (
-    "vllm/vllm-openai@sha256:" "7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
+    "vllm/vllm-openai@sha256:" "8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695"
 )
 
 # Services that the plan says pin the NGC image today (t4 will migrate these
@@ -171,8 +171,8 @@ def test_doc_cites_real_mesh_traffic_not_a_hypothetical() -> None:
     assert "culture.yaml" in doc_text, "doc must cite culture.yaml as evidence"
     # The exact model id culture.yaml's lobes agent is served by — verifies
     # the doc's citation is accurate, not a stale/guessed value.
-    assert "vllm-local/unsloth/Qwen3.6-27B-NVFP4" in culture_yaml_text
-    assert "vllm-local/unsloth/Qwen3.6-27B-NVFP4" in doc_text
+    assert "vllm-local/unsloth/Qwen3.8-27B-NVFP4" in culture_yaml_text
+    assert "vllm-local/unsloth/Qwen3.8-27B-NVFP4" in doc_text
 
     assert "model=main" in doc_text or "model=multimodal" in doc_text, (
         "doc must cite the tier-alias routing (model=main / model=multimodal), "

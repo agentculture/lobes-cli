@@ -1,0 +1,67 @@
+# t1 baseline — INCUMBENT unsloth/Qwen3.6-27B-NVFP4 cortex, live DGX Spark GB10
+# Captured 2026-08-19, BEFORE the qwen3.8 swap (plan qwen3-8-cortex-upgrade, task t1).
+# This baseline is unrecoverable after the swap (docs/model-switch-playbook.md §1).
+
+## Before-state — RE-CHECKED LIVE on the box (not assumed)
+
+deployment dir: ~/.lobes   (spark-lobe shape; MODEL_GEAR_VERSION=0.55.0)
+engine image:   vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+engine version: vLLM 0.23.1rc1.dev672+g93d8f834d  (from the running container's boot log)
+container:      model-gear-vllm-primary, Up 8 days at capture (booted 2026-08-11 17:52)
+gateway:        model-gear-gateway on :8001 (inbound gated by CULTURE_VLLM_API_KEY)
+
+.env (primary lane):
+  PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4
+  PRIMARY_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
+  PRIMARY_MAX_MODEL_LEN=262144
+  PRIMARY_GPU_MEM_UTIL=0.44
+  PRIMARY_KV_CACHE_DTYPE=fp8
+
+live engine non-default args (boot log, api_utils.py:273):
+  quantization=compressed-tensors, max_model_len=262144, gpu_memory_utilization=0.44,
+  kv_cache_dtype=fp8, max_num_seqs=2, enable_prefix_caching=true,
+  speculative_config={"method":"qwen3_5_mtp","num_speculative_tokens":3},
+  reasoning_parser=qwen3, tool_call_parser=qwen3_coder_thinking
+  (plugin /opt/lobes/qwen3_thinking_tool_parser.py),
+  default_chat_template_kwargs={"preserve_thinking": true}, trust_remote_code=true
+
+## KV pool (boot log 2026-08-11)
+
+  Available KV cache memory: 15.45 GiB
+  GPU KV cache size: 434,954 tokens  ->  ceiling 434954/262144 = 1.66x at full 256K
+  NOTE: differs from the 2026-07-31 acceptance run's 26.39 GiB / 756,642 tokens at the
+  same declared knobs. This boot stores KV in fp8 ("Using fp8 data type to store kv
+  cache", cache.py:280) and co-resides with embed/embed-deep/rerank (+ realtime/stt/
+  chatterbox). The delta is recorded, not explained — the ceiling is arithmetic, not
+  measured concurrency (playbook §8 caveat).
+
+## Benchmark — via gateway :8001, streamed, decode from usage.completion_tokens
+# (NEVER SSE-chunk counts — playbook §1 trap). Unique [run-<uuid>] prefix per request
+# (prefix-caching trap). temperature=0. 3 runs per shape. model=<raw served id>.
+
+shape   prompt_toks  completion_toks  TTFT (s)        decode tok/s (single-stream)
+short   33-34        64               0.266-0.282     26.49-31.02  (mean 29.1)
+medium  443-447      256              0.367-0.428     26.10-29.06  (mean 27.7)
+long    61-64        700              0.259-0.330     23.69-24.07  (mean 23.9)
+
+(first-ever request after idle showed TTFT 3.597s — cold-path; excluded from the
+ 3-run table, noted here for honesty)
+
+raw runs: 9 JSONL rows captured; decode = completion_tokens / (t_last_delta - t_first_delta).
+
+## MTP acceptance (docker logs model-gear-vllm-primary | grep SpecDecoding, during runs)
+
+  Mean acceptance length: 2.83-2.90
+  Per-position acceptance rate: ~0.81-0.84 / 0.59-0.63 / 0.43-0.45
+  Avg draft acceptance rate: 61.0-63.4%  (one tail sample 47.6% on a 20-token window)
+  Consistent with the 2026-07-31 acceptance transcript's 62-67%.
+
+## Comparison honesty
+
+These numbers are measured on TODAY's engine (0.23.1rc1.dev672), today's flags
+(kv fp8, max_num_seqs=2, MTP n=3) and a warm 8-day-old process. They are the
+controlled baseline for the 3.8 candidate measured on whatever engine t2 selects —
+if the engine changes, the comparison spans engines and must say so. Decode here
+(23.9-29.1) is notably higher than the 2026-07-31 recorded 14.9-19.0 for the same
+checkpoint; flag differences (kv_cache_dtype fp8 vs the acceptance run) and warm
+caches are candidate explanations — not investigated further in t1.

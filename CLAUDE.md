@@ -19,13 +19,16 @@ OpenAI-compatible vLLM model the Culture mesh consumes. The binary is **`lobes`*
   and the agent rides on it. (It used to be a separate agent, `lepenseur`; that
   name is retired.)
 
-The served model is **`vllm-local/unsloth/Qwen3.6-27B-NVFP4`** (a Qwen3.6 27B
-with hybrid Mamba/linear-attention layers; **MULTIMODAL** — image and video
+The served model is **`vllm-local/unsloth/Qwen3.8-27B-NVFP4`** (a Qwen3.5-arch
+27B with hybrid Mamba/linear-attention layers; **MULTIMODAL** — image and video
 intake through its own ViT; a **self-hosted** MTP draft head baked into the
 checkpoint, so vLLM speculative decoding (Multi-Token Prediction) works with no
-external draft repo; compressed-tensors NVFP4 (mixed precision: fp8
-attention/`lm_head` + nvfp4 MLP, ViT left unquantized), 256K native; thinking
-mode with a reasoning trace). This is the **`cortex`** role — the fleet's
+external draft repo; compressed-tensors NVFP4, 262144 (256K) native; thinking
+mode with a reasoning trace). It replaced the previous primary,
+`unsloth/Qwen3.6-27B-NVFP4` (now a demoted candidate, kept per
+cite-don't-delete), 2026-08-19 — same architecture family, so the swap is a
+checkpoint change within the same engine-support family, not a new-arch
+bring-up. This is the **`cortex`** role — the fleet's
 reasoning/deciding/final-authority lobe (issue #81), and since the 2026-07-31
 promotion it is **the first role that can both see an image and decide**: the
 role contract forbids `senses` from `final_decision`/`repo_action` and `worker`
@@ -34,23 +37,38 @@ had to be handed to a role barred from making it.
 
 **Served context depends on deployment shape:** the legacy single-model scaffold
 (`lobes serve`, no fleet) serves the full 256K solo; the **spark-lobe** shape
-(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at the full
-**256K** at `gpu_mem_util=0.44`, MEASURED 2026-07-31; the machine-as-brain
+(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at
+**1M tokens** (`max_model_len=1048576`) via a YaRN `hf_overrides` rope-scaling
+override, **MEASURED live 2026-08-19** (`docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt`):
+`gpu_mem_util=0.58` (the 0.60 hypothesis was refused twice at boot; 0.58
+booted after the opt-in embed-deep 4B gear was stopped to fund the budget —
+the operator's reclaim decision), KV pool 42.07 GiB = 1,271,476 tokens =
+**1.21× ceiling at full 1M** (arithmetic, effectively single-request at max
+depth). A 328K-token needle retrieval — beyond the 262144 native ceiling —
+passed live, and an 8-prompt QA comparison measured ZERO quality cost from
+always-on YaRN (7/8 native vs 7/8 YaRN, identical failure). The shape's prior
+MEASURED 2026-07-31 pair (`gpu_mem_util=0.44` / `max_model_len=262144`, no
+YaRN) is kept in the shape TOML as the documented rollback value. The machine-as-brain
 **fleet duo** declares **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so cortex can
 co-reside with a local multimodal gear — that duo budget is **inherited from the
 previous text-only checkpoint and has not been booted with a ViT** (see
-`lobes/profiles/builtin/spark.toml`). See `docs/colleague-stack.md#migration-before--after`.
+`lobes/profiles/builtin/spark.toml`). See `docs/colleague-stack.md#migration-before--after`
+and `lobes/profiles/builtin_shapes/spark-lobe.toml` for the 1M hypothesis's
+full rationale.
 lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to it.
 
-Two 27B checkpoints remain as **candidates**, kept not deleted
+Three 27B checkpoints remain as **candidates**, kept not deleted
 (cite-don't-delete):
 
-- **`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** — the previous default primary,
+- **`unsloth/Qwen3.6-27B-NVFP4`** — the previous default primary, demoted
+  2026-08-19 by the Qwen3.8 upgrade. Multimodal (hybrid Mamba/linear-attn +
+  ViT, 256K native); every pre-2026-08-19 evidence transcript was measured
+  against it.
+- **`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP`** — an earlier default primary,
   demoted 2026-07-31. Its export dropped the ViT (hence its `--language-model-only`
   and `--tokenizer=mmangkad/…` flags, both now gone from the lane), so it is the
   remaining **text-only** 27B — the pick for a deployment wanting a smaller weight
-  footprint and no vision. Every pre-0.54.9 evidence transcript was measured
-  against it.
+  footprint and no vision.
 - **`mmangkad/Qwen3.6-27B-NVFP4`** — the archived original primary. It used to be
   justified as the tokenizer source the MTP primary served with *and* the only
   vision-capable 27B; **both rationales are now obsolete** — the promoted primary

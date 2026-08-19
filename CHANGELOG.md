@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.0] - 2026-08-20
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.56.6] - 2026-08-19
+
+### Changed
+
+- Bumped the shared vLLM nightly digest for all six Qwen-lane fleet services (vllm-primary/embed/embed-deep/rerank/hand/worker) in one commit, flipped the fleet default primary to `unsloth/Qwen3.8-27B-NVFP4`, and wired the spark-lobe shape's 1M-token YaRN hypothesis (`hf-overrides` + `VLLM_ALLOW_LONG_MAX_MODEL_LEN`) — see docs/plans/2026-08-19-qwen3-8-cortex-upgrade.md task t5.
+
 ## [0.56.5] - 2026-08-10
 
 ### Fixed

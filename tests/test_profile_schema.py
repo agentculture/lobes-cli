@@ -36,6 +36,8 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "attention_backend",
         "enforce_eager",
         "max_num_seqs",
+        "hf_overrides",
+        "allow_long_max_model_len",
     }
 
 
@@ -50,6 +52,8 @@ def test_role_profile_round_trips_through_dict() -> None:
         attention_backend="TRITON_ATTN",
         enforce_eager=True,
         max_num_seqs=4,
+        hf_overrides='{"text_config": {"rope_parameters": {"rope_type": "yarn"}}}',
+        allow_long_max_model_len="1",
     )
     again = RoleProfile.from_dict("cortex", rp.to_dict())
     assert again == rp
@@ -258,12 +262,16 @@ def test_spark_builtin_matches_the_fleet_template_exactly() -> None:
 
     cortex = spark.role("cortex")
     assert cortex.feasible is True
-    assert cortex.model == "unsloth/Qwen3.6-27B-NVFP4"
+    assert cortex.model == "unsloth/Qwen3.8-27B-NVFP4"
     assert cortex.gpu_mem_util == 0.30
     assert cortex.max_model_len == 131072
     assert cortex.quantization == "compressed-tensors"
     assert cortex.kv_cache_dtype == "fp8"
     assert cortex.max_num_seqs == 2
+    # The 1M YaRN knobs are spark-lobe-shape-only (t5) -- the bare card
+    # profile takes no position on either.
+    assert cortex.hf_overrides is None
+    assert cortex.allow_long_max_model_len is None
 
     senses = spark.role("senses")
     assert senses.feasible is True
@@ -301,8 +309,18 @@ def test_thor_builtin_encodes_exactly_the_four_validated_divergences() -> None:
     assert thor is not None
     assert thor.name == "thor"
 
-    # cortex: only kv_cache_dtype diverges (fp8 -> auto).
-    assert thor.role("cortex") == dataclasses.replace(spark.role("cortex"), kv_cache_dtype="auto")
+    # cortex: kv_cache_dtype diverges (fp8 -> auto) — the one VALIDATED sm_110
+    # divergence — PLUS, as of t5 (devague plan
+    # lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p), a temporary `model`
+    # divergence: t5's scope is spark.toml + spark-lobe.toml only, so Thor's
+    # own profile has not yet been swapped to unsloth/Qwen3.8-27B-NVFP4 (a
+    # sibling task's job — see CLAUDE.md's model section). This is a known,
+    # temporal gap, not a THIRD validated hardware divergence.
+    assert thor.role("cortex") == dataclasses.replace(
+        spark.role("cortex"),
+        kv_cache_dtype="auto",
+        model="unsloth/Qwen3.6-27B-NVFP4",
+    )
 
     # senses: identical to spark (no thor divergence declared for this role).
     assert thor.role("senses") == spark.role("senses")
@@ -519,7 +537,7 @@ def test_operator_profile_overrides_a_builtin_of_the_same_name(tmp_path) -> None
 
     # The built-in itself is never touched by the override.
     builtin_spark = loader.load_builtin("spark")
-    assert builtin_spark.role("cortex").model == "unsloth/Qwen3.6-27B-NVFP4"
+    assert builtin_spark.role("cortex").model == "unsloth/Qwen3.8-27B-NVFP4"
 
 
 def test_mixed_case_operator_file_overrides_the_builtin(tmp_path) -> None:

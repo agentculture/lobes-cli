@@ -438,7 +438,7 @@ auth/exposure — or `lobes explain api`.
 `lobes` is one identity, not two: it is the repo/tool that serves the model
 *and* the local thinking agent deployed on it. The agent's runtime identity lives
 in `AGENTS.md` (the `acp` system prompt) and `culture.yaml` (`suffix: lobes`,
-`backend: acp`, `model: vllm-local/unsloth/Qwen3.6-27B-NVFP4`) — the same
+`backend: acp`, `model: vllm-local/unsloth/Qwen3.8-27B-NVFP4`) — the same
 lobes that runs the engine consumes it over the `acp` `vllm-local` provider.
 
 ## Acknowledgements

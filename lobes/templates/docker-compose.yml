@@ -73,8 +73,8 @@ services:
     command:
       - vllm
       - serve
-      - ${VLLM_MODEL:-unsloth/Qwen3.6-27B-NVFP4}
-      - --served-model-name=${VLLM_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
+      - ${VLLM_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
+      - --served-model-name=${VLLM_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
       - --quantization=${VLLM_QUANTIZATION:-compressed-tensors}   # the multimodal primary's own quant_method (mixed fp8 + nvfp4); mmangkad/nvidia are modelopt_fp4 (`lobes switch` sets this from the catalog)
@@ -92,7 +92,7 @@ services:
       - --enable-auto-tool-choice          # OpenAI tool/function calling (tool_choice:"auto"); additive — plain chat/reasoning unaffected
       - --tool-call-parser=${VLLM_TOOL_CALL_PARSER:-qwen3_coder}   # Qwen3-Coder/Qwen3.6 (e.g. Qwen3.6-27B) emit XML and need `qwen3_coder`; `hermes` fits Qwen3 dense (e.g. Qwen3-32B) (set VLLM_TOOL_CALL_PARSER); coexists with --reasoning-parser on nv26.04
       - --enable-prefix-caching
-      # --- MTP default primary (unsloth/Qwen3.6-27B-NVFP4) -----------------------
+      # --- MTP default primary (unsloth/Qwen3.8-27B-NVFP4) -----------------------
       # The MULTIMODAL primary (promoted 2026-07-31) serves its ViT: image AND
       # video intake, both validated live on the GB10 against negative controls
       # (docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt). Its MTP

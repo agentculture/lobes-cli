@@ -169,7 +169,8 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "validation",
         "final_authority",
         # Added 2026-07-31 with the multimodal promotion (colleague#361). The
-        # cortex checkpoint (unsloth/Qwen3.6-27B-NVFP4) serves its own ViT and
+        # cortex checkpoint (then unsloth/Qwen3.6-27B-NVFP4, since replaced by
+        # unsloth/Qwen3.8-27B-NVFP4) serves its own ViT and
         # image + video intake were VALIDATED live on the GB10 against negative
         # controls (docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt).
         #

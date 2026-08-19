@@ -27,6 +27,10 @@ from dataclasses import asdict, dataclass
 _CONTEXT_32K_NATIVE = "32K native"
 _CONTEXT_128K_NATIVE = "128K native"
 _CONTEXT_256K_NATIVE = "256K native"
+
+# Self-hosted MTP draft via vLLM's generic "mtp" method (no external draft
+# repo) — shared by every checkpoint that bakes its own mtp.* module in.
+_MTP_SELF_HOSTED_N2 = '{"method": "mtp", "num_speculative_tokens": 2}'
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
 
@@ -205,7 +209,17 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # PROMOTED to fleet default primary 2026-07-31 (operator-confirmed), after
         # the live GB10 boot below. Replaces sakamakismile/…-Text-NVFP4-MTP, which
         # is demoted to `candidate` and kept (cite-don't-delete).
-        role_hint="primary",
+        #
+        # DEMOTED from fleet default primary 2026-08-19 (operator-confirmed,
+        # qwen3.8-cortex-upgrade plan t3), replaced by unsloth/Qwen3.8-27B-NVFP4
+        # below — the next-generation checkpoint from the SAME publisher and
+        # export recipe (Qwen3_5ForConditionalGeneration → the 3.8 line), with
+        # the same self-hosted MTP draft and multimodal ViT this entry has, plus
+        # a config-verified 1M-token YaRN reach this entry's card never claimed.
+        # Kept, not deleted (cite-don't-delete): it is the checkpoint every
+        # 2026-07-31..2026-08-19 evidence transcript was measured against, and it
+        # remains selectable via `lobes switch`.
+        role_hint="candidate",
         shape="hybrid Mamba/linear-attn + ViT (text+image+video, self-hosted MTP draft)",
         context="256K native (served at full 256K on the spark-lobe shape)",
         native_max_model_len=262144,
@@ -241,7 +255,82 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # worker's own README serve command. UNMEASURED on this checkpoint:
         # the 35B twin reached 89.1% acceptance at 2 tokens, but that is the
         # sibling's number, not this one's.
-        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        speculative_config=_MTP_SELF_HOSTED_N2,
+        task="generate",
+    ),
+    SupportedModel(
+        id="unsloth/Qwen3.8-27B-NVFP4",
+        # Fleet default PRIMARY since 2026-08-19 (operator-confirmed,
+        # qwen3.8-cortex-upgrade plan t3), replacing unsloth/Qwen3.6-27B-NVFP4
+        # above (demoted to `candidate`, kept per cite-don't-delete).
+        #
+        # Every fact below is read off the checkpoint's own published config
+        # files (fetched 2026-08-19) — NOT from a boot. Per the thor-muse /
+        # thor-worker rule, gpu_mem_util and max_model_len for the co-resident
+        # fleet shapes are MEASURED truths, not arithmetic, so this entry does
+        # not declare them beyond the checkpoint's own native ceiling; a live
+        # GB10 boot + evidence transcript (plan tasks t7/t8/t9) supplies the
+        # rest, and this comment should be re-verified against that transcript
+        # once it lands.
+        #
+        # Verified against the ACTUAL config files, not card prose:
+        #   https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/main/config.json
+        #     - architectures: ["Qwen3_5ForConditionalGeneration"], model_type
+        #       "qwen3_5" — the SAME arch the outgoing 3.6 primary serves, so
+        #       this is a checkpoint swap within the same engine-support
+        #       family, not a new-architecture bring-up.
+        #     - text_config.max_position_embeddings = 262144 (native 256K),
+        #       num_hidden_layers = 64 — matching the outgoing primary's
+        #       native window; the checkpoint card's 1M-token reach is via a
+        #       YaRN --hf-overrides on text_config.rope_parameters, not a
+        #       larger native ceiling, so native_max_model_len stays 262144
+        #       here and the 1M knobs are wired at the profile/template layer
+        #       (plan task t5), not in this catalog entry.
+        #     - vision_config is present (ViT) with image_token_id and
+        #       video_token_id fields — MULTIMODAL, so a served lane must NOT
+        #       pass --language-model-only, same as the outgoing primary.
+        #     - mtp_num_hidden_layers = 1 — a self-hosted MTP draft module is
+        #       physically present in the checkpoint (own baked-in draft
+        #       weights), no external draft repo needed, mirroring the
+        #       outgoing primary's own self-hosted draft.
+        #     - quantization_config.quant_method "compressed-tensors",
+        #       format "mixed-precision" — fp8 attention/lm_head + nvfp4 MLP,
+        #       ViT left unquantized. Same quantization family the outgoing
+        #       primary uses, so --quantization=compressed-tensors carries
+        #       forward unchanged.
+        #   ~23.4 GB checkpoint size. License apache-2.0.
+        #   tokenizer.json: "truncation": null on the fixed revision fetched
+        #     2026-08-19 — an EARLIER revision of this checkpoint hardcoded
+        #     "max_length": 2048 in its tokenizer.json, which would silently
+        #     truncate every long-context request; re-verify this field after
+        #     any re-download, it is not guaranteed to stay null across
+        #     revisions.
+        #   chat_template.jinja: CONTAINS the `preserve_thinking` variable, so
+        #     issue #93's --default-chat-template-kwargs flag keeps working
+        #     across the swap. It ships its own tokenizer and its own ViT —
+        #     no --tokenizer override, no --language-model-only, same as the
+        #     outgoing primary.
+        role_hint="primary",
+        shape="hybrid Mamba/linear-attn + ViT (text+image+video, self-hosted MTP draft)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="compressed-tensors",
+        # MEASURED live on the DGX Spark GB10, 2026-08-19 — see
+        # docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt: boots at
+        # 0.58/1048576 (1M via YaRN hf-overrides; 0.60 refused twice, the
+        # opt-in embed-deep gear reclaimed), KV pool 42.07 GiB = 1,271,476
+        # tokens = 1.21x ceiling at full 1M, decode 19.9-24.0 tok/s
+        # single-stream, MTP 54-61% acceptance at n=2, 328K-token needle
+        # retrieval beyond the native ceiling, image + strict-tools gates
+        # pass on vLLM 0.26.1rc1.dev942.
+        status="load-tested",
+        doc="qwen3.8-27b-nvfp4.md",
+        # Self-hosted draft (no external "model" key) via the generic "mtp"
+        # method — validated live 2026-08-19 (54-61% draft acceptance at
+        # n=2 on the GB10; the outgoing 3.6 needed the qwen3_5_mtp key on
+        # the 0.23 engine, the 0.26 engine takes "mtp" directly).
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
@@ -733,7 +822,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # experts). vLLM auto-selects a working kernel per path. `lobes switch`
         # therefore adds NO --moe-backend flag for this gear.
         moe_backend="",
-        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(

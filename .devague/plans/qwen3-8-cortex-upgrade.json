@@ -1,0 +1,538 @@
+{
+  "slug": "qwen3-8-cortex-upgrade",
+  "title": "qwen3.8 cortex upgrade",
+  "frame_slug": "qwen3-8-cortex-upgrade",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-19T18:21:07Z",
+  "updated": "2026-08-19T18:23:24Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes upgrades the cortex checkpoint from unsloth/Qwen3.6-27B-NVFP4 to unsloth/Qwen3.8-27B-NVFP4 on the DGX Spark, served on a vLLM engine new enough to register the Qwen3.8 arch, with measured GB10 budgets and the option of 1M YaRN context",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "a live GB10 boot serves unsloth/Qwen3.8-27B-NVFP4 at max_model_len=1048576 and a gateway chat completion answers 200 \u2014 no claim of 'upgraded' before that boot",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains a SupportedModel entry for unsloth/Qwen3.8-27B-NVFP4 verified against its published config.json (arch id, quant scheme, MTP tensors, ViT, 262144 native), following the exact pattern the current primary entry used; the incumbent unsloth/Qwen3.6-27B-NVFP4 demotes to candidate, kept not deleted (cite-don't-delete, same as the sakamakismile demotion)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "every fact in the new catalog entry is read from the checkpoint's published config files at implementation time (not from the forum or this spec), and the demoted 3.6 remains selectable via lobes switch",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the shared VLLM_NIGHTLY_IMAGE digest is the default image for the primary, embed, rerank, hand and worker lanes (lobes/templates/fleet/docker-compose.yml:43,181,266,324,491,1078) \u2014 if the spike proves a digest bump necessary, the blast radius is every lane on it, and there is no PRIMARY_IMAGE per-lane override today (only HAND_IMAGE/WORKER_IMAGE exist); a bump-for-cortex-only would need a new template knob or a full-fleet revalidation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the swap PR either bumps the digest for all five lanes with each lane re-probed, or first lands a per-lane image knob \u2014 it never moves cortex alone on the shared default silently",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "lobes/profiles/builtin/spark.toml [primary].model and lobes/profiles/builtin_shapes/spark-lobe.toml flip to unsloth/Qwen3.8-27B-NVFP4 with budgets treated as MEASURED truths per the repo rule: boot the spark-lobe hypothesis 0.44/262144 first (the incumbent's accepted values; the forum measured 0.45/262144 for this exact checkpoint on a GB10, so 0.44 is plausible); spark.toml's machine-as-brain duo 0.30/131072 stays a declared, never-booted-with-this-ViT inheritance unless separately measured",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "every gpu_mem_util/max_model_len committed for the 3.8 lane is a value a live GB10 boot actually accepted \u2014 declared-only numbers are labelled UNVALIDATED per #108",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "lobes/runtime/_parser.py _RULES gains qwen3.8 / qwen3-8 / qwen3_8 markers resolving to qwen3_coder (tests/test_parser.py + the catalog test asserting tool_parser==infer_parser(id) both extend); the forum's qwen3_xml parser name is a newer-vLLM alternative and is NOT adopted while the fleet stays on the 0.23.1 digest",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "infer_parser('unsloth/Qwen3.8-27B-NVFP4') returns qwen3_coder (or the deliberately chosen newer parser) and the catalog test asserting tool_parser==infer_parser(id) passes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "every in-tree surface naming the served primary id updates together: lobes/templates/{docker-compose.yml,env.example} + templates/fleet/{docker-compose.yml,env.example} (including the VLLM_MODEL/VLLM_SERVED_NAME == PRIMARY_* coherence rule), lobes/roles.py, lobes/gateway/_config.py, lobes/cli/_commands/whoami.py, lobes/explain/catalog.py, lobes/machines/orin.py, plus the ~20 test files pinning the id (grep audit 2026-08-19 found 40 files)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "after the change, grep for the old id finds it only in candidate/demotion/history contexts \u2014 no live default, template, or profile still points at 3.6",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the docs/model-switch-playbook.md ordering governs the live swap: benchmark the INCUMBENT on the current engine BEFORE the swap (that baseline is unrecoverable), measure decode via usage.completion_tokens never SSE-chunk counts, and apply the forum's three measurement gotchas \u2014 unique prefixes (prefix caching masks prefill), fresh images (mm cache masks vision cost), MTP acceptance averaged over multiple DIFFERENT prompts (acceptance is generated-text-dependent)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the incumbent baseline transcript exists and is committed BEFORE the swap lands, measured via usage.completion_tokens with the three cache/acceptance gotchas applied",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "the swap breaks every consumer pinning the raw id (playbook \u00a72: NO mesh consumer addresses by role \u2014 changing PRIMARY_SERVED_NAME 404s culture/colleague, eidetic, reachy-mini-cli and the lobes agent's own culture.yaml), and every box proxying cortex must mirror the new served name into its .env (the 2026-08-05 Spark refresh showed a peer swap left MULTIMODAL_SERVED_NAME stale and the role sat ready=false) \u2014 the rollout needs a consumer/peer update step outside this repo",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the rollout notes name every consumer repo and peer .env mirror that must repoint, and the swap PR links them \u2014 none discovered post-hoc via 404s",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "deliverables follow the repo's promotion convention: a new docs/qwen3.8-27b-nvfp4.md per-model doc, CLAUDE.md served-model paragraph update, an evidence transcript under docs/evidence/ gating any VALIDATED claim (#108), a CHANGELOG entry and version bump (every-PR-bumps rule), and the incumbent's docs kept (cite-don't-delete)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "no doc or capabilities surface says VALIDATED without a docs/evidence/ transcript; the PR bumps the version",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "the vLLM image updates to a build that serves Qwen3.8-27B-NVFP4 on GB10 (operator-approved 2026-08-19): candidates are a newer official vllm/vllm-openai nightly digest, or the forum's GB10 builds (ghcr.io/spark-arena/dgx-vllm-eugr-nightly nightly-20260801 = vLLM 0.26.1rc1.dev244, or ghcr.io/drowzeys/keys-vllm-027-gb10-qwen38:mtp3-20260813); the new pin lands as a digest, and the c4 blast-radius rule applies \u2014 either the shared digest bumps for all five lanes with revalidation, or a PRIMARY_IMAGE per-lane knob is added first",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the committed pin is a digest whose resolved vLLM version is recorded; the official image was tried first and any fallback to spark-arena is documented with the failure that forced it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "audience",
+      "text": "the fleet operator plus every mesh consumer that pins the raw served id (culture/colleague, eidetic, reachy-mini-cli, the lobes agent's culture.yaml) and the peer boxes proxying cortex",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the rollout notes are addressed to these named consumers/peers; none learns of the swap via a 404",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "before_state",
+      "text": "cortex serves unsloth/Qwen3.6-27B-NVFP4 at 256K native on the shared vLLM 0.23.1rc1.dev672 nightly digest (spark-lobe 0.44@262144, co-resident with embedder/reranker/embed-deep/hand)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the before-state numbers (digest, 0.44@262144) match what the live box actually serves at swap time, re-checked not assumed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "after_state",
+      "text": "cortex serves unsloth/Qwen3.8-27B-NVFP4 at 1M YaRN context on the DGX Spark via a new shared official-nightly digest with self-hosted MTP armed and image+video intake, all five digest-sharing lanes revalidated, the 3.6 demoted to candidate, and consumers/peer mirrors repointed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "every element of the after-state is evidenced: 1M boot transcript, five-lane revalidation results, 3.6 demotion in the catalog, repointed mirrors verified 200",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "why_it_matters",
+      "text": "the fleet's reasoning/final-authority lobe gains a newer checkpoint generation and ~4x served context (256K -> 1M) \u2014 long-context work that currently cannot fit in cortex at all becomes servable on the same box",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the 1M claim is exercised, not just configured: a long-context request beyond 262144 tokens completes through the gateway",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "an evidence transcript under docs/evidence/ records the live GB10 boot at max_model_len=1048576 with the correctness gates passing, MTP acceptance and decode measured against the pre-swap incumbent baseline, and a gateway chat completion answering 200 for model=cortex and the raw new id",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "the transcript is committed under docs/evidence/ in the promoting PR itself, not promised as a follow-up",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "before promotion, strict tool calling is proven on the new engine: the qwen3_coder_thinking plugin's structural-tag patch is re-verified (or ported) against the new digest's vLLM source, or superseded by the newer engine's own parser (qwen3_xml) if that engine derives the grammar's reasoning flag correctly \u2014 a strict:true tool schema with enable_thinking on must return a well-formed call, not a 500",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "a strict:true + enable_thinking=true tool call is exercised live on the new engine and returns a schema-valid call; the 0.23-era plugin is not carried forward unverified",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "the digest bump covers SIX lanes, not five: vllm-embed-deep (Qwen3-Embedding-4B, live on the Spark) also defaults to VLLM_NIGHTLY_IMAGE (templates/fleet/docker-compose.yml:266) \u2014 it revalidates with the other five",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the revalidation checklist names all six lanes explicitly and embed-deep's probe result is in the evidence, not inferred from embed's",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "rollout scope (operator, 2026-08-19): ONLY the Spark box is touched \u2014 the Thor and Orin deployments keep their current images, .env pins and running lanes; no Jetson redeploy, re-scaffold or revalidation is part of this upgrade",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "the swap PR's diff and rollout notes touch no Thor/Orin deployment state \u2014 the Jetson boxes' .env, images and running containers are byte-identical before and after",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "long-context operability: at the forum's measured prefill rates (1734->853 tok/s, declining with length) a near-1M prompt prefills for TENS OF MINUTES \u2014 the gateway, any proxy hop, and consumer HTTP timeouts must be checked/raised for the 1M lane, streaming responses must emit early (TTFT semantics under chunked prefill), and lobes status --pressure sampling must not misread a long prefill as a wedged lane",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "a deliberately long-prefill request (>=200K tokens) is run through the gateway during acceptance and completes without any layer timing out; the timeout values actually in effect are recorded",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the swap PR records the ROLLBACK recipe as a first-class section: the old digest (sha256:7c5a...), the old id (unsloth/Qwen3.6-27B-NVFP4), the .env lines to restore, and the boot order \u2014 so a post-promotion regression is a 15-minute restore, not an archaeology session",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "the rollback section quotes the exact old digest and .env lines \u2014 someone who was not in this conversation could execute it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "if the spark-arena fallback image is used, it is pinned by DIGEST (never a mutable tag like nightly-latest), its resolved vLLM version recorded, and the provenance (third-party ghcr, unaudited) stated in the compose comment \u2014 same rigor as the official pin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "no mutable tag appears in any committed compose/env line for the cortex lane",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Baseline: benchmark the INCUMBENT 3.6 cortex on the current engine, live on the Spark, before anything changes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "transcript records TTFT, decode tok/s at three shapes (short/medium/512+ gen) measured via usage.completion_tokens, MTP acceptance from SpecDecoding logs, and KV pool \u2014 with unique prefixes and fresh images",
+        "the live before-state (digest, 0.44@262144, served id) is re-checked on the box and recorded, not assumed",
+        "the transcript is committed under docs/evidence/ BEFORE any swap commit lands"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h6",
+        "c18",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Engine spike: newest OFFICIAL vllm/vllm-openai nightly digest boots 3.8 NVFP4 standalone on the GB10 at 262144",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the candidate digest's resolved vLLM version is recorded; a standalone container serves unsloth/Qwen3.8-27B-NVFP4 with MTP armed and answers a completion",
+        "if the official image fails, the exact failure is recorded and the spark-arena fallback is tried and digest-pinned \u2014 official-first order is documented"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c13",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Catalog: add the config-verified 3.8 entry, demote 3.6 to candidate (lobes/catalog.py + catalog tests only)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every field of the new entry cites the checkpoint's published config files fetched at implementation time; tokenizer.json truncation re-verified null",
+        "3.6 gets role_hint candidate, stays selectable via lobes switch; uv run pytest tests/test_catalog.py tests/test_catalog_tiers.py passes"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Parser: _RULES gains qwen3.8 markers -> qwen3_coder (lobes/runtime/_parser.py + tests/test_parser.py only)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "infer_parser('unsloth/Qwen3.8-27B-NVFP4') == 'qwen3_coder'; the catalog test asserting tool_parser==infer_parser(id) passes"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Templates + profiles: bump the shared digest for ALL SIX lanes together, flip the primary id, wire the 1M YaRN knobs (templates/*, profiles spark.toml + spark-lobe.toml)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one digest-form pin (from t2) replaces the old default on all six VLLM_NIGHTLY_IMAGE lanes in one commit \u2014 never a subset; the compose comment records the resolved vLLM version",
+        "grep finds no mutable tag in any committed compose/env line for the cortex lane",
+        "spark-lobe renders max_model_len=1048576 with the YaRN hf-overrides on text_config.rope_parameters (all mrope fields preserved), VLLM_ALLOW_LONG_MAX_MODEL_LEN=1, and util marked as a hypothesis pending the t7 boot"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c4",
+        "h11",
+        "c29",
+        "h21",
+        "c13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Id sweep: every remaining surface naming the old id updates (roles.py, gateway/_config.py, whoami.py, explain/catalog.py, machines/orin.py, remaining tests) \u2014 no catalog/parser/template files",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "grep for unsloth/Qwen3.6-27B-NVFP4 finds it only in candidate/demotion/history contexts; full test suite passes"
+      ],
+      "deps": [
+        "t3",
+        "t5"
+      ],
+      "covers": [
+        "c8",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Live swap + 1M boot on the Spark deployment per the playbook: boot 3.8 at 262144 first, then extend to 1M YaRN, reclaiming co-resident gear budget if needed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a live GB10 boot serves 3.8 at max_model_len=1048576 and a gateway chat completion answers 200 for model=cortex and the raw id",
+        "every committed gpu_mem_util/max_model_len is a value the boot actually accepted; any gear trim/drop exercised under the c16 reclaim decision is recorded",
+        "no Thor/Orin deployment state is touched"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t5"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c5",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Acceptance gates on the live 1M lane: six-lane probes, long-prefill operability, strict tools, YaRN quality, benchmark vs baseline",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "all SIX digest lanes pass their correctness probes, embed-deep's result recorded explicitly, not inferred",
+        "a >=200K-token prompt completes through the gateway with no layer timing out; the effective timeout values are recorded",
+        "a strict:true + enable_thinking=true tool call returns a schema-valid call on the new engine (plugin re-verified, ported, or superseded \u2014 never carried forward unverified)",
+        "short-context quality compared on the same prompts native-vs-1M-YaRN, and decode/TTFT/MTP-acceptance compared against the t1 incumbent baseline \u2014 numbers, not impressions"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c20",
+        "h15",
+        "c22",
+        "h10",
+        "c23",
+        "h18",
+        "c27",
+        "h19"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Evidence + docs + release: transcript, per-model doc, rollback recipe, version bump",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the evidence transcript lands under docs/evidence/ IN the promoting PR; no surface says VALIDATED without it",
+        "docs/qwen3.8-27b-nvfp4.md exists; CLAUDE.md served-model paragraph updated; measured knobs folded back into profile comments",
+        "the playbook/PR carries an executable rollback section quoting the old digest and exact .env lines",
+        "CHANGELOG entry + version bump per the every-PR-bumps rule"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c11",
+        "h8",
+        "c19",
+        "h14",
+        "c21",
+        "h16",
+        "c28",
+        "h20"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Rollout notes to consumers and peers: the served-id repoint, addressed to every raw-id pinner",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the notes name each consumer repo (culture/colleague, eidetic, reachy-mini-cli, the lobes agent's culture.yaml) and every peer .env mirror, with the new id and the date \u2014 none learns via a 404",
+        "the notes contain zero Thor/Orin deployment changes; Jetson boxes byte-identical before and after"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c10",
+        "h7",
+        "c17",
+        "h12",
+        "c25",
+        "h22"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the in-tree VLLM_NIGHTLY_IMAGE default changes for future scaffolds on cards that never booted it (sm_110/Orin) \u2014 UNVALIDATED there per #108 until a later boot",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "MTP self-draft acceptance at 1M-YaRN depth is unmeasured anywhere; t8 measures it on this deployment for the first time",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "one full-context request can monopolize the KV pool for a multi-minute prefill while shorter cortex requests queue \u2014 no per-request KV fairness in v1",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

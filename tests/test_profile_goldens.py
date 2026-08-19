@@ -135,13 +135,21 @@ def test_thor_golden_carries_its_own_sm110_divergences() -> None:
 
 
 def test_spark_and_thor_share_every_other_knob() -> None:
-    """Outside the four sm_110 divergences, spark and thor render identically.
+    """Outside the sm_110 divergences and the cortex checkpoint, spark and thor
+    render identically.
 
     Both profiles declare the same models/util/context/quant on purpose (both
     are 128 GB unified-memory Blackwell-class boards) — this pins that
     intentional near-duplication so a future accidental divergence (or
     accidental de-duplication) shows up as a targeted diff instead of getting
     lost in the two full-file byte comparisons above.
+
+    As of the qwen3.8-cortex-upgrade plan (2026-08-19), spark's card profile
+    flipped its cortex `PRIMARY_MODEL`/`PRIMARY_SERVED_NAME` to
+    `unsloth/Qwen3.8-27B-NVFP4`; thor's card profile was deliberately left on
+    the prior `unsloth/Qwen3.6-27B-NVFP4` (the upgrade's live evidence covers
+    only the GB10), so that pair joins the intentional divergence set rather
+    than the shared-knob set.
     """
     spark_lines = set(_read_golden("spark.env").splitlines())
     thor_lines = set(_read_golden("thor.env").splitlines())
@@ -150,12 +158,18 @@ def test_spark_and_thor_share_every_other_knob() -> None:
     # the compose template's own ${VAR:-default} applies for those knobs).
     only_in_spark = spark_lines - thor_lines
     only_in_thor = thor_lines - spark_lines
-    assert only_in_spark == {"PRIMARY_KV_CACHE_DTYPE=fp8"}
+    assert only_in_spark == {
+        "PRIMARY_KV_CACHE_DTYPE=fp8",
+        "PRIMARY_MODEL=unsloth/Qwen3.8-27B-NVFP4",
+        "PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4",
+    }
     assert only_in_thor == {
         "PRIMARY_KV_CACHE_DTYPE=auto",
         "EMBED_ATTENTION_BACKEND=TRITON_ATTN",
         "RERANK_ATTENTION_BACKEND=TRITON_ATTN",
         "RERANK_ENFORCE_EAGER=--enforce-eager",
+        "PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4",
+        "PRIMARY_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4",
     }
 
 

@@ -120,13 +120,19 @@ def test_moe_backend_aligns_with_shape() -> None:
 # carries a "re:^mtp.*" pattern — i.e. real MTP weight tensors exist in the
 # checkpoint and are deliberately left unquantized. See the worker catalog
 # entry's own comment for the full citation.
-# unsloth/Qwen3.6-27B-NVFP4 (the multimodal-cortex CANDIDATE) is the same
-# publisher's same-recipe 27B sibling and qualifies for the same reason,
-# verified the same way against its own published config (fetched 2026-07-31):
-# mtp_num_hidden_layers=1, a top-level "unsloth_fixed_mtp" flag, and 15 real
-# `mtp.*` tensors in model.safetensors.index.json. Like the worker gear it
-# never lost its draft head, so its upstream id never carried an "-MTP" marker.
-_SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset({_WORKER_ID, "unsloth/Qwen3.6-27B-NVFP4"})
+# unsloth/Qwen3.6-27B-NVFP4 (now a demoted CANDIDATE) is the same publisher's
+# same-recipe 27B sibling and qualifies for the same reason, verified the same
+# way against its own published config (fetched 2026-07-31): mtp_num_hidden_layers=1,
+# a top-level "unsloth_fixed_mtp" flag, and 15 real `mtp.*` tensors in
+# model.safetensors.index.json. Like the worker gear it never lost its draft
+# head, so its upstream id never carried an "-MTP" marker.
+# unsloth/Qwen3.8-27B-NVFP4 (the current PRIMARY, since 2026-08-19) qualifies
+# for the identical reason, verified against its own published config (fetched
+# 2026-08-19): text_config.mtp_num_hidden_layers=1 — a self-hosted MTP draft
+# module, no external draft repo, and no "-MTP" marker in its upstream id.
+_SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset(
+    {_WORKER_ID, "unsloth/Qwen3.6-27B-NVFP4", "unsloth/Qwen3.8-27B-NVFP4"}
+)
 
 
 def test_speculative_config_only_on_mtp_or_external_draft_checkpoints() -> None:
@@ -373,7 +379,10 @@ def test_minor_gear_quantization_is_none_sentinel() -> None:
 _GEMMA_BASE_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
 _GEMMA_CODER_ID = "sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4"
 _14B_ID = "nvidia/Qwen3-14B-NVFP4"
-_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
+# Fleet default primary since 2026-08-19 (qwen3.8-cortex-upgrade plan t3);
+# unsloth/Qwen3.6-27B-NVFP4 is demoted to role_hint="candidate" and kept
+# (cite-don't-delete) — see its catalog entry's demotion comment.
+_PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"
 
 # The exact native-MTP speculative_config §7 measured on the NVFP4 base gear —
 # 28.6 tok/s decode at 57.9% draft acceptance (vs the coder's 30.8%/~6% win, and
@@ -525,6 +534,54 @@ def test_14b_is_demoted_to_candidate() -> None:
     middle = next((m for m in SUPPORTED_MODELS if m.id == _14B_ID), None)
     assert middle is not None, f"{_14B_ID} must be KEPT in the catalog (demoted, not deleted)"
     assert middle.role_hint == "candidate", f"{_14B_ID}: expected demotion to 'candidate'"
+
+
+# ---------------------------------------------------------------------------
+# qwen3.8-cortex-upgrade (plan t3): 3.8 promoted to primary, 3.6 demoted
+# ---------------------------------------------------------------------------
+
+_OUTGOING_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
+_INCOMING_PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"
+
+
+def test_qwen38_primary_gear_exists_with_correct_fields() -> None:
+    # The config-verified 3.8 entry (fetched 2026-08-19) must be present and
+    # carry role_hint="primary" plus the fields config files establish.
+    gear = next((m for m in SUPPORTED_MODELS if m.id == _INCOMING_PRIMARY_ID), None)
+    assert gear is not None, f"{_INCOMING_PRIMARY_ID} not found in catalog"
+    assert gear.role_hint == "primary"
+    assert gear.task == "generate"
+    assert gear.quantization == "compressed-tensors"
+    assert gear.native_max_model_len == 262144
+    assert gear.tool_parser == "qwen3_coder"
+    assert gear.speculative_config
+    # MEASURED live on the GB10 2026-08-19 (1M boot + gates) — see
+    # docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt.
+    assert gear.status == "load-tested"
+
+
+def test_qwen38_is_the_only_primary_gear() -> None:
+    # resolve_tier depends on exactly one role_hint="primary" generate gear —
+    # a second entry would make "main"/"hard"/"cortex" resolution ambiguous by
+    # first-match, exactly like the multimodal/worker/hand single-gear guards
+    # elsewhere in this file.
+    primaries = [m.id for m in SUPPORTED_MODELS if m.role_hint == "primary"]
+    assert primaries == [_INCOMING_PRIMARY_ID], f"role_hint='primary' models: {primaries}"
+
+
+def test_qwen36_is_demoted_to_candidate_and_kept() -> None:
+    # The outgoing 3.6 primary is KEPT (cite-don't-delete) and demoted to a
+    # legacy candidate; it must remain in the catalog and stay selectable.
+    outgoing = next((m for m in SUPPORTED_MODELS if m.id == _OUTGOING_PRIMARY_ID), None)
+    assert outgoing is not None, f"{_OUTGOING_PRIMARY_ID} must be KEPT (demoted, not deleted)"
+    assert outgoing.role_hint == "candidate", f"{_OUTGOING_PRIMARY_ID}: expected demotion"
+    assert outgoing.task == "generate"
+
+
+def test_resolve_tier_main_and_hard_return_qwen38_primary() -> None:
+    for tier in ("main", "hard", "cortex"):
+        model = resolve_tier(tier)
+        assert model.id == _INCOMING_PRIMARY_ID, f"resolve_tier({tier!r}) -> {model.id}"
 
 
 def test_tier_role_map_uses_new_vocabulary() -> None:

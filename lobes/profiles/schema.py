@@ -80,6 +80,15 @@ KNOB_NAMES: tuple[str, ...] = (
     "attention_backend",
     "enforce_eager",
     "max_num_seqs",
+    # hf_overrides / allow_long_max_model_len (t5 of devague plan
+    # lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p): the two knobs the
+    # spark-lobe shape's 1M-context YaRN hypothesis needs to reach the
+    # vllm-primary compose command/environment. Both are plain strings
+    # (never a bool/JSON dataclass) so the existing str-knob render path in
+    # lobes.profiles.render._role_env handles them with no special case, the
+    # same way kv_cache_dtype/attention_backend already do.
+    "hf_overrides",
+    "allow_long_max_model_len",
 )
 
 
@@ -219,6 +228,8 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "attention_backend": (_is_optional_str, _STR_OR_NONE),
     "enforce_eager": (_is_optional_bool, "bool or None"),
     "max_num_seqs": (_is_optional_int, "int or None"),
+    "hf_overrides": (_is_optional_str, _STR_OR_NONE),
+    "allow_long_max_model_len": (_is_optional_str, _STR_OR_NONE),
 }
 
 
@@ -242,6 +253,17 @@ class RoleProfile:
     attention_backend: str | None = None
     enforce_eager: bool | None = None
     max_num_seqs: int | None = None
+    # A raw vLLM --hf-overrides JSON string (matching lobes.catalog.SupportedModel's
+    # own hf_overrides field's shape/purpose) — a role/machine's opinion on the
+    # checkpoint config override, e.g. a YaRN rope_parameters patch for a
+    # long-context shape. None means "no opinion" like every other knob.
+    hf_overrides: str | None = None
+    # The VLLM_ALLOW_LONG_MAX_MODEL_LEN passthrough env value ("1" to allow a
+    # max_model_len beyond the checkpoint's declared ceiling, e.g. serving a
+    # YaRN-scaled 1M window). A plain string (not bool) so it renders through
+    # the same str-knob path as kv_cache_dtype/attention_backend — vLLM reads
+    # the env var as a raw string, not a "true"/"false" token.
+    allow_long_max_model_len: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view — every declared field, ``None`` included.
