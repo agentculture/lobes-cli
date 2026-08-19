@@ -27,6 +27,10 @@ from dataclasses import asdict, dataclass
 _CONTEXT_32K_NATIVE = "32K native"
 _CONTEXT_128K_NATIVE = "128K native"
 _CONTEXT_256K_NATIVE = "256K native"
+
+# Self-hosted MTP draft via vLLM's generic "mtp" method (no external draft
+# repo) — shared by every checkpoint that bakes its own mtp.* module in.
+_MTP_SELF_HOSTED_N2 = '{"method": "mtp", "num_speculative_tokens": 2}'
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
 
@@ -251,7 +255,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # worker's own README serve command. UNMEASURED on this checkpoint:
         # the 35B twin reached 89.1% acceptance at 2 tokens, but that is the
         # sibling's number, not this one's.
-        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
@@ -326,7 +330,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # method — validated live 2026-08-19 (54-61% draft acceptance at
         # n=2 on the GB10; the outgoing 3.6 needed the qwen3_5_mtp key on
         # the 0.23 engine, the 0.26 engine takes "mtp" directly).
-        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
@@ -818,7 +822,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # experts). vLLM auto-selects a working kernel per path. `lobes switch`
         # therefore adds NO --moe-backend flag for this gear.
         moe_backend="",
-        speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
