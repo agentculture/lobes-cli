@@ -179,17 +179,47 @@ Rule: quote the ceiling and the measured saturation together, or quote neither.
 If concurrency has not been measured for a lane, say so — the ceiling alone
 reads as a capacity claim it cannot support.
 
-## 9. What still is not covered
+## 9. Write the rollback recipe BEFORE you need it
+
+Added after the 2026-08-19 Qwen3.8 swap (spec requirement c28): the swap PR
+must carry a rollback an operator who was not in the room can execute. The
+recipe for the CURRENT (2026-08-19) state, restoring the previous primary:
+
+```bash
+# in the deployment dir (~/.lobes) — backups taken by the swap itself:
+#   docker-compose.yml.bak-20260819-pre-qwen38, .env.bak-20260819-pre-qwen38
+# Either restore both files, or edit .env:
+#   PRIMARY_MODEL=unsloth/Qwen3.6-27B-NVFP4
+#   PRIMARY_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
+#   VLLM_MODEL=unsloth/Qwen3.6-27B-NVFP4
+#   VLLM_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
+#   PRIMARY_MAX_MODEL_LEN=262144
+#   PRIMARY_GPU_MEM_UTIL=0.44
+#   VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+#   (delete the PRIMARY_HF_OVERRIDES and PRIMARY_ALLOW_LONG_MAX_MODEL_LEN lines;
+#    restore COMPOSE_PROFILES=embed-deep if re-hosting the 4B embed gear)
+docker compose -f docker-compose.yml -f docker-compose.audio.yml \
+  -f docker-compose.shape.yml -f docker-compose.override.yml \
+  up -d --no-deps vllm-primary vllm-embed vllm-embed-deep vllm-rerank gateway
+```
+
+The old checkpoint stays in the HF cache and in the catalog as a candidate
+(cite-don't-delete), so rollback is a ~6-minute reboot, not a re-download.
+Keep this section current on every swap — a recipe that names last year's
+digest is worse than none.
+
+## 10. What still is not covered
 
 Honest gaps in the current probe set, for whoever does this next:
 
-- **No quality benchmark.** Nothing here measures whether the new model is
-  *better* — only that it is alive, fast, and structurally intact. A swap that
-  degrades reasoning quality would pass every gate on this page.
-- **No concurrency benchmark.** All numbers are single-stream. The KV pool
-  implies ~2.89× concurrency at full context; nothing measures behaviour there.
-- **No long-context probe.** The lane serves 262144 tokens; the longest probe
-  used ~94 prompt tokens.
+- **Quality benchmarking is thin.** The 2026-08-19 swap added an 8-prompt
+  deterministic QA comparison (native vs YaRN) — better than nothing, still
+  far from a real eval. A swap that degrades reasoning quality subtly would
+  pass every gate on this page.
+- **No concurrency benchmark.** All numbers are single-stream. KV-pool
+  ceilings imply concurrency; nothing measures behaviour there.
+- **Long-context probes exist now** (228K and 328K needle retrievals,
+  2026-08-19) but depth beyond ~330K of the 1M window is unexercised.
 - **No pressure/shedding test** against the new lane.
 
 ## See also

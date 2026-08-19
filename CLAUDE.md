@@ -37,14 +37,18 @@ had to be handed to a role barred from making it.
 
 **Served context depends on deployment shape:** the legacy single-model scaffold
 (`lobes serve`, no fleet) serves the full 256K solo; the **spark-lobe** shape
-(what the DGX Spark runs — `senses` dropped to a peer) DECLARES a **1M-token**
-YaRN hypothesis for cortex (`gpu_mem_util=0.60`, `max_model_len=1048576`, via
-an `hf_overrides` rope-scaling override) as of the 2026-08-19 Qwen3.8 upgrade
-— UNVALIDATED pending its live boot (#108); the checkpoint's own native
-ceiling stays 262144, and the shape's prior MEASURED 2026-07-31 pair
-(`gpu_mem_util=0.44` / `max_model_len=262144`, full native, no YaRN) is kept
-in the shape TOML as the documented rollback value if the 1M hypothesis is
-refused live. The machine-as-brain
+(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at
+**1M tokens** (`max_model_len=1048576`) via a YaRN `hf_overrides` rope-scaling
+override, **MEASURED live 2026-08-19** (`docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt`):
+`gpu_mem_util=0.58` (the 0.60 hypothesis was refused twice at boot; 0.58
+booted after the opt-in embed-deep 4B gear was stopped to fund the budget —
+the operator's reclaim decision), KV pool 42.07 GiB = 1,271,476 tokens =
+**1.21× ceiling at full 1M** (arithmetic, effectively single-request at max
+depth). A 328K-token needle retrieval — beyond the 262144 native ceiling —
+passed live, and an 8-prompt QA comparison measured ZERO quality cost from
+always-on YaRN (7/8 native vs 7/8 YaRN, identical failure). The shape's prior
+MEASURED 2026-07-31 pair (`gpu_mem_util=0.44` / `max_model_len=262144`, no
+YaRN) is kept in the shape TOML as the documented rollback value. The machine-as-brain
 **fleet duo** declares **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so cortex can
 co-reside with a local multimodal gear — that duo budget is **inherited from the
 previous text-only checkpoint and has not been booted with a ViT** (see
