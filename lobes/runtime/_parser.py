@@ -6,7 +6,7 @@ calls. Picking the wrong one silently breaks tool calling (the server returns
 rather than leaving the caller to remember it. The rules below mirror the
 guidance in ``templates/env.example`` (the single source of truth):
 
-* Qwen3-Coder / Qwen3.5 / Qwen3.6 checkpoints emit the XML function format → ``qwen3_coder``
+* Qwen3-Coder / Qwen3.5 / Qwen3.6 / Qwen3.8 checkpoints emit the XML function format → ``qwen3_coder``
 * Qwen3 dense models emit Hermes-style JSON tool calls → ``hermes``
 * Mistral checkpoints emit the ``[TOOL_CALLS]`` format → ``mistral``
 * Gemma 4 checkpoints emit ``<|tool_call>call:name{…}<tool_call|>`` → ``gemma4``
@@ -31,8 +31,9 @@ from __future__ import annotations
 
 # Ordered (substring-set, parser) rules, matched against the lowercased model id.
 # A model matches a rule when it contains ANY of the rule's markers. The Coder /
-# Qwen3.6 rule comes first because those ids also contain "qwen3"; its markers are
-# Qwen3-scoped so a generic "*-coder" model doesn't get qwen3_coder.
+# Qwen3.5 / Qwen3.6 / Qwen3.8 rule comes first because those ids also contain
+# "qwen3"; its markers are Qwen3-scoped so a generic "*-coder" model doesn't get
+# qwen3_coder.
 _RULES: list[tuple[tuple[str, ...], str]] = [
     (
         (
@@ -45,6 +46,15 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
             "qwen3.6",
             "qwen3-6",
             "qwen3_6",
+            "qwen3.8",
+            "qwen3_8",
+            # Deliberately NO "qwen3-8" hyphen marker: unlike the "-5"/"-6"
+            # spellings above (no real checkpoint is named "Qwen3-5B" or
+            # "Qwen3-6B"), "qwen3-8" is a substring of the real dense
+            # "Qwen3-8B" id ("qwen/qwen3-8b".find("qwen3-8") == 5) — adding it
+            # would silently move that unrelated hermes-family checkpoint onto
+            # qwen3_coder. The dot ("qwen3.8") and underscore ("qwen3_8")
+            # spellings don't collide with any "-<size>B" suffix, so they stay.
         ),
         "qwen3_coder",
     ),

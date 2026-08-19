@@ -23,8 +23,18 @@ from lobes.runtime import _parser
         # The `worker` gear's MoE checkpoint (unsloth's NVFP4 export, ships its
         # own MTP draft module) — still a Qwen3.6 id, so qwen3_coder applies.
         ("unsloth/Qwen3.6-35B-A3B-NVFP4", "qwen3_coder"),
+        # Qwen3.8 (config declares model_type qwen3_5, same qwen3_coder XML
+        # tool-call family) → qwen3_coder.
+        ("unsloth/Qwen3.8-27B-NVFP4", "qwen3_coder"),
+        ("some/qwen3_8-foo", "qwen3_coder"),
+        # NOTE: no "qwen3-8" (hyphen) marker case here — that spelling is a
+        # substring of the real dense "Qwen3-8B" id and must NOT match (see
+        # the regression guard below and the comment in _parser.py).
         # Qwen3 dense → hermes
         ("nvidia/Qwen3-32B-NVFP4", "hermes"),
+        # Regression guard: "Qwen3-8B" contains the substring "qwen3-8", which
+        # must NOT be treated as a Qwen3.8 marker (see _parser.py comment) —
+        # this dense checkpoint must stay on hermes, not qwen3_coder.
         ("Qwen/Qwen3-8B", "hermes"),
         # Mistral → mistral (emits the [TOOL_CALLS] format)
         ("RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4", "mistral"),
