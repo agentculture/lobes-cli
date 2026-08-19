@@ -67,14 +67,17 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 # pending the live t7 boot (the repo's measured-not-declared rule, same as
 # thor-muse's util before its first live boot):
 #
-#   gpu_mem_util = 0.60 -- HYPOTHESIS, not measured. The historical solo 0.60
-#   was REFUSED on the 3.6/text-only checkpoints (see the pre-t5 history
-#   above -- 59.35 GiB free at boot vs 73.01 GiB demanded). t7 boots THIS
-#   value first against 3.8's own ~2.4 GiB larger footprint (an unquantized
-#   ViT identical to 3.6's) at the wider 1M KV window; if it is refused again,
-#   t7 reclaims budget from the other co-resident gears (embedder/reranker/
-#   embed-deep) rather than giving up the 1M reach (operator decision,
-#   docs/specs/2026-08-19-qwen3-8-cortex-upgrade.md).
+#   gpu_mem_util = 0.58 -- MEASURED live on the GB10, 2026-08-19 (t7 boot,
+#   docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt). The 0.60 hypothesis
+#   was REFUSED twice at boot (73.01 GiB demanded vs 72.22 then 65.22 GiB
+#   free), so t7 exercised the operator's reclaim decision
+#   (docs/specs/2026-08-19-qwen3-8-cortex-upgrade.md q4): the opt-in
+#   embed-deep 4B gear was STOPPED on this box (COMPOSE_PROFILES no longer
+#   includes embed-deep in the deployed .env) and 0.58 then booted first
+#   try. Measured at 0.58/1048576: KV pool 42.07 GiB = 1,271,476 tokens =
+#   1.21x ceiling at the full 1M window; engine init 137 s. Effectively a
+#   single full-context request at max depth -- the ceiling is arithmetic,
+#   not measured concurrency.
 #
 #   max_model_len = 1048576 -- HYPOTHESIS. 1M (1048576) is reachable ONLY via
 #   the YaRN hf_overrides below; the checkpoint's own native ceiling is
@@ -106,7 +109,7 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 # Profile carries hf_overrides=None / allow_long_max_model_len=None and
 # renders nothing for either key (profile_env's "None = no opinion"
 # convention) -- byte-identical to before t5 for those renders.
-gpu_mem_util = 0.60
+gpu_mem_util = 0.58
 max_model_len = 1048576
 hf_overrides = '{"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}'
 allow_long_max_model_len = "1"

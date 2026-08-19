@@ -85,7 +85,7 @@ _SENSES_FULL_NATIVE_MAX_LEN = 131072  # 128K
 # max_model_len=1048576 (via an hf_overrides rope-scaling override past the
 # checkpoint's own 262144 native ceiling). This is a DECLARED HYPOTHESIS, not
 # a measured value (#108) -- pending the plan's live t7 boot.
-_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.60
+_SPARK_CORTEX_FULL_NATIVE_UTIL = 0.58
 
 
 def _compose(base: RoleProfile, override: RoleProfile) -> RoleProfile:
@@ -126,15 +126,16 @@ def test_spark_lobe_cortex_override_is_strictly_larger_than_co_resident_budget()
 
 def test_spark_lobe_cortex_util_is_the_reclaim_sum_that_fits_the_box() -> None:
     # Pre-t5 the override was the reclaim-sum 0.30 + 0.14 = 0.44: the exact
-    # budget the dropped senses lobe frees (0.60 solo was measured NOT to fit
+    # budget the dropped senses lobe frees (0.60 was REFUSED live twice on
     # the live GB10). As of t5 (qwen3.8-cortex-upgrade), the shape instead
-    # DECLARES the historical solo 0.60 as a HYPOTHESIS to re-attempt against
+    # 2026-08-19; 0.58 is the MEASURED value that booted, with the embed-deep
+    # gear reclaimed per the operator decision -- see
     # the new Qwen3.8 checkpoint's own footprint at the wider 1M window --
     # UNVALIDATED pending the live t7 boot (#108); see the TOML provenance
     # comment for the rollback value (0.44) if that boot refuses it.
     override = load_builtin_shape("spark-lobe").override("cortex")
     assert override.gpu_mem_util == pytest.approx(_SPARK_CORTEX_FULL_NATIVE_UTIL)
-    assert override.gpu_mem_util == pytest.approx(0.60)
+    assert override.gpu_mem_util == pytest.approx(0.58)
     # Strictly larger than the co-resident value.
     assert override.gpu_mem_util > _SPARK_CORTEX_UTIL
 

@@ -1,0 +1,58 @@
+# Acceptance — unsloth/Qwen3.8-27B-NVFP4 cortex at 1M YaRN, live DGX Spark GB10
+# 2026-08-19, plan qwen3-8-cortex-upgrade. t7 = live swap + 1M boot (this section);
+# t8 gates appended below as they run.
+
+## t7 — live swap + 1M boot (MEASURED)
+
+Deployment: ~/.lobes (spark-lobe shape). Backups taken before any change:
+  docker-compose.yml.bak-20260819-pre-qwen38, .env.bak-20260819-pre-qwen38
+Compose invocation (four -f files, per the recorded rule):
+  docker compose -f docker-compose.yml -f docker-compose.audio.yml
+    -f docker-compose.shape.yml -f docker-compose.override.yml
+    up -d --no-deps vllm-primary vllm-embed vllm-embed-deep vllm-rerank gateway
+  (named services only — the new template's default-on vllm-hand was deliberately
+   NOT started; hand hosting on this box is out of this upgrade's scope)
+
+Engine: vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+  = vLLM 0.26.1rc1.dev942+g5a4c8d992 (official Docker Hub nightly, built 2026-08-19).
+The 262144-native leg was validated separately by the t2 standalone spike on the SAME
+image + flags (docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt),
+isolating checkpoint risk from YaRN risk per the plan instruction.
+
+Boot history (the reclaim decision, exercised):
+  attempt 1 — gpu_mem_util=0.60, max_model_len=1048576: REFUSED
+    "Free memory on device cuda:0 (72.22/121.69 GiB) ... less than desired (0.6, 73.01 GiB)"
+  attempt 2 — 0.58: REFUSED (co-resident gears re-initializing; free had dropped)
+    "(65.22/121.69 GiB) ... less than desired (0.58, 70.58 GiB)"
+  reclaim — operator decision q4 (spec): stopped the opt-in embed-deep 4B gear
+    (docker stop model-gear-vllm-embed-deep; COMPOSE_PROFILES=embed-deep removed
+    from .env so a later bring-up stays consistent). Free rose 65 -> 77 GiB.
+  attempt 3 — 0.58 with embed-deep reclaimed: BOOTED.
+
+MEASURED at 0.58 / 1048576 (boot log 20:43):
+  Available KV cache memory: 42.07 GiB
+  GPU KV cache size: 1,271,476 tokens
+  Maximum concurrency for 1,048,576 tokens per request: 1.21x
+    (arithmetic ceiling, not measured concurrency — effectively single-request
+     at full 1M depth; playbook §8 caveat applies)
+  init engine: 137.15 s (compilation 47.90 s)
+  kv fp8; max_num_seqs=2; speculative {"method":"mtp","num_speculative_tokens":2}
+  hf_overrides live in engine config: rope_type=yarn factor=4.0
+    original_max_position_embeddings=262144 (mrope fields preserved)
+  tool parser: qwen3_coder_thinking plugin LOADED cleanly on 0.26 at boot
+    (strict-call behaviour is t8's gate, not proven by load alone)
+  preserve_thinking: true (server default, unchanged)
+
+Gateway contract (h1) — all four aliases answer 200 via :8001:
+  cortex -> 200
+  unsloth/Qwen3.8-27B-NVFP4 -> 200
+  main -> 200
+  hard -> 200
+
+Co-resident after the swap: embedder (0.6B), reranker (0.6B), stt, tts/chatterbox,
+realtime, gateway. embed-deep: STOPPED (reclaimed). senses/worker: proxied to
+peers (unchanged). No Thor/Orin deployment state touched (boundary c25).
+
+## t8 — acceptance gates
+
+(appended by t8)
