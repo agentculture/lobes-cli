@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-19T17:17:56Z",
-  "updated": "2026-08-19T17:56:40Z",
+  "updated": "2026-08-19T18:20:27Z",
   "claims": [
     {
       "id": "c1",
@@ -381,6 +381,132 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "the digest bump covers SIX lanes, not five: vllm-embed-deep (Qwen3-Embedding-4B, live on the Spark) also defaults to VLLM_NIGHTLY_IMAGE (templates/fleet/docker-compose.yml:266) \u2014 it revalidates with the other five",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "the revalidation checklist names all six lanes explicitly and embed-deep's probe result is in the evidence, not inferred from embed's",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "the digest bump is cross-box and cross-arch: worker rides the digest on the Thor (sm_110) where every forced --moe-backend was refused live and only auto-select boots \u2014 the new engine's auto-select must be re-proven there, and hand's LFM2 registration re-checked; revalidation spans Spark sm_121a AND Thor sm_110, not one card",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "rollout scope (operator, 2026-08-19): ONLY the Spark box is touched \u2014 the Thor and Orin deployments keep their current images, .env pins and running lanes; no Jetson redeploy, re-scaffold or revalidation is part of this upgrade",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the swap PR's diff and rollout notes touch no Thor/Orin deployment state \u2014 the Jetson boxes' .env, images and running containers are byte-identical before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "assumption",
+      "text": "serving 1M via STATIC YaRN (factor 4.0) applies the rope scaling to EVERY request, including ordinary short-context ones \u2014 Qwen's own YaRN guidance warns static scaling can degrade short-sequence quality, and cortex is the fleet's final-authority reasoning lobe; the tradeoff is accepted only if measured",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "the pre/post benchmark includes a short-context reasoning comparison (same prompts, 3.8@262144-native vs 3.8@1M-YaRN) so the quality cost of always-on YaRN is a number, not a hope",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "long-context operability: at the forum's measured prefill rates (1734->853 tok/s, declining with length) a near-1M prompt prefills for TENS OF MINUTES \u2014 the gateway, any proxy hop, and consumer HTTP timeouts must be checked/raised for the 1M lane, streaming responses must emit early (TTFT semantics under chunked prefill), and lobes status --pressure sampling must not misread a long prefill as a wedged lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "a deliberately long-prefill request (>=200K tokens) is run through the gateway during acceptance and completes without any layer timing out; the timeout values actually in effect are recorded",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the swap PR records the ROLLBACK recipe as a first-class section: the old digest (sha256:7c5a...), the old id (unsloth/Qwen3.6-27B-NVFP4), the .env lines to restore, and the boot order \u2014 so a post-promotion regression is a 15-minute restore, not an archaeology session",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the rollback section quotes the exact old digest and .env lines \u2014 someone who was not in this conversation could execute it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "if the spark-arena fallback image is used, it is pinned by DIGEST (never a mutable tag like nightly-latest), its resolved vLLM version recorded, and the provenance (third-party ghcr, unaudited) stated in the compose comment \u2014 same rigor as the official pin",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "no mutable tag appears in any committed compose/env line for the cortex lane",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -396,6 +522,24 @@
     {
       "id": "v2",
       "text": "whether the new engine changes the embed/rerank pooling and hand LFM2 lanes' validated behaviour if the shared digest bumps (re-run the three correctness probes)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "the in-tree template default (VLLM_NIGHTLY_IMAGE) changes for FUTURE scaffolds on every card \u2014 a later Thor/Orin re-scaffold would pick up a digest never booted on sm_110/Orin; per #108 those cards' lanes are UNVALIDATED on the new digest until they boot it (out of this upgrade's scope by c25)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "MTP self-draft behaviour at 1M-YaRN context is unmeasured anywhere (the forum measured acceptance at 262K native only) \u2014 acceptance could change under rope scaling at depth",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -499,6 +643,80 @@
       "seeds": [
         "c13"
       ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / adjacent-systems lens: templates/fleet/docker-compose.yml image map",
+      "finding": "awk over every service:image pair found six VLLM_NIGHTLY_IMAGE consumers (primary, embed, embed-deep, rerank, hand, worker); the spec's 'five lanes' undercounted \u2014 embed-deep was invisible because it is not a first-class role",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / adjacent-systems lens: thor-worker lane + docs/qwen3.6-35b-a3b-nvfp4.md moe-backend history",
+      "finding": "the sm_110 moe-backend refusal matrix is engine-version-specific; a 0.26.x nightly may add/remove backends and change auto-select's pick \u2014 silent risk to a VALIDATED lane on another box",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / migration lens: operator rollout-scope decision",
+      "finding": "Spark-only rollout caps the live blast radius at the six Spark-resident digest lanes minus the ones spark-lobe drops; the template-default change still travels to future scaffolds \u2014 recorded as residual, non-blocking risk",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / counter-evidence lens: Qwen YaRN static-scaling guidance vs the q4 decision",
+      "finding": "nobody in the frame argued against always-on YaRN; Qwen documentation recommends enabling YaRN only when long context is needed \u2014 the 1M decision needs a measured short-context quality check, or a boot-two-configs comparison, before promotion",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / operations-observability lens: forum prefill table + lobes/gateway timeout surfaces",
+      "finding": "prefill throughput declines with prompt length; extrapolated to 1M the request runs longer than typical HTTP idle timeouts \u2014 no claim in the frame covered timeout/keepalive behaviour",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / reversibility lens: docs/model-switch-playbook.md",
+      "finding": "the playbook orders the forward swap but has no explicit rollback section; the incumbent stays in the catalog (cite-don't-delete) so restore is possible \u2014 it just isn't written down as a recipe",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / security-supply-chain lens: forum container references",
+      "finding": "the forum names mutable tags (nightly-20260801, mtp3-20260813) on personal ghcr namespaces; the repo's own convention (bump the digest DELIBERATELY) must extend to any fallback",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / failure-mode lens: KV budget arithmetic at 1M",
+      "finding": "at util 0.60 on the 121.63 GiB GB10: ~72.98 total minus ~28.11 fixed overhead leaves ~44.9 GiB KV = ~1.27M KV tokens = ~1.2x ceiling at full 1M \u2014 effectively SINGLE-REQUEST at max context, and total co-resident util (0.60 + embed 0.06 + embed-deep 0.06 + rerank 0.06 + hand 0.06 = 0.84) leaves ~16% headroom for the OS on unified memory; the c16 reclaim decision is likely to be exercised, not hypothetical",
+      "seeds": []
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / concurrency lens: pressure policy + 1M lane",
+      "finding": "clean pass on the policy itself (shed-with-429 is id-agnostic), residual: one full-context request can monopolize the KV pool for its entire multi-minute prefill while shorter cortex requests queue \u2014 no claim addresses per-request KV fairness; acceptable for v1, noted for the plan",
+      "seeds": []
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / lifecycle lens: HF download + disk",
+      "finding": "23.4 GB checkpoint download to the Spark HF cache alongside the incumbent's shards; clean pass \u2014 the box held two 27B checkpoints during the last swap without issue",
+      "seeds": []
     }
   ],
   "lapses": []

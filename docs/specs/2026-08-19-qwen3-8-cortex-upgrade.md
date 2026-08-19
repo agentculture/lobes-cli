@@ -36,6 +36,14 @@
   - honesty: the committed pin is a digest whose resolved vLLM version is recorded; the official image was tried first and any fallback to spark-arena is documented with the failure that forced it
 - before promotion, strict tool calling is proven on the new engine: the `qwen3_coder_thinking` plugin's structural-tag patch is re-verified (or ported) against the new digest's vLLM source, or superseded by the newer engine's own parser (`qwen3_xml`) if that engine derives the grammar's reasoning flag correctly — a strict:true tool schema with `enable_thinking` on must return a well-formed call, not a 500
   - honesty: a strict:true + `enable_thinking`=true tool call is exercised live on the new engine and returns a schema-valid call; the 0.23-era plugin is not carried forward unverified
+- the digest bump covers SIX lanes, not five: vllm-embed-deep (Qwen3-Embedding-4B, live on the Spark) also defaults to `VLLM_NIGHTLY_IMAGE` (templates/fleet/docker-compose.yml:266) — it revalidates with the other five
+  - honesty: the revalidation checklist names all six lanes explicitly and embed-deep's probe result is in the evidence, not inferred from embed's
+- long-context operability: at the forum's measured prefill rates (1734->853 tok/s, declining with length) a near-1M prompt prefills for TENS OF MINUTES — the gateway, any proxy hop, and consumer HTTP timeouts must be checked/raised for the 1M lane, streaming responses must emit early (TTFT semantics under chunked prefill), and lobes status --pressure sampling must not misread a long prefill as a wedged lane
+  - honesty: a deliberately long-prefill request (>=200K tokens) is run through the gateway during acceptance and completes without any layer timing out; the timeout values actually in effect are recorded
+- the swap PR records the ROLLBACK recipe as a first-class section: the old digest (sha256:7c5a...), the old id (unsloth/Qwen3.6-27B-NVFP4), the .env lines to restore, and the boot order — so a post-promotion regression is a 15-minute restore, not an archaeology session
+  - honesty: the rollback section quotes the exact old digest and .env lines — someone who was not in this conversation could execute it
+- if the spark-arena fallback image is used, it is pinned by DIGEST (never a mutable tag like nightly-latest), its resolved vLLM version recorded, and the provenance (third-party ghcr, unaudited) stated in the compose comment — same rigor as the official pin
+  - honesty: no mutable tag appears in any committed compose/env line for the cortex lane
 
 ## Honesty conditions
 
@@ -46,6 +54,8 @@
 - every element of the after-state is evidenced: 1M boot transcript, five-lane revalidation results, 3.6 demotion in the catalog, repointed mirrors verified 200
 - the 1M claim is exercised, not just configured: a long-context request beyond 262144 tokens completes through the gateway
 - the transcript is committed under docs/evidence/ in the promoting PR itself, not promised as a follow-up
+- the swap PR's diff and rollout notes touch no Thor/Orin deployment state — the Jetson boxes' .env, images and running containers are byte-identical before and after
+- the pre/post benchmark includes a short-context reasoning comparison (same prompts, 3.8@262144-native vs 3.8@1M-YaRN) so the quality cost of always-on YaRN is a number, not a hope
 
 ## Success signals
 
@@ -54,6 +64,7 @@
 ## Scope / boundaries
 
 - the shared `VLLM_NIGHTLY_IMAGE` digest is the default image for the primary, embed, rerank, hand and worker lanes (lobes/templates/fleet/docker-compose.yml:43,181,266,324,491,1078) — if the spike proves a digest bump necessary, the blast radius is every lane on it, and there is no `PRIMARY_IMAGE` per-lane override today (only `HAND_IMAGE`/`WORKER_IMAGE` exist); a bump-for-cortex-only would need a new template knob or a full-fleet revalidation
+- rollout scope (operator, 2026-08-19): ONLY the Spark box is touched — the Thor and Orin deployments keep their current images, .env pins and running lanes; no Jetson redeploy, re-scaffold or revalidation is part of this upgrade
 
 ## Non-goals
 
@@ -63,6 +74,7 @@
 
 - the pinned fleet nightly (vllm/vllm-openai@sha256:7c5a... = vLLM 0.23.1rc1.dev672) boots Qwen3.8-27B-NVFP4 unchanged: the checkpoint's config.json (fetched 2026-08-19) declares `Qwen3_5ForConditionalGeneration` / `model_type` `qwen3_5`, compressed-tensors mixed-precision, 64 layers, `mtp_num_hidden_layers`=1 — byte-identical arch/quant declarations to the incumbent the digest serves on this GB10 today; the NVIDIA forum's 'requires custom 0.26.1 build, stock has no `sm_121a` NVFP4 kernels' claim conflicts with this fleet's live experience and must be decided by a standalone spike boot (the docs/vllm-nightly-migration.md t2-spike pattern), not believed
 - the #93 `preserve_thinking` flag and the `qwen3_coder_thinking` strict-tools plugin (lobes/`vllm_plugins`/) both survive the swap: the 3.8 `chat_template`.jinja carries the `preserve_thinking` variable (verified 2026-08-19, 1 occurrence) and the tool-call format stays the `qwen3_coder` XML family; the plugin only needs re-verification if the engine digest changes
+- serving 1M via STATIC YaRN (factor 4.0) applies the rope scaling to EVERY request, including ordinary short-context ones — Qwen's own YaRN guidance warns static scaling can degrade short-sequence quality, and cortex is the fleet's final-authority reasoning lobe; the tradeoff is accepted only if measured
 
 ## Scope exploration
 
@@ -90,6 +102,23 @@
   - seeds: `c12`
 - `s12` — `forum post 380244 (container section) + operator decision`: forum's verified-working config: vLLM 0.26.1rc1.dev244 custom build, --tool-call-parser `qwen3_xml`, --reasoning-parser qwen3, mtp `num_speculative_tokens`=5 recommended (3 optimal TTFT), `FLASHINFER_CUDA_ARCH_LIST`=12.1a + `FLASHINFER_DISABLE_VERSION_CHECK`=1 on GB10
   - seeds: `c13`
+- `s13` — `challenge pass / adjacent-systems lens: templates/fleet/docker-compose.yml image map`: awk over every service:image pair found six `VLLM_NIGHTLY_IMAGE` consumers (primary, embed, embed-deep, rerank, hand, worker); the spec's 'five lanes' undercounted — embed-deep was invisible because it is not a first-class role
+  - seeds: `c23`
+- `s14` — `challenge pass / adjacent-systems lens: thor-worker lane + docs/qwen3.6-35b-a3b-nvfp4.md moe-backend history`: the `sm_110` moe-backend refusal matrix is engine-version-specific; a 0.26.x nightly may add/remove backends and change auto-select's pick — silent risk to a VALIDATED lane on another box
+  - seeds: `c24` (rejected)
+- `s15` — `challenge pass / migration lens: operator rollout-scope decision`: Spark-only rollout caps the live blast radius at the six Spark-resident digest lanes minus the ones spark-lobe drops; the template-default change still travels to future scaffolds — recorded as residual, non-blocking risk
+  - seeds: `c25`
+- `s16` — `challenge pass / counter-evidence lens: Qwen YaRN static-scaling guidance vs the q4 decision`: nobody in the frame argued against always-on YaRN; Qwen documentation recommends enabling YaRN only when long context is needed — the 1M decision needs a measured short-context quality check, or a boot-two-configs comparison, before promotion
+  - seeds: `c26`
+- `s17` — `challenge pass / operations-observability lens: forum prefill table + lobes/gateway timeout surfaces`: prefill throughput declines with prompt length; extrapolated to 1M the request runs longer than typical HTTP idle timeouts — no claim in the frame covered timeout/keepalive behaviour
+  - seeds: `c27`
+- `s18` — `challenge pass / reversibility lens: docs/model-switch-playbook.md`: the playbook orders the forward swap but has no explicit rollback section; the incumbent stays in the catalog (cite-don't-delete) so restore is possible — it just isn't written down as a recipe
+  - seeds: `c28`
+- `s19` — `challenge pass / security-supply-chain lens: forum container references`: the forum names mutable tags (nightly-20260801, mtp3-20260813) on personal ghcr namespaces; the repo's own convention (bump the digest DELIBERATELY) must extend to any fallback
+  - seeds: `c29`
+- `s20` — `challenge pass / failure-mode lens: KV budget arithmetic at 1M`: at util 0.60 on the 121.63 GiB GB10: ~72.98 total minus ~28.11 fixed overhead leaves ~44.9 GiB KV = ~1.27M KV tokens = ~1.2x ceiling at full 1M — effectively SINGLE-REQUEST at max context, and total co-resident util (0.60 + embed 0.06 + embed-deep 0.06 + rerank 0.06 + hand 0.06 = 0.84) leaves ~16% headroom for the OS on unified memory; the c16 reclaim decision is likely to be exercised, not hypothetical
+- `s21` — `challenge pass / concurrency lens: pressure policy + 1M lane`: clean pass on the policy itself (shed-with-429 is id-agnostic), residual: one full-context request can monopolize the KV pool for its entire multi-minute prefill while shorter cortex requests queue — no claim addresses per-request KV fairness; acceptable for v1, noted for the plan
+- `s22` — `challenge pass / lifecycle lens: HF download + disk`: 23.4 GB checkpoint download to the Spark HF cache alongside the incumbent's shards; clean pass — the box held two 27B checkpoints during the last swap without issue
 
 ## Decisions
 
@@ -100,6 +129,8 @@
 ## Open parks
 
 - [unknown_nonblocking] whether the new engine changes the embed/rerank pooling and hand LFM2 lanes' validated behaviour if the shared digest bumps (re-run the three correctness probes)
+- [unknown_nonblocking] the in-tree template default (`VLLM_NIGHTLY_IMAGE`) changes for FUTURE scaffolds on every card — a later Thor/Orin re-scaffold would pick up a digest never booted on `sm_110`/Orin; per #108 those cards' lanes are UNVALIDATED on the new digest until they boot it (out of this upgrade's scope by c25)
+- [unknown_nonblocking] MTP self-draft behaviour at 1M-YaRN context is unmeasured anywhere (the forum measured acceptance at 262K native only) — acceptance could change under rope scaling at depth
 
 ## Resolved vagueness
 
