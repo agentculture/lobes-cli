@@ -555,6 +555,9 @@ def test_qwen38_primary_gear_exists_with_correct_fields() -> None:
     assert gear.native_max_model_len == 262144
     assert gear.tool_parser == "qwen3_coder"
     assert gear.speculative_config
+    # MEASURED live on the GB10 2026-08-19 (1M boot + gates) — see
+    # docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt.
+    assert gear.status == "load-tested"
 
 
 def test_qwen38_is_the_only_primary_gear() -> None:

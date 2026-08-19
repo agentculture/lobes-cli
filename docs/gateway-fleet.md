@@ -90,21 +90,23 @@ See [docs/durable-logs.md](durable-logs.md) (issue #50).
 
 Since the fleet-wide nightly-unification migration
 (`docs/vllm-nightly-migration.md` §4–§8), the four default-on gears —
-`vllm-primary`, `vllm-multimodal`, `vllm-embed`, and `vllm-rerank` — all pin
-the **same** vLLM nightly digest
+`vllm-primary`, `vllm-embed`, and `vllm-rerank` pin the **same** vLLM nightly
+digest
 (`vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695`,
-vLLM `0.26.1rc1.dev942+g5a4c8d992`) that the Gemma multimodal gear already ran
-before the migration — bumped from the earlier
+vLLM `0.26.1rc1.dev942+g5a4c8d992`) — bumped from the earlier
 `sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9`
 (`0.23.1rc1.dev672`) pin by the qwen3.8-cortex-upgrade plan (t5), the same
 digest bump that flipped `PRIMARY_MODEL` to `unsloth/Qwen3.8-27B-NVFP4`. See
 `docs/vllm-nightly-migration.md` §9 and
 `docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt`.
-`vllm-primary`/`vllm-embed`/`vllm-rerank` pull that digest
-directly; `vllm-multimodal` (and the opt-in `vllm-multimodal-coder`) build it
-via `Dockerfile.vllm-gemma4` (needed for the native `gemma4_unified` class +
-audio extras) — same base image, different Dockerfile. One engine, fleet-wide,
-for every gear a caller reaches through the gateway by default; a same-engine
+**Deliberate exception:** the Gemma lanes (`vllm-multimodal`, the opt-in
+`vllm-multimodal-coder`, and dormant `vllm-muse`) build via
+`Dockerfile.vllm-gemma4`, whose `FROM` stays pinned to the **earlier**
+`sha256:7c5a10e9…` (`0.23.1rc1.dev672`) base — an operator decision of the
+2026-08-19 Spark-only rollout (the Spark hosts no Gemma lane; bumping the
+Gemma base would widen the blast radius to the Orin's `senses` with no
+validation behind it, and a test regression-guards the old pin). The Gemma
+lanes are therefore NOT covered by the 0.26.1 new-image validation; a same-engine
 27B-vs-12B comparison (`docs/vllm-nightly-migration.md` §6) is no longer
 confounded by engine version.
 

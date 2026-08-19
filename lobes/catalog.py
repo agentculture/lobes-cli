@@ -312,14 +312,20 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="compressed-tensors",
-        # Not yet booted — config-file-verified only. Plan tasks t7/t8/t9
-        # supply the live GB10 boot + evidence transcript that would flip
-        # this to "load-tested".
-        status="configured",
+        # MEASURED live on the DGX Spark GB10, 2026-08-19 — see
+        # docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt: boots at
+        # 0.58/1048576 (1M via YaRN hf-overrides; 0.60 refused twice, the
+        # opt-in embed-deep gear reclaimed), KV pool 42.07 GiB = 1,271,476
+        # tokens = 1.21x ceiling at full 1M, decode 19.9-24.0 tok/s
+        # single-stream, MTP 54-61% acceptance at n=2, 328K-token needle
+        # retrieval beyond the native ceiling, image + strict-tools gates
+        # pass on vLLM 0.26.1rc1.dev942.
+        status="load-tested",
         doc="qwen3.8-27b-nvfp4.md",
-        # Self-hosted draft (no external "model" key), mirroring the outgoing
-        # 3.6 primary's own speculative config — carried forward unverified on
-        # this checkpoint pending the live boot (plan task t7).
+        # Self-hosted draft (no external "model" key) via the generic "mtp"
+        # method — validated live 2026-08-19 (54-61% draft acceptance at
+        # n=2 on the GB10; the outgoing 3.6 needed the qwen3_5_mtp key on
+        # the 0.23 engine, the 0.26 engine takes "mtp" directly).
         speculative_config='{"method": "mtp", "num_speculative_tokens": 2}',
         task="generate",
     ),
