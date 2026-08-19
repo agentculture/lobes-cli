@@ -6,7 +6,8 @@ calls. Picking the wrong one silently breaks tool calling (the server returns
 rather than leaving the caller to remember it. The rules below mirror the
 guidance in ``templates/env.example`` (the single source of truth):
 
-* Qwen3-Coder / Qwen3.5 / Qwen3.6 / Qwen3.8 checkpoints emit the XML function format → ``qwen3_coder``
+* Qwen3-Coder / Qwen3.5 / Qwen3.6 / Qwen3.8 checkpoints emit the XML function
+  format → ``qwen3_coder``
 * Qwen3 dense models emit Hermes-style JSON tool calls → ``hermes``
 * Mistral checkpoints emit the ``[TOOL_CALLS]`` format → ``mistral``
 * Gemma 4 checkpoints emit ``<|tool_call>call:name{…}<tool_call|>`` → ``gemma4``
