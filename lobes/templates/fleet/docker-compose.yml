@@ -24,9 +24,9 @@
 # vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
 # drop both generate GPU utils so they sum well under 1.0.
 services:
-  # vllm-primary / vllm-embed / vllm-rerank pin the SAME nightly digest
-  # Dockerfile.vllm-gemma4 already bases off (vLLM 0.23.1rc1.dev672) — one
-  # engine, fleet-wide, for the default-on generate/embed/rerank gears (t4 of
+  # vllm-primary / vllm-embed / vllm-embed-deep / vllm-rerank / vllm-hand /
+  # vllm-worker pin the SAME nightly digest — one engine, fleet-wide, for the
+  # six default/opt-in gears that ride the Qwen vllm-openai nightly lane (t4 of
   # devague plan lobes-unifies-its-generate-lane-on-one-vllm-nightl; replaces
   # the pre-t4 nvcr.io/nvidia/vllm:26.04-py3 NGC pin). Live-validated by the t2
   # (27B, GO) and t3 (embed+rerank, GO) spikes — see
@@ -34,13 +34,23 @@ services:
   # re-validate) rather than floating the moving :nightly tag, same discipline
   # as Dockerfile.vllm-gemma4.
   #
+  # BUMPED (t5 of devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p):
+  # the official Docker Hub nightly built 2026-08-19, resolving to vLLM
+  # 0.26.1rc1.dev942+g5a4c8d992 — see the t2 engine spike,
+  # docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt. This
+  # digest now DIVERGES from Dockerfile.vllm-gemma4 (pinned OLD, vLLM
+  # 0.23.1rc1.dev672+g93d8f834d, deliberately — operator decision, not
+  # re-validated against the new nightly) — "one engine, fleet-wide" no longer
+  # includes the Gemma 4 senses/muse lane. The pre-bump digest was
+  # sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9.
+  #
   # §5 finding: nightly's memory-profiler asserts free GPU memory stays
   # CONSTANT while it profiles — bring these gears up when fleet memory is
   # stable, not mid-churn (concurrent teardown of another container on the
   # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
   # a settle gap over a simultaneous multi-gear `docker compose up`.
   vllm-primary:
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
     container_name: model-gear-vllm-primary
     restart: unless-stopped
     deploy:
@@ -62,6 +72,14 @@ services:
       # around, #71): disable the ESTIMATED cudagraph-memory headroom so the
       # util knob maps back to true usage instead of starving the KV cache.
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      # OFF by default (t5 of devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p):
+      # vLLM refuses to serve a --max-model-len beyond the checkpoint's own
+      # declared ceiling unless this is set. Only a shape that serves a YaRN-
+      # scaled window beyond the checkpoint's native 262144 (e.g. spark-lobe's
+      # 1M-token hypothesis, PRIMARY_MAX_MODEL_LEN=1048576) needs
+      # PRIMARY_ALLOW_LONG_MAX_MODEL_LEN=1 in .env; every other shape/card
+      # leaves this at its inert default.
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=${PRIMARY_ALLOW_LONG_MAX_MODEL_LEN:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
     volumes:
@@ -85,8 +103,8 @@ services:
     command:
       - vllm
       - serve
-      - ${PRIMARY_MODEL:-unsloth/Qwen3.6-27B-NVFP4}
-      - --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
+      - ${PRIMARY_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
+      - --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
       - --host=0.0.0.0
       - --port=8000
       # compressed-tensors — the checkpoint's OWN quant_method (mixed precision:
@@ -105,6 +123,16 @@ services:
       # at the same memory footprint. The always-on Gemma multimodal gear frees
       # the headroom by trimming to 32K instead. See docs/vllm-nightly-migration.md §8.
       - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
+      # hf-overrides JSON, merged into the checkpoint's own config at load —
+      # DEFAULT is an empty dict (a documented vLLM no-op, byte-equivalent to
+      # omitting the flag entirely). Only a long-context shape sets this: the
+      # spark-lobe 1M-token hypothesis (t5) patches text_config.rope_parameters
+      # to YaRN (factor 4.0, original_max_position_embeddings 262144),
+      # preserving every other stock rope field (mrope_interleaved,
+      # mrope_section, partial_rotary_factor, rope_theta) — see
+      # builtin_shapes/spark-lobe.toml's [overrides.cortex] for the exact JSON
+      # and its provenance (verified against the checkpoint's own config.json).
+      - --hf-overrides=${PRIMARY_HF_OVERRIDES:-{}}
       - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
       - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
       - --reasoning-parser=qwen3
@@ -178,7 +206,7 @@ services:
     # Same nightly digest as vllm-primary — see the comment above vllm-primary
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up.
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
     container_name: model-gear-vllm-embed
     restart: unless-stopped
     deploy:
@@ -263,7 +291,7 @@ services:
     # 0.44 and thor-lobe's 0.30 had to be. sm_110/Thor is UNVALIDATED and additionally
     # needs EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN set by hand (no trait reaches a
     # gear — see docs/machine-profiles.md).
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
     container_name: model-gear-vllm-embed-deep
     profiles: ["embed-deep"]
     restart: unless-stopped
@@ -321,7 +349,7 @@ services:
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up (§5's spike crash was this exact gear, tripped by concurrent
     # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
     container_name: model-gear-vllm-rerank
     restart: unless-stopped
     deploy:
@@ -488,13 +516,16 @@ services:
   # this lane has no second half to pair with.
 
   vllm-hand:
-    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}}
+    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
     container_name: model-gear-vllm-hand
     # Lfm2ForCausalLM needs vLLM >= 0.23.0, so this lane pins the NIGHTLY image
     # (like primary/embed/rerank/worker), never the NGC 26.04 tag vllm-minor
     # uses — that engine is 0.19.0 and does not know the architecture. Verified
-    # against the pinned digest on a physical Thor 2026-08-10: VLLM_VERSION
-    # 0.23.1rc1.dev672+g93d8f834d, LFM2_REGISTERED True.
+    # against the PRE-t5 pinned digest on a physical Thor 2026-08-10:
+    # VLLM_VERSION 0.23.1rc1.dev672+g93d8f834d, LFM2_REGISTERED True. The
+    # digest bumped under t5 (see the vllm-primary comment above); LFM2
+    # registration against the new digest is unrevalidated — >= 0.23.0 stays
+    # satisfied since the new digest resolves to 0.26.1rc1.dev942.
     restart: unless-stopped
     deploy:
       resources:
@@ -1075,7 +1106,7 @@ services:
   # MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55 was
   # measured (not computed) — do NOT treat 0.30 as validated.
   vllm-worker:
-    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9}}
+    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
     container_name: model-gear-vllm-worker
     profiles:
       - worker
@@ -1228,7 +1259,7 @@ services:
       # gateway builds its routing table from THIS value, so a mismatch makes it
       # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
       # with a perfectly healthy backend behind it (observed live 2026-07-31).
-      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.6-27B-NVFP4}
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
       # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
       # gateway wires a second backend only when these are present).
       # Minor co-resident generate backend (opt-in: activate with --profile minor

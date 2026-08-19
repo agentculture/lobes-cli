@@ -12,6 +12,8 @@ from __future__ import annotations
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.render import ROLE_ENV_PREFIX, profile_env
 from lobes.profiles.schema import Profile, RoleProfile
+from lobes.profiles.shape_render import render_shape
+from lobes.profiles.shapes import resolve_shape
 
 # --- role -> prefix table ----------------------------------------------------
 
@@ -34,8 +36,8 @@ def test_role_env_prefix_covers_all_six_roles() -> None:
 def test_spark_profile_env_matches_compose_defaults() -> None:
     spark = resolve_profile("spark")
     env = profile_env(spark)
-    assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.6-27B-NVFP4"
-    assert env["PRIMARY_SERVED_NAME"] == "unsloth/Qwen3.6-27B-NVFP4"
+    assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.8-27B-NVFP4"
+    assert env["PRIMARY_SERVED_NAME"] == "unsloth/Qwen3.8-27B-NVFP4"
     assert env["PRIMARY_GPU_MEM_UTIL"] == "0.3"
     assert env["PRIMARY_MAX_MODEL_LEN"] == "131072"
     assert env["PRIMARY_QUANTIZATION"] == "compressed-tensors"
@@ -62,6 +64,44 @@ def test_thor_profile_env_carries_machine_derived_divergences() -> None:
 def test_profile_env_is_a_dict_of_str_to_str() -> None:
     env = profile_env(resolve_profile("spark"))
     assert all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
+
+
+# --- t5: spark-lobe's 1M YaRN hypothesis renders the three new knobs -------
+
+
+def test_spark_lobe_render_carries_the_1m_yarn_knobs() -> None:
+    spark = resolve_profile("spark")
+    spark_lobe = resolve_shape("spark-lobe")
+    env = render_shape(spark_lobe, spark).env
+    assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.8-27B-NVFP4"
+    assert env["PRIMARY_MAX_MODEL_LEN"] == "1048576"
+    assert env["PRIMARY_ALLOW_LONG_MAX_MODEL_LEN"] == "1"
+    import json
+
+    hf_overrides = json.loads(env["PRIMARY_HF_OVERRIDES"])
+    rope = hf_overrides["text_config"]["rope_parameters"]
+    assert rope["rope_type"] == "yarn"
+    assert rope["factor"] == 4.0
+    assert rope["original_max_position_embeddings"] == 262144
+    # Every other stock rope field is preserved byte-for-byte (verified
+    # against the checkpoint's own config.json — see the spark-lobe.toml
+    # comment).
+    assert rope["mrope_interleaved"] is True
+    assert rope["mrope_section"] == [11, 11, 10]
+    assert rope["partial_rotary_factor"] == 0.25
+    assert rope["rope_theta"] == 10000000
+
+
+def test_only_spark_lobe_renders_the_1m_yarn_knobs() -> None:
+    # Every OTHER card/shape stays untouched by t5's YaRN wiring — no other
+    # built-in shape declares hf_overrides/allow_long_max_model_len anywhere.
+    for card_name in ("spark", "thor", "base"):
+        card = resolve_profile(card_name)
+        for shape_name in ("machine-as-brain", "thor-lobe", "thor-muse", "thor-worker"):
+            shape = resolve_shape(shape_name)
+            env = render_shape(shape, card).env
+            assert "PRIMARY_HF_OVERRIDES" not in env
+            assert "PRIMARY_ALLOW_LONG_MAX_MODEL_LEN" not in env
 
 
 # --- silence: a profile with no opinion on a knob emits nothing -------------
