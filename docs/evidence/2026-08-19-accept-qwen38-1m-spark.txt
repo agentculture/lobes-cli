@@ -53,6 +53,58 @@ Co-resident after the swap: embedder (0.6B), reranker (0.6B), stt, tts/chatterbo
 realtime, gateway. embed-deep: STOPPED (reclaimed). senses/worker: proxied to
 peers (unchanged). No Thor/Orin deployment state touched (boundary c25).
 
-## t8 — acceptance gates
+## t8 — acceptance gates (run 2026-08-19/20, all against the live gateway unless noted)
 
-(appended by t8)
+Benchmark (same harness/shapes as the t1 baseline; usage.completion_tokens; 3 runs/shape):
+  shape   TTFT (s)        decode tok/s        vs 3.6 baseline   vs 3.8-native spike
+  short   0.201-0.246     23.63-24.69 (24.0)  29.1              30.3
+  medium  0.345-0.347     22.04-22.41 (22.3)  27.7              25.4
+  long    0.250-0.253     19.63-20.09 (19.9)  23.9              21.4
+  The 1M lane runs ~2-5 tok/s under the 3.6 baseline and ~0-1.5 under 3.8-native.
+  MTP acceptance at n=2: 54.4-61.1% (per-position ~0.67-0.72 / 0.42-0.50).
+  (The t2 spike measured 41-48% at n=3 — fewer, better-accepted positions at n=2.)
+
+Multimodal gates (live 1M lane):
+  image known-answer (solid red PNG): "red" — PASS
+  image negative control (bicycle absent): "no" — PASS
+
+Strict tools with thinking (c22/h10) — LIVE PROOF on 0.26.1rc1.dev942:
+  strict:true schema + enable_thinking=true -> ONE well-formed tool_call,
+  args {"city": "Paris", "unit": "celsius"} (schema-valid, enum respected). PASS.
+  The 0.23-era qwen3_coder_thinking plugin loaded and behaves on the new engine;
+  not carried forward unverified.
+
+Long-context operability (c27/h19 + c20/h15):
+  228,415-token prompt via gateway: 315.8 s wall, ~723 tok/s prefill, needle
+    retrieved exactly, NON-streamed request survived every layer (connect timeout
+    is 5 s; no read/idle timeout tripped in 316 s of silence).
+  328,379-token prompt — BEYOND the 262,144 native ceiling, YaRN executing:
+    582.8 s wall, ~563 tok/s prefill, needle retrieved exactly, non-streamed
+    connection held 9.7 silent minutes. h15 SATISFIED: 1M is exercised, not
+    just configured.
+  Operator guidance (rollout notes): consumers SHOULD stream near-1M requests —
+    prefill runs minutes and streaming keeps the connection observably alive;
+    the non-streamed success above is measured luck of this stack's timeouts,
+    not a contract. An early oversized probe (~600K tokens) was killed CLIENT-side
+    at 10 min with no server harm (request aborted cleanly, lane healthy).
+
+YaRN short-context quality (c26/h17) — measured, same 8-prompt deterministic QA
+set, same engine, same flags, native-262144 (standalone container) vs 1M-YaRN
+(live lane):
+  native: 7/8    1M-YaRN: 7/8   — identical score, IDENTICAL failure (the
+  'spell necessary backwards' prompt returns empty content in both configs:
+  thinking exhausts the token budget — checkpoint behaviour, not a YaRN cost).
+  On this set the always-on YaRN quality cost is ZERO measurable.
+
+Pooling lanes on the new digest (c23/h18):
+  embedder (Qwen/Qwen3-Embedding-0.6B): ranking probe rel 0.6502 > irr 0.2685 — PASS
+  reranker (Qwen/Qwen3-Reranker-0.6B): ordering probe top_index=0
+    (0.1911 > 0.0461) — PASS
+  embed-deep: NOT PROBED — deliberately STOPPED/reclaimed on this box (t7);
+    recorded explicitly, not inferred. Any future re-host revalidates it then.
+  hand: not hosted on this box (unchanged); worker/senses: proxied to peers,
+    no engine change on their hosts (Spark-only boundary c25).
+
+Six-lane digest tally on THIS box: primary/embed/rerank live-probed PASS;
+embed-deep reclaimed (recorded); hand/worker defaults bumped in-template only,
+UNVALIDATED on their hosts per #108 (parked risk r1).
