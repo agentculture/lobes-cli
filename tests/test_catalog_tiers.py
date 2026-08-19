@@ -29,7 +29,10 @@ _MINOR_ID = "Qwen/Qwen3.5-4B"
 # The gear the cheap tier resolves to since the `hand` lobe replaced the 4B in
 # that slot. `_MINOR_ID` above is retained: the 4B is demoted, not deleted.
 _HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
-_PRIMARY_ID = "unsloth/Qwen3.6-27B-NVFP4"
+# Fleet default primary since 2026-08-19 (qwen3.8-cortex-upgrade plan t3);
+# unsloth/Qwen3.6-27B-NVFP4 is demoted to role_hint="candidate" and kept
+# (cite-don't-delete) — see lobes/catalog.py's demotion comment.
+_PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"
 
 
 # ---------------------------------------------------------------------------
