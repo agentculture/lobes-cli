@@ -24,6 +24,7 @@ summary = "DGX Spark mesh-lobe -- Qwen cortex + embedder + reranker + audio, no 
 hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 
 [overrides.cortex]
+# --- pre-t5 history (unsloth/Qwen3.6-27B-NVFP4, retained for rollback) ------
 # gpu_mem_util = 0.44 -- the co-resident reclaim-sum: 0.30 (cortex, spark
 # co-resident) + 0.14 (senses, spark co-resident), reclaimed because senses is
 # dropped from this shape. NOT the historical 0.60 solo value: the GB10's
@@ -54,5 +55,58 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 #   * VISION VALIDATED on this shape: image intake against an opposite-colour
 #     negative control, and VIDEO intake against a REVERSED-motion control.
 # Transcript: docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
-gpu_mem_util = 0.44
-max_model_len = 262144
+#
+# The MEASURED 0.44 / 262144 pair above is the rollback value if the t7 boot
+# below refuses the 1M hypothesis: an operator can restore it verbatim by
+# setting gpu_mem_util = 0.44 / max_model_len = 262144 / hf_overrides =
+# (unset) / allow_long_max_model_len = (unset) in a local override.
+#
+# --- t5 (devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p) ----------
+# model swap to unsloth/Qwen3.8-27B-NVFP4 (spark.toml's own comment records
+# the swap rationale) PLUS the 1M-token YaRN reach -- DECLARED HYPOTHESIS,
+# pending the live t7 boot (the repo's measured-not-declared rule, same as
+# thor-muse's util before its first live boot):
+#
+#   gpu_mem_util = 0.60 -- HYPOTHESIS, not measured. The historical solo 0.60
+#   was REFUSED on the 3.6/text-only checkpoints (see the pre-t5 history
+#   above -- 59.35 GiB free at boot vs 73.01 GiB demanded). t7 boots THIS
+#   value first against 3.8's own ~2.4 GiB larger footprint (an unquantized
+#   ViT identical to 3.6's) at the wider 1M KV window; if it is refused again,
+#   t7 reclaims budget from the other co-resident gears (embedder/reranker/
+#   embed-deep) rather than giving up the 1M reach (operator decision,
+#   docs/specs/2026-08-19-qwen3-8-cortex-upgrade.md).
+#
+#   max_model_len = 1048576 -- HYPOTHESIS. 1M (1048576) is reachable ONLY via
+#   the YaRN hf_overrides below; the checkpoint's own native ceiling is
+#   262144 (256K), so serving beyond it needs BOTH the rope-scaling override
+#   AND allow_long_max_model_len (vLLM refuses --max-model-len past a
+#   checkpoint's declared ceiling otherwise).
+#
+#   hf_overrides -- VERIFIED against the checkpoint's own config.json
+#   (fetched 2026-08-19; see lobes/catalog.py's unsloth/Qwen3.8-27B-NVFP4
+#   entry). Stock text_config.rope_parameters:
+#     {"mrope_interleaved": true, "mrope_section": [11, 11, 10],
+#      "partial_rotary_factor": 0.25, "rope_theta": 10000000,
+#      "rope_type": "default"}
+#   The override below changes ONLY rope_type ("default" -> "yarn") and adds
+#   factor 4.0 + original_max_position_embeddings 262144 (262144 * 4 =
+#   1048576, the requested 1M window); every other stock field
+#   (mrope_interleaved, mrope_section, partial_rotary_factor, rope_theta) is
+#   preserved byte-for-byte, so nothing about the checkpoint's rotary/mrope
+#   behaviour changes except the requested scale-up.
+#
+#   allow_long_max_model_len = "1" -- required alongside max_model_len
+#   1048576: vLLM refuses to serve past a checkpoint's declared ceiling
+#   (262144) without VLLM_ALLOW_LONG_MAX_MODEL_LEN=1, YaRN override or not.
+#
+# Renders ONLY on this shape (compose_profile overlays these onto the spark
+# card's cortex role) -- every other card/shape (machine-as-brain, thor-lobe,
+# thor-muse, thor-worker, orin-small, base) is untouched: none of them
+# declare a [overrides.cortex] table with these knobs, so their composed
+# Profile carries hf_overrides=None / allow_long_max_model_len=None and
+# renders nothing for either key (profile_env's "None = no opinion"
+# convention) -- byte-identical to before t5 for those renders.
+gpu_mem_util = 0.60
+max_model_len = 1048576
+hf_overrides = '{"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}'
+allow_long_max_model_len = "1"

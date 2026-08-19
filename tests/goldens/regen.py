@@ -106,9 +106,17 @@ def extract_template_defaults(text: str) -> set[str]:
         depth = 1
         j = start + 2
         while j < n and depth > 0:
-            if text[j : j + 2] == "${":
+            # Match ANY "{" (not just a "${..." substitution) — a default
+            # value can legitimately contain a bare "{"/"}" pair of its own
+            # (e.g. a JSON default, ``${PRIMARY_HF_OVERRIDES:-{}}``, t5).
+            # Counting only "${" opens would let that inner "}" close the
+            # OUTER substitution early and truncate its default. Bare-brace
+            # counting still finds the true matching close for the nested
+            # ``${HOME:-...}``-style examples this walk was built for, since
+            # every "${" is also a "{".
+            if text[j] == "{":
                 depth += 1
-                j += 2
+                j += 1
                 continue
             if text[j] == "}":
                 depth -= 1

@@ -14,25 +14,28 @@ summary = "DGX Spark (GB10 Grace Blackwell, 128 GB unified) — the default, loa
 
 [roles.cortex]
 feasible = true
-# unsloth/Qwen3.6-27B-NVFP4 — the MULTIMODAL cortex, promoted 2026-07-31.
-# Its ViT is VALIDATED on this card: served with the vision tower intact (no
-# --language-model-only), image intake correct against an opposite-colour
-# negative control, and VIDEO intake correct against a REVERSED-motion control
-# (a single-frame read cannot pass that). Thinking, preserve_thinking (#93) and
-# strict tool calling with thinking on (colleague#320) all re-verified.
-# Transcript: docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
-model = "unsloth/Qwen3.6-27B-NVFP4"
+# unsloth/Qwen3.8-27B-NVFP4 — fleet default PRIMARY since 2026-08-19
+# (t5 of devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p), replacing
+# unsloth/Qwen3.6-27B-NVFP4 (demoted to `candidate`, kept per
+# cite-don't-delete — see lobes/catalog.py). Same Qwen3_5ForConditionalGeneration
+# arch, same publisher/export recipe, same self-hosted MTP draft and
+# multimodal ViT the outgoing entry had — a checkpoint swap within the same
+# engine-support family, not a new architecture bring-up. Adds a
+# config-verified 1M-token YaRN reach the outgoing checkpoint's card never
+# claimed (see builtin_shapes/spark-lobe.toml's [overrides.cortex]).
+model = "unsloth/Qwen3.8-27B-NVFP4"
 # !!! BUDGET BELOW IS INHERITED, NOT MEASURED FOR THIS CHECKPOINT !!!
 # 0.30 / 131072 are the machine-as-brain DUO values (cortex co-resident with a
-# local Gemma senses), measured for the previous TEXT-ONLY checkpoint. The
-# unsloth export adds an unquantized bf16 ViT (333 visual tensors), so these
-# numbers are a carry-over hypothesis for the duo shape — NOT a measurement.
-# What WAS measured, on the spark-lobe shape (senses dropped to a peer, the
-# shape this card actually runs today): gpu_mem_util 0.44 at the full 262144
-# window — booted first try, KV pool 26.39 GiB / 756,642 tokens = ~2.89x
-# concurrency. See builtin_shapes/spark-lobe.toml's [overrides.cortex].
-# A machine-as-brain GB10 booting the duo should expect to MEASURE these two
-# values, exactly as thor-muse's refused 0.40 -> 0.55 taught (docs/machine-profiles.md).
+# local Gemma senses), measured for the PREVIOUS TWO checkpoints in turn (a
+# text-only export, then the 3.6 multimodal export that re-validated them
+# unchanged 2026-07-31). The 3.8 swap (t5) has NOT been booted on the duo
+# shape at all — these two numbers are a carry-over hypothesis, unverified
+# for this checkpoint, not a measurement. The 262144-native window and its
+# 1M YaRN extension are being validated on the spark-lobe shape instead (t7),
+# not the duo — see builtin_shapes/spark-lobe.toml's [overrides.cortex].
+# A machine-as-brain GB10 booting the duo on 3.8 should expect to MEASURE
+# these two values, exactly as thor-muse's refused 0.40 -> 0.55 taught
+# (docs/machine-profiles.md).
 gpu_mem_util = 0.30
 max_model_len = 131072
 # compressed-tensors (mixed precision: fp8 attn/lm_head + nvfp4 MLP), NOT the
