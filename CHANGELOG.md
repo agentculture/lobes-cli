@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.1] - 2026-08-20
+
+### Added
+
+- `docs/specs/2026-08-20-nemotron-lightning-worker.md` — converged devague spec (+ frame state) for the Lightning worker swap (#187), the cortex proxy repoint (#186), and hand budget validation (#183); the challenge pass ran rigorous (hardware + distributed-state + migration signals).
+
 ## [0.57.0] - 2026-08-20
 
 ### Added
