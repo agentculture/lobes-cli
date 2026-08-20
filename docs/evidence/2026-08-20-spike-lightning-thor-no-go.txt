@@ -53,9 +53,15 @@ spike transcript; nothing here claims it.
 Jetson AI Lab publishes an official Thor recipe for Lightning on the RELEASE
 image vllm/vllm-openai:v0.27.1
 (https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/#run-on-jetson).
-The NO-GO above is therefore scoped to the fleet's 8bd082 0.26.1 nightly
-digest, not to the hardware. Follow-up spikes when the fleet moves images:
-(1) Lightning on Thor via v0.27.1, and (2) whether v0.27.1 restores the
-sm_110 GDN MTP kernel — which would let the Thor-local cortex (deviation d1)
-re-enable MTP. The d1 topology stands regardless (the Spark placement also
-serves the hand-finetuning memory goal).
+Same-day follow-up: we DID spike upstream v0.27.1 on the Thor (util 0.50,
+65536 window, then again with --mamba-backend flashinfer) and it wedged at
+the SAME Mamba2 SSD Triton warmup both times (idle-CPU hang, killed at
+25/15 min). Since the lab page instructs the SAME upstream image (per the
+operator, not a Jetson-built container), the open lead is now sharper: diff
+their exact run command/environment against our failing one on the same
+image — JetPack/driver version, env vars, --mamba-backend value, model
+revision — or establish their page is untested on Thor. Separately still
+open: whether any newer image restores the sm_110 GDN MTP kernel, which
+would let the Thor-local cortex (deviation d1) re-enable MTP. The d1
+topology stands regardless (the Spark placement also serves the
+hand-finetuning memory goal).
