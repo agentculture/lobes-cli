@@ -22,16 +22,56 @@ unconfirmed, not assumed working. Treating them as interchangeable would be
 exactly the kind of card-prose-over-measurement mistake this repo's honesty
 rules exist to prevent.
 
-## `worker`: the eighth Colleague role (`unsloth/Qwen3.6-35B-A3B-NVFP4`)
+## `worker`: DEMOTED from the eighth Colleague role, 2026-08-20 (`unsloth/Qwen3.6-35B-A3B-NVFP4`)
 
-> **Status: DECLARED, not yet booted on any hardware.** The catalog entry,
-> role registry, and gateway config wiring are **shipped** (verified against
-> the checkpoint's own `config.json`, fetched 2026-07-31 — not card prose).
-> The `thor-worker` deployment shape, its compose service, and every
-> live-measured number (`gpu_mem_util`, `max_model_len` if trimmed from
-> native, the sm_110 MoE backend choice, MTP acceptance) are **forthcoming**
-> (thor-worker-lobe plan task t7) — nothing here claims worker validated on
-> hardware (#108).
+> **Status: no longer `worker`.** Deviation d1 (2026-08-20,
+> `.devague/deliveries/nemotron-lightning-worker.json`) replaced this
+> checkpoint in the `worker` seat with
+> `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`, now hosted on the
+> DGX Spark GB10 — see
+> [`nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md).
+> This checkpoint is demoted to a kept catalog **candidate**
+> (cite-don't-delete), not deleted — the section below is now history, not
+> the current `worker` contract.
+>
+> **Final production baseline, captured 2026-08-20 just before the swap**
+> (`docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt`, Jetson AGX
+> Thor, production 0.23.1 engine, `util=0.45`, `max_model_len=262144`, MTP
+> self-draft ON): known-answer "Paris" PASS (5.43 s), decode **61.2 tok/s**
+> single-stream (679 completion tokens / 11.1 s), structured tool-call PASS
+> (4.92 s) — this number is unrecoverable after the flip and is the figure
+> the Lightning replacement is compared against.
+>
+> **Its own GDN-MTP kernel gap, on the fleet's newer nightly.** Before the
+> baseline above, an attempt to re-boot this checkpoint on the fleet-wide
+> `8bd082` nightly (vLLM 0.26.1rc1.dev942, the same digest the Lightning
+> spike later ran on) BOOTED healthy — KV pool grew to 50.02 GiB /
+> 4,317,665 tokens / 16.47× — but DIED on the first decode request:
+> `RuntimeError: launch_gdn_decode_post_conv_mtp ... GDN decode MTP
+> post-conv kernel launch failed: no kernel image is available for
+> execution on the device`. Torch-level sm_110 SASS is present, but this
+> digest's own csrc GDN (Mamba/gated-delta-net) MTP decode kernel ships no
+> sm_110 image — the same kernel-coverage gap the `cortex` swap
+> independently hit on this checkpoint's sibling architecture (see
+> [`docs/machine-profiles.md`](machine-profiles.md) and
+> `docs/evidence/2026-08-20-accept-cortex-local-thor.txt`). The baseline was
+> therefore captured on the production 0.23.1 engine instead, which is also
+> what the covering plan's playbook asked for.
+
+The section below is preserved as-written for its historical DECLARED
+contract (2026-07-31, before the swap):
+
+> **Status (historical, pre-d1): DECLARED, not yet booted on any hardware.**
+> The catalog entry, role registry, and gateway config wiring were
+> **shipped** (verified against the checkpoint's own `config.json`, fetched
+> 2026-07-31 — not card prose). The `thor-worker` deployment shape, its
+> compose service, and every live-measured number (`gpu_mem_util`,
+> `max_model_len` if trimmed from native, the sm_110 MoE backend choice, MTP
+> acceptance) were **forthcoming** (thor-worker-lobe plan task t7) —
+> nothing claimed worker validated on hardware (#108). d1 superseded this
+> before t7 landed: `thor-worker`'s shape data ended up hosting Lightning on
+> the Spark card instead (see
+> [`deployment-shapes.md`](deployment-shapes.md#shapes-are-card-agnostic-data-proven-live-by-d1)).
 
 **Model id:** `unsloth/Qwen3.6-35B-A3B-NVFP4`
 **Tier alias:** `worker` — like `muse`, the role name *is* the alias

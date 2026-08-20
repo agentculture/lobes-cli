@@ -590,7 +590,7 @@ not contradictory.
 | card | machine | profile | status | validation |
 |---|---|---|---|---|
 | **DGX Spark** (Grace Blackwell, 128 GB unified) | `spark` | `spark.toml` | load-tested | 2026-06-03 — `lobes benchmark` ran at ~7.8–8.0 tok/s decode (27B primary, util 0.30, single-stream) on the fleet duo (cortex 128K, senses 32K) with FlashInfer attention. **The correctness probes postdate that run and have not been executed on the GB10** — rerank ordering there is explicitly unverified (issue #106). See `docs/tuning-profiles.md` and the Spark run on `docs/qwen3.6-27b-text-nvfp4-mtp.md`. |
-| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | `thor.toml` | load-tested | 2026-07-13 — the three correctness probes (cortex known-answer, embed paraphrase-ranking, rerank ordering) all pass with the profile's four divergences (`cortex kv_cache_dtype=auto`, `embedder TRITON_ATTN`, `reranker TRITON_ATTN + enforce_eager=true`); senses' health was not confirmed in that run (it boots last and the concurrent-boot race, caveat 4 below, can catch it). |
+| **Jetson AGX Thor** (Blackwell-class sm_110, 128 GB unified) | `thor` | `thor.toml` | load-tested | 2026-07-13 — the three correctness probes (cortex known-answer, embed paraphrase-ranking, rerank ordering) all pass with the profile's four divergences (`cortex kv_cache_dtype=auto`, `embedder TRITON_ATTN`, `reranker TRITON_ATTN + enforce_eager=true`); senses' health was not confirmed in that run (it boots last and the concurrent-boot race, caveat 4 below, can catch it). **Updated 2026-08-20 (deviation d1):** the Thor now serves `cortex` LOCALLY (`unsloth/Qwen3.8-27B-NVFP4`, full 1M YaRN window, `gpu_mem_util=0.58`, **MTP off** — see caveat 5 below) instead of proxying it to the Spark; `docs/evidence/2026-08-20-accept-cortex-local-thor.txt`. |
 | **unknown card** (UNKNOWN) | `generic` | `base.toml` | conservative fallback | — — no hardware beyond Spark/Thor is load-tested; UNKNOWN cards are served a small 4B model, no 27B, and no multimodal (`senses` disabled). Avoids OOM crashes on first boot. See issue #107 for broader "small default on every card" work. |
 | Jetson AGX Orin / Orin Nano Super | `(not yet)` | (not yet) | **no built-in profile — unvalidated at that scope; operator-validated separately** | **Built-ins:** no built-in `orin` profile exists, and the built-in `orin-small` *shape* remains DECLARED/UNVALIDATED (#108 — an unbooted built-in stays unvalidated regardless of operator activity elsewhere). Do not claim built-in Orin support from this row. **Operator deployment:** a physical Jetson AGX Orin 64GB WAS operator-validated 2026-07-16/17, using a hand-written **operator profile** (`<deploy-dir>/profiles/orin.toml` — `senses`/`embedder`/`reranker`, `senses` at its full native 131072 context, measured `gpu_mem_util=0.45`) composed with the built-in `thor-lobe` *shape* (not `orin-small`). See [`orin-profiles.md`](orin-profiles.md) for the measured knobs and the Jetson/sm_87 divergences found live. |
 
@@ -721,6 +721,68 @@ probes pass. `senses` (the Gemma 12B) boots **last** and is the gear most
 often caught by the race — its health was not confirmed in the 2026-07-13
 clean-boot run; the steady-state values (32K / util 0.14) are the ones the
 long-running hand-tuned deployment serves with.
+
+### 5. Non-dense decode paths are broken/wedged on sm_110, on the current nightly + v0.27.1 upstream
+
+**The problem (measured 2026-08-20, three checkpoints, same day, same
+`8bd082` fleet nightly, vLLM 0.26.1rc1.dev942):** dense-transformer decode
+serves fine on Thor (sm_110), but every **non-standard decode path** tried
+that day failed, each with a different signature:
+
+1. **GDN MTP decode** (Qwen3.6/3.8's gated-delta-net linear-attention hybrid,
+   speculative mode): `RuntimeError: launch_gdn_decode_post_conv_mtp ...
+   GDN decode MTP post-conv kernel launch failed: no kernel image is
+   available for execution on the device` — a hard fail on the very first
+   decode request, after a healthy boot. Hit independently on both the
+   Qwen3.6-35B-A3B worker candidate
+   (`docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt`) and the
+   Qwen3.8-27B cortex checkpoint
+   (`docs/evidence/2026-08-20-accept-cortex-local-thor.txt`) — the **same**
+   GDN kernel, two different checkpoints.
+2. **LFM2 conv-hybrid decode** (the `hand` role's LiquidAI checkpoint):
+   corrupt deterministic output escalating to `torch.AcceleratorError: CUDA
+   error: unspecified launch failure` within 1–3 requests, on BOTH the
+   `8bd082` nightly and the older 0.23.1 production engine — boot and LoRA
+   allocation succeed, inference does not
+   (`docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt`, the #181
+   re-attribution). The identical config passed cleanly on the DGX Spark
+   GB10 the same day.
+3. **Mamba-2 SSD decode** (NVIDIA Nemotron Lightning): boot and
+   `torch.compile` complete, then the engine wedges forever at `Warming up
+   Mamba2 SSD Triton kernels...` — no crash, no health, 25+ minutes of
+   silence, killed by the operator
+   (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`).
+
+**What DOES work on sm_110, same digest:** plain dense-transformer decode
+(no MTP, no Mamba, no gated-delta-net) and GDN decode **without** MTP — the
+`cortex` swap's own fix was simply to remove the
+`--speculative-config={"method": "mtp", ...}` line: the non-MTP GDN decode
+path serves the full 1M-token window fine at 12.1 tok/s single-stream
+(`docs/evidence/2026-08-20-accept-cortex-local-thor.txt`). So the fault line
+on this digest is specifically the **speculative/non-dense decode kernel
+coverage**, not sm_110 as a target generally — torch-level SASS for sm_110
+is present and dense-transformer kernels work (the t1 spike,
+`docs/evidence/2026-08-20-spike-nightly-sm110-thor.txt`).
+
+**Not a Thor-hardware verdict, scoped to this fleet's pinned nightly:**
+NVIDIA's own Lightning model card pins upstream vLLM `v0.27.1` and Jetson AI
+Lab separately publishes an official Thor recipe for Lightning on that exact
+release image
+(<https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/#run-on-jetson>).
+The `8bd082` 0.26.1 nightly this fleet pins does not serve it; whether
+`v0.27.1` also restores the sm_110 GDN MTP decode kernel (which would let
+`thor.toml`'s `cortex` re-enable MTP) is an open, unrun follow-up spike, not
+a claim made here.
+
+**Consequence for `thor.toml`:** `cortex` is VALIDATED on the physical Thor
+serving `unsloth/Qwen3.8-27B-NVFP4` at its full 1,048,576-token (1M) native
+window, `gpu_mem_util=0.58`, KV pool 1,114,504 tokens, **MTP explicitly
+OFF** — the compose-side `--speculative-config` line is removed rather than
+templated, since the fleet template has no `PRIMARY_SPECULATIVE_CONFIG`
+off-switch yet (recorded as a repo follow-up, mirroring the existing
+`MULTIMODAL_SPECULATIVE_CONFIG` pattern). See
+`docs/evidence/2026-08-20-accept-cortex-local-thor.txt` and
+`docs/qwen3.8-27b-nvfp4.md`.
 
 ### Note on future verification
 
