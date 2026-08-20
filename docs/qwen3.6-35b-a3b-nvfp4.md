@@ -4,10 +4,11 @@ The catalog carries **two, distinct** `Qwen3.6-35B-A3B-NVFP4` entries — same
 architecture family (MoE, ~35B total / ~3B active per token), different
 org/export, different role, different story:
 
-- **`unsloth/Qwen3.6-35B-A3B-NVFP4`** — the **`worker`** role, the eighth
-  first-class Colleague role (thor-worker-lobe plan). MULTIMODAL, ships its
-  OWN self-hosted MTP draft, 262144 native context. See ["`worker`: the
-  eighth Colleague role"](#worker-the-eighth-colleague-role-unslothqwen36-35b-a3b-nvfp4)
+- **`unsloth/Qwen3.6-35B-A3B-NVFP4`** — the **former `worker`** role holder
+  (thor-worker-lobe plan; DEMOTED to candidate 2026-08-20, deviation d1).
+  MULTIMODAL, ships its OWN self-hosted MTP draft, 262144 native context. See
+  ["`worker`: DEMOTED from the eighth Colleague
+  role"](#worker-demoted-from-the-eighth-colleague-role-2026-08-20-unslothqwen36-35b-a3b-nvfp4)
   below.
 - **`mmangkad/Qwen3.6-35B-A3B-NVFP4`** — a **MoE candidate**, the *former*
   fleet fallback, 32K native, its own MTP explicitly does not load. Unchanged
