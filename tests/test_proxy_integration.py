@@ -749,22 +749,35 @@ _GOLDEN_CAPABILITIES = {
     },
     "worker": {
         "role": "worker",
-        # The opt-in worker lobe (thor-worker-lobe plan): unwired in this
-        # no-knob deployment, so it is honestly infeasible-by-default
-        # (OPT_IN_BACKENDS, exactly like muse above) and named by its catalog
-        # default. mtp True: the checkpoint ships its OWN MTP draft weights
-        # (self-hosted, unlike the Gemma gears' external draft id).
-        "model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+        # The opt-in worker lobe: unwired in this no-knob deployment, so it is
+        # honestly infeasible-by-default (OPT_IN_BACKENDS, exactly like muse
+        # above) and named by its catalog default. Catalog worker moved to
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+        # (nemotron-lightning-worker plan, #187, t3) — text-only, 1M native
+        # ceiling, nvidia modelopt quant. mtp False: config.json carries no
+        # MTP/draft-head field for this checkpoint (unlike the demoted
+        # Qwen worker's self-hosted draft); the card's separate MTP/DSpark
+        # claim is declared, unmeasured (plan t2).
+        #
+        # NOTE: `responsibilities` below is roles.py's OWN static vocabulary
+        # (ROLE_RESPONSIBILITIES), not derived from the catalog — it still
+        # names image_understanding/video_understanding here because the
+        # sibling nemotron-lightning-worker plan task t4 (roles.py) redefines
+        # that vocabulary for the new TEXT-ONLY checkpoint; this task (t3)
+        # only changes the catalog entry.
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
-        "context": 262144,
-        "quant": "compressed-tensors",
-        "mtp": True,
+        "context": 1048576,
+        "quant": "modelopt",
+        "mtp": False,
         # True even though this deployment does not HOST worker: `tools` is a
         # fact about the model the role would serve (the catalog's
-        # `qwen3_coder` tool parser), exactly like muse above. `feasible:
-        # false` is what tells a caller it is unreachable here.
+        # `qwen3_coder` tool parser — UNVALIDATED on our engine, cited from
+        # the checkpoint's own card, see lobes/catalog.py), exactly like muse
+        # above. `feasible: false` is what tells a caller it is unreachable
+        # here.
         "tools": True,
         "responsibilities": [
             "execution",
