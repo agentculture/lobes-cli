@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.2] - 2026-08-20
+
+### Added
+
+- `docs/plans/2026-08-20-nemotron-lightning-worker.md` — converged 16-task build plan (+ plan state) from the #188 spec: Lightning worker swap gated on sm_110/nemotron_h spikes with baseline-before-flip ordering, cortex repoints on Thor+Orin (#186), and hand budget probes on Thor+Spark (#183).
+
 ## [0.57.1] - 2026-08-20
 
 ### Added
