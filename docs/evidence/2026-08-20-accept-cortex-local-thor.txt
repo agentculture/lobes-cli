@@ -1,0 +1,65 @@
+# d1 acceptance (Thor half) — Thor serves cortex LOCALLY: Qwen3.8-27B at the full 1M window, no MTP
+#
+# Deviation: d1 (.devague/deliveries/nemotron-lightning-worker.json) — topology swap.
+# Box: Jetson AGX Thor (sm_110, 122.8 GB unified). Date: 2026-08-20.
+# Engine: the fleet-wide 8bd082 official nightly (vLLM 0.26.1rc1.dev942).
+# Rollback: ~/.lobes.pre-lightning-20260820T154750Z (pre-swap deployment snapshot).
+#
+# Config: re-rendered `lobes init --shape spark-lobe --apply --force` on the thor
+# card, then the Spark's proven cortex block transplanted:
+#   PRIMARY_MODEL=PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4
+#   PRIMARY_MAX_MODEL_LEN=1048576 (YaRN via PRIMARY_HF_OVERRIDES, factor 4.0)
+#   PRIMARY_GPU_MEM_UTIL=0.58, PRIMARY_MAX_NUM_SEQS=2,
+#   PRIMARY_KV_CACHE_DTYPE=auto (the validated Thor divergence, #109 — not the
+#   Spark's fp8), tool parser qwen3_coder_thinking.
+# Worker/hand on this box: feasible=false + referral/proxy to the Spark
+# (WORKER_/HAND_ PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001, PROXY=true).
+# senses: unchanged referral/proxy to the Orin. Gateway rebuilt to the 0.57.1 wheel.
+
+## The one Thor-specific change: MTP OFF
+
+First boot (spark-identical config incl. the lane's hardcoded
+'--speculative-config={"method": "mtp", "num_speculative_tokens": 2}') came up
+healthy, then died on the FIRST decode with the same missing-kernel signature
+as the Qwen 35B worker:
+  RuntimeError: launch_gdn_decode_post_conv_mtp ... GDN decode MTP post-conv
+  kernel launch failed: no kernel image is available for execution on the device
+So the Qwen 27B/3.8 line is NOT plain-dense — it carries GDN/linear-attention
+hybrid layers, and the nightly's GDN **MTP** decode kernel ships no sm_110
+image. Removing the speculative-config line (deployment-side compose edit; the
+fleet template has no PRIMARY_SPECULATIVE_CONFIG off-switch — recorded as a
+repo follow-up mirroring MULTIMODAL_SPECULATIVE_CONFIG) fixed it: the NON-MTP
+GDN decode path works on sm_110.
+
+## Boot facts (no-MTP boot)
+
+  Model loading took 22.47 GiB memory and 12.19 s
+  GPU KV cache size: 1,114,504 tokens
+  Maximum concurrency for 1,048,576 tokens per request: 1.06x
+  -> the FULL 1M YaRN window fits on the Thor at util 0.58.
+
+## Probes (matched worker_probe.py suite, via the local gateway, model=cortex)
+
+  known_answer: "Paris"  PASS  (2.27 s)
+  decode: 895 completion tokens / 73.8 s = 12.1 tok/s single-stream (NO MTP)
+  tool_calls: structured PASS — {"name": "get_weather", "arguments": {"city": "Paris"}},
+              finish_reason=tool_calls, nothing leaked (qwen3_coder_thinking parser)
+  served model id: unsloth/Qwen3.8-27B-NVFP4
+  gateway smoke: "THOR-CORTEX-LOCAL-OK", HTTP 200, no X-Lobes-Proxied-By (local serve)
+
+## Cross-box acceptance
+
+Orin repointed (PRIMARY_PEER_ORIGIN -> http://thor.tail0be7e0.ts.net:8000),
+gateway recreated, live:
+  model=cortex -> 200, reply "ORIN-VIA-THOR-OK",
+  X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+
+## Honest deltas vs the Spark cortex it replaces
+
+- MTP is OFF on Thor (blocked on the sm_110 kernel gap): 12.1 tok/s
+  single-stream vs the Spark's MTP-assisted decode. Re-enable when a nightly
+  ships sm_110 GDN MTP kernels.
+- The earlier same-day transcripts 2026-08-20-accept-cortex-repoint-{thor,orin}.txt
+  recorded the PRE-swap #186 state (both Jetsons proxying to the Spark); this
+  transcript and the d1 record supersede their topology while their probe
+  evidence stands.
