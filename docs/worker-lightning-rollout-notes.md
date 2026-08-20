@@ -1,12 +1,22 @@
 # Lightning worker rollout notes — read this before you see a 404
 
-**Not yet live.** This note is written **ahead of** the flip (thor-worker-lobe
-plan, tasks t1–t9): the Thor `worker` lane still serves
-`unsloth/Qwen3.6-35B-A3B-NVFP4` today. Nothing in this document describes a
-completed swap — it is the pre-flip warning the playbook (below) says every
-raw-id pinner needs **before** it happens, not after.
+**LIVE as of 2026-08-20 — and the hosting box CHANGED mid-rollout.** This note
+was written ahead of the flip, when the plan still put Lightning on the Thor.
+Deviation **d1** (recorded in `.devague/deliveries/nemotron-lightning-worker.json`,
+operator-approved) swapped the topology the same day: the `worker` role now
+serves on the **DGX Spark** (`http://spark.tail0be7e0.ts.net:8001`), because
+Lightning's Mamba-2 warmup wedges on Thor sm_110 on both the fleet nightly and
+the upstream `v0.27.1` release image
+(`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`), while the Spark
+serves it cleanly at 75.1 tok/s
+(`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`). The Thor now serves
+`cortex` locally instead and **proxies** `worker` to the Spark, so consumers
+addressing any gateway still resolve the role. Everything below about the
+served-id change and the contract narrowing still applies — read "the worker
+lane" as living on the Spark, with Thor-specific wording left as the
+historical pre-flip framing.
 
-The Thor `worker` served id is changing:
+The `worker` served id is changing:
 
 ```text
 unsloth/Qwen3.6-35B-A3B-NVFP4  ->  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4

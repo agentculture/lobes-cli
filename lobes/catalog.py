@@ -908,23 +908,31 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         #   hardware family, so a forced marlin pick would be an unverified
         #   guess in the opposite direction from that lesson.
         #
-        # STATUS: this checkpoint has NEVER booted on our hardware. No
-        # gpu_mem_util or max_model_len budget is declared anywhere for it —
-        # per the thor-muse/thor-worker rule, those are MEASURED truths on a
-        # unified-memory card, not arithmetic. Promotion of this entry's facts
-        # to "load-tested" is gated on the covering plan's live Thor boot +
-        # evidence transcript (t8) and the validation matrix (t14). See
+        # STATUS (2026-08-20, deviation d1): VALIDATED live on the DGX Spark
+        # GB10 — NOT on the Thor the covering plan originally targeted. On the
+        # Spark (util 0.30, 65536 window, MTP off): weights 17.85 GiB, KV pool
+        # 3,560,789 tokens (54.33x at 65K), 75.1 tok/s single-stream, ~75 ms
+        # median streaming TTFT, structured tool_calls PASS through the
+        # nemotron_v3 + qwen3_coder parser pair (which validates the card's
+        # cross-family parser claim below). On the Thor (sm_110) it is a
+        # NO-GO: the engine wedges indefinitely in "Warming up Mamba2 SSD
+        # Triton kernels" on BOTH the fleet 8bd082 nightly and the upstream
+        # v0.27.1 release image (idle-CPU hang, not slow JIT) — so `worker`
+        # serves on the Spark and other boxes refer/proxy to it. Evidence:
+        # docs/evidence/2026-08-20-accept-worker-hand-spark.txt,
+        # docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. See
         # docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md and
         # docs/plans/2026-08-20-nemotron-lightning-worker.md.
         role_hint="worker",
         shape="hybrid Mamba-2 + sparse-MoE (~3B active per token, text-only)",
         context="1M native (1,048,576 max_position_embeddings)",
         native_max_model_len=1048576,
-        # UNVALIDATED on our engine (see the long comment above) — cited from
-        # the checkpoint's OWN model-card serve example, not guessed by us.
+        # VALIDATED live on the Spark 2026-08-20: structured tool_calls parse
+        # through nemotron_v3 (reasoning) + qwen3_coder (tools), nothing
+        # leaked into content. The card's cross-family parser claim held.
         tool_parser="qwen3_coder",
         quantization="modelopt",
-        status="configured",  # never booted here; nemotron_h support UNPROVEN until plan t1/t2
+        status="load-tested",  # Spark GB10 2026-08-20: 75.1 tok/s, tools ✓; Thor sm_110 NO-GO (Mamba2 warmup wedge)
         doc="nemotron-3.5-lightning-30b-a3b-nvfp4.md",
         # moe_backend="" (auto-select), mirroring the outgoing worker's own
         # hard-won sm_110 lesson (forced NVFP4 MoE backends were refused on

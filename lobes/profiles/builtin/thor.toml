@@ -18,20 +18,26 @@ summary = "Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified) — load-tes
 
 [roles.cortex]
 feasible = true
-# unsloth/Qwen3.6-27B-NVFP4 — tracks the fleet default primary (promoted
-# 2026-07-31). The MODEL is deliberately NOT a per-card divergence: thor's
-# cortex must differ from spark's in kv_cache_dtype ALONE (see
+# unsloth/Qwen3.8-27B-NVFP4 — tracks the fleet default primary (spark.toml,
+# since 2026-08-19). The MODEL is deliberately NOT a per-card divergence:
+# thor's cortex must differ from spark's in kv_cache_dtype ALONE (see
 # tests/test_profile_schema.py::test_thor_builtin_encodes_exactly_the_four_validated_divergences),
 # so pinning a different checkpoint here would silently break that contract.
+# (This line lagged at Qwen3.6-27B until 2026-08-20 — a silent drift the
+# deviation-d1 render surfaced when a Thor box actually hosted cortex again.)
 #
-# STATUS on sm_110: the CHECKPOINT is unvalidated on this card — no physical
-# Thor has booted this 27B (#108). What IS proven on Thor is the family: the
-# `worker` gear (unsloth/Qwen3.6-35B-A3B-NVFP4) is the same publisher, the same
-# compressed-tensors mixed-precision recipe, and likewise serves a ViT, and it
-# was validated live 2026-07-31
-# (docs/evidence/2026-07-31-accept-worker-thor.txt). That is a family prior, not
-# a measurement of this checkpoint.
-model = "unsloth/Qwen3.6-27B-NVFP4"
+# STATUS on sm_110: VALIDATED live 2026-08-20 (deviation d1) on the physical
+# Thor via the spark-lobe shape at the FULL 1M YaRN window — weights 22.47
+# GiB, KV pool 1,114,504 tokens (1.06x at 1M), 12.1 tok/s single-stream,
+# known-answer + structured tool_calls PASS
+# (docs/evidence/2026-08-20-accept-cortex-local-thor.txt) — with ONE
+# sm_110-only caveat the schema deliberately cannot encode (it lives in the
+# compose lane, like the worker MoE-backend note): MTP MUST BE OFF. The
+# 8bd082 nightly ships no sm_110 image for fused_gdn_decode_post_conv_mtp
+# (the Qwen 27B line is GDN-hybrid); the non-MTP GDN decode path works. A
+# Thor deployment removes the primary lane's --speculative-config line until
+# a PRIMARY_SPECULATIVE_CONFIG knob ships or a nightly restores the kernel.
+model = "unsloth/Qwen3.8-27B-NVFP4"
 # Budget INHERITED, not measured for this checkpoint — identical caveat to
 # spark.toml's duo values. 0.30 / 131072 were measured for the outgoing
 # TEXT-ONLY export; this one adds an unquantized bf16 ViT. A machine-as-brain
