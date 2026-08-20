@@ -67,3 +67,13 @@ hand — via the Spark gateway alias (model=hand, bearer mesh key):
 - Lightning MTP (self-hosted draft) unevaluated; strict-tools arming unprobed.
 - The senses/stt/tts adverts on the re-scaffolded Spark were not re-validated
   in this window (audio overlay containers kept running throughout).
+
+## Addendum — streaming TTFT (operator-requested, same day)
+
+ttft_probe.py (SSE streaming, 3 short + 3 long runs, deployed path: Thor
+gateway -> proxy -> Spark worker, mesh hop included):
+  short prompts: TTFT 142 / 73 / 75 ms  (median 75 ms)
+  long generations: TTFT 87 / 75 / 77 ms (median 77 ms), sustained 74.3-74.6 tok/s
+Lightning's first token arrives in ~75 ms THROUGH the proxy — the 0.45 s
+non-streaming known-answer above was dominated by whole-response accounting,
+not prefill.

@@ -63,3 +63,14 @@ gateway recreated, live:
   recorded the PRE-swap #186 state (both Jetsons proxying to the Spark); this
   transcript and the d1 record supersede their topology while their probe
   evidence stands.
+
+## Addendum — streaming TTFT (operator-requested, same day)
+
+ttft_probe.py (SSE streaming, 3 short + 3 long runs, local gateway path):
+  short prompts: TTFT 346 / 231 / 289 ms (median 289 ms)
+  long generations: TTFT 304 / 311 / 311 ms (median 311 ms), sustained 12.1 tok/s
+Measured AFTER the v0.27.1 Lightning test window (cortex stop/start cycle) —
+the restart re-served the identical config; decode matches the pre-window
+12.1 tok/s exactly. For the record the same probe run against the deployed
+worker (Lightning via Spark) medians 75 ms TTFT / 74.5 tok/s — the fast-doer
+vs deliberate-thinker split the cognitive-split design intends (#187).
