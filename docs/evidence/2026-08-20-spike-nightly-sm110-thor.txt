@@ -1,0 +1,57 @@
+# t1 groundwork spike — the 8bd082 official nightly carries sm_110, proven live on the physical Thor
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t1 (covers c15/h14; resolves plan risk r1).
+# Box: Jetson AGX Thor (aarch64, sm_110, 122.8 GB unified), hostname thor. Date: 2026-08-20.
+# Operator: lobes (Claude), directed session.
+#
+# WHY THIS SPIKE EXISTS: the fleet-wide VLLM_NIGHTLY_IMAGE default
+# (vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695,
+# vLLM 0.26.1rc1.dev942, #185) had only ever booted on the Spark (sm_121).
+# cu-wheel arch coverage burned this mesh before (chatterbox, #145: cu128
+# shipped no sm_110 SASS) — so the Lightning worker flip is gated on proving
+# this digest on THIS card before anything consumes it.
+
+## 1. Wheel-level proof — sm_110 SASS is in the arch list
+
+$ docker run --rm --entrypoint python3 vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695 -c \
+    "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('arch_list:', torch.cuda.get_arch_list()); import importlib.metadata as im; print('vllm', im.version('vllm'))"
+torch 2.13.0+cu130 cuda 13.0
+arch_list: ['sm_80', 'sm_90', 'sm_100', 'sm_110', 'sm_120']
+vllm 0.26.1rc1.dev942+g5a4c8d992
+
+sm_110 is a first-class SASS target (not PTX forward-compat), on cu130 —
+the Thor-safe CUDA axis. vLLM version matches the #185 Spark evidence exactly.
+
+## 2. Live-kernel proof — a CUDA op executes on the Thor GPU
+
+$ docker run --rm --runtime nvidia --entrypoint python3 vllm/vllm-openai@sha256:8bd082... -c \
+    "import torch; print('device:', torch.cuda.get_device_name(0), 'cap:', torch.cuda.get_device_capability(0)); a = torch.randn(64,64,device='cuda'); print('matmul ok:', float((a@a).sum()) == float((a@a).sum()))"
+device: NVIDIA Thor cap: (11, 0)
+matmul ok: True
+
+## 3. Before-state re-verified on the deployed box (c15/h14)
+
+- Installed CLI was lobes-cli 0.50.0; upgraded to 0.57.1 (`uv tool upgrade lobes-cli`;
+  0.57.2 was minutes-old on main and not yet on PyPI at spike time).
+- ~/.lobes/.env still pins the OLD worker lane end to end:
+    VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@sha256:7c5a10e9... (0.23.1rc1.dev672 — the 2026-07-31 worker-era pin)
+    WORKER_MODEL=WORKER_SERVED_NAME=unsloth/Qwen3.6-35B-A3B-NVFP4
+- CORRECTION to the spec's before-state: PRIMARY_SERVED_NAME on this box is
+  sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP — TWO generations stale, not one
+  (the spec assumed unsloth/Qwen3.6-27B-NVFP4). The #186 mirror jumps straight
+  to unsloth/Qwen3.8-27B-NVFP4. PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+  is declared; PRIMARY_PEER_PROXY/_API_KEY are unset (referral-only today).
+- Disk: 247 GiB free on / — headroom for Lightning weights (~20 GiB) while
+  KEEPING the Qwen checkpoint + the old 7c5a10e9 image for rollback (t7/c23).
+- `lobes init --shape thor-worker` (0.57.1 templates, dry-run) resolves
+  profile=thor / shape=thor-worker and would set 24 env vars. DELIBERATELY NOT
+  applied here: the running Qwen worker lane still serves, and a re-render that
+  moves VLLM_NIGHTLY_IMAGE under a serving lane belongs to the flip task (t8),
+  not the groundwork spike. Recorded as sequencing, not omission.
+
+## Verdict
+
+r1 RESOLVED — the 8bd082 digest is sm_110-safe at both the wheel level (SASS
+in arch_list) and the silicon level (live kernel on cap 11.0). The flip's image
+prerequisite holds. nemotron_h SERVING support remains unproven (that is spike
+t2, risk r2 — this transcript claims nothing about it).
