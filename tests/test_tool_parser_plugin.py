@@ -45,6 +45,7 @@ and paste the output into ``_EXPECTED_NON_PRIMARY_HASHES`` below.
 from __future__ import annotations
 
 import hashlib
+import shlex
 from pathlib import Path
 
 import yaml
@@ -152,12 +153,35 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
     "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
     "vllm-rerank": "6d9b3aa91863c05e2592716db85cb2110a49523ba99a74b521ed84913c0e530e",
-    "vllm-worker": "fbe72dfaaaa6ee7fc69325c548110b084e3e5107890cdd7c1d07634aec2923eb",
+    # Recomputed 2026-08-20 for the spec-knobs task: `vllm-worker` moved (only
+    # service that did, besides `vllm-primary` itself, which this tripwire
+    # never hashes). Two hand-edits two deployed boxes had to make today
+    # became knobs: WORKER_SPECULATIVE_CONFIG (the same MTP off-switch
+    # mechanism vllm-multimodal already has — a set-but-empty value drops
+    # --speculative-config entirely) and WORKER_REASONING_PARSER (default
+    # moved from hardcoded qwen3 to nemotron_v3, matching the catalog's
+    # CURRENT role_hint=worker model). `command:` changed shape from a YAML
+    # list to a shell-lexed STRING for the same reason vllm-multimodal's did
+    # (t5) — a list item cannot be conditionally omitted. See
+    # tests/test_worker_compose.py and tests/test_senses_speculative_config.py.
+    "vllm-worker": "a7b34c601463079b87ce91a1e2a1947f918e779e1519ebdfe58ffc7286462ce0",
 }
 
 
 def _load_fleet() -> dict:
     return yaml.safe_load(_FLEET_COMPOSE.read_text(encoding="utf-8"))
+
+
+def _primary_command_tokens() -> list[str]:
+    """vllm-primary's raw (unsubstituted) command, tokenized.
+
+    ``command:`` is now a shell-lexed STRING (spec-knobs task, the same
+    off-switch mechanism the senses lane established — see
+    ``tests/test_senses_speculative_config.py``), not a YAML list. Tokenizing
+    the raw text with ``shlex`` is safe: none of ``$``, ``{``, ``}`` are shell
+    metacharacters, so every bare ``${VAR:-default}`` stays one token.
+    """
+    return shlex.split(_load_fleet()["services"]["vllm-primary"]["command"])
 
 
 def _service_hash(service: dict) -> str:
@@ -168,23 +192,23 @@ def _service_hash(service: dict) -> str:
 
 class TestVllmPrimaryToolParserPlugin:
     def test_tool_call_parser_default_is_thinking_aware(self) -> None:
-        command = _load_fleet()["services"]["vllm-primary"]["command"]
+        command = _primary_command_tokens()
         assert f"--tool-call-parser=${{PRIMARY_TOOL_CALL_PARSER:-{_PLUGIN_PARSER_NAME}}}" in command
 
     def test_tool_call_parser_still_env_overridable(self) -> None:
         # Same knob as before (PRIMARY_TOOL_CALL_PARSER), just a new default —
         # an operator can still override it in .env, e.g. back to plain
         # upstream qwen3_coder for a non-thinking primary.
-        command = _load_fleet()["services"]["vllm-primary"]["command"]
+        command = _primary_command_tokens()
         assert any(c.startswith("--tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-") for c in command)
 
     def test_tool_parser_plugin_flag_present(self) -> None:
-        command = _load_fleet()["services"]["vllm-primary"]["command"]
+        command = _primary_command_tokens()
         assert f"--tool-parser-plugin={_PLUGIN_DEST_PATH}" in command
 
     def test_auto_tool_choice_still_enabled(self) -> None:
         # The plugin wiring must not have dropped the existing flag it sits next to.
-        command = _load_fleet()["services"]["vllm-primary"]["command"]
+        command = _primary_command_tokens()
         assert "--enable-auto-tool-choice" in command
 
     def test_plugin_file_mounted_read_only(self) -> None:

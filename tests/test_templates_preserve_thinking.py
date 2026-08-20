@@ -14,6 +14,7 @@ Asserts that:
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import yaml
@@ -32,6 +33,24 @@ def _load(path: Path) -> dict:
 
 def _command(compose: dict, service: str) -> list[str]:
     return compose["services"][service]["command"]
+
+
+def _command_tokens(compose: dict, service: str) -> list[str]:
+    """Like ``_command``, but always a token LIST.
+
+    ``vllm-primary``'s ``command:`` is now a shell-lexed STRING (spec-knobs
+    task, the same off-switch mechanism as the senses lane — see
+    ``tests/test_senses_speculative_config.py``), not a YAML list. Tokenizing
+    the raw (unsubstituted) text with ``shlex`` is safe here: none of ``$``,
+    ``{``, ``}`` are shell metacharacters, so every bare ``${VAR:-default}``
+    stays one token, and the only quoted segment (the preserve_thinking JSON)
+    round-trips because its wrapping single quotes are real quote characters
+    in the source.
+    """
+    command = compose["services"][service]["command"]
+    if isinstance(command, str):
+        return shlex.split(command)
+    return list(command)
 
 
 class TestSingleScaffoldPrimaryHasPreserveThinking:
@@ -64,7 +83,7 @@ class TestFleetPrimaryHasPreserveThinking:
         assert _KWARGS_VALUE in command, f"{_KWARGS_VALUE!r} not found on vllm-primary command"
 
     def test_flag_is_adjacent_to_reasoning_parser(self) -> None:
-        command = _command(_load(_FLEET_COMPOSE), "vllm-primary")
+        command = _command_tokens(_load(_FLEET_COMPOSE), "vllm-primary")
         reasoning_idx = next(
             i for i, item in enumerate(command) if item.startswith("--reasoning-parser")
         )

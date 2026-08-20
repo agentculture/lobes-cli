@@ -12,6 +12,7 @@ Two concerns:
 from __future__ import annotations
 
 import pathlib
+import shlex
 
 import yaml
 
@@ -251,7 +252,11 @@ def test_primary_max_model_len_default_is_128k() -> None:
     27B KV cache is util-bound not context-bound, so the always-on Gemma
     multimodal gear frees co-resident headroom by trimming to 32K instead)."""
     svc = _load_compose()["services"]["vllm-primary"]
-    cmd = [str(c) for c in svc.get("command", [])]
+    command = svc.get("command", [])
+    # vllm-primary's command: is now a shell-lexed STRING (spec-knobs task, the
+    # same off-switch mechanism the senses lane established), not a YAML list —
+    # see tests/test_senses_speculative_config.py.
+    cmd = shlex.split(command) if isinstance(command, str) else [str(c) for c in command]
     max_len_flag = next((c for c in cmd if c.startswith("--max-model-len=")), None)
     assert max_len_flag is not None, "--max-model-len flag missing from vllm-primary command"
     # The default (after :-) must be 131072, not the old 65536 trim.
