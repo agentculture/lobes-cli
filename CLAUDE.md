@@ -55,6 +55,21 @@ previous text-only checkpoint and has not been booted with a ViT** (see
 `lobes/profiles/builtin/spark.toml`). See `docs/colleague-stack.md#migration-before--after`
 and `lobes/profiles/builtin_shapes/spark-lobe.toml` for the 1M hypothesis's
 full rationale.
+
+**Deviation d1 (2026-08-20) moved `cortex` off the Spark, onto the Jetson
+AGX Thor, locally.** The `spark-lobe`-on-Spark measurements above are now
+history, not the deployed reality: a Lightning-worker rollout hit a Thor
+NO-GO (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`) and the
+approved topology swap put `cortex` on the Thor instead, freeing the Spark
+for `worker` + `hand` + fine-tuning headroom. The Thor now serves
+`unsloth/Qwen3.8-27B-NVFP4` **locally**, at the full **1,048,576-token
+(1M) YaRN window**, `gpu_mem_util=0.58`, KV pool 1,114,504 tokens, **MTP
+OFF** (this checkpoint's GDN decode carries an MTP variant with no sm_110
+kernel image on the fleet's current nightly — plain non-MTP GDN decode
+works fine), measured **12.1 tok/s** single-stream decode, TTFT ~300 ms —
+see `docs/evidence/2026-08-20-accept-cortex-local-thor.txt`. See
+`docs/qwen3.8-27b-nvfp4.md` and the `worker`/`muse` paragraphs
+below for the rest of the d1 topology.
 lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to it.
 
 Three 27B checkpoints remain as **candidates**, kept not deleted
@@ -240,75 +255,87 @@ emits `MUSE_FEASIBLE=false` — and on a stale/pre-muse `.env` an unwired
 `muse` defaults to infeasible (`OPT_IN_BACKENDS` — `model=muse` 404s
 `role_infeasible`, referable/proxyable, never a silent fallback to cortex).
 Under pressure `muse` sheds (429) exactly like cortex/senses/worker.
-**Operator decision (thor-worker-lobe plan): no box in the mesh currently
-hosts `muse`** — the Jetson AGX Thor, the one box that ran `thor-muse`
-(DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the budget, util
-0.55 at the full 262144 window, but the acceptance transcript never landed,
-issue #108), moved to hosting `worker` instead (below). The deployed Thor declares
-no `MUSE_PEER_ORIGIN`, so `model=muse` now 404s `role_infeasible` with **no**
+**Operator decision (thor-worker-lobe plan, then deviation d1): no box in
+the mesh currently hosts `muse`.** The Jetson AGX Thor, the one box that ran
+`thor-muse` (DECLARED/UNVALIDATED: the 2026-07-17 live boot measured the
+budget, util 0.55 at the full 262144 window, but the acceptance transcript
+never landed, issue #108), first moved to hosting `worker` (thor-worker-lobe
+plan), then — deviation d1, 2026-08-20, after a Lightning-on-Thor NO-GO
+(`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`) — moved again to
+hosting `cortex` locally instead, with `worker` relocating to the DGX Spark
+(see the `worker` paragraph below). The deployed Thor still declares no
+`MUSE_PEER_ORIGIN`, so `model=muse` still 404s `role_infeasible` with **no**
 `hosted_by` referral anywhere in the mesh. The `muse` role, its catalog
 entry, and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) —
 dormant, not deleted — and the tier vocabulary above still ranks `worker` <
 `muse`. See `docs/gemma-4-31b-nvfp4.md`.
 
-**`worker` — the eighth role (opt-in hosting), the fast ground-work DOER.**
-Checkpoint: `unsloth/Qwen3.6-35B-A3B-NVFP4` (Qwen3.6 35B-A3B, an MoE with
-~3B active parameters per token, **262144 native context**,
-compressed-tensors NVFP4, and — unlike the catalog's other 35B-A3B candidate,
-`mmangkad/Qwen3.6-35B-A3B-NVFP4`, whose MTP never loads — ships its OWN
-self-hosted MTP draft module baked into the checkpoint). Served
-**MULTIMODAL** (image+video intake via the checkpoint's own ViT, no audio;
-no `--language-model-only`) — a "seeing doer", distinct from `senses`, which
-perceives but must never act. Responsibilities: execution, ground_work,
-bulk_transform, drafting, image_understanding, video_understanding,
-`tool_use`, and **`repo_action`** — worker is the FIRST role besides `cortex`
-permitted to act on the repo, under `cortex`'s direction (forbidden:
-final_decision, security_decision — worker never makes the final call or a
-security decision on its own authority). Alias `model=worker`. It is the
-**second opt-in core role** (`OPT_IN_CORE_ROLES = ("muse", "worker")`):
-machine-as-brain NEVER hosts it, the gateway wires its backend only behind
-`WORKER_BASE_URL`, and an unwired `worker` defaults to infeasible
-(`OPT_IN_BACKENDS` — `model=worker` 404s `role_infeasible`, never a silent
-fallback), mirroring `muse`'s mechanics exactly (`WORKER_FEASIBLE` /
-`WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY`; `base.toml`
-vetoes it on an unrecognised card just like `muse`). Under pressure `worker`
-sheds (429) exactly like cortex/senses/muse.
+**`worker` — the eighth role (opt-in hosting), the fast ground-work DOER —
+RE-CHECKPOINTED to Lightning on the Spark, deviation d1 (2026-08-20).**
+Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
+(`NemotronHForCausalLM`, a Mamba-2/MoE/attention hybrid with ~3B active of
+30B total parameters, 1,048,576-token native ceiling, modelopt NVFP4;
+served at a trimmed 65536 window). **TEXT-ONLY, non-coding** — this
+checkpoint carries no `vision_config`, so `worker` LOST
+`image_understanding`/`video_understanding` on this swap (the "seeing
+doer" framing below is now dead language, kept only as history).
+Responsibilities: execution, ground_work, bulk_transform, drafting,
+repo_inspection, run_authorized_commands, `tool_use`, and **`repo_action`**
+— worker is the FIRST role besides `cortex` permitted to act on the repo,
+under `cortex`'s direction (forbidden: final_decision, security_decision,
+**code_authoring** — worker never makes the final call, a security
+decision, or writes code, on its own authority). Alias `model=worker`. It
+is the **second opt-in core role** (`OPT_IN_CORE_ROLES = ("muse",
+"worker")`): machine-as-brain NEVER hosts it, the gateway wires its backend
+only behind `WORKER_BASE_URL`, and an unwired `worker` defaults to
+infeasible (`OPT_IN_BACKENDS` — `model=worker` 404s `role_infeasible`,
+never a silent fallback), mirroring `muse`'s mechanics exactly
+(`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
+`WORKER_PEER_API_KEY`; `base.toml` vetoes it on an unrecognised card just
+like `muse`). Under pressure `worker` sheds (429) exactly like
+cortex/senses/muse.
 
-The `thor-worker` deployment shape has **LANDED and is VALIDATED** on the
-physical Jetson AGX Thor (sm_110), 2026-07-31 —
-`docs/evidence/2026-07-31-accept-worker-thor.txt`. It drops BOTH `cortex` and
-`senses` and hosts `worker` + the pooling gears + the audio overlay, mirroring
-`thor-muse`'s structure. Its budget is **measured, not declared**:
-`gpu_mem_util=0.45` at the full `max_model_len=262144` (no trim), weights
-24.81 GiB loaded in ~31 s, KV pool 41.78 GiB, ~50.8 tok/s decode
-**single-stream**, MTP self-draft acceptance **89.1%**.
+**Now hosted on the DGX Spark GB10, not the Thor.** The `thor-worker`
+deployment shape's data rendered on the **Spark** card (`lobes init --shape
+thor-worker --apply --force` on `spark-f8a9`) after a same-day Thor NO-GO —
+Lightning's Mamba-2 SSD decode path wedges indefinitely on this fleet's
+pinned nightly on sm_110
+(`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`; a Thor-specific
+recipe on the newer release image `v0.27.1` is unexplored, see that
+transcript's addendum). Measured on the Spark, 2026-08-20
+(`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`):
+`WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536` (a progressive
+start; 1M is a ceiling, not yet exercised), weights 17.85 GiB loaded, KV
+pool 3,560,789 tokens (54.33× concurrency at 65K), `fp8_e4m3` KV cache,
+**75.1 tok/s** decode single-stream (no MTP), tool calls PASS via the
+`nemotron_v3` reasoning parser + `qwen3_coder` tool parser (the NVIDIA
+recipe's pairing, validated live). TTFT medians 75 ms (short) / 77 ms
+(long). Against the incumbent Qwen worker's final baseline (61.2 tok/s,
+captured just before the swap — see `docs/qwen3.6-35b-a3b-nvfp4.md`), this
+is +23% decode and ~7× faster short-turn latency through the proxy hop —
+an honest deployed-topology comparison, not a same-silicon A/B. Lightning's
+own self-hosted MTP/DSpark and strict-tools arming remain UNEVALUATED. See
+`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
 
-> **Concurrency numbers in this repo are KV-pool CEILINGS, not measured
-> throughput.** `KV pool / max_model_len` gives 14.07× for this lane — how many
-> full-context requests the cache could *hold*. Two independent consumers
-> measured the real behaviour on 2026-07-31: usable concurrency **saturates near
-> width 8–9**, and per-stream decode falls to **~30 tok/s** at high width
-> (embodiment; colleague#361 measured 29.8 tok/s/stream and 268.1 tok/s aggregate
-> at width 14 — a 5.5% aggregate gain for a 75% load increase over width 8).
-> Multiplying a single-stream tok/s by the ceiling is the misreading to avoid.
-> The same caveat applies to every `Nx concurrency` figure below.
-The 0.45 hypothesis booted first try — the MoE's ~3B active-parameter footprint
-is why. **`--moe-backend` is deliberately NOT forced on sm_110**: every forced
-value was refused live (`flashinfer_b12x`/`flashinfer_cutlass` are
-sm_121a/Spark-only, `marlin` rejects the unquantized MTP experts, `triton`
-rejects NVFP4 MoE) — only auto-select boots, so the committed compose omits the
-flag and `WORKER_MOE_BACKEND` is an opt-in hand-pin. See
-`docs/qwen3.6-35b-a3b-nvfp4.md`.
+**The Thor reaches it by proxy**, mirroring the pre-d1 direction reversed:
+`WORKER_PEER_ORIGIN` + `WORKER_PEER_PROXY` on the Thor forward `model=worker`
+to the Spark and relay the answer with `X-Lobes-Proxied-By` — validated live
+the same day (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`'s
+proxy-chain probe, run from the Thor's own gateway).
 
-**The Spark reaches it by proxy** (2026-07-31): `WORKER_PEER_ORIGIN` +
-`WORKER_PEER_PROXY` on the spark-lobe box forward `model=worker` to the Thor and
-relay the answer with `X-Lobes-Proxied-By`, image input included — so callers
-address `worker` on their local gateway and never dial the Thor directly. That
-required a **fix in 0.54.8**: `worker` was wired into `_config.py`'s peer dicts
-in 0.54.6 but missing from `server.py`'s `_PEER_SERVED_NAME_ENV` /
-`_PEER_ROLE_HINT`, so `peer_specs_from_table` silently dropped it and
-`WORKER_PEER_PROXY=true` did nothing. See
-`docs/evidence/2026-07-31-accept-worker-proxy-spark.txt`.
+> **Superseded history (pre-d1, kept for the record — 2026-07-31):** the
+> `worker` role was previously `unsloth/Qwen3.6-35B-A3B-NVFP4` (MULTIMODAL,
+> image+video via its own ViT, self-hosted MTP draft), hosted LOCALLY on
+> the Jetson AGX Thor via the `thor-worker` shape at `gpu_mem_util=0.45` /
+> `max_model_len=262144`, measuring ~50.8 tok/s single-stream decode and
+> 89.1% MTP acceptance
+> (`docs/evidence/2026-07-31-accept-worker-thor.txt`), with the Spark
+> reaching it by proxy in the OPPOSITE direction from today
+> (`docs/evidence/2026-07-31-accept-worker-proxy-spark.txt`). Deviation d1
+> superseded all of it in one day: different checkpoint, different
+> modality, different host box, opposite proxy direction. See
+> `docs/qwen3.6-35b-a3b-nvfp4.md` for that checkpoint's full history and its
+> own GDN-MTP kernel gap on the fleet's newer nightly.
 
 **`hand` — the ninth role, the fleet's FINE-TUNING BASE (default-hosted
 everywhere).** Checkpoint: `LiquidAI/LFM2.5-1.2B-Instruct` (a ~1.2B hybrid

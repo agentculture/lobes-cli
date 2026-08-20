@@ -8,6 +8,21 @@
 > eighth, thor-worker-lobe plan, and `hand` as the ninth, hand-lobe plan).
 > **`muse` is currently DORMANT/unhosted mesh-wide** — see the callout below
 > the role table.
+>
+> **Topology swap, deviation d1 (2026-08-20).** `worker` is no longer the
+> multimodal `unsloth/Qwen3.6-35B-A3B-NVFP4` on the Thor — the Thor's
+> Mamba-2 SSD decode path wedged on this fleet's pinned nightly
+> (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`), so
+> operator-approved deviation d1
+> (`.devague/deliveries/nemotron-lightning-worker.json`) moved `worker` to
+> `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` on the **DGX Spark
+> GB10** instead, and moved `cortex` to the **Thor**, serving it locally at
+> its full 1M window (MTP off — sm_110 has no GDN-MTP decode kernel on this
+> digest). See
+> [`nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md),
+> [`qwen3.6-27b-text-nvfp4-mtp.md`](qwen3.6-27b-text-nvfp4-mtp.md), and
+> `CLAUDE.md`'s "Colleague roles" section for the deployed picture; the
+> per-role table and responsibility tokens below are updated for it.
 
 This doc is the **role contract** reference. For the fleet's Docker topology,
 tuning knobs, and memory budget, see [`docs/gateway-fleet.md`](gateway-fleet.md);
@@ -30,10 +45,10 @@ below.
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
-| `cortex` | `primary` (generate) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
+| `cortex` | `primary` (generate, **hosted on the Jetson AGX Thor since d1**) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
 | `muse` | `muse` (generate, **opt-in hosting, currently DORMANT/unhosted**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
-| `worker` | `worker` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, image/video understanding — **and repo actions**, under `cortex`'s direction. Never the final decision or a security call. |
+| `worker` | `worker` (generate, **opt-in hosting, Lightning on the DGX Spark since d1**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, repo inspection, running authorized commands — **and repo actions**, under `cortex`'s direction. TEXT-ONLY, non-coding (see the d1 callout above). Never the final decision or a security call. |
 | `hand` | `hand` (generate, **default-hosted everywhere**) | `POST /v1/chat/completions` | The fine-tuning base and trained specialist — domain mastery via LoRA adapters. Also the `minor`/`cheap` tier and the pressure-policy **servable floor**. Never decides, acts on the repo, or makes a security call. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
@@ -71,7 +86,8 @@ per the callout above, but it never decides).
 
 > **`muse` and `worker` are OPT-IN CORE ROLES — machine-as-brain never hosts
 > either.** The `nvidia/Gemma-4-31B-IT-NVFP4` checkpoint behind `muse` and the
-> `unsloth/Qwen3.6-35B-A3B-NVFP4` checkpoint behind `worker` are both too
+> `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` checkpoint now behind
+> `worker` (since d1, replacing `unsloth/Qwen3.6-35B-A3B-NVFP4`) are both too
 > heavy to co-reside with the default `cortex`+`senses` duo on a 128 GB box,
 > so the default shape's hosted set stays the SEVEN default-hosted roles
 > (`DEFAULT_HOSTED_ROLES` in `lobes/profiles/shapes.py`) while the contract
@@ -80,11 +96,14 @@ per the callout above, but it never decides).
 > **DECLARED/UNVALIDATED** as of this writing, and now additionally
 > **DORMANT** (see below) — a 2026-07-17 live boot measured the budget, but
 > the acceptance run/transcript never landed, #108 (see
-> [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)); a `thor-worker` shape
-> for `worker` is **forthcoming** (thor-worker-lobe plan task t7) with no
-> budget numbers committed yet — the role/tier/gateway-config plumbing is
-> shipped, the shape and its live-measured budget are not (see
-> [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)). On every
+> [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md)); the `thor-worker`
+> shape for `worker` is now **LIVE, but rendered on the Spark card, not the
+> Thor** (d1, 2026-08-20) — see
+> [`deployment-shapes.md`](deployment-shapes.md#shapes-are-card-agnostic-data-proven-live-by-d1)
+> for how a shape named `thor-worker` ended up hosting `worker` on a
+> different card; the measured budget lives in
+> [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md).
+> On every
 > non-hosting deployment both are honestly `feasible: false` (and, uniquely
 > among the six other roles, an unwired `muse`/`worker` *defaults* to
 > infeasible even on a stale pre-muse/pre-worker `.env` — see
@@ -117,7 +136,7 @@ whether a role did its job well; that judgment is Colleague's (see
 | `cortex` | `reasoning`, `deciding`, `planning`, `tool_use`, `code_repo_actions`, `validation`, `final_authority` | *(none — cortex is the final authority)* |
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
 | `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
-| `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `image_understanding`, `video_understanding`, `tool_use`, `repo_action` | `final_decision`, `security_decision` — worker acts under cortex's direction, never on its own authority |
+| `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use`, `repo_action` | `final_decision`, `security_decision`, `code_authoring` — worker acts under cortex's direction, never on its own authority, and does not author code |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
@@ -129,11 +148,17 @@ Every other non-`cortex` role (`senses`, `muse`, `embedder`, `reranker`,
 `repo_action` is deliberately narrower than `cortex`'s: `cortex` also carries
 `final_authority` and no forbidden list at all, while `worker`'s forbidden
 list still bars `final_decision` and `security_decision` — worker executes
-ground work (bulk transforms, drafting, image/video-informed edits) UNDER
-`cortex`'s direction, it never decides on its own authority. It is also
-MULTIMODAL (the checkpoint's ViT gives it image+video intake, no audio),
-hence `image_understanding`/`video_understanding` — a "seeing doer," unlike
-text-only `cortex`.
+ground work (bulk transforms, drafting, repo inspection, running authorized
+commands) UNDER `cortex`'s direction, it never decides on its own authority.
+**Since deviation d1 (2026-08-20), `worker` is TEXT-ONLY and
+non-coding** — the checkpoint behind it
+(`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`, hosted on the DGX
+Spark) carries no vision tower, unlike the multimodal Qwen checkpoint it
+replaced, and `code_authoring` is forbidden outright. See
+[`nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md)
+for the checkpoint facts and
+[`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) for the demoted
+multimodal predecessor.
 
 **`stt`'s `realtime_vad_session` responsibility is additive and
 honesty-gated (issue #149).** It names the `/v1/realtime` WebSocket
@@ -208,6 +233,26 @@ silently downgraded to the base, because a caller who asked for the legal
 specialist and got the generalist has been lied to. Adapters are declared once
 in `HAND_LORA_MODULES` (read by both the engine and the gateway, so they cannot
 disagree), fixed at boot — there is no runtime hot-load.
+
+**Per-card status, updated 2026-08-20.** `hand` (LFM2.5-1.2B) is
+default-hosted everywhere, but its inference health is not uniform:
+**Orin and Spark are VALIDATED** (known-answer + structured tool-calls PASS
+on both — `docs/evidence/2026-08-20-accept-hand-spark.txt` for the Spark
+half); **Thor stays BLOCKED**, now **re-attributed** away from its original
+filing. #181 was originally filed as a LoRA embedding-slot boot failure;
+the 2026-08-20 re-run
+(`docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt`) found boot
+and LoRA allocation now succeed on both the fleet's new `8bd082` nightly
+and the old 0.23.1 production engine, but **inference itself is corrupt on
+the Thor on both engines** — wrong deterministic generations, escalating to
+a CUDA unspecified-launch-failure / EngineCore death within 1–3 requests.
+The identical config passed cleanly on the Spark the same day. This is the
+same pattern as the Thor's other sm_110 non-dense-decode gaps that same day
+(Lightning's Mamba-2 SSD wedge, the Qwen worker/cortex GDN-MTP kernel gap —
+see [`docs/machine-profiles.md`](machine-profiles.md)): dense-transformer
+paths serve fine on this digest, non-standard (conv/Mamba/GDN) decode paths
+do not. `hand` stays UNSERVED on the Thor (`feasible=false`); #181 should be
+re-titled to this inference-level attribution.
 
 **v1 ships zero adapters**, with `--enable-lora` armed and the inventory empty.
 The serving half of muscle memory is here; the training half is `unsloth-cli`,
@@ -494,7 +539,7 @@ touching the rest of the fleet:
 lobes up cortex --apply             # docker compose up -d vllm-primary
 lobes up senses --apply             # docker compose up -d vllm-multimodal
 lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only — currently no box hosts one, see the dormant callout above)
-lobes up worker --apply             # docker compose up -d vllm-worker (verb wired; errors helpfully off a non-hosting box — a worker-hosting shape is forthcoming, thor-worker-lobe plan t7)
+lobes up worker --apply             # docker compose up -d vllm-worker (verb wired; live on the Spark since d1, errors helpfully off any other non-hosting box)
 lobes up embedder --apply           # docker compose up -d vllm-embed
 lobes up reranker --apply           # docker compose up -d vllm-rerank
 lobes up stt --apply                # requires the --audio overlay
@@ -515,9 +560,10 @@ while `hand` IS included (default-hosted, no compose-profile gate)**
 (their services are compose-profile-gated, so bundling either would break the
 target on every non-hosting deployment). `lobes up muse` works on a
 muse-hosting deployment and errors helpfully — naming the fix — when the
-deployment's `COMPOSE_PROFILES` doesn't include `muse`; `lobes up worker` is
-designed to mirror that exact mechanic once the `vllm-worker` compose service
-and a worker-hosting shape land (thor-worker-lobe plan).
+deployment's `COMPOSE_PROFILES` doesn't include `muse`; `lobes up worker`
+mirrors that exact mechanic and is live on the Spark (deviation d1,
+2026-08-20) — the `vllm-worker` compose service and the worker-hosting shape
+both landed, just on a different card than the plan first targeted.
 
 ## Measurement: `lobes measure`
 
