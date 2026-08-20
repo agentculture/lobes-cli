@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.0] - 2026-08-20
+
+### Added
+
+- Lightning worker + d1 topology swap (plan `nemotron-lightning-worker`, #187/#186/#183, deviation d1): the `worker` role serves `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` — VALIDATED on the DGX Spark GB10 (75.1 tok/s, ~75 ms TTFT, `nemotron_v3` + `qwen3_coder` pair) after a Thor sm_110 NO-GO (Mamba-2 SSD warmup wedge on both the fleet nightly and upstream v0.27.1); the Thor serves `cortex` locally (`unsloth/Qwen3.8-27B-NVFP4` @ the full 1M YaRN window, MTP off — sm_110 ships no GDN-MTP kernel). Nine evidence transcripts under `docs/evidence/2026-08-20-*`.
+- `PRIMARY_SPECULATIVE_CONFIG` / `WORKER_SPECULATIVE_CONFIG` (set-but-empty = MTP off, the senses-lane mechanism) and `WORKER_REASONING_PARSER` (default `nemotron_v3`); the primary and worker compose lanes move to shell-lexed string commands, fixing a Compose brace-interpolation hazard with `${VAR:-{}}` defaults.
+- `hand` becomes referable/proxyable: the `NEVER_PROXIED_BACKENDS` decision is REVERSED by d1 evidence (LFM2.5 inference is corrupt-then-fatal on Thor sm_110 while identical config passes on the Spark — #181 re-attributed); `HAND_PEER_ORIGIN`/`_PROXY`/`_API_KEY` land in both the config channels and server resolution tables together.
+- `docs/worker-lightning-rollout-notes.md` (served-id audit: no external raw-id pinners), Lightning per-model doc, and the sm_110 non-dense-decode lesson in `docs/machine-profiles.md`.
+
+### Changed
+
+- `worker` responsibilities per #187: text-only, non-coding — `image_understanding`/`video_understanding` dropped; `repo_inspection`, `run_authorized_commands`, `action_selection`, `retrieval_synthesis`, `summarization`, `log_digestion`, `structured_extraction` added; `code_authoring` forbidden. `unsloth/Qwen3.6-35B-A3B-NVFP4` demoted to candidate (final production baseline 61.2 tok/s captured pre-swap).
+- `thor.toml` cortex tracks the fleet default again (`unsloth/Qwen3.8-27B-NVFP4`, validated at 1M on the physical Thor); the spark↔thor divergence set returns to hardware-only.
+
 ## [0.57.2] - 2026-08-20
 
 ### Added
