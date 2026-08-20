@@ -107,16 +107,21 @@ class TestWorkerImageIsQwenLane:
 
 class TestWorkerCommand:
     def test_serves_worker_model_default(self) -> None:
+        # Default is the catalog's role_hint=worker model since 2026-08-20 (d1):
+        # Lightning, validated on the Spark; the demoted Qwen candidate is an
+        # override documented in env.example.
         cmd = _worker_command()
-        assert "${WORKER_MODEL:-unsloth/Qwen3.6-35B-A3B-NVFP4}" in cmd
+        assert "${WORKER_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}" in cmd
 
     def test_served_model_name(self) -> None:
         cmd = _worker_command()
         assert any(c.startswith("--served-model-name=${WORKER_SERVED_NAME:-") for c in cmd)
 
-    def test_quantization_compressed_tensors(self) -> None:
+    def test_quantization_modelopt_default(self) -> None:
+        # Lightning's own quant_method (config.json 2026-08-20); the Qwen
+        # candidate overrides to compressed-tensors.
         cmd = _worker_command()
-        assert "--quantization=${WORKER_QUANTIZATION:-compressed-tensors}" in cmd
+        assert "--quantization=${WORKER_QUANTIZATION:-modelopt}" in cmd
 
     def test_max_model_len_knob(self) -> None:
         cmd = _worker_command()
@@ -135,16 +140,14 @@ class TestWorkerCommand:
         cmd = _worker_command()
         assert not any(c.startswith("--moe-backend") for c in cmd)
 
-    def test_self_draft_mtp_no_external_draft_model(self) -> None:
+    def test_speculative_default_off(self) -> None:
+        # DEFAULT-OFF since 2026-08-20: the Lightning worker's MTP/DSpark is
+        # card-declared but unmeasured on this fleet — the Spark validation ran
+        # plain decode per #187. The knob's default carries NO flag; enabling
+        # is an explicit env.example-documented override.
         cmd = _worker_command()
-        spec = [c for c in cmd if "--speculative-config" in c]
-        assert spec, "worker must declare a --speculative-config (self-draft MTP)"
-        blob = spec[0]
-        assert '"method": "mtp"' in blob
-        assert '"num_speculative_tokens": 2' in blob
-        # Self-draft: NO external draft-model key (unlike the Gemma gears).
-        assert '"model"' not in blob
-        assert "draft_model" not in blob
+        assert "${WORKER_SPECULATIVE_CONFIG-}" in cmd
+        assert not any("--speculative-config" in c for c in cmd)
 
     def test_parser_pair_default(self) -> None:
         # --tool-call-parser stays hardcoded qwen3_coder: BOTH the shipped
@@ -218,11 +221,13 @@ class TestWorkerSpeculativeConfigKnob:
         assert "" not in cmd
 
     @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
-    def test_unset_keeps_mtp_on_by_default(self) -> None:
+    def test_unset_renders_no_speculative_flag(self) -> None:
+        # Default-off (2026-08-20): unset renders NO --speculative-config in
+        # the argv at all — the same absence set-but-empty produces.
         out = _compose_config({"COMPOSE_PROFILES": "worker"})
         rendered = yaml.safe_load(out)
         cmd = [str(c) for c in rendered["services"]["vllm-worker"]["command"]]
-        assert any(c.startswith("--speculative-config") and '"method": "mtp"' in c for c in cmd)
+        assert not any(c.startswith("--speculative-config") for c in cmd)
 
 
 class TestGatewayWiresWorker:
@@ -240,6 +245,22 @@ class TestGatewayWiresWorker:
             "WORKER_PEER_API_KEY",
         ):
             assert k in keys, f"gateway environment must pass through {k}"
+
+    def test_gateway_environment_passes_hand_peer_keys(self) -> None:
+        # hand rides the same feasibility/peer channels since 2026-08-20 (the
+        # d1 reversal of NEVER_PROXIED_BACKENDS) — the gateway container must
+        # actually RECEIVE the knobs or the reversal is inert in deployments
+        # (qodo PR #190 finding 2).
+        svc = _load_fleet()["services"]["gateway"]
+        env: list[str] = svc["environment"]
+        keys = {e.split("=", 1)[0] for e in env if "=" in e}
+        for k in (
+            "HAND_FEASIBLE",
+            "HAND_PEER_ORIGIN",
+            "HAND_PEER_PROXY",
+            "HAND_PEER_API_KEY",
+        ):
+            assert k in keys, f"gateway environment must pass {k}"
 
 
 class TestEnvExampleDocumentsWorkerKnobs:
@@ -288,8 +309,8 @@ class TestWorkerComposeConfigRender:
         cmd = [str(c) for c in svc["command"]]
         assert "--tool-call-parser=qwen3_coder" in cmd
         assert "--reasoning-parser=nemotron_v3" in cmd
-        assert "--quantization=compressed-tensors" in cmd
-        assert any("--speculative-config" in c and '"method": "mtp"' in c for c in cmd)
+        assert "--quantization=modelopt" in cmd
+        assert not any("--speculative-config" in c for c in cmd)
         assert "--language-model-only" not in cmd
         assert _NIGHTLY_VLLM_IMAGE in svc["image"]
 

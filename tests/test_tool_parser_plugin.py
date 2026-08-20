@@ -143,7 +143,8 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (vllm-multimodal, vllm-multimodal-coder, vllm-muse, vllm-middle,
     # vllm-minor) stay on their own image and are unaffected, byte-identical to
     # the prior recompute.
-    "gateway": "884e7a609f48f5c2cb2a886909f2e9d99d96f591837fa44d73ef1c95b6258b31",
+    # 2026-08-20: +HAND feasibility/peer env passthrough (qodo PR #190 #2)
+    "gateway": "8cc476bcfdb24df429ba64ea36706c9fdb38a11306b190d588c1586a2c023357",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
     "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",
@@ -164,7 +165,8 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # list to a shell-lexed STRING for the same reason vllm-multimodal's did
     # (t5) — a list item cannot be conditionally omitted. See
     # tests/test_worker_compose.py and tests/test_senses_speculative_config.py.
-    "vllm-worker": "a7b34c601463079b87ce91a1e2a1947f918e779e1519ebdfe58ffc7286462ce0",
+    # 2026-08-20: worker defaults -> Lightning (qodo PR #190 #3)
+    "vllm-worker": "5c8e612b01e4b54153910effc4ed96f9e035778920d18ea7b1d935908ed2e08a",
 }
 
 

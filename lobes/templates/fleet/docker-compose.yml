@@ -1237,17 +1237,20 @@ services:
     #
     # Per-arg notes (these were interleaved in the list this replaced):
     #
-    #   --quantization  compressed-tensors: the checkpoint's OWN config.json
-    #     quant_method (verified against the real config.json) — NOT modelopt.
-    #     modelopt/modelopt_fp4 would fail with a quant-method mismatch. (The
-    #     catalog's CURRENT role_hint=worker model,
-    #     nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, is modelopt
-    #     instead — override WORKER_QUANTIZATION=modelopt alongside WORKER_MODEL
-    #     if you serve it here; see env.example.)
+    #   --quantization  modelopt: the DEFAULT worker checkpoint's OWN
+    #     quant_method (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4,
+    #     verified against its real config.json 2026-08-20). If you serve the
+    #     demoted unsloth/Qwen3.6-35B-A3B-NVFP4 candidate here instead,
+    #     override WORKER_QUANTIZATION=compressed-tensors alongside
+    #     WORKER_MODEL — each checkpoint fails on the other's quant method.
     #
-    #   --max-model-len  Full 256K native window by default; a worker-hosting
-    #     shape (thor-worker) renders the real served length into
-    #     WORKER_MAX_MODEL_LEN.
+    #   --max-model-len  Default 65536 — the window VALIDATED live for the
+    #     default Lightning worker on the DGX Spark (2026-08-20, KV 3.56M
+    #     tokens / 54.33x concurrency at 65K — see
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
+    #     checkpoint's ceiling is 1M (config-verified); grow progressively
+    #     with evidence (#187), and a worker-hosting shape renders the real
+    #     served length into WORKER_MAX_MODEL_LEN.
     #
     #   --gpu-memory-utilization  PLACEHOLDER default — the real util is
     #     MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55
@@ -1266,21 +1269,17 @@ services:
     #     Spark). To pin a backend, add a `--moe-backend=<x>` line here by hand
     #     (see env.example WORKER_MOE_BACKEND).
     #
-    #   WORKER_SPECULATIVE_CONFIG  Self-draft MTP baked INTO the checkpoint (its
-    #     own MTP head, no external draft-model key) — mirrors the 27B
-    #     primary's speculative decode, minus the separate draft repo. Default-on.
-    #
-    #     OFF-SWITCH: put `WORKER_SPECULATIVE_CONFIG=` (set, but empty) in .env
-    #     to serve this lane with NO speculative decoding at all. That is the
-    #     recorded fallback validated live on the DGX Spark serving the
-    #     nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 worker (plain
-    #     decode first, #187) — see
-    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt. Uses the same
-    #     dash-only default operator as MULTIMODAL_SPECULATIVE_CONFIG (never the
-    #     colon-dash operator every other knob in this file uses, which would
-    #     treat an empty value as unset and put the off-switch out of reach) —
-    #     see that knob's env.example entry for the full quoting caveat if you
-    #     want to RETARGET the draft rather than switch it off.
+    #   WORKER_SPECULATIVE_CONFIG  DEFAULT-OFF (empty): the default Lightning
+    #     worker's MTP/DSpark benefit is declared by its card but UNMEASURED on
+    #     this fleet — the validated Spark serve (2026-08-20,
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt) ran plain
+    #     decode per #187 ("measure plain decoding first"). To enable
+    #     speculative decoding once measured, set e.g.
+    #       WORKER_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"mtp\", \"num_speculative_tokens\": 2}'"
+    #     (the value the demoted Qwen candidate validated on Thor 2026-07-31 —
+    #     use it when serving that candidate). Dash-only default operator, same
+    #     as MULTIMODAL_SPECULATIVE_CONFIG — see its env.example entry for the
+    #     dotenv/shell-lexer quoting caveat.
     #
     #   WORKER_REASONING_PARSER  Default is nemotron_v3, matching the CURRENT
     #     catalog role_hint=worker model
@@ -1288,27 +1287,29 @@ services:
     #     on the Spark 2026-08-20, structured tool_calls PASS through the
     #     nemotron_v3 + qwen3_coder pair, see
     #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
-    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH the
-    #     Nemotron worker and the demoted unsloth/Qwen3.6-35B-A3B-NVFP4
-    #     candidate this lane still defaults WORKER_MODEL to use it; only the
-    #     reasoning parser differs between the two. If you serve the demoted
-    #     Qwen candidate (the shipped WORKER_MODEL default), override
-    #     WORKER_REASONING_PARSER=qwen3 to match it — nemotron_v3 is the wrong
-    #     grammar for that checkpoint's thinking traces.
+    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH
+    #     the default Nemotron worker and the demoted
+    #     unsloth/Qwen3.6-35B-A3B-NVFP4 candidate use it; only the reasoning
+    #     parser differs between the two. If you serve the demoted Qwen
+    #     candidate, override WORKER_REASONING_PARSER=qwen3 to match it —
+    #     nemotron_v3 is the wrong grammar for that checkpoint's thinking
+    #     traces (and vice versa).
     #
     #   SECURITY: --trust-remote-code runs the model repo's code in-container
-    #     (same posture as the 27B primary). Multimodal (image+video) is
-    #     SERVED — deliberately NO --language-model-only: worker keeps its ViT
-    #     vision tower.
+    #     (same posture as the 27B primary). The default Lightning worker is
+    #     TEXT-ONLY (no vision_config in its config.json — #187's contract);
+    #     no --language-model-only flag is needed because there is no tower to
+    #     drop. (The demoted Qwen candidate DOES ship a ViT and serves it when
+    #     selected — its multimodal validation is 2026-07-31 history.)
     command: >-
-      vllm serve ${WORKER_MODEL:-unsloth/Qwen3.6-35B-A3B-NVFP4}
-      --served-model-name=${WORKER_SERVED_NAME:-unsloth/Qwen3.6-35B-A3B-NVFP4}
+      vllm serve ${WORKER_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --served-model-name=${WORKER_SERVED_NAME:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
       --host=0.0.0.0
       --port=8000
-      --quantization=${WORKER_QUANTIZATION:-compressed-tensors}
-      --max-model-len=${WORKER_MAX_MODEL_LEN:-262144}
+      --quantization=${WORKER_QUANTIZATION:-modelopt}
+      --max-model-len=${WORKER_MAX_MODEL_LEN:-65536}
       --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
-      ${WORKER_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'}
+      ${WORKER_SPECULATIVE_CONFIG-}
       --enable-auto-tool-choice
       --tool-call-parser=qwen3_coder
       --reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}
@@ -1478,6 +1479,11 @@ services:
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
+      # hand joined the peer channels 2026-08-20 (d1 reversal — see
+      # lobes/gateway/_config.py's NEVER_PROXIED_BACKENDS): a box whose card
+      # cannot serve LFM2.5 correctly (Thor sm_110) declares HAND_FEASIBLE=false
+      # and refers/proxies to a box that can.
+      - HAND_FEASIBLE=${HAND_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
       # First-class audio lanes (issue #129): declare one off exactly like a
@@ -1496,6 +1502,7 @@ services:
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
+      - HAND_PEER_ORIGIN=${HAND_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
       - STT_PEER_ORIGIN=${STT_PEER_ORIGIN:-}
@@ -1523,6 +1530,7 @@ services:
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
+      - HAND_PEER_PROXY=${HAND_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
       - STT_PEER_PROXY=${STT_PEER_PROXY:-}
@@ -1538,6 +1546,7 @@ services:
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
+      - HAND_PEER_API_KEY=${HAND_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
       - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}

@@ -61,24 +61,22 @@ quantization = "compressed-tensors"
 attention_backend = "TRITON_ATTN"
 
 [roles.hand]
-# The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
-# base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
-# ViT, no thinking mode; served with --enable-lora ARMED and (in v1) an EMPTY
-# adapter inventory. See docs/lfm2.5-1.2b-hand.md.
+# INFEASIBLE on this card — MEASURED, not declared (2026-08-20, the fifth
+# validated sm_110 divergence). LFM2.5-1.2B BOOTS healthy here (including
+# LoRA init — retiring #181's original boot-time attribution) but INFERENCE
+# is broken: corrupted deterministic generations escalating to CUDA
+# unspecified-launch-failure / EngineCore death within 1-3 requests, on BOTH
+# the 8bd082 nightly and the prior 0.23.1 production engine, while the
+# IDENTICAL config passes cleanly on the Spark GB10 the same day. A lane
+# that serves wrong answers is worse than an honest 404, so this card
+# declares hand off; a deployment reaches it via the (since-2026-08-20)
+# HAND_PEER_ORIGIN/_PROXY channels instead. Evidence:
+# docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt. Re-measure on
+# engine upgrades — this is a kernel-coverage fact, not silicon fate.
 #
-# quantization is DELIBERATELY ABSENT from this block, on every card: the
-# catalog's quantization="none" bf16 sentinel means the lane must omit
-# --quantization ENTIRELY. Declaring it here — even as an empty string — would
-# render a flag that corrupts bf16 weights.
-#
-# BUDGET: DECLARED, NOT MEASURED (#108). Same 128 GB unified-memory board as the
-# Spark, so the same ~7.7 GiB at 0.06 and the same caveat: this card's measured
-# co-residency history (thor-muse's refused 0.40 -> measured 0.55) is exactly
-# why an unmeasured number stays labelled as one. Total 0.56 -> 0.62.
-feasible = true
-model = "LiquidAI/LFM2.5-1.2B-Instruct"
-gpu_mem_util = 0.06
-max_model_len = 32768
+# The model/budget lines are DELIBERATELY ABSENT: an infeasible role renders
+# no lane on this card (the catalog names what the role WOULD serve).
+feasible = false
 
 [roles.embedder]
 feasible = true

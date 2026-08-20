@@ -162,14 +162,23 @@ def test_spark_and_thor_share_every_other_knob() -> None:
     # thor.toml tracks the fleet default again, validated live at 1M on the
     # physical Thor) — so the model lines no longer diverge and the set is
     # back to the validated hardware divergences alone.
+    # hand is the FIFTH validated sm_110 divergence (2026-08-20): infeasible
+    # on thor (LFM2.5 inference corrupt-then-fatal there, clean on the Spark —
+    # docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt), so spark
+    # renders the four hand lane knobs and thor renders the off flag instead.
     assert only_in_spark == {
         "PRIMARY_KV_CACHE_DTYPE=fp8",
+        "HAND_MODEL=LiquidAI/LFM2.5-1.2B-Instruct",
+        "HAND_SERVED_NAME=LiquidAI/LFM2.5-1.2B-Instruct",
+        "HAND_GPU_MEM_UTIL=0.06",
+        "HAND_MAX_MODEL_LEN=32768",
     }
     assert only_in_thor == {
         "PRIMARY_KV_CACHE_DTYPE=auto",
         "EMBED_ATTENTION_BACKEND=TRITON_ATTN",
         "RERANK_ATTENTION_BACKEND=TRITON_ATTN",
         "RERANK_ENFORCE_EAGER=--enforce-eager",
+        "HAND_FEASIBLE=false",
     }
 
 
