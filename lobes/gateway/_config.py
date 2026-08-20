@@ -169,21 +169,30 @@ def _as_bool(env: Mapping[str, str], key: str) -> bool:
 # ``FEASIBLE_ENV`` minus exactly this set, and that relationship is asserted in
 # tests/test_gateway_config_proxy.py rather than left to a hand-typed copy.
 #
-# ``hand`` (hand-lobe plan t4) is the only member. Referral and proxying exist
-# because a HEAVY lobe cannot fit on every box, so a dropped role has to be
-# reachable somewhere else. `hand` is ~1.2B — it runs on every host in the mesh
-# by design, which is the entire reason the role exists. A box that cannot
-# serve 2.4 GiB of bf16 weights is not a box that should be dialing a peer to
-# find them, and a `hand:<domain>` adapter is meaningless on a peer that was
-# never given that adapter's path.
+# EMPTY since 2026-08-20 (deviation d1) — and the emptiness is a recorded
+# REVERSAL, not drift. ``hand`` (hand-lobe plan t4) was the only member, on
+# the rationale that a ~1.2B lobe "runs on every host in the mesh by design"
+# so there is never a peer to refer it to. The physical Jetson AGX Thor
+# falsified that premise the day the d1 topology needed it: LFM2.5 inference
+# is corrupt-then-fatal on sm_110 on BOTH the fleet nightly and the prior
+# production engine while the identical config passes on the Spark
+# (docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt). "Small
+# enough to fit everywhere" does not imply "serves correctly everywhere" —
+# kernel coverage is a per-card fact. So hand rides the same
+# origin/proxy/key channels as every other role, and a box that cannot serve
+# it refers/proxies to one that can. The adapter caveat from the original
+# rationale still holds operationally: a `hand:<domain>` adapter resolves
+# only on a peer that actually loaded that adapter — referral does not
+# teleport adapter files.
 #
-# The absence is load-bearing, not an oversight, which is why it is named here
-# instead of simply omitted: a symmetry-minded refactor ("every other role is
-# in these dicts…") has to delete this constant to break the rule. The inverse
-# mistake is on record — in 0.54.6 ``worker`` was wired into these dicts but
-# MISSING from server.py's _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT, and
-# ``WORKER_PEER_PROXY=true`` went silently inert.
-NEVER_PROXIED_BACKENDS: frozenset[str] = frozenset({"hand"})
+# The constant stays (empty) so the FEASIBLE_ENV-minus-this-set relationship
+# in tests/test_gateway_config_proxy.py keeps failing loudly if a future
+# role is wired into FEASIBLE_ENV without either a peer channel or a
+# DECLARED exemption here. The 0.54.6 worker lesson also still applies: a
+# role added to these dicts must ALSO land in server.py's
+# _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT or the proxy knob goes silently
+# inert.
+NEVER_PROXIED_BACKENDS: frozenset[str] = frozenset()
 
 PEER_ORIGIN_ENV: dict[str, str] = {
     "primary": "PRIMARY_PEER_ORIGIN",
@@ -192,6 +201,9 @@ PEER_ORIGIN_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_ORIGIN",
+    # hand joined these channels 2026-08-20 (deviation d1) — a recorded
+    # REVERSAL of the never-proxied decision; see NEVER_PROXIED_BACKENDS.
+    "hand": "HAND_PEER_ORIGIN",
     "embed": "EMBED_PEER_ORIGIN",
     "rerank": "RERANK_PEER_ORIGIN",
     # First-class audio roles (issue #129 item 3): the referral/proxy channels
@@ -233,6 +245,7 @@ PEER_PROXY_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_PROXY",
+    "hand": "HAND_PEER_PROXY",  # d1 reversal — see NEVER_PROXIED_BACKENDS
     "embed": "EMBED_PEER_PROXY",
     "rerank": "RERANK_PEER_PROXY",
     # Audio roles (issue #129): same three-condition arming as every other
@@ -260,6 +273,7 @@ PEER_API_KEY_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_API_KEY",
+    "hand": "HAND_PEER_API_KEY",  # d1 reversal — see NEVER_PROXIED_BACKENDS
     "embed": "EMBED_PEER_API_KEY",
     "rerank": "RERANK_PEER_API_KEY",
     # Audio roles (issue #129): the O(machines) rule holds — the value is a

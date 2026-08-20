@@ -91,12 +91,15 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
     # the omission is DECLARED.
     assert set(PEER_PROXY_ENV) == set(PEER_ORIGIN_ENV)
     assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
-    assert NEVER_PROXIED_BACKENDS == {"hand"}
+    # d1 reversal 2026-08-20: hand IS proxyable now (the Thor cannot serve
+    # LFM2.5 — see _config.py's NEVER_PROXIED_BACKENDS rationale).
+    assert NEVER_PROXIED_BACKENDS == frozenset()
     assert PEER_PROXY_ENV == {
         "primary": "PRIMARY_PEER_PROXY",
         "multimodal": "MULTIMODAL_PEER_PROXY",
         "muse": "MUSE_PEER_PROXY",
         "worker": "WORKER_PEER_PROXY",
+        "hand": "HAND_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
         "stt": "STT_PEER_PROXY",
@@ -111,6 +114,7 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_API_KEY",
         "muse": "MUSE_PEER_API_KEY",
         "worker": "WORKER_PEER_API_KEY",
+        "hand": "HAND_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
         "stt": "STT_PEER_API_KEY",

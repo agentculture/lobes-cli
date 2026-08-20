@@ -932,7 +932,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # leaked into content. The card's cross-family parser claim held.
         tool_parser="qwen3_coder",
         quantization="modelopt",
-        status="load-tested",  # Spark GB10 2026-08-20: 75.1 tok/s, tools ✓; Thor sm_110 NO-GO (Mamba2 warmup wedge)
+        # Spark GB10 2026-08-20: 75.1 tok/s, tools ✓; Thor sm_110 NO-GO
+        # (Mamba2 warmup wedge — see the STATUS comment above).
+        status="load-tested",
         doc="nemotron-3.5-lightning-30b-a3b-nvfp4.md",
         # moe_backend="" (auto-select), mirroring the outgoing worker's own
         # hard-won sm_110 lesson (forced NVFP4 MoE backends were refused on
