@@ -1,0 +1,69 @@
+# d1 acceptance (Spark half) — the Spark serves worker (Lightning) + hand, probed through the mesh
+#
+# Deviation: d1 (.devague/deliveries/nemotron-lightning-worker.json) — topology swap.
+# Box: DGX Spark GB10 (spark-f8a9, 128 GB unified). Date: 2026-08-20.
+# Engine: the fleet-wide 8bd082 official nightly (vLLM 0.26.1rc1.dev942).
+# Backup: ~/.lobes.pre-swap-20260820T180720Z. Scaffold: lobes 0.57.2,
+# `lobes init --shape thor-worker --apply --force` on the spark card, then:
+#   VLLM_PORT=8001 restored (render had reset it to 8000);
+#   GATEWAY_API_KEY restored (mesh key; render had dropped the inbound gate);
+#   WORKER_MODEL=WORKER_SERVED_NAME=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+#   WORKER_GPU_MEM_UTIL=0.30, WORKER_MAX_MODEL_LEN=65536 (progressive start; 1M is a ceiling)
+#   WORKER_QUANTIZATION=modelopt (Lightning's own quant_method)
+#   PRIMARY_FEASIBLE=false + PRIMARY_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000 (cortex moved)
+#   compose worker lane (deployment-side edits, template follow-ups recorded):
+#     MTP line removed (plain decode first, #187), --reasoning-parser=nemotron_v3
+#     (tool parser stays qwen3_coder per the NVIDIA recipe).
+# The old cortex lane (vllm-primary) was stopped and removed from service first.
+
+## Boot facts
+
+worker (Lightning, NemotronHForCausalLM):
+  Model loading took 17.85 GiB (744 s incl. first-time weight download)
+  fp8_e4m3 KV cache
+  GPU KV cache size: 3,560,789 tokens
+  Maximum concurrency for 65,536 tokens per request: 54.33x
+hand (LFM2.5-1.2B): one transient restart during the concurrent bring-up
+  ("No available memory for the cache blocks" while worker profiled), then
+  healthy via restart policy — the known co-boot ordering effect.
+Gateway rebuilt to the 0.57.2 wheel (the prior build predated the hand role
+and answered model=hand with model_not_found).
+
+## Probes
+
+worker — matched worker_probe.py suite, run from the THOR box via Thor's own
+gateway worker proxy (model=worker at thor:8000 → X-Lobes-Proxied →
+spark:8001), so this transcript also validates the d1 referral chain live:
+  known_answer: "Paris"  PASS  (0.45 s end-to-end through the proxy)
+  decode: 861 completion tokens / 11.47 s = 75.1 tok/s single-stream (NO MTP)
+  tool_calls: structured PASS — {"name": "get_weather", "arguments": {"city": "Paris"}},
+              finish_reason=tool_calls, nothing leaked (nemotron_v3 + qwen3_coder pair)
+  served id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+
+hand — via the Spark gateway alias (model=hand, bearer mesh key):
+  known-answer "Paris" PASS; structured tool_calls PASS (lfm2 parser).
+  This upgrades hand's Spark status beyond the same-day engine-direct
+  validation (2026-08-20-accept-hand-spark.txt): hand is now GATEWAY-FRONTED
+  on the Spark — the alias/readiness layer #183 item 4 called offline-only is
+  live on this box.
+
+## Performance comparison (operator-requested)
+
+  incumbent worker (Qwen3.6-35B-A3B, Thor, production 0.23.1 engine, MTP ON):
+    61.2 tok/s single-stream, known-answer 5.43 s, tool-call 4.92 s
+    (docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt)
+  new worker (Lightning 30B-A3B, Spark, 8bd082 nightly, MTP OFF):
+    75.1 tok/s single-stream, known-answer 0.45 s, tool-call 0.77 s
+    — +23% decode and ~7x faster short-turn latency, WITH the proxy hop
+    included and WITHOUT speculative decoding yet.
+  Honest caveat: different boxes (GB10 vs Thor) and different engines — this
+  is the DEPLOYED-topology comparison (what callers actually experience), not
+  an same-silicon A/B. Lightning's MTP evaluation remains open (#187 item 5).
+
+## Still open
+
+- WORKER_MAX_MODEL_LEN=65536 is a progressive start; growing toward the 1M
+  ceiling needs its own boots (54.33x concurrency at 65K suggests ample room).
+- Lightning MTP (self-hosted draft) unevaluated; strict-tools arming unprobed.
+- The senses/stt/tts adverts on the re-scaffolded Spark were not re-validated
+  in this window (audio overlay containers kept running throughout).
