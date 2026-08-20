@@ -16,16 +16,21 @@ hardcoding any single model endpoint:
   muse-hosting deployment shape (``lobes init --shape thor-muse``), never
   by the default ``machine-as-brain`` (a 31B cannot co-reside with the
   cortex+senses duo on a 128 GB box).
-* ``worker``   → the ``worker`` generate backend (Qwen3.6-35B-A3B NVFP4, an
-  MoE ~3B-active-per-token lobe). The fast ground-work DOER — bulk execution,
-  drafting, and repo actions UNDER cortex's direction. It is the first role
-  besides ``cortex`` permitted ``repo_action`` (it may ACT on the repo), but
-  it never makes the final decision or a security call. MULTIMODAL: the
-  checkpoint carries a ViT (image+video intake, no audio), so worker is a
-  "seeing doer" served multimodal (no ``--language-model-only``) — distinct
-  from ``senses``, which perceives but must not act. OPT-IN like ``muse``:
-  hosted only by a worker-hosting deployment shape, never by the default
-  ``machine-as-brain``.
+* ``worker``   → the ``worker`` generate backend (Qwen3.6-35B-A3B NVFP4 today;
+  moving to ``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`` per issue
+  #187 — an MoE ~3B-active-per-token lobe either way). The fast,
+  **TEXT-ONLY, NON-CODING** doer — action selection, tool loops, RAG
+  synthesis, summarization/log digestion, structured extraction, and repo
+  **inspection**/navigation/running-already-authorized-commands, all UNDER
+  cortex's direction. It is the first role besides ``cortex`` permitted
+  ``repo_action`` (it may touch the repo — search, inspect diffs, run tests),
+  but ``code_authoring`` is explicitly forbidden: "not coder" does not mean
+  "cannot touch a repository" (issue #187) — new code or deep code reasoning
+  escalates to ``cortex``. It never makes the final decision or a security
+  call either. TEXT-ONLY: unlike the prior Qwen checkpoint's ViT, perception
+  stays with ``senses``/the talker lane — worker is a doer, not a seer.
+  OPT-IN like ``muse``: hosted only by a worker-hosting deployment shape,
+  never by the default ``machine-as-brain``.
 * ``hand``     → the ``hand`` generate backend (LiquidAI LFM2.5-1.2B-Instruct).
   The fleet's designated FINE-TUNING BASE and its trained specialist: one cheap
   base, many LoRA adapters, each mastering a domain ("muscle memory"). Where
@@ -182,8 +187,10 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         # prevent, in the opposite direction. Reported by colleague#361.
         #
         # cortex is now the ONLY role that both SEES and DECIDES: `senses` is
-        # forbidden final_decision/repo_action and `worker` is forbidden
-        # final_decision/security_decision, so before this no role could do both.
+        # forbidden final_decision/repo_action, and `worker` (issue #187) is
+        # TEXT-ONLY — no image_understanding/video_understanding at all — as
+        # well as forbidden final_decision/security_decision/code_authoring,
+        # so cortex remains the sole role that both sees and has final say.
         "image_understanding",
         "video_understanding",
     ),
@@ -211,23 +218,46 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "divergent_second_opinion",
         "tool_use",
     ),
-    # `worker` is the fast ground-work DOER (thor-worker-lobe plan). Unlike
-    # every other non-cortex role its list carries `repo_action`: worker is
-    # the FIRST role besides cortex permitted to ACT on the repo — it executes
-    # bulk ground-work UNDER cortex's direction, and to do that it genuinely
-    # calls tools and touches the repo. What it must NOT do is decide: the
-    # forbidden list below still bars final_decision / security_decision, so
-    # worker acts on cortex's plan, never on its own final authority. It is
-    # also MULTIMODAL (the checkpoint's ViT gives it image+video intake, no
-    # audio), hence the image_understanding / video_understanding tokens — a
-    # seeing doer, unlike text-only cortex.
+    # `worker` is the fast, TEXT-ONLY, NON-CODING doer (issue #187,
+    # superseding the earlier thor-worker-lobe plan's multimodal "seeing
+    # doer" framing — the checkpoint moves to Nemotron 3.5 Lightning,
+    # text-only). Unlike every other non-cortex role its list carries
+    # `repo_action`: worker is the FIRST role besides cortex permitted to
+    # ACT on the repo — but #187 draws an explicit line INSIDE that
+    # permission, not just around it: "not coder does not mean cannot touch
+    # a repository". So the vocabulary is split into two families:
+    #
+    #   * ALLOWED "touch the repo" tokens: `repo_action` (may act),
+    #     `repo_inspection` (search code, inspect diffs, retrieve files,
+    #     navigate), `run_authorized_commands` (run tests/already-authorized
+    #     commands) — plus the general doer tokens (`execution`,
+    #     `ground_work`, `bulk_transform`, `drafting`) and the explicit
+    #     agent-work tokens #187 calls out by name: `action_selection`
+    #     (choose the next tool/step), `retrieval_synthesis` (RAG answers
+    #     from supplied evidence), `summarization`, `log_digestion`
+    #     (summarize a long tool/log result), `structured_extraction`
+    #     (extract/normalize structured data).
+    #   * FORBIDDEN "author code" token: `code_authoring`, in
+    #     ROLE_FORBIDDEN below, alongside final_decision/security_decision.
+    #     New code or deep code reasoning ESCALATES to cortex — the
+    #     forbidden list is what keeps `repo_action` from silently widening
+    #     into coding authority now that the vocabulary can say so directly,
+    #     rather than the policy hiding in prose or a model-name check.
+    #
+    # No image_understanding / video_understanding: perception stays with
+    # `senses`/the talker lane; worker is text-only.
     "worker": (
         "execution",
         "ground_work",
         "bulk_transform",
         "drafting",
-        "image_understanding",
-        "video_understanding",
+        "action_selection",
+        "retrieval_synthesis",
+        "summarization",
+        "log_digestion",
+        "structured_extraction",
+        "repo_inspection",
+        "run_authorized_commands",
         "tool_use",
         "repo_action",
     ),
@@ -276,12 +306,18 @@ STT_REALTIME_RESPONSIBILITY = "realtime_vad_session"
 # on the repo (repo_action is deliberately ABSENT from its forbidden list — see
 # ROLE_RESPONSIBILITIES above), but it still must never make the final decision
 # or a security call, so worker acts under cortex's direction, never on its own
-# authority. The service roles carry no forbidden list of their own.
+# authority. Issue #187 adds a THIRD worker-forbidden token, `code_authoring`:
+# "not coder does not mean cannot touch a repository" — worker may inspect,
+# search, run tests/authorized commands (repo_action stays permitted), but
+# authoring new code or deep code reasoning is explicitly barred and escalates
+# to cortex. This is deliberately a vocabulary token, not a prose caveat or a
+# model-name check, so a consumer reading only these two lists gets the whole
+# policy. The service roles carry no forbidden list of their own.
 ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "cortex": (),
     "senses": ("final_decision", "repo_action", "security_decision"),
     "muse": ("final_decision", "repo_action", "security_decision"),
-    "worker": ("final_decision", "security_decision"),
+    "worker": ("final_decision", "security_decision", "code_authoring"),
     # `hand` withholds repo_action deliberately for v1: ADDING a responsibility
     # later is contract-compatible, REMOVING one is a break, so the conservative
     # list ships first. Granting it once adapters exist is issue #180.

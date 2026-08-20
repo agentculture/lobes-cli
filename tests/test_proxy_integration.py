@@ -771,16 +771,24 @@ _GOLDEN_CAPABILITIES = {
             "ground_work",
             "bulk_transform",
             "drafting",
-            "image_understanding",
-            "video_understanding",
+            "action_selection",
+            "retrieval_synthesis",
+            "summarization",
+            "log_digestion",
+            "structured_extraction",
+            "repo_inspection",
+            "run_authorized_commands",
             "tool_use",
             "repo_action",
         ],
         # Unlike muse/senses, worker MAY act on the repo — repo_action is
         # deliberately ABSENT here (it is only permitted, never forbidden).
+        # code_authoring IS forbidden (issue #187): "not coder" does not mean
+        # "cannot touch a repository" — worker may inspect/run, never author.
         "forbidden_responsibilities": [
             "final_decision",
             "security_decision",
+            "code_authoring",
         ],
         "feasible": False,
         "ready": False,
