@@ -1,0 +1,26 @@
+{
+  "plan_slug": "nemotron-lightning-worker",
+  "schema_version": 1,
+  "created": "2026-08-20T17:36:50Z",
+  "updated": "2026-08-20T17:36:50Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "TOPOLOGY SWAP: Thor stops hosting worker and instead serves cortex locally (unsloth/Qwen3.8-27B-NVFP4, dense sm_110-safe arch); the Spark loses cortex and gains worker (Lightning) + hand (LFM2.5) \u2014 both validated/expected-good on sm_121; Orin and Spark repoint cortex at the Thor origin; freed Spark memory is earmarked for hand adapter fine-tuning (unsloth-cli#16 path)",
+      "task_ref": "t8",
+      "reason": "Live sm_110 evidence invalidates the plan premise that Thor hosts Mamba/conv-hybrid gears on the 8bd082 nightly: the incumbent Qwen 35B worker's GDN MTP decode kernel ships no sm_110 image (t6 prelude), LFM2.5 inference is corrupt-then-fatal on BOTH engines while identical config passes on the Spark (t12/t13), and the Lightning spike wedged in Mamba2 SSD kernel warmup (t2, transcript pending). Dense-transformer paths serve fine on Thor \u2014 so cortex moves here and the exotic-arch gears move to the sm_121 box",
+      "affects": [
+        "t9",
+        "t14",
+        "t15",
+        "t16",
+        "c4",
+        "c14",
+        "c17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

@@ -719,8 +719,12 @@ def test_worker_gear_exists_with_correct_fields() -> None:
     assert worker.role_hint == "worker"
     assert worker.native_max_model_len == 1048576  # config.json max_position_embeddings
     assert worker.quantization == "modelopt"  # hf_quant_config.json producer/quant_algo
-    assert worker.tool_parser == "qwen3_coder"  # VALIDATED live on the Spark 2026-08-20 (with nemotron_v3 reasoning)
-    assert worker.status == "load-tested"  # Spark GB10 2026-08-20 (d1); Thor sm_110 is a NO-GO (Mamba2 warmup wedge)
+    assert (
+        worker.tool_parser == "qwen3_coder"
+    )  # VALIDATED live on the Spark 2026-08-20 (with nemotron_v3 reasoning)
+    assert (
+        worker.status == "load-tested"
+    )  # Spark GB10 2026-08-20 (d1); Thor sm_110 is a NO-GO (Mamba2 warmup wedge)
     assert worker.task == "generate"
     assert worker.dimension == 0
     assert worker.hf_overrides == ""
