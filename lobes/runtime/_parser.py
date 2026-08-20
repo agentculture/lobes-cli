@@ -109,6 +109,20 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     # is validated per card as each acceptance transcript lands under
     # docs/evidence/.
     (("lfm2", "lfm-2"), "lfm2"),
+    # NVIDIA Nemotron 3.5 Lightning (the new `worker` gear, nemotron-lightning-
+    # worker plan, #187) is a NemotronHForCausalLM/nemotron_h checkpoint — a
+    # different architecture family from Qwen entirely. It is NOT a Qwen
+    # model, but its own published model card's example vLLM serve command
+    # passes `--tool-call-parser qwen3_coder`, i.e. the publisher asserts it
+    # emits Qwen3-Coder-shaped tool calls. That claim is UNVALIDATED on this
+    # repo's engine (see lobes/catalog.py's worker entry for the full
+    # citation) — carried here as the best-cited default until the covering
+    # plan's t2 structured-tool_calls probe confirms or disproves it. Markers
+    # scoped to the "nemotron-3.5-lightning"/"nemotron_3.5_lightning" spelling
+    # so this rule never matches an unrelated Nemotron checkpoint (e.g. the
+    # retired NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4, a different family with
+    # no such card claim).
+    (("nemotron-3.5-lightning", "nemotron_3.5_lightning"), "qwen3_coder"),
 ]
 
 
