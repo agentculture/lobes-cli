@@ -114,3 +114,17 @@ criteria):
 - Release + deployment refresh: the hand-proxy reversal and the new knobs are in-tree only until 0.58.0 publishes; the Thor gateway then needs a rebuild for its hand referral to annotate (currently an honest 404).
 - Spark audio overlay adverts (`stt`/`tts` show not-ready) were out of scope today — verify after the re-scaffold settles.
 - hand adapter serving: still blocked on `unsloth-cli#16`; the freed Spark memory is the intended fine-tuning ground (the d1 dividend).
+
+## Post-summary amendment (same day)
+
+After this summary was first committed, the operator moved the mesh to a
+**dual-cortex** layout: the Spark's MTP cortex returned (the Thor no-MTP
+cortex is correct but slow), the Lightning worker lane came down, and
+`worker` is now dormant/unhosted mesh-wide — an honest `role_infeasible`
+404 everywhere, with `hand` still served on the Spark and the Orin
+repointed at the Spark's cortex. Verified end-to-end in
+`docs/evidence/2026-08-20-accept-dual-cortex-mesh.txt`. The Actual
+Delivery table above describes the run as executed; the worker-serving
+rows now also carry that transcript as their superseding topology. A
+parallelism/fallback scheme over the two cortexes is the operator's
+stated follow-up PR.

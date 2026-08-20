@@ -10,8 +10,11 @@ the upstream `v0.27.1` release image
 (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`), while the Spark
 serves it cleanly at 75.1 tok/s
 (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`). The Thor now serves
-`cortex` locally instead and **proxies** `worker` to the Spark, so consumers
-addressing any gateway still resolve the role. Everything below about the
+`cortex` locally instead. **Later the same day the worker went DORMANT
+mesh-wide** (operator decision: both 128 GB boxes serve a cortex instead —
+see `docs/evidence/2026-08-20-accept-dual-cortex-mesh.txt`): `model=worker`
+now 404s `role_infeasible` on every gateway, with the Spark Lightning
+validation standing as the recorded bring-back path. Everything below about the
 served-id change and the contract narrowing still applies — read "the worker
 lane" as living on the Spark, with Thor-specific wording left as the
 historical pre-flip framing.
