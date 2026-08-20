@@ -1,0 +1,513 @@
+{
+  "slug": "nemotron-lightning-worker",
+  "title": "nemotron-lightning-worker",
+  "frame_slug": "nemotron-lightning-worker",
+  "schema_version": 2,
+  "status": "exported",
+  "created": "2026-08-20T15:29:19Z",
+  "updated": "2026-08-20T15:32:29Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Thor's worker seat moves to nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 \u2014 a fast, text-only, non-coding doer (action selection, tool loops, RAG, digestion, repo inspection \u2014 never code authoring or final judgment). The Thor machine image rides the same official vLLM nightly the Spark validated for Qwen3.8. Thor and Orin repoint their cortex proxy at the Spark's new served id unsloth/Qwen3.8-27B-NVFP4 (#186), and the worker validation matrix lands per #187 (with #183's hand budgets tracked as their own effort)."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the announcement holds only when all four c17 transcripts exist under docs/evidence/; until then every doc states declared/UNVALIDATED per #108"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains a nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 entry with role_hint=worker (hybrid Mamba-2 + sparse-MoE ~3B active, text-only, 1M ceiling, official NVFP4); the unsloth/Qwen3.6-35B-A3B-NVFP4 entry (origin/main catalog.py:751, VALIDATED 2026-07-31) stays in-tree as a demoted candidate \u2014 cite-don't-delete, same as muse"
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the catalog entry's config facts (arch class, quant_method, context, tokenizer, parser names) are read from the checkpoint's own config.json/hf_quant_config.json fetched from HF \u2014 never from model-card prose or the vLLM Jetson guide"
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "lobes/roles.py ROLE_RESPONSIBILITIES['worker'] is redefined per #187: drop image_understanding/video_understanding (Lightning is text-only), keep tool_use/execution/ground_work, and express 'repo inspection/navigation/running-authorized-commands yes, code authoring no' \u2014 extending the responsibility vocabulary explicitly if repo_action cannot carry that distinction (per #187's instruction not to hide policy in prose)"
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the inspection-vs-authoring split is expressed in machine-readable responsibility tokens (extended vocabulary if needed), never in prose or model-name checks \u2014 a consumer reading only responsibilities/forbidden_responsibilities gets the whole policy"
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "lobes/profiles/builtin_shapes/thor-worker.toml swaps its overrides.worker model to the Lightning checkpoint; its gpu_mem_util/max_model_len budgets must be MEASURED on the physical Thor live boot, never copied from the Qwen 35B values (util 0.45 / 262144 / 14.07x ceiling are checkpoint-specific measurements from 2026-07-31; thor-muse's 0.40-refused-0.55-measured precedent is the discipline)"
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "every budget number committed to thor-worker.toml traces to a live Thor boot transcript under docs/evidence/ dated for THIS checkpoint; no number is inherited from the Qwen 35B measurements"
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "#186 lands as per-box deployment ops on Thor and Orin, not gateway code: each box mirrors PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4 into its .env beside PRIMARY_PEER_ORIGIN/_PROXY/_API_KEY, recreates the gateway with its full -f overlay set, and proves cortex proxied=true/ready=true + a model=cortex 200 with X-Lobes-Proxied-By; evidence transcripts land under docs/evidence/ per #108"
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "acceptance is observed on both boxes, not inferred: lobes capabilities shows cortex proxied=true/ready=true/hosted_by, and a model=cortex chat request answers 200 carrying X-Lobes-Proxied-By, captured in a transcript per box"
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "no gateway code change is expected for either the repoint or the model swap: WORKER_*/PRIMARY_* env channels are role-generic (roles.py maps worker->worker uniformly; the #165 fix already added worker to server.py's resolution tables), and #187 requires preserving the #178 peer-proxy behaviour so consumers resolve worker by role, never by hardcoded endpoint/model id"
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "the swap lands with zero diffs under lobes/gateway/ and lobes/roles.py's channel tables; if any gateway code change proves necessary, this boundary is reopened explicitly rather than quietly widened"
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "Lightning's 1M context is a capability CEILING, not a default allocation (#187 point 7): the shape's max_model_len starts from measured Thor budget and validates long-context progressively; DSpark speculative decoding is optional/experimental on Thor and must earn its own evidence"
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the served max_model_len on Thor is whatever the live boot sustains, validated progressively; no config allocates the 1M ceiling by default, and DSpark ships only with its own Thor evidence or not at all"
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "the runtime advert must describe the DEPLOYED worker (#187): served model id/revision, quantization, configured context, modalities=text-only, tools from a measured tool-call probe, MTP mode actually enabled, loaded/ready/feasible separately \u2014 stale image_understanding/video_understanding claims removed everywhere they surface (roles.py, capabilities, colleague-stack.md, CLAUDE.md, qwen3.6-35b doc cross-refs)"
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the tools=yes advert derives from a measured structured tool_calls probe against the live Lightning lane (parser pairs fail silently \u2014 200 OK with the call leaked into content counts as FAILURE); a repo-wide grep proves no surface still claims worker image/video understanding"
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "docs follow the shipped state: a new docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md per-model doc (provenance-fetched config), demotion notes in docs/qwen3.6-35b-a3b-nvfp4.md, role-table updates in docs/colleague-stack.md and CLAUDE.md, and evidence transcripts under docs/evidence/ for the Thor Lightning boot, the validation matrix, and both #186 repoints"
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "docs ship the deployed state only: the Lightning doc carries measured numbers with transcript citations, the Qwen 35B doc is marked demoted-not-deleted, and no doc or capabilities output claims validated without evidence (#108)"
+    },
+    {
+      "id": "c13",
+      "kind": "audience",
+      "text": "mesh consumers that address roles through the gateway contract (colleague \u2014 under renovation, so the worker contract can change; embodiment; reachy-mini-cli; eidetic) and the operators of the three deployed boxes (Thor, Spark, Orin)"
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "consumer impact is bounded by contract: worker/cortex stay addressed by role/alias through the gateway, and the one raw-id break (#186 cortex served id) is announced via the rollout-notes pattern before any box flips"
+    },
+    {
+      "id": "c14",
+      "kind": "after_state",
+      "text": "Thor serves worker on Lightning NVFP4 (text-only, nemotron parser pair, measured budget) on the same official nightly the Spark runs; the advert tells the deployed truth (no vision tokens, probe-verified tools); Thor and Orin answer model=cortex 200 by proxy under the Qwen3.8 served id; and hand has a reproducible budget on Thor AND Spark per #183"
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "each clause of the after-state maps to one of the four success-signal transcripts; any clause without a landed transcript is stated declared/UNVALIDATED, never claimed done"
+    },
+    {
+      "id": "c15",
+      "kind": "before_state",
+      "text": "today worker is the Qwen3.6-35B multimodal doer on an older nightly, its advert claims vision the replacement won't have; this Thor checkout is 7 commits stale; Thor and Orin still mirror the OLD cortex id so a repoint-less box would 404; hand is validated on Orin only (Thor blocked on #181, Spark never exercised)"
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "each before-state fact is cited to what was read: origin/main catalog/roles/shape files, the 7-commit git delta, issues #186/#183, and docs/lfm2.5-1.2b-hand.md \u2014 none is asserted from memory"
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "the reference cognitive split (#187) puts presence on Gemma, agency on Lightning, hard thinking/coding on Qwen3.8 \u2014 a worker seat tuned for fast moderate-accuracy agent loops instead of a repurposed coder, plus proxy correctness and reproducible budgets, keeps the mesh honest and fast"
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the cognitive-split rationale is #187's own operator-stated design, quoted not invented; lobes-cli implements only its Thor/repo side (colleague owns orchestration, c8)"
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "acceptance transcripts under docs/evidence/ for: (1) Lightning live boot on Thor with measured budget + tool-call probe, (2) the #187 matched Qwen-vs-Lightning validation matrix incl. negative/escalation tasks, (3) model=cortex 200-by-proxy from Thor AND Orin with X-Lobes-Proxied-By, (4) hand budget probes on Thor and Spark per the Orin template"
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "a success signal counts only as a landed transcript file under docs/evidence/ \u2014 a green local run without the committed transcript does not satisfy it"
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "hand validation per #183: reproduce the Orin probe on Thor (re-attributing #181's LoRA embedding-slot failure under the new nightly \u2014 fixed, changed, or re-blocked, reported faithfully) and on the Spark (its 0.06 is a declared hypothesis); the adapter-serving surface stays blocked on unsloth-cli#16 and is reported as such, never claimed validated"
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "hand results are reported faithfully per card: a Thor failure is recorded as blocked-with-attribution (not skipped), the Spark run follows the Orin probe template (budget, known-answer, structured tool_calls via lfm2 parser), and adapter serving is stated blocked on unsloth-cli#16"
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "the WORKER served-id swap is its own raw-id break, separate from #186: docs/model-switch-playbook.md \u00a72 records that no mesh consumer addresses roles by name \u2014 all pin raw served ids \u2014 so the swap needs its own rollout-notes audit (who pins unsloth/Qwen3.6-35B-A3B-NVFP4), and any box that refers/proxies worker (WORKER_PEER_ORIGIN) must mirror the NEW WORKER_SERVED_NAME or its readiness probe sits proxied=true/ready=false and 404s \u2014 the exact 2026-08-05 cortex lesson applied to worker"
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "the audit greps the sibling checkouts (colleague, embodiment, eidetic, reachy-mini-cli) for the old worker id and the rollout note names every hit; on-box WORKER_SERVED_NAME mirrors are verified by capabilities showing worker ready=true from the referring box"
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "rollback stays cheap until acceptance: the Qwen 35B worker must remain restorable during the whole rollout \u2014 thor-worker shape re-render is byte-for-byte restorable by design, and the old checkpoint + old image stay cached on the Thor disk until the #187 validation matrix passes (verify disk headroom before pulling ~20 GiB of Lightning weights)"
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "rollback is exercised or explicitly waived in the transcript: either one dry-run restore to the Qwen shape is shown working, or the operator records accepting untested rollback"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Thor groundwork spike: pull the deployment to merged main, render, pull the 8bd082 nightly digest, and PROVE sm_110 compatibility (cuobjdump SASS/PTX listing or a minimal engine boot) before anything else consumes the image",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Thor's repo checkout and ~/.lobes render are at >=0.57.1; the digest is pulled and a recorded probe shows sm_110 SASS (or working PTX JIT) \u2014 a negative result STOPS the flip and is reported, not worked around",
+        "the before-state facts (stale checkout, old mirrors) are re-verified against pulled main and corrections recorded"
+      ],
+      "deps": [],
+      "covers": [
+        "c15",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Spike: Lightning serves on the nightly on Thor \u2014 standalone vllm serve of nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (nemotron_h) with --reasoning-parser nemotron_v3 + candidate tool parser; probe structured tool_calls, measure plain decode, then evaluate MTP/DSpark separately; grow max_model_len progressively from a modest window",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the lane answers a known-answer completion AND returns a structured tool_calls array (a 200 with the call leaked into content is FAILURE); reasoning/tool parser pair recorded",
+        "plain-decode tok/s measured BEFORE any speculative mode; MTP/DSpark results (or their absence) recorded separately; no config allocates the 1M ceiling by default"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c9",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "catalog.py: add the Lightning entry (role_hint=worker, quantization=modelopt, NemotronHForCausalLM facts from the fetched config) and demote unsloth/Qwen3.6-35B-A3B-NVFP4 to a kept candidate (cite-don't-delete); tests updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "uv run pytest tests/test_catalog.py passes with the new entry; every config fact in the entry cites config.json/hf_quant_config.json fetched from HF (c24 probe), none from model-card prose"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "roles.py: redefine ROLE_RESPONSIBILITIES['worker'] per #187 \u2014 drop image_understanding/video_understanding, keep tool_use/execution/ground_work, add explicit tokens splitting repo inspection/navigation/run-authorized-commands from code authoring (extend the vocabulary, never prose or model-name checks); adjust cortex's only-role-that-sees-and-decides comment; tests updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a consumer reading only responsibilities/forbidden_responsibilities gets the full non-coder policy; no vision token remains on worker; existing roles tests pass and a new test asserts the worker token set"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Worker served-id rollout audit + rollout notes: grep sibling checkouts (colleague, embodiment, eidetic, reachy-mini-cli) for unsloth/Qwen3.6-35B-A3B-NVFP4, write the worker rollout-notes doc naming every pinner, and list every box needing a WORKER_SERVED_NAME mirror",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the rollout note names every raw-id hit found by the audit grep (or records a clean grep per repo) and states the new id + mirror instructions BEFORE the flip lands"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "h17",
+        "c13",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Incumbent baseline (playbook \u00a71): benchmark the CURRENT Qwen 35B worker on the NEW 8bd082 engine on Thor before it is gone \u2014 this number is unrecoverable after the flip",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a matched-condition baseline transcript (decode tok/s, tool-call probe, worker-shaped task sample) for the incumbent on the new engine lands under docs/evidence/ before any flip"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Rollback readiness: verify Thor disk headroom for ~20 GiB of Lightning weights alongside the kept Qwen checkpoint + image; exercise one dry-run restore to the Qwen shape (or record an explicit operator waiver)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "old checkpoint and image remain on disk until the validation matrix passes; the restore dry-run output (or the recorded waiver) is in the evidence transcript"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c23",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Thor live boot + measurement: flip the worker lane to Lightning (drop_caches BEFORE recreate; watch for the orphaned-dependent compose state), measure gpu_mem_util/max_model_len co-resident with hand+embedder+reranker+audio, run the structured tool-call probe against the served lane, and verify the advert (capabilities) tells the deployed truth \u2014 text-only, probe-derived tools, loaded/ready/feasible separate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a live-boot transcript under docs/evidence/ records the measured budget with all co-residents up, the tool_calls probe result, and a capabilities dump showing no vision tokens and probe-backed tools for worker"
+      ],
+      "deps": [
+        "t2",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c10",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Commit the measured shape: thor-worker.toml swaps overrides.worker to Lightning with the t8-measured budgets (transcript-cited), env.example worker block updated (quantization=modelopt, parser flags, new served id), compose worker lane flags aligned; shape goldens regenerated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every number in the committed shape cites the t8 transcript; shape golden tests pass; the Qwen values survive only as cited history in comments"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c4",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "#186 Thor: mirror PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4 beside the peer knobs in the Thor .env, recreate the gateway with the full -f overlay set, and prove cortex by proxy",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes capabilities on Thor shows cortex proxied=true/ready=true/hosted_by=spark; a model=cortex request answers 200 with X-Lobes-Proxied-By; transcript lands under docs/evidence/"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c6",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "#186 Orin: same mirror + gateway recreate + proof on the Orin box",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "same observable acceptance as the Thor repoint, captured in the Orin's own transcript under docs/evidence/"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "hand on Thor (#183/#181): re-run the Orin-template probe on the new nightly \u2014 budget at the card window, known-answer completion, structured tool_calls via the lfm2 parser \u2014 and re-attribute #181's LoRA embedding-slot failure (fixed, changed, or re-blocked)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "either a passing budget transcript lands, or the failure is recorded blocked-with-attribution under the new engine \u2014 never skipped or smoothed over"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c20",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "hand on Spark (#183): first exercise of the declared 0.06 hypothesis with the Orin probe template; adapter serving recorded as blocked on unsloth-cli#16",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a Spark transcript establishes (or refutes) the 0.06 budget with known-answer + tool_calls probes; the adapter-serving surface is explicitly stated blocked, not validated"
+      ],
+      "deps": [],
+      "covers": [
+        "c20",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "Validation matrix (#187): run the matched worker-shaped tasks + explicit negative/escalation tasks against Lightning on Thor and compare with the t6 incumbent baseline; record the go/no-go",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the matrix transcript covers #187's worker-shaped list (tool choice, tool loop, RAG, summarize, extract, repo navigation, run tests, long loop, failure recovery) and at least two negative tasks proving escalation to cortex; a no-go triggers the t7 rollback path"
+      ],
+      "deps": [
+        "t6",
+        "t8"
+      ],
+      "covers": [
+        "c17",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t15",
+      "summary": "Docs follow the shipped state: new docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md (fetched-config provenance + measured numbers), demotion notes in docs/qwen3.6-35b-a3b-nvfp4.md, role tables in docs/colleague-stack.md + CLAUDE.md, cognitive-split rationale quoted from #187; repo-wide grep proves no surface still claims worker vision",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every 'validated' claim cites a transcript path; the vision-claims grep is clean; markdownlint passes"
+      ],
+      "deps": [
+        "t3",
+        "t4",
+        "t9",
+        "t13"
+      ],
+      "covers": [
+        "c12",
+        "h8",
+        "c16",
+        "h15"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t16",
+      "summary": "Final acceptance audit: all four success-signal transcripts landed; after-state clauses each mapped to one; zero diffs under lobes/gateway/ and roles.py channel tables (or the boundary reopened explicitly); remaining gaps stated declared/UNVALIDATED",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an audit note maps c14's clauses to transcript paths, confirms the c7 zero-gateway-diff boundary via git diff, and lists anything still declared/UNVALIDATED honestly"
+      ],
+      "deps": [
+        "t8",
+        "t9",
+        "t10",
+        "t11",
+        "t12",
+        "t13",
+        "t14",
+        "t15"
+      ],
+      "covers": [
+        "c1",
+        "h12",
+        "c14",
+        "h11",
+        "c7",
+        "h5",
+        "c17",
+        "h16"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "sm_110 SASS/PTX coverage of the 8bd082 nightly digest is unproven until t1 \u2014 a negative result stops the flip and reopens the image choice (older Thor-validated 0.23.1 digest as fallback)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1"
+    },
+    {
+      "id": "r2",
+      "text": "vLLM end-to-end support for nemotron_h on this nightly (reasoning/tool parser pair, FP8 KV, Mamba backend, MTP/DSpark) is unproven until t2; parser pairs fail silently, hence the structured-probe acceptance",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2"
+    },
+    {
+      "id": "r3",
+      "text": "GATEWAY_FORCE_STRICT_TOOLS arming for the Lightning lane stays undecided until a live structural-tag probe (muse precedent: never advertise a grammar-constrained lane that isn't one)",
+      "kind": "follow_up",
+      "task_id": "t8"
+    },
+    {
+      "id": "r4",
+      "text": "#181 (LoRA embedding-slot failure) may persist under the new nightly \u2014 t12 reports blocked-with-attribution rather than forcing a pass",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12"
+    },
+    {
+      "id": "r5",
+      "text": "Thor unified-memory first-boot race + compose orphaned-dependent state can fail any heavy-lobe recreate \u2014 runbook: drop_caches BEFORE recreate, verify no service stuck in created",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8"
+    },
+    {
+      "id": "r6",
+      "text": "adapter serving end-to-end stays untestable until unsloth-cli#16 ships a real adapter \u2014 reported blocked, out of this plan's power",
+      "kind": "follow_up",
+      "task_id": "t13"
+    },
+    {
+      "id": "r7",
+      "text": "the incumbent baseline is unrecoverable after the flip \u2014 t6 MUST complete before t8; ordering is load-bearing (playbook \u00a71)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6"
+    }
+  ]
+}
