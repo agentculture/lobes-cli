@@ -1,0 +1,58 @@
+# t13 acceptance — hand's 0.06 budget VALIDATED on the DGX Spark GB10 (#183)
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t13 (covers c20/h9, Spark half).
+# Box: DGX Spark GB10 (spark-f8a9, 128 GB unified). Date: 2026-08-20.
+# Run from an operator shell on the Spark, ENGINE-DIRECT — the same shape as the
+# Orin acceptance (docs/evidence/2026-08-10-accept-hand-orin.txt), because the
+# Spark's ~/.lobes scaffold predates the hand role (no vllm-hand service, no
+# HAND_* env, empty COMPOSE_PROFILES); the gateway/alias layer therefore stays
+# offline-tested-only on this box, exactly as #183 item 4 records.
+
+## Boot — the declared 0.06 hypothesis, first exercise on this card
+
+$ docker run -d --name hand-probe --gpus all --ipc host \
+    -v $HOME/.cache/huggingface:/root/.cache/huggingface -p 18001:8000 \
+    vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695 \
+    --model LiquidAI/LFM2.5-1.2B-Instruct --served-model-name LiquidAI/LFM2.5-1.2B-Instruct \
+    --host 0.0.0.0 --port 8000 --max-model-len 32768 --gpu-memory-utilization 0.06 \
+    --enable-lora --max-loras 4 --max-lora-rank 32 \
+    --enable-auto-tool-choice --tool-call-parser lfm2
+
+(flags mirror the fleet template's vllm-hand lane; --runtime nvidia is not a
+valid runtime name on this box's dockerd — --gpus all used instead. Engine:
+the fleet-wide 8bd082 nightly, vLLM 0.26.1rc1.dev942.)
+
+Healthy. Boot facts:
+  Available KV cache memory: 2.72 GiB
+  GPU KV cache size: 236,817 tokens, Maximum concurrency for 32,768 tokens per request: 7.23x
+  (engine note: with CUDA-graph memory profiling, util 0.0600 is equivalent to
+   0.0407 pre-profiling; 0.0793 would restore the older effective KV size —
+   recorded verbatim for the tuning docs, no knob changed here.)
+
+Comparison with the Orin acceptance (2026-08-10): available KV 2.7 GiB, pool
+235,721 tokens, 7.19x — the Spark numbers land within ~0.5%. The declared 0.06
+is now MEASURED on both cards.
+
+## Probes (Orin template)
+
+known-answer:
+  Q: "What is the capital of France? Answer with the city name only."
+  A: "Paris"  — PASS
+
+structured tool_calls via the lfm2 parser:
+  Q: "What is the weather in Paris right now? Use the tool." (get_weather schema, tool_choice=auto)
+  tool_calls structured: True
+  call: {'name': 'get_weather', 'arguments': '{"city": "Paris"}'}
+  leaked content: (empty)   finish_reason: tool_calls  — PASS
+  (a 200 with the call leaked into content would count as FAILURE — none occurred)
+
+## Still true after this run (unchanged from #183)
+
+- Adapter serving end-to-end stays BLOCKED on agentculture/unsloth-cli#16
+  (zero real adapters exist); nothing here validates it.
+- The gateway/alias/pressure layer for hand on the Spark stays offline-tested
+  only — this probe dialled the engine directly, and the Spark scaffold needs a
+  re-render before hand is gateway-fronted there (routine maintenance, out of
+  this task's scope).
+
+Probe container removed after the run; the Spark's serving fleet was untouched.
