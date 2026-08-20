@@ -98,83 +98,149 @@ services:
     expose:
       - "8000"
     # mg-logwrap tees output to /logs/model-gear, then `exec`s the command (vLLM stays
-    # the signal target). The command list below is unchanged.
+    # the signal target).
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
-    command:
-      - vllm
-      - serve
-      - ${PRIMARY_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
-      - --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
-      - --host=0.0.0.0
-      - --port=8000
-      # compressed-tensors — the checkpoint's OWN quant_method (mixed precision:
-      # fp8 attention/lm_head/upper-8 MLP + nvfp4 MLP gate/up/down, ViT and every
-      # linear_attn left unquantized). The outgoing text-only MTP export used
-      # `modelopt`; passing that here fails on a quant-method mismatch.
-      - --quantization=${PRIMARY_QUANTIZATION:-compressed-tensors}
-      # fp8 KV needs calibrated k_scale/v_scale in the checkpoint. The shipped
-      # default STAYS fp8 (GB10 behavior unchanged) — per-machine override goes
-      # in .env. On boxes serving an NVFP4 re-export with no KV scales
-      # (kv_cache_quant_algo: null), fp8 trips `assert layer.k_scale > 0.0`; set
-      # PRIMARY_KV_CACHE_DTYPE=auto there instead (Thor's working value — see #109).
-      - --kv-cache-dtype=${PRIMARY_KV_CACHE_DTYPE:-fp8}
-      # Serves its full 128K native context (up from a 64K trim): the 27B KV
-      # cache is util-bound, not context-bound, so 64K->128K trades concurrency
-      # at the same memory footprint. The always-on Gemma multimodal gear frees
-      # the headroom by trimming to 32K instead. See docs/vllm-nightly-migration.md §8.
-      - --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
-      # hf-overrides JSON, merged into the checkpoint's own config at load —
-      # DEFAULT is an empty dict (a documented vLLM no-op, byte-equivalent to
-      # omitting the flag entirely). Only a long-context shape sets this: the
-      # spark-lobe 1M-token hypothesis (t5) patches text_config.rope_parameters
-      # to YaRN (factor 4.0, original_max_position_embeddings 262144),
-      # preserving every other stock rope field (mrope_interleaved,
-      # mrope_section, partial_rotary_factor, rope_theta) — see
-      # builtin_shapes/spark-lobe.toml's [overrides.cortex] for the exact JSON
-      # and its provenance (verified against the checkpoint's own config.json).
-      - --hf-overrides=${PRIMARY_HF_OVERRIDES:-{}}
-      - --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
-      - --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}   # MTP cap — 4 OOMs at n=3/high context
-      - --reasoning-parser=qwen3
-      - --default-chat-template-kwargs
-      - '{"preserve_thinking": true}'   # preserve historical <think> across turns; request-level chat_template_kwargs override this default
-      - --enable-auto-tool-choice
-      # qwen3_coder_thinking (t2): a CUSTOM plugin parser, not an upstream vLLM
-      # name. Upstream's stock qwen3_coder parser hardcodes reasoning=False on
-      # every emitted tool call — strict structural tags then break for a
-      # thinking model, which needs to stay reasoning-aware across a tool turn.
-      # --tool-parser-plugin (below) registers this name from the mounted file.
-      # Falls back to plain upstream qwen3_coder if an operator overrides
-      # PRIMARY_TOOL_CALL_PARSER in .env (e.g. to run a non-thinking primary here).
-      - --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder_thinking}
-      - --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
-      # Mamba prefix caching is experimental for this hybrid 27B; functional, watch for drift.
-      - --enable-prefix-caching
-      # SELF-HOSTED MTP draft — the draft module is baked into the checkpoint
-      # (15 real `mtp.*` tensors + an `unsloth_fixed_mtp` config flag), so the
-      # generic "mtp" method applies with no external draft-model key. This
-      # replaces the outgoing export's grafted '{"method": "qwen3_5_mtp",
-      # "num_speculative_tokens": 3}'. MEASURED on the GB10 2026-07-31: engages
-      # at 62-67% draft acceptance, mean acceptance length 2.24-2.35, decode up
-      # to 19.0 tok/s at TTFT ~0.27s. To run a non-MTP model as primary, remove
-      # this line (and clear PRIMARY_MAX_NUM_SEQS).
-      # SECURITY: --trust-remote-code runs the model repo's code in-container. HF_TOKEN
-      # is only needed to download gated repos (these defaults are public) — leave it
-      # empty or use a minimal-scope read-only token; pin revisions you trust.
-      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'
-      - --trust-remote-code
-      # DELIBERATELY ABSENT, and both removals are load-bearing:
-      #   --language-model-only  — the outgoing export had its ViT stripped, so it
-      #     had to be told to run text-only. THIS checkpoint declares
-      #     language_model_only=false and ships a 27-layer ViT; keeping the tower
-      #     is the entire point. VALIDATED live 2026-07-31 on the GB10: image
-      #     intake against an opposite-colour negative control AND video intake
-      #     against a REVERSED-motion control (a single-frame read cannot pass
-      #     that). See docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
-      #   --tokenizer=mmangkad/…  — that override existed only because the
-      #     outgoing checkpoint's tokenizer_config declared a TokenizersBackend
-      #     absent from the image. This export ships its own tokenizer AND a
-      #     chat_template.jinja carrying `preserve_thinking`, so #93 survives.
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # Converted from a YAML list (spec-knobs task) for the SAME reason the senses
+    # lane (vllm-multimodal) was converted first: `docker compose` cannot
+    # conditionally omit a LIST item — a var that substitutes to "" still renders
+    # as an empty argv element, and `vllm serve` reads that as a second positional
+    # and dies with `unrecognized arguments`. A STRING command is shell-lexed by
+    # compose AFTER substitution, so a variable that expands to nothing leaves no
+    # token at all. Two boxes had to hand-edit their rendered docker-compose.yml
+    # to drop MTP on Jetson Thor sm_110 (the 8bd082 nightly ships no kernel image
+    # for fused_gdn_decode_post_conv_mtp there — see
+    # docs/evidence/2026-08-20-accept-cortex-local-thor.txt) before this knob
+    # existed; PRIMARY_SPECULATIVE_CONFIG below is the off-switch that replaces
+    # that hand-edit. See tests/test_senses_speculative_config.py's docstring for
+    # the full argv-parsing proof and env.example for the knob's usage.
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  compressed-tensors — the checkpoint's OWN quant_method
+    #     (mixed precision: fp8 attention/lm_head/upper-8 MLP + nvfp4 MLP
+    #     gate/up/down, ViT and every linear_attn left unquantized). The outgoing
+    #     text-only MTP export used `modelopt`; passing that here fails on a
+    #     quant-method mismatch.
+    #
+    #   --kv-cache-dtype  fp8 KV needs calibrated k_scale/v_scale in the
+    #     checkpoint. The shipped default STAYS fp8 (GB10 behavior unchanged) —
+    #     per-machine override goes in .env. On boxes serving an NVFP4 re-export
+    #     with no KV scales (kv_cache_quant_algo: null), fp8 trips `assert
+    #     layer.k_scale > 0.0`; set PRIMARY_KV_CACHE_DTYPE=auto there instead
+    #     (Thor's working value — see #109).
+    #
+    #   --max-model-len  Serves its full 128K native context (up from a 64K
+    #     trim): the 27B KV cache is util-bound, not context-bound, so
+    #     64K->128K trades concurrency at the same memory footprint. The
+    #     always-on Gemma multimodal gear frees the headroom by trimming to 32K
+    #     instead. See docs/vllm-nightly-migration.md §8.
+    #
+    #   --hf-overrides  JSON, merged into the checkpoint's own config at load —
+    #     DEFAULT is an empty dict (a documented vLLM no-op, byte-equivalent to
+    #     omitting the flag entirely). Only a long-context shape sets this: the
+    #     spark-lobe 1M-token hypothesis (t5) patches text_config.rope_parameters
+    #     to YaRN (factor 4.0, original_max_position_embeddings 262144),
+    #     preserving every other stock rope field (mrope_interleaved,
+    #     mrope_section, partial_rotary_factor, rope_theta) — see
+    #     builtin_shapes/spark-lobe.toml's [overrides.cortex] for the exact JSON
+    #     and its provenance (verified against the checkpoint's own config.json).
+    #
+    #     PLACEMENT + QUOTING ARE BOTH LOAD-BEARING (verified against real
+    #     `docker compose config`, Compose v2.40.3), for reasons that only
+    #     exist because this command became a folded STRING (this task): a
+    #     bare, EMPTY-braces default — `${PRIMARY_HF_OVERRIDES:-{}}` — corrupts
+    #     compose's OWN interpolation of every subsequent `{`/`}` pair in the
+    #     rest of the string (verified: with it positioned earlier, the LAST
+    #     brace-containing substitution downstream — the speculative-config
+    #     default — loses its closing brace; unrelated bare literal braces
+    #     placed after it get mangled the same way). Moving it to be the LAST
+    #     substitution in the command sidesteps that entirely. Separately, the
+    #     surrounding single quotes (`'${PRIMARY_HF_OVERRIDES:-{}}'`, exactly
+    #     the senses lane's own quoting idiom) keep a CUSTOM override — e.g. the
+    #     spark-lobe shape's YaRN JSON, which contains spaces and is written
+    #     unquoted into `.env` — as ONE argv token; without them the shell-lexer
+    #     splits it on every space inside the JSON. Both defaults (`{}` and the
+    #     spark-lobe YaRN JSON) round-trip correctly with this arrangement;
+    #     moving --hf-overrides earlier or dropping the quotes reintroduces one
+    #     of the two failures.
+    #
+    #   --max-num-seqs  MTP cap — 4 OOMs at n=3/high context.
+    #
+    #   --default-chat-template-kwargs  preserve historical <think> across turns
+    #     (issue #93); request-level chat_template_kwargs override this default.
+    #
+    #   --tool-call-parser  qwen3_coder_thinking (t2): a CUSTOM plugin parser,
+    #     not an upstream vLLM name. Upstream's stock qwen3_coder parser
+    #     hardcodes reasoning=False on every emitted tool call — strict
+    #     structural tags then break for a thinking model, which needs to stay
+    #     reasoning-aware across a tool turn. --tool-parser-plugin (below)
+    #     registers this name from the mounted file. Falls back to plain
+    #     upstream qwen3_coder if an operator overrides PRIMARY_TOOL_CALL_PARSER
+    #     in .env (e.g. to run a non-thinking primary here).
+    #
+    #   --enable-prefix-caching  Mamba prefix caching is experimental for this
+    #     hybrid 27B; functional, watch for drift.
+    #
+    #   PRIMARY_SPECULATIVE_CONFIG  SELF-HOSTED MTP draft, default-on — the
+    #     draft module is baked into the checkpoint (15 real `mtp.*` tensors +
+    #     an `unsloth_fixed_mtp` config flag), so the generic "mtp" method
+    #     applies with no external draft-model key. This replaces the outgoing
+    #     export's grafted '{"method": "qwen3_5_mtp", "num_speculative_tokens":
+    #     3}'. MEASURED on the GB10 2026-07-31: engages at 62-67% draft
+    #     acceptance, mean acceptance length 2.24-2.35, decode up to 19.0 tok/s
+    #     at TTFT ~0.27s.
+    #
+    #     OFF-SWITCH: put `PRIMARY_SPECULATIVE_CONFIG=` (set, but empty) in .env
+    #     to serve this lane with NO speculative decoding at all (also clear
+    #     PRIMARY_MAX_NUM_SEQS, which exists only to cap MTP's OOM risk). That is
+    #     the recorded fallback for a Jetson AGX Thor sm_110 box: the 8bd082
+    #     nightly ships no kernel image for fused_gdn_decode_post_conv_mtp there,
+    #     so a Thor serving cortex must drop MTP entirely while the non-MTP GDN
+    #     path works — see docs/evidence/2026-08-20-accept-cortex-local-thor.txt.
+    #     Uses the same dash-only default operator as MULTIMODAL_SPECULATIVE_CONFIG
+    #     (never the colon-dash operator every other knob in this file uses,
+    #     which would treat an empty value as unset and put the off-switch out
+    #     of reach) — see that knob's env.example entry for the full quoting
+    #     caveat if you want to RETARGET the draft rather than switch it off.
+    #
+    #   SECURITY: --trust-remote-code runs the model repo's code in-container.
+    #     HF_TOKEN is only needed to download gated repos (these defaults are
+    #     public) — leave it empty or use a minimal-scope read-only token; pin
+    #     revisions you trust.
+    #
+    #   DELIBERATELY ABSENT, and both removals are load-bearing:
+    #     --language-model-only  — the outgoing export had its ViT stripped, so
+    #       it had to be told to run text-only. THIS checkpoint declares
+    #       language_model_only=false and ships a 27-layer ViT; keeping the
+    #       tower is the entire point. VALIDATED live 2026-07-31 on the GB10:
+    #       image intake against an opposite-colour negative control AND video
+    #       intake against a REVERSED-motion control (a single-frame read
+    #       cannot pass that). See
+    #       docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
+    #     --tokenizer=mmangkad/…  — that override existed only because the
+    #       outgoing checkpoint's tokenizer_config declared a TokenizersBackend
+    #       absent from the image. This export ships its own tokenizer AND a
+    #       chat_template.jinja carrying `preserve_thinking`, so #93 survives.
+    command: >-
+      vllm serve ${PRIMARY_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
+      --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${PRIMARY_QUANTIZATION:-compressed-tensors}
+      --kv-cache-dtype=${PRIMARY_KV_CACHE_DTYPE:-fp8}
+      --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
+      --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
+      --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}
+      --reasoning-parser=qwen3
+      --default-chat-template-kwargs '{"preserve_thinking": true}'
+      --enable-auto-tool-choice
+      --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder_thinking}
+      --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
+      --enable-prefix-caching
+      ${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'}
+      --trust-remote-code
+      --hf-overrides='${PRIMARY_HF_OVERRIDES:-{}}'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -1156,50 +1222,98 @@ services:
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
-    command:
-      - vllm
-      - serve
-      - ${WORKER_MODEL:-unsloth/Qwen3.6-35B-A3B-NVFP4}
-      - --served-model-name=${WORKER_SERVED_NAME:-unsloth/Qwen3.6-35B-A3B-NVFP4}
-      - --host=0.0.0.0
-      - --port=8000
-      # compressed-tensors: the checkpoint's OWN config.json quant_method
-      # (verified against the real config.json) — NOT modelopt. modelopt/
-      # modelopt_fp4 would fail with a quant-method mismatch.
-      - --quantization=${WORKER_QUANTIZATION:-compressed-tensors}
-      # Full 256K native window by default; a worker-hosting shape (thor-worker)
-      # renders the real served length into WORKER_MAX_MODEL_LEN.
-      - --max-model-len=${WORKER_MAX_MODEL_LEN:-262144}
-      # PLACEHOLDER default — the real util is MEASURED on Thor at t7 (the live
-      # boot), exactly as thor-muse's 0.55 was measured, not computed. Do NOT
-      # treat 0.30 as validated.
-      - --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
-      # MoE (~3B active/token). --moe-backend is DELIBERATELY NOT forced:
-      # measured live on Thor sm_110 (2026-07-31,
-      # docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value was
-      # REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not support
-      # current device cuda"; flashinfer NVFP4 is sm_121a/Spark-only), marlin
-      # ("not supported for unquantized MoE" — the self-hosted MTP experts are
-      # unquantized), triton ("not supported for NvFP4 MoE"). Only AUTO-SELECT
-      # boots: vLLM picks TRITON for the unquantized/fp8 MoE and a modular NVFP4
-      # kernel for the main experts, and auto-picks the fastest SUPPORTED kernel
-      # on any card (incl. flashinfer_b12x on a Spark). To pin a backend, add a
-      # `--moe-backend=<x>` line here by hand (see env.example WORKER_MOE_BACKEND).
-      # Self-draft MTP baked INTO the checkpoint (its own MTP head, no external
-      # draft-model key) — mirrors the 27B primary's speculative decode, minus
-      # the separate draft repo.
-      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'
-      # Qwen-family parser PAIR (same as the cortex/main lane): the qwen3_coder
-      # tool parser + the qwen3 reasoning parser. Plain upstream qwen3_coder here
-      # (NOT the cortex lane's qwen3_coder_thinking plugin — worker mounts no
-      # tool-parser plugin file).
-      - --enable-auto-tool-choice
-      - --tool-call-parser=qwen3_coder
-      - --reasoning-parser=qwen3
-      # SECURITY: --trust-remote-code runs the model repo's code in-container
-      # (same posture as the 27B primary). Multimodal (image+video) is SERVED —
-      # deliberately NO --language-model-only: worker keeps its ViT vision tower.
-      - --trust-remote-code
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # Converted from a YAML list (spec-knobs task), same mechanism and the same
+    # reason as the senses lane (vllm-multimodal) and vllm-primary above: a
+    # `docker compose` LIST item cannot be conditionally omitted (a var that
+    # substitutes to "" still renders as an empty argv element and `vllm serve`
+    # dies on it), while a STRING command is shell-lexed by compose AFTER
+    # substitution, so an empty variable leaves no token at all. The Spark box
+    # serving Lightning as worker had to hand-remove the MTP line (plain decode
+    # first, #187) before WORKER_SPECULATIVE_CONFIG existed — see
+    # docs/evidence/2026-08-20-accept-worker-hand-spark.txt. See
+    # tests/test_senses_speculative_config.py's docstring for the argv-parsing
+    # proof and env.example for both new knobs' usage.
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  modelopt: the DEFAULT worker checkpoint's OWN
+    #     quant_method (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4,
+    #     verified against its real config.json 2026-08-20). If you serve the
+    #     demoted unsloth/Qwen3.6-35B-A3B-NVFP4 candidate here instead,
+    #     override WORKER_QUANTIZATION=compressed-tensors alongside
+    #     WORKER_MODEL — each checkpoint fails on the other's quant method.
+    #
+    #   --max-model-len  Default 65536 — the window VALIDATED live for the
+    #     default Lightning worker on the DGX Spark (2026-08-20, KV 3.56M
+    #     tokens / 54.33x concurrency at 65K — see
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
+    #     checkpoint's ceiling is 1M (config-verified); grow progressively
+    #     with evidence (#187), and a worker-hosting shape renders the real
+    #     served length into WORKER_MAX_MODEL_LEN.
+    #
+    #   --gpu-memory-utilization  PLACEHOLDER default — the real util is
+    #     MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55
+    #     was measured, not computed. Do NOT treat 0.30 as validated.
+    #
+    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced: measured
+    #     live on Thor sm_110 (2026-07-31,
+    #     docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value
+    #     was REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not
+    #     support current device cuda"; flashinfer NVFP4 is sm_121a/Spark-only),
+    #     marlin ("not supported for unquantized MoE" — the self-hosted MTP
+    #     experts are unquantized), triton ("not supported for NvFP4 MoE").
+    #     Only AUTO-SELECT boots: vLLM picks TRITON for the unquantized/fp8 MoE
+    #     and a modular NVFP4 kernel for the main experts, and auto-picks the
+    #     fastest SUPPORTED kernel on any card (incl. flashinfer_b12x on a
+    #     Spark). To pin a backend, add a `--moe-backend=<x>` line here by hand
+    #     (see env.example WORKER_MOE_BACKEND).
+    #
+    #   WORKER_SPECULATIVE_CONFIG  DEFAULT-OFF (empty): the default Lightning
+    #     worker's MTP/DSpark benefit is declared by its card but UNMEASURED on
+    #     this fleet — the validated Spark serve (2026-08-20,
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt) ran plain
+    #     decode per #187 ("measure plain decoding first"). To enable
+    #     speculative decoding once measured, set e.g.
+    #       WORKER_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"mtp\", \"num_speculative_tokens\": 2}'"
+    #     (the value the demoted Qwen candidate validated on Thor 2026-07-31 —
+    #     use it when serving that candidate). Dash-only default operator, same
+    #     as MULTIMODAL_SPECULATIVE_CONFIG — see its env.example entry for the
+    #     dotenv/shell-lexer quoting caveat.
+    #
+    #   WORKER_REASONING_PARSER  Default is nemotron_v3, matching the CURRENT
+    #     catalog role_hint=worker model
+    #     (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — validated live
+    #     on the Spark 2026-08-20, structured tool_calls PASS through the
+    #     nemotron_v3 + qwen3_coder pair, see
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
+    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH
+    #     the default Nemotron worker and the demoted
+    #     unsloth/Qwen3.6-35B-A3B-NVFP4 candidate use it; only the reasoning
+    #     parser differs between the two. If you serve the demoted Qwen
+    #     candidate, override WORKER_REASONING_PARSER=qwen3 to match it —
+    #     nemotron_v3 is the wrong grammar for that checkpoint's thinking
+    #     traces (and vice versa).
+    #
+    #   SECURITY: --trust-remote-code runs the model repo's code in-container
+    #     (same posture as the 27B primary). The default Lightning worker is
+    #     TEXT-ONLY (no vision_config in its config.json — #187's contract);
+    #     no --language-model-only flag is needed because there is no tower to
+    #     drop. (The demoted Qwen candidate DOES ship a ViT and serves it when
+    #     selected — its multimodal validation is 2026-07-31 history.)
+    command: >-
+      vllm serve ${WORKER_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --served-model-name=${WORKER_SERVED_NAME:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${WORKER_QUANTIZATION:-modelopt}
+      --max-model-len=${WORKER_MAX_MODEL_LEN:-65536}
+      --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
+      ${WORKER_SPECULATIVE_CONFIG-}
+      --enable-auto-tool-choice
+      --tool-call-parser=qwen3_coder
+      --reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}
+      --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -1365,6 +1479,11 @@ services:
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
+      # hand joined the peer channels 2026-08-20 (d1 reversal — see
+      # lobes/gateway/_config.py's NEVER_PROXIED_BACKENDS): a box whose card
+      # cannot serve LFM2.5 correctly (Thor sm_110) declares HAND_FEASIBLE=false
+      # and refers/proxies to a box that can.
+      - HAND_FEASIBLE=${HAND_FEASIBLE:-}
       - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
       - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
       # First-class audio lanes (issue #129): declare one off exactly like a
@@ -1383,6 +1502,7 @@ services:
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
+      - HAND_PEER_ORIGIN=${HAND_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
       - STT_PEER_ORIGIN=${STT_PEER_ORIGIN:-}
@@ -1410,6 +1530,7 @@ services:
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
+      - HAND_PEER_PROXY=${HAND_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
       - STT_PEER_PROXY=${STT_PEER_PROXY:-}
@@ -1425,6 +1546,7 @@ services:
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
+      - HAND_PEER_API_KEY=${HAND_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
       - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}

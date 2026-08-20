@@ -1,0 +1,54 @@
+# t10 acceptance — Thor repoints cortex at the Spark's new served id, 200 by proxy (#186)
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t10 (covers c6/h4, Thor half).
+# Box: Jetson AGX Thor (thor-worker deployment, ~/.lobes). Date: 2026-08-20.
+# Rollback point: ~/.lobes.pre-lightning-20260820T154750Z (byte-identical cp -a snapshot,
+# verified with diff -rq before any edit).
+#
+# BEFORE (recorded in the t1 spike transcript): PRIMARY_SERVED_NAME was
+# sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP — TWO generations stale, and
+# PRIMARY_PEER_PROXY/_API_KEY were unset (referral-only). The peer-readiness
+# probe matches the ADVERTISED id against the peer's /v1/models (the recorded
+# 2026-08-05 lesson), so the stale mirror alone left the role unready.
+
+## .env changes (Thor)
+
+PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4     # was sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+PRIMARY_PEER_PROXY=true                            # arm forward (origin was already declared)
+PRIMARY_PEER_API_KEY=<REDACTED — copy of the Spark's inbound GATEWAY_API_KEY, per the O(machines) key rule>
+PRIMARY_MAX_MODEL_LEN=1048576                      # mirror the peer's served 1M YaRN window (was 131072)
+# PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 (unchanged)
+
+Gateway recreated with the box's full -f overlay chain (from `lobes fleet files`):
+$ docker compose -f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml \
+    up -d --force-recreate gateway
+
+## Negative control (before the key landed) — proxy fired, peer's gate refused
+
+The first post-repoint request returned the SPARK's invalid_api_key error with
+X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 already present —
+proving the forward happens and the peer's inbound gate is armed. The keyless
+senses lane (MULTIMODAL_PEER_PROXY=true to the Orin, no key) shows per-peer
+gates differ; the key is per-peer material, never minted per pairing.
+
+## Acceptance — both observables, live
+
+$ lobes capabilities   (cortex row)
+cortex    unsloth/Qwen3.8-27B-NVFP4                         1048576  by-proxy  http://localhost:8000
+          ** infeasible on this machine — never served here **
+          proxied via this gateway from peer: http://spark.tail0be7e0.ts.net:8001
+
+$ curl -s -X POST localhost:8000/v1/chat/completions -d '{"model":"cortex","messages":[{"role":"user","content":"Reply with exactly: THOR-PROXY-OK"}],"max_tokens":2048,"chat_template_kwargs":{"enable_thinking":false}}'
+HTTP/1.1 200 OK
+X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+model: unsloth/Qwen3.8-27B-NVFP4 | reply: THOR-PROXY-OK
+
+## Notes
+
+- The serving Thor gateway container still runs the 0.54.6 wheel (scaffold-era
+  build). Cortex proxying predates that build (validated 2026-07-16) so the
+  acceptance is valid; the gateway image refresh rides the t8 flip.
+- The Orin half of #186 (task t11) is NOT covered here — ssh access to the Orin
+  was still denied at this point; see the t11 transcript when it lands.
+- enable_thinking=false per the known Thor gotcha (a small max_tokens dies
+  inside <think> on the Qwen cortex line).

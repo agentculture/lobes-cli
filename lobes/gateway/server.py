@@ -708,6 +708,9 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "multimodal": "MULTIMODAL_SERVED_NAME",
     "muse": "MUSE_SERVED_NAME",
     "worker": "WORKER_SERVED_NAME",
+    # d1 reversal (2026-08-20) — hand is proxyable now; see
+    # _config.NEVER_PROXIED_BACKENDS.
+    "hand": "HAND_SERVED_NAME",
     "embed": "EMBED_SERVED_NAME",
     "rerank": "RERANK_SERVED_NAME",
 }
@@ -732,6 +735,7 @@ _PEER_ROLE_HINT: dict[str, str] = {
     "multimodal": "multimodal",
     "muse": "muse",
     "worker": "worker",
+    "hand": "hand",  # d1 reversal — paired with _PEER_SERVED_NAME_ENV above (the 0.54.6 lesson)
     "embed": "embedding",
     "rerank": "reranker",
 }

@@ -1,0 +1,54 @@
+# t11 acceptance — Orin repoints cortex at the Spark's new served id, 200 by proxy (#186)
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t11 (covers c6/h4, Orin half).
+# Box: Jetson AGX Orin (orin-small-era deployment, ~/.lobes; gateway wheel 0.45.0). Date: 2026-08-20.
+# Run from an operator shell on the Orin.
+#
+# BEFORE: the box already followed the cortex referral by proxy
+# (PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001, PRIMARY_PEER_PROXY=true,
+# PRIMARY_PEER_API_KEY set — the 2026-07-17 #127 decision), but its mirror was
+# one generation stale: PRIMARY_MODEL=PRIMARY_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
+# at PRIMARY_MAX_MODEL_LEN=131072. The peer-readiness probe matches the ADVERTISED
+# id against the peer's /v1/models (2026-08-05 lesson), so the stale mirror alone
+# would leave cortex proxied=true/ready=false once the Spark's old id vanished.
+
+## .env changes (Orin)
+
+PRIMARY_MODEL=unsloth/Qwen3.8-27B-NVFP4
+PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4
+PRIMARY_MAX_MODEL_LEN=1048576   # mirror of the peer cortex 1M YaRN window (#186; this box does not serve it)
+# peer origin / proxy / key: unchanged (already armed)
+
+Gateway recreated with the box's recorded compose chain (read back from the
+container's own com.docker.compose.project.config_files label):
+$ docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.audio.yml \
+    -f docker-compose.gpu-audio.yml -f docker-compose.shape.yml up -d --force-recreate gateway
+{"status": "ok", "service": "model-gear-gateway", "version": "0.45.0"}
+
+## Acceptance — both observables, live
+
+$ curl -s localhost:8000/capabilities   (cortex entry, key fields)
+{
+ "model": "unsloth/Qwen3.8-27B-NVFP4",
+ "context": 1048576,
+ "feasible": false,
+ "ready": true,
+ "proxied": true,
+ "hosted_by": "http://spark.tail0be7e0.ts.net:8001"
+}
+
+$ curl -s -X POST localhost:8000/v1/chat/completions -d '{"model":"cortex","messages":[{"role":"user","content":"Reply with exactly: ORIN-PROXY-OK"}],"max_tokens":2048,"chat_template_kwargs":{"enable_thinking":false}}'
+HTTP/1.1 200 OK
+X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+model: unsloth/Qwen3.8-27B-NVFP4 | reply: ORIN-PROXY-OK
+
+## Notes
+
+- With the Thor transcript (2026-08-20-accept-cortex-repoint-thor.txt) this
+  closes #186's acceptance: BOTH Jetson boxes answer model=cortex 200 by proxy
+  under the new id.
+- The Orin gateway wheel is 0.45.0 (pre-#129); cortex proxying predates it, so
+  the acceptance is valid on this build. A wheel refresh is routine maintenance
+  outside this plan.
+- The old capabilities payload shape on 0.45.0 is a dict keyed by role (not the
+  newer roles list) — recorded here as-is.

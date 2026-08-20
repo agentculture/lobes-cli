@@ -54,7 +54,9 @@ _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"  # the catalog multimodal default
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
-_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"  # the catalog worker default (t1)
+# the catalog worker default — nemotron-lightning-worker plan (#187, t3)
+# moved this from unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as candidate).
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 _GATEWAY_URL = "http://localhost:8000"
 
 _THOR_ORIGIN = "http://thor.local:8001"

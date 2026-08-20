@@ -310,16 +310,15 @@ def test_thor_builtin_encodes_exactly_the_four_validated_divergences() -> None:
     assert thor.name == "thor"
 
     # cortex: kv_cache_dtype diverges (fp8 -> auto) — the one VALIDATED sm_110
-    # divergence — PLUS, as of t5 (devague plan
-    # lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p), a temporary `model`
-    # divergence: t5's scope is spark.toml + spark-lobe.toml only, so Thor's
-    # own profile has not yet been swapped to unsloth/Qwen3.8-27B-NVFP4 (a
-    # sibling task's job — see CLAUDE.md's model section). This is a known,
-    # temporal gap, not a THIRD validated hardware divergence.
+    # divergence. The temporary Qwen3.6-vs-3.8 `model` gap the qwen3.8 t5
+    # rollout left here closed on 2026-08-20 (deviation d1: a Thor box hosts
+    # cortex again and validated the 3.8 checkpoint live at 1M —
+    # docs/evidence/2026-08-20-accept-cortex-local-thor.txt), so the model
+    # tracks spark.toml again. The Thor-only MTP-off requirement lives in the
+    # compose lane, not the schema (see thor.toml's cortex comment).
     assert thor.role("cortex") == dataclasses.replace(
         spark.role("cortex"),
         kv_cache_dtype="auto",
-        model="unsloth/Qwen3.6-27B-NVFP4",
     )
 
     # senses: identical to spark (no thor divergence declared for this role).

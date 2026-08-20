@@ -227,7 +227,10 @@ def test_tier_role_capability_order_is_ascending_with_muse_and_worker() -> None:
 # IS its tier, exactly like muse.
 # ---------------------------------------------------------------------------
 
-_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+# nemotron-lightning-worker plan (#187, t3): the worker gear moved from
+# unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as a candidate) to
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 
 
 def test_tier_role_map_includes_worker_as_its_own_backend() -> None:
@@ -237,7 +240,7 @@ def test_tier_role_map_includes_worker_as_its_own_backend() -> None:
 
 
 def test_resolve_tier_worker_returns_the_worker_gear() -> None:
-    """resolve_tier('worker') must return the unsloth MoE worker gear."""
+    """resolve_tier('worker') must return the current catalog worker gear."""
     model = resolve_tier("worker")
     assert model.role_hint == "worker"
     assert model.task == "generate"

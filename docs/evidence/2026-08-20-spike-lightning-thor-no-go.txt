@@ -1,0 +1,67 @@
+# t2 spike — Lightning does NOT reach serving on the Thor: NO-GO (risk r2 resolved negative)
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t2 (covers c9/h6's
+# progressive-validation leg; resolves risk r2 NEGATIVE). Box: Jetson AGX Thor
+# (sm_110). Date: 2026-08-20. Engine: the fleet-wide 8bd082 official nightly
+# (vLLM 0.26.1rc1.dev942, torch 2.13.0+cu130 — sm_110 SASS present per the t1 spike).
+#
+# Config (conservative, per #187: plain decode first, no MTP/DSpark, modest window):
+# $ docker run ... vllm/vllm-openai@sha256:8bd082... \
+#     --model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 \
+#     --max-model-len 32768 --gpu-memory-utilization 0.25 \
+#     --reasoning-parser nemotron_v3 --enable-auto-tool-choice --tool-call-parser qwen3_coder
+# drop_caches run before boot per the Thor runbook.
+
+## What happened
+
+- Weights loaded, torch.compile completed (13.53 s), AOT cache saved.
+- --reasoning-parser nemotron_v3 and --tool-call-parser qwen3_coder were both
+  ACCEPTED by this vLLM build (no unknown-parser refusal) — parser AVAILABILITY
+  is confirmed; parser CORRECTNESS was never reached.
+- The engine then wedged at:
+    (EngineCore) INFO [mamba_mixer2.py:597] Warming up Mamba2 SSD Triton kernels...
+  and emitted NOTHING further for 25+ minutes (17:11 -> 17:36). The process
+  stayed alive (exec succeeded); /health never came up. Killed by operator.
+
+## Verdict, in the day's context
+
+NO-GO for Lightning on the Thor on this digest. Third same-day failure of a
+non-dense decode path on sm_110, each with a different signature:
+  1. Qwen3.6-35B GDN MTP decode kernel: "no kernel image is available" (hard fail)
+  2. LFM2.5 conv-hybrid: corrupt deterministic output -> CUDA unspecified
+     launch failure (both 0.23.1 and 0.26.1 engines; passes on Spark sm_121)
+  3. Lightning Mamba-2 SSD: infinite wedge in Triton kernel warmup
+Dense-transformer serving on the same digest/box is fine (Qwen cortex family).
+
+External context (operator-supplied, 2026-08-20): NVIDIA's Lightning model
+card pins vLLM 0.27.1 and validates on DGX Spark/GB200/H100 — no published
+Jetson Thor recipe exists; an official GGUF/llama.cpp route exists but is
+outside this fleet's vLLM contract. A future Thor-specific vLLM >=0.27.1
+image may change this verdict; today's fleet digest does not serve it.
+
+## Consequence
+
+Deviation d1 (approved, .devague/deliveries/nemotron-lightning-worker.json):
+the topology SWAPS — Thor serves cortex (unsloth/Qwen3.8-27B-NVFP4, dense);
+the Spark hosts worker (Lightning) + hand, where these architectures are
+validated (hand: docs/evidence/2026-08-20-accept-hand-spark.txt) or
+NVIDIA-validated (Lightning on GB10-class). Lightning-on-Spark gets its own
+spike transcript; nothing here claims it.
+
+## Addendum (same day, operator-supplied)
+
+Jetson AI Lab publishes an official Thor recipe for Lightning on the RELEASE
+image vllm/vllm-openai:v0.27.1
+(https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/#run-on-jetson).
+Same-day follow-up: we DID spike upstream v0.27.1 on the Thor (util 0.50,
+65536 window, then again with --mamba-backend flashinfer) and it wedged at
+the SAME Mamba2 SSD Triton warmup both times (idle-CPU hang, killed at
+25/15 min). Since the lab page instructs the SAME upstream image (per the
+operator, not a Jetson-built container), the open lead is now sharper: diff
+their exact run command/environment against our failing one on the same
+image — JetPack/driver version, env vars, --mamba-backend value, model
+revision — or establish their page is untested on Thor. Separately still
+open: whether any newer image restores the sm_110 GDN MTP kernel, which
+would let the Thor-local cortex (deviation d1) re-enable MTP. The d1
+topology stands regardless (the Spark placement also serves the
+hand-finetuning memory goal).

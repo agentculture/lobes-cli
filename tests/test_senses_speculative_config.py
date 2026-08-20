@@ -207,26 +207,54 @@ def test_custom_value_replaces_the_default() -> None:
 
 
 def test_knob_is_scoped_to_the_senses_lane_only() -> None:
-    """No other generate lane gained the knob — cortex/coder/muse/worker are
-    untouched by t5, and their ``command:`` stays a list."""
-    compose = _load_fleet()
+    """The MULTIMODAL_SPECULATIVE_CONFIG knob name itself is senses-only — the
+    cortex/worker lanes gained their OWN off-switch knobs instead
+    (PRIMARY_SPECULATIVE_CONFIG / WORKER_SPECULATIVE_CONFIG, spec-knobs task),
+    never a shared name. The coder/muse lanes gained neither and keep MTP
+    hardcoded (or absent) with no off-switch at all."""
     text = _FLEET_COMPOSE.read_text(encoding="utf-8")
 
-    # The knob is SUBSTITUTED exactly once — in the senses lane's own command.
+    # The senses knob is SUBSTITUTED exactly once — in its own command.
     # (Prose mentions of the name in the comment block above it don't count.)
     assert (
         text.count(f"${{{_KNOB}") == 1
     ), f"${{{_KNOB} must be substituted exactly once in the fleet template"
 
-    for name in ("vllm-primary", "vllm-multimodal-coder", "vllm-muse", "vllm-worker"):
-        command = compose["services"][name]["command"]
-        assert isinstance(command, list), f"{name}: command must stay a list (t5 is senses-only)"
+    for name in ("vllm-multimodal-coder", "vllm-muse"):
+        command = _load_fleet()["services"][name]["command"]
+        assert isinstance(
+            command, list
+        ), f"{name}: command must stay a list (no off-switch was added to this lane)"
 
 
-@pytest.mark.parametrize("lane", ["vllm-primary", "vllm-muse", "vllm-worker"])
-def test_other_lanes_keep_their_own_speculative_flags(lane: str) -> None:
-    """t5 must not have disarmed anyone else's MTP while parameterizing senses."""
+@pytest.mark.parametrize(
+    "lane,knob",
+    [
+        ("vllm-primary", "PRIMARY_SPECULATIVE_CONFIG"),
+        ("vllm-worker", "WORKER_SPECULATIVE_CONFIG"),
+    ],
+)
+def test_primary_and_worker_gained_their_own_off_switch(lane: str, knob: str) -> None:
+    """The spec-knobs task extended the senses lane's off-switch mechanism to
+    cortex (vllm-primary) and worker (vllm-worker), each with ITS OWN knob name
+    — never MULTIMODAL_SPECULATIVE_CONFIG shared across lanes. Both lanes'
+    ``command:`` converted from a YAML list to the same shell-lexed STRING form
+    for the identical reason the senses lane's did (t5): a list item cannot be
+    conditionally omitted."""
     command = _load_fleet()["services"][lane]["command"]
+    assert isinstance(command, str), f"{lane}: command must be a STRING, not a list"
+    assert f"${{{knob}-" in command, f"{lane}: must default via ${{{knob}-...}}"
+    assert f"${{{knob}:-" not in command, (
+        f"{lane}: {knob} must NOT use ${{{knob}:-default}} — an empty value "
+        "would fall back to the default and the off-switch would never engage"
+    )
+
+
+def test_muse_keeps_its_own_speculative_flag() -> None:
+    """muse gained no off-switch — its MTP stays exactly as it was before this
+    task (multimodal-coder carries no speculative-config at all, by its own
+    long-standing design — see that service's own comment)."""
+    command = _load_fleet()["services"]["vllm-muse"]["command"]
     assert any(
         str(tok).startswith("--speculative-config=") for tok in command
-    ), f"{lane}: its own --speculative-config must survive t5 untouched"
+    ), "vllm-muse: its own --speculative-config must survive untouched"

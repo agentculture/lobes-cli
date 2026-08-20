@@ -1,0 +1,45 @@
+# t6 — incumbent baseline: Qwen3.6-35B-A3B worker on its PRODUCTION engine, Thor (playbook §1)
+#
+# Plan: docs/plans/2026-08-20-nemotron-lightning-worker.md, task t6 (covers c17 signal 2's
+# comparison leg). Box: Jetson AGX Thor, thor-worker deployment. Date: 2026-08-20.
+# This number is unrecoverable after the flip — captured BEFORE any swap.
+#
+# Production config: vllm/vllm-openai@sha256:7c5a10e9... (vLLM 0.23.1rc1.dev672 —
+# the 2026-07-31 worker-era pin), WORKER_MODEL=unsloth/Qwen3.6-35B-A3B-NVFP4,
+# util 0.45, max_model_len 262144, MTP self-draft on, moe-backend auto-select.
+# drop_caches run before the recreate per the Thor runbook.
+#
+# Boot: model loading 24.81 GiB / 35.3 s; healthy.
+#
+# Probe: scratchpad worker_probe.py via the gateway (model=worker) — the SAME
+# script later runs against Lightning so conditions match.
+
+{
+ "known_answer": {"reply": "Paris", "pass": true, "s": 5.43},
+ "served_model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+ "decode": {"completion_tokens": 679, "s": 11.1, "tok_s": 61.2},
+ "tool_calls": {"structured": true, "pass": true,
+                "call": {"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"},
+                "leaked_content": "", "finish_reason": "tool_calls", "s": 4.92}
+}
+
+# 61.2 tok/s single-stream (warm engine) vs the 50.8 recorded at the 2026-07-31
+# acceptance — same order, better run-conditions; both are single-stream numbers,
+# never multiply by a concurrency ceiling (see thor-worker.toml's warning).
+#
+# ── FAILED PRELUDE, kept because it is load-bearing (r1 partially reopened) ──
+# Before this baseline, the incumbent was recreated once on the NEW 8bd082
+# nightly (vLLM 0.26.1rc1.dev942) to attempt an engine-matched baseline. It
+# BOOTED healthy (KV pool grew to 50.02 GiB / 4,317,665 tokens / 16.47x) but
+# DIED on the first decode request:
+#   RuntimeError: launch_gdn_decode_post_conv_mtp,
+#   /workspace/csrc/libtorch_stable/gdn/fused_gdn_decode_kernel.cu:412,
+#   GDN decode MTP post-conv kernel launch failed: no kernel image is available
+#   for execution on the device
+# i.e. torch-level sm_110 SASS is present (t1 spike) but vLLM's own csrc GDN
+# (Mamba/gated-delta-net) MTP decode kernel ships without an sm_110 image.
+# Consequence recorded for t2: any Mamba-hybrid checkpoint's decode path on
+# this digest must be proven kernel-by-kernel on the Thor — a healthy BOOT is
+# not evidence (the crash came after health checks passed). The baseline above
+# was therefore taken on the production engine, which is also what playbook §1
+# asks for.

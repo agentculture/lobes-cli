@@ -57,13 +57,16 @@ Four families exist:
   support table and "Opt-in core roles" below). The shape file, its TOML, and
   its goldens stay in-tree (cite-don't-delete).
 - **second opt-in-core-role shape** (`thor-worker`, **forthcoming** —
-  thor-worker-lobe plan task t7) — mirrors `thor-muse`'s structure exactly: a
-  box that drops BOTH heavy default lobes and instead hosts `worker`, the
-  opt-in fast ground-work DOER (`unsloth/Qwen3.6-35B-A3B-NVFP4`), plus the
-  two pooling gears and the audio overlay. `worker` is the second opt-in core
-  role (see "Opt-in core roles" below); the shape's budget knobs are
-  committed only once a live boot on the physical Jetson AGX Thor measures
-  them — no number is declared here yet.
+  thor-worker-lobe plan task t7, **now live** — see the support table and
+  "Shapes are card-agnostic data" below) — mirrors `thor-muse`'s structure
+  exactly: a box that drops BOTH heavy default lobes and instead hosts
+  `worker`, the opt-in fast ground-work DOER (as of deviation d1,
+  2026-08-20, `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`, not the
+  originally-planned `unsloth/Qwen3.6-35B-A3B-NVFP4`), plus the two pooling
+  gears and the audio overlay. `worker` is the second opt-in core role (see
+  "Opt-in core roles" below); the shape's budget knobs are **measured** —
+  but on the DGX Spark GB10, not the Jetson AGX Thor the plan originally
+  targeted (the Thor NO-GO'd; d1 swapped the topology).
 
 ## The support table
 
@@ -75,7 +78,40 @@ Four families exist:
 | **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or `STT_PEER_ORIGIN`/`TTS_PEER_ORIGIN`), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
 | **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED, DORMANT** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) never passed and no transcript landed under `docs/evidence/` (#108). **Now additionally DORMANT** (thor-worker-lobe plan, operator decision): the physical Thor that measured this shape's budget moved to hosting `thor-worker` instead, and no box in the mesh currently renders `thor-muse`. The file, its TOML, and its goldens stay in-tree (cite-don't-delete) — do not read this row as a "muse is served" claim, now more than ever. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
-| **thor-worker** (**forthcoming**) | `worker`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `worker` lobe instead | **not yet committed** | Mirrors `thor-muse`'s structure (thor-worker-lobe plan task t7): hosts the eighth Colleague role — `unsloth/Qwen3.6-35B-A3B-NVFP4`, the fast ground-work DOER — with the FULL worker declaration in its own `[overrides.worker]` (see "Opt-in core roles" below). The shape-machinery plumbing that would host it (`OPT_IN_CORE_ROLES`, `base.toml`'s veto, `shape_render.py`'s activation-env mapping) is already shipped; the shape TOML itself, its compose service, and its `gpu_mem_util`/`max_model_len` budget are committed only after a live boot on the physical Jetson AGX Thor measures them — no number is declared here. See [`docs/qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md). |
+| **thor-worker** | `worker`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `worker` lobe instead | **validated live — but on the Spark card, not the Thor (deviation d1, 2026-08-20)** | Mirrors `thor-muse`'s structure: hosts the eighth Colleague role — now `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (Lightning, not the originally-planned `unsloth/Qwen3.6-35B-A3B-NVFP4`), the fast ground-work DOER — with the FULL worker declaration in its own `[overrides.worker]` (see "Opt-in core roles" below). The plan's original target, the Jetson AGX Thor, NO-GO'd live (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt` — the Mamba-2 SSD decode path wedges on this fleet's pinned nightly); deviation d1 rendered this SAME shape file on the **Spark** card instead (`lobes init --shape thor-worker --apply --force` on `spark-f8a9`), measuring `WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536`, KV pool 3,560,789 tokens / 54.33× concurrency, 75.1 tok/s decode (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`). See ["Shapes are card-agnostic data, proven live by d1"](#shapes-are-card-agnostic-data-proven-live-by-d1) below for what this means for the shape-name-vs-card-name assumption, and [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md) for the full measured numbers. |
+
+## Shapes are card-agnostic data, proven live by d1
+
+Every built-in shape name (`spark-lobe`, `thor-lobe`, `thor-muse`,
+`thor-worker`, …) is **historical** — it names the card the shape was
+*written for*, not a card it is *bound to*. Nothing in `Shape.hosts` or a
+shape's `[overrides.*]` reads or asserts a card identity; a shape composes
+onto whatever `Profile` `lobes init` resolves for the box it runs on
+(shape × card is genuinely orthogonal, as the top of this document already
+states). That was a design claim until deviation d1 (2026-08-20,
+`.devague/deliveries/nemotron-lightning-worker.json`) proved it live, by
+accident of circumstance rather than by design intent: the Thor no-go for
+Lightning (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`) forced
+an operator-approved topology swap, and the swap rendered the
+**`thor-worker`** shape file on the **Spark** card (hosting `worker` +
+`hand`) and the **`spark-lobe`** shape file on the **Thor** card (hosting
+`cortex` locally at its full 1M window) — see
+`docs/evidence/2026-08-20-accept-cortex-local-thor.txt` and
+`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`. Both renders worked
+exactly as the shape/profile composition model predicts: no shape code
+branched on card name, no override silently assumed Thor-ness or
+Spark-ness, and every knob that needed a different value on the new card
+(the Thor's MTP-off cortex line, the Spark's `WORKER_GPU_MEM_UTIL`/
+`WORKER_MAX_MODEL_LEN`) was a normal measured-override edit, not a shape
+rewrite.
+
+**Follow-up idea, not done here:** renaming or aliasing the shapes so their
+names stop implying a fixed card (e.g. a card-neutral `worker-lobe` alongside
+or instead of `thor-worker`) has been raised as a natural next step. It is
+deliberately **not** done in this change — the shape files, their TOML, and
+every citation to `thor-worker`/`spark-lobe`/`thor-muse` elsewhere in this
+repo stay as they are; renaming is its own follow-up with its own blast
+radius (docs, goldens, CLI help text, `lobes explain shapes`).
 
 All shipped shapes are pure data over the `#108` `Profile` schema
 — no per-shape Python branch exists anywhere in `lobes/profiles/shapes.py` or
@@ -105,8 +141,9 @@ goldens).
 `cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`) yet is **never hosted
 by machine-as-brain** — a 31B cannot co-reside with the default
 `cortex`+`senses` duo on a 128 GB box. `worker` — the eighth Colleague role,
-the fast ground-work DOER (`unsloth/Qwen3.6-35B-A3B-NVFP4`,
-thor-worker-lobe plan) — joined `muse` as the **second** opt-in core role on
+the fast ground-work DOER (`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
+since deviation d1, 2026-08-20, replacing the originally-planned
+`unsloth/Qwen3.6-35B-A3B-NVFP4`; thor-worker-lobe plan) — joined `muse` as the **second** opt-in core role on
 the exact same mechanism (`OPT_IN_CORE_ROLES = ("muse", "worker")`): also too
 heavy to co-reside with the default duo, also never hosted by
 machine-as-brain. Concretely:
@@ -130,11 +167,13 @@ machine-as-brain. Concretely:
   attention-backend knobs. The card profiles stay silent on both muse and
   worker, except `base.toml`, which vetoes both
   (`[roles.muse] feasible=false` / `[roles.worker] feasible=false` — the
-  conservative unknown-card rule). A `thor-worker` shape carrying the
-  matching `[overrides.worker]` is **forthcoming** (task t7) — the schema
-  and rendering machinery that would compose it are already shipped and
-  exercised by `thor-muse` today; only the shape's own TOML (with its
-  live-measured budget) and its compose service remain.
+  conservative unknown-card rule). The `thor-worker` shape carrying the
+  matching `[overrides.worker]` is **live** (task t7, landed 2026-08-20 as
+  part of deviation d1) — the schema and rendering machinery that compose it
+  are the same ones `thor-muse` exercises, and the shape's own TOML, with
+  its live-measured budget, was rendered on the Spark card rather than the
+  Thor the plan originally targeted (see "Shapes are card-agnostic data,
+  proven live by d1" above).
 - **Hosting muse or worker renders its activation env**
   (`shape_render.OPT_IN_CORE_ACTIVATION_ENV` /
   `OPT_IN_CORE_COMPOSE_PROFILE`, keyed by both role names):
@@ -145,9 +184,11 @@ machine-as-brain. Concretely:
   `MUSE_*` knobs rendered from the shape's overrides via the ordinary
   profile-env path. `worker` mirrors this exactly:
   `COMPOSE_PROFILES=worker` / `WORKER_BASE_URL=http://vllm-worker:8000` — the
-  activation-env mapping is already rendered by `shape_render.py`, but the
-  `vllm-worker` compose service it activates is not yet in the fleet
-  template (forthcoming, task t4).
+  activation-env mapping is rendered by `shape_render.py`, and the
+  `vllm-worker` compose service it activates is live in the fleet template
+  — booted on the Spark card via `lobes init --shape thor-worker --apply
+  --force` as part of deviation d1, 2026-08-20
+  (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`).
 - **`MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` / `MUSE_PEER_API_KEY` and
   `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY` all
   exist** — just like every core role's referral/proxy channels, so a box
@@ -451,8 +492,10 @@ scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-mu
   [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
   [--dev-index URL] [--timeout SECS]
 scripts/accept-shape.sh --restore [--deploy-dir DIR]
-# `thor-worker` joins this shape list once someone runs it — this is the same
-# script that produces every acceptance transcript. Never pass `--audio` with
+# `thor-worker` is live (deviation d1, 2026-08-20) but was accepted by a direct
+# `lobes init --shape thor-worker --apply --force` + probe run on the Spark
+# card, not yet by this harness's own `scripts/accept-shape.sh` path — that
+# formal run is a follow-up, not done here. Never pass `--audio` with
 # `orin-lobe`: that shape hosts no stt/tts (no sm_87 Parakeet image).
 ```
 

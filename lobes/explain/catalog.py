@@ -1212,9 +1212,12 @@ Responsibilities (what each role owns) / forbidden (what it must NOT do):
   final_decision, repo_action, security_decision (muse proposes, cortex
   decides).
 - `worker` — execution, ground_work, bulk_transform, drafting,
-  image_understanding, video_understanding, tool_use, repo_action. Forbidden:
-  final_decision, security_decision — the only non-cortex role that may ACT on
-  the repo, under cortex's direction.
+  action_selection, retrieval_synthesis, summarization, log_digestion,
+  structured_extraction, repo_inspection, run_authorized_commands, tool_use,
+  repo_action. Forbidden: final_decision, security_decision, code_authoring —
+  the fast, text-only, non-coding doer (issue #187): it may inspect/search/run
+  authorized commands under cortex's direction, but code authoring escalates
+  to cortex.
 - `hand` — domain_mastery, learned_skill, specialized_task, tool_use.
   Forbidden: final_decision, repo_action, security_decision. The fleet's
   fine-tuning base: one cheap base, many LoRA adapters, each mastering a

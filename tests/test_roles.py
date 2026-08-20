@@ -60,7 +60,9 @@ _EXPECTED_ROLES = {
     "tts",
 }
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
-_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+# the catalog worker default — nemotron-lightning-worker plan (#187, t3)
+# moved this from unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as candidate).
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 
 # The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
 # GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL
@@ -400,22 +402,34 @@ def test_static_responsibility_maps_cover_all_nine_roles() -> None:
         "repo_action",
         "security_decision",
     )
-    # worker — the fast ground-work DOER: execution/drafting tokens PLUS
-    # tool_use AND repo_action. Unlike muse/senses it may ACT on the repo
-    # (repo_action is NOT forbidden); unlike cortex it is not the final
-    # authority (final_decision / security_decision stay forbidden).
+    # worker — the fast, TEXT-ONLY, NON-CODING doer (issue #187): execution/
+    # drafting tokens, the explicit RAG/summarization/digestion/extraction
+    # tokens, and the split of "may touch the repo" (repo_inspection,
+    # run_authorized_commands, repo_action) from "may author code"
+    # (code_authoring — forbidden, below). No vision token remains.
     assert ROLE_RESPONSIBILITIES["worker"] == (
         "execution",
         "ground_work",
         "bulk_transform",
         "drafting",
-        "image_understanding",
-        "video_understanding",
+        "action_selection",
+        "retrieval_synthesis",
+        "summarization",
+        "log_digestion",
+        "structured_extraction",
+        "repo_inspection",
+        "run_authorized_commands",
         "tool_use",
         "repo_action",
     )
-    assert ROLE_FORBIDDEN["worker"] == ("final_decision", "security_decision")
+    assert ROLE_FORBIDDEN["worker"] == (
+        "final_decision",
+        "security_decision",
+        "code_authoring",
+    )
     assert "repo_action" not in ROLE_FORBIDDEN["worker"]
+    assert "image_understanding" not in ROLE_RESPONSIBILITIES["worker"]
+    assert "video_understanding" not in ROLE_RESPONSIBILITIES["worker"]
     assert ROLE_RESPONSIBILITIES["stt"] == ("transcribe", "audio_input_to_text")
     assert ROLE_RESPONSIBILITIES["tts"] == ("speech_output", "synthesize")
     assert ROLE_RESPONSIBILITIES["embedder"] == ("vectorization", "memory_retrieval_input")
@@ -452,25 +466,36 @@ def test_worker_is_present_and_resolves_to_the_worker_gear() -> None:
 
 
 def test_worker_responsibilities_are_the_doer_contract() -> None:
-    """worker is the fast ground-work DOER: execution/drafting tokens PLUS
-    tool_use AND repo_action — the first role besides cortex permitted to act
-    on the repo, yet still barred from the final decision / a security call.
-    It is also MULTIMODAL (image+video intake via its ViT), hence the
-    image_understanding/video_understanding tokens — a seeing doer, unlike
-    text-only cortex."""
+    """worker (issue #187) is the fast, TEXT-ONLY, NON-CODING doer:
+    execution/drafting tokens PLUS the explicit RAG/summarization/digestion/
+    extraction tokens AND repo_action/repo_inspection/run_authorized_commands
+    — it may touch the repo (search, inspect, run authorized commands/tests)
+    but never author code (code_authoring is forbidden, below) and never
+    make the final decision or a security call. No vision token remains."""
     worker = _registry(_full_env())["worker"]
     for token in (
         "execution",
         "ground_work",
         "bulk_transform",
         "drafting",
-        "image_understanding",
-        "video_understanding",
+        "action_selection",
+        "retrieval_synthesis",
+        "summarization",
+        "log_digestion",
+        "structured_extraction",
+        "repo_inspection",
+        "run_authorized_commands",
     ):
         assert token in worker.responsibilities
     assert "tool_use" in worker.responsibilities
     assert "repo_action" in worker.responsibilities
-    assert worker.forbidden_responsibilities == ("final_decision", "security_decision")
+    assert "image_understanding" not in worker.responsibilities
+    assert "video_understanding" not in worker.responsibilities
+    assert worker.forbidden_responsibilities == (
+        "final_decision",
+        "security_decision",
+        "code_authoring",
+    )
     assert "repo_action" not in worker.forbidden_responsibilities
 
 

@@ -749,13 +749,26 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="unsloth/Qwen3.6-35B-A3B-NVFP4",
-        # The `worker` gear (thor-worker-lobe plan, t1) — a DISTINCT entry from
-        # the mmangkad/Qwen3.6-35B-A3B-NVFP4 "candidate" above (same
-        # architecture family, different org/export). Unlike that copy, this
-        # unsloth export ships its OWN MTP draft module baked into the
-        # checkpoint (never dropped one to begin with), so it "can act as its
-        # own speculative draft for faster decoding" (some throughput tradeoff
-        # vs plain inference — the card's own words).
+        # Former `worker` gear (thor-worker-lobe plan, t1; VALIDATED live on the
+        # physical Jetson AGX Thor sm_110, 2026-07-31 — see
+        # docs/evidence/2026-07-31-accept-worker-thor.txt). DEMOTED from
+        # role_hint="worker" to a kept candidate (nemotron-lightning-worker
+        # plan, #187, t3): the worker seat moves to
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 below — a
+        # text-only, non-coding doer with a 1M native ceiling — per the
+        # operator decision recorded in
+        # docs/plans/2026-08-20-nemotron-lightning-worker.md. Kept, not
+        # deleted (cite-don't-delete): this is the checkpoint every
+        # 2026-07-31..2026-08-20 worker-lane evidence transcript was measured
+        # against, and it stays selectable via `lobes switch`. Nothing below
+        # this comment changed — same fields, same facts, only role_hint moved.
+        #
+        # A DISTINCT entry from the mmangkad/Qwen3.6-35B-A3B-NVFP4 "candidate"
+        # above (same architecture family, different org/export). Unlike that
+        # copy, this unsloth export ships its OWN MTP draft module baked into
+        # the checkpoint (never dropped one to begin with), so it "can act as
+        # its own speculative draft for faster decoding" (some throughput
+        # tradeoff vs plain inference — the card's own words).
         #
         # Verified against the checkpoint's ACTUAL config files (fetched
         # 2026-07-31), not card prose:
@@ -795,7 +808,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         #   is Spark's arch, not Thor's (sm_110 — see
         #   docs/machine-profiles.md); UNCONFIRMED on Thor until the live
         #   boot (plan task t7).
-        role_hint="worker",
+        role_hint="candidate",
         # MULTIMODAL (image+video) — config.json (fetched 2026-07-31) carries a
         # vision_config (27-layer ViT), image_token_id=248056,
         # video_token_id=248057, vision_start/end tokens (248053/248054), and
@@ -823,6 +836,114 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # therefore adds NO --moe-backend flag for this gear.
         moe_backend="",
         speculative_config=_MTP_SELF_HOSTED_N2,
+        task="generate",
+    ),
+    SupportedModel(
+        id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        # The NEW `worker` gear (nemotron-lightning-worker plan, #187, t3),
+        # replacing unsloth/Qwen3.6-35B-A3B-NVFP4 above (demoted to
+        # role_hint="candidate", kept — cite-don't-delete). A fast, TEXT-ONLY,
+        # non-coding doer: action selection, tool loops, RAG, digestion, repo
+        # inspection/navigation — never code authoring or the final decision
+        # (roles.py's ROLE_RESPONSIBILITIES for `worker` is redefined to match
+        # in a sibling task, t4; this entry only changes the catalog).
+        #
+        # UNGATED checkpoint (no HF license wall). Verified against the
+        # checkpoint's ACTUAL config files, fetched 2026-08-20 — NOT card
+        # prose:
+        #   https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4/resolve/main/config.json
+        #     - architectures: ["NemotronHForCausalLM"], model_type
+        #       "nemotron_h" — a DIFFERENT engine-support family from the
+        #       outgoing Qwen3_5MoeForConditionalGeneration worker; nemotron_h
+        #       serving on this repo's pinned vLLM nightly is UNPROVEN until
+        #       the covering plan's t1/t2 spikes land (sm_110 SASS/PTX +
+        #       standalone serve probe).
+        #     - max_position_embeddings = 1048576 (1M native ceiling) — a
+        #       config-verified YaRN reach, not card-prose. `lobes switch`
+        #       clamps a machine default DOWN to this only if it is smaller;
+        #       nothing in this catalog or any shape allocates the full 1M by
+        #       default (that is a live-boot decision, see the plan's t2/t8).
+        #     - 52 hidden layers; hybrid Mamba-2 state-space + sparse-MoE +
+        #       selective-attention layers (128 routed experts, 1 shared
+        #       expert, 6 experts/token — ~3B active of 30B total, matching
+        #       the card's own "30B/3B active" framing).
+        #     - NO vision_config anywhere in the file — this checkpoint is
+        #       TEXT-ONLY, unlike the outgoing worker's ViT (image+video)
+        #       intake. `worker` therefore LOSES image_understanding/
+        #       video_understanding on this swap (roles.py t4 tracks the
+        #       responsibilities-vocabulary change).
+        #     - No mtp_num_hidden_layers / draft-head field and no
+        #       speculative-decoding field in config.json — so
+        #       speculative_config stays empty (the honest sentinel) even
+        #       though the model card separately advertises MTP/DSpark
+        #       support; that support is DECLARED by the card, UNMEASURED by
+        #       us (plan t2 evaluates MTP/DSpark separately from plain
+        #       decode).
+        #   https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4/resolve/main/hf_quant_config.json
+        #     - producer.name="modelopt" (version 0.44.0rc5); quant_algo
+        #       "MIXED_PRECISION": FP8 on attention/lm_head-style projections,
+        #       W4A16_NVFP4 (group_size=16) on the routed-expert up/down
+        #       projections; kv_cache_quant_algo="FP8". This is the SAME
+        #       nvidia-modelopt family as the muse 31B gear and the outgoing
+        #       27B MTP primary (`quantization="modelopt"`), NOT the
+        #       compressed-tensors format the outgoing worker used — do not
+        #       carry that forward.
+        #   Model card (fetched 2026-08-20, prose — cited separately from the
+        #   config facts above): license OpenMDW-1.1; the card's OWN example
+        #   vLLM serve command passes `--reasoning-parser nemotron_v3` (no
+        #   catalog field for this — it is a serve-time flag, tracked in the
+        #   covering plan/docs, not this dataclass) and
+        #   `--tool-call-parser qwen3_coder` — i.e. the publisher itself
+        #   asserts this checkpoint emits Qwen3-Coder-shaped tool calls
+        #   despite not being a Qwen model. That claim is UNVALIDATED on our
+        #   engine (this repo has been burned by silently-wrong parser pairs
+        #   before — see the gemma4 `pythonic` history in CLAUDE.md) until the
+        #   plan's t2 structured-tool_calls probe confirms it; carried here as
+        #   the best-cited default because the alternative (an empty
+        #   tool_parser) would fail this repo's own
+        #   test_tool_parser_matches_infer_parser invariant. The card also
+        #   suggests `--moe-backend marlin`, which is NOT carried here: the
+        #   outgoing worker's own sm_110 history (`moe_backend=""` below)
+        #   showed every forced NVFP4 MoE backend refused on this exact
+        #   hardware family, so a forced marlin pick would be an unverified
+        #   guess in the opposite direction from that lesson.
+        #
+        # STATUS (2026-08-20, deviation d1): VALIDATED live on the DGX Spark
+        # GB10 — NOT on the Thor the covering plan originally targeted. On the
+        # Spark (util 0.30, 65536 window, MTP off): weights 17.85 GiB, KV pool
+        # 3,560,789 tokens (54.33x at 65K), 75.1 tok/s single-stream, ~75 ms
+        # median streaming TTFT, structured tool_calls PASS through the
+        # nemotron_v3 + qwen3_coder parser pair (which validates the card's
+        # cross-family parser claim below). On the Thor (sm_110) it is a
+        # NO-GO: the engine wedges indefinitely in "Warming up Mamba2 SSD
+        # Triton kernels" on BOTH the fleet 8bd082 nightly and the upstream
+        # v0.27.1 release image (idle-CPU hang, not slow JIT) — so `worker`
+        # serves on the Spark and other boxes refer/proxy to it. Evidence:
+        # docs/evidence/2026-08-20-accept-worker-hand-spark.txt,
+        # docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. See
+        # docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md and
+        # docs/plans/2026-08-20-nemotron-lightning-worker.md.
+        role_hint="worker",
+        shape="hybrid Mamba-2 + sparse-MoE (~3B active per token, text-only)",
+        context="1M native (1,048,576 max_position_embeddings)",
+        native_max_model_len=1048576,
+        # VALIDATED live on the Spark 2026-08-20: structured tool_calls parse
+        # through nemotron_v3 (reasoning) + qwen3_coder (tools), nothing
+        # leaked into content. The card's cross-family parser claim held.
+        tool_parser="qwen3_coder",
+        quantization="modelopt",
+        # Spark GB10 2026-08-20: 75.1 tok/s, tools ✓; Thor sm_110 NO-GO
+        # (Mamba2 warmup wedge — see the STATUS comment above).
+        status="load-tested",
+        doc="nemotron-3.5-lightning-30b-a3b-nvfp4.md",
+        # moe_backend="" (auto-select), mirroring the outgoing worker's own
+        # hard-won sm_110 lesson (forced NVFP4 MoE backends were refused on
+        # this exact hardware family) rather than carrying the card's
+        # untested "marlin" suggestion forward.
+        moe_backend="",
+        # No speculative_config: config.json carries no MTP/draft-head field
+        # (see the long comment above) — the card's MTP/DSpark claim is
+        # declared, UNMEASURED, and evaluated separately by plan task t2.
         task="generate",
     ),
     SupportedModel(

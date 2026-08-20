@@ -1,0 +1,49 @@
+# Dual-cortex mesh — the Spark's fast MTP cortex returns; worker goes DORMANT mesh-wide
+#
+# Operator decision (2026-08-20, post-d1, in-session): the Thor's no-MTP cortex
+# is correct but slow (12.1 tok/s vs the Spark's MTP-assisted line), so BOTH
+# 128 GB boxes now serve a cortex — Thor local (1M, MTP off, unchanged from
+# 2026-08-20-accept-cortex-local-thor.txt) and the Spark restored to its
+# pre-d1 config (1M YaRN, MTP on, util 0.58). The Lightning worker lane on the
+# Spark came DOWN: `worker` is now dormant/unhosted mesh-wide, exactly like
+# muse — its catalog entry, evidence, and today's Spark validation all stand
+# (load-tested is a historical fact); no box declares a WORKER_PEER_ORIGIN, so
+# every gateway answers model=worker with an honest role_infeasible 404 and NO
+# referral. A parallelism/fallback scheme over the two cortexes is the
+# operator's stated follow-up PR. hand STAYS served on the Spark.
+#
+# Per-box changes:
+#   Spark: vllm-worker removed; PRIMARY_FEASIBLE=false + peer block dropped
+#          (serves locally again); COMPOSE_PROFILES=worker cleared;
+#          WORKER_FEASIBLE=false; gateway recreated.
+#   Thor:  WORKER_PEER_* removed (referral would point nowhere); gateway
+#          recreated; cortex lane untouched.
+#   Orin:  PRIMARY_PEER_ORIGIN repointed thor -> spark:8001 (the faster
+#          cortex); gateway recreated.
+
+## Acceptance — all four observables, live 2026-08-20
+
+Spark, local:
+  model=cortex -> unsloth/Qwen3.8-27B-NVFP4 | reply "SPARK-CORTEX-LOCAL-OK"
+
+Orin, by proxy:
+  model=cortex -> unsloth/Qwen3.8-27B-NVFP4 | reply "ORIN-VIA-SPARK-OK"
+  X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+
+Thor, local (unchanged):
+  model=cortex -> reply "THOR-STILL-OK"
+
+worker, BOTH gateways (Thor and Spark):
+  HTTP 404 {"type": "role_infeasible"} — no silent fallback, no dangling
+  referral.
+
+## Notes
+
+- The delivery summary's "worker serves on the Spark" claims describe the
+  state at PR-#190 authoring time earlier today; THIS transcript supersedes
+  the topology (the Lightning validation evidence is unaffected — the lane
+  can return whenever wanted, weights and config are one `COMPOSE_PROFILES`
+  flip away).
+- Thor's HAND referral to the Spark stays (hand still served there).
+- The repro branch for the Jetson AI Lab maintainers is unaffected:
+  repro/nemotron-lightning-thor-sm110.
