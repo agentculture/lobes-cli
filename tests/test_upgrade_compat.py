@@ -204,10 +204,14 @@ def test_init_over_old_single_scaffold_requires_apply(tmp_path) -> None:
     assert rc == 0
     after = _hash_tree(deploy)
     assert after["docker-compose.yml"] == before["docker-compose.yml"]
-    assert _ENV_KEY_RE.findall((deploy / ".env").read_text(encoding="utf-8")) >= []
     old_env = (FIXTURES / "single" / "env.example").read_text(encoding="utf-8")
     new_env = (deploy / ".env").read_text(encoding="utf-8")
     assert old_env in new_env, "merge appends; it never rewrites what was there"
+    # And the merge is additive in the direction that matters: no key the old
+    # scaffold declared may go missing.
+    old_keys = set(_ENV_KEY_RE.findall(old_env))
+    assert old_keys, "fixture env declares no keys — the assertion below would be vacuous"
+    assert old_keys <= set(_ENV_KEY_RE.findall(new_env))
 
 
 def test_init_over_old_fleet_scaffold_requires_apply(tmp_path, monkeypatch) -> None:

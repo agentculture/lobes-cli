@@ -225,6 +225,47 @@ def test_init_never_truncates_env_even_with_force(tmp_path) -> None:
     assert "EMBED_PEER_ORIGIN=http://peer:8000" in body
 
 
+def test_init_merge_retightens_env_permissions(tmp_path) -> None:
+    """A re-render re-hardens ``.env`` even though it no longer overwrites it.
+
+    Overwriting used to chmod 0600 as a side effect; merge-only must not
+    quietly drop that, or a deployment whose perms drifted stays world-readable
+    with an API key in it.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    env = target / ".env"
+    env.chmod(0o644)
+
+    assert main(["init", str(target), "--apply"]) == 0
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+
+def test_init_reapply_reports_env_and_not_the_skipped_plugin(tmp_path, capsys) -> None:
+    """The apply report names what CHANGED — no more, no less.
+
+    ``.env`` is always rewritten on the fleet path (shape/profile knobs,
+    LOBES_PROFILE, MODEL_GEAR_VERSION) so it must be listed; the tool-parser
+    plugin was skipped, so claiming it would be a lie.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    capsys.readouterr()
+
+    assert main(["init", str(target), "--apply", "--json"]) == 0
+    files = json.loads(capsys.readouterr().out)["files"]
+    assert _compose.ENV_FILE in files
+    assert _compose.PLUGIN_DEST_NAME not in files
+
+
+def test_write_plugin_file_returns_none_when_it_skips(tmp_path) -> None:
+    """The skip signal callers rely on to report honestly."""
+    target = tmp_path / "deploy"
+    assert _compose.write_plugin_file(target, force=False) is not None
+    assert _compose.write_plugin_file(target, force=False) is None
+    assert _compose.write_plugin_file(target, force=True) is not None
+
+
 def test_init_merge_appends_only_absent_keys(tmp_path) -> None:
     """Merging adds what is missing and never restates a key already set.
 

@@ -572,7 +572,9 @@ def _emit_apply(
         # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
         # Single source of truth: written fresh from the packaged
         # lobes.vllm_plugins module, not a lobes/templates/ copy.
-        written = written + [_compose.write_plugin_file(target, force=force)]
+        plugin = _compose.write_plugin_file(target, force=force)
+        if plugin is not None:
+            written = written + [plugin]
         # Render the resolved (shape, profile) pair's knobs into .env, the same
         # way any other env value gets written here (lobes.runtime._env.set_env)
         # — skipping keys the composition merely restates from the template
@@ -594,6 +596,14 @@ def _emit_apply(
         # deploy.resources stanza; every other card writes nothing and scrubs a
         # stale pair. This is what makes the fix survive a re-render.
         _sync_gpu_overrides(target, profile)
+        # The fleet path ALWAYS edits .env after the scaffold pass — the shape/
+        # profile knobs above, plus LOBES_PROFILE and MODEL_GEAR_VERSION. On a
+        # re-render `write_scaffold` returns it only when the merge appended a
+        # key, so without this the report would omit the one file that was
+        # certainly rewritten. Never claim less than what changed.
+        env_path = target / _compose.ENV_FILE
+        if env_path not in written:
+            written = written + [env_path]
     if audio:
         # Extend the fleet .env with the audio keys (NGC_API_KEY, ports, AUDIO_URL …).
         # Independent of --shape: --audio is the sole switch that SCAFFOLDS the

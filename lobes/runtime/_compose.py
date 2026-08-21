@@ -214,19 +214,21 @@ def plugin_plan(target: os.PathLike | str) -> tuple[str, bool]:
     return (PLUGIN_DEST_NAME, (Path(target) / PLUGIN_DEST_NAME).exists())
 
 
-def write_plugin_file(target: os.PathLike | str, *, force: bool) -> Path:
-    """Write the tool-parser plugin file into the deployment dir. Returns the path.
+def write_plugin_file(target: os.PathLike | str, *, force: bool) -> Path | None:
+    """Write the tool-parser plugin file into the deployment dir.
 
-    Mirrors :func:`write_scaffold`'s per-file exists/force contract: an existing
-    file is left alone unless ``force`` is set. Fleet-only — the caller
-    (``lobes init``) never invokes this for the legacy single-model scaffold.
-    Generated from packaged source, so skipping it costs nothing an operator
-    typed; ``--force`` refreshes it after a lobes upgrade.
+    Returns the path when the file was actually written, and ``None`` when an
+    existing one was left alone — so a caller reporting "what I wrote" cannot
+    name a file it merely skipped. Mirrors :func:`write_scaffold`'s per-file
+    exists/force contract. Fleet-only — the caller (``lobes init``) never
+    invokes this for the legacy single-model scaffold. Generated from packaged
+    source, so skipping it costs nothing an operator typed; ``--force``
+    refreshes it after a lobes upgrade.
     """
     dest_dir = Path(target).expanduser()
     dest = dest_dir / PLUGIN_DEST_NAME
     if dest.exists() and not force:
-        return dest
+        return None
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest.write_text(plugin_source(), encoding="utf-8")
     return dest
@@ -426,6 +428,41 @@ def merge_env_template(dest: Path, template_text: str) -> list[str]:
     return added
 
 
+def _harden_env_perms(dest: Path, dest_name: str) -> None:
+    """Keep ``.env`` owner-only — it may hold ``HF_TOKEN`` / ``GATEWAY_API_KEY``.
+
+    Applied on the MERGE path too, not just on a fresh write: overwriting used
+    to re-tighten permissions as a side effect, and merge-only must not quietly
+    drop that. Best-effort — chmod can fail on some filesystems (e.g. Windows).
+    """
+    if dest_name != ENV_FILE:
+        return
+    try:
+        dest.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _materialise_template(dest: Path, content: str, *, dest_name: str, force: bool) -> Path | None:
+    """Materialise ONE template file. Returns its path when the file CHANGED.
+
+    ``None`` means "left as it was" — either an existing non-merge file with no
+    ``force``, or a merge whose keys were all present already. Callers report
+    what they changed, so returning the path unconditionally would let ``init``
+    claim to have written files it skipped.
+    """
+    if dest.exists():
+        if dest_name in MERGE_ONLY_FILES:
+            appended = merge_env_template(dest, content)
+            _harden_env_perms(dest, dest_name)
+            return dest if appended else None
+        if not force:
+            return None
+    dest.write_text(content, encoding="utf-8")
+    _harden_env_perms(dest, dest_name)
+    return dest
+
+
 def write_scaffold(
     target: os.PathLike | str, *, force: bool, templates: dict[str, str] = SINGLE_TEMPLATES
 ) -> list[Path]:
@@ -452,24 +489,14 @@ def write_scaffold(
     dest_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for tname, dest_name in templates.items():
-        content = _read_template(template_root, tname)
-        dest = dest_dir / dest_name
-        if dest.exists():
-            if dest_name in MERGE_ONLY_FILES:
-                if merge_env_template(dest, content):
-                    written.append(dest)
-                continue
-            if not force:
-                continue
-        dest.write_text(content, encoding="utf-8")
-        # .env is meant to hold secrets (HF_TOKEN); keep it owner-only on shared
-        # hosts. Best-effort — chmod can fail on some filesystems (e.g. Windows).
-        if dest_name == ENV_FILE:
-            try:
-                dest.chmod(0o600)
-            except OSError:
-                pass
-        written.append(dest)
+        changed = _materialise_template(
+            dest_dir / dest_name,
+            _read_template(template_root, tname),
+            dest_name=dest_name,
+            force=force,
+        )
+        if changed is not None:
+            written.append(changed)
     return written
 
 
