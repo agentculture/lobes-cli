@@ -196,13 +196,22 @@ def test_init_over_old_single_scaffold_requires_apply(tmp_path) -> None:
     assert rc == 0
     assert _hash_tree(deploy) == before
 
-    # --apply without --force: init's documented behaviour is to REFUSE an
-    # existing file (lobes/runtime/_compose.py write_scaffold), not overwrite
-    # it — and it checks EVERY dest file before writing ANY, so a refusal
-    # never leaves a half-rewritten scaffold.
+    # --apply without --force: init SKIPS every existing template rather than
+    # refusing outright (lobes/runtime/_compose.py write_scaffold), so the old
+    # scaffold's compose survives byte-for-byte. `.env` is merge-only, so it may
+    # GAIN keys the newer template introduced — never lose or rewrite one.
     rc = main(["init", str(deploy), "--single", "--apply"])
-    assert rc == 1  # EXIT_USER_ERROR — "already exists ... --force to overwrite"
-    assert _hash_tree(deploy) == before, "a refused --apply must not write anything"
+    assert rc == 0
+    after = _hash_tree(deploy)
+    assert after["docker-compose.yml"] == before["docker-compose.yml"]
+    old_env = (FIXTURES / "single" / "env.example").read_text(encoding="utf-8")
+    new_env = (deploy / ".env").read_text(encoding="utf-8")
+    assert old_env in new_env, "merge appends; it never rewrites what was there"
+    # And the merge is additive in the direction that matters: no key the old
+    # scaffold declared may go missing.
+    old_keys = set(_ENV_KEY_RE.findall(old_env))
+    assert old_keys, "fixture env declares no keys — the assertion below would be vacuous"
+    assert old_keys <= set(_ENV_KEY_RE.findall(new_env))
 
 
 def test_init_over_old_fleet_scaffold_requires_apply(tmp_path, monkeypatch) -> None:
@@ -216,8 +225,18 @@ def test_init_over_old_fleet_scaffold_requires_apply(tmp_path, monkeypatch) -> N
     assert _hash_tree(deploy) == before
 
     rc = main(["init", str(deploy), "--apply"])
-    assert rc == 1
-    assert _hash_tree(deploy) == before, "a refused --apply must not write anything"
+    assert rc == 0
+    after = _hash_tree(deploy)
+    assert after["docker-compose.yml"] == before["docker-compose.yml"]
+    # The fleet path DOES re-render the resolved profile/shape knobs into .env
+    # (that is the point of `init --shape`), so the old body is not a verbatim
+    # substring here. What must hold is that no key DISAPPEARS: a re-render
+    # retunes what the profile owns and leaves everything else standing.
+    old_keys = set(
+        _ENV_KEY_RE.findall((FIXTURES / "fleet" / "env.example").read_text(encoding="utf-8"))
+    )
+    new_keys = set(_ENV_KEY_RE.findall((deploy / ".env").read_text(encoding="utf-8")))
+    assert old_keys <= new_keys, f"re-render dropped env key(s): {sorted(old_keys - new_keys)}"
 
 
 def test_init_over_old_scaffold_force_apply_is_the_only_write_path(tmp_path, monkeypatch) -> None:

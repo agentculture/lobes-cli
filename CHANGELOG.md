@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.0] - 2026-08-21
+
+### Added
+
+- `_compose.MERGE_ONLY_FILES`, `scaffold_action()`, `env_keys()` and `merge_env_template()` — the merge-only machinery, with `MERGE_ONLY_FILES` naming the invariant so a symmetry-minded refactor has to delete a constant to break it.
+
+### Changed
+
+- `lobes init --apply` no longer aborts when a deployment is already scaffolded: existing template files are SKIPPED instead. Refusing outright was what pushed operators toward `--force`, and `--force` is the flag that used to destroy `.env` — the guard against a small accident was manufacturing a much larger one. A shape/profile re-render (`lobes init --shape spark-lobe --apply`) is now a safe, routine operation on a live box.
+- `lobes init`'s dry run now names the exact per-file action — `create` / `merge` / `overwrite` / `skip` — in both the human plan and `--json` (new `action` key per file), instead of the blanket, now-false "needs --force to overwrite" note.
+- `--force` help text states what it does and does not touch: it overwrites compose/Dockerfiles/plugin, never `.env`.
+
+### Fixed
+
+- `lobes init --apply --force` no longer TRUNCATES an existing `.env`. It is now merge-only always: missing template keys are appended, every existing line is left untouched. Previously `write_scaffold` rewrote every template including `.env`, destroying operator-typed state no template can regenerate — `GATEWAY_API_KEY`, every `*_PEER_ORIGIN`/`*_PEER_PROXY`/`*_PEER_API_KEY`, the per-role `*_FEASIBLE` declarations, `COMPOSE_PROFILES` and `HF_TOKEN`. Reproduced on a live DGX Spark deployment: 89 env keys in, 72 out, with the senses->Orin proxy, the embed->Thor proxy and the inbound auth gate all silently un-wired. This is what reverted that box's cortex from its 1M YaRN window to the card-profile 128K default on 2026-08-20, and the same trap was recorded a month earlier (eidetic `lobes-init-apply-is-not-a-repair-path`, 2026-07-17). Reset `.env` deliberately by deleting it first.
+- `write_plugin_file` mirrors the same contract: an existing tool-parser plugin file is left alone without `--force` rather than aborting the command, and returns `None` when it skips so callers cannot report a file they did not write.
+- `.env` permissions are re-hardened to 0600 on the MERGE path too. Overwriting used to chmod as a side effect; merge-only would otherwise have left a drifted, world-readable `.env` — with an API key in it — untightened.
+- `lobes init --apply` reports what actually changed: `.env` is always listed on the fleet path (it is always rewritten with the shape/profile knobs, `LOBES_PROFILE` and `MODEL_GEAR_VERSION`), and a skipped tool-parser plugin is no longer listed as written.
+
 ## [0.58.0] - 2026-08-20
 
 ### Added

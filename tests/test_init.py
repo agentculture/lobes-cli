@@ -185,11 +185,105 @@ def test_init_single_apply_json(tmp_path, capsys) -> None:
     assert "Dockerfile.gateway" not in payload["files"]
 
 
-def test_init_refuses_overwrite_without_force(tmp_path) -> None:
+def test_init_reapply_without_force_skips_existing(tmp_path) -> None:
+    """A re-``--apply`` is no longer an error: existing templates are SKIPPED.
+
+    Refusing outright is what pushed operators to ``--force``, and ``--force``
+    is the flag that used to truncate ``.env``. Skipping lets a shape/profile
+    re-render happen without ever reaching for the destructive flag.
+    """
     target = tmp_path / "deploy"
     assert main(["init", str(target), "--apply"]) == 0
-    rc = main(["init", str(target), "--apply"])
-    assert rc == 1  # exists; needs --force
+    compose = target / "docker-compose.yml"
+    compose.write_text("# operator hand-edit\n", encoding="utf-8")
+
+    assert main(["init", str(target), "--apply"]) == 0
+    assert compose.read_text(encoding="utf-8") == "# operator hand-edit\n"
+
+
+def test_init_never_truncates_env_even_with_force(tmp_path) -> None:
+    """``.env`` is merge-only ALWAYS — the one file holding operator-typed state.
+
+    Regression guard for the trap that silently un-wired a live fleet: the
+    gateway credential and the peer/feasibility wiring are unrecoverable once
+    overwritten, so ``--force`` must refresh the templates around them without
+    touching them.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    env = target / ".env"
+    env.write_text(
+        env.read_text(encoding="utf-8")
+        + "\nGATEWAY_API_KEY=operator-secret\nEMBED_PEER_ORIGIN=http://peer:8000\n",
+        encoding="utf-8",
+    )
+
+    assert main(["init", str(target), "--apply", "--force"]) == 0
+
+    body = env.read_text(encoding="utf-8")
+    assert "GATEWAY_API_KEY=operator-secret" in body
+    assert "EMBED_PEER_ORIGIN=http://peer:8000" in body
+
+
+def test_init_merge_retightens_env_permissions(tmp_path) -> None:
+    """A re-render re-hardens ``.env`` even though it no longer overwrites it.
+
+    Overwriting used to chmod 0600 as a side effect; merge-only must not
+    quietly drop that, or a deployment whose perms drifted stays world-readable
+    with an API key in it.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    env = target / ".env"
+    env.chmod(0o644)
+
+    assert main(["init", str(target), "--apply"]) == 0
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+
+def test_init_reapply_reports_env_and_not_the_skipped_plugin(tmp_path, capsys) -> None:
+    """The apply report names what CHANGED — no more, no less.
+
+    ``.env`` is always rewritten on the fleet path (shape/profile knobs,
+    LOBES_PROFILE, MODEL_GEAR_VERSION) so it must be listed; the tool-parser
+    plugin was skipped, so claiming it would be a lie.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    capsys.readouterr()
+
+    assert main(["init", str(target), "--apply", "--json"]) == 0
+    files = json.loads(capsys.readouterr().out)["files"]
+    assert _compose.ENV_FILE in files
+    assert _compose.PLUGIN_DEST_NAME not in files
+
+
+def test_write_plugin_file_returns_none_when_it_skips(tmp_path) -> None:
+    """The skip signal callers rely on to report honestly."""
+    target = tmp_path / "deploy"
+    assert _compose.write_plugin_file(target, force=False) is not None
+    assert _compose.write_plugin_file(target, force=False) is None
+    assert _compose.write_plugin_file(target, force=True) is not None
+
+
+def test_init_merge_appends_only_absent_keys(tmp_path) -> None:
+    """Merging adds what is missing and never restates a key already set.
+
+    ``docker compose`` env_file semantics let the LAST duplicate of a key win,
+    so re-appending one an operator already tuned would silently override it.
+    """
+    target = tmp_path / "deploy"
+    assert main(["init", str(target), "--apply"]) == 0
+    env = target / ".env"
+    keys = _compose.env_keys(env.read_text(encoding="utf-8"))
+    a_key = sorted(keys)[0]
+    env.write_text("\n".join(f"{k}=operator-value" for k in sorted(keys)) + "\n", encoding="utf-8")
+
+    assert main(["init", str(target), "--apply"]) == 0
+
+    body = env.read_text(encoding="utf-8")
+    assert body.count(f"{a_key}=") == 1, "an already-set key must not be re-appended"
+    assert f"{a_key}=operator-value" in body
 
 
 def test_init_force_overwrites(tmp_path) -> None:

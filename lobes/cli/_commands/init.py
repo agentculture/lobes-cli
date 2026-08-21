@@ -432,6 +432,7 @@ def _dry_run_payload(
     card,
     profile_name: str | None,
     shape: Shape | None,
+    force: bool = False,
 ) -> dict:
     """The ``--json`` shape of a dry run: what ``--apply`` would write."""
     payload = {
@@ -440,13 +441,38 @@ def _dry_run_payload(
         "single": not fleet,
         "audio": audio,
         "target": str(target),
-        "files": [{"name": name, "exists": exists} for name, exists in plan],
+        "files": [
+            {
+                "name": name,
+                "exists": exists,
+                "action": _compose.scaffold_action(target, name, force=force),
+            }
+            for name, exists in plan
+        ],
     }
     if fleet:
         payload.update(_profile_plan_dict(profile, card, profile_name, shape))
         payload["shape_override"] = _shape_override_plan(target, shape)
         payload["gpu_override"] = _gpu_override_plan(target, profile)
     return payload
+
+
+_SCAFFOLD_NOTES = {
+    "create": "",
+    "merge": " (exists; MERGED — missing keys appended, existing lines untouched)",
+    "overwrite": " (exists; would be OVERWRITTEN by --force)",
+    "skip": " (exists; left as-is — pass --force to overwrite)",
+}
+
+
+def _scaffold_note(target: Path, name: str, force: bool) -> str:
+    """The dry-run suffix naming what ``--apply`` would do to one scaffolded file.
+
+    A plan that says "needs --force" about ``.env`` would now be a lie twice
+    over: ``.env`` is never overwritten (merge-only), and the other files no
+    longer abort the command when they exist.
+    """
+    return _SCAFFOLD_NOTES[_compose.scaffold_action(target, name, force=force)]
 
 
 def _dry_run_scope(fleet: bool, audio: bool) -> str:
@@ -466,6 +492,7 @@ def _dry_run_lines(
     card,
     profile_name: str | None,
     shape: Shape | None,
+    force: bool = False,
 ) -> list[str]:
     """The human-readable dry-run plan, one line per thing ``--apply`` would do.
 
@@ -475,9 +502,8 @@ def _dry_run_lines(
     like a working one).
     """
     lines = [f"DRY RUN — would scaffold {_dry_run_scope(fleet, audio)}into {target}:"]
-    for name, exists in plan:
-        note = " (exists; needs --force to overwrite)" if exists else ""
-        lines.append(f"  {name}{note}")
+    for name, _exists in plan:
+        lines.append(f"  {name}{_scaffold_note(target, name, force)}")
     if audio:
         lines.append("  .env (+ audio keys appended)")
     if fleet:
@@ -499,6 +525,7 @@ def _emit_dry_run(
     json_mode: bool,
     profile_name: str | None,
     shape: Shape | None,
+    force: bool = False,
 ) -> None:
     plan = _compose.scaffold_plan(target, _templates(fleet, audio))
     profile = card = None
@@ -512,11 +539,11 @@ def _emit_dry_run(
         plan = plan + [_compose.plugin_plan(target)]
     if json_mode:
         emit_result(
-            _dry_run_payload(target, fleet, audio, plan, profile, card, profile_name, shape),
+            _dry_run_payload(target, fleet, audio, plan, profile, card, profile_name, shape, force),
             json_mode=True,
         )
         return
-    lines = _dry_run_lines(target, fleet, audio, plan, profile, card, profile_name, shape)
+    lines = _dry_run_lines(target, fleet, audio, plan, profile, card, profile_name, shape, force)
     emit_result("\n".join(lines), json_mode=False)
 
 
@@ -545,7 +572,9 @@ def _emit_apply(
         # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
         # Single source of truth: written fresh from the packaged
         # lobes.vllm_plugins module, not a lobes/templates/ copy.
-        written = written + [_compose.write_plugin_file(target, force=force)]
+        plugin = _compose.write_plugin_file(target, force=force)
+        if plugin is not None:
+            written = written + [plugin]
         # Render the resolved (shape, profile) pair's knobs into .env, the same
         # way any other env value gets written here (lobes.runtime._env.set_env)
         # — skipping keys the composition merely restates from the template
@@ -567,6 +596,14 @@ def _emit_apply(
         # deploy.resources stanza; every other card writes nothing and scrubs a
         # stale pair. This is what makes the fix survive a re-render.
         _sync_gpu_overrides(target, profile)
+        # The fleet path ALWAYS edits .env after the scaffold pass — the shape/
+        # profile knobs above, plus LOBES_PROFILE and MODEL_GEAR_VERSION. On a
+        # re-render `write_scaffold` returns it only when the merge appended a
+        # key, so without this the report would omit the one file that was
+        # certainly rewritten. Never claim less than what changed.
+        env_path = target / _compose.ENV_FILE
+        if env_path not in written:
+            written = written + [env_path]
     if audio:
         # Extend the fleet .env with the audio keys (NGC_API_KEY, ports, AUDIO_URL …).
         # Independent of --shape: --audio is the sole switch that SCAFFOLDS the
@@ -661,7 +698,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if args.apply:
         _emit_apply(target, fleet, audio, args.force, json_mode, profile_name, shape)
     else:
-        _emit_dry_run(target, fleet, audio, json_mode, profile_name, shape)
+        _emit_dry_run(target, fleet, audio, json_mode, profile_name, shape, args.force)
     return 0
 
 
@@ -737,7 +774,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         "— incompatible with --single. An unknown value is a user error "
         "naming the valid shapes.",
     )
-    p.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing template files (compose, Dockerfiles, plugin). "
+        "NEVER overwrites .env: that file is merge-only always — missing keys "
+        "are appended, existing lines are left untouched. Without --force an "
+        "existing file is skipped, not an error.",
+    )
     p.add_argument("--apply", action="store_true", help="Actually write the files.")
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_init)
