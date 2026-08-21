@@ -217,18 +217,16 @@ def plugin_plan(target: os.PathLike | str) -> tuple[str, bool]:
 def write_plugin_file(target: os.PathLike | str, *, force: bool) -> Path:
     """Write the tool-parser plugin file into the deployment dir. Returns the path.
 
-    Mirrors :func:`write_scaffold`'s per-file exists/force contract: refuses to
-    overwrite an existing file unless ``force`` is set. Fleet-only — the caller
+    Mirrors :func:`write_scaffold`'s per-file exists/force contract: an existing
+    file is left alone unless ``force`` is set. Fleet-only — the caller
     (``lobes init``) never invokes this for the legacy single-model scaffold.
+    Generated from packaged source, so skipping it costs nothing an operator
+    typed; ``--force`` refreshes it after a lobes upgrade.
     """
     dest_dir = Path(target).expanduser()
     dest = dest_dir / PLUGIN_DEST_NAME
     if dest.exists() and not force:
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message=f"{dest} already exists",
-            remediation="re-run with --force to overwrite",
-        )
+        return dest
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest.write_text(plugin_source(), encoding="utf-8")
     return dest
@@ -346,6 +344,16 @@ def _read_template(template_root, name: str) -> str:
     return node.read_text(encoding="utf-8")
 
 
+#: Scaffolded files that a re-scaffold must NEVER truncate, because they hold
+#: operator-typed state no template can regenerate: the inbound credential
+#: (``GATEWAY_API_KEY``), every peer wiring knob (``*_PEER_ORIGIN`` /
+#: ``*_PEER_PROXY`` / ``*_PEER_API_KEY``), the per-role ``*_FEASIBLE``
+#: declarations, and ``HF_TOKEN``. Overwriting ``.env`` silently un-wires a
+#: running fleet — a dropped role stops referring to its peer, a proxied lane
+#: goes dark, and an armed auth gate falls open. See :func:`write_scaffold`.
+MERGE_ONLY_FILES: frozenset[str] = frozenset({ENV_FILE})
+
+
 def scaffold_plan(
     target: Path, templates: dict[str, str] = SINGLE_TEMPLATES
 ) -> list[tuple[str, bool]]:
@@ -353,30 +361,106 @@ def scaffold_plan(
     return [(dest, (target / dest).exists()) for dest in templates.values()]
 
 
+def scaffold_action(target: os.PathLike | str, dest_name: str, *, force: bool) -> str:
+    """What ``write_scaffold`` would do to ``dest_name``: the honest dry-run verb.
+
+    ``create`` (absent), ``merge`` (an existing :data:`MERGE_ONLY_FILES` entry —
+    missing keys appended, existing lines untouched), ``overwrite`` (exists and
+    ``force``), or ``skip`` (exists, no ``force``).
+    """
+    if not (Path(target).expanduser() / dest_name).exists():
+        return "create"
+    if dest_name in MERGE_ONLY_FILES:
+        return "merge"
+    return "overwrite" if force else "skip"
+
+
+def _env_line_key(line: str) -> str | None:
+    """The ``KEY`` of an ACTIVE ``KEY=VALUE`` env line, or ``None``.
+
+    Commented-out template defaults (``# VLLM_MINOR_GPU_MEM_UTIL=0.10``) are
+    deliberately not keys: they document an opt-in knob rather than set one, so
+    merging must not activate them behind the operator's back.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    name, sep, _ = stripped.partition("=")
+    name = name.strip()
+    return name if sep and name else None
+
+
+def env_keys(text: str) -> set[str]:
+    """Every active ``KEY`` set in a ``.env`` / ``env.example`` body."""
+    return {key for key in (_env_line_key(line) for line in text.splitlines()) if key}
+
+
+def merge_env_template(dest: Path, template_text: str) -> list[str]:
+    """Append template keys ABSENT from an existing ``.env``. Returns those keys.
+
+    Never rewrites or reorders an existing line — the file's current values,
+    comments and ordering all survive verbatim; new keys land in one appended,
+    labelled block. Appending only ABSENT keys is what makes this safe under
+    ``docker compose`` ``env_file`` semantics, where the LAST duplicate of a key
+    wins: a re-appended ``HF_CACHE=`` would silently clobber a real value.
+    """
+    existing = env_keys(dest.read_text(encoding="utf-8"))
+    added: list[str] = []
+    lines: list[str] = []
+    for line in template_text.splitlines():
+        key = _env_line_key(line)
+        if key and key not in existing:
+            added.append(key)
+            lines.append(line)
+    if not added:
+        return []
+    block = [
+        "",
+        "# --- appended by `lobes init`: template keys this .env did not set ---",
+        "# Existing lines above were left untouched (init never rewrites them).",
+        *lines,
+        "",
+    ]
+    with dest.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(block))
+    return added
+
+
 def write_scaffold(
     target: os.PathLike | str, *, force: bool, templates: dict[str, str] = SINGLE_TEMPLATES
 ) -> list[Path]:
-    """Copy the packaged templates into ``target``. Returns written paths.
+    """Copy the packaged templates into ``target``. Returns the paths it changed.
 
-    Refuses to overwrite an existing file unless ``force`` is set. ``templates``
-    selects the template set (single-model by default, ``FLEET_TEMPLATES`` for
-    the gateway deployment).
+    ``templates`` selects the template set (single-model by default,
+    ``FLEET_TEMPLATES`` for the gateway deployment). Two rules govern an
+    ALREADY-SCAFFOLDED directory, both chosen so re-rendering a LIVE deployment
+    cannot destroy operator state:
+
+    * :data:`MERGE_ONLY_FILES` (``.env``) is **merge-only, always** — with or
+      without ``force``. Every existing line survives verbatim; only template
+      keys the file lacks are appended (:func:`merge_env_template`). This file
+      holds values no template can regenerate, so truncating it silently
+      un-wires a running fleet. Reset it deliberately by deleting it first.
+    * Every OTHER template is **skipped when it already exists** unless
+      ``force`` is set — it no longer aborts the whole command. Refusing
+      outright is what pushed operators toward ``--force``, and ``--force`` is
+      exactly the flag that used to eat ``.env``: the guard against a small
+      accident was manufacturing a much larger one.
     """
     dest_dir = Path(target).expanduser()
     template_root = files("lobes.templates")
-    written: list[Path] = []
-    for tname, dest_name in templates.items():
-        dest = dest_dir / dest_name
-        if dest.exists() and not force:
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=f"{dest} already exists",
-                remediation="re-run with --force to overwrite",
-            )
     dest_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
     for tname, dest_name in templates.items():
         content = _read_template(template_root, tname)
         dest = dest_dir / dest_name
+        if dest.exists():
+            if dest_name in MERGE_ONLY_FILES:
+                if merge_env_template(dest, content):
+                    written.append(dest)
+                continue
+            if not force:
+                continue
         dest.write_text(content, encoding="utf-8")
         # .env is meant to hold secrets (HF_TOKEN); keep it owner-only on shared
         # hosts. Best-effort — chmod can fail on some filesystems (e.g. Windows).
