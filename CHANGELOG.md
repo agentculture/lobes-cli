@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.1] - 2026-08-21
+
+### Added
+
+- docs/evidence/2026-08-21-measure-reasoning-effort-cortex-spark.txt — a read-only COST measurement of the Qwen3.8 cortex reasoning_effort knob on the Spark (4 prompts x low/medium/xhigh/thinking-off, temperature=0, n=1 per cell).
+- docs/qwen3.8-27b-nvfp4.md: a Reasoning effort section recording that the checkpoint template defaults to xhigh, that high is an alias for xhigh, and that the mechanism is an injected sentence rather than a token budget.
+- docs/openai-api.md: a caller-facing Controlling the thinking trace subsection covering enable_thinking vs reasoning_effort, the 400 on an unrecognised value, the per-key merge over the server default, and the message.reasoning / reasoning_tokens response fields.
+
+### Changed
+
+- Documented that lobes sets reasoning_effort nowhere, so every cortex request runs at the template default xhigh. No default was changed: the measurement found lower effort is not monotonically cheaper (2 of 4 prompts cost more) and degrades instruction-following, while enable_thinking:false cut 75% of completion tokens against low s 24%.
+
 ## [0.58.0] - 2026-08-20
 
 ### Added

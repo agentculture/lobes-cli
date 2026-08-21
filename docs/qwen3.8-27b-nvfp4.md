@@ -84,6 +84,58 @@ failure** (a prompt whose thinking exhausts the token budget in both configs).
 Zero measurable cost on this set; it is a small set — a broader eval remains
 open.
 
+## Reasoning effort — the default is `xhigh`, and lobes never sets it
+
+The checkpoint's own `chat_template.jinja` (lines 57-71) implements a
+`reasoning_effort` chat-template kwarg. **lobes sets it nowhere** — no env var,
+no profile TOML, no compose line references it — so every cortex request runs at
+the template's own default, **`xhigh`**, the most expensive rung. `high` is an
+**alias for `xhigh`**; the real ladder is `low` / `medium` / `xhigh` and an
+unrecognised value is refused with a 400 carrying the template's own
+`raise_exception` text.
+
+The mechanism is **one injected system sentence, not a token budget** — it steers
+verbosity and bounds nothing (only `max_tokens` bounds anything). `medium`
+injects no sentence at all: it is the un-nudged baseline. Measured cost of the
+sentence itself: `xhigh` 42 prompt tokens, `low` 30, `medium` 0.
+
+**MEASURED 2026-08-21** on the Spark's local cortex —
+`docs/evidence/2026-08-21-measure-reasoning-effort-cortex-spark.txt`. Headline
+numbers, 4 prompts x 3 rungs, n=1, `temperature=0`:
+
+| config | thinking tokens | vs `xhigh` |
+|---|---:|---:|
+| `xhigh` (default) | 7136 | — |
+| `medium` | 5441 | −23.8% |
+| `low` | 5058 | −29.1% |
+| `enable_thinking: false` | **0** (1794 total) | **−75% total** |
+
+Three findings that matter to callers, all in that transcript:
+
+- **The aggregate saving is not monotonic.** Lowering effort made 2 of 4 prompts
+  *more* expensive (`medium` used +75% thinking tokens on an arithmetic prompt;
+  both lower rungs cost ~2.2x `xhigh` on a one-word classification). The −29%
+  aggregate is carried almost entirely by one open-ended judgement prompt.
+- **Instruction-following degraded at lower effort.** Asked to answer with just a
+  letter and a number, `xhigh` returned 6 answer tokens; `medium`/`low` returned
+  319/192 tokens of tables. Lower effort is worse for a caller that *parses*.
+- **For shallow calls, turn thinking OFF rather than down** — `enable_thinking:
+  false` (already the pattern at `lobes/cli/_commands/route.py:60` and
+  `lobes/realtime/_turn.py:143`) cut 75% against `low`'s 24%, and scored 4/4 on
+  the same prompts.
+
+So the fleet default stays `xhigh` (`lobes/templates/fleet/docker-compose.yml`),
+and `low`/`medium` are a **per-call-site** choice for open-ended judgement, not a
+default to change. A per-request `chat_template_kwargs` merges **per key** over
+`--default-chat-template-kwargs`, so sending only `reasoning_effort` leaves the
+issue #93 `preserve_thinking: true` intact.
+
+> Scope (#108): that transcript measures **token cost and single-answer
+> agreement**, not quality. `enable_thinking:false` matching `xhigh` 4/4 most
+> likely means the prompts were too easy to discriminate, not that thinking is
+> free to drop. Effort x tool-calling, x strict/xgrammar, and x depth in the 1M
+> window are all unmeasured.
+
 ## Known limits
 
 - 1.21× KV ceiling at 1M: one full-depth request effectively owns the lane
