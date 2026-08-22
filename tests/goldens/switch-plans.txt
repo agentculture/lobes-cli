@@ -316,3 +316,17 @@
   msg: gpu-mem-util (embed/score default): 0.06
   note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
   note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-rerank service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=classify\n      - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
+  VLLM_MODEL=unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
+  VLLM_SERVED_NAME=unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  msg: tool-call parser: skipped (llama.cpp gear — no vLLM --tool-call-parser on this engine)
+  msg: quantization: skipped (llama.cpp gear — quantization is baked into the checkpoint file, not a serve flag)
+  note: llama.cpp-served gear — `lobes switch` configures the vLLM lane (llama.cpp takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/qwen3.8-27b-gguf-llamacpp.md.

@@ -30,11 +30,16 @@ import argparse
 import socket
 
 from lobes import profiles
-from lobes.catalog import mtp_compose_command_items, supported_models
+from lobes.catalog import mtp_compose_command_items, serves_with_vllm, supported_models
 from lobes.cli import _runtime_ops
 from lobes.cli._commands.whoami import _gpu_name
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env, _health, _parser
+
+
+def _catalogued(model_id: str):
+    """The catalog entry for ``model_id``, or ``None`` when uncatalogued."""
+    return next((m for m in supported_models() if m.id == model_id), None)
 
 
 def _select_parser(args: argparse.Namespace) -> tuple[str | None, str]:
@@ -43,9 +48,24 @@ def _select_parser(args: argparse.Namespace) -> tuple[str | None, str]:
     An explicit ``--tool-call-parser`` wins; otherwise infer one from the model
     name. ``None`` means "unknown model" — leave the existing
     ``VLLM_TOOL_CALL_PARSER`` untouched (override it explicitly when needed).
+
+    A catalogued **non-vLLM** gear short-circuits before the inference:
+    ``infer_parser`` answers from the model NAME, so a llama.cpp-served GGUF of a
+    Qwen3.8 checkpoint would otherwise be auto-assigned ``qwen3_coder`` — a vLLM
+    flag ``llama-server`` does not have (it uses ``--jinja`` + the model's own
+    embedded chat template instead). Silently writing it would be the exact
+    failure the engine axis exists to prevent. An explicit
+    ``--tool-call-parser`` still wins, because that is the operator overriding on
+    purpose rather than the tool guessing.
     """
     if args.tool_call_parser:
         return args.tool_call_parser, f"tool-call parser (explicit): {args.tool_call_parser}"
+    catalogued = _catalogued(args.model)
+    if catalogued is not None and not serves_with_vllm(catalogued):
+        return None, (
+            f"tool-call parser: skipped ({catalogued.engine} gear — no vLLM "
+            "--tool-call-parser on this engine)"
+        )
     inferred = _parser.infer_parser(args.model)
     if inferred:
         return inferred, f"tool-call parser (auto-selected): {inferred}"
@@ -72,6 +92,14 @@ def _select_quantization(args: argparse.Namespace) -> tuple[str | None, str]:
         if args.quantization == _UNQUANTIZED:
             return None, "quantization: none (bf16/unquantized; --quantization omitted)"
         return args.quantization, f"quantization (explicit): {args.quantization}"
+    catalogued = _catalogued(args.model)
+    if catalogued is not None and not serves_with_vllm(catalogued):
+        # A GGUF file carries its quantization inside the file — there is no flag
+        # to write, and the catalog entry leaves the field empty on purpose.
+        return None, (
+            f"quantization: skipped ({catalogued.engine} gear — quantization is "
+            "baked into the checkpoint file, not a serve flag)"
+        )
     for model in supported_models():
         if model.id == args.model:
             if model.quantization == _UNQUANTIZED:
@@ -216,6 +244,29 @@ _BF16_NONE_NOTICE = (
 )
 
 
+def _engine_notice(model) -> str | None:
+    """Non-vLLM gear: ``lobes switch`` configures the vLLM lane, which cannot serve it.
+
+    ``switch`` writes ``VLLM_*`` keys and restarts the vLLM container. A gear
+    declaring another engine (today: llama.cpp, for the GGUF cortex — see
+    ``lobes/catalog.py``'s ``ENGINE_LLAMA_CPP`` entry) is served by a DIFFERENT
+    lane entirely, wired from the profile/shape data, not from these keys. Say so
+    instead of pretending the switch took: because this is a notice, ``--apply``
+    writes ``.env`` and deliberately does NOT restart the container
+    (:func:`_apply_env_only`), so a healthy deployment is never taken down by a
+    switch that could not have worked.
+    """
+    if serves_with_vllm(model):
+        return None
+    return (
+        f"{model.engine}-served gear — `lobes switch` configures the vLLM lane "
+        f"({model.engine} takes none of these flags: no --tool-call-parser, no "
+        "--reasoning-parser, no --quantization). Serve it from its own lane "
+        "instead (rendered from the machine profile + deployment shape); see "
+        f"docs/{model.doc}."
+    )
+
+
 def _serve_notices(model_id: str, args: argparse.Namespace | None = None) -> list[str]:
     """Reminders for compose ``command:`` edits a switch implies.
 
@@ -224,9 +275,18 @@ def _serve_notices(model_id: str, args: argparse.Namespace | None = None) -> lis
     removal fires on the **effective** quantization choice — a catalogued
     ``quantization="none"`` gear *or* an explicit ``--quantization none`` (even
     for an uncatalogued model), matching ``_select_quantization``'s contract.
+
+    A catalogued **non-vLLM** gear short-circuits to :func:`_engine_notice` alone
+    — every other notice here is an edit to the vLLM compose template, which does
+    not serve that gear at all.
     """
-    model = next((m for m in supported_models() if m.id == model_id), None)
+    model = _catalogued(model_id)
     candidates: list[str | None] = []
+    if model is not None and not serves_with_vllm(model):
+        # A non-vLLM gear gets its OWN notice and none of the vLLM-template ones:
+        # "remove the MTP command items" / "add --moe-backend" are edits to a
+        # compose file that does not serve this gear at all.
+        return [notice for notice in [_engine_notice(model)] if notice]
     if model is not None:
         candidates += [
             _mtp_removal_notice(model),

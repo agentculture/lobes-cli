@@ -33,6 +33,33 @@ _CONTEXT_256K_NATIVE = "256K native"
 _MTP_SELF_HOSTED_N2 = '{"method": "mtp", "num_speculative_tokens": 2}'
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
+# ---------------------------------------------------------------------------
+# The ENGINE axis — which inference server serves a gear
+# ---------------------------------------------------------------------------
+# Every gear in this catalog was, until 2026-08-23, served by vLLM, and the
+# dataclass below is shaped accordingly: ``id`` doubles as the vLLM
+# ``--served-model-name``, ``tool_parser`` IS the vLLM ``--tool-call-parser``,
+# and ``moe_backend`` / ``speculative_config`` / ``hf_overrides`` are literal
+# vLLM serve flags. A GGUF checkpoint served by **llama.cpp** has none of
+# those surfaces: ``llama-server`` takes no ``--tool-call-parser`` and no
+# ``--reasoning-parser`` (it uses ``--jinja`` plus the model's own embedded
+# chat template, with ``--reasoning-format auto`` / ``--chat-template-kwargs``
+# doing the auto-detection), and its quantization is baked into the ``.gguf``
+# file rather than passed as a flag.
+#
+# So the engine is declared, not assumed. ``engine`` DEFAULTS to
+# :data:`ENGINE_VLLM`, which is why every pre-existing entry below is
+# untouched by this axis and renders byte-identically (pinned by
+# ``tests/goldens/switch-plans.txt``). A non-vLLM gear declares its engine and
+# is thereby exempted from the vLLM-only fields — see
+# :func:`serves_with_vllm`, which is the single predicate every consumer keys
+# off so the exemption cannot be re-derived (and drift) per call site.
+ENGINE_VLLM = "vllm"
+ENGINE_LLAMA_CPP = "llama.cpp"
+
+#: Every engine a catalog entry may declare. ``tests/test_catalog.py`` pins it.
+ENGINES: tuple[str, ...] = (ENGINE_VLLM, ENGINE_LLAMA_CPP)
+
 
 @dataclass(frozen=True)
 class SupportedModel:
@@ -47,14 +74,20 @@ class SupportedModel:
     role_hint: str
     shape: str  # architecture in a phrase, e.g. "dense" / "MoE (~3B active)"
     context: str  # native context window, human-readable
-    # The largest --max-model-len this checkpoint serves with vLLM's *default* rope
+    # The largest context this checkpoint serves with the engine's *default* rope
+    # (no YaRN/rope-scaling override) — vLLM's --max-model-len, llama.cpp's -c.
     # (no YaRN/rope-scaling override) — a hard ceiling: vLLM refuses a larger value
     # and the container fails to boot. `lobes switch` clamps the machine-profile
     # context default DOWN to this, so a high machine default (e.g. spark's 256K)
     # can't silently boot-fail a 32K-native model. An explicit --max-model-len wins.
     native_max_model_len: int
-    tool_parser: str  # vLLM --tool-call-parser (must match runtime._parser.infer_parser)
-    quantization: str  # vLLM --quantization
+    # vLLM --tool-call-parser (must match runtime._parser.infer_parser). VLLM-ONLY:
+    # llama.cpp has no such flag, so an ENGINE_LLAMA_CPP gear leaves this EMPTY and
+    # `infer_parser`'s answer is deliberately not carried onto it.
+    tool_parser: str
+    # vLLM --quantization. VLLM-ONLY: a GGUF file carries its quantization inside
+    # the file (Q4_K_M et al), so an ENGINE_LLAMA_CPP gear leaves this EMPTY too.
+    quantization: str
     status: str  # "load-tested" (measured on this hardware) | "configured" (not yet)
     doc: str  # per-model markdown under docs/ (filename only)
     # Per-model serve extras for MoE checkpoints. Empty for dense/hybrid models;
@@ -73,6 +106,12 @@ class SupportedModel:
     # the 4B's weights alone are 7.56 GiB, while 0.06 x 121.69 GiB = 7.30 GiB, so the
     # shared default cannot load it at all. See docs/qwen3-embedding-4b.md.
     default_gpu_mem_util: float = 0.0
+    # Which inference server serves this gear — one of :data:`ENGINES`. Defaults to
+    # :data:`ENGINE_VLLM`, so every entry predating the axis keeps its exact
+    # rendering. A non-vLLM gear is exempt from the vLLM-only fields above
+    # (tool_parser / quantization / moe_backend / speculative_config /
+    # hf_overrides); see :func:`serves_with_vllm`.
+    engine: str = ENGINE_VLLM
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -969,6 +1008,66 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
             ' "is_original_qwen3_reranker": true}'
         ),
     ),
+    SupportedModel(
+        id="unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M",
+        # The catalog's FIRST non-vLLM gear (qwen3-8-gguf-llamacpp plan t3) — the
+        # same Qwen3.8 27B checkpoint the fleet's vLLM `cortex` primary serves
+        # (unsloth/Qwen3.8-27B-NVFP4, above), but as an Unsloth Dynamic 2.0
+        # UD-Q4_K_M **GGUF** served by **llama.cpp**, not vLLM. The id is the
+        # llama.cpp `-hf <repo>:<quant>` spelling, which is how the lane addresses
+        # the file; it is NOT a vLLM `--served-model-name` (a llama.cpp lane names
+        # the served model itself), and that difference is exactly what the
+        # `engine` axis exists to record.
+        #
+        # MEASURED off the downloaded file, 2026-08-23 (plan task t1, on the
+        # Jetson AGX Orin 64 GB this gear is aimed at) — NOT card prose:
+        #   general.architecture = "qwen35" (the same Qwen3.5-arch family the
+        #     NVFP4 sibling declares as Qwen3_5ForConditionalGeneration)
+        #   27.32B parameters, 15.32 GiB on disk, Q4_K_M
+        #   262144 native context (the GGUF's own declared ceiling)
+        #
+        # WHY the vLLM-only fields are EMPTY here (they are not oversights):
+        #   tool_parser="" — `llama-server` has NO --tool-call-parser and NO
+        #     --reasoning-parser. It takes `--jinja` and uses the model's own
+        #     embedded chat template, auto-detecting the tool-call and reasoning
+        #     shapes (`--reasoning-format auto`, `--chat-template-kwargs`). So
+        #     `infer_parser` — which answers "qwen3_coder" for any qwen3.8 id —
+        #     is deliberately NOT carried onto this gear: its answer names a vLLM
+        #     flag that does not exist on this engine. `serves_with_vllm` is what
+        #     every consumer (tests included) keys off to skip it.
+        #   quantization="" — Q4_K_M lives INSIDE the .gguf file. There is no
+        #     flag to pass, and writing one would only mislead.
+        #   speculative_config="" — the NVFP4 sibling's self-hosted MTP draft head
+        #     is IGNORED by llama.cpp: this engine does not run the checkpoint's
+        #     MTP module, so this gear has NO speculative decoding. Declaring the
+        #     sibling's `_MTP_SELF_HOSTED_N2` here would advertise a capability
+        #     the lane cannot serve.
+        #   moe_backend="" / hf_overrides="" — vLLM serve flags; llama.cpp has
+        #     neither surface.
+        #
+        # role_hint="candidate", NOT "primary": role_hint="primary" is single-
+        # occupancy (tests/test_catalog.py::test_qwen38_is_the_only_primary_gear
+        # pins it, because `resolve_tier` takes the FIRST match), and the fleet's
+        # cortex primary is still the NVFP4 sibling. Which BOX serves cortex with
+        # which engine is a deployment-shape/profile decision (plan tasks t4/t5),
+        # not a catalog one — a catalog promotion here would silently re-point
+        # `main`/`hard`/`cortex` for every deployment in the mesh.
+        #
+        # status="configured": the GGUF's own header facts above are measured,
+        # but the SERVED lane is not — no acceptance transcript exists yet. Per
+        # #108, promotion to "load-tested" waits on the plan's t10 evidence
+        # transcript under docs/evidence/.
+        role_hint="candidate",
+        shape="hybrid Mamba/linear-attn, GGUF UD-Q4_K_M (text-only on llama.cpp)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="qwen3.8-27b-gguf-llamacpp.md",
+        task="generate",
+        engine=ENGINE_LLAMA_CPP,
+    ),
 )
 
 
@@ -980,6 +1079,23 @@ def supported_models() -> tuple[SupportedModel, ...]:
 def as_dicts() -> list[dict[str, str]]:
     """The catalog as plain dicts — for JSON emission without importing the dataclass."""
     return [asdict(model) for model in SUPPORTED_MODELS]
+
+
+def serves_with_vllm(model: SupportedModel) -> bool:
+    """Whether *model* is served by vLLM — the ONE predicate the engine axis exports.
+
+    Every consumer that wants to apply a vLLM-only fact (a ``--tool-call-parser``
+    from :func:`lobes.runtime._parser.infer_parser`, a ``--quantization``, a
+    ``--moe-backend``, a ``--speculative-config``, or a compose-edit notice about
+    the vLLM template) asks this instead of re-deriving ``engine == "vllm"``
+    inline. One predicate means one place to change when a THIRD engine lands,
+    and no call site that quietly forgot the check.
+
+    :param model: A catalog entry.
+    :returns: ``True`` for :data:`ENGINE_VLLM` gears — i.e. every entry that does
+        not explicitly declare another engine.
+    """
+    return model.engine == ENGINE_VLLM
 
 
 # The tokenizer the MTP primary serves with — a base-checkpoint override (the MTP
