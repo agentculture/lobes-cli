@@ -1694,8 +1694,16 @@ def fleet_status_payload(
         results = []
     backends: list[dict] = []
     running = waiting = 0
+    busy_partial = False
     for b, st in zip(members, results):
         metrics = st.get("metrics") or {}
+        # A non-vLLM engine may not export in-flight counts at all (see
+        # lobes._metrics). Such a backend must not silently contribute 0 to the
+        # fleet aggregate — the total is flagged partial so /status never implies
+        # a lane is idle when it is simply unmeasured.
+        unknown = _metrics.unsupported_fields(metrics)
+        if "running" in unknown or "waiting" in unknown:
+            busy_partial = True
         running += int(metrics.get("running", 0) or 0)
         waiting += int(metrics.get("waiting", 0) or 0)
         backends.append(
@@ -1707,10 +1715,13 @@ def fleet_status_payload(
                 "metrics": st.get("metrics"),
             }
         )
+    busy: dict = {"running": running, "waiting": waiting}
+    if busy_partial:  # added only when true → an all-vLLM fleet's payload is unchanged
+        busy["partial"] = True
     payload = {
         "object": "lobes.fleet_status",
         "default_model": table.default_model,
-        "busy": {"running": running, "waiting": waiting},
+        "busy": busy,
         "backends": backends,
         "endpoints": _endpoints_for(table, bool(cfg.audio_url)),
     }
