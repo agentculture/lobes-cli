@@ -1,0 +1,318 @@
+### mmangkad/Qwen3.6-27B-NVFP4
+  VLLM_MODEL=mmangkad/Qwen3.6-27B-NVFP4
+  VLLM_SERVED_NAME=mmangkad/Qwen3.6-27B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt_fp4
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt_fp4
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+  VLLM_MODEL=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+  VLLM_SERVED_NAME=RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=131072
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=mistral
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): mistral
+  msg: quantization (from catalog): compressed-tensors
+  msg: max-model-len (clamped to model native ceiling): 131072
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### nvidia/Qwen3-32B-NVFP4
+  VLLM_MODEL=nvidia/Qwen3-32B-NVFP4
+  VLLM_SERVED_NAME=nvidia/Qwen3-32B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=32768
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=hermes
+  VLLM_QUANTIZATION=modelopt_fp4
+  msg: tool-call parser (auto-selected): hermes
+  msg: quantization (from catalog): modelopt_fp4
+  msg: max-model-len (clamped to model native ceiling): 32768
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  VLLM_MODEL=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  VLLM_SERVED_NAME=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### unsloth/Qwen3.6-27B-NVFP4
+  VLLM_MODEL=unsloth/Qwen3.6-27B-NVFP4
+  VLLM_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): compressed-tensors
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### unsloth/Qwen3.8-27B-NVFP4
+  VLLM_MODEL=unsloth/Qwen3.8-27B-NVFP4
+  VLLM_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=2
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): compressed-tensors
+  msg: max-num-seqs (MTP primary cap): 2
+### mmangkad/Qwen3.6-35B-A3B-NVFP4
+  VLLM_MODEL=mmangkad/Qwen3.6-35B-A3B-NVFP4
+  VLLM_SERVED_NAME=mmangkad/Qwen3.6-35B-A3B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=32768
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt_fp4
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt_fp4
+  msg: max-model-len (clamped to model native ceiling): 32768
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: MoE model — add this to the compose `command` by hand (not written to .env; see docs/qwen3.6-35b-a3b-nvfp4.md): --moe-backend=marlin
+### Qwen/Qwen3-Embedding-0.6B
+  VLLM_MODEL=Qwen/Qwen3-Embedding-0.6B
+  VLLM_SERVED_NAME=Qwen/Qwen3-Embedding-0.6B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: none (task=embed)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### Qwen/Qwen3-Embedding-4B
+  VLLM_MODEL=Qwen/Qwen3-Embedding-4B
+  VLLM_SERVED_NAME=Qwen/Qwen3-Embedding-4B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.11
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: none (task=embed)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.11
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024, 1536, 2048, 2560]}'\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### nvidia/Qwen3-14B-NVFP4
+  VLLM_MODEL=nvidia/Qwen3-14B-NVFP4
+  VLLM_SERVED_NAME=nvidia/Qwen3-14B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=32768
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=hermes
+  VLLM_QUANTIZATION=modelopt_fp4
+  msg: tool-call parser (auto-selected): hermes
+  msg: quantization (from catalog): modelopt_fp4
+  msg: max-model-len (clamped to model native ceiling): 32768
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### LiquidAI/LFM2.5-1.2B-Instruct
+  VLLM_MODEL=LiquidAI/LFM2.5-1.2B-Instruct
+  VLLM_SERVED_NAME=LiquidAI/LFM2.5-1.2B-Instruct
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=32768
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=lfm2
+  msg: tool-call parser (auto-selected): lfm2
+  msg: quantization: none (bf16/unquantized; --quantization omitted)
+  msg: max-model-len (clamped to model native ceiling): 32768
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: bf16/unquantized model (quantization=none) — REMOVE the --quantization line from the compose `command:` by hand: the template defaults to --quantization=modelopt when VLLM_QUANTIZATION is absent, which would corrupt bf16 weights. See docs/qwen3.5-4b-minor.md.
+### Qwen/Qwen3.5-4B
+  VLLM_MODEL=Qwen/Qwen3.5-4B
+  VLLM_SERVED_NAME=Qwen/Qwen3.5-4B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization: none (bf16/unquantized; --quantization omitted)
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: bf16/unquantized model (quantization=none) — REMOVE the --quantization line from the compose `command:` by hand: the template defaults to --quantization=modelopt when VLLM_QUANTIZATION is absent, which would corrupt bf16 weights. See docs/qwen3.5-4b-minor.md.
+### coolthor/gemma-4-12B-it-NVFP4A16
+  VLLM_MODEL=coolthor/gemma-4-12B-it-NVFP4A16
+  VLLM_SERVED_NAME=coolthor/gemma-4-12B-it-NVFP4A16
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=131072
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=gemma4
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): gemma4
+  msg: quantization (from catalog): compressed-tensors
+  msg: max-model-len (clamped to model native ceiling): 131072
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4
+  VLLM_MODEL=sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4
+  VLLM_SERVED_NAME=sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=131072
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=gemma4
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): gemma4
+  msg: quantization (from catalog): compressed-tensors
+  msg: max-model-len (clamped to model native ceiling): 131072
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### unsloth/gemma-4-12B-it-qat-w4a16
+  VLLM_MODEL=unsloth/gemma-4-12B-it-qat-w4a16
+  VLLM_SERVED_NAME=unsloth/gemma-4-12B-it-qat-w4a16
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=gemma4
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): gemma4
+  msg: quantization (from catalog): compressed-tensors
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### nvidia/Gemma-4-31B-IT-NVFP4
+  VLLM_MODEL=nvidia/Gemma-4-31B-IT-NVFP4
+  VLLM_SERVED_NAME=nvidia/Gemma-4-31B-IT-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=gemma4
+  VLLM_QUANTIZATION=modelopt
+  msg: tool-call parser (auto-selected): gemma4
+  msg: quantization (from catalog): modelopt
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### unsloth/Qwen3.6-35B-A3B-NVFP4
+  VLLM_MODEL=unsloth/Qwen3.6-35B-A3B-NVFP4
+  VLLM_SERVED_NAME=unsloth/Qwen3.6-35B-A3B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=compressed-tensors
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): compressed-tensors
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  VLLM_MODEL=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  VLLM_SERVED_NAME=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### Qwen/Qwen3-Reranker-0.6B
+  VLLM_MODEL=Qwen/Qwen3-Reranker-0.6B
+  VLLM_SERVED_NAME=Qwen/Qwen3-Reranker-0.6B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=score
+  msg: tool-call parser: skipped (task=score)
+  msg: quantization: none (task=score)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-rerank service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=classify\n      - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
