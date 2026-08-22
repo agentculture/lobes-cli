@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.3] - 2026-08-23
+
+### Added
+
+- docs/plans/2026-08-22-qwen3-8-gguf-llamacpp.md — converged build plan for the
+  Orin-local llama.cpp cortex: 11 tasks in 8 dependency waves, every task
+  carrying TDD acceptance criteria and operator instructions, covering all 32
+  spec targets. Wave 0 is the spike (t1) plus the Tegra iowait fix (t7); the
+  remaining tasks are conditional on a GO, and a NO-GO ends the plan with a
+  recorded verdict (risk r1). Also recorded: unmeasured concurrency (r2),
+  expected feature losses versus the vLLM lane — MTP, ViT, preserve_thinking,
+  strict tools (r3), out-of-scope mesh senses re-homing (r4), and the
+  second-cortex-host routing question (r5). Plan state in
+  `.devague/plans/qwen3-8-gguf-llamacpp.json`.
+
 ## [0.58.2] - 2026-08-23
 
 ### Added
