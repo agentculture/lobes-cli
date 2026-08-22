@@ -101,3 +101,31 @@ def test_fleet_status_payload_all_unreachable() -> None:
     )
     assert payload["busy"] == {"running": 0, "waiting": 0}
     assert all(b["health"] == "unreachable" for b in payload["backends"])
+
+
+# --- non-vLLM backends: the busy aggregate must not imply "idle" ------------
+
+
+def test_fleet_status_busy_is_flagged_partial_when_a_backend_cannot_report() -> None:
+    # A llama.cpp lane reports running/waiting but no success counter; a lane that
+    # reports neither must not silently contribute 0 to the fleet busy aggregate.
+    def probe(base_url, *, timeout):
+        if "p:8000" in base_url:
+            return {"health": "ok", "metrics": {"running": 2, "waiting": 1}}
+        return {
+            "health": "ok",
+            "metrics": {"engine": "unknown", "unsupported": ["running", "waiting"]},
+        }
+
+    payload = S.fleet_status_payload(_table(), _cfg(), probe=probe)
+    assert payload["busy"]["running"] == 2 and payload["busy"]["waiting"] == 1
+    assert payload["busy"]["partial"] is True
+
+
+def test_fleet_status_busy_has_no_partial_flag_for_an_all_vllm_fleet() -> None:
+    payload = S.fleet_status_payload(
+        _table(),
+        _cfg(),
+        probe=lambda *a, **k: {"health": "ok", "metrics": {"running": 1, "waiting": 0}},
+    )
+    assert payload["busy"] == {"running": 3, "waiting": 0}  # byte-identical: no new key
