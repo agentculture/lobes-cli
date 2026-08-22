@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-22T21:21:54Z",
-  "updated": "2026-08-22T21:38:33Z",
+  "updated": "2026-08-22T21:46:24Z",
   "claims": [
     {
       "id": "c1",
@@ -329,6 +329,94 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "the rollout must neutralize the known Tegra spurious-iowait shedding on this box, or the local cortex is unusable during flares: sugov kthreads inflate nr_iowait with zero disk I/O, and the gateway pressure policy (iowait > 50 -> busy, lobes/gateway/_pressure_policy.py:166) 429-sheds ALL cortex traffic; the deployed .env still carries threshold 50 and the =100 override is ephemeral (container shell-env, reverts on next compose up)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "verified on the box after cutover: with the persisted threshold (or Tegra-aware sampling), a sugov iowait flare no longer flips the gateway to busy \u2014 cortex requests still answer 200 during a flare, and the setting survives a docker compose down/up cycle",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "assumption",
+      "text": "thinking-mode response-shape parity is unverified: the vLLM lane parses <think> into reasoning_content via --reasoning-parser=qwen3, while llama.cpp uses its own --reasoning-format mechanism \u2014 whether callers see reasoning_content (vs thinking leaking into content, or silently stripped) on the llama.cpp lane must be checked in the spike",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "the llama.cpp lane lands as rendered template/profile/shape data, NEVER as hand-edits to the deployed compose: this box already carries hand-edited runtime: nvidia lines that a re-init would revert (recorded 2026-07-16 drift), and orin.toml:48 documents that debt \u2014 the new lane must not deepen it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "a fresh lobes init render for this box produces the llama.cpp lane with runtime: nvidia and every csv-mode accommodation from repo data alone \u2014 zero manual compose edits needed to boot",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "staged cutover with a live rollback path: PRIMARY_PEER_PROXY to the Spark stays configured and working until every c20 gate passes on the local lane, and senses is stopped only when the llama.cpp cortex needs its memory \u2014 never removed as step one; rollback is re-enabling the proxy, which requires no peer-side change",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "at every step of the cutover, model=cortex through this gateway answers correctly (proxied or local), and the flip back to proxy is a .env-only change proven once before senses is removed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "the llama.cpp backend joins the fleet like every vLLM lane: unpublished port on the compose network, reached only through the gateway (vllm-multimodal precedent \u2014 no host port), so the gateway's opt-in GATEWAY_API_KEY gate remains the sole auth surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "docker ps on the deployed box shows no host-published port for the llama.cpp container, and the backend answers only via the gateway origin \u2014 probed from another mesh box",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -348,6 +436,15 @@
       "claim_id": null,
       "resolved": true,
       "resolution": "target corrected from Blackwell to sm_87 (Jetson AGX Orin, Ampere): llama.cpp CUDA on Orin is a mature, well-trodden path \u2014 the remaining unknown is only which build/container to pin, folded into the v1 spike",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "llama.cpp serves one model with N parallel slots; mesh callers can issue concurrent cortex requests \u2014 queueing/latency behaviour under concurrency is unmeasured (single-stream is the only c20 target)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
       "resolution_claim_id": null
     }
   ],
@@ -433,6 +530,58 @@
       "seeds": [
         "c13"
       ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / adjacent-systems lens: lobes/gateway/_pressure_policy.py + this box's deployed .env",
+      "finding": "an Orin-local cortex inherits the gateway pressure gate; the spurious-sugov-iowait flare (memory, 2026-07-17, validated live) would shed it exactly as it shed senses \u2014 persist the threshold or land Tegra-aware sampling as part of this work",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / unstated-assumptions lens: docs/qwen3.8-27b-nvfp4.md reasoning sections vs llama.cpp server surface",
+      "finding": "the frame gates tool calling (c20) but never mentions the reasoning-trace response shape callers get today; parity is a spike check, not an assumption to carry silently",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / lifecycle lens: lobes/profiles/builtin/orin.toml:48 + deployed ~/.lobes compose hand-edits",
+      "finding": "re-init reverts hand edits; the csv-mode runtime: nvidia requirement (h3) must be rendered from repo data so lobes init on this box produces a working lane byte-for-byte",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / reversibility lens: deployed .env (PRIMARY_PEER_PROXY wiring) + shape restore mechanics",
+      "finding": "the frame said replace-senses but never ordered the swap; keeping the proxy as fallback makes the cutover reversible at every step",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / security lens: templates/fleet compose port exposure + gateway auth",
+      "finding": "no new auth surface: backend stays network-internal like the existing lanes",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / concurrency lens: llama.cpp server slot model vs mesh caller patterns",
+      "finding": "single-slot default queues concurrent requests; acceptable for a one-operator box, unmeasured beyond that \u2014 parked nonblocking",
+      "seeds": []
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / cheap probes: HF API + df + free + /proc/stat on this box",
+      "finding": "UD-Q4_K_M exists upstream at 16.46 GB (HF tree API, live probe); 1.6 TB disk free; box at 37/61 GiB with senses up, swap 0; iowait 0 right now \u2014 the sugov flare is episodic, not steady-state",
+      "seeds": []
     }
   ],
   "lapses": []

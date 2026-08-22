@@ -27,6 +27,12 @@
 - the GGUF cortex REPLACES senses on this box (operator decision 2026-08-23: Gemma 4 12B is removed): the Orin becomes a cortex-lobe — llama.cpp Qwen3.8-27B UD-`Q4_K_M` (~16-17 GB weights + KV) plus the pooling gears, with senses' ~0.45-util budget reclaimed
   - instruction: stop the vllm-multimodal lane, then boot the llama.cpp cortex and measure RSS/unified-memory at target context on this swapless box before declaring the budget
   - honesty: the UD-`Q4_K_M` weights + KV cache + pooling gears fit the 61.3 GiB unified budget with NO swap configured, measured at the target context, not computed
+- the rollout must neutralize the known Tegra spurious-iowait shedding on this box, or the local cortex is unusable during flares: sugov kthreads inflate `nr_iowait` with zero disk I/O, and the gateway pressure policy (iowait > 50 -> busy, lobes/gateway/`_pressure_policy.py`:166) 429-sheds ALL cortex traffic; the deployed .env still carries threshold 50 and the =100 override is ephemeral (container shell-env, reverts on next compose up)
+  - honesty: verified on the box after cutover: with the persisted threshold (or Tegra-aware sampling), a sugov iowait flare no longer flips the gateway to busy — cortex requests still answer 200 during a flare, and the setting survives a docker compose down/up cycle
+- the llama.cpp lane lands as rendered template/profile/shape data, NEVER as hand-edits to the deployed compose: this box already carries hand-edited runtime: nvidia lines that a re-init would revert (recorded 2026-07-16 drift), and orin.toml:48 documents that debt — the new lane must not deepen it
+  - honesty: a fresh lobes init render for this box produces the llama.cpp lane with runtime: nvidia and every csv-mode accommodation from repo data alone — zero manual compose edits needed to boot
+- staged cutover with a live rollback path: `PRIMARY_PEER_PROXY` to the Spark stays configured and working until every c20 gate passes on the local lane, and senses is stopped only when the llama.cpp cortex needs its memory — never removed as step one; rollback is re-enabling the proxy, which requires no peer-side change
+  - honesty: at every step of the cutover, model=cortex through this gateway answers correctly (proxied or local), and the flip back to proxy is a .env-only change proven once before senses is removed
 
 ## Honesty conditions
 
@@ -39,6 +45,7 @@
 - the local cortex is actually usable for real work: latency and quality are acceptable to the operator after a hands-on session, not just probe-passing
 - assess numbers are captured through the gateway path callers actually use, and the evidence transcript lands under docs/evidence/ before any doc claims VALIDATED (#108 rule)
 - the numbers come from the live box run, measured through the gateway path, and land in the docs/evidence/ transcript — no target is claimed met from theory or extrapolation
+- docker ps on the deployed box shows no host-published port for the llama.cpp container, and the backend answers only via the gateway origin — probed from another mesh box
 
 ## Success signals
 
@@ -50,6 +57,7 @@
 
 - the gateway request path stays untouched: Backend keys on `base_url` and forwards OpenAI-shaped POSTs verbatim, so any OpenAI-speaking llama.cpp server drops in behind the existing routing (established by docs/tensorrt-llm-investigation.md section 1, re-verified against lobes/gateway/)
 - lobes assess / lobes benchmark need no change: assess.py speaks pure OpenAI HTTP (/health, /v1/models, /v1/chat/completions), which llama.cpp's server implements — so llama.cpp-vs-vLLM numbers are directly comparable through the existing harness
+- the llama.cpp backend joins the fleet like every vLLM lane: unpublished port on the compose network, reached only through the gateway (vllm-multimodal precedent — no host port), so the gateway's opt-in `GATEWAY_API_KEY` gate remains the sole auth surface
 
 ## Non-goals
 
@@ -63,6 +71,7 @@
 - a second cortex host raises a routing question the current mesh has no precedent for: today each role has at most one hoster and peer referral/proxy names a single origin — an Orin-local GGUF cortex either serves only local callers or needs the shape/referral story extended
 - the WHY: this Orin's operator profile (~/.lobes/profiles/orin.toml, 2026-07-16 mesh work) declares cortex feasible=false because modelopt NVFP4 W4A4 needs Blackwell — GGUF `Q4_K_M` via llama.cpp is the quantization path Ampere `sm_87` CAN run, replacing today's cortex-by-proxy-to-Spark with a local cortex
 - removing senses from the Orin leaves the mesh with NO senses host unless one is re-declared elsewhere: the Spark currently proxies model=senses to this box (live 2026-07-31 wiring), so the Spark's SENSES/MULTIMODAL peer config dangles and vision intake mesh-wide needs a decision — re-host, referral-only, or accept `role_infeasible`
+- thinking-mode response-shape parity is unverified: the vLLM lane parses <think> into `reasoning_content` via --reasoning-parser=qwen3, while llama.cpp uses its own --reasoning-format mechanism — whether callers see `reasoning_content` (vs thinking leaking into content, or silently stripped) on the llama.cpp lane must be checked in the spike
 
 ## Scope exploration
 
@@ -86,6 +95,22 @@
   - seeds: `c11`, `c9` (rejected)
 - `s10` — `CLAUDE.md proxy-lobes section + this box's deployed compose (vllm-multimodal lane)`: the Spark's gateway forwards senses to this Orin (X-Lobes-Proxied-By validated 2026-07-31); dropping the 12B here breaks that chain — the removal is a mesh topology change, not a local free-up
   - seeds: `c13`
+- `s11` — `challenge pass / adjacent-systems lens: lobes/gateway/_pressure_policy.py + this box's deployed .env`: an Orin-local cortex inherits the gateway pressure gate; the spurious-sugov-iowait flare (memory, 2026-07-17, validated live) would shed it exactly as it shed senses — persist the threshold or land Tegra-aware sampling as part of this work
+  - seeds: `c21`
+- `s12` — `challenge pass / unstated-assumptions lens: docs/qwen3.8-27b-nvfp4.md reasoning sections vs llama.cpp server surface`: the frame gates tool calling (c20) but never mentions the reasoning-trace response shape callers get today; parity is a spike check, not an assumption to carry silently
+  - seeds: `c22`
+- `s13` — `challenge pass / lifecycle lens: lobes/profiles/builtin/orin.toml:48 + deployed ~/.lobes compose hand-edits`: re-init reverts hand edits; the csv-mode runtime: nvidia requirement (h3) must be rendered from repo data so lobes init on this box produces a working lane byte-for-byte
+  - seeds: `c23`
+- `s14` — `challenge pass / reversibility lens: deployed .env (PRIMARY_PEER_PROXY wiring) + shape restore mechanics`: the frame said replace-senses but never ordered the swap; keeping the proxy as fallback makes the cutover reversible at every step
+  - seeds: `c24`
+- `s15` — `challenge pass / security lens: templates/fleet compose port exposure + gateway auth`: no new auth surface: backend stays network-internal like the existing lanes
+  - seeds: `c25`
+- `s16` — `challenge pass / concurrency lens: llama.cpp server slot model vs mesh caller patterns`: single-slot default queues concurrent requests; acceptable for a one-operator box, unmeasured beyond that — parked nonblocking
+- `s17` — `challenge pass / cheap probes: HF API + df + free + /proc/stat on this box`: UD-`Q4_K_M` exists upstream at 16.46 GB (HF tree API, live probe); 1.6 TB disk free; box at 37/61 GiB with senses up, swap 0; iowait 0 right now — the sugov flare is episodic, not steady-state
+
+## Open parks
+
+- [unknown_nonblocking] llama.cpp serves one model with N parallel slots; mesh callers can issue concurrent cortex requests — queueing/latency behaviour under concurrency is unmeasured (single-stream is the only c20 target)
 
 ## Resolved vagueness
 
