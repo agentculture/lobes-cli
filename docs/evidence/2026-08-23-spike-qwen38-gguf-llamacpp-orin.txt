@@ -1,0 +1,122 @@
+================================================================================
+SPIKE — unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M via llama.cpp on Jetson AGX Orin 64GB
+plan qwen3-8-gguf-llamacpp, task t1 · 2026-08-23 · operator: orin
+================================================================================
+VERDICT: functional GO / throughput FAIL-AS-SPECIFIED.
+  The checkpoint loads, decodes correctly, serves the FULL 262144 native context,
+  and passes tool-calling and reasoning-shape parity. It does NOT reach the c20
+  decode gate of >=5 tok/s. See "THROUGHPUT" and the diagnosis below.
+
+--------------------------------------------------------------------------------
+1. HARDWARE / PLATFORM (measured)
+--------------------------------------------------------------------------------
+GPU              Orin (nvgpu), compute capability 8.7 (sm_87), driver 595.78
+L4T              R39 (rev 2.0), aarch64 Tegra
+RAM              61.3 GiB unified, ZERO swap configured
+disk             1.6 TB free
+host build tools nvcc ABSENT, cmake ABSENT, g++ ABSENT (host source build needs sudo)
+container tk     csv mode -> compose `deploy.resources` GPU requests FAIL here;
+                 the lane MUST use `runtime: nvidia`
+power mode       MODE_30W at spike time (of MAXN / 15W / 30W / 50W)
+GPU clock        306 MHz initially (min); pinned to 612 MHz (mode max) via jetson_clocks
+EMC (bwmgr)      3199 MHz = max, already pinned
+CPU              8 of 12 cores online under MODE_30W (4 reported `off`)
+
+--------------------------------------------------------------------------------
+2. CHECKPOINT (parsed from the GGUF header, live)
+--------------------------------------------------------------------------------
+file             Qwen3.8-27B-UD-Q4_K_M.gguf, 15.33 GiB (16,453,443,584 bytes)
+sha256           322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482  VERIFIED
+general.architecture   qwen35
+tokenizer.ggml.pre     qwen35
+params           27,320,697,856 (27.32 B) · n_vocab 248320 · ftype "Q4_K - Medium"
+context          n_ctx_train 262144
+layers           block_count 65 · full_attention_interval 4  => 16 full-attn, 49 SSM
+attention        head_count 24 · head_count_kv 4 · key_length 256 · value_length 256
+hybrid (SSM)     ssm.conv_kernel 4 · ssm.state_size 128 · ssm.group_count 16
+                 ssm.time_step_rank 48 · ssm.inner_size 6144
+MTP              nextn_predict_layers 1  (PRESENT in file — see 5, IGNORED by llama.cpp)
+rope             dimension_sections [11,11,10,0] · dimension_count 64 · freq_base 1e7
+quantization     imatrix (Unsloth Dynamic), 496 entries / 1251 chunks
+
+--------------------------------------------------------------------------------
+3. RUNTIME
+--------------------------------------------------------------------------------
+image            ghcr.io/ggml-org/llama.cpp:server-cuda  (arm64/linux)
+build            d775b8967 (10573), GNU 14.2.0, Linux aarch64
+CUDA init        ggml_cuda_init: found 1 CUDA devices (Total VRAM: 62817 MiB)
+                 Device 0: Orin, compute capability 8.7, VMM: yes, VRAM: 62817 MiB
+                 load_backend: loaded CUDA backend from /app/libggml-cuda.so
+                 load_backend: loaded CPU backend from /app/libggml-cpu-armv8.2_2.so
+arch support     libllama.so.0.2.0 contains compiled qwen35 symbols:
+                 qwen35, qwen3516build, qwen3517load, qwen355graph*, qwen35moe
+                 ("qwen35" occurs 149x). NOT an enum stub — load + graph builders present.
+NOTE             The feared non-Tegra-arm64 failure did NOT reproduce. (A prior
+                 incident on this box, 2026-07-17, had the Parakeet base image fail
+                 with "no kernel image available" for lacking sm_87 kernels.)
+
+--------------------------------------------------------------------------------
+4. LOAD AND MEMORY at the FULL 262144 window
+--------------------------------------------------------------------------------
+prep             stopped model-gear-vllm-multimodal (senses) -> free RAM 23 -> 47 GiB
+command          docker run -d --runtime nvidia -v ~/scratch/gguf:/models:ro \
+                   ghcr.io/ggml-org/llama.cpp:server-cuda \
+                   -m /models/Qwen3.8-27B-UD-Q4_K_M.gguf --host 0.0.0.0 --port 8090 \
+                   -ngl 99 -c 262144 --jinja -np 1
+load time        84 s to "model loaded" / "listening on http://0.0.0.0:8090"
+slots            n_slots = 1, n_ctx_slot = 262144, kv_unified = false
+/health          {"status":"ok"}
+/v1/models meta  n_ctx 262144, n_ctx_train 262144, n_params 27320697856,
+                 size 16453443584, ftype "Q4_K - Medium"
+memory           free RAM 13 -> 46 GiB used  => ~33 GiB for weights + KV
+                 tegrastats during generation: RAM 48658/62817MB
+
+KV PREDICTION vs MEASUREMENT (predicted BEFORE boot, from the header):
+  16 of 65 layers hold a per-token KV cache; GQA kv_heads=4, k=v=256, f16
+  => 4 * (256+256) * 2 = 4096 B/layer/token * 16 layers = 65536 B = 64 KiB/token
+     ctx 262144 -> KV 16.00 GiB + weights 15.33 GiB = 31.33 GiB PREDICTED
+     MEASURED ~33 GiB.  Prediction held within ~1.7 GiB of runtime overhead.
+  This low KV cost is a direct consequence of the hybrid design — 49 of 65 layers
+  are Mamba/SSM with constant state rather than a growing per-token cache.
+
+--------------------------------------------------------------------------------
+5. FEATURE PARITY vs the vLLM cortex lane
+--------------------------------------------------------------------------------
+PASS  reasoning shape (c22) — on DEFAULT flags, no special configuration
+      message.reasoning_content populated; '<think>' did NOT leak into content.
+      Server log: "chat template supports preserving reasoning, consider enabling
+      it via --reasoning-preserve"
+      llama.cpp equivalents to the vLLM mechanisms:
+        --chat-template-kwargs   <=> vLLM --default-chat-template-kwargs (issue #93)
+        --reasoning-format       none | deepseek | deepseek-legacy  (default: auto)
+        --reasoning-budget N     (no vLLM equivalent)
+PASS  preserve_thinking — the GGUF's own chat template line 119 reads
+        {%- if preserve_thinking is undefined or preserve_thinking is true %}
+      i.e. it PRESERVES BY DEFAULT. The vLLM lane needs an explicit
+      --default-chat-template-kwargs '{"preserve_thinking": true}'; this lane does not.
+PASS  tool calling — the template emits the qwen3_coder XML dialect
+        <tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>
+      and llama.cpp's chat-format table contains a literal "Qwen 3 Coder" entry.
+FAIL  MTP / speculative decoding — llama.cpp IGNORES the MTP head. Load log:
+        W model has unused tensor blk.64.nextn.eh_proj.weight (43008000 bytes) -- ignoring
+        W model has unused tensor blk.64.nextn.enorm/hnorm/shared_head_norm  -- ignoring
+        W model has unused tensor blk.64.attn_* / blk.64.ffn_*               -- ignoring
+      ~0.9 GiB of the 15.33 GiB file is dead weight on this lane.
+ABSENT vision / ViT — this GGUF is text-only; no mmproj companion was fetched.
+
+--------------------------------------------------------------------------------
+6. CORRECTNESS PROBES (through the OpenAI-compatible API)
+--------------------------------------------------------------------------------
+PASS  known-answer, thinking OFF
+        "What is the capital of France? Answer with one word." -> 'Paris'
+        finish_reason stop, usage {completion_tokens 2, prompt_tokens 24}
+PASS  arithmetic with thinking ON
+        "If 3 apples cost 60 cents, what do 7 cost?" -> "$1.40" (correct)
+        reasoning_content populated with a coherent derivation; content clean.
+PASS  tool calling — asserts tool_calls != null (NOT merely that a reply arrived;
+      that is the trap that made `pythonic` silently wrong for Gemma 4)
+        tool_calls = [{"type":"function","function":{"name":"get_weather",
+                       "arguments":"{\"city\":\"Paris\"}"},"id":"..."}]
+        finish_reason = "tool_calls"
+=> The hybrid Mamba/SSM + attention stack DECODES CORRECTLY on sm_87.
+   This answers the plan's blocking unknown v1.

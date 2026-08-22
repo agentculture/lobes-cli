@@ -1,0 +1,63 @@
+{
+  "plan_slug": "qwen3-8-gguf-llamacpp",
+  "schema_version": 1,
+  "created": "2026-08-22T21:57:52Z",
+  "updated": "2026-08-22T23:09:01Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t7 is not fan-out work: its primary acceptance criterion is already satisfied in main",
+      "task_ref": "t7",
+      "reason": "Discovered at fan-out time: lobes/profiles/builtin/orin.toml:272 already declares LOBES_IOWAIT_DEGRADED_THRESHOLD = \"100\" under [host_env] at CARD level (every shape rendered over orin inherits it, machine-as-brain included), and the deployed ~/.lobes/.env line 538 carries it \u2014 so criterion 2 (persisted, survives compose up/down) holds today. A prior workforce run landed it 2026-08-04. Frame claim c21 and this task were written from a stale 2026-07-17 memory that described the ephemeral shell-env override state. Criterion 1 (cortex answers 200 during a flare) cannot be tested until a local cortex exists, so it belongs to the t9/t10 bring-up; criterion 3 is conditional on choosing the sampling rewrite, which was not the fix taken.",
+      "affects": [
+        "t7",
+        "t9",
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "target context raised from the c20 floor (>=32768) to the checkpoint's full native 262144",
+      "task_ref": "t1",
+      "reason": "Operator decision 2026-08-23: the goal is the official 256K context, and turning off more models is authorized to get it. Arithmetic from the GGUF hparams: 256K needs ~31.3 GiB (15.33 weights + 16.0 KV at 64 KiB/token). The box has 61.3 GiB and ZERO swap, ~21 GiB free with the fleet up, so ~10+ GiB must be freed. Stopping senses (vllm-multimodal, util 0.45, ~27.6 GiB) alone yields ~48 GiB free and fits 256K with ~17 GiB spare; embed+rerank (~7.4 GiB total) need not be touched. Consequence: senses stops EARLIER than t9's staged ordering placed it, and the Spark's vision proxy to this box breaks at that moment (already accepted by the operator: 'don't worry about proxies, that will be solved; we give up gemma if we need').",
+      "affects": [
+        "t1",
+        "t5",
+        "t9",
+        "t10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t6 delivery touched the presentation layer beyond its _metrics.py-only instruction",
+      "task_ref": "t6",
+      "reason": "t6 acceptance criterion 3 is a statement about the RENDERED surfaces (lobes overview --live and gateway /status must not imply an idle lane). Parsing honestly in _metrics.py alone cannot satisfy it \u2014 the renderer would still print running: 0 for a field the backend never reported, and single_sections indexed metrics['running'] directly so it would have raised KeyError on the unknown-engine dict. The instruction was drawn more narrowly than its own acceptance criterion; the criterion won. All-vLLM output stays byte-identical.",
+      "affects": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "measured decode ~2.5 tok/s against the c20 floor of >=5 tok/s",
+      "task_ref": "t1",
+      "reason": "llama-bench p512/n128: ggml 10573 CUDA12 fa=1 -> pp512 63.10, tg128 2.53; fa=0 -> 61.98 / 2.52. Six causes tested and ELIMINATED: long context (identical at 8192 and 262144), GPU core clock (306->612 MHz = 1.00x), EMC (already max), CPU (no core >54%), flash attention (2.53 vs 2.52). 99% GR3D with total insensitivity to a 2x clock change means launch-latency-bound, not compute-bound. Also records a correction: the earlier 'GPU at 100% = at the silicon ceiling, not fixable by config' conclusion was WRONG. Remaining arm: NVIDIA CUDA-13 build vs the benchmarked CUDA-12 build on a CUDA 13.2 host.",
+      "affects": [
+        "t1",
+        "t10",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

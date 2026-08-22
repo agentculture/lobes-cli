@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-22T21:47:10Z",
-  "updated": "2026-08-22T21:50:01Z",
+  "updated": "2026-08-22T22:22:54Z",
   "targets": [
     {
       "id": "c1",
@@ -362,7 +362,7 @@
         "c21",
         "h13"
       ],
-      "instruction": "The flare is real and recorded: sugov:0/sugov:4 cpufreq kthreads flicker in D state and inflate nr_iowait to ~59% with vmstat bi/bo at zero. The gate is lobes/gateway/_pressure_policy.py:166 (LOBES_IOWAIT_DEGRADED_THRESHOLD, default 50). The deployed .env still says 50 and the =100 fix currently lives only as a container shell-env override that any compose up reverts. Persist it, or corroborate iowait with real disk I/O (or PSI) in the policy \u2014 the latter is the repo-level fix and needs a unit test."
+      "instruction": "RE-SCOPED by deviation d1 (2026-08-23): the fix ALREADY LANDED \u2014 lobes/profiles/builtin/orin.toml:272 declares LOBES_IOWAIT_DEGRADED_THRESHOLD = \"100\" under [host_env] at card level (inherited by every shape rendered over orin, machine-as-brain included), and the deployed ~/.lobes/.env line 538 carries it. Acceptance criterion 2 is satisfied in main; criterion 3 is N/A (the threshold declaration was the fix taken, not the sampling rewrite). What REMAINS is verification only, folded into the t9/t10 bring-up: once the local cortex runs, confirm a spurious sugov flare still yields 200 not 429. Write no new code for this task."
     },
     {
       "id": "t8",
@@ -493,6 +493,14 @@
       "text": "a second cortex host has no mesh precedent: each role today has at most one hoster and peer referral names a single origin (frame assumption c10) \u2014 whether the Orin cortex serves only local callers or the referral story extends is undecided",
       "kind": "follow_up",
       "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "hand is a PRE-AUTHORIZED budget lever (operator, 2026-08-23): if the GGUF cortex needs more room, dropping hand from this box is approved in principle and should be recorded via /deviate when exercised. NOTE it frees nothing today \u2014 hand is NOT running on this box (docker ps shows only gateway, vllm-multimodal, vllm-embed, vllm-rerank, prod-worker-1; the deployment predates the hand role). The lever applies to t5's RENDERED shape budget (~0.10 util, ~6 GiB on this 64 GB card), not to the spike or the immediate cutover.",
+      "kind": "follow_up",
+      "task_id": "t5",
       "resolved": false,
       "resolution": ""
     }
