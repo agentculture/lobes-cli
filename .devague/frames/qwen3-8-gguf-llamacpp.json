@@ -1,0 +1,439 @@
+{
+  "slug": "qwen3-8-gguf-llamacpp",
+  "title": "qwen3.8-gguf-llamacpp",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-22T21:21:54Z",
+  "updated": "2026-08-22T21:38:33Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M via a llama.cpp lane as an alternative engine to the vLLM NVFP4 cortex",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "llama.cpp's server really does serve this hybrid-Mamba Qwen3.8 GGUF with an OpenAI-compatible /v1/chat/completions on sm_87 \u2014 proven by a live spike on this box, not by hearsay",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "spike first (TRT-LLM pattern): stand llama.cpp up on the Orin with the UD-Q4_K_M GGUF, gate on load+correctness+tok/s+context, THEN integrate (compose lane, catalog entry, shape) only on a GO",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "catalog.py's Gear model is vLLM-shaped (id doubles as --served-model-name, tool_parser is a vLLM --tool-call-parser, serve_extras are vLLM flags) \u2014 a llama.cpp-served GGUF gear needs either a runtime/engine field on Gear or a lane declared outside the catalog",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a llama.cpp gear can be declared without breaking the existing vLLM gears: every current catalog consumer (switch, fleet render, infer_parser) still resolves the vLLM gears byte-identically after the change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add an engine/runtime axis (or a parallel llama.cpp lane declaration) such that existing vLLM gears render byte-identically; prove with the goldens/tests before merging",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "every generate lane in both compose templates (legacy docker-compose.yml + fleet template) images a vLLM container (NGC 26.04 or the pinned vllm-openai nightly digest) \u2014 a llama.cpp lane means a new service block with its own image, and no ARM64/Blackwell (sm_110/sm_121) llama.cpp CUDA image is verified in-tree",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "a llama.cpp CUDA build/image actually runs on this box's JetPack (CUDA 13.2, csv-mode container toolkit \u2014 deploy.resources GPU requests fail here, the lane must use runtime: nvidia)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "pin a llama.cpp CUDA image or build for JetPack/CUDA 13.2 with runtime: nvidia (csv-mode toolkit \u2014 no deploy.resources GPU requests); record the exact image/commit in the compose lane",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the gateway request path stays untouched: Backend keys on base_url and forwards OpenAI-shaped POSTs verbatim, so any OpenAI-speaking llama.cpp server drops in behind the existing routing (established by docs/tensorrt-llm-investigation.md section 1, re-verified against lobes/gateway/)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "a live request to model=cortex through this box's gateway reaches the llama.cpp backend and returns a well-formed OpenAI chat completion with zero gateway code changes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "gateway /status and lobes overview --live will report misleading zeros for a llama.cpp backend: lobes/_metrics.py parses vllm:* Prometheus series only (vllm:gpu_cache_usage_perc, vllm:num_requests_running, ...) \u2014 a llama.cpp metrics adapter or an honest 'telemetry unsupported' marker is needed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "lobes assess / lobes benchmark need no change: assess.py speaks pure OpenAI HTTP (/health, /v1/models, /v1/chat/completions), which llama.cpp's server implements \u2014 so llama.cpp-vs-vLLM numbers are directly comparable through the existing harness",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "lobes assess runs green against the llama.cpp lane unmodified \u2014 if any probe needs a llama.cpp special-case, this boundary is false and must be re-scoped",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "non_goal",
+      "text": "this is not a vLLM replacement decision: docs/tensorrt-llm-investigation.md set the house pattern for alternative engines \u2014 desk/spike investigation with a go/no-go on bring-up effort BEFORE any deployment claim; the GGUF lane follows the same pattern and the NVFP4 vLLM cortex stays the deployed primary until measured otherwise",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "the GGUF lane loses known vLLM-lane features until proven otherwise: preserve_thinking chat-template kwarg (#93), strict tools via xgrammar structural tags (colleague#320), the qwen3 reasoning parser, self-hosted MTP speculative decoding, and multimodality (a text GGUF has no ViT unless an mmproj file ships and llama.cpp wires it) \u2014 each is a per-feature parity check, not assumed carried over",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the GGUF cortex targets sm_87 (Jetson AGX Orin 64GB, Ampere, aarch64) and co-resides with the senses role the orin-lobe deployment already serves \u2014 the Q4_K_M 27B (~16-17 GB weights) plus senses must fit the 64 GB unified budget",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "assumption",
+      "text": "a second cortex host raises a routing question the current mesh has no precedent for: today each role has at most one hoster and peer referral/proxy names a single origin \u2014 an Orin-local GGUF cortex either serves only local callers or needs the shape/referral story extended",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "the WHY: this Orin's operator profile (~/.lobes/profiles/orin.toml, 2026-07-16 mesh work) declares cortex feasible=false because modelopt NVFP4 W4A4 needs Blackwell \u2014 GGUF Q4_K_M via llama.cpp is the quantization path Ampere sm_87 CAN run, replacing today's cortex-by-proxy-to-Spark with a local cortex",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the GGUF cortex REPLACES senses on this box (operator decision 2026-08-23: Gemma 4 12B is removed): the Orin becomes a cortex-lobe \u2014 llama.cpp Qwen3.8-27B UD-Q4_K_M (~16-17 GB weights + KV) plus the pooling gears, with senses' ~0.45-util budget reclaimed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the UD-Q4_K_M weights + KV cache + pooling gears fit the 61.3 GiB unified budget with NO swap configured, measured at the target context, not computed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "stop the vllm-multimodal lane, then boot the llama.cpp cortex and measure RSS/unified-memory at target context on this swapless box before declaring the budget",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "assumption",
+      "text": "removing senses from the Orin leaves the mesh with NO senses host unless one is re-declared elsewhere: the Spark currently proxies model=senses to this box (live 2026-07-31 wiring), so the Spark's SENSES/MULTIMODAL peer config dangles and vision intake mesh-wide needs a decision \u2014 re-host, referral-only, or accept role_infeasible",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "mesh senses re-homing and the Spark's dangling senses-proxy wiring are OUT of this frame's scope \u2014 the operator accepts losing Gemma 12B entirely if needed; this frame delivers only the Orin-local GGUF cortex",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "audience",
+      "text": "the operator of the Orin box and the Culture mesh callers that address model=cortex/main through this box's gateway (plus lobes-cli maintainers who own the catalog/compose/telemetry surfaces)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "mesh callers keep addressing role aliases (model=cortex/main), never a llama.cpp-specific id \u2014 the engine swap is invisible at the calling contract",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "before_state",
+      "text": "cortex on the Orin is proxy-only (PRIMARY_PEER_PROXY to the Spark) because the NVFP4 W4A4 cortex quant is Blackwell-only; the box spends its GPU budget hosting senses (Gemma 4 12B), a role the operator is willing to give up",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "the before-state is verified on the deployed box, not from memory: the .env shows PRIMARY_PEER_PROXY to the Spark and vllm-multimodal is the running senses lane at the time the swap starts",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "the Orin serves cortex LOCALLY: llama.cpp runs unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M behind the lobes gateway, senses/Gemma 12B is removed, and model=cortex answers on this box without a proxy hop",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "after the swap, model=cortex answers locally (no X-Lobes-Proxied-By header) and the Gemma 12B container is down and its budget freed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "why_it_matters",
+      "text": "a local cortex removes the Spark dependency for this box's reasoning lane and puts the fleet's sm_87 silicon to work on the role that matters most \u2014 the first cortex the Ampere box can actually run",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the local cortex is actually usable for real work: latency and quality are acceptable to the operator after a hands-on session, not just probe-passing",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "lobes assess passes against the llama.cpp lane through the gateway (health, known-answer, tool-calling probe), with measured decode tok/s and a working context window recorded in an evidence transcript under docs/evidence/, per the house pattern",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "assess numbers are captured through the gateway path callers actually use, and the evidence transcript lands under docs/evidence/ before any doc claims VALIDATED (#108 rule)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "run lobes assess + the tool-calling probe through the gateway, capture decode tok/s and context ceiling, land the transcript under docs/evidence/ with the date-stamped naming convention",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "measured on this box through the gateway: decode >= 5 tok/s single-stream, context window >= 32768 served and needle-probed, known-answer and tool-calling probes PASS \u2014 numbers recorded in the evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the numbers come from the live box run, measured through the gateway path, and land in the docs/evidence/ transcript \u2014 no target is claimed met from theory or extrapolation",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "llama.cpp support quality for the Qwen3.8 qwen3_5 hybrid Mamba/linear-attention arch is hearsay ('I hear llama.cpp supports it well') \u2014 unverified: whether UD-Q4_K_M loads, decodes correctly, supports YaRN to beyond-native context, and at what tok/s on this fleet's aarch64 Blackwell silicon needs a live spike",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "operator-confirmed frame gates the whole build on a live spike (c1 instruction + h1): llama.cpp on this box must prove load/correctness/tok/s/context on the UD-Q4_K_M before any integration lands \u2014 the unknown is resolved by that gate, not by assuming support",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "no verified llama.cpp CUDA container/build for aarch64 sm_110 (Thor) / sm_121 (Spark GB10) is known in-tree; build-from-source vs ghcr.io/ggml-org/llama.cpp server-cuda image viability is unexplored",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "target corrected from Blackwell to sm_87 (Jetson AGX Orin, Ampere): llama.cpp CUDA on Orin is a mature, well-trodden path \u2014 the remaining unknown is only which build/container to pin, folded into the v1 spike",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/catalog.py",
+      "finding": "Gear dataclass fields are vLLM flags verbatim (served-model-name, tool_parser matching runtime._parser.infer_parser, MoE serve extras); no engine/runtime axis exists",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/templates/docker-compose.yml + templates/fleet/docker-compose.yml",
+      "finding": "all 10+ generate-lane image: lines are vLLM images; zero llama.cpp/GGUF mentions anywhere in the repo (grep across py/md/toml/yml returned nothing) \u2014 greenfield runtime surface",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/gateway/ (via docs/tensorrt-llm-investigation.md sec.1)",
+      "finding": "request proxying is engine-agnostic; llama.cpp's OpenAI-compatible server is reachable behind the gateway unchanged",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/_metrics.py",
+      "finding": "telemetry parser is keyed on vllm:* series names; llama.cpp's /metrics surface differs \u2014 same gap the TRT-LLM investigation recorded",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/assess.py",
+      "finding": "assessment harness is stdlib OpenAI HTTP only; llama.cpp serves /health and /v1/models, so the harness runs as-is",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "docs/tensorrt-llm-investigation.md",
+      "finding": "prior alternative-engine precedent: engine-agnostic request path confirmed, telemetry gap named, verdict pattern = spike before bring-up",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "docs/qwen3.8-27b-nvfp4.md (checkpoint facts)",
+      "finding": "the NVFP4 lane's validated features (MTP module, ViT, preserve_thinking template, qwen3_coder_thinking strict-tools plugin) are vLLM mechanisms; none transfer to llama.cpp automatically",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/profiles/builtin/orin.toml + builtin_shapes/orin-lobe.toml, orin-small.toml",
+      "finding": "the Orin card has a profile and two shapes in-tree; orin-small is declared-UNVALIDATED (no 27B, senses disabled per base fallback rules) and this box actually runs senses \u2014 a GGUF-cortex-on-Orin shape is a new shape, not a tweak of either",
+      "seeds": [
+        "c9",
+        "c10"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "~/.lobes/profiles/orin.toml + this box's deployed .env (cortex=proxy to Spark)",
+      "finding": "cortex is currently infeasible-local on sm_87 (NVFP4 W4A4 is Blackwell-only) and served by PRIMARY_PEER_PROXY to the Spark; the GGUF lane would make it local. Budget note: box ran 54/61 GiB with 3 engines and NO swap \u2014 a ~16-17 GB Q4_K_M plus KV must displace or coexist within that",
+      "seeds": [
+        "c11",
+        "c9"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "CLAUDE.md proxy-lobes section + this box's deployed compose (vllm-multimodal lane)",
+      "finding": "the Spark's gateway forwards senses to this Orin (X-Lobes-Proxied-By validated 2026-07-31); dropping the 12B here breaks that chain \u2014 the removal is a mesh topology change, not a local free-up",
+      "seeds": [
+        "c13"
+      ]
+    }
+  ],
+  "lapses": []
+}

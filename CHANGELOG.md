@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.2] - 2026-08-23
+
+### Added
+
+- docs/specs/2026-08-22-qwen3-8-gguf-llamacpp.md — converged devague spec: the
+  Jetson AGX Orin (sm_87) gains a LOCAL cortex serving
+  `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` via a llama.cpp lane, replacing the
+  `senses` Gemma 4 12B on that box (operator decision; mesh senses re-homing is
+  out of scope). Spike-gated per the TRT-LLM-investigation pattern: live
+  load/correctness/tok/s/context on the box before any integration lands.
+  Measurable gate: decode >= 5 tok/s single-stream, context >= 32768 served and
+  needle-probed, known-answer + tool-calling probes PASS through the gateway,
+  evidence under docs/evidence/. Frame state in
+  `.devague/frames/qwen3-8-gguf-llamacpp.json` (10 scope entries, 19 confirmed
+  claims, 12 honesty conditions).
+
 ## [0.58.1] - 2026-08-21
 
 ### Added
