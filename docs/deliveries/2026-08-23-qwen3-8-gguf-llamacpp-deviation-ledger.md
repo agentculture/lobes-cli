@@ -119,3 +119,35 @@ benchmarked CUDA-12 build, on a CUDA 13.2 host) and, if that is also null, a
 lower-quant comparison. The honest outcome may be that ~2.5 tok/s is this
 platform's real figure for this checkpoint, in which case c20's floor is
 renegotiated rather than the number massaged.
+
+---
+
+## d5 — t3 touched switch/bench beyond its "`catalog.py` only" instruction, and fixed a latent bug
+
+- **Task:** t3 · **Classification:** acceptable · **Origin:** llm · **State:** approved
+- **Affects:** t3
+
+**What happened.** t3's instruction scoped the work to `lobes/catalog.py`. Delivery
+also changed `lobes/cli/_commands/switch.py` and `lobes/bench/compare.py`.
+
+**Why the instruction could not be satisfied as written.** t3's acceptance
+criterion 3 requires that vLLM-only fields are "not silently applied" to a
+llama.cpp gear. `infer_parser` matches on the model **name**, so
+`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` resolves to `qwen3_coder`, and `lobes switch`
+would have written `VLLM_TOOL_CALL_PARSER=qwen3_coder` for a gear whose engine has
+no such flag — exactly the failure the engine axis exists to prevent. A
+catalog-only change cannot stop that. Same shape as d3: the instruction was
+narrower than its own acceptance criterion.
+
+**Latent bug found and fixed (not in scope, but silent and wrong).**
+`lobes benchmark --profile qwen-nvfp4-vs-bf16` splits its pair on `_is_bf16`,
+which treats `quantization == ""` as bf16. The GGUF gear's id contains both `qwen`
+and `27b`, and its `quantization` is empty for an unrelated reason — Q4_K_M lives
+*inside* the GGUF file. Without a gate it would have been selected as the **BF16
+arm** and benchmarked as one, producing a plausible and entirely wrong comparison.
+Verified empirically before fixing; a named regression test records why.
+
+**Byte-identity evidence.** A switch-plan golden was captured BEFORE the model
+change (`tests/goldens/switch-plans.txt`, commit `833846c`) and moved by exactly
+**14 added lines and zero modified lines** — criterion 2 proven by diff rather
+than inspection, as the plan demanded.

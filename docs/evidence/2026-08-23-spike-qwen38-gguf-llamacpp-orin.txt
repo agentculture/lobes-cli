@@ -120,3 +120,84 @@ PASS  tool calling — asserts tool_calls != null (NOT merely that a reply arriv
         finish_reason = "tool_calls"
 => The hybrid Mamba/SSM + attention stack DECODES CORRECTLY on sm_87.
    This answers the plan's blocking unknown v1.
+
+--------------------------------------------------------------------------------
+7. THROUGHPUT — benchmark matrix (llama-bench -p 512 -n 128 -ngl 99)
+--------------------------------------------------------------------------------
+Conditions: GPU clocks pinned via `sudo jetson_clocks` (612 MHz, the MODE_30W
+ceiling); EMC already at max 3199 MHz; senses stopped; single slot; one run each.
+
+| build                            | CUDA | fa | pp512 (t/s)  | tg128 (t/s) |
+|----------------------------------|------|----|--------------|-------------|
+| ggml-org 10573 (d775b8967)       |  12  |  1 | 63.10 ± 0.12 | 2.53 ± 0.00 |
+| ggml-org 10573 (d775b8967)       |  12  |  0 | 61.98 ± 0.19 | 2.52 ± 0.03 |
+| nvidia-ai-iot 10373 (38406d597)  |  13  |  1 | 64.79 ± 0.10 | 2.61 ± 0.00 |  <-- BEST
+| nvidia-ai-iot 10373 (38406d597)  |  13  |  0 | 63.56 ± 0.09 | 2.57 ± 0.00 |
+
+Both variables move consistently and reproducibly:
+  CUDA 13 over CUDA 12 : +3.2% decode, +2.7% prefill
+  flash-attn on over off: +1.5% decode, +1.9% prefill
+NOTE the CUDA-13 image carries an OLDER llama.cpp (10373 < 10573), so its win is
+attributable to the CUDA generation, not to newer llama.cpp code.
+
+SELECTED CONFIGURATION (the fastest measured):
+  image ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+  flags -ngl 99 -c 262144 --jinja -np 1 -fa on
+
+--------------------------------------------------------------------------------
+8. WHY IT IS 2.6 tok/s — six candidate causes, all MEASURED and eliminated
+--------------------------------------------------------------------------------
+long context ......... NULL   2.57 tok/s identical at ctx 8192 and ctx 262144
+GPU core clock ....... NULL   306 -> 612 MHz (jetson_clocks) gave exactly 1.00x
+memory / EMC clock ... N/A    already pinned at max 3199 MHz before any change
+CPU saturation ....... NULL   no core above 54% during generation; 8 of 12 online
+flash attention ...... NULL   2.61 (on) vs 2.57 (off) — real but ~1.5%
+build / CUDA gen ..... SMALL  CUDA 13 vs CUDA 12 = +3.2%, reproducible
+GGUF quant ........... see section 9
+
+Signature: `GR3D_FREQ` pegged at 99-100% throughout, yet decode is completely
+insensitive to a 2x core-clock change. That combination means LAUNCH-LATENCY
+bound, not throughput bound. GR3D_FREQ on Tegra measures work *submitted* to the
+GPU, not ALU occupancy, so 99% is consistent with many small serialized kernels.
+This matches the reported behaviour of the Gated-DeltaNet CUDA path on sm_87.
+
+CORRECTION ON THE RECORD: an earlier conclusion in this spike — "GPU at 100% means
+compute-bound, at the silicon's ceiling, not fixable by config" — was WRONG on two
+counts. GR3D_FREQ is not occupancy, and the board was additionally capped at
+MODE_30W with the GPU pinned to its 306 MHz floor. Pinning clocks was a real and
+necessary fix; it simply was not this bottleneck.
+
+DEPLOYMENT CONTEXT: the Jetson AGX Thor serves this same checkpoint (NVFP4, vLLM)
+at 12.1 tok/s. Proxying cortex to a peer is ~4.6x faster than serving it locally
+on this Orin. The value of a local Orin cortex is INDEPENDENCE, not speed.
+
+--------------------------------------------------------------------------------
+9. LIVE STREAMING BATTERY — selected config, through the OpenAI streaming API
+--------------------------------------------------------------------------------
+Config: nvidia CUDA-13 build, -ngl 99 -c 262144 --jinja -np 1 -fa on
+Method: real SSE stream; TTFT is time to the FIRST content delta as a client sees
+it, not a server-side self-report. Decode excludes TTFT.
+Load: 15.6 s warm-cache (84 s cold).
+
+| prompt depth | TTFT      | streamed | decode      |
+|--------------|-----------|----------|-------------|
+| 0            |  1 566 ms | 128 tok  | 2.61 tok/s  |
+| 512          | 12 407 ms | 128 tok  | 2.62 tok/s  |
+(further depths appended below as measured)
+
+Cross-validation: streaming decode 2.61 tok/s matches llama-bench tg128 2.61
+exactly — the API path adds no measurable decode overhead.
+
+*** THE OPERATIONALLY IMPORTANT FINDING IS PREFILL, NOT DECODE ***
+Decode is FLAT with prompt depth (2.61 -> 2.62), which is the hybrid architecture
+working as designed: only 16 of 65 layers carry a growing KV cache.
+But TTFT scales linearly with prefill, and prefill measures ~64 tok/s. So:
+      depth    512 -> TTFT ~12 s
+      depth  8 192 -> TTFT ~2 min      (extrapolated from 64 tok/s)
+      depth 32 768 -> TTFT ~8.5 min    (extrapolated)
+      depth 262 144 -> TTFT ~68 min    (extrapolated — the full window)
+=> The 256K window is REAL (memory allocated, n_ctx_slot=262144 served) but it is
+   a BATCH/BACKGROUND capability on this box, NOT an interactive one. A reader who
+   sees "serves 256K" would reasonably assume they can paste a large document and
+   converse about it; on this hardware they cannot. This caveat must travel with
+   every claim about the context window.

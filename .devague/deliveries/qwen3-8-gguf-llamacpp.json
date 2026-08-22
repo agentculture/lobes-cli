@@ -2,7 +2,7 @@
   "plan_slug": "qwen3-8-gguf-llamacpp",
   "schema_version": 1,
   "created": "2026-08-22T21:57:52Z",
-  "updated": "2026-08-22T23:09:01Z",
+  "updated": "2026-08-22T23:16:18Z",
   "deviations": [
     {
       "id": "d1",
@@ -58,6 +58,18 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d5",
+      "what": "t3 touched switch/bench beyond its catalog.py-only instruction, and fixed a latent silent-wrong-answer in benchmark pairing",
+      "task_ref": "t3",
+      "reason": "Criterion 3 (vLLM-only fields not SILENTLY APPLIED) cannot be satisfied from catalog.py alone: infer_parser matches on model NAME, so the GGUF gear resolved to qwen3_coder and lobes switch would have written VLLM_TOOL_CALL_PARSER for an engine with no such flag. Same shape as d3. Additionally found and fixed a latent bug: _is_bf16 treats empty quantization as bf16, and the GGUF gear's quantization is empty because Q4_K_M lives inside the file \u2014 so qwen-nvfp4-vs-bf16 would have benchmarked it as the BF16 arm. Byte-identity proven by a golden captured BEFORE the change: exactly 14 added lines, zero modified.",
+      "affects": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
     }
   ]
 }
