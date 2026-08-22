@@ -415,11 +415,16 @@ def test_orin_builtin_records_the_measured_budget_with_its_boot_order_caveat() -
 
 
 def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:
-    # cortex/muse/worker are all NVFP4 exports that quantize ACTIVATIONS to FP4,
-    # which needs Blackwell tensor cores; sm_87 is Ampere. A hard architecture
-    # line, not a memory tradeoff — so they carry no model and no knobs either.
+    # muse/worker are NVFP4 exports that quantize ACTIVATIONS to FP4, which needs
+    # Blackwell tensor cores; sm_87 is Ampere. A hard architecture line, not a
+    # memory tradeoff — so they carry no model and no knobs either.
+    #
+    # `cortex` is deliberately NOT in this list any more (qwen3-8-gguf-llamacpp
+    # t5): the NVFP4 line is about the CHECKPOINT FORMAT, and this card serves
+    # cortex from a weight-only GGUF through llama.cpp instead — see the
+    # dedicated test below.
     orin = loader.load_builtin("orin")
-    for role in ("cortex", "muse", "worker"):
+    for role in ("muse", "worker"):
         rp = orin.role(role)
         assert rp.feasible is False, f"{role} must be infeasible on Ampere sm_87"
         assert rp == RoleProfile(feasible=False), f"{role} leaked a model/knob opinion"
@@ -427,6 +432,42 @@ def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:
     text = _orin_toml_text()
     assert "Blackwell" in text
     assert "W4A16" in text  # the contrasting weight-only scheme senses uses
+
+
+def test_orin_builtin_serves_cortex_on_the_llama_cpp_engine() -> None:
+    # The Ampere board CAN serve the cortex role — just not the NVFP4 export.
+    # It declares the catalog's llama.cpp GGUF gear, and declares NONE of the
+    # vLLM-only knobs, because `llama-server` has no flag to receive them (a
+    # knob that reaches no flag is the dead declaration #92 forbids).
+    from lobes.catalog import ENGINE_LLAMA_CPP
+    from lobes.profiles.shape_render import role_engine
+
+    cortex = loader.load_builtin("orin").role("cortex")
+    assert cortex.feasible is True
+    assert cortex.model == "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+    assert role_engine(cortex) == ENGINE_LLAMA_CPP
+    # The GGUF's own declared native ceiling, served in full at the t1 spike.
+    assert cortex.max_model_len == 262144
+    assert cortex.gpu_mem_util is None  # no utilization fraction on this engine
+    assert cortex.quantization is None  # Q4_K_M lives inside the .gguf
+    assert cortex.kv_cache_dtype is None
+    assert cortex.attention_backend is None
+    assert cortex.enforce_eager is None
+    assert cortex.hf_overrides is None
+
+
+def test_orin_builtin_records_the_co_residency_exclusion_next_to_the_declaration() -> None:
+    # cortex (~33 GiB measured) and senses (0.45 x 61.3 = ~27.6 GiB) do not both
+    # fit in 61.3 GiB with ZERO swap, so this card needs a SHAPE to pick one.
+    # Both stay feasible (feasibility is "can the board serve it at all?"), which
+    # makes the exclusion invisible in the data — so the file has to say it.
+    orin = loader.load_builtin("orin")
+    assert orin.role("cortex").feasible is True
+    assert orin.role("senses").feasible is True
+    text = _orin_toml_text()
+    assert "CANNOT CO-RESIDE" in text
+    assert "orin-cortex" in text  # the shape that resolves it
+    assert "orin-lobe" in text  # ...and the other one
 
 
 def test_orin_builtin_pooling_gears_are_single_sourced_from_machines_registry() -> None:

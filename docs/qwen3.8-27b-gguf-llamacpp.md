@@ -31,8 +31,8 @@ container format for a different engine.
 
 ## The engine — why the vLLM fields are empty
 
-Served by `ghcr.io/ggml-org/llama.cpp:server-cuda` via `llama-server`, which
-speaks the OpenAI-compatible API. The catalog entry leaves every vLLM-only
+Served by `llama-server`, which speaks the OpenAI-compatible API, from the
+digest-pinned image the lane carries (see "The lane" below). The catalog entry leaves every vLLM-only
 field empty **on purpose**:
 
 - **`tool_parser=""`** — `llama-server` has no `--tool-call-parser` and no
@@ -63,6 +63,92 @@ plan's live transcript:
 | ViT (image / video intake) | yes | not served on this lane |
 | `preserve_thinking` (#93) | `--default-chat-template-kwargs` | UNVERIFIED |
 | strict tools / xgrammar (colleague#320) | armed | UNVERIFIED |
+
+
+## The lane (plan t4)
+
+`llamacpp-primary` in `lobes/templates/fleet/docker-compose.yml` — the fleet's
+first non-vLLM generate service. Properties worth knowing before you touch it:
+
+| property | value | why |
+|---|---|---|
+| image | `ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c10…` | Pinned by digest, never a tag. llama.cpp build `38406d597` (10373) on CUDA 13, arm64, `CUDAARCHS=87;110`. |
+| gating | `profiles: [llamacpp]` | Opt-in like `vllm-muse`/`vllm-worker`/`vllm-minor` — no existing deployment starts it. |
+| exposure | `expose: "8000"`, **no `ports:`** | Reachable only on the compose network, matching the `vllm-multimodal` precedent. The gateway origin is the only way in. |
+| GPU request | the shipped `deploy.resources` stanza | A csv-mode board rewrites it to `runtime: nvidia` through its card profile's `gpu_access = "runtime"` declaration and the generated `docker-compose.gpu.yml` — see below. |
+| model | `/models/${LLAMACPP_GGUF}`, mounted **read-only** | The lane never downloads. The served file is the one the operator placed. |
+| health | `curl -f http://localhost:8000/health` | `llama-server` answers `{"status":"ok"}` once loaded; `start_period` covers the measured 84 s cold load. |
+
+**The image was chosen by measurement, 2026-08-23 on the Jetson AGX Orin 64GB**
+(`llama-bench -p 512 -n 128 -ngl 99`):
+
+| build | CUDA | flash attn | pp512 | tg128 |
+|---|---|---|---|---|
+| `ghcr.io/nvidia-ai-iot/llama_cpp` 10373 | 13 | on | **64.79** | **2.61** |
+| `ghcr.io/nvidia-ai-iot/llama_cpp` 10373 | 13 | off | 63.56 | 2.57 |
+| `ghcr.io/ggml-org/llama.cpp` 10573 | 12 | on | 63.10 | 2.53 |
+| `ghcr.io/ggml-org/llama.cpp` 10573 | 12 | off | 61.98 | 2.52 |
+
+The ggml-org image is the recorded **runner-up**, not a drop-in: swapping to it
+is a deliberate act that should be re-measured.
+
+**Serve flags** are the measured-best set: `-ngl 99 -c 262144 --jinja -np 1
+-fa on`. They are written as separate `--flag value` list items because
+llama.cpp's own arg parser **rejects** the `--flag=value` form every vLLM lane
+uses (verified against this image: `error: invalid argument: --ctx-size=4096`).
+
+**No vLLM flag appears in it** — no `--quantization`, no
+`--gpu-memory-utilization`, no `--tool-call-parser`, no `--reasoning-parser`,
+no `--speculative-config`. Those surfaces do not exist on this engine, and a
+translated-looking flag would be a claim the lane cannot honour.
+
+## Rendering it (plan t5)
+
+Nothing about the lane is hand-configured. The `orin` card profile declares
+`cortex` on this gear, and the engine follows from the catalog entry for that
+model id:
+
+```bash
+lobes init --profile orin --shape orin-cortex --apply
+```
+
+renders, from repo data alone:
+
+* `.env` — `PRIMARY_MODEL` / `PRIMARY_SERVED_NAME` = this gear,
+  `PRIMARY_MAX_MODEL_LEN=262144`, `PRIMARY_URL=http://llamacpp-primary:8000`,
+  `COMPOSE_PROFILES=llamacpp`, `MULTIMODAL_FEASIBLE=false`. No
+  `PRIMARY_GPU_MEM_UTIL` — this engine has no such flag, so declaring one would
+  be a dead knob;
+* `docker-compose.shape.yml` — parks `vllm-primary` **and** `vllm-multimodal` in
+  the inert `shape-dropped` compose profile. Parking the vLLM cortex lane while
+  cortex is *hosted* is the engine swap: both lanes running at once on a
+  61.3 GiB board is the failure that prevents;
+* `docker-compose.gpu.yml` — `!reset`s every GPU service's `deploy:` stanza and
+  sets `runtime: nvidia`, because this board's NVIDIA container toolkit resolves
+  to legacy **csv** mode and refuses the `deploy.resources` form at container
+  create. `llamacpp-primary` is in that list.
+
+The caller-facing contract does not move: `model=cortex|main|hard` still routes
+to `cortex`, and the gateway needed no code change to reach a different engine.
+
+## Memory, measured
+
+At the full 262144 window on the Orin (2026-08-23):
+
+| term | value |
+|---|---|
+| weights | 15.33 GiB |
+| KV cache | 16.00 GiB (**64 KiB/token**) |
+| resident total | **~33 GiB** (predicted 31.33 from the GGUF header) |
+| load time | 84 s cold, 15.6 s warm-cache |
+
+KV is cheap because only **16 of the 65 layers** hold a per-token cache
+(`full_attention_interval = 4`), and those use GQA at `head_count_kv = 4`,
+`key_length = value_length = 256`. The other 49 are Mamba/SSM with constant
+state. `-c` is the only memory dial this engine has.
+
+That footprint is why `orin-cortex` drops `senses`: ~33 GiB plus senses' ~27.6
+GiB does not fit in 61.3 GiB, and the board has **zero swap**.
 
 ## `lobes switch` and this gear
 

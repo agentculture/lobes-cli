@@ -91,6 +91,13 @@ GPU_AUDIO_OVERLAY = "docker-compose.gpu-audio.yml"
 # template text, so a new GPU service cannot land without updating these).
 GPU_SERVICES: tuple[str, ...] = (
     "vllm-primary",
+    # The opt-in llama.cpp cortex lane (qwen3-8-gguf-llamacpp t4). It is here for
+    # exactly the reason every other entry is: the lane declares the SHIPPED
+    # `deploy.resources` GPU request, so a csv-mode board needs it rewritten to
+    # `runtime: nvidia` — and the Jetson AGX Orin that this lane exists for IS
+    # that board. Omitting it would leave the one card the lane targets unable to
+    # create the container.
+    "llamacpp-primary",
     "vllm-embed",
     "vllm-embed-deep",
     "vllm-rerank",

@@ -850,6 +850,24 @@ render time — `shape × card` — never a per-shape code fork.
   0.30 / 131072. **Declared, UNVALIDATED** — no box has booted this shape,
   and the budget it carries is the card profile's own MEASURED-PENDING
   hypothesis.
+- **`orin-cortex`** — the SAME board's opposite answer to `orin-lobe`:
+  keeps `cortex` + `hand` + `embedder` + `reranker`, drops `senses` (and
+  `stt`/`tts`, for orin-lobe's reason). `cortex` runs LOCALLY here, on the
+  **llama.cpp** lane rather than vLLM: the Blackwell line is about the
+  NVFP4 *checkpoint format*, not the role, and the `orin` card declares
+  the catalog's GGUF gear (`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`,
+  `engine = llama.cpp`), which is weight-only and decodes on Ampere. The
+  render moves the lane and its origin with the model
+  (`COMPOSE_PROFILES=llamacpp` + `PRIMARY_URL=http://llamacpp-primary:8000`)
+  and parks `vllm-primary`, so the caller-facing alias never moves.
+  `senses` goes because the two do not co-reside: MEASURED 2026-08-23,
+  ~33 GiB (weights 15.33 + KV 16.00 at 64 KiB/token) for cortex against
+  61.3 GiB with zero swap, while `senses` holds ~27.6 GiB. **No
+  overrides** — `llama-server` has no utilization knob to reclaim into and
+  the context already sits at the checkpoint's native 262144. **Declared,
+  UNVALIDATED** — no box has booted this shape, and the spike behind its
+  numbers measured 2.61 tok/s single-stream, below the covering plan's
+  >= 5 tok/s gate.
 - **`orin-small`** — drops BOTH `cortex` and `senses`, keeps the opt-in
   `minor` gear (`vllm-minor`) + `embedder` + `reranker` + `stt`/`tts`. The
   Jetson AGX Orin 64GB reference shape (mesh-brain end-state, issue #112,
@@ -880,7 +898,8 @@ carries the value that fit, with a provenance comment.
 ## Selecting a shape
 
 ```bash
-lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-small|thor-muse> [--apply]
+lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe
+                   |orin-cortex|orin-small|thor-muse|thor-worker> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,
@@ -888,7 +907,8 @@ and the env/override plan); `--apply` commits. Re-running with the previous
 shape restores the previous rendering byte-for-byte. `--shape` is
 incompatible with `--single` (the legacy topology has no profile/shape
 resolution at all); it composes freely with `--audio` (every built-in shape
-hosts `stt`/`tts` identically).
+hosts `stt`/`tts` identically, except the two Orin ones — `orin-lobe` and
+`orin-cortex` — whose board has no sm_87 Parakeet image).
 
 ## Dropped-lobe honesty, end-to-end
 

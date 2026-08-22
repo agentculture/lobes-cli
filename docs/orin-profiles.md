@@ -8,6 +8,20 @@ data by booting it, and this boot is what earned Orin's. The repo's built-in
 `orin-small` *shape* remains DECLARED/UNVALIDATED (this deployment used
 `thor-lobe`, not `orin-small` — see "Shape choice" below).
 
+> **`cortex` is no longer categorically infeasible on this board (2026-08-23).**
+> Everything below still describes what this deployment measured and served in
+> July 2026, and the NVFP4 statement in it is still true as written — the NVFP4
+> exports quantize *activations* to FP4 and need Blackwell. What changed is that
+> the line turned out to be about the CHECKPOINT FORMAT, not the role: the
+> built-in `orin` card profile now declares `cortex` on a weight-only **GGUF**
+> gear served by llama.cpp (`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`), which decodes
+> on Ampere — the same reason the int4 W4A16 `senses` gear runs here. It cannot
+> co-reside with `senses` (MEASURED: ~33 GiB + ~27.6 GiB against 61.3 GiB with
+> zero swap), so it comes with its own shape, `orin-cortex`, which drops `senses`
+> the way `orin-lobe` drops `cortex`. Both are **DECLARED, UNVALIDATED** — no box
+> has booted either. See `docs/qwen3.8-27b-gguf-llamacpp.md` and
+> `docs/deployment-shapes.md`.
+
 ## What this box serves
 
 | role | model | context | gpu_mem_util | result |
