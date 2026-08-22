@@ -20,6 +20,13 @@ Rewrites every golden this directory owns:
   byte-identically to the bare ``<card>.env`` above, so it is validated against
   that existing golden by ``tests/test_shape_goldens.py`` rather than copied
   into a drifting duplicate here.
+* ``tests/goldens/switch-plans.txt`` — one block per catalogued gear: the
+  ``VLLM_*`` env plan, the human messages (which carry the auto-selected
+  ``infer_parser`` result and the catalog quantization verbatim), and the
+  compose-edit notices ``lobes switch <id> --machine spark --purpose balanced``
+  would print. This is the CATALOG's rendering surface: it turns "adding a gear
+  left every other gear untouched" from an eyeball claim into a diff (the
+  engine-axis work, qwen3-8-gguf-llamacpp plan t3).
 
 These are the byte-for-byte comparison targets in
 ``tests/test_profile_goldens.py``. Regenerating is a deliberate act, not a
@@ -31,6 +38,7 @@ didn't mean to touch is exactly the signal this suite exists to catch (see
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -40,6 +48,8 @@ _REPO_ROOT = _GOLDENS_DIR.parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))  # allow `python tests/goldens/regen.py` standalone
 
+from lobes.catalog import SUPPORTED_MODELS  # noqa: E402
+from lobes.cli._commands.switch import _build_plan, _serve_notices  # noqa: E402
 from lobes.profiles.loader import builtin_names, resolve_profile  # noqa: E402
 from lobes.profiles.render import profile_env  # noqa: E402
 from lobes.profiles.shape_render import render_shape  # noqa: E402
@@ -214,6 +224,64 @@ def write_shape_goldens() -> list[Path]:
     return written
 
 
+# --- switch-plan golden (the catalog's rendering surface) -------------------
+
+SWITCH_GOLDEN = _GOLDENS_DIR / "switch-plans.txt"
+
+#: Fixed inputs for the switch-plan golden. An explicit ``--machine`` keeps the
+#: rendering pure (``_resolve_machine_name`` only shells out to ``nvidia-smi``
+#: for ``auto``), and a fixed port/purpose keeps the projection a function of
+#: the CATALOG alone — the thing this golden exists to pin.
+SWITCH_GOLDEN_MACHINE = "spark"
+SWITCH_GOLDEN_PURPOSE = "balanced"
+SWITCH_GOLDEN_PORT = 8000
+
+
+def _switch_args(model_id: str) -> argparse.Namespace:
+    """The ``lobes switch <model_id> --machine spark --purpose balanced`` namespace.
+
+    Every optional flag is left at its parser default (``None``) so the plan is
+    resolved from the catalog + profiles alone, which is exactly what the golden
+    is pinning.
+    """
+    return argparse.Namespace(
+        model=model_id,
+        machine=SWITCH_GOLDEN_MACHINE,
+        purpose=SWITCH_GOLDEN_PURPOSE,
+        task=None,
+        tool_call_parser=None,
+        quantization=None,
+        max_model_len=None,
+        gpu_mem_util=None,
+    )
+
+
+def switch_plan_text() -> str:
+    """One block per catalogued gear: env plan, messages, compose-edit notices.
+
+    Pure passthrough of ``lobes.cli._commands.switch``'s own plan builders — this
+    module never reimplements the catalog -> ``VLLM_*`` mapping, it only formats
+    what ``_build_plan`` / ``_serve_notices`` already produced. Multi-line notices
+    are escaped to one line each so a block stays greppable and the diff stays
+    line-oriented.
+
+    Blocks appear in catalog order, so ADDING a gear appends a block and leaves
+    every existing block byte-identical — which is the review surface for any
+    change to the catalog's shape (a new field, a new engine axis, a re-typed
+    entry).
+    """
+    lines: list[str] = []
+    for model in SUPPORTED_MODELS:
+        args = _switch_args(model.id)
+        plan, messages = _build_plan(args, SWITCH_GOLDEN_PORT, model.id)
+        notices = _serve_notices(model.id, args)
+        lines.append(f"### {model.id}")
+        lines += [f"  {key}={value}" for key, value in plan.items()]
+        lines += [f"  msg: {message}" for message in messages]
+        lines += [f"  note: {notice}" for notice in (n.replace("\n", "\\n") for n in notices)]
+    return "\n".join(lines) + "\n"
+
+
 def write_goldens() -> list[Path]:
     written: list[Path] = []
     for name in builtin_names():
@@ -223,6 +291,8 @@ def write_goldens() -> list[Path]:
     template_path = _GOLDENS_DIR / "template-defaults.env"
     template_path.write_text(template_defaults_text(), encoding="utf-8")
     written.append(template_path)
+    SWITCH_GOLDEN.write_text(switch_plan_text(), encoding="utf-8")
+    written.append(SWITCH_GOLDEN)
     written.extend(write_shape_goldens())
     return written
 

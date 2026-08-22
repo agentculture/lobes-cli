@@ -9,12 +9,16 @@ from pathlib import Path
 import pytest
 
 from lobes.catalog import (
+    ENGINE_LLAMA_CPP,
+    ENGINE_VLLM,
+    ENGINES,
     SUPPORTED_MODELS,
     TIER_ROLE,
     SupportedModel,
     as_dicts,
     mtp_compose_command_items,
     resolve_tier,
+    serves_with_vllm,
     speculative_config_item,
     supported_models,
 )
@@ -31,9 +35,19 @@ _QWEN_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
 # Fields required non-empty for ALL models (task-agnostic).
 _FIELDS_ALL = ("id", "role_hint", "shape", "context", "status", "doc")
-# Fields required non-empty ONLY for generate (chat/completion) models.
-# Embedding and reranker gears have no tool parser and no quantization flag.
+# Fields required non-empty ONLY for VLLM-SERVED generate (chat/completion) models.
+# Embedding and reranker gears have no tool parser and no quantization flag; and
+# neither does a non-vLLM gear — `tool_parser` IS the vLLM --tool-call-parser and
+# `quantization` IS the vLLM --quantization, and llama.cpp has neither flag (it
+# uses --jinja + the model's own embedded chat template, and a GGUF carries its
+# quantization inside the file). Requiring them of a llama.cpp gear would force a
+# lie into the catalog.
 _FIELDS_GENERATE = ("tool_parser", "quantization")
+
+
+def _vllm_generate_models() -> list[SupportedModel]:
+    """Every vLLM-served chat/completion gear — the scope of the vLLM-only rules."""
+    return [m for m in SUPPORTED_MODELS if m.task == "generate" and serves_with_vllm(m)]
 
 
 def test_catalog_is_nonempty_and_accessors_agree() -> None:
@@ -48,7 +62,8 @@ def test_every_entry_has_all_fields_nonempty() -> None:
     for entry in as_dicts():
         for field in _FIELDS_ALL:
             assert entry.get(field), f"{entry.get('id')}: empty/missing {field}"
-        if entry.get("task", "generate") == "generate":
+        is_vllm = entry.get("engine", ENGINE_VLLM) == ENGINE_VLLM
+        if entry.get("task", "generate") == "generate" and is_vllm:
             for field in _FIELDS_GENERATE:
                 assert entry.get(field), f"{entry.get('id')}: empty/missing {field}"
 
@@ -83,9 +98,12 @@ def test_tool_parser_matches_infer_parser() -> None:
     # Restrict to generate (chat/completion) models: embed/score gears have no
     # tool parser (tool_parser="") but infer_parser would return "hermes" for
     # any Qwen3 id — those models don't do tool calling, so the field is empty.
-    for model in SUPPORTED_MODELS:
-        if model.task == "generate":
-            assert infer_parser(model.id) == model.tool_parser, model.id
+    # Scoped to vLLM gears: `infer_parser` answers with a vLLM --tool-call-parser
+    # name, which is meaningless on an engine that has no such flag (see
+    # test_llama_cpp_gear_does_not_carry_the_inferred_vllm_parser below, which
+    # pins the OPPOSITE direction for a non-vLLM gear).
+    for model in _vllm_generate_models():
+        assert infer_parser(model.id) == model.tool_parser, model.id
 
 
 def test_gateway_default_primary_and_fallback_are_in_catalog() -> None:
@@ -891,3 +909,86 @@ def test_qat_w4a16_doc_records_the_honesty_bar() -> None:
     assert "262144" in text
     assert "pending-live-probe" in lowered or "pending live probe" in lowered
     assert "#101" in text
+
+
+# ---------------------------------------------------------------------------
+# The ENGINE axis (qwen3-8-gguf-llamacpp plan t3)
+# ---------------------------------------------------------------------------
+
+_GGUF_ID = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+
+
+def test_every_entry_declares_a_known_engine() -> None:
+    # An unknown engine string would silently route a gear to no lane at all.
+    for model in SUPPORTED_MODELS:
+        assert model.engine in ENGINES, f"{model.id}: unknown engine {model.engine!r}"
+
+
+def test_engine_defaults_to_vllm_so_existing_declarations_are_untouched() -> None:
+    # The axis is additive: a gear that does not mention an engine IS a vLLM gear.
+    # Constructing an entry with no `engine=` must still produce a vLLM gear, or
+    # every pre-axis declaration in the catalog would have changed meaning.
+    entry = SupportedModel(
+        id="test-org/no-engine-declared",
+        role_hint="candidate",
+        shape="dense",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="hermes",
+        quantization="modelopt_fp4",
+        status="configured",
+        doc="fake.md",
+    )
+    assert entry.engine == ENGINE_VLLM
+    assert serves_with_vllm(entry)
+
+
+def test_exactly_one_non_vllm_gear_and_it_is_the_gguf_cortex() -> None:
+    # Every OTHER catalog entry must still be a vLLM gear — this is the
+    # catalog-side half of "adding an engine axis moved nothing else".
+    non_vllm = [m.id for m in SUPPORTED_MODELS if not serves_with_vllm(m)]
+    assert non_vllm == [_GGUF_ID], f"unexpected non-vLLM gears: {non_vllm}"
+
+
+def test_gguf_gear_exists_with_the_fields_the_file_and_the_engine_establish() -> None:
+    gear = next((m for m in SUPPORTED_MODELS if m.id == _GGUF_ID), None)
+    assert gear is not None, f"{_GGUF_ID} not found in catalog"
+    assert gear.engine == ENGINE_LLAMA_CPP
+    assert gear.task == "generate"
+    # Read off the downloaded GGUF, 2026-08-23: 262144 native.
+    assert gear.native_max_model_len == 262144
+    # NOT the primary: role_hint="primary" is single-occupancy and the fleet's
+    # cortex is still the NVFP4 sibling — which box serves cortex with which
+    # engine is a shape/profile decision, not a catalog one.
+    assert gear.role_hint == "candidate"
+    # No acceptance transcript yet (#108).
+    assert gear.status == "configured"
+
+
+def test_llama_cpp_gear_carries_none_of_the_vllm_only_fields() -> None:
+    # The acceptance bar: vLLM-only fields are not REQUIRED of a llama.cpp gear.
+    # llama-server takes no --tool-call-parser, no --reasoning-parser, no
+    # --quantization, no --moe-backend, no --hf-overrides; and it IGNORES the
+    # checkpoint's MTP head, so a speculative_config here would advertise a
+    # capability the lane cannot serve.
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _GGUF_ID)
+    for field in ("tool_parser", "quantization", "moe_backend", "speculative_config"):
+        assert getattr(gear, field) == "", f"{_GGUF_ID}: vLLM-only {field} must stay empty"
+    assert gear.hf_overrides == ""
+    assert gear.default_gpu_mem_util == 0.0
+
+
+def test_llama_cpp_gear_does_not_carry_the_inferred_vllm_parser() -> None:
+    # The trap, pinned explicitly: `infer_parser` matches on the model NAME, so a
+    # Qwen3.8 GGUF id resolves to "qwen3_coder" — a flag this engine does not
+    # have. The catalog must NOT carry that answer onto the gear.
+    gear = next(m for m in SUPPORTED_MODELS if m.id == _GGUF_ID)
+    assert infer_parser(gear.id) == "qwen3_coder", "precondition: the name still matches"
+    assert gear.tool_parser == "", "the vLLM parser must not be silently applied"
+
+
+def test_engine_is_serialised_for_every_gear() -> None:
+    # as_dicts() is the gateway's /v1/models/supported and the CLI --json path;
+    # a consumer must be able to read the engine without a hasattr guard.
+    for entry in as_dicts():
+        assert entry.get("engine"), f"{entry.get('id')}: as_dicts() missing engine"

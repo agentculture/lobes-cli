@@ -249,6 +249,26 @@ def test_qwen_variants_missing_bf16_in_the_real_catalog_today() -> None:
     assert bf16 is None
 
 
+def test_qwen_variants_never_pick_a_non_vllm_gear_as_the_bf16_side() -> None:
+    """A llama.cpp gear must never be mistaken for the BF16 variant.
+
+    ``_is_bf16`` splits the pair on ``quantization``, whose empty-string arm
+    means "carries no quantization flag". That is TRUE of a GGUF gear for a
+    reason that has nothing to do with bf16 — its quantization lives inside the
+    ``.gguf`` file — so without the engine gate in ``_is_qwen_27b_class`` the 27B
+    GGUF cortex (id carries both "qwen" and "27b") would be selected as the BF16
+    side of an NVFP4-vs-BF16 comparison and silently benchmarked as one.
+    """
+    non_vllm = [m for m in C.SUPPORTED_MODELS if m.engine != "vllm"]
+    assert non_vllm, "precondition: the catalog carries at least one non-vLLM gear"
+    assert any(
+        "qwen" in m.id.lower() and "27b" in m.id.lower() and m.quantization == "" for m in non_vllm
+    ), "precondition: a non-vLLM 27B Qwen gear with no quantization flag exists"
+    nvfp4, bf16 = C.qwen_nvfp4_bf16_variants()
+    assert bf16 is None
+    assert nvfp4 is not None and nvfp4.engine == "vllm"
+
+
 def test_qwen_variants_both_present_with_injected_catalog() -> None:
     nvfp4, bf16 = C.qwen_nvfp4_bf16_variants(_FAKE_CATALOG_BOTH)
     assert nvfp4 is _FAKE_NVFP4
