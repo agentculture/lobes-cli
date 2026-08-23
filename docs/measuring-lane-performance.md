@@ -77,6 +77,35 @@ happened. Pinning `min=max` at each point gave the real answer:
 The lesson generalises past Jetson: **a governed value read at rest does not
 describe that value under load.** Pin it, or measure it during the run.
 
+## Rule 3 — a number without its conditions is not reproducible
+
+The two rules above are both instances of a third, more general one:
+**state the conditions a measurement was taken under, or the number cannot be
+compared to anything.**
+
+During the Orin bring-up two comparisons were nearly corrupted this way. The
+clock artifact above is one (a governed clock read at idle). The other: one arm
+of a build-comparison matrix ran while a 13 GB model download was active, and a
+27B model lane was still resident in memory when a quant ladder was first queued.
+For a comparison whose interesting differences are **1-2%**, that variance is
+larger than the signal.
+
+`scripts/prefill-depth-curve.py` reports the server's own `prompt_tokens` for the
+same reason: so the depth in the record is measured, not requested.
+
+When benchmarking to compare, **enforce and record**:
+
+- power mode and clocks (Jetson: `nvpmodel -q`,
+  `/sys/class/devfreq/17000000.gpu/{cur,min,max}_freq`, `bwmgr/cur_freq`)
+- the exact co-resident set (`docker ps`) and any active downloads
+- free memory before the run, and thermals before **and** after
+- the image digest and the model file
+
+and **re-baseline the incumbent under the same conditions** rather than comparing
+a fresh clean run against an older one taken under unknown load. Re-measuring a
+number you already have is cheap; a wrong conclusion drawn from mismatched
+conditions is not.
+
 ## Recording the result
 
 Emit `--json` and append it to the lane's evidence transcript under
