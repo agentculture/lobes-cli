@@ -118,7 +118,8 @@ def test_fleet_status_busy_is_flagged_partial_when_a_backend_cannot_report() -> 
         }
 
     payload = S.fleet_status_payload(_table(), _cfg(), probe=probe)
-    assert payload["busy"]["running"] == 2 and payload["busy"]["waiting"] == 1
+    assert payload["busy"]["running"] == 2
+    assert payload["busy"]["waiting"] == 1
     assert payload["busy"]["partial"] is True
 
 

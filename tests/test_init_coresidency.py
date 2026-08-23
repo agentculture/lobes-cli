@@ -37,7 +37,7 @@ from __future__ import annotations
 import pytest
 
 from lobes.cli import main
-from lobes.cli._errors import EXIT_USER_ERROR
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import builtin_names, resolve_profile
 from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile
 from lobes.profiles.shape_render import overcommitted_groups, shape_env
@@ -179,7 +179,8 @@ def test_bare_init_refuses_on_the_declaring_card(tmp_path, monkeypatch, capsys) 
     rc = main(["init", str(target), "--apply"])
     assert rc == EXIT_USER_ERROR
     err = capsys.readouterr().err
-    assert "cortex" in err and "senses" in err
+    assert "cortex" in err
+    assert "senses" in err
     # Names the concrete way out, both alternatives, from the card's own data.
     assert "orin-cortex" in err
     assert "orin-lobe" in err
@@ -237,7 +238,8 @@ def test_explicit_machine_as_brain_warns_but_proceeds(tmp_path, monkeypatch, cap
     assert main(["init", str(target), "--shape", _DEFAULT_SHAPE, "--apply"]) == 0
     captured = capsys.readouterr()
     assert "warning" in captured.err
-    assert "cortex" in captured.err and "senses" in captured.err
+    assert "cortex" in captured.err
+    assert "senses" in captured.err
     assert (target / _compose.ENV_FILE).exists()
 
 
@@ -305,9 +307,9 @@ def test_exclusive_roles_round_trips_through_to_dict() -> None:
     ],
 )
 def test_a_malformed_declaration_is_a_load_error(bad) -> None:
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ModelGearError) as exc:
         Profile.from_dict("bogus", bad)
-    assert getattr(exc.value, "code", None) == EXIT_USER_ERROR
+    assert exc.value.code == EXIT_USER_ERROR
 
 
 def test_a_well_formed_declaration_loads() -> None:
