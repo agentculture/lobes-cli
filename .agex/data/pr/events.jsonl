@@ -111,6 +111,28 @@
 {"ts":"2026-08-10T07:28:12.425961+00:00","type":"pr_read","pr":184,"comment_count":8,"threads_unresolved":0,"ci_state":"failure"}
 {"ts":"2026-08-10T07:38:52.888182+00:00","type":"readiness_arrived","pr":184,"waited_secs":0}
 {"ts":"2026-08-10T07:38:58.375296+00:00","type":"pr_read","pr":184,"comment_count":8,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-19T21:36:21.165092+00:00","type":"pr_opened","pr":185,"title":"feat: Qwen3.8-27B-NVFP4 becomes cortex at 1M YaRN context, VALIDATED on the Spark (0.57.0)"}
+{"ts":"2026-08-19T21:36:22.383522+00:00","type":"pr_review_triggered","pr":185,"command":"/agentic_review"}
+{"ts":"2026-08-19T21:36:23.194516+00:00","type":"pr_webhook_posted","pr":185,"event":"pr_opened"}
+{"ts":"2026-08-19T21:37:26.274955+00:00","type":"readiness_arrived","pr":185,"waited_secs":60}
+{"ts":"2026-08-19T21:37:31.397212+00:00","type":"pr_read","pr":185,"comment_count":3,"threads_unresolved":0,"ci_state":"failure"}
+{"ts":"2026-08-19T22:11:05.619218+00:00","type":"pr_read","pr":185,"comment_count":8,"threads_unresolved":4,"ci_state":"ok"}
+{"ts":"2026-08-19T22:13:50.213457+00:00","type":"pr_batch_replied","pr":185,"count":0,"resolved":0}
+{"ts":"2026-08-19T22:14:12.057371+00:00","type":"pr_reply","pr":185,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-19T22:14:13.242192+00:00","type":"pr_reply","pr":185,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-19T22:14:14.392514+00:00","type":"pr_reply","pr":185,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-19T22:14:15.569018+00:00","type":"pr_reply","pr":185,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-19T22:14:15.581485+00:00","type":"pr_batch_replied","pr":185,"count":4,"resolved":0}
+{"ts":"2026-08-19T22:14:16.326582+00:00","type":"pr_webhook_posted","pr":185,"event":"pr_replied"}
+{"ts":"2026-08-19T22:16:02.665127+00:00","type":"readiness_arrived","pr":185,"waited_secs":0}
+{"ts":"2026-08-19T22:16:07.006451+00:00","type":"pr_read","pr":185,"comment_count":12,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-21T04:45:43.125637+00:00","type":"pr_read","pr":191,"comment_count":7,"threads_unresolved":4,"ci_state":"ok"}
+{"ts":"2026-08-21T04:48:53.077547+00:00","type":"pr_reply","pr":191,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-21T04:48:54.495800+00:00","type":"pr_reply","pr":191,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-21T04:48:55.863418+00:00","type":"pr_reply","pr":191,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-21T04:48:57.182265+00:00","type":"pr_reply","pr":191,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-21T04:48:57.195315+00:00","type":"pr_batch_replied","pr":191,"count":4,"resolved":0}
+{"ts":"2026-08-21T04:48:57.874967+00:00","type":"pr_webhook_posted","pr":191,"event":"pr_replied"}
 {"ts":"2026-08-23T05:02:00.537705+00:00","type":"pr_opened","pr":193,"title":"feat(cortex): local llama.cpp GGUF cortex on the Jetson AGX Orin (sm_87) \u2014 the catalog's first non-vLLM gear"}
 {"ts":"2026-08-23T05:02:02.420149+00:00","type":"pr_review_triggered","pr":193,"command":"/agentic_review"}
 {"ts":"2026-08-23T05:03:07.551679+00:00","type":"readiness_arrived","pr":193,"waited_secs":60}
