@@ -1,0 +1,114 @@
+{
+  "plan_slug": "qwen3-8-gguf-llamacpp",
+  "schema_version": 1,
+  "created": "2026-08-22T21:57:52Z",
+  "updated": "2026-08-23T04:21:23Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t7 is not fan-out work: its primary acceptance criterion is already satisfied in main",
+      "task_ref": "t7",
+      "reason": "Discovered at fan-out time: lobes/profiles/builtin/orin.toml:272 already declares LOBES_IOWAIT_DEGRADED_THRESHOLD = \"100\" under [host_env] at CARD level (every shape rendered over orin inherits it, machine-as-brain included), and the deployed ~/.lobes/.env line 538 carries it \u2014 so criterion 2 (persisted, survives compose up/down) holds today. A prior workforce run landed it 2026-08-04. Frame claim c21 and this task were written from a stale 2026-07-17 memory that described the ephemeral shell-env override state. Criterion 1 (cortex answers 200 during a flare) cannot be tested until a local cortex exists, so it belongs to the t9/t10 bring-up; criterion 3 is conditional on choosing the sampling rewrite, which was not the fix taken.",
+      "affects": [
+        "t7",
+        "t9",
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "target context raised from the c20 floor (>=32768) to the checkpoint's full native 262144",
+      "task_ref": "t1",
+      "reason": "Operator decision 2026-08-23: the goal is the official 256K context, and turning off more models is authorized to get it. Arithmetic from the GGUF hparams: 256K needs ~31.3 GiB (15.33 weights + 16.0 KV at 64 KiB/token). The box has 61.3 GiB and ZERO swap, ~21 GiB free with the fleet up, so ~10+ GiB must be freed. Stopping senses (vllm-multimodal, util 0.45, ~27.6 GiB) alone yields ~48 GiB free and fits 256K with ~17 GiB spare; embed+rerank (~7.4 GiB total) need not be touched. Consequence: senses stops EARLIER than t9's staged ordering placed it, and the Spark's vision proxy to this box breaks at that moment (already accepted by the operator: 'don't worry about proxies, that will be solved; we give up gemma if we need').",
+      "affects": [
+        "t1",
+        "t5",
+        "t9",
+        "t10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t6 delivery touched the presentation layer beyond its _metrics.py-only instruction",
+      "task_ref": "t6",
+      "reason": "t6 acceptance criterion 3 is a statement about the RENDERED surfaces (lobes overview --live and gateway /status must not imply an idle lane). Parsing honestly in _metrics.py alone cannot satisfy it \u2014 the renderer would still print running: 0 for a field the backend never reported, and single_sections indexed metrics['running'] directly so it would have raised KeyError on the unknown-engine dict. The instruction was drawn more narrowly than its own acceptance criterion; the criterion won. All-vLLM output stays byte-identical.",
+      "affects": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "measured decode ~2.5 tok/s against the c20 floor of >=5 tok/s",
+      "task_ref": "t1",
+      "reason": "llama-bench p512/n128: ggml 10573 CUDA12 fa=1 -> pp512 63.10, tg128 2.53; fa=0 -> 61.98 / 2.52. Six causes tested and ELIMINATED: long context (identical at 8192 and 262144), GPU core clock (306->612 MHz = 1.00x), EMC (already max), CPU (no core >54%), flash attention (2.53 vs 2.52). 99% GR3D with total insensitivity to a 2x clock change means launch-latency-bound, not compute-bound. Also records a correction: the earlier 'GPU at 100% = at the silicon ceiling, not fixable by config' conclusion was WRONG. Remaining arm: NVIDIA CUDA-13 build vs the benchmarked CUDA-12 build on a CUDA 13.2 host.",
+      "affects": [
+        "t1",
+        "t10",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d5",
+      "what": "t3 touched switch/bench beyond its catalog.py-only instruction, and fixed a latent silent-wrong-answer in benchmark pairing",
+      "task_ref": "t3",
+      "reason": "Criterion 3 (vLLM-only fields not SILENTLY APPLIED) cannot be satisfied from catalog.py alone: infer_parser matches on model NAME, so the GGUF gear resolved to qwen3_coder and lobes switch would have written VLLM_TOOL_CALL_PARSER for an engine with no such flag. Same shape as d3. Additionally found and fixed a latent bug: _is_bf16 treats empty quantization as bf16, and the GGUF gear's quantization is empty because Q4_K_M lives inside the file \u2014 so qwen-nvfp4-vs-bf16 would have benchmarked it as the BF16 arm. Byte-identity proven by a golden captured BEFORE the change: exactly 14 added lines, zero modified.",
+      "affects": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d6",
+      "what": "t5 required render/shape_render/init plumbing, not just orin.toml + shape + goldens",
+      "task_ref": "t5",
+      "reason": "ROLE_SERVICE['cortex'] is hardcoded to vllm-primary, so a data-only change would have started a vLLM lane on a .gguf file. Minimum plumbing added: render.role_engine() (reads the engine off the CATALOG entry for the model the card names, so a profile cannot drift from its model), render.profile_env() emitting COMPOSE_PROFILES/PRIMARY_URL on the PROFILE side (keeps the identity-shape invariant machine-as-brain == bare card profile true), shape_render.role_service(), and init._shape_dropped_services() parking vllm-primary even though cortex IS hosted, because it is hosted by the other engine. A non-vLLM model on a role with no alternative lane now RAISES rather than silently falling back to vllm serve.",
+      "affects": [
+        "t5"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d7",
+      "what": "the lane declares deploy.resources and lets the card RENDER runtime: nvidia, rather than hardcoding runtime: nvidia as instructed",
+      "task_ref": "t4",
+      "reason": "My t4 instruction said to hardcode 'runtime: nvidia' because this JetPack runs csv mode. The delivered lane instead declares the shipped deploy.resources stanza and registers in _compose.GPU_SERVICES; the orin card's existing gpu_access='runtime' then generates docker-compose.gpu.yml which !resets the stanza and sets runtime: nvidia. Verified end-to-end with a real 'lobes init --profile orin --shape orin-cortex --apply' + 'docker compose config': runtime: nvidia, deploy: null. This is BETTER than the instruction: csv-vs-CDI is a fact about a BOARD, and hardcoding it would bake one board's toolkit mode into a card-neutral template and break the lane on a devices-mode box. It also uses the very mechanism built to stop the hand-edit debt orin.toml:48 documents.",
+      "affects": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "d4 is RETRACTED: the throughput deficit was the MODE_30W power cap, not a structural limit",
+      "task_ref": "t1",
+      "reason": "d4 concluded the ~2.5 tok/s deficit was 'structural ... not reachable by any configuration lever'. WITHDRAWN. It rested on a measurement artifact: the '306 MHz' baseline was read from cur_freq at IDLE while the nvhost_podgov governor was active (min=306/max=612); under load the governor boosted to 612, so the comparison was boosted-612 vs pinned-612 and correctly returned 1.00x for a change that never occurred. The operator proposed pinning min=max=306, which exposed it: 306 MHz -> 1.36, 612 -> 2.61, 1300 (MAXN) -> 8.46 tok/s. MEASURED AT MAXN: pp512 253.84 (3.92x), tg128 8.46 (3.24x), sustained 8.43 over 900 tokens. Superlinear because MAXN also restores 4 CPU cores (12 vs 8) and lifts the power budget. ALL FIVE c20 criteria now PASS; the spike verdict changes from split to FULL GO. Thermals verified: tj 70.9C after 100s sustained, fan auto-ramped to 52%, GPU held 1300 MHz with no throttling.",
+      "affects": [
+        "t1",
+        "t5",
+        "t10",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

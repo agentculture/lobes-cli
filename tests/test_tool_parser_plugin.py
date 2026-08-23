@@ -144,7 +144,19 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # vllm-minor) stay on their own image and are unaffected, byte-identical to
     # the prior recompute.
     # 2026-08-20: +HAND feasibility/peer env passthrough (qodo PR #190 #2)
-    "gateway": "8cc476bcfdb24df429ba64ea36706c9fdb38a11306b190d588c1586a2c023357",
+    #
+    # Recomputed 2026-08-23 for the qwen3-8-gguf-llamacpp plan (t4): the gateway's
+    # hardcoded `PRIMARY_URL=http://vllm-primary:8000` became the overridable
+    # `${PRIMARY_URL:-http://vllm-primary:8000}` (same default, so every existing
+    # deployment renders the identical value) so a card serving cortex on the
+    # llama.cpp lane can point it at `llamacpp-primary` instead. `gateway` is the
+    # ONLY pre-existing service that moved; the new `llamacpp-primary` lane is an
+    # ADDITION and carries its own entry below.
+    "gateway": "1b2bc15fa576035dac0bc2cd930821994c993d3baa3242adf4142389d2c8e9b4",
+    # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
+    # no existing deployment starts it. Hashed here from the day it landed, so a
+    # later edit to it is as visible as an edit to any other lane.
+    "llamacpp-primary": "56507a02c50560eb2ab2d620b33121c605fd2b0f3b6092f17451889cac7c2004",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
     "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",

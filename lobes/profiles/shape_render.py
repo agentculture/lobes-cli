@@ -38,6 +38,16 @@ shape contributes to BOTH sides of "compose/.env": the ``.env`` via the core
 roles + opt-in activation, and the compose file list + service set via what
 it hosts.
 
+**Which ENGINE serves a hosted role.** A role's compose service was, until
+2026-08-23, a flat role -> service constant (:data:`ROLE_SERVICE`). The catalog
+now declares an ``engine`` per gear, and a llama.cpp GGUF gear runs a different
+lane entirely — so :func:`role_service` resolves the service from ``(role, the
+model composed for it)``. The ``.env`` half of that swap (the lane's
+compose-profile activation and the origin the gateway dials) lives one layer
+down, in :func:`lobes.profiles.render.profile_env`, because it follows from the
+CARD's model declaration and no hosting decision — which is what keeps the
+identity-shape invariant true on a card that declares a non-vLLM gear.
+
 **Dropped role -> flagged off, no service.** A core role a shape does NOT host
 renders the #110-conventional ``<PREFIX>_FEASIBLE=false`` marker and nothing
 else — no ``<PREFIX>_MODEL``, no knobs — exactly like a card that finds the
@@ -52,8 +62,10 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Mapping
 
-from lobes.profiles.render import profile_env
-from lobes.profiles.schema import ROLES, Profile, RoleProfile
+from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.profiles.render import profile_env, role_engine
+from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
 
 # role -> the compose SERVICE (the `services:` key the compose template
@@ -135,6 +147,59 @@ OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
 }
 
 
+# --- the ENGINE axis: which compose lane actually serves a role -------------
+#
+# Every role's service was, until 2026-08-23, a vLLM lane, so ROLE_SERVICE above
+# could be a flat role -> service constant. The catalog now DECLARES an engine
+# per gear (lobes/catalog.py's `engine` field / `serves_with_vllm`, plan t3), and
+# a llama.cpp GGUF gear is served by `llama-server`, not `vllm serve` — a
+# different container, a different flag surface, a different compose service.
+#
+# So the service a role resolves to is a function of (role, the model composed
+# for it), not of the role alone. The ENGINE itself is resolved by
+# :func:`lobes.profiles.render.role_engine`, straight off the catalog entry for
+# that model id — this module only maps the answer onto a compose service, the
+# same way ``render.py`` maps it onto the lane's ``.env`` activation keys.
+#
+# role -> its llama.cpp compose service, for the roles that HAVE an alternative
+# engine lane at all. Today only `cortex` does (`llamacpp-primary` in the fleet
+# template, parked behind the `llamacpp` compose profile). Mirrors the shipped
+# template exactly, same design as ROLE_SERVICE, and verified against the real
+# compose file by tests/test_shape_goldens.py.
+LLAMA_CPP_ROLE_SERVICE: dict[str, str] = {
+    "cortex": "llamacpp-primary",
+}
+
+
+def role_service(role: str, rp: RoleProfile) -> str:
+    """The compose service that serves ``role`` given the model composed for it.
+
+    :data:`ROLE_SERVICE` for every vLLM gear (i.e. everything that predates the
+    engine axis); the role's alternative-engine lane otherwise.
+
+    A non-vLLM model on a role with NO alternative lane is a LOAD ERROR rather
+    than a silent fall-back to the vLLM service: serving a GGUF through
+    ``vllm serve`` cannot work, and the failure would otherwise surface as an
+    unexplained container crash-loop long after the profile was written.
+    """
+    engine = role_engine(rp)
+    if engine == ENGINE_VLLM:
+        return ROLE_SERVICE[role]
+    if engine == ENGINE_LLAMA_CPP and role in LLAMA_CPP_ROLE_SERVICE:
+        return LLAMA_CPP_ROLE_SERVICE[role]
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"role {role!r} declares model {rp.model!r}, which the catalog serves with "
+            f"{engine!r} — but no {engine!r} compose lane exists for that role"
+        ),
+        remediation=(
+            f"serve {role!r} with a vLLM gear, or add a {engine!r} lane for it to "
+            "lobes/templates/fleet/docker-compose.yml and LLAMA_CPP_ROLE_SERVICE"
+        ),
+    )
+
+
 def _overlay(base: RoleProfile, override: RoleProfile) -> RoleProfile:
     """Compose a shape's per-role budget override onto the card profile's role.
 
@@ -211,6 +276,39 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     )
 
 
+def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles, ...]:
+    """The card's mutually-exclusive role groups this ``shape`` would OVER-HOST.
+
+    A card declares co-residency as data
+    (:attr:`~lobes.profiles.schema.Profile.exclusive_roles`): "this board can
+    serve either of these, never both at once". Feasibility cannot express
+    that — it is per-role, and both members are genuinely feasible — so a
+    shape that hosts every feasible role (``machine-as-brain``, the default a
+    bare ``lobes init`` resolves) will happily render a deployment that
+    over-commits the board's memory and crash-loops at boot.
+
+    This is the predicate that catches it, and it is entirely DATA-DRIVEN:
+    nothing here matches a card name, a role name or a shape name. A group is
+    over-hosted when the composed (shape, card) pair would actually RUN more
+    than one of its members — i.e. the shape hosts the role AND the card still
+    marks it feasible (:func:`compose_profile` is the single source of truth
+    for both, so a shape-dropped or card-vetoed role never counts). One
+    member, or none, is fine.
+
+    Pure, and empty for every card that declares no group at all — which is
+    every built-in profile but ``orin``.
+    """
+    composed = compose_profile(shape, profile)
+    over: list[ExclusiveRoles] = []
+    for group in profile.exclusive_roles:
+        hosted = [
+            role for role in group.roles if shape.hosts_role(role) and composed.role(role).feasible
+        ]
+        if len(hosted) > 1:
+            over.append(group)
+    return tuple(over)
+
+
 def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     """The ``.env`` projection for a (shape, card) pair.
 
@@ -227,7 +325,13 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     """
     composed = compose_profile(shape, profile)
     env = profile_env(composed)
-    compose_profiles = [
+    # profile_env already emits COMPOSE_PROFILES for any role the COMPOSED
+    # profile serves on a non-vLLM engine (its lane is compose-profile-gated
+    # too — see render.LLAMA_CPP_COMPOSE_PROFILE). Seed from it rather than
+    # assigning over it, or hosting an opt-in gear alongside such a role would
+    # silently un-gate the wrong service.
+    compose_profiles = [entry for entry in env.pop("COMPOSE_PROFILES", "").split(",") if entry]
+    compose_profiles += [
         OPT_IN_COMPOSE_PROFILE[role] for role in OPT_IN_ROLES if shape.hosts_role(role)
     ]
     for role in OPT_IN_ROLES:
@@ -260,9 +364,13 @@ def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
     the shape hosts it, exactly like the audio roles.
     """
     services = {GATEWAY_SERVICE}
+    composed = compose_profile(shape, profile)
     for role in ROLES:
-        if shape.hosts_role(role) and profile.role(role).feasible:
-            services.add(ROLE_SERVICE[role])
+        role_profile = composed.role(role)
+        if shape.hosts_role(role) and role_profile.feasible:
+            # Engine-aware: a role whose composed model is a non-vLLM gear runs
+            # its own lane, never ROLE_SERVICE's vLLM one (see role_service).
+            services.add(role_service(role, role_profile))
     audio_hosted = False
     for role in AUDIO_ROLES:
         if shape.hosts_role(role):

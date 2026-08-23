@@ -1,10 +1,21 @@
-"""Parse vLLM Prometheus ``/metrics`` + probe a backend's live state (stdlib only).
+"""Parse a backend's Prometheus ``/metrics`` + probe its live state (stdlib only).
 
 Shared by the gateway's ``/status`` fan-out and ``lobes overview --live``. The
 parser is pure; the probes are best-effort and **never raise** — an unreachable
 backend folds into a structured result so the live view degrades gracefully
 instead of erroring. vLLM serves ``/metrics`` and ``/health`` unauthenticated, so
 no API key is needed for either.
+
+**Engines other than vLLM (issue: the llama.cpp lane).** Prometheus series are
+namespaced per engine: vLLM emits ``vllm:*``, llama.cpp's server emits
+``llamacpp:*``. A parser keyed on ``vllm:*`` alone therefore reads a *busy*
+llama.cpp backend as all-zeros — and the live view would present those zeros as
+real numbers. So :func:`parse_metrics` sniffs the engine from the series names
+present and parses llama.cpp's own series where they map cleanly, while naming
+the fields that engine genuinely cannot report in an ``unsupported`` list and
+**omitting** their keys entirely. The invariant callers can rely on: a numeric
+field that is present is measured, and ``0`` always means idle — never
+"unknown". Anything else is absent and named in ``unsupported``.
 """
 
 from __future__ import annotations
@@ -29,6 +40,41 @@ _SUM_FIELDS = {
     "vllm:prompt_tokens_total": "prompt_tokens",
     "vllm:generation_tokens_total": "generation_tokens",
 }
+
+# Engine sniffing. ``vllm`` is the historical default and its output shape is
+# frozen (no ``engine``/``unsupported`` keys) so every existing consumer and
+# golden stays byte-identical. Only a *recognised non-vLLM* engine, or an
+# unrecognised one, grows the honesty fields.
+ENGINE_VLLM = "vllm"
+ENGINE_LLAMACPP = "llamacpp"
+ENGINE_UNKNOWN = "unknown"
+_PREFIXES = ((ENGINE_VLLM, "vllm:"), (ENGINE_LLAMACPP, "llamacpp:"))
+
+# llama.cpp's ``llama-server --metrics`` surface. Only series verified against
+# that server's own exposition are mapped; nothing is guessed. Deliberately
+# UNMAPPED (see _LLAMACPP_ALWAYS_UNSUPPORTED): llama.cpp has no per-finish-reason
+# success counter — no ``request_success_total`` equivalent exists — so
+# ``requests_succeeded``/``by_finish_reason`` are reported unknown, not zero.
+_LLAMACPP_KV = "llamacpp:kv_cache_usage_ratio"
+_LLAMACPP_SUM_FIELDS = {
+    "llamacpp:requests_processing": "running",
+    "llamacpp:requests_deferred": "waiting",
+    "llamacpp:prompt_tokens_total": "prompt_tokens",
+    "llamacpp:tokens_predicted_total": "generation_tokens",
+}
+_LLAMACPP_ALWAYS_UNSUPPORTED = ("requests_succeeded", "by_finish_reason")
+
+# Every live-view field, in the order ``unsupported`` lists them (deterministic
+# output, so /status payloads diff cleanly).
+_ALL_FIELDS = (
+    "running",
+    "waiting",
+    "prompt_tokens",
+    "generation_tokens",
+    "requests_succeeded",
+    "by_finish_reason",
+    "kv_cache_usage",
+)
 
 
 def _label(label_block: str, key: str) -> str | None:
@@ -65,17 +111,24 @@ def _iter_samples(text: str):
         yield name, labels, val
 
 
-def parse_metrics(text: str) -> dict:
-    """Reduce a vLLM ``/metrics`` exposition to the live-view numbers.
+def _detect_engine(samples: list) -> str | None:
+    """Sniff the engine from the series namespaces present, or ``None`` if nothing matches.
 
-    Returns ints for counts/tokens and a ``by_finish_reason`` map; ``kv_cache_usage``
-    (0..1) is included only when the gauge is present. Unknown/malformed lines are
-    skipped, so a partial scrape still yields what it can.
+    vLLM wins a (pathological) tie: it is the incumbent, and its parse is the one
+    every existing deployment depends on.
     """
+    for engine, prefix in _PREFIXES:
+        if any(name.startswith(prefix) for name, _labels, _val in samples):
+            return engine
+    return None
+
+
+def _parse_vllm(samples: list) -> dict:
+    """The vLLM reduction — frozen shape, no ``engine``/``unsupported`` keys."""
     sums = dict.fromkeys(_SUM_FIELDS.values(), 0.0)
     kv: float | None = None
     by_reason: dict[str, float] = {}
-    for name, labels, val in _iter_samples(text):
+    for name, labels, val in samples:
         field = _SUM_FIELDS.get(name)
         if field is not None:
             sums[field] += val
@@ -95,6 +148,62 @@ def parse_metrics(text: str) -> dict:
     if kv is not None:
         out["kv_cache_usage"] = round(kv, 3)
     return out
+
+
+def _parse_llamacpp(samples: list) -> dict:
+    """Reduce a llama.cpp ``llamacpp:*`` exposition, naming what it cannot report.
+
+    A field is emitted **only if its series actually appeared** in the scrape, so a
+    build that does not export one reads "unknown" rather than a fabricated ``0``
+    — the whole point of the exercise is telling "0 because idle" apart from
+    "unknown because unsupported".
+    """
+    sums: dict[str, float] = {}
+    kv: float | None = None
+    for name, _labels, val in samples:
+        field = _LLAMACPP_SUM_FIELDS.get(name)
+        if field is not None:
+            sums[field] = sums.get(field, 0.0) + val
+        elif name == _LLAMACPP_KV:
+            kv = val if kv is None else max(kv, val)
+    out: dict = {"engine": ENGINE_LLAMACPP}
+    for field in _ALL_FIELDS:
+        if field in sums:
+            out[field] = int(sums[field])
+    if kv is not None:
+        out["kv_cache_usage"] = round(kv, 3)
+    out["unsupported"] = [f for f in _ALL_FIELDS if f not in out]
+    return out
+
+
+def parse_metrics(text: str) -> dict:
+    """Reduce a backend ``/metrics`` exposition to the live-view numbers.
+
+    Returns ints for counts/tokens and a ``by_finish_reason`` map; ``kv_cache_usage``
+    (0..1) is included only when the gauge is present. Unknown/malformed lines are
+    skipped, so a partial scrape still yields what it can.
+
+    A **vLLM** scrape (and an empty one) yields exactly the historical dict. A
+    **llama.cpp** scrape yields the same fields it can genuinely report plus
+    ``engine``/``unsupported``. A scrape carrying series from neither engine
+    yields ``engine: "unknown"`` and **no numbers at all** — refusing to answer
+    beats answering zero.
+    """
+    samples = list(_iter_samples(text))
+    engine = _detect_engine(samples)
+    if engine == ENGINE_LLAMACPP:
+        return _parse_llamacpp(samples)
+    if engine is None and samples:
+        # Some third engine we have never parsed: every field is unknown. (An
+        # EMPTY scrape stays on the vLLM path — that is the historical
+        # "nothing to report yet" shape, not a foreign engine.)
+        return {"engine": ENGINE_UNKNOWN, "unsupported": list(_ALL_FIELDS)}
+    return _parse_vllm(samples)
+
+
+def unsupported_fields(metrics: dict | None) -> frozenset[str]:
+    """The live-view fields *this* backend cannot report (empty for vLLM)."""
+    return frozenset((metrics or {}).get("unsupported") or ())
 
 
 def http_get_text(

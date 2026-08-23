@@ -57,6 +57,15 @@ A ``feasible=True`` role (the default) never gets a ``<PREFIX>_FEASIBLE`` key
 at all — "feasible" is the assumed default the compose template already
 encodes, so spelling out ``=true`` for every role would just be noise.
 
+**The ENGINE axis.** A role's ``model`` also decides WHICH inference server
+serves it: the catalog declares an ``engine`` per gear, and a non-vLLM gear's
+lane is parked behind a Docker Compose profile and reached at its own origin.
+Both of those are ``.env`` values, so they are rendered here — derived from the
+same ``model`` declaration that names the gear, never from a second knob that
+could drift from it. A card declaring only vLLM gears (every card but ``orin``
+today) renders exactly what it rendered before this axis existed. See
+:func:`role_engine` / :data:`LLAMA_CPP_ACTIVATION_ENV`.
+
 **Card-level (non-role) keys — ``host_env``.** A few ``.env`` keys the compose
 template reads belong to no lane at all (the gateway's pressure-policy
 thresholds are the whole of it today). A card whose HOST accounting makes the
@@ -70,6 +79,8 @@ exactly what it rendered before the field existed.
 
 from __future__ import annotations
 
+from lobes.catalog import ENGINE_VLLM, SUPPORTED_MODELS
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 
 # role -> the fleet compose template's env-var prefix for that role's service.
@@ -110,6 +121,89 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
 # --no-enforce-eager flag accepts — see RERANK_ENFORCE_EAGER in
 # lobes/templates/fleet/docker-compose.yml for the idiom this mirrors.
 _ENFORCE_EAGER_TOKEN = {True: "--enforce-eager", False: "--no-enforce-eager"}
+
+
+# --- the ENGINE axis (qwen3-8-gguf-llamacpp t5) ------------------------------
+#
+# Every role's model was, until 2026-08-23, served by vLLM, so a role's model id
+# was the only thing this module needed from it. The catalog now DECLARES an
+# engine per gear (lobes/catalog.py's `engine` field / `serves_with_vllm`), and a
+# llama.cpp GGUF gear is served by a DIFFERENT compose lane — one that is parked
+# behind a Docker Compose profile and reached at its own origin.
+#
+# Those two facts are ``.env`` values, so they are rendered HERE, from the same
+# `model` declaration that names the gear — never as a second knob a profile
+# could set out of step with the model it describes. The engine is read straight
+# off the catalog entry for the model id; a model the catalog does not list (an
+# operator profile naming an arbitrary checkpoint) takes the vLLM default, which
+# is exactly what every card rendered before this axis existed. So every
+# pre-existing profile renders byte-identically, and the identity-shape
+# invariant (machine-as-brain == the bare card profile) is preserved on a card
+# that DOES declare a non-vLLM gear, because the derivation lives on this side
+# of the composition rather than in the shape layer.
+_ENGINE_BY_MODEL_ID: dict[str, str] = {model.id: model.engine for model in SUPPORTED_MODELS}
+
+# role -> the .env keys that ACTIVATE its llama.cpp lane. Today only `cortex` has
+# an alternative-engine lane at all (`llamacpp-primary` in the fleet template).
+# The role ALIAS callers use does not move with the engine — only the origin
+# behind it does. Mirrors the shipped template exactly (same design as
+# ROLE_ENV_PREFIX); tests/test_shape_goldens.py verifies the mirror against the
+# real compose file.
+# NOTE on the http:// scheme (SonarCloud python:S5332 flags it): this is a
+# CONTAINER-INTERNAL address on the private compose network, resolved by the
+# Docker DNS alias `llamacpp-primary` and never reachable off-box — the lane
+# publishes no host port at all. Every other in-fleet backend URL is the same
+# shape (`http://vllm-primary:8000`, `http://vllm-embed:8000`, …), and
+# CLAUDE.md states the fleet assumption explicitly: peer origins ride a
+# private/tailnet transport and "no TLS termination happens at this layer".
+# Serving TLS between two containers in one compose project would add a
+# certificate lifecycle for no threat it mitigates. Not a finding here.
+LLAMA_CPP_ACTIVATION_ENV: dict[str, dict[str, str]] = {
+    "cortex": {"PRIMARY_URL": "http://llamacpp-primary:8000"},  # NOSONAR python:S5332
+}
+
+#: The Docker Compose profile gating every llama.cpp lane in the fleet template.
+LLAMA_CPP_COMPOSE_PROFILE = "llamacpp"
+
+
+def role_engine(rp: RoleProfile) -> str:
+    """The engine serving ``rp``'s model — a catalog fact, defaulting to vLLM.
+
+    :param rp: A role's (possibly shape-composed)
+        :class:`~lobes.profiles.schema.RoleProfile`.
+    :returns: One of :data:`lobes.catalog.ENGINES`. A role with no model, or a
+        model the catalog does not list, answers
+        :data:`lobes.catalog.ENGINE_VLLM` — the pre-engine-axis behaviour.
+    """
+    return _ENGINE_BY_MODEL_ID.get(rp.model or "", ENGINE_VLLM)
+
+
+def _engine_activation_env(role: str, rp: RoleProfile) -> dict[str, str]:
+    """The ``.env`` keys activating ``role``'s non-vLLM lane; ``{}`` for a vLLM gear.
+
+    A non-vLLM model on a role with NO alternative lane is a LOAD ERROR rather
+    than a silently ignored declaration: the render would otherwise name a GGUF
+    as the model while pointing the gateway at a ``vllm serve`` lane that cannot
+    load it.
+    """
+    engine = role_engine(rp)
+    if engine == ENGINE_VLLM:
+        return {}
+    activation = LLAMA_CPP_ACTIVATION_ENV.get(role)
+    if activation is None:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"role {role!r} declares model {rp.model!r}, which the catalog serves with "
+                f"{engine!r} — but no {engine!r} lane exists for that role"
+            ),
+            remediation=(
+                f"serve {role!r} with a vLLM gear, or add a {engine!r} lane for it to "
+                "lobes/templates/fleet/docker-compose.yml, LLAMA_CPP_ACTIVATION_ENV "
+                "and shape_render.LLAMA_CPP_ROLE_SERVICE"
+            ),
+        )
+    return dict(activation)
 
 
 def _role_env(role: str, rp: RoleProfile) -> dict[str, str]:
@@ -155,6 +249,22 @@ def profile_env(profile: Profile) -> dict[str, str]:
     # host_env FIRST: a role knob rendered below always wins a name collision,
     # so a card's non-role declaration can never shadow a lane's own budget.
     env: dict[str, str] = dict(profile.host_env)
+    compose_profiles: list[str] = []
     for role in ROLES:
-        env.update(_role_env(role, profile.role(role)))
+        role_profile = profile.role(role)
+        env.update(_role_env(role, role_profile))
+        # A feasible role whose model is a non-vLLM catalog gear ALSO needs its
+        # lane started and wired, in the same render that names the model — the
+        # engine's lane is compose-profile-gated and the gateway dials the origin
+        # it is given. An INFEASIBLE role activates nothing (it renders only the
+        # #110 flagged-off marker), which is what makes a shape that drops the
+        # role leave the alternative lane parked too.
+        if not role_profile.feasible:
+            continue
+        activation = _engine_activation_env(role, role_profile)
+        if activation:
+            env.update(activation)
+            compose_profiles.append(LLAMA_CPP_COMPOSE_PROFILE)
+    if compose_profiles:
+        env["COMPOSE_PROFILES"] = ",".join(compose_profiles)
     return env

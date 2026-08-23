@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from lobes.catalog import SUPPORTED_MODELS, SupportedModel
+from lobes.catalog import SUPPORTED_MODELS, SupportedModel, serves_with_vllm
 from lobes.roles import RoleInfo
 from lobes.roles_measure import DEFAULT_TIMEOUT, measure_registry, measure_role
 
@@ -73,9 +73,19 @@ _QWEN_NVFP4_VS_BF16 = "qwen-nvfp4-vs-bf16"
 
 
 def _is_qwen_27b_class(model: SupportedModel) -> bool:
-    """True for a Qwen catalog entry in the ~27B size class (id carries "27b")."""
+    """True for a **vLLM-served** Qwen catalog entry in the ~27B size class.
+
+    The engine gate is load-bearing, not decoration. This profile is an
+    NVFP4-vs-BF16 comparison on ONE engine's quantization path, and it splits
+    the two sides on :func:`_is_bf16`, which reads ``quantization`` — a
+    vLLM-only field the catalog deliberately leaves EMPTY on a llama.cpp gear
+    (its quantization lives inside the ``.gguf`` file). Without this gate the
+    27B GGUF cortex would match ``_is_bf16``'s empty-string arm and be picked as
+    the "BF16 variant" of a comparison it has nothing to do with — a silent
+    wrong answer, which is the failure mode the engine axis exists to prevent.
+    """
     lowered = model.id.lower()
-    return "qwen" in lowered and "27b" in lowered
+    return serves_with_vllm(model) and "qwen" in lowered and "27b" in lowered
 
 
 def _is_bf16(model: SupportedModel) -> bool:

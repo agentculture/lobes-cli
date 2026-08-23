@@ -1,10 +1,13 @@
 """Build the ``lobes overview --live`` sections from a running deployment.
 
 Read-only and HTTP-only (no docker), so it works against a local deployment or a
-remote tunnel alike. It probes the gateway ``/status`` (fleet) or a single vLLM
-``/metrics`` + ``/health`` via :mod:`lobes._metrics` (best-effort — never
-raises). The section builders are pure (they take the already-probed payloads) so
-they unit-test without sockets; :func:`live_sections` is the thin probing wrapper.
+remote tunnel alike. It probes the gateway ``/status`` (fleet) or a single
+backend's ``/metrics`` + ``/health`` via :mod:`lobes._metrics` (best-effort —
+never raises). A backend whose engine cannot report a field renders as
+``unknown``, and any total it makes incomplete is flagged partial — never a
+fabricated ``0``. The section builders are pure (they take the already-probed
+payloads) so they unit-test without sockets; :func:`live_sections` is the thin
+probing wrapper.
 
 Sections answer the five "what is the fleet doing right now" questions: ONLINE
 (health), OFFERED (models + task families), BUSY (in-flight/queued), USAGE
@@ -18,32 +21,70 @@ from lobes import _metrics
 _FLEET_STATUS_OBJECT = "lobes.fleet_status"
 
 
-def _agg_usage(backends: list[dict]) -> tuple[int, int, int, dict[str, int]]:
-    """Sum tokens + finished requests across backends (the fleet's cumulative usage)."""
+# A field a backend genuinely cannot report renders as this word — never as a
+# number. See :mod:`lobes._metrics`: a non-vLLM engine (llama.cpp) names such
+# fields in ``unsupported`` and omits their keys, so the live view can tell
+# "0 because idle" from "unknown because this engine does not export it".
+_UNKNOWN = "unknown"
+
+# The usage fields the fleet totals sum; a backend that cannot report one makes
+# the corresponding total incomplete, which the Usage section then says out loud.
+_USAGE_FIELDS = ("prompt_tokens", "generation_tokens", "requests_succeeded", "by_finish_reason")
+
+
+def _fmt(m: dict, field: str, *, thousands: bool = False) -> str:
+    """One live-view number, or ``unknown`` when this backend cannot report it."""
+    if field not in m or field in _metrics.unsupported_fields(m):
+        return _UNKNOWN
+    value = int(m[field] or 0)
+    return f"{value:,}" if thousands else str(value)
+
+
+def _agg_usage(backends: list[dict]) -> tuple[int, int, int, dict[str, int], set[str]]:
+    """Sum tokens + finished requests across backends (the fleet's cumulative usage).
+
+    The fifth element names the usage fields at least one backend could not
+    report — the totals are then honest-but-partial rather than silently short.
+    """
     prompt = gen = succeeded = 0
     reasons: dict[str, int] = {}
+    incomplete: set[str] = set()
     for b in backends:
         m = b.get("metrics") or {}
+        unknown = _metrics.unsupported_fields(m)
+        incomplete |= {f for f in _USAGE_FIELDS if f in unknown}
         prompt += int(m.get("prompt_tokens", 0) or 0)
         gen += int(m.get("generation_tokens", 0) or 0)
         succeeded += int(m.get("requests_succeeded", 0) or 0)
         for reason, count in (m.get("by_finish_reason") or {}).items():
             reasons[reason] = reasons.get(reason, 0) + int(count)
-    return prompt, gen, succeeded, reasons
+    return prompt, gen, succeeded, reasons, incomplete
 
 
-def _usage_items(prompt: int, gen: int, succeeded: int, reasons: dict[str, int]) -> list[str]:
+def _usage_items(
+    prompt: str,
+    gen: str,
+    succeeded: str,
+    reasons: dict[str, int],
+    incomplete: set[str] = frozenset(),
+) -> list[str]:
     line = f"requests succeeded: {succeeded}"
     if reasons:
         line += "  (" + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())) + ")"
-    return [f"prompt tokens: {prompt:,}    generation tokens: {gen:,}", line]
+    items = [f"prompt tokens: {prompt}    generation tokens: {gen}", line]
+    if incomplete:
+        items.append(
+            "(!) totals are partial — not reported by every backend: "
+            + ", ".join(sorted(incomplete))
+        )
+    return items
 
 
 def _backend_line(b: dict) -> str:
     m = b.get("metrics") or {}
     parts = [f"{b.get('name', '?')} ({b.get('task', '?')}): {b.get('health', '?')}"]
     if m:
-        parts.append(f"run {int(m.get('running', 0))} wait {int(m.get('waiting', 0))}")
+        parts.append(f"run {_fmt(m, 'running')} wait {_fmt(m, 'waiting')}")
     if b.get("served_name"):
         parts.append(str(b["served_name"]))
     return " · ".join(parts)
@@ -55,7 +96,7 @@ def fleet_sections(status: dict) -> list[dict]:
     busy = status.get("busy") or {}
     tasks = sorted({b.get("task") for b in backends if b.get("task")})
     models = [b.get("served_name") for b in backends if b.get("served_name")]
-    prompt, gen, succeeded, reasons = _agg_usage(backends)
+    prompt, gen, succeeded, reasons, incomplete = _agg_usage(backends)
     return [
         {
             "title": "Online (live)",
@@ -75,9 +116,17 @@ def fleet_sections(status: dict) -> list[dict]:
             "items": [
                 f"running: {int(busy.get('running', 0))}    "
                 f"waiting: {int(busy.get('waiting', 0))}"
+                + (
+                    "    (partial — a backend does not report in-flight counts)"
+                    if busy.get("partial")
+                    else ""
+                )
             ],
         },
-        {"title": "Usage", "items": _usage_items(prompt, gen, succeeded, reasons)},
+        {
+            "title": "Usage",
+            "items": _usage_items(f"{prompt:,}", f"{gen:,}", str(succeeded), reasons, incomplete),
+        },
         {"title": "Endpoints", "items": list(status.get("endpoints") or []) or ["(none)"]},
     ]
 
@@ -89,11 +138,11 @@ def single_sections(
     served = served_name or "(model unknown — no .env)"
     online = f"{served} on :{port} — " + ("ok" if healthy else "not responding")
     if metrics:
-        busy = [f"running: {metrics['running']}    waiting: {metrics['waiting']}"]
+        busy = [f"running: {_fmt(metrics, 'running')}    waiting: {_fmt(metrics, 'waiting')}"]
         usage = _usage_items(
-            metrics["prompt_tokens"],
-            metrics["generation_tokens"],
-            metrics["requests_succeeded"],
+            _fmt(metrics, "prompt_tokens", thousands=True),
+            _fmt(metrics, "generation_tokens", thousands=True),
+            _fmt(metrics, "requests_succeeded"),
             metrics.get("by_finish_reason") or {},
         )
     else:

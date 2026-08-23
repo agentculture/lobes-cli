@@ -152,8 +152,9 @@ _ALIAS_CELL_IDS = [f"{shape}--{role}--{alias}" for shape, role, alias in ALIAS_C
 def test_matrix_enumerates_the_documented_reference_cells() -> None:
     """The derived matrix IS the documented one — the explicit enumeration.
 
-    spark-lobe drops senses; thor-lobe drops cortex; thor-muse and orin-small
-    drop BOTH heavies; every shape that doesn't host the opt-in muse lobe
+    spark-lobe and orin-cortex drop senses; thor-lobe and orin-lobe drop
+    cortex; thor-muse and orin-small drop BOTH heavies; every shape that
+    doesn't host the opt-in muse lobe
     (all but thor-muse) contributes a muse cell too. `worker` — the second
     opt-in core role (thor-worker-lobe plan) — joined `muse` in
     OPT_IN_CORE_ROLES with NO hosting shape built yet, so EVERY shape
@@ -165,6 +166,12 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     assert set(CELLS) == {
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
+        # orin-cortex is orin-lobe with the heavies swapped: it hosts cortex
+        # (on the llama.cpp lane) and drops senses to a peer, so it contributes
+        # a senses cell where orin-lobe contributes a cortex one.
+        ("orin-cortex", "senses"),
+        ("orin-cortex", "muse"),
+        ("orin-cortex", "worker"),
         # orin-lobe is thor-lobe's sm_87 sibling: it hosts senses and drops
         # cortex (which the orin CARD also declares infeasible — NVFP4 W4A4
         # needs Blackwell), so it contributes the same three cells thor-lobe

@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.3] - 2026-08-23
+
+### Added
+
+- docs/plans/2026-08-22-qwen3-8-gguf-llamacpp.md — converged build plan for the
+  Orin-local llama.cpp cortex: 11 tasks in 8 dependency waves, every task
+  carrying TDD acceptance criteria and operator instructions, covering all 32
+  spec targets. Wave 0 is the spike (t1) plus the Tegra iowait fix (t7); the
+  remaining tasks are conditional on a GO, and a NO-GO ends the plan with a
+  recorded verdict (risk r1). Also recorded: unmeasured concurrency (r2),
+  expected feature losses versus the vLLM lane — MTP, ViT, preserve_thinking,
+  strict tools (r3), out-of-scope mesh senses re-homing (r4), and the
+  second-cortex-host routing question (r5). Plan state in
+  `.devague/plans/qwen3-8-gguf-llamacpp.json`.
+
+## [0.58.2] - 2026-08-23
+
+### Added
+
+- docs/specs/2026-08-22-qwen3-8-gguf-llamacpp.md — converged devague spec: the
+  Jetson AGX Orin (sm_87) gains a LOCAL cortex serving
+  `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` via a llama.cpp lane, replacing the
+  `senses` Gemma 4 12B on that box (operator decision; mesh senses re-homing is
+  out of scope). Spike-gated per the TRT-LLM-investigation pattern: live
+  load/correctness/tok/s/context on the box before any integration lands.
+  Measurable gate: decode >= 5 tok/s single-stream, context >= 32768 served and
+  needle-probed, known-answer + tool-calling probes PASS through the gateway,
+  evidence under docs/evidence/. Frame state in
+  `.devague/frames/qwen3-8-gguf-llamacpp.json` (10 scope entries, 19 confirmed
+  claims, 12 honesty conditions).
+
 ## [0.58.1] - 2026-08-21
 
 ### Added
