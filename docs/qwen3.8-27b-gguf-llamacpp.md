@@ -1,5 +1,17 @@
 # unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M — the llama.cpp gear
 
+> **SUPERSEDED NUMBERS BELOW — read the "MAXN correction" section at the end
+> first.** Every throughput figure in the "Measured performance" section was taken
+> under `MODE_30W` with the GPU capped at 612 MHz. At MAXN the same lane measures
+> **8.46 tok/s decode and 253.84 tok/s prefill** — 3.2x and 3.9x higher — and all
+> five acceptance criteria pass.
+
+> **SUPERSEDED NUMBERS BELOW - read section 14 of the evidence transcript first.**
+> Every throughput figure in "Measured performance" was taken under `MODE_30W`
+> with the GPU capped at 612 MHz. At **MAXN** the same lane measures
+> **8.46 tok/s decode / 253.84 tok/s prefill** - 3.2x and 3.9x higher - and
+> **all five acceptance criteria pass**. See "MAXN correction" at the end.
+
 **Status: `configured`, NOT validated.** The facts below are read off the
 downloaded GGUF file and off `llama-server`'s own flag surface. **No acceptance
 transcript exists**, so nothing here — and nothing anywhere else in the repo —
@@ -239,3 +251,66 @@ here. **The value of a local Orin cortex is independence, not speed.**
 | MTP / speculative decoding | **ABSENT** | llama.cpp ignores `blk.64.nextn.*`; ~0.9 GiB of the file is dead weight |
 | vision / ViT | **ABSENT** | text-only GGUF; no mmproj companion |
 
+
+## MAXN correction — the numbers above are a floor, not a ceiling
+
+Everything in "Measured performance" was taken under `MODE_30W` with the GPU
+capped at 612 MHz. The board's real figures, measured at MAXN
+(`sudo nvpmodel -m 0` + reboot + `sudo jetson_clocks`, GPU pinned 1300.5 MHz):
+
+| metric | 612 MHz (MODE_30W) | **MAXN 1300.5 MHz** | gain |
+|---|---|---|---|
+| pp512 prefill | 64.79 | **253.84 ± 1.45** | **3.92x** |
+| tg128 decode | 2.61 | **8.46 ± 0.00** | **3.24x** |
+| sustained decode (900 tok) | — | **8.43** | — |
+
+Clock scaling, measured by pinning `min=max` at each point:
+
+| GPU clock | decode |
+|---|---|
+| 306 MHz | 1.36 tok/s |
+| 612 MHz | 2.61 tok/s |
+| 1300.5 MHz | 8.46 tok/s |
+
+The gain is **superlinear** against the 2.12x clock step because MAXN also
+restores 4 disabled CPU cores (12 online, was 8) and lifts the power budget.
+
+### What this changes
+
+- **All five acceptance criteria pass.** The verdict is **FULL GO**, not the
+  split result the earlier sections describe.
+- **TTFT rule:** `TTFT_seconds ~= depth / 254` (was `/ 57`). A full 262144-token
+  prefill is ~17 minutes, not ~77.
+- **Decode is now bandwidth-bound, the healthy regime:** 16.45 GB of weights at
+  8.46 tok/s = 139 GB/s = **68% of Orin's 204.8 GB/s peak**. At 612 MHz it was
+  21% — which is what made the lane look pathological. **The Gated-DeltaNet path
+  was never broken; it was starved by the power cap.**
+- **Against the Thor** (12.1 tok/s on NVFP4/vLLM) the local lane is **1.4x
+  slower, not 4.6x**. The earlier "independence, not speed" framing understated
+  it — the lane is competitive.
+
+### Operational requirement
+
+**This lane requires MAXN.** On a stock `MODE_30W` Orin it delivers 2.6 tok/s and
+misses the >=5 tok/s bar. `sudo nvpmodel -m 0` needs a reboot; pair it with
+`sudo jetson_clocks`.
+
+Thermals were verified rather than assumed — 100 s of sustained generation:
+
+| t | tj | fan | GPU clock |
+|---|---|---|---|
+| 20 s | 64.9 C | 42% | 1300 MHz |
+| 60 s | 68.7 C | 49% | 1300 MHz |
+| 100 s | 70.9 C | 52% | 1300 MHz |
+
+`nvfancontrol` auto-ramped and the GPU **held 1300 MHz with no throttling**,
+~25 C below the ~95 C throttle point. **No manual fan lock is needed.** The signal
+that would change that: `cur_freq` dropping below 1300 MHz under load.
+
+### Why the earlier sections got it wrong
+
+The original clock test reported a null (306 -> 612 MHz = 1.00x). It was an
+artifact: `cur_freq` was read **at idle** while the `nvhost_podgov` governor was
+active at `min=306 / max=612`; under load the governor boosted to 612, so the
+test compared 612 against 612. Pinning `min=max` before attributing anything to
+clock is the correct instrument. See ledger deviation **d8**.
