@@ -163,15 +163,19 @@ That is not sufficient: `ROLE_SERVICE["cortex"]` is hardcoded to `vllm-primary`,
 so a data-only change would have started a **vLLM lane on a `.gguf` file**.
 
 **Plumbing added, and why each piece is where it is.**
+
 - `render.role_engine()` reads the engine off the **catalog entry for the model
   the card names** (t3's `engine` field) rather than adding a new `RoleProfile`
   knob — a knob could drift from the model it describes; a lookup cannot.
+
 - `render.profile_env()` emits `COMPOSE_PROFILES=llamacpp` and
   `PRIMARY_URL=http://llamacpp-primary:8000` on the **profile** side, not the
   shape side. That is what keeps the identity-shape invariant
   (`machine-as-brain` == bare card profile) true on a card that declares one.
+
 - `init._shape_dropped_services()` parks `vllm-primary` *even though cortex is
   hosted*, because it is hosted by the other engine.
+
 - A non-vLLM model on a role with no alternative lane now **raises** in both
   layers rather than silently falling back to `vllm serve`.
 
@@ -210,12 +214,14 @@ was correct about the *requirement* and wrong about the *mechanism*.
   that service" user error instead of starting the llama.cpp lane. `lobes fleet
   up` — the documented fleet path — works. Left alone rather than restructure a
   validated verb late in the run.
+
 - **`machine-as-brain` on the `orin` card is now an over-committed declaration**
   (cortex ~33 GiB + senses ~27.6 GiB > 61.3 GiB, zero swap). Unavoidable given
   the schema: a shape override cannot flip `feasible`, and feasibility ("can the
   board serve it at all?") is genuinely true. `orin.toml`'s header states this in
   a banner, points at the two shapes that resolve it, and a test pins that the
   file says it.
+
 - **`LLAMACPP_MODEL_DIR` cannot come from repo data** — it is the host directory
   holding the `.gguf`, an operator path like `HF_CACHE`. Defaults to
   `${HOME}/.cache/llama.cpp`; `env.example` documents the knob and the
@@ -262,11 +268,14 @@ The gain is **superlinear** against the 2.12x clock increase because MAXN also
 restores 4 disabled CPU cores (12 online, was 8) and lifts the power budget.
 
 **Consequences.**
+
 - **All five c20 criteria now PASS.** The spike verdict changes from
   "functional GO / throughput FAIL-AS-SPECIFIED" to **FULL GO**.
+
 - TTFT rule revised: `TTFT_seconds ~= depth / 254` (was `/ 57`).
 - The deployment comparison changes: against the Thor's 12.1 tok/s the local lane
   is **1.4x slower, not 4.6x** — competitive, not a consolation prize.
+
 - Evidence section 8's "launch-latency bound, not throughput bound" is withdrawn
   in section 14.
 

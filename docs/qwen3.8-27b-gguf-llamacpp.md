@@ -5,7 +5,7 @@
 > under `MODE_30W` with the GPU capped at 612 MHz. At MAXN the same lane measures
 > **8.46 tok/s decode and 253.84 tok/s prefill** — 3.2x and 3.9x higher — and all
 > five acceptance criteria pass.
-
+>
 > **SUPERSEDED NUMBERS BELOW - read section 14 of the evidence transcript first.**
 > Every throughput figure in "Measured performance" was taken under `MODE_30W`
 > with the GPU capped at 612 MHz. At **MAXN** the same lane measures
@@ -76,7 +76,6 @@ plan's live transcript:
 | `preserve_thinking` (#93) | `--default-chat-template-kwargs` | UNVERIFIED |
 | strict tools / xgrammar (colleague#320) | armed | UNVERIFIED |
 
-
 ## The lane (plan t4)
 
 `llamacpp-primary` in `lobes/templates/fleet/docker-compose.yml` — the fleet's
@@ -126,16 +125,16 @@ lobes init --profile orin --shape orin-cortex --apply
 
 renders, from repo data alone:
 
-* `.env` — `PRIMARY_MODEL` / `PRIMARY_SERVED_NAME` = this gear,
+- `.env` — `PRIMARY_MODEL` / `PRIMARY_SERVED_NAME` = this gear,
   `PRIMARY_MAX_MODEL_LEN=262144`, `PRIMARY_URL=http://llamacpp-primary:8000`,
   `COMPOSE_PROFILES=llamacpp`, `MULTIMODAL_FEASIBLE=false`. No
   `PRIMARY_GPU_MEM_UTIL` — this engine has no such flag, so declaring one would
   be a dead knob;
-* `docker-compose.shape.yml` — parks `vllm-primary` **and** `vllm-multimodal` in
+- `docker-compose.shape.yml` — parks `vllm-primary` **and** `vllm-multimodal` in
   the inert `shape-dropped` compose profile. Parking the vLLM cortex lane while
   cortex is *hosted* is the engine swap: both lanes running at once on a
   61.3 GiB board is the failure that prevents;
-* `docker-compose.gpu.yml` — `!reset`s every GPU service's `deploy:` stanza and
+- `docker-compose.gpu.yml` — `!reset`s every GPU service's `deploy:` stanza and
   sets `runtime: nvidia`, because this board's NVIDIA container toolkit resolves
   to legacy **csv** mode and refuses the `deploy.resources` form at container
   create. `llamacpp-primary` is in that list.
@@ -179,8 +178,10 @@ clocks pinned via `jetson_clocks` (GPU 612 MHz, EMC 3199 MHz), senses stopped.
 
 ### The selected configuration
 
-    image  ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
-    flags  -ngl 99 -c 262144 --jinja -np 1 -fa on
+```text
+image  ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+flags  -ngl 99 -c 262144 --jinja -np 1 -fa on
+```
 
 This is the fastest of **five** measured configurations, not a default:
 
@@ -250,7 +251,6 @@ here. **The value of a local Orin cortex is independence, not speed.**
 | tool calling | **PASS** | `tool_calls` non-null, `finish_reason: "tool_calls"`; llama.cpp ships a `Qwen 3 Coder` parser for this XML dialect |
 | MTP / speculative decoding | **ABSENT** | llama.cpp ignores `blk.64.nextn.*`; ~0.9 GiB of the file is dead weight |
 | vision / ViT | **ABSENT** | text-only GGUF; no mmproj companion |
-
 
 ## MAXN correction — the numbers above are a floor, not a ceiling
 
