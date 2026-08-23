@@ -151,3 +151,72 @@ Verified empirically before fixing; a named regression test records why.
 change (`tests/goldens/switch-plans.txt`, commit `833846c`) and moved by exactly
 **14 added lines and zero modified lines** — criterion 2 proven by diff rather
 than inspection, as the plan demanded.
+
+---
+
+## d6 — t5 required render/shape_render/init plumbing, not just data + goldens
+
+- **Task:** t5 · **Classification:** acceptable · **Origin:** llm · **State:** approved
+
+**What happened.** The plan scoped t5 to `orin.toml` + the shape TOML + goldens.
+That is not sufficient: `ROLE_SERVICE["cortex"]` is hardcoded to `vllm-primary`,
+so a data-only change would have started a **vLLM lane on a `.gguf` file**.
+
+**Plumbing added, and why each piece is where it is.**
+- `render.role_engine()` reads the engine off the **catalog entry for the model
+  the card names** (t3's `engine` field) rather than adding a new `RoleProfile`
+  knob — a knob could drift from the model it describes; a lookup cannot.
+- `render.profile_env()` emits `COMPOSE_PROFILES=llamacpp` and
+  `PRIMARY_URL=http://llamacpp-primary:8000` on the **profile** side, not the
+  shape side. That is what keeps the identity-shape invariant
+  (`machine-as-brain` == bare card profile) true on a card that declares one.
+- `init._shape_dropped_services()` parks `vllm-primary` *even though cortex is
+  hosted*, because it is hosted by the other engine.
+- A non-vLLM model on a role with no alternative lane now **raises** in both
+  layers rather than silently falling back to `vllm serve`.
+
+---
+
+## d7 — the lane RENDERS `runtime: nvidia` instead of hardcoding it, contrary to instruction
+
+- **Task:** t4 · **Classification:** acceptable · **Origin:** llm · **State:** approved
+
+**What happened.** The t4 instruction said to hardcode `runtime: nvidia` (not
+`deploy.resources`) because this JetPack's container toolkit runs csv mode. The
+delivered lane does the **opposite in the template** and gets the right result in
+the **render**: it declares the shipped `deploy.resources` stanza and registers in
+`_compose.GPU_SERVICES`; the orin card's existing `gpu_access = "runtime"` then
+generates `docker-compose.gpu.yml`, which `!reset`s the stanza and sets
+`runtime: nvidia`.
+
+**Verified end-to-end**, not argued: a real `lobes init --profile orin --shape
+orin-cortex --apply` followed by `docker compose config` yields `runtime: nvidia`
+and `deploy: null`.
+
+**Why this is better than the instruction.** csv-vs-CDI is a fact about a
+**board**, and this repo already has the mechanism for it — the one built
+precisely to stop the hand-edit debt `orin.toml:48` documents. Hardcoding
+`runtime:` would bake one board's toolkit mode into a card-neutral template and
+break the lane on a devices-mode box, while gaining nothing here. My instruction
+was correct about the *requirement* and wrong about the *mechanism*.
+
+---
+
+## Follow-ups recorded, not silently dropped
+
+- **`lobes up cortex` still targets `vllm-primary`.** `up.py` carries its own
+  static `ROLE_SERVICE`, resolved before the deployment dir is known, so on an
+  `orin-cortex` deployment it raises the existing "this deployment's shape drops
+  that service" user error instead of starting the llama.cpp lane. `lobes fleet
+  up` — the documented fleet path — works. Left alone rather than restructure a
+  validated verb late in the run.
+- **`machine-as-brain` on the `orin` card is now an over-committed declaration**
+  (cortex ~33 GiB + senses ~27.6 GiB > 61.3 GiB, zero swap). Unavoidable given
+  the schema: a shape override cannot flip `feasible`, and feasibility ("can the
+  board serve it at all?") is genuinely true. `orin.toml`'s header states this in
+  a banner, points at the two shapes that resolve it, and a test pins that the
+  file says it.
+- **`LLAMACPP_MODEL_DIR` cannot come from repo data** — it is the host directory
+  holding the `.gguf`, an operator path like `HF_CACHE`. Defaults to
+  `${HOME}/.cache/llama.cpp`; `env.example` documents the knob and the
+  `hf download` line.

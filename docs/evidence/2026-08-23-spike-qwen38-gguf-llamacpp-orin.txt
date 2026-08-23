@@ -201,3 +201,35 @@ But TTFT scales linearly with prefill, and prefill measures ~64 tok/s. So:
    sees "serves 256K" would reasonably assume they can paste a large document and
    converse about it; on this hardware they cannot. This caveat must travel with
    every claim about the context window.
+
+FULL STREAMING BATTERY — completed, selected config (nvidia CUDA-13, -fa on, c=262144)
+
+| prompt depth | TTFT       | streamed | decode     | wall     |
+|--------------|------------|----------|------------|----------|
+| 0            |   1 566 ms | 128 tok  | 2.61 tok/s |  50.54 s |
+| 512          |  12 407 ms | 128 tok  | 2.62 tok/s |  61.24 s |
+| 2 048        |  41 581 ms | 128 tok  | 2.62 tok/s |  90.50 s |
+| 8 192        | 143 122 ms | 128 tok  | 2.58 tok/s | 192.80 s |
+| 32 768       | 610 020 ms | 128 tok  | 2.43 tok/s | 662.66 s |
+                (10.2 min)
+
+Server-side prefill rate, sampled during the 34 024-token prefill:
+    16 384 tok -> 59.34 tok/s
+    22 528 tok -> 58.18 tok/s
+    34 024 tok -> 56.24 tok/s   (full prompt, 604.95 s)
+  and at shallow depth: 642 tok -> 59.7 tok/s; 8 894 tok -> 62.18 tok/s
+
+CORRECTED CHARACTERISATION (an earlier note in this work said decode was
+depth-INVARIANT; the 32 768 point disproves the strong form):
+  decode  2.61 -> 2.43 tok/s across 0 -> 32 768   = ~7% decay
+  prefill 62.2 -> 56.2 tok/s across 8.9K -> 34K   = ~10% decay
+Both are close to flat but NOT invariant. The honest statement is that this lane
+degrades GENTLY and PREDICTABLY with depth — there is no cliff — rather than that
+it does not degrade at all.
+
+TTFT is a near-linear function of prompt size: TTFT_seconds ~= depth / 57.
+Extrapolating to the full window: 262 144 / 57 ~= 77 minutes to first token.
+=> The 262144 window is genuinely SERVED (allocated, n_ctx_slot=262144, and a
+   34K-token prompt was processed end-to-end) but it is a BATCH capability.
+   Interactive use is bounded at roughly the low thousands of tokens, where TTFT
+   is still seconds rather than minutes.
