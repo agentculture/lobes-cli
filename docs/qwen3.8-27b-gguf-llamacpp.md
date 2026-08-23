@@ -405,3 +405,41 @@ A GGUF-vs-NVFP4 quality comparison would need a cross-box, cross-engine harness
 perplexity implementations). That is a real piece of work and it is **not** what
 issue #194 covers — #194 is about task accuracy *within* this lane's quant
 choices. Treat cross-engine quality parity as **unmeasured**.
+
+## Agentic clients: prompt caching is what makes this lane practical
+
+Measured by driving the installed `qwen` CLI (v0.22.0) against this lane, 2026-08-23.
+
+An agentic CLI sends a large preamble — system prompt, tool definitions, project
+context — on **every** turn. For this client that is **~35 000 tokens**, which
+puts every turn at the deep end of the prefill curve. Cold, that costs ~150 s
+before a single output token.
+
+**llama.cpp's prompt cache removes almost all of it**, and it is on by default:
+
+| task | prompt tokens prefilled | prefill time | |
+|---|---|---|---|
+| 21 | 29 991 | 128.7 s | cold |
+| 31 | 35 020 | 152.2 s | cold |
+| 92 | **4** | **0.32 s** | cache hit |
+| 207 | **4** | **0.29 s** | cache hit |
+
+A ~500x reduction. The second turn completed in **13.3 s total** (0.29 s prefill,
+then 101 tokens at 7.76 tok/s).
+
+**So the cost model for agentic use is:**
+
+- **first turn of a session** — ~150 s, the cold prefill of the preamble
+- **every turn after** — ~0.3 s prefill, then decode-bound at ~8.5 tok/s
+
+Pay the preamble **once per session, not per turn**. As the conversation grows the
+cache covers the stable prefix and only the new suffix is prefilled (measured:
+9 475 new tokens at 244 tok/s mid-session).
+
+> An earlier note in this work concluded that agentic use costs ~150 s *per turn*
+> and was therefore impractical. That was measured across two consecutive **cold**
+> turns and generalised — it is wrong. Warm turns are ~500x cheaper on prefill.
+
+Throughput under real agentic load matches the synthetic benchmark: 237 tokens in
+28.9 s = **8.2 tok/s**, against 8.46 measured by `llama-bench`. The lane behaves
+as characterised when a genuine client drives it.
