@@ -378,3 +378,26 @@ reasoning / deciding / **final-authority** lobe, and the cost of a wrong call
 there is whatever that decision propagates into — not a percentage of a
 perplexity score. **The risk side of this trade is unmeasured, not small.**
 Issue #194 tracks measuring it properly.
+
+### What was NOT compared: NVFP4
+
+Every perplexity number above is a **GGUF quant measured against other GGUF
+quants on this Orin**. `unsloth/Qwen3.8-27B-NVFP4` — the checkpoint the Blackwell
+boxes serve as `cortex` — was **never benchmarked here, and cannot be**: it is
+W4A4 and needs Blackwell FP4 tensor cores, which is the whole reason this lane
+exists.
+
+So the intuition *"Q4_K_M is close to NVFP4"* is **plausible but unverified**.
+What is actually established:
+
+- Q4_K_M sits within **0.39% perplexity** of Q6_K, two quantisation levels above
+  it — *measured here*
+- Q4_K_M is the **same upstream checkpoint** as the NVFP4 cortex in a different
+  container format — *a fact about provenance, not a measurement*
+- Q4_K_M is the **knee of the speed curve** on this hardware — *measured here*
+
+A GGUF-vs-NVFP4 quality comparison would need a cross-box, cross-engine harness
+(vLLM on Blackwell vs llama.cpp on Ampere, different tokenizer paths, different
+perplexity implementations). That is a real piece of work and it is **not** what
+issue #194 covers — #194 is about task accuracy *within* this lane's quant
+choices. Treat cross-engine quality parity as **unmeasured**.
