@@ -288,3 +288,41 @@ manual fan lock is required.
 clock under load. That single error produced a confident, well-evidenced, entirely
 wrong conclusion that survived six other *correct* eliminations. Pin the frequency
 (`min=max`) before attributing anything to clock.
+
+---
+
+## d9 — the quant recommendation was decided on a proxy, and says so
+
+- **Task:** t11 · **Classification:** needs-follow-up · **Origin:** llm · **State:** approved
+
+**What happened.** The lane's quant was chosen by measuring **four rungs on two
+axes** — speed (`llama-bench`) and perplexity (`llama-perplexity`, wikitext-2,
+200 chunks, paired) — under enforced-identical conditions.
+
+| quant | tok/s | PPL | extra sec / 500-tok answer |
+|---|---|---|---|
+| UD-Q3_K_XL | 8.56 | 6.7922 | −0.7 s (but −1.20% quality) |
+| **UD-Q4_K_M** | **8.46** | **6.7118** | — |
+| UD-Q5_K_M | 7.15 | 6.6970 | +10.8 s for +0.22% |
+| UD-Q6_K | 6.56 | 6.6857 | +17.1 s for +0.39% |
+
+**Two predictions were refuted en route**, both recorded rather than quietly
+dropped:
+
+1. *"Going up the quant ladder is nearly free"* — extrapolated a size law from
+   the Q3→Q4 pair, predicted Q5_K_M at ~8.38 tok/s, measured **7.15** (off by
+   >10×). Size is not the driver; the 4-bit→5-bit **kernel** boundary is.
+2. *"Q5 costs 15.5% for a quality step up"* — the cost was measured, the
+   **step up was assumed**. Measured, it is 0.22%, at 0.20× the confidence
+   half-width.
+
+**Why this is `needs-follow-up` and not `acceptable`.** Perplexity is a log
+measure of next-token prediction on wikitext. It is **not a decision-error
+rate**, and `cortex` is the fleet's final-authority lobe — the cost of a wrong
+call there is whatever it propagates into. The interim choice is defensible
+because it needs no bet on the unmeasured axis (Q4 is the knee from both
+directions), but the axis that matters is **unmeasured, not small**.
+
+**Tracked in issue #194** — error rate on cortex-shaped tasks (tool-call
+correctness, multi-step reasoning, instruction adherence, long-context
+retrieval), with confidence intervals sized narrower than the effect claimed.

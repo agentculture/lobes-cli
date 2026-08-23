@@ -375,3 +375,67 @@ METHODOLOGICAL LESSON (recorded so the next person does not repeat it)
   well-evidenced, and entirely wrong conclusion that survived six other correct
   eliminations. The correct instrument is to PIN the frequency (min=max) and
   remove the governor's freedom before attributing anything to clock.
+
+## The quant ladder — measured on BOTH axes
+
+> **Interim decision: `UD-Q4_K_M`.** It is the measured knee from *both*
+> directions. The measurement that would actually settle it — error rate on
+> cortex-shaped tasks — is deliberately deferred to **issue #194**. Nothing
+> below claims the quality question is closed.
+
+Speed: `llama-bench -p 512 -n 128 -ngl 99 -fa 1`. Quality: `llama-perplexity`,
+wikitext-2 test set, 200 chunks @ 512 ctx (~102K tokens), identical corpus and
+chunk count per quant — a *paired* comparison. Every run under enforced-identical
+conditions (MAXN, GPU pinned 1300.5 MHz, the same four containers, **zero active
+downloads**), recorded into each log per `docs/measuring-lane-performance.md`.
+
+| quant | size | pp512 | tg128 | PPL | Δ speed | Δ quality | 500-tok answer |
+|---|---|---|---|---|---|---|---|
+| UD-Q3_K_XL | 12.23 GiB | — | 8.56 | 6.7922 ± 0.074 | +1.2% | -1.20% | 58.4 s |
+| **UD-Q4_K_M** | 15.33 GiB | 253.46 | **8.46** | 6.7118 ± 0.073 | +0.0% | +0.00% | 59.1 s |
+| UD-Q5_K_M | 18.41 GiB | 232.36 | 7.15 | 6.6970 ± 0.073 | -15.5% | +0.22% | 69.9 s |
+| UD-Q6_K | 20.46 GiB | 225.02 | 6.56 | 6.6857 ± 0.072 | -22.5% | +0.39% | 76.2 s |
+
+### Read it as seconds paid, not percentages
+
+A percentage makes 0.39% sound like a rounding error and 22.5% sound like a
+catastrophe. Neither framing helps. What a caller experiences is **time**:
+
+| from Q4_K_M | extra seconds per 500-token answer | perplexity bought |
+|---|---|---|
+| → Q5_K_M | **+10.8 s** | +0.22% |
+| → Q6_K | **+17.1 s** | +0.39% |
+| → Q3_K_XL | −0.7 s | **−1.20%** (worse) |
+
+**Two full quantization levels above `Q4_K_M` buy 0.39% perplexity for 17 seconds
+on every answer.** Descending to `Q3_K_XL` saves 0.7 s and costs 1.20% — the
+largest quality delta in the set, in the wrong direction.
+
+### Why size does not explain the speed curve
+
+| step | size change | speed change |
+|---|---|---|
+| Q3 → Q4 | **+25.3%** | **−1.2%** |
+| Q4 → Q5 | +20.1% | **−15.5%** |
+| Q5 → Q6 | +11.1% | −8.3% |
+
+A 25% size increase costs 1.2%, while a 20% increase costs 15.5%. Size is not the
+driver — the **4-bit → 5-bit dequantisation kernel boundary** is where the cost
+appears, and each further bit adds unpacking work per weight. An earlier note in
+this repo extrapolated a size law from the Q3→Q4 pair and predicted Q5_K_M at
+~8.38 tok/s; it measured **7.15**. Do not extrapolate across quant families —
+measure each rung.
+
+### What perplexity does NOT tell you
+
+Perplexity is a **log measure of next-token prediction on wikitext**. It is **not
+a decision-error rate**, and the mapping from PPL to task accuracy is neither
+linear nor established for this checkpoint. The 0.22% Q4→Q5 gap is **0.20× the
+confidence half-width** — real in direction, statistically indistinguishable from
+zero in magnitude. It could correspond to no behavioural difference at all.
+
+This matters more for `cortex` than for any other role: it is the fleet's
+reasoning / deciding / **final-authority** lobe, and the cost of a wrong call
+there is whatever that decision propagates into — not a percentage of a
+perplexity score. **The risk side of this trade is unmeasured, not small.**
+Issue #194 tracks measuring it properly.
