@@ -149,8 +149,17 @@ _ENGINE_BY_MODEL_ID: dict[str, str] = {model.id: model.engine for model in SUPPO
 # behind it does. Mirrors the shipped template exactly (same design as
 # ROLE_ENV_PREFIX); tests/test_shape_goldens.py verifies the mirror against the
 # real compose file.
+# NOTE on the http:// scheme (SonarCloud python:S5332 flags it): this is a
+# CONTAINER-INTERNAL address on the private compose network, resolved by the
+# Docker DNS alias `llamacpp-primary` and never reachable off-box — the lane
+# publishes no host port at all. Every other in-fleet backend URL is the same
+# shape (`http://vllm-primary:8000`, `http://vllm-embed:8000`, …), and
+# CLAUDE.md states the fleet assumption explicitly: peer origins ride a
+# private/tailnet transport and "no TLS termination happens at this layer".
+# Serving TLS between two containers in one compose project would add a
+# certificate lifecycle for no threat it mitigates. Not a finding here.
 LLAMA_CPP_ACTIVATION_ENV: dict[str, dict[str, str]] = {
-    "cortex": {"PRIMARY_URL": "http://llamacpp-primary:8000"},
+    "cortex": {"PRIMARY_URL": "http://llamacpp-primary:8000"},  # NOSONAR python:S5332
 }
 
 #: The Docker Compose profile gating every llama.cpp lane in the fleet template.

@@ -61,7 +61,16 @@ def test_switch_plan_rendering_is_pure(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", _boom)
     monkeypatch.setattr(subprocess, "Popen", _boom)
-    assert regen.switch_plan_text() == regen.switch_plan_text()
+    # Two calls, then BOTH compared against the committed golden. Comparing the
+    # two calls only to each other is near-tautological (SonarCloud flagged it as
+    # such): it would hold for any deterministic-but-wrong render. Pinning to the
+    # golden is what gives this purity test teeth — it proves the render neither
+    # shelled out (subprocess is patched to raise) nor drifted.
+    first = regen.switch_plan_text()
+    second = regen.switch_plan_text()
+    assert first == second, "switch-plan rendering is not deterministic"
+    expected = _GOLDEN.read_text(encoding="utf-8")
+    assert first == expected, "pure switch-plan render drifted from the golden"
 
 
 def test_golden_records_the_inferred_parser_for_every_vllm_gear() -> None:
