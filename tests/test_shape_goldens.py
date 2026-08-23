@@ -45,16 +45,25 @@ from pathlib import Path
 
 import pytest
 
+from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.render import ROLE_ENV_PREFIX, profile_env
+from lobes.profiles.render import (
+    LLAMA_CPP_ACTIVATION_ENV,
+    LLAMA_CPP_COMPOSE_PROFILE,
+    ROLE_ENV_PREFIX,
+    profile_env,
+    role_engine,
+)
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 from lobes.profiles.shape_render import (
     GATEWAY_SERVICE,
+    LLAMA_CPP_ROLE_SERVICE,
     OPT_IN_ACTIVATION_ENV,
     REALTIME_SERVICE,
     ROLE_SERVICE,
     compose_profile,
     render_shape,
+    role_service,
     shape_env,
     shape_services,
 )
@@ -270,13 +279,139 @@ def test_hosted_opt_in_role_renders_its_activation_env_on_every_card() -> None:
 
 
 def test_shapes_without_opt_in_roles_render_no_activation_env() -> None:
-    """No opt-in gear hosted -> no activation keys (machine-as-brain stays byte-identical)."""
+    """No opt-in gear hosted -> no activation keys (machine-as-brain stays byte-identical).
+
+    The `orin` CARD is excluded from the COMPOSE_PROFILES half on purpose: it
+    serves cortex on the llama.cpp engine, whose lane is compose-profile-gated
+    too, so any shape HOSTING cortex on that card legitimately renders
+    COMPOSE_PROFILES=llamacpp (see
+    test_llama_cpp_cortex_renders_its_lane_activation). The `minor` keys must
+    still be absent everywhere — those are the opt-in GEAR's, and no shape here
+    hosts it.
+    """
     for shape_name in ("machine-as-brain", "spark-lobe", "thor-lobe"):
         shape = resolve_shape(shape_name)
         for card in builtin_names():
-            env = shape_env(shape, resolve_profile(card))
-            for key in ("COMPOSE_PROFILES", "MINOR_BASE_URL", "MINOR_SERVED_NAME"):
+            profile = resolve_profile(card)
+            env = shape_env(shape, profile)
+            for key in ("MINOR_BASE_URL", "MINOR_SERVED_NAME"):
                 assert key not in env, f"{shape_name}/{card} leaked {key}"
+            hosts_llama_cpp_role = any(
+                shape.hosts_role(role)
+                and compose_profile(shape, profile).role(role).feasible
+                and role_engine(compose_profile(shape, profile).role(role)) != ENGINE_VLLM
+                for role in ROLES
+            )
+            if hosts_llama_cpp_role:
+                continue
+            assert "COMPOSE_PROFILES" not in env, f"{shape_name}/{card} leaked COMPOSE_PROFILES"
+
+
+# --- the ENGINE axis: a role whose model is a non-vLLM gear runs another lane -
+
+
+def test_role_service_is_the_vllm_lane_for_every_vllm_gear() -> None:
+    """The engine axis is inert for everything that predates it.
+
+    Every role on every built-in card resolves to exactly ROLE_SERVICE unless
+    its model is a non-vLLM catalog gear — which is what keeps every pre-engine
+    (shape, card) rendering byte-identical.
+    """
+    for card in builtin_names():
+        profile = resolve_profile(card)
+        for role in ROLES:
+            rp = profile.role(role)
+            if role_engine(rp) != ENGINE_VLLM:
+                continue
+            assert role_service(role, rp) == ROLE_SERVICE[role]
+
+
+def test_llama_cpp_cortex_runs_its_own_lane_not_the_vllm_one() -> None:
+    """The orin card's cortex is a GGUF gear, so it must NOT resolve to vllm-primary.
+
+    Serving a `.gguf` through `vllm serve` cannot work, so this is the whole
+    point of the axis: the SERVICE moves with the engine while the ROLE (and
+    therefore every caller-facing alias) does not.
+    """
+    profile = resolve_profile("orin")
+    cortex = profile.role("cortex")
+    assert role_engine(cortex) == ENGINE_LLAMA_CPP
+    assert role_service("cortex", cortex) == LLAMA_CPP_ROLE_SERVICE["cortex"]
+    assert role_service("cortex", cortex) != ROLE_SERVICE["cortex"]
+
+    services = shape_services(resolve_shape("orin-cortex"), profile)
+    assert LLAMA_CPP_ROLE_SERVICE["cortex"] in services
+    assert ROLE_SERVICE["cortex"] not in services
+    # senses is dropped by this shape; the cheap gears stay.
+    assert ROLE_SERVICE["senses"] not in services
+    assert ROLE_SERVICE["hand"] in services
+    assert ROLE_SERVICE["embedder"] in services
+    assert ROLE_SERVICE["reranker"] in services
+
+
+def test_llama_cpp_cortex_renders_its_lane_activation() -> None:
+    """Naming the GGUF model must also START and WIRE its lane, in one render.
+
+    The llamacpp-primary service is parked behind the `llamacpp` compose
+    profile and the gateway dials the origin it is given — so a render that
+    moved the model without moving both would leave `model=cortex` pointed at a
+    vLLM lane that is not running. Same failure mode OPT_IN_ACTIVATION_ENV
+    exists to prevent, one axis over.
+    """
+    env = shape_env(resolve_shape("orin-cortex"), resolve_profile("orin"))
+    assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+    assert env["PRIMARY_SERVED_NAME"] == env["PRIMARY_MODEL"]
+    assert env["PRIMARY_URL"] == LLAMA_CPP_ACTIVATION_ENV["cortex"]["PRIMARY_URL"]
+    assert LLAMA_CPP_COMPOSE_PROFILE in env["COMPOSE_PROFILES"].split(",")
+    # No gpu_mem_util reaches the lane — llama.cpp has no such flag.
+    assert "PRIMARY_GPU_MEM_UTIL" not in env
+
+
+def test_llama_cpp_constants_mirror_the_shipped_compose_template() -> None:
+    """Same discipline as test_role_service_constants_exist_in_compose_templates
+    and test_opt_in_activation_env_mirrors_the_compose_template: the constants
+    are a MIRROR of the template, so read the template and prove they line up —
+    the service key, its profile gate, and the gateway's overridable origin."""
+    text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    service = LLAMA_CPP_ROLE_SERVICE["cortex"]
+    assert re.search(rf"^  {re.escape(service)}:$", text, re.MULTILINE)
+    block = text.split(f"  {service}:", 1)[1].split("\n  # A warm", 1)[0]
+    assert re.search(
+        rf"profiles:\s*\n\s*- {re.escape(LLAMA_CPP_COMPOSE_PROFILE)}", block
+    ), "the llama.cpp lane lost its compose-profile gate"
+    # No host-published port — reachable only on the compose net (t4 criterion 1).
+    assert "ports:" not in block
+    assert re.search(r"expose:\s*\n\s*- \"8000\"", block)
+    origin = LLAMA_CPP_ACTIVATION_ENV["cortex"]["PRIMARY_URL"]
+    assert f"{service}:8000" in origin
+    assert "- PRIMARY_URL=${PRIMARY_URL:-http://vllm-primary:8000}" in text
+
+
+def test_llama_cpp_lane_carries_no_vllm_flags() -> None:
+    """t4 criterion 3, asserted against the shipped template rather than by eye.
+
+    `llama-server` has none of these surfaces; a translated-looking flag here
+    would be a lie about what the lane can do.
+    """
+    text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    block = text.split(f"  {LLAMA_CPP_ROLE_SERVICE['cortex']}:", 1)[1].split("\n  # A warm", 1)[0]
+    command = block.split("    command:", 1)[1].split("    healthcheck:", 1)[0]
+    for vllm_only in (
+        "vllm",
+        "--quantization",
+        "--gpu-memory-utilization",
+        "--max-model-len",
+        "--tool-call-parser",
+        "--reasoning-parser",
+        "--speculative-config",
+        "--served-model-name",
+        "--trust-remote-code",
+        "--enable-lora",
+    ):
+        assert vllm_only not in command, f"vLLM flag {vllm_only!r} leaked into the llama.cpp lane"
+    # ...and it DOES carry the measured llama.cpp ones.
+    for llama_flag in ("llama-server", "--n-gpu-layers", "--ctx-size", "--jinja", "--flash-attn"):
+        assert llama_flag in command
 
 
 def test_opt_in_activation_env_mirrors_the_compose_template() -> None:
@@ -387,18 +522,31 @@ def test_gateway_always_serves_and_realtime_rides_the_overlay() -> None:
 
 
 def test_services_cover_exactly_the_hosted_feasible_roles() -> None:
-    """Every hosted+feasible role has its compose service; dropped/infeasible roles do not."""
+    """Every hosted+feasible role has its compose service; dropped/infeasible roles do not.
+
+    "Its" service is engine-aware since the llama.cpp lane landed: the expected
+    service is ``role_service(role, composed_role)``, which is ROLE_SERVICE for
+    every vLLM gear and the alternative lane otherwise. The vLLM service of a
+    role hosted on another engine must be ABSENT — that is what stops both
+    cortex lanes running at once.
+    """
     for shape_name in builtin_shape_names():
         shape = resolve_shape(shape_name)
         for card in builtin_names():
             profile = resolve_profile(card)
+            composed = compose_profile(shape, profile)
             services = set(shape_services(shape, profile))
             for role in ROLES:
-                service = ROLE_SERVICE[role]
-                should_run = shape.hosts_role(role) and profile.role(role).feasible
+                role_profile = composed.role(role)
+                should_run = shape.hosts_role(role) and role_profile.feasible
+                service = role_service(role, role_profile) if should_run else ROLE_SERVICE[role]
                 assert (
                     service in services
                 ) == should_run, f"{role} service {service!r} presence wrong on {shape_name}/{card}"
+                if should_run and service != ROLE_SERVICE[role]:
+                    assert (
+                        ROLE_SERVICE[role] not in services
+                    ), f"{role} runs BOTH engines' lanes on {shape_name}/{card}"
             for role in AUDIO_ROLES:
                 assert (ROLE_SERVICE[role] in services) == shape.hosts_role(role)
 
@@ -503,6 +651,14 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
 # Caught by a live compose boot, not by any test; this is that test.
 
 
+# COMPOSE_PROFILES is the ONE rendered key that is legitimately never
+# ${substituted} by the template: `docker compose` reads it itself, as its own
+# documented way of activating profile-gated services, so it reaches the lane by
+# a different road than every knob below. (It is rendered whenever a card serves
+# a role on a compose-profile-gated lane — today, orin's llama.cpp cortex.)
+_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset({"COMPOSE_PROFILES"})
+
+
 @pytest.mark.parametrize("card_name", sorted(builtin_names()))
 def test_every_rendered_profile_knob_is_substituted_by_the_fleet_template(card_name):
     """Every KEY a card profile renders must appear as ${KEY...} in the template.
@@ -513,7 +669,11 @@ def test_every_rendered_profile_knob_is_substituted_by_the_fleet_template(card_n
     template = FLEET_COMPOSE.read_text(encoding="utf-8")
     rendered = profile_env(resolve_profile(card_name))
     dead = [
-        key for key in rendered if f"${{{key}" not in template and f"${{{key}}}" not in template
+        key
+        for key in rendered
+        if key not in _NOT_SUBSTITUTED_BY_TEMPLATE
+        and f"${{{key}" not in template
+        and f"${{{key}}}" not in template
     ]
     assert not dead, (
         f"{card_name}: these profile-rendered keys are never substituted by "
