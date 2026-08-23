@@ -7,16 +7,22 @@ real hostname is literally that, and its device-tree model string
 (``/proc/device-tree/model``, the Jetson-only fallback signal) also carries
 it (``"NVIDIA Jetson AGX Orin Developer Kit"``).
 
-**Ampere cannot serve the `cortex` primary.** The 27B checkpoint
+**Ampere cannot serve the NVFP4 `cortex` primary.** The 27B checkpoint
 (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` / the current primary
 `unsloth/Qwen3.8-27B-NVFP4`, and its predecessor `unsloth/Qwen3.6-27B-NVFP4`)
 quantizes *activations* to FP4, which needs
 Blackwell-class tensor cores — sm_87 is Ampere, one generation short. That is
 a hard architecture line, not a memory tradeoff, and it is a per-role
 *feasibility* fact (declared in a fleet ``Profile`` TOML — out of scope here;
-see the `orin.toml` operator profile in docs/orin-profiles.md and the future
-built-in `lobes/profiles/builtin/orin.toml`, a later task). This module only
+see the `orin.toml` operator profile in docs/orin-profiles.md and the
+built-in `lobes/profiles/builtin/orin.toml`). This module only
 owns card *detection* plus the knob divergences the live boot measured.
+
+Note the line is about the CHECKPOINT FORMAT, not the ROLE: since 2026-08-23
+``builtin/orin.toml`` declares ``cortex`` feasible on a **GGUF** gear served by
+llama.cpp (``unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M``), which is weight-only and
+decodes on Ampere — the same reason the int4 W4A16 ``senses`` gear runs here.
+That declaration carries no knob this module owns, so nothing below changes.
 
 The pooling-lane divergences below (`embedder`/`reranker` forced onto
 `TRITON_ATTN`, `reranker` additionally `enforce_eager`) mirror Thor's sm_110

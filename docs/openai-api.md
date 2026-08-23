@@ -218,6 +218,45 @@ The `vllm-local` provider in `culture.yaml` points at this endpoint; an unknown
 `model` defaults to the primary, so `model: default` also works when you set
 `VLLM_SERVED_NAME=default` in `.env`.
 
+#### Controlling the thinking trace (cortex)
+
+The cortex checkpoint is a thinking model, and by default **every** request pays
+for a full reasoning trace. Two `chat_template_kwargs` control it, and the
+difference between them matters more than it looks:
+
+| you want | send | effect |
+|---|---|---|
+| no thinking at all | `{"enable_thinking": false}` | trace suppressed, `reasoning_tokens: 0` |
+| a shorter trace | `{"reasoning_effort": "low"\|"medium"}` | one nudge sentence; **not** a budget |
+| the default | *(nothing)* | `xhigh` — the most expensive rung |
+
+```bash
+curl -s http://localhost:8001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "cortex",
+    "messages": [{"role": "user", "content": "Classify: embed, rerank, generate."}],
+    "chat_template_kwargs": {"enable_thinking": false}
+  }'
+```
+
+Notes for callers:
+
+- **`reasoning_effort` accepts `low` / `medium` / `xhigh` only**; `high` is an
+  alias for `xhigh`, and anything else is a **400**, not a fallback.
+- **Prefer `enable_thinking: false` over a lower effort for shallow calls.**
+  Measured on the Spark cortex, thinking-off cut total completion tokens 75%
+  against `low`'s 24%, and lowering effort made some prompts *more* expensive —
+  a one-word classification cost 123 tokens at `low` versus **3** with thinking
+  off. See `docs/evidence/2026-08-21-measure-reasoning-effort-cortex-spark.txt`.
+- **Lower effort degrades instruction-following**, so if you *parse* the reply,
+  `xhigh` or thinking-off are the safer picks.
+- `chat_template_kwargs` merges **per key** over the server default, so sending
+  only one key leaves the issue #93 `preserve_thinking: true` in place.
+- On this build the trace comes back as `message.reasoning` (**not**
+  `reasoning_content`) with a count in
+  `usage.completion_tokens_details.reasoning_tokens`.
+
 ### Embeddings
 
 `POST /v1/embeddings` — served by the warm `Qwen/Qwen3-Embedding-0.6B` gear (fleet

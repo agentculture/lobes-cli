@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.59.0] - 2026-08-21
+## [0.59.0] - 2026-08-23
 
 ### Added
 
@@ -22,6 +22,71 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `write_plugin_file` mirrors the same contract: an existing tool-parser plugin file is left alone without `--force` rather than aborting the command, and returns `None` when it skips so callers cannot report a file they did not write.
 - `.env` permissions are re-hardened to 0600 on the MERGE path too. Overwriting used to chmod as a side effect; merge-only would otherwise have left a drifted, world-readable `.env` — with an API key in it — untightened.
 - `lobes init --apply` reports what actually changed: `.env` is always listed on the fleet path (it is always rewritten with the shape/profile knobs, `LOBES_PROFILE` and `MODEL_GEAR_VERSION`), and a skipped tool-parser plugin is no longer listed as written.
+
+## [0.58.4] - 2026-08-23
+
+### Added
+
+- docs/qwen3.8-27b-gguf-llamacpp.md — three sections measured *after* #193 merged:
+  - **Agentic clients and prompt caching.** The `qwen` CLI sends ~35 000 tokens of
+    preamble per turn, which cold costs ~150 s of prefill. llama.cpp's prompt cache
+    (on by default) cuts warm turns to ~0.3 s — a ~500x reduction — so the preamble
+    is paid **once per session, not per turn**. This retracts an earlier note that
+    called agentic use impractical; that note generalised from two consecutive
+    *cold* turns and was wrong.
+  - **What was NOT compared: NVFP4.** It was never benchmarked on this box and
+    cannot be (W4A4 needs Blackwell FP4 tensor cores — the reason this lane
+    exists). Cross-engine quality parity rests on published benchmarks, not on
+    anything measured here, and the doc now says so.
+  - Throughput under real agentic load (8.2 tok/s) matches the synthetic benchmark
+    (8.46 tok/s), so the lane behaves as characterised when a genuine client drives it.
+
+### Changed
+
+### Fixed
+
+## [0.58.3] - 2026-08-23
+
+### Added
+
+- docs/plans/2026-08-22-qwen3-8-gguf-llamacpp.md — converged build plan for the
+  Orin-local llama.cpp cortex: 11 tasks in 8 dependency waves, every task
+  carrying TDD acceptance criteria and operator instructions, covering all 32
+  spec targets. Wave 0 is the spike (t1) plus the Tegra iowait fix (t7); the
+  remaining tasks are conditional on a GO, and a NO-GO ends the plan with a
+  recorded verdict (risk r1). Also recorded: unmeasured concurrency (r2),
+  expected feature losses versus the vLLM lane — MTP, ViT, preserve_thinking,
+  strict tools (r3), out-of-scope mesh senses re-homing (r4), and the
+  second-cortex-host routing question (r5). Plan state in
+  `.devague/plans/qwen3-8-gguf-llamacpp.json`.
+
+## [0.58.2] - 2026-08-23
+
+### Added
+
+- docs/specs/2026-08-22-qwen3-8-gguf-llamacpp.md — converged devague spec: the
+  Jetson AGX Orin (sm_87) gains a LOCAL cortex serving
+  `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` via a llama.cpp lane, replacing the
+  `senses` Gemma 4 12B on that box (operator decision; mesh senses re-homing is
+  out of scope). Spike-gated per the TRT-LLM-investigation pattern: live
+  load/correctness/tok/s/context on the box before any integration lands.
+  Measurable gate: decode >= 5 tok/s single-stream, context >= 32768 served and
+  needle-probed, known-answer + tool-calling probes PASS through the gateway,
+  evidence under docs/evidence/. Frame state in
+  `.devague/frames/qwen3-8-gguf-llamacpp.json` (10 scope entries, 19 confirmed
+  claims, 12 honesty conditions).
+
+## [0.58.1] - 2026-08-21
+
+### Added
+
+- docs/evidence/2026-08-21-measure-reasoning-effort-cortex-spark.txt — a read-only COST measurement of the Qwen3.8 cortex reasoning_effort knob on the Spark (4 prompts x low/medium/xhigh/thinking-off, temperature=0, n=1 per cell).
+- docs/qwen3.8-27b-nvfp4.md: a Reasoning effort section recording that the checkpoint template defaults to xhigh, that high is an alias for xhigh, and that the mechanism is an injected sentence rather than a token budget.
+- docs/openai-api.md: a caller-facing Controlling the thinking trace subsection covering enable_thinking vs reasoning_effort, the 400 on an unrecognised value, the per-key merge over the server default, and the message.reasoning / reasoning_tokens response fields.
+
+### Changed
+
+- Documented that lobes sets reasoning_effort nowhere, so every cortex request runs at the template default xhigh. No default was changed: the measurement found lower effort is not monotonically cheaper (2 of 4 prompts cost more) and degrades instruction-following, while enable_thinking:false cut 75% of completion tokens against low s 24%.
 
 ## [0.58.0] - 2026-08-20
 

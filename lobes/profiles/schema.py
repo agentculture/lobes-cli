@@ -119,6 +119,142 @@ def _profile_error(message: str, remediation: str) -> ModelGearError:
     return ModelGearError(code=EXIT_USER_ERROR, message=message, remediation=remediation)
 
 
+# The keys one ``[[exclusive_roles]]`` entry may carry. ``roles`` is the group
+# itself; ``shapes`` names the deployment shapes that resolve it (so the
+# refusal can point at a concrete alternative instead of "pass --shape"); and
+# ``reason`` is the measured arithmetic that makes the group true, quoted back
+# to the operator verbatim.
+_EXCLUSIVE_KEYS = ("roles", "shapes", "reason")
+
+
+@dataclass(frozen=True)
+class ExclusiveRoles:
+    """One declared **mutually-exclusive** role group on a card.
+
+    Feasibility (:attr:`RoleProfile.feasible`) and CO-RESIDENCY are different
+    axes, and only the first is a per-role fact. A board can be perfectly
+    capable of serving two roles — each one boots, each one is honestly
+    ``feasible = true`` — and still not have the memory to run BOTH at once.
+    Nothing in :class:`RoleProfile` can say that, because it is a statement
+    about a *pair*, not about either member.
+
+    This is where a card says it. Declaring::
+
+        [[exclusive_roles]]
+        roles = ["cortex", "senses"]
+        shapes = ["orin-cortex", "orin-lobe"]
+        reason = "…the measured arithmetic…"
+
+    means "this board can serve either, never both together". It is read by
+    ``lobes init``'s co-residency guard
+    (:func:`lobes.profiles.shape_render.overcommitted_groups`), which refuses
+    to scaffold a deployment whose resolved shape would host more than one
+    member — the ``machine-as-brain`` default being exactly the shape that
+    would.
+
+    ``shapes`` is not decoration: the guard's whole value is naming the way
+    OUT, and deriving that from the built-in shape set would surface every
+    shape on every card (``spark-lobe`` "resolves" a cortex/senses conflict
+    too — on the wrong board). It is declared here, and
+    ``tests/test_init_coresidency.py`` proves each named shape exists and
+    actually resolves the group, so the declaration cannot drift into a lie.
+    ``reason`` is likewise carried into the error text — a refusal that states
+    the numbers is one an operator can check.
+
+    Frozen and role-name-validated at load, like everything else in this
+    module; a group of fewer than two roles, a duplicate member, or a role
+    outside :data:`ROLES` is a LOAD ERROR, never a silently dropped
+    declaration.
+    """
+
+    roles: tuple[str, ...]
+    shapes: tuple[str, ...] = ()
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain-dict view — the exact shape :func:`_exclusive_group` accepts back."""
+        return {
+            "roles": list(self.roles),
+            "shapes": list(self.shapes),
+            "reason": self.reason,
+        }
+
+
+def _str_tuple(name: str, key: str, raw: Any, *, minimum: int) -> tuple[str, ...]:
+    """A validated tuple of plain strings for one ``exclusive_roles`` key."""
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
+        raise _profile_error(
+            message=f"profile {name!r}: exclusive_roles {key!r} must be a list of strings, "
+            f"got {raw!r}",
+            remediation=f'declare it as {key} = ["…", "…"]',
+        )
+    values = tuple(raw)
+    if len(values) < minimum:
+        raise _profile_error(
+            message=(
+                f"profile {name!r}: exclusive_roles {key!r} needs at least {minimum} "
+                f"entr{'y' if minimum == 1 else 'ies'}, got {list(values)!r}"
+            ),
+            remediation=(
+                "a mutual-exclusion group is a statement about a PAIR — one role "
+                "cannot conflict with itself"
+                if key == "roles"
+                else f"name the shape(s) that resolve the group in {key}"
+            ),
+        )
+    if len(set(values)) != len(values):
+        raise _profile_error(
+            message=f"profile {name!r}: exclusive_roles {key!r} repeats an entry: {list(values)!r}",
+            remediation=f"list each name once in {key}",
+        )
+    return values
+
+
+def _exclusive_group(name: str, raw: Any) -> ExclusiveRoles:
+    """Validate and build ONE ``[[exclusive_roles]]`` entry."""
+    if not isinstance(raw, Mapping):
+        raise _profile_error(
+            message=f"profile {name!r}: each exclusive_roles entry must be a table/mapping",
+            remediation="declare each group as a [[exclusive_roles]] table with "
+            f"keys: {', '.join(_EXCLUSIVE_KEYS)}",
+        )
+    unknown = set(raw.keys()) - set(_EXCLUSIVE_KEYS)
+    if unknown:
+        raise _profile_error(
+            message=(f"profile {name!r}: unknown exclusive_roles key(s) {sorted(unknown)!r}"),
+            remediation=f"known keys: {', '.join(_EXCLUSIVE_KEYS)}",
+        )
+    roles = _str_tuple(name, "roles", raw.get("roles", []), minimum=2)
+    unknown_roles = set(roles) - set(ROLES)
+    if unknown_roles:
+        raise _profile_error(
+            message=(
+                f"profile {name!r}: unknown role(s) {sorted(unknown_roles)!r} "
+                "in an exclusive_roles group"
+            ),
+            remediation=f"known roles: {', '.join(ROLES)}",
+        )
+    shapes = _str_tuple(name, "shapes", raw.get("shapes", []), minimum=1)
+    reason = raw.get("reason", "")
+    if not isinstance(reason, str):
+        raise _profile_error(
+            message=f"profile {name!r}: exclusive_roles 'reason' must be str, "
+            f"got {type(reason).__name__} ({reason!r})",
+            remediation='quote it — reason = "…the measured arithmetic…"',
+        )
+    return ExclusiveRoles(roles=roles, shapes=shapes, reason=reason)
+
+
+def _exclusive_roles_from_value(name: str, raw: Any) -> tuple[ExclusiveRoles, ...]:
+    """Validate and build a profile's ``exclusive_roles`` declaration."""
+    if not isinstance(raw, (list, tuple)):
+        raise _profile_error(
+            message=f"profile {name!r}: 'exclusive_roles' must be a list of tables",
+            remediation="declare each group as a [[exclusive_roles]] table",
+        )
+    return tuple(_exclusive_group(name, entry) for entry in raw)
+
+
 def _gpu_access_from_value(name: str, raw: Any) -> str:
     """Validate a profile's ``gpu_access`` declaration (loud, never silent)."""
     if not isinstance(raw, str) or raw not in GPU_ACCESS_MODES:
@@ -345,6 +481,16 @@ class Profile:
     accepts is a fact about the BOARD, true of every shape rendered over it
     (a shape-scoped fix would leave a bare ``lobes init`` on the same board
     broken — the same reasoning as ``host_env``).
+
+    ``exclusive_roles`` is the card's **co-residency** declaration — the one
+    thing a per-role table structurally cannot say, because it is a statement
+    about a PAIR of roles rather than about either one (see
+    :class:`ExclusiveRoles`). It renders NO ``.env`` key and no compose file:
+    what it reaches is ``lobes init``'s co-residency guard, which refuses to
+    scaffold a deployment whose resolved shape would host two roles the card
+    declares mutually exclusive. A card that declares none (every profile but
+    ``orin`` today) is completely unaffected — the guard finds no group and
+    the render is byte-identical.
     """
 
     name: str
@@ -352,10 +498,12 @@ class Profile:
     roles: Mapping[str, RoleProfile] = field(default_factory=dict)
     host_env: Mapping[str, str] = field(default_factory=dict)
     gpu_access: str = GPU_ACCESS_DEVICES
+    exclusive_roles: tuple[ExclusiveRoles, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
         object.__setattr__(self, "host_env", MappingProxyType(dict(self.host_env)))
+        object.__setattr__(self, "exclusive_roles", tuple(self.exclusive_roles))
 
     def role(self, name: str) -> RoleProfile:
         """The declaration for one role; an absent role is fully permissive.
@@ -368,13 +516,14 @@ class Profile:
         return self.roles.get(name, RoleProfile())
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain-dict view, ``{"name", "summary", "roles", "host_env", "gpu_access"}``."""
+        """Plain-dict view of every declared field (round-trips through ``from_dict``)."""
         return {
             "name": self.name,
             "summary": self.summary,
             "roles": {role: rp.to_dict() for role, rp in self.roles.items()},
             "host_env": dict(self.host_env),
             "gpu_access": self.gpu_access,
+            "exclusive_roles": [group.to_dict() for group in self.exclusive_roles],
         }
 
     @staticmethod
@@ -388,7 +537,7 @@ class Profile:
         ``gpu_access`` value are validated the same way
         (:func:`_host_env_from_dict` / :func:`_gpu_access_from_value`).
         """
-        known_top = {"name", "summary", "roles", "host_env", "gpu_access"}
+        known_top = {"name", "summary", "roles", "host_env", "gpu_access", "exclusive_roles"}
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
             raise _profile_error(
@@ -413,6 +562,7 @@ class Profile:
         }
         host_env = _host_env_from_dict(name, data.get("host_env", {}))
         gpu_access = _gpu_access_from_value(name, data.get("gpu_access", GPU_ACCESS_DEVICES))
+        exclusive_roles = _exclusive_roles_from_value(name, data.get("exclusive_roles", []))
         # declared-name wins over an embedded "name" field (loader passes the
         # filename stem, which is the source of truth for a profile's identity).
         declared_name = data.get("name", name)
@@ -430,4 +580,5 @@ class Profile:
             roles=roles,
             host_env=host_env,
             gpu_access=gpu_access,
+            exclusive_roles=exclusive_roles,
         )

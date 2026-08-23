@@ -8,9 +8,33 @@
 # <deploy-dir>/profiles/orin.toml (an operator file of the same name still wins
 # over this built-in, per lobes/profiles/loader.py).
 #
-# What this board serves: `senses` (the Gemma 4 12B multimodal gear) plus the
-# two ~0.6B pooling gears. The three NVFP4 generate lobes — cortex, muse,
-# worker — are feasible=false; see the shared rationale below.
+# What this board serves: `cortex` — but through the **llama.cpp** lane, on a
+# GGUF checkpoint, NOT the NVFP4 primary (see the engine section below) — plus
+# `senses` (the Gemma 4 12B multimodal gear), the `hand` fine-tuning base, and
+# the two ~0.6B pooling gears. The two remaining NVFP4 generate lobes, `muse`
+# and `worker`, are feasible=false; see the shared rationale below.
+#
+# !!! cortex and senses CANNOT CO-RESIDE on this board !!!  MEASURED
+# 2026-08-23: the llama.cpp cortex holds ~33 GiB resident at its served window
+# and `senses` holds 0.45 x 61.3 = ~27.6 GiB, against 61.3 GiB of unified memory
+# with ZERO swap configured. Feasibility (can this board serve the role at all?)
+# and co-residency (which roles fit together?) are different axes here, and only
+# the first is a card fact — so BOTH roles are declared feasible below and the
+# DEPLOYMENT SHAPE is what picks one: `orin-cortex` (hosts cortex, drops senses)
+# or `orin-lobe` (hosts senses, drops cortex).
+#
+# That used to be a WARNING in this banner and nothing more, which left the
+# DEFAULT path broken: `machine-as-brain` hosts every role a card declares
+# feasible, so a bare `lobes init --apply` on this board rendered a deployment
+# that starts both and is expected to OOM. It is now a DECLARATION the tool
+# acts on — the `[[exclusive_roles]]` table below, read by `lobes init`'s
+# co-residency guard (lobes/profiles/shape_render.py's `overcommitted_groups`).
+# A bare `lobes init` on this card REFUSES, naming `orin-cortex` / `orin-lobe`;
+# an explicitly typed `--shape machine-as-brain` warns and proceeds, matching
+# --profile's own "forcing a profile onto a card it was not validated for
+# (warns, but proceeds)" precedent. Nothing about the RENDER changed: the
+# declaration writes no .env key and no compose file, and every other card,
+# declaring no group at all, is untouched.
 #
 # Two knobs are deliberately ABSENT from the pooling roles at the bottom
 # (embedder.attention_backend, reranker.attention_backend +
@@ -61,29 +85,100 @@ summary = "Jetson AGX Orin 64GB (Ampere sm_87, 64 GB unified) — senses + pooli
 # which proves the compose merge, not the container create.
 gpu_access = "runtime"
 
-# --- the three NVFP4 generate lobes: a HARD architecture line ----------------
+# --- co-residency: the pair this board cannot host together ------------------
 #
-# cortex (unsloth/Qwen3.6-27B-NVFP4), muse (nvidia/Gemma-4-31B-IT-NVFP4) and
-# worker (unsloth/Qwen3.6-35B-A3B-NVFP4) are all NVFP4 exports that quantize
-# ACTIVATIONS to FP4 (W4A4 on the MLP path). FP4 activations are executed by
-# BLACKWELL FP4 tensor cores; sm_87 is Ampere, one generation short. No
-# gpu_mem_util makes that work — this is a feasibility fact, NOT a memory
-# tradeoff (docs/orin-profiles.md "Why no cortex"; the same statement heads
+# The machine-readable half of the banner above. `roles` is the group itself;
+# `shapes` names the deployment shapes that resolve it, so the refusal points at
+# a concrete alternative instead of a bare "pass --shape" (deriving that from
+# the built-in shape set would offer `spark-lobe`/`thor-lobe` too — shapes that
+# "resolve" a cortex/senses clash on the wrong board); `reason` is the measured
+# arithmetic, quoted back verbatim so the operator can check it. Both named
+# shapes are proven to exist and to actually resolve the group by
+# tests/test_init_coresidency.py, so this cannot drift into a lie.
+[[exclusive_roles]]
+roles = ["cortex", "senses"]
+shapes = ["orin-cortex", "orin-lobe"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB, against 61.3 GiB of unified memory with ZERO swap"
+
+# --- the NVFP4 architecture line, and the engine that steps around it --------
+#
+# The NVFP4 exports this fleet serves for cortex (unsloth/Qwen3.8-27B-NVFP4),
+# muse (nvidia/Gemma-4-31B-IT-NVFP4) and worker
+# (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) all quantize ACTIVATIONS
+# to FP4 (W4A4 on the MLP path). FP4 activations are executed by BLACKWELL FP4
+# tensor cores; sm_87 is Ampere, one generation short. No gpu_mem_util makes
+# that work — it is a feasibility fact, NOT a memory tradeoff
+# (docs/orin-profiles.md "Why no cortex"; the same statement heads
 # lobes/machines/orin.py).
 #
-# Contrast the `senses` gear below, which DOES run here: weight-only int4
-# (W4A16). Its weights dequantize through vLLM's Marlin/int4 path (compute
-# capability >= 8.0) and its activations stay 16-bit — that is the whole reason
-# a 12B multimodal lobe serves on this Ampere board while a 27B NVFP4 primary
-# cannot.
+# That line is about the CHECKPOINT FORMAT, not about the ROLE — which is what
+# the `cortex` block below now turns on. Two other things on this board already
+# step around the same barrier the same way:
+#   * `senses` is weight-only int4 (W4A16): its weights dequantize through
+#     vLLM's Marlin/int4 path (compute capability >= 8.0) and its activations
+#     stay 16-bit;
+#   * `hand` is plain bf16 and never quantized at all.
+# A GGUF Q4_K_M is the third: weight-only, dequantized per block into 16-bit
+# arithmetic, with no FP4 activation path anywhere in it.
 #
-# feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model,
-# no knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served.
-# A box on this profile reaches cortex by honest referral / proxy instead
-# (PRIMARY_PEER_ORIGIN + PRIMARY_PEER_PROXY -> the DGX Spark; validated live
-# 2026-07-17, docs/orin-profiles.md "Mesh wiring").
+# `muse` and `worker` stay feasible=false because no non-NVFP4 gear is
+# catalogued for them on this board — not because the roles are impossible.
+# feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model, no
+# knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served; a
+# box on this profile reaches them by honest referral / proxy instead.
 [roles.cortex]
-feasible = false
+# *** MEASURED LIVE on this box, 2026-08-23 (plan qwen3-8-gguf-llamacpp task t1
+# *** spike): docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt.
+# *** NOTHING here is VALIDATED — the acceptance transcript is that plan's t10,
+# *** and until it lands no doc, support table or `lobes capabilities` output
+# *** may claim this lane validated (#108). The spike's own verdict was
+# *** "functional GO / throughput FAIL-AS-SPECIFIED": correct decode, full
+# *** context, tool calling and reasoning_content all PASS, and 2.61 tok/s
+# *** single-stream decode, which is BELOW the plan's >= 5 tok/s gate.
+#
+# The catalog's FIRST non-vLLM gear (lobes/catalog.py's `engine` axis,
+# ENGINE_LLAMA_CPP). Declaring it here is what makes `lobes init` render the
+# `llamacpp-primary` compose lane instead of `vllm-primary`: the engine is read
+# off the catalog entry for THIS model id, never off a separate knob that could
+# drift from it (lobes/profiles/shape_render.py's role_service / role_engine).
+# The composed render carries COMPOSE_PROFILES=llamacpp plus
+# PRIMARY_URL=http://llamacpp-primary:8000, and the generated
+# docker-compose.shape.yml parks `vllm-primary` — so the caller-facing alias
+# (model=cortex|main|hard) is unchanged and only the lane behind it moved.
+#
+# It is the SAME upstream checkpoint the Blackwell boxes serve as cortex
+# (unsloth/Qwen3.8-27B-NVFP4), in a different container format for a different
+# engine — so this board joins the mesh's cortex hosts rather than approximating
+# one. Read off the downloaded file (sha256-verified in the transcript):
+#   general.architecture "qwen35" · 27.32B params · 15.33 GiB on disk · Q4_K_M
+#   n_ctx_train 262144 · block_count 65, full_attention_interval 4
+#   head_count 24 / head_count_kv 4 · key_length = value_length = 256
+#
+# NO gpu_mem_util, NO quantization, NO kv_cache_dtype, NO attention_backend, and
+# those absences are the point rather than an oversight — `llama-server` has
+# none of those flags. Its quantization lives INSIDE the .gguf; its memory
+# follows -ngl (all 65 layers offloaded) and -c (the window below), so there is
+# no utilization fraction to declare; and it takes --jinja plus the model's own
+# embedded chat template rather than a reasoning/tool parser pair. A knob
+# declared here that reaches no flag is exactly the dead declaration #92 exists
+# to prevent.
+#
+# BUDGET, MEASURED at this exact window on this box (not computed, not scaled
+# from another card): weights 15.33 GiB + KV 16.00 GiB = **~33 GiB resident**
+# (the pre-boot prediction from the GGUF header was 31.33 GiB; runtime overhead
+# accounts for the ~1.7 GiB difference). KV costs 64 KiB/token because only 16
+# of the 65 layers hold a per-token KV cache — the other 49 are Mamba/SSM with
+# constant state — and those 16 use GQA at head_count_kv=4, k=v=256, f16. The
+# spike ran with `senses` STOPPED: free RAM went 23 -> 47 GiB on stopping it,
+# cortex took ~33, and ~13 GiB stayed free. Load time 84 s cold / 15.6 s warm.
+#
+# max_model_len is the GGUF's OWN declared native ceiling, served in full and
+# needle-probed at the spike; it is the `-c` flag on this lane, not vLLM's
+# --max-model-len. Trim it to shrink the footprint — 64 KiB/token is the
+# exchange rate, and it is the only memory dial this engine has.
+feasible = true
+model = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+max_model_len = 262144
 
 [roles.muse]
 feasible = false

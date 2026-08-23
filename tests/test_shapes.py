@@ -269,6 +269,7 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "thor-worker",
         "orin-small",
         "orin-lobe",
+        "orin-cortex",
     }
 
 

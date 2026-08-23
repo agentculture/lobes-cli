@@ -1,0 +1,508 @@
+{
+  "slug": "qwen3-8-gguf-llamacpp",
+  "title": "qwen3.8-gguf-llamacpp",
+  "frame_slug": "qwen3-8-gguf-llamacpp",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-22T21:47:10Z",
+  "updated": "2026-08-22T22:22:54Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M via a llama.cpp lane as an alternative engine to the vLLM NVFP4 cortex",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "llama.cpp's server really does serve this hybrid-Mamba Qwen3.8 GGUF with an OpenAI-compatible /v1/chat/completions on sm_87 \u2014 proven by a live spike on this box, not by hearsay",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "catalog.py's Gear model is vLLM-shaped (id doubles as --served-model-name, tool_parser is a vLLM --tool-call-parser, serve_extras are vLLM flags) \u2014 a llama.cpp-served GGUF gear needs either a runtime/engine field on Gear or a lane declared outside the catalog",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "a llama.cpp gear can be declared without breaking the existing vLLM gears: every current catalog consumer (switch, fleet render, infer_parser) still resolves the vLLM gears byte-identically after the change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "every generate lane in both compose templates (legacy docker-compose.yml + fleet template) images a vLLM container (NGC 26.04 or the pinned vllm-openai nightly digest) \u2014 a llama.cpp lane means a new service block with its own image, and no ARM64/Blackwell (sm_110/sm_121) llama.cpp CUDA image is verified in-tree",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "a llama.cpp CUDA build/image actually runs on this box's JetPack (CUDA 13.2, csv-mode container toolkit \u2014 deploy.resources GPU requests fail here, the lane must use runtime: nvidia)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the gateway request path stays untouched: Backend keys on base_url and forwards OpenAI-shaped POSTs verbatim, so any OpenAI-speaking llama.cpp server drops in behind the existing routing (established by docs/tensorrt-llm-investigation.md section 1, re-verified against lobes/gateway/)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "a live request to model=cortex through this box's gateway reaches the llama.cpp backend and returns a well-formed OpenAI chat completion with zero gateway code changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "lobes assess / lobes benchmark need no change: assess.py speaks pure OpenAI HTTP (/health, /v1/models, /v1/chat/completions), which llama.cpp's server implements \u2014 so llama.cpp-vs-vLLM numbers are directly comparable through the existing harness",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "lobes assess runs green against the llama.cpp lane unmodified \u2014 if any probe needs a llama.cpp special-case, this boundary is false and must be re-scoped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the GGUF cortex REPLACES senses on this box (operator decision 2026-08-23: Gemma 4 12B is removed): the Orin becomes a cortex-lobe \u2014 llama.cpp Qwen3.8-27B UD-Q4_K_M (~16-17 GB weights + KV) plus the pooling gears, with senses' ~0.45-util budget reclaimed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the UD-Q4_K_M weights + KV cache + pooling gears fit the 61.3 GiB unified budget with NO swap configured, measured at the target context, not computed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "audience",
+      "text": "the operator of the Orin box and the Culture mesh callers that address model=cortex/main through this box's gateway (plus lobes-cli maintainers who own the catalog/compose/telemetry surfaces)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "mesh callers keep addressing role aliases (model=cortex/main), never a llama.cpp-specific id \u2014 the engine swap is invisible at the calling contract",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "before_state",
+      "text": "cortex on the Orin is proxy-only (PRIMARY_PEER_PROXY to the Spark) because the NVFP4 W4A4 cortex quant is Blackwell-only; the box spends its GPU budget hosting senses (Gemma 4 12B), a role the operator is willing to give up",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the before-state is verified on the deployed box, not from memory: the .env shows PRIMARY_PEER_PROXY to the Spark and vllm-multimodal is the running senses lane at the time the swap starts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "the Orin serves cortex LOCALLY: llama.cpp runs unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M behind the lobes gateway, senses/Gemma 12B is removed, and model=cortex answers on this box without a proxy hop",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "after the swap, model=cortex answers locally (no X-Lobes-Proxied-By header) and the Gemma 12B container is down and its budget freed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "why_it_matters",
+      "text": "a local cortex removes the Spark dependency for this box's reasoning lane and puts the fleet's sm_87 silicon to work on the role that matters most \u2014 the first cortex the Ampere box can actually run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the local cortex is actually usable for real work: latency and quality are acceptable to the operator after a hands-on session, not just probe-passing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "lobes assess passes against the llama.cpp lane through the gateway (health, known-answer, tool-calling probe), with measured decode tok/s and a working context window recorded in an evidence transcript under docs/evidence/, per the house pattern",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "assess numbers are captured through the gateway path callers actually use, and the evidence transcript lands under docs/evidence/ before any doc claims VALIDATED (#108 rule)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "measured on this box through the gateway: decode >= 5 tok/s single-stream, context window >= 32768 served and needle-probed, known-answer and tool-calling probes PASS \u2014 numbers recorded in the evidence transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the numbers come from the live box run, measured through the gateway path, and land in the docs/evidence/ transcript \u2014 no target is claimed met from theory or extrapolation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "the rollout must neutralize the known Tegra spurious-iowait shedding on this box, or the local cortex is unusable during flares: sugov kthreads inflate nr_iowait with zero disk I/O, and the gateway pressure policy (iowait > 50 -> busy, lobes/gateway/_pressure_policy.py:166) 429-sheds ALL cortex traffic; the deployed .env still carries threshold 50 and the =100 override is ephemeral (container shell-env, reverts on next compose up)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "verified on the box after cutover: with the persisted threshold (or Tegra-aware sampling), a sugov iowait flare no longer flips the gateway to busy \u2014 cortex requests still answer 200 during a flare, and the setting survives a docker compose down/up cycle",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "the llama.cpp lane lands as rendered template/profile/shape data, NEVER as hand-edits to the deployed compose: this box already carries hand-edited runtime: nvidia lines that a re-init would revert (recorded 2026-07-16 drift), and orin.toml:48 documents that debt \u2014 the new lane must not deepen it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "a fresh lobes init render for this box produces the llama.cpp lane with runtime: nvidia and every csv-mode accommodation from repo data alone \u2014 zero manual compose edits needed to boot",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "staged cutover with a live rollback path: PRIMARY_PEER_PROXY to the Spark stays configured and working until every c20 gate passes on the local lane, and senses is stopped only when the llama.cpp cortex needs its memory \u2014 never removed as step one; rollback is re-enabling the proxy, which requires no peer-side change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "at every step of the cutover, model=cortex through this gateway answers correctly (proxied or local), and the flip back to proxy is a .env-only change proven once before senses is removed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "the llama.cpp backend joins the fleet like every vLLM lane: unpublished port on the compose network, reached only through the gateway (vllm-multimodal precedent \u2014 no host port), so the gateway's opt-in GATEWAY_API_KEY gate remains the sole auth surface",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "docker ps on the deployed box shows no host-published port for the llama.cpp container, and the backend answers only via the gateway origin \u2014 probed from another mesh box",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Spike: prove llama.cpp serves Qwen3.8-27B UD-Q4_K_M on this Orin (sm_87) \u2014 scratch space, no repo files",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "llama.cpp server boots with the 16.46 GB UD-Q4_K_M GGUF on this box and answers /v1/chat/completions with a correct known-answer response",
+        "single-stream decode tok/s and the largest working context are both measured and written down, not estimated",
+        "the reasoning-trace response shape is documented: whether callers get reasoning_content, thinking leaked into content, or it stripped (the c22 parity check)",
+        "a NO-GO is a valid recorded outcome that ends the plan with a written verdict \u2014 the spike must be able to fail honestly"
+      ],
+      "deps": [],
+      "covers": [
+        "c1",
+        "h1"
+      ],
+      "instruction": "Scratch space only (~/scratch or /tmp), zero repo edits. hf download unsloth/Qwen3.8-27B-GGUF Qwen3.8-27B-UD-Q4_K_M.gguf (16.46 GB, 1.6 TB free). Run llama-server with --host 0.0.0.0 -ngl 99 and a modest -c first, then climb. Probe /v1/models, /health, a known-answer chat, tool calling, and inspect whether reasoning arrives as reasoning_content (llama.cpp --reasoning-format). Record tok/s from the server's own timings. Write the verdict \u2014 GO or NO-GO \u2014 before touching any other task."
+    },
+    {
+      "id": "t2",
+      "summary": "Pin a llama.cpp CUDA runtime image that boots under this box's JetPack csv-mode toolkit",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the exact image digest or build recipe is recorded in-tree; no floating tag",
+        "the container starts with runtime: nvidia and NO deploy.resources GPU request (csv-mode toolkit rejects the latter on this JetPack)",
+        "container logs confirm GPU offload of the model layers on sm_87, not CPU-only fallback"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h3"
+      ],
+      "instruction": "This box's NVIDIA container toolkit runs csv mode (JetPack): compose deploy.resources GPU requests FAIL here \u2014 use runtime: nvidia. Try ghcr.io/ggml-org/llama.cpp server-cuda first; if its CUDA/arch build does not cover sm_87, build from source against the local CUDA 13.2. Pin by digest, never a floating tag, and confirm layer offload in the boot log rather than trusting the flag."
+    },
+    {
+      "id": "t3",
+      "summary": "Add an engine/runtime axis to the catalog so a llama.cpp gear is declarable",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a GGUF/llama.cpp gear can be declared in lobes/catalog.py alongside the vLLM gears",
+        "every existing vLLM gear still resolves byte-identically through switch, fleet render, and infer_parser \u2014 proven by the existing goldens/tests, not by inspection",
+        "vLLM-only fields (tool_parser, serve_extras) are not required of, and not silently applied to, a llama.cpp gear"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "h2"
+      ],
+      "instruction": "Touch lobes/catalog.py only. Add the engine axis so llama.cpp gears coexist with vLLM ones; vLLM-only fields (tool_parser, serve_extras) must not be required of a GGUF gear. The bar is byte-identical rendering for every existing vLLM gear \u2014 run the goldens/tests to prove it, do not eyeball it."
+    },
+    {
+      "id": "t4",
+      "summary": "Add the llama.cpp cortex service block to the fleet compose template",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the new lane has NO host-published port and is reachable only on the compose network, matching the vllm-multimodal precedent",
+        "docker ps on the deployed box shows no published port for the llama.cpp container, and a probe from another mesh box reaches it only via the gateway origin",
+        "the lane carries llama.cpp server flags only \u2014 no vLLM flags leak into it"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c25",
+        "h16"
+      ],
+      "instruction": "Touch lobes/templates/fleet/docker-compose.yml only. Mirror the vllm-multimodal lane's exposure model: no host-published port, gateway reaches it by service name on the compose network. llama.cpp server flags only \u2014 no vLLM flags."
+    },
+    {
+      "id": "t5",
+      "summary": "Render the Orin llama.cpp cortex lane from repo data (profile + shape), never hand-edits",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a fresh lobes init render on this box produces a bootable llama.cpp cortex lane with runtime: nvidia from repo data alone \u2014 zero manual compose edits needed",
+        "the shape hosts cortex + hand + the pooling gears and declares senses dropped on this box",
+        "the memory budget is MEASURED on this swapless 61.3 GiB box at the target context with senses stopped \u2014 weights + KV + hand + pooling gears \u2014 never computed",
+        "profile/shape goldens are updated and the existing card renders are unchanged"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c23",
+        "h14",
+        "c12",
+        "h4"
+      ],
+      "instruction": "Touch lobes/profiles/builtin/orin.toml, the new shape TOML, and their goldens. orin.toml:48 documents the hand-edit debt this task must not deepen \u2014 everything the lane needs (runtime: nvidia included) renders from repo data. Measure the budget on the box with senses stopped: weights + KV at target context + hand (~0.10 util) + pooling gears, against 61.3 GiB with ZERO swap."
+    },
+    {
+      "id": "t6",
+      "summary": "Make gateway telemetry honest for a non-vLLM backend",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a llama.cpp backend reports either genuinely parsed metrics or an explicit telemetry-unsupported marker \u2014 never silent zeros presented as real numbers",
+        "a unit test covers the non-vLLM backend path in lobes/_metrics.py",
+        "lobes overview --live and gateway /status do not imply the llama.cpp lane is idle when it is busy"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": "Touch lobes/_metrics.py (and its tests). The parser keys on vllm:* Prometheus series, so a llama.cpp backend silently reads as all-zeros \u2014 which lobes overview --live and gateway /status then present as real. Either parse llama.cpp's own metrics or mark the lane telemetry-unsupported; silent zeros are the one unacceptable outcome."
+    },
+    {
+      "id": "t7",
+      "summary": "Neutralize the Tegra spurious-iowait shedding so the local cortex survives a sugov flare",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "during a spurious sugov iowait flare (high nr_iowait, zero disk I/O), cortex requests through this gateway still answer 200 \u2014 not 429",
+        "the setting survives a docker compose down/up cycle: it is persisted in .env or repo data, not a container shell-env override",
+        "if the fix is Tegra-aware or disk-corroborated sampling in _pressure_policy.py, a unit test covers the flare case"
+      ],
+      "deps": [],
+      "covers": [
+        "c21",
+        "h13"
+      ],
+      "instruction": "RE-SCOPED by deviation d1 (2026-08-23): the fix ALREADY LANDED \u2014 lobes/profiles/builtin/orin.toml:272 declares LOBES_IOWAIT_DEGRADED_THRESHOLD = \"100\" under [host_env] at card level (inherited by every shape rendered over orin, machine-as-brain included), and the deployed ~/.lobes/.env line 538 carries it. Acceptance criterion 2 is satisfied in main; criterion 3 is N/A (the threshold declaration was the fix taken, not the sampling rewrite). What REMAINS is verification only, folded into the t9/t10 bring-up: once the local cortex runs, confirm a spurious sugov flare still yields 200 not 429. Write no new code for this task."
+    },
+    {
+      "id": "t8",
+      "summary": "Verify gateway routing, the assess harness, and the role-alias contract are untouched by the engine swap",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a live model=cortex request through this box's gateway reaches the llama.cpp backend and returns a well-formed OpenAI chat completion with ZERO gateway code changes",
+        "lobes assess runs green against the llama.cpp lane unmodified \u2014 if any probe needs a llama.cpp special-case, boundary c6 is false and gets re-scoped rather than papered over",
+        "mesh callers address role aliases (model=cortex/main) only; no llama.cpp-specific model id is required at the calling contract"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c4",
+        "h6",
+        "c6",
+        "h7",
+        "c15",
+        "h8"
+      ],
+      "instruction": "No repo edits expected \u2014 this task's job is to prove the boundaries hold. If lobes assess needs even one llama.cpp special-case, stop and report: boundary c6 is false and gets re-scoped rather than patched around. Same for the gateway: any code change means c4 was wrong."
+    },
+    {
+      "id": "t9",
+      "summary": "Staged cutover on the box, keeping the Spark cortex proxy as a live rollback path",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the before-state is verified on the deployed box at cutover start: .env shows PRIMARY_PEER_PROXY to the Spark and vllm-multimodal is the running senses lane",
+        "rollback to the Spark proxy is proven as an .env-only change (no peer-side edit) BEFORE senses is removed",
+        "senses/Gemma 12B is stopped only when the llama.cpp cortex needs its memory \u2014 never as step one",
+        "after cutover, model=cortex answers locally with NO X-Lobes-Proxied-By header, and the Gemma 12B container is down with its budget freed",
+        "at every intermediate step, model=cortex through this gateway answers correctly \u2014 proxied or local, never broken"
+      ],
+      "deps": [
+        "t5",
+        "t7",
+        "t8"
+      ],
+      "covers": [
+        "c24",
+        "h15",
+        "c16",
+        "h9",
+        "c17",
+        "h10"
+      ],
+      "instruction": "Operational, on the deployed box. Order matters: verify before-state, bring the llama.cpp lane up alongside the proxy, prove the .env-only rollback works, and only then stop vllm-multimodal to free its memory. Never remove senses first. Confirm the local answer by the ABSENCE of X-Lobes-Proxied-By, not by assuming."
+    },
+    {
+      "id": "t10",
+      "summary": "Measure the acceptance gates and land the evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "measured through the gateway path callers actually use: decode >= 5 tok/s single-stream, context >= 32768 served and needle-probed, known-answer and tool-calling probes PASS",
+        "the transcript lands under docs/evidence/ with the date-stamped naming convention before any doc claims VALIDATED (#108)",
+        "every number comes from the live run \u2014 no target is claimed met by theory or extrapolation, and a missed target is recorded as missed"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c19",
+        "h5",
+        "c20",
+        "h12"
+      ],
+      "instruction": "Measure through the gateway, not the backend directly. Targets: >= 5 tok/s single-stream decode, >= 32768 context needle-probed, known-answer + tool-calling PASS. Follow the docs/evidence/ naming convention (YYYY-MM-DD-accept-<slug>-orin.txt). A missed target is recorded as missed \u2014 this transcript is the only thing that licenses a VALIDATED claim anywhere (#108)."
+    },
+    {
+      "id": "t11",
+      "summary": "Operator hands-on acceptance and documentation of the lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the operator runs a real working session against the local cortex and judges latency and quality acceptable \u2014 probe-passing alone does not satisfy this",
+        "a per-model doc records the lane, its measured numbers, and the feature gaps versus the vLLM cortex (MTP, ViT, preserve_thinking, strict tools)",
+        "CLAUDE.md reflects the Orin as a local-cortex host, and nothing claims VALIDATED without the t10 transcript"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c18",
+        "h11"
+      ],
+      "instruction": "Operator-owned: a real working session, not a probe. Then write docs/qwen3.8-27b-gguf-llamacpp.md recording measured numbers AND the honest feature gaps versus the vLLM cortex (no MTP, no ViT, preserve_thinking and strict tools unverified), and update CLAUDE.md to describe the Orin as a local-cortex host. Cite the t10 transcript for every number."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "t1 may return NO-GO \u2014 llama.cpp may not serve this hybrid-Mamba Qwen3.8 GGUF acceptably on sm_87. Tasks t2-t11 are conditional on GO; a NO-GO ends the plan with a recorded verdict, which is a valid delivery, not a failure to hide",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "concurrency behaviour is unmeasured: llama.cpp serves one model with N parallel slots and the c20 gate targets single-stream only \u2014 mesh callers issuing concurrent cortex requests may queue (frame park v3)",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "the llama.cpp lane is expected to LOSE vLLM-lane features: self-hosted MTP speculative decoding, ViT multimodality, preserve_thinking (#93), and xgrammar strict tools (colleague#320) \u2014 each is a per-feature check in t1/t11, and any that matters to a caller becomes follow-up work",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "removing senses from this box leaves the mesh with no vision host and dangles the Spark's senses-proxy wiring \u2014 explicitly out of this plan's scope per frame claim c14, and owned elsewhere",
+      "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "a second cortex host has no mesh precedent: each role today has at most one hoster and peer referral names a single origin (frame assumption c10) \u2014 whether the Orin cortex serves only local callers or the referral story extends is undecided",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "hand is a PRE-AUTHORIZED budget lever (operator, 2026-08-23): if the GGUF cortex needs more room, dropping hand from this box is approved in principle and should be recorded via /deviate when exercised. NOTE it frees nothing today \u2014 hand is NOT running on this box (docker ps shows only gateway, vllm-multimodal, vllm-embed, vllm-rerank, prod-worker-1; the deployment predates the hand role). The lever applies to t5's RENDERED shape budget (~0.10 util, ~6 GiB on this 64 GB card), not to the spike or the immediate cutover.",
+      "kind": "follow_up",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

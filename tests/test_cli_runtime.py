@@ -462,6 +462,99 @@ def test_switch_to_mtp_primary_still_needs_no_compose_edit_regression(tmp_path, 
     assert "NOTE:" not in out
 
 
+# --- the engine axis: a llama.cpp gear on a vLLM-lane verb ------------------
+
+_GGUF_GEAR = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+
+
+def test_switch_never_applies_a_vllm_parser_or_quantization_to_a_llama_cpp_gear(
+    tmp_path, capsys
+) -> None:
+    # infer_parser answers "qwen3_coder" for ANY qwen3.8 id, including this GGUF
+    # one — and llama.cpp has no --tool-call-parser at all (it uses --jinja plus
+    # the model's own embedded chat template). Writing the inferred value would
+    # configure a flag that does not exist on the serving engine, so switch must
+    # plan NEITHER key and say why.
+    _scaffold(tmp_path)
+    rc = main(["switch", _GGUF_GEAR, "--machine", "spark", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_TOOL_CALL_PARSER" not in out
+    assert "VLLM_QUANTIZATION" not in out
+    assert "tool-call parser: skipped (llama.cpp gear" in out
+    assert "quantization: skipped (llama.cpp gear" in out
+
+
+def test_switch_explicit_tool_call_parser_still_wins_on_a_llama_cpp_gear(tmp_path, capsys) -> None:
+    # The engine guard suppresses the tool's own GUESS, not the operator's
+    # explicit instruction — same precedence every other selector uses.
+    _scaffold(tmp_path)
+    rc = main(
+        [
+            "switch",
+            _GGUF_GEAR,
+            "--tool-call-parser",
+            "qwen3_coder",
+            "--compose-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in out
+    assert "explicit" in out
+
+
+def test_switch_to_a_llama_cpp_gear_prints_only_the_engine_notice(tmp_path, capsys) -> None:
+    # The vLLM-template notices ("REMOVE the MTP command items", "--moe-backend")
+    # are edits to a compose file that does not serve this gear at all — emitting
+    # them would send the operator to the wrong lane.
+    _scaffold(tmp_path)
+    rc = main(["switch", _GGUF_GEAR, "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    notices = [line for line in out.splitlines() if "NOTE:" in line]
+    assert len(notices) == 1, notices
+    assert "llama.cpp-served gear" in notices[0]
+    assert "--moe-backend" not in out
+    assert "--speculative-config" not in out
+
+
+def test_switch_apply_to_a_llama_cpp_gear_writes_env_but_never_restarts(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # A switch that could not possibly have worked must not take a healthy vLLM
+    # deployment down. The engine notice routes through the same env-only apply
+    # path every compose-edit-required gear uses.
+    _scaffold(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(_compose, "compose_down", lambda d: (calls.append("down"), _ok())[1])
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", lambda *a, **k: None)
+
+    rc = main(["switch", _GGUF_GEAR, "--compose-dir", str(tmp_path), "--apply", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restarted"] is False
+    assert payload["blocked_on_compose_edits"] is True
+    assert calls == []
+    assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == _GGUF_GEAR
+
+
+def test_switch_leaves_every_vllm_gear_alone_after_the_engine_guards(tmp_path, capsys) -> None:
+    # The engine guards must be inert for a vLLM gear — the byte-for-byte proof
+    # lives in tests/goldens/switch-plans.txt, this is the CLI-level spot check
+    # that the guard did not swallow the auto-selection path on the way past.
+    _scaffold(tmp_path)
+    rc = main(["switch", "unsloth/Qwen3.8-27B-NVFP4", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "VLLM_TOOL_CALL_PARSER=qwen3_coder" in out
+    assert "VLLM_QUANTIZATION=compressed-tensors" in out
+    assert "skipped" not in out
+
+
 def test_switch_clamps_context_to_model_native_ceiling(tmp_path, capsys) -> None:
     _scaffold(tmp_path)
     # spark's machine default is 262144 (256K, for the 256K-native MTP primary), but

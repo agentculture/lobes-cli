@@ -1,0 +1,441 @@
+================================================================================
+SPIKE — unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M via llama.cpp on Jetson AGX Orin 64GB
+plan qwen3-8-gguf-llamacpp, task t1 · 2026-08-23 · operator: orin
+================================================================================
+VERDICT: functional GO / throughput FAIL-AS-SPECIFIED.
+  The checkpoint loads, decodes correctly, serves the FULL 262144 native context,
+  and passes tool-calling and reasoning-shape parity. It does NOT reach the c20
+  decode gate of >=5 tok/s. See "THROUGHPUT" and the diagnosis below.
+
+--------------------------------------------------------------------------------
+1. HARDWARE / PLATFORM (measured)
+--------------------------------------------------------------------------------
+GPU              Orin (nvgpu), compute capability 8.7 (sm_87), driver 595.78
+L4T              R39 (rev 2.0), aarch64 Tegra
+RAM              61.3 GiB unified, ZERO swap configured
+disk             1.6 TB free
+host build tools nvcc ABSENT, cmake ABSENT, g++ ABSENT (host source build needs sudo)
+container tk     csv mode -> compose `deploy.resources` GPU requests FAIL here;
+                 the lane MUST use `runtime: nvidia`
+power mode       MODE_30W at spike time (of MAXN / 15W / 30W / 50W)
+GPU clock        306 MHz initially (min); pinned to 612 MHz (mode max) via jetson_clocks
+EMC (bwmgr)      3199 MHz = max, already pinned
+CPU              8 of 12 cores online under MODE_30W (4 reported `off`)
+
+--------------------------------------------------------------------------------
+2. CHECKPOINT (parsed from the GGUF header, live)
+--------------------------------------------------------------------------------
+file             Qwen3.8-27B-UD-Q4_K_M.gguf, 15.33 GiB (16,453,443,584 bytes)
+sha256           322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482  VERIFIED
+general.architecture   qwen35
+tokenizer.ggml.pre     qwen35
+params           27,320,697,856 (27.32 B) · n_vocab 248320 · ftype "Q4_K - Medium"
+context          n_ctx_train 262144
+layers           block_count 65 · full_attention_interval 4  => 16 full-attn, 49 SSM
+attention        head_count 24 · head_count_kv 4 · key_length 256 · value_length 256
+hybrid (SSM)     ssm.conv_kernel 4 · ssm.state_size 128 · ssm.group_count 16
+                 ssm.time_step_rank 48 · ssm.inner_size 6144
+MTP              nextn_predict_layers 1  (PRESENT in file — see 5, IGNORED by llama.cpp)
+rope             dimension_sections [11,11,10,0] · dimension_count 64 · freq_base 1e7
+quantization     imatrix (Unsloth Dynamic), 496 entries / 1251 chunks
+
+--------------------------------------------------------------------------------
+3. RUNTIME
+--------------------------------------------------------------------------------
+image            ghcr.io/ggml-org/llama.cpp:server-cuda  (arm64/linux)
+build            d775b8967 (10573), GNU 14.2.0, Linux aarch64
+CUDA init        ggml_cuda_init: found 1 CUDA devices (Total VRAM: 62817 MiB)
+                 Device 0: Orin, compute capability 8.7, VMM: yes, VRAM: 62817 MiB
+                 load_backend: loaded CUDA backend from /app/libggml-cuda.so
+                 load_backend: loaded CPU backend from /app/libggml-cpu-armv8.2_2.so
+arch support     libllama.so.0.2.0 contains compiled qwen35 symbols:
+                 qwen35, qwen3516build, qwen3517load, qwen355graph*, qwen35moe
+                 ("qwen35" occurs 149x). NOT an enum stub — load + graph builders present.
+NOTE             The feared non-Tegra-arm64 failure did NOT reproduce. (A prior
+                 incident on this box, 2026-07-17, had the Parakeet base image fail
+                 with "no kernel image available" for lacking sm_87 kernels.)
+
+--------------------------------------------------------------------------------
+4. LOAD AND MEMORY at the FULL 262144 window
+--------------------------------------------------------------------------------
+prep             stopped model-gear-vllm-multimodal (senses) -> free RAM 23 -> 47 GiB
+command          docker run -d --runtime nvidia -v ~/scratch/gguf:/models:ro \
+                   ghcr.io/ggml-org/llama.cpp:server-cuda \
+                   -m /models/Qwen3.8-27B-UD-Q4_K_M.gguf --host 0.0.0.0 --port 8090 \
+                   -ngl 99 -c 262144 --jinja -np 1
+load time        84 s to "model loaded" / "listening on http://0.0.0.0:8090"
+slots            n_slots = 1, n_ctx_slot = 262144, kv_unified = false
+/health          {"status":"ok"}
+/v1/models meta  n_ctx 262144, n_ctx_train 262144, n_params 27320697856,
+                 size 16453443584, ftype "Q4_K - Medium"
+memory           free RAM 13 -> 46 GiB used  => ~33 GiB for weights + KV
+                 tegrastats during generation: RAM 48658/62817MB
+
+KV PREDICTION vs MEASUREMENT (predicted BEFORE boot, from the header):
+  16 of 65 layers hold a per-token KV cache; GQA kv_heads=4, k=v=256, f16
+  => 4 * (256+256) * 2 = 4096 B/layer/token * 16 layers = 65536 B = 64 KiB/token
+     ctx 262144 -> KV 16.00 GiB + weights 15.33 GiB = 31.33 GiB PREDICTED
+     MEASURED ~33 GiB.  Prediction held within ~1.7 GiB of runtime overhead.
+  This low KV cost is a direct consequence of the hybrid design — 49 of 65 layers
+  are Mamba/SSM with constant state rather than a growing per-token cache.
+
+--------------------------------------------------------------------------------
+5. FEATURE PARITY vs the vLLM cortex lane
+--------------------------------------------------------------------------------
+PASS  reasoning shape (c22) — on DEFAULT flags, no special configuration
+      message.reasoning_content populated; '<think>' did NOT leak into content.
+      Server log: "chat template supports preserving reasoning, consider enabling
+      it via --reasoning-preserve"
+      llama.cpp equivalents to the vLLM mechanisms:
+        --chat-template-kwargs   <=> vLLM --default-chat-template-kwargs (issue #93)
+        --reasoning-format       none | deepseek | deepseek-legacy  (default: auto)
+        --reasoning-budget N     (no vLLM equivalent)
+PASS  preserve_thinking — the GGUF's own chat template line 119 reads
+        {%- if preserve_thinking is undefined or preserve_thinking is true %}
+      i.e. it PRESERVES BY DEFAULT. The vLLM lane needs an explicit
+      --default-chat-template-kwargs '{"preserve_thinking": true}'; this lane does not.
+PASS  tool calling — the template emits the qwen3_coder XML dialect
+        <tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>
+      and llama.cpp's chat-format table contains a literal "Qwen 3 Coder" entry.
+FAIL  MTP / speculative decoding — llama.cpp IGNORES the MTP head. Load log:
+        W model has unused tensor blk.64.nextn.eh_proj.weight (43008000 bytes) -- ignoring
+        W model has unused tensor blk.64.nextn.enorm/hnorm/shared_head_norm  -- ignoring
+        W model has unused tensor blk.64.attn_* / blk.64.ffn_*               -- ignoring
+      ~0.9 GiB of the 15.33 GiB file is dead weight on this lane.
+ABSENT vision / ViT — this GGUF is text-only; no mmproj companion was fetched.
+
+--------------------------------------------------------------------------------
+6. CORRECTNESS PROBES (through the OpenAI-compatible API)
+--------------------------------------------------------------------------------
+PASS  known-answer, thinking OFF
+        "What is the capital of France? Answer with one word." -> 'Paris'
+        finish_reason stop, usage {completion_tokens 2, prompt_tokens 24}
+PASS  arithmetic with thinking ON
+        "If 3 apples cost 60 cents, what do 7 cost?" -> "$1.40" (correct)
+        reasoning_content populated with a coherent derivation; content clean.
+PASS  tool calling — asserts tool_calls != null (NOT merely that a reply arrived;
+      that is the trap that made `pythonic` silently wrong for Gemma 4)
+        tool_calls = [{"type":"function","function":{"name":"get_weather",
+                       "arguments":"{\"city\":\"Paris\"}"},"id":"..."}]
+        finish_reason = "tool_calls"
+=> The hybrid Mamba/SSM + attention stack DECODES CORRECTLY on sm_87.
+   This answers the plan's blocking unknown v1.
+
+--------------------------------------------------------------------------------
+7. THROUGHPUT — benchmark matrix (llama-bench -p 512 -n 128 -ngl 99)
+--------------------------------------------------------------------------------
+Conditions: GPU clocks pinned via `sudo jetson_clocks` (612 MHz, the MODE_30W
+ceiling); EMC already at max 3199 MHz; senses stopped; single slot; one run each.
+
+| build                            | CUDA | fa | pp512 (t/s)  | tg128 (t/s) |
+|----------------------------------|------|----|--------------|-------------|
+| ggml-org 10573 (d775b8967)       |  12  |  1 | 63.10 ± 0.12 | 2.53 ± 0.00 |
+| ggml-org 10573 (d775b8967)       |  12  |  0 | 61.98 ± 0.19 | 2.52 ± 0.03 |
+| nvidia-ai-iot 10373 (38406d597)  |  13  |  1 | 64.79 ± 0.10 | 2.61 ± 0.00 |  <-- BEST
+| nvidia-ai-iot 10373 (38406d597)  |  13  |  0 | 63.56 ± 0.09 | 2.57 ± 0.00 |
+
+Both variables move consistently and reproducibly:
+  CUDA 13 over CUDA 12 : +3.2% decode, +2.7% prefill
+  flash-attn on over off: +1.5% decode, +1.9% prefill
+NOTE the CUDA-13 image carries an OLDER llama.cpp (10373 < 10573), so its win is
+attributable to the CUDA generation, not to newer llama.cpp code.
+
+SELECTED CONFIGURATION (the fastest measured):
+  image ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+  flags -ngl 99 -c 262144 --jinja -np 1 -fa on
+
+--------------------------------------------------------------------------------
+8. WHY IT IS 2.6 tok/s — six candidate causes, all MEASURED and eliminated
+--------------------------------------------------------------------------------
+long context ......... NULL   2.57 tok/s identical at ctx 8192 and ctx 262144
+GPU core clock ....... NULL   306 -> 612 MHz (jetson_clocks) gave exactly 1.00x
+memory / EMC clock ... N/A    already pinned at max 3199 MHz before any change
+CPU saturation ....... NULL   no core above 54% during generation; 8 of 12 online
+flash attention ...... NULL   2.61 (on) vs 2.57 (off) — real but ~1.5%
+build / CUDA gen ..... SMALL  CUDA 13 vs CUDA 12 = +3.2%, reproducible
+GGUF quant ........... see section 9
+
+Signature: `GR3D_FREQ` pegged at 99-100% throughout, yet decode is completely
+insensitive to a 2x core-clock change. That combination means LAUNCH-LATENCY
+bound, not throughput bound. GR3D_FREQ on Tegra measures work *submitted* to the
+GPU, not ALU occupancy, so 99% is consistent with many small serialized kernels.
+This matches the reported behaviour of the Gated-DeltaNet CUDA path on sm_87.
+
+CORRECTION ON THE RECORD: an earlier conclusion in this spike — "GPU at 100% means
+compute-bound, at the silicon's ceiling, not fixable by config" — was WRONG on two
+counts. GR3D_FREQ is not occupancy, and the board was additionally capped at
+MODE_30W with the GPU pinned to its 306 MHz floor. Pinning clocks was a real and
+necessary fix; it simply was not this bottleneck.
+
+DEPLOYMENT CONTEXT: the Jetson AGX Thor serves this same checkpoint (NVFP4, vLLM)
+at 12.1 tok/s. Proxying cortex to a peer is ~4.6x faster than serving it locally
+on this Orin. The value of a local Orin cortex is INDEPENDENCE, not speed.
+
+--------------------------------------------------------------------------------
+9. LIVE STREAMING BATTERY — selected config, through the OpenAI streaming API
+--------------------------------------------------------------------------------
+Config: nvidia CUDA-13 build, -ngl 99 -c 262144 --jinja -np 1 -fa on
+Method: real SSE stream; TTFT is time to the FIRST content delta as a client sees
+it, not a server-side self-report. Decode excludes TTFT.
+Load: 15.6 s warm-cache (84 s cold).
+
+| prompt depth | TTFT      | streamed | decode      |
+|--------------|-----------|----------|-------------|
+| 0            |  1 566 ms | 128 tok  | 2.61 tok/s  |
+| 512          | 12 407 ms | 128 tok  | 2.62 tok/s  |
+(further depths appended below as measured)
+
+Cross-validation: streaming decode 2.61 tok/s matches llama-bench tg128 2.61
+exactly — the API path adds no measurable decode overhead.
+
+*** THE OPERATIONALLY IMPORTANT FINDING IS PREFILL, NOT DECODE ***
+Decode is FLAT with prompt depth (2.61 -> 2.62), which is the hybrid architecture
+working as designed: only 16 of 65 layers carry a growing KV cache.
+But TTFT scales linearly with prefill, and prefill measures ~64 tok/s. So:
+      depth    512 -> TTFT ~12 s
+      depth  8 192 -> TTFT ~2 min      (extrapolated from 64 tok/s)
+      depth 32 768 -> TTFT ~8.5 min    (extrapolated)
+      depth 262 144 -> TTFT ~68 min    (extrapolated — the full window)
+=> The 256K window is REAL (memory allocated, n_ctx_slot=262144 served) but it is
+   a BATCH/BACKGROUND capability on this box, NOT an interactive one. A reader who
+   sees "serves 256K" would reasonably assume they can paste a large document and
+   converse about it; on this hardware they cannot. This caveat must travel with
+   every claim about the context window.
+
+FULL STREAMING BATTERY — completed, selected config (nvidia CUDA-13, -fa on, c=262144)
+
+| prompt depth | TTFT       | streamed | decode     | wall     |
+|--------------|------------|----------|------------|----------|
+| 0            |   1 566 ms | 128 tok  | 2.61 tok/s |  50.54 s |
+| 512          |  12 407 ms | 128 tok  | 2.62 tok/s |  61.24 s |
+| 2 048        |  41 581 ms | 128 tok  | 2.62 tok/s |  90.50 s |
+| 8 192        | 143 122 ms | 128 tok  | 2.58 tok/s | 192.80 s |
+| 32 768       | 610 020 ms | 128 tok  | 2.43 tok/s | 662.66 s |
+                (10.2 min)
+
+Server-side prefill rate, sampled during the 34 024-token prefill:
+    16 384 tok -> 59.34 tok/s
+    22 528 tok -> 58.18 tok/s
+    34 024 tok -> 56.24 tok/s   (full prompt, 604.95 s)
+  and at shallow depth: 642 tok -> 59.7 tok/s; 8 894 tok -> 62.18 tok/s
+
+CORRECTED CHARACTERISATION (an earlier note in this work said decode was
+depth-INVARIANT; the 32 768 point disproves the strong form):
+  decode  2.61 -> 2.43 tok/s across 0 -> 32 768   = ~7% decay
+  prefill 62.2 -> 56.2 tok/s across 8.9K -> 34K   = ~10% decay
+Both are close to flat but NOT invariant. The honest statement is that this lane
+degrades GENTLY and PREDICTABLY with depth — there is no cliff — rather than that
+it does not degrade at all.
+
+TTFT is a near-linear function of prompt size: TTFT_seconds ~= depth / 57.
+Extrapolating to the full window: 262 144 / 57 ~= 77 minutes to first token.
+=> The 262144 window is genuinely SERVED (allocated, n_ctx_slot=262144, and a
+   34K-token prompt was processed end-to-end) but it is a BATCH capability.
+   Interactive use is bounded at roughly the low thousands of tokens, where TTFT
+   is still seconds rather than minutes.
+
+--------------------------------------------------------------------------------
+10. QUANT ARM — a SMALLER quant is SLOWER (the decisive streaming test)
+--------------------------------------------------------------------------------
+Same image (nvidia CUDA-13), same flags, same box, `-fa 1`:
+
+| quant       | file size | pp512 (t/s)  | tg128 (t/s) |
+|-------------|-----------|--------------|-------------|
+| UD-Q4_K_M   | 15.32 GiB | 64.79 ± 0.10 | 2.61 ± 0.00 |  <-- SELECTED
+| UD-Q3_K_XL  | 12.23 GiB | 63.55 ± 0.69 | 2.46 ± 0.00 |
+
+A 20% smaller model runs 6% SLOWER. If decode were memory-bandwidth bound, fewer
+weight bytes would yield MORE tokens/s. It yields fewer. Q3_K dequantisation costs
+more compute per weight than Q4_K on sm_87.
+=> Weight streaming is definitively NOT the bottleneck. This is the strongest form
+   of that answer available: the experiment moved the number the WRONG WAY.
+
+--------------------------------------------------------------------------------
+11. SELECTED CONFIGURATION (what is enabled)
+--------------------------------------------------------------------------------
+  image ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+  model /models/Qwen3.8-27B-UD-Q4_K_M.gguf
+  flags --host 0.0.0.0 --port 8090 -ngl 99 -c 262144 --jinja -np 1 -fa on
+
+Chosen as the fastest of FIVE measured configurations (section 7 + section 10),
+not as a default. Live confirmation on the enabled lane: 2.64 tok/s decode,
+/health {"status":"ok"} — matching the 2.61 benchmark within noise.
+
+--------------------------------------------------------------------------------
+12. WHAT IS AND IS NOT PROVEN ABOUT THE 262144 WINDOW
+--------------------------------------------------------------------------------
+PROVEN:
+  - the server ALLOCATES and advertises it: n_ctx_slot = 262144, kv_unified=false,
+    /v1/models reports n_ctx 262144 / n_ctx_train 262144
+  - ~33 GiB resident at that setting, matching the 31.33 GiB header prediction
+  - a 34 024-token prompt was PROCESSED end-to-end (604.95 s prefill) and answered
+NOT PROVEN at the time of writing:
+  - needle RETRIEVAL at depth (probe running; see section 13)
+  - any prompt beyond 34 024 tokens. The full 262144 window has NEVER been filled.
+    At ~57 tok/s that would take ~77 minutes of prefill for a single request.
+HONEST STATEMENT: the 256K window is SERVED and PARTIALLY EXERCISED (to ~13% of
+its depth). It is not demonstrated at full depth, and this transcript does not
+claim it is.
+
+--------------------------------------------------------------------------------
+13. NEEDLE-IN-HAYSTACK RETRIEVAL — the c20 context gate, PASSED
+--------------------------------------------------------------------------------
+Method: a unique sentinel ("The maintenance access code for the Orin lobe is
+TANGERINE-4417.") planted at the MIDPOINT of a filler haystack, with the question
+asked at the very END. Depth is reported as the server's OWN measured
+prompt_tokens, not the requested figure.
+
+  requested ctx      : 32768
+  prompt_tokens      : 35 006   (server-measured — EXCEEDS the c20 floor of 32768)
+  answer returned    : 'TANGERINE-4417'
+  NEEDLE FOUND       : True                          <-- THE GATE, PASSED
+  prefill            : 58.8 tok/s
+  decode             : 2.74 tok/s
+
+=> The 262144-token window is not merely ALLOCATED — content planted 17.5K tokens
+   deep is RETRIEVED VERBATIM. This distinguishes a usable context from a nominal
+   one: a model can accept a long prompt and still have lost its contents. It has
+   not.
+
+c20 GATE SCORECARD (the plan's measurable success signal):
+  [PASS] context >= 32768 served AND needle-probed ....... 35 006 tok, needle found
+  [PASS] known-answer probe .............................. 'Paris'
+  [PASS] tool-calling probe .............................. tool_calls non-null
+  [FAIL] decode >= 5 tok/s single-stream ................. 2.61-2.74 tok/s
+  [PASS] measured through the gateway path / evidence under docs/evidence/
+=> FOUR of five criteria PASS. The single failure is throughput, diagnosed across
+   seven measured levers (sections 8 and 10) and recorded as ledger deviation d4.
+
+================================================================================
+14. *** RETRACTION AND CORRECTION — THE POWER MODE WAS THE BOTTLENECK ***
+================================================================================
+Everything in sections 7-12 above was measured under `MODE_30W` with the GPU
+capped at 612 MHz. Those numbers are a FLOOR, not this board's capability.
+
+WHAT WAS RETRACTED, AND WHY IT WAS WRONG
+Section 8 concluded: "long context NULL / GPU core clock NULL (306 -> 612 MHz gave
+exactly 1.00x) ... GR3D pegged at 99% yet insensitive to a 2x core-clock change
+means LAUNCH-LATENCY bound, not throughput bound ... the deficit is STRUCTURAL."
+That conclusion is WITHDRAWN. It rested on a measurement artifact:
+
+  The original "306 MHz" baseline was taken with the devfreq governor
+  (nvhost_podgov) ACTIVE at min=306 / max=612. `cur_freq` was read at IDLE and
+  recorded as 306 MHz. Under load the governor BOOSTED to 612 MHz. So the
+  comparison was governor-boosted-612 vs pinned-612 — the same clock — and
+  correctly returned 1.00x for a change that never happened.
+
+The operator proposed the inverted test that exposed it: PIN min=max=306 so no
+boost is possible. Measured on the CUDA-13 build:
+    GPU  306 MHz -> 1.36 tok/s
+    GPU  612 MHz -> 2.61 tok/s      (1.92x — near-linear in clock)
+    GPU 1300 MHz -> 8.46 tok/s      (3.24x over 612; SUPERLINEAR vs the 2.12x clock)
+
+The superlinearity is MAXN doing more than raising the clock: it also restores
+4 disabled CPU cores (12 online, was 8) and lifts the power budget.
+
+MEASURED AT MAXN (nvpmodel -m 0 + jetson_clocks, GPU pinned 1300.5 MHz)
+  llama-bench -p 512 -n 128 -ngl 99 -fa 1, nvidia CUDA-13 image, UD-Q4_K_M:
+      pp512  253.84 +/- 1.45 tok/s    (was 64.79 at 612 MHz — 3.92x)
+      tg128    8.46 +/- 0.00 tok/s    (was  2.61 at 612 MHz — 3.24x)
+  live streaming, enabled lane:  8.49 tok/s (128-token burst)
+  live sustained, 900 tokens:    8.43 tok/s   <-- holds under real load
+
+THERMALS AT MAXN UNDER SUSTAINED LOAD (tegrastats, 100 s of continuous generation)
+      t=20s  tj 64.9C  fan 42%  gpu 1300 MHz
+      t=40s  tj 67.0C  fan 46%  gpu 1300 MHz
+      t=60s  tj 68.7C  fan 49%  gpu 1300 MHz
+      t=80s  tj 69.8C  fan 52%  gpu 1300 MHz
+      t=100s tj 70.9C  fan 52%  gpu 1300 MHz
+  nvfancontrol auto-ramped 36% -> 52%; the GPU HELD 1300 MHz throughout — NO
+  thermal throttling, ~25 C of headroom to the ~95 C throttle point. No manual fan
+  lock is needed. The signal that would change that: cur_freq dropping below
+  1300 MHz under load.
+
+REVISED TTFT RULE:  TTFT_seconds ~= depth / 254   (was depth / 57)
+  => a full 262144-token prefill is ~17 minutes, not ~77.
+
+REVISED c20 GATE SCORECARD — ALL CRITERIA NOW PASS
+  [PASS] decode >= 5 tok/s .................. 8.43-8.49 tok/s at MAXN
+  [PASS] context >= 32768 + needle-probed ... 35 006 tok, needle retrieved
+  [PASS] known-answer probe ................. 'Paris'
+  [PASS] tool-calling probe ................. tool_calls non-null
+  [PASS] evidence under docs/evidence/ ...... this file
+  The spike verdict changes from "functional GO / throughput FAIL-AS-SPECIFIED"
+  to *** FULL GO ***.
+
+REVISED DEPLOYMENT COMPARISON
+  The Jetson AGX Thor serves this checkpoint (NVFP4, vLLM) at 12.1 tok/s. At
+  8.43 tok/s the local Orin lane is 1.4x slower, not 4.6x. Section 8's claim that
+  "the value of a local Orin cortex is INDEPENDENCE, not speed" UNDERSTATED it:
+  the lane is now genuinely competitive.
+
+METHODOLOGICAL LESSON (recorded so the next person does not repeat it)
+  A governed clock read at idle does not describe the clock under load. Reading
+  `cur_freq` at rest and labelling a benchmark with it produced a confident,
+  well-evidenced, and entirely wrong conclusion that survived six other correct
+  eliminations. The correct instrument is to PIN the frequency (min=max) and
+  remove the governor's freedom before attributing anything to clock.
+
+## The quant ladder — measured on BOTH axes
+
+> **Interim decision: `UD-Q4_K_M`.** It is the measured knee from *both*
+> directions. The measurement that would actually settle it — error rate on
+> cortex-shaped tasks — is deliberately deferred to **issue #194**. Nothing
+> below claims the quality question is closed.
+
+Speed: `llama-bench -p 512 -n 128 -ngl 99 -fa 1`. Quality: `llama-perplexity`,
+wikitext-2 test set, 200 chunks @ 512 ctx (~102K tokens), identical corpus and
+chunk count per quant — a *paired* comparison. Every run under enforced-identical
+conditions (MAXN, GPU pinned 1300.5 MHz, the same four containers, **zero active
+downloads**), recorded into each log per `docs/measuring-lane-performance.md`.
+
+| quant | size | pp512 | tg128 | PPL | Δ speed | Δ quality | 500-tok answer |
+|---|---|---|---|---|---|---|---|
+| UD-Q3_K_XL | 12.23 GiB | — | 8.56 | 6.7922 ± 0.074 | +1.2% | -1.20% | 58.4 s |
+| **UD-Q4_K_M** | 15.33 GiB | 253.46 | **8.46** | 6.7118 ± 0.073 | +0.0% | +0.00% | 59.1 s |
+| UD-Q5_K_M | 18.41 GiB | 232.36 | 7.15 | 6.6970 ± 0.073 | -15.5% | +0.22% | 69.9 s |
+| UD-Q6_K | 20.46 GiB | 225.02 | 6.56 | 6.6857 ± 0.072 | -22.5% | +0.39% | 76.2 s |
+
+### Read it as seconds paid, not percentages
+
+A percentage makes 0.39% sound like a rounding error and 22.5% sound like a
+catastrophe. Neither framing helps. What a caller experiences is **time**:
+
+| from Q4_K_M | extra seconds per 500-token answer | perplexity bought |
+|---|---|---|
+| → Q5_K_M | **+10.8 s** | +0.22% |
+| → Q6_K | **+17.1 s** | +0.39% |
+| → Q3_K_XL | −0.7 s | **−1.20%** (worse) |
+
+**Two full quantization levels above `Q4_K_M` buy 0.39% perplexity for 17 seconds
+on every answer.** Descending to `Q3_K_XL` saves 0.7 s and costs 1.20% — the
+largest quality delta in the set, in the wrong direction.
+
+### Why size does not explain the speed curve
+
+| step | size change | speed change |
+|---|---|---|
+| Q3 → Q4 | **+25.3%** | **−1.2%** |
+| Q4 → Q5 | +20.1% | **−15.5%** |
+| Q5 → Q6 | +11.1% | −8.3% |
+
+A 25% size increase costs 1.2%, while a 20% increase costs 15.5%. Size is not the
+driver — the **4-bit → 5-bit dequantisation kernel boundary** is where the cost
+appears, and each further bit adds unpacking work per weight. An earlier note in
+this repo extrapolated a size law from the Q3→Q4 pair and predicted Q5_K_M at
+~8.38 tok/s; it measured **7.15**. Do not extrapolate across quant families —
+measure each rung.
+
+### What perplexity does NOT tell you
+
+Perplexity is a **log measure of next-token prediction on wikitext**. It is **not
+a decision-error rate**, and the mapping from PPL to task accuracy is neither
+linear nor established for this checkpoint. The 0.22% Q4→Q5 gap is **0.20× the
+confidence half-width** — real in direction, statistically indistinguishable from
+zero in magnitude. It could correspond to no behavioural difference at all.
+
+This matters more for `cortex` than for any other role: it is the fleet's
+reasoning / deciding / **final-authority** lobe, and the cost of a wrong call
+there is whatever that decision propagates into — not a percentage of a
+perplexity score. **The risk side of this trade is unmeasured, not small.**
+Issue #194 tracks measuring it properly.

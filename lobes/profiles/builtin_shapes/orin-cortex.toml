@@ -1,0 +1,87 @@
+# The Jetson AGX Orin 64GB as a LOCAL CORTEX HOST — the shape that serves the
+# `cortex` role on this board through the llama.cpp lane, and drops `senses` to
+# a peer to pay for it (qwen3-8-gguf-llamacpp plan t5).
+#
+# It is `orin-lobe` with the two heavy lobes swapped: orin-lobe keeps the Gemma
+# `senses` gear and refers/proxies cortex to the DGX Spark; this shape keeps
+# cortex LOCAL and gives up vision on this box. Everything else — `hand`, the two
+# ~0.6B pooling gears, no audio — is identical, for identical reasons.
+#
+# DECLARED, NOT VALIDATED (#108). The t1 spike measured the numbers this shape
+# is built on (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt) and
+# its verdict was "functional GO / throughput FAIL-AS-SPECIFIED": the lane
+# decodes correctly at the full 262144 window, passes known-answer, tool-calling
+# and reasoning-shape probes, and reaches 2.61 tok/s single-stream — BELOW the
+# plan's >= 5 tok/s gate. No box has booted this SHAPE, and no acceptance
+# transcript exists; that is the plan's t10. Until it lands, nothing here, in
+# any doc, or in `lobes capabilities` may claim this shape validated.
+#
+# --- why senses has to go ----------------------------------------------------
+#
+# MEASURED, not computed. The llama.cpp cortex holds ~33 GiB resident at the
+# served window (weights 15.33 + KV 16.00; see builtin/orin.toml's
+# [roles.cortex] block for the per-token arithmetic) and `senses` holds
+# 0.45 x 61.3 = ~27.6 GiB. The board has 61.3 GiB of unified memory and is
+# configured with ZERO swap, so the two do not fit and there is no page-out to
+# absorb the overshoot. The spike ran with `senses` STOPPED for exactly this reason: free
+# RAM went 23 -> 47 GiB on stopping it, cortex took ~33, and ~13 GiB stayed
+# free alongside `hand`, the pooling gears and the host's own workload.
+#
+# That is a CO-RESIDENCY fact, which is why it lives here and not on the card:
+# builtin/orin.toml declares BOTH roles feasible, because feasibility asks
+# "can this board serve the role at all?" and both answers are yes. Which of
+# them a given box actually hosts is the shape's decision, and this file is one
+# of the two answers (`orin-lobe` is the other).
+#
+# The board reaches vision the same way orin-lobe reaches cortex — through a
+# peer. The operator declares the forwarding target
+# (MULTIMODAL_PEER_ORIGIN, plus MULTIMODAL_PEER_PROXY to actually follow the
+# referral) in the deployment's own .env; a shape never derives a peer origin
+# (#92 — always operator-typed). Note the mesh consequence, which is NOT this
+# plan's to solve: moving vision off this box is the frame's own out-of-scope
+# item, and the peer that hosts `senses` has to exist before this shape is a
+# good idea.
+#
+# --- why no stt/tts (inherited verbatim from orin-lobe) ----------------------
+#
+# This board CANNOT serve the audio overlay. MEASURED live (2026-07-17): the
+# Parakeet STT image is built FROM `scitrera/dgx-spark-vllm`, whose bundled
+# torch carries no sm_87 kernels — the container crash-looped 8 times with
+# "CUDA error: no kernel image is available for execution on the device". That
+# is a build-artifact fact about the base image, not a budget question, so
+# hosting `stt`/`tts` here would advertise two lanes that cannot start. Audio is
+# forwarded to a peer via AUDIO_URL / the per-lane STT_PEER_ORIGIN /
+# TTS_PEER_ORIGIN of #129, exactly as on orin-lobe.
+name = "orin-cortex"
+summary = "Jetson AGX Orin 64GB local-cortex host (DECLARED, UNVALIDATED) -- llama.cpp GGUF cortex + hand + embedder + reranker, no senses, no audio"
+
+
+# `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY built-in
+# shape, including the mesh-lobe shapes that drop a heavy lobe. That is the
+# point of the role: at ~2.4 GiB it is cheap enough to keep resident on every
+# box, so a caller always has a local generate lane and a local fine-tuning
+# base — and unlike muse/worker there is never a reason to refer it to a peer.
+# Its budget comes from the CARD profile (per-card, see builtin/*.toml), not
+# from a shape override: dropping another lobe does not change what hand needs.
+hosts = ["cortex", "hand", "embedder", "reranker"]
+
+
+# NO OVERRIDES TABLE AT ALL, and that is deliberate — this shape RECLAIMS NOTHING.
+#
+# spark-lobe and thor-lobe raise the surviving lobe's budget with the dropped
+# lobe's freed share, because both survivors are vLLM lanes whose footprint is
+# set by a `gpu_memory_utilization` fraction there is more of once a neighbour
+# leaves. Neither half of that applies here:
+#
+#   * `llama-server` has NO utilization knob at all. Its footprint is weights
+#     (fixed by the quantization baked into the .gguf) plus KV (fixed by `-c`),
+#     so the only reclaim-shaped move would be raising the context — and
+#   * the context is ALREADY at the checkpoint's own native ceiling (262144,
+#     declared by the GGUF header and served in full at the spike). There is
+#     nothing above it to reclaim into short of a rope-scaling override, which
+#     is unmeasured on this engine and this board.
+#
+# So the card profile's [roles.cortex] declaration stands unmodified, and the
+# freed ~27.6 GiB stays free — headroom on a swapless board, not budget to
+# spend. If a future measurement shows a bigger window fits, it belongs in
+# builtin/orin.toml (a card fact about the served checkpoint), not here.

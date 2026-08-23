@@ -464,6 +464,68 @@ the built-in with their own `<deploy-dir>/profiles/orin.toml` leaving
 > `tests/test_init_gpu_access.py`). That proves the compose merge, not a
 > container **create** — only a live boot can, and none has run yet.
 
+### `[[exclusive_roles]]` — roles this board can each serve, but not together
+
+The third optional top-level declaration, and the one thing a per-role table
+structurally **cannot** say. `feasible` answers *"can this board serve this
+role at all?"* — a question about ONE role. Co-residency is a question about a
+**pair**: two roles can each be honestly `feasible = true` and still not fit in
+the box's memory at the same time.
+
+```toml
+# lobes/profiles/builtin/orin.toml
+[[exclusive_roles]]
+roles = ["cortex", "senses"]
+shapes = ["orin-cortex", "orin-lobe"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB … against 61.3 GiB … with ZERO swap"
+```
+
+| key | meaning |
+|---|---|
+| `roles` | the mutually-exclusive group — at least two, each a known role, no repeats |
+| `shapes` | the deployment shapes that RESOLVE the group (at least one). Declared, not derived: deriving it from the built-in shape set would offer `spark-lobe`/`thor-lobe` too, which "resolve" a cortex/senses clash on the wrong board. `tests/test_init_coresidency.py` proves every named shape exists and actually hosts at most one member, so the declaration cannot drift into a lie. |
+| `reason` | the measured arithmetic, quoted back verbatim in the refusal so an operator can check it |
+
+**What it reaches** (a knob must reach something real, #92): `lobes init`'s
+**co-residency guard**. The default shape a bare `lobes init` resolves is
+`machine-as-brain`, which hosts every role the card marks feasible — so on a
+card with a declared group, the decision-free path is exactly the one that
+renders a deployment expected to OOM at boot.
+`lobes.profiles.shape_render.overcommitted_groups(shape, profile)` reports the
+groups the composed (shape, card) pair would actually run more than one member
+of — a role the shape drops, or the card vetoes, never counts — and `init`
+turns a non-empty result into a `ModelGearError` on the user-error exit path,
+naming the shapes the card itself declares:
+
+```console
+$ lobes init --apply          # on a Jetson AGX Orin
+refusing to scaffold the default 'machine-as-brain' shape: card profile 'orin'
+declares cortex, senses mutually exclusive, but shape 'machine-as-brain' hosts
+them together — MEASURED 2026-08-23: …
+  choose a shape that hosts one of them: orin-cortex, orin-lobe
+  (e.g. 'lobes init --shape orin-cortex'). To scaffold machine-as-brain anyway,
+  name it explicitly ('lobes init --shape machine-as-brain') — it warns, then
+  proceeds.
+```
+
+**An explicit `--shape machine-as-brain` warns and proceeds**; only the
+*defaulted* shape is refused, and there is no override flag. That is this CLI's
+existing precedent rather than a new one — `--profile` already documents
+*"overrides detection, including forcing a profile onto a card it was not
+validated for (warns, but proceeds)"*. An operator who types the shape has made
+the call knowingly; the one thing that must never be forceable is the default
+path, and it isn't.
+
+The check runs on the **dry run** as well as `--apply` — a plan that quietly
+describes a deployment that cannot boot is the same bug one step earlier — and
+it follows the **resolved profile**, so `--profile orin` on another box refuses
+identically.
+
+Like `[host_env]` and `gpu_access` it is a **card** declaration, and like
+`gpu_access` it renders **no `.env` key and no compose file**: every profile and
+shape golden is byte-unchanged by it. A card declaring no group at all — every
+built-in but `orin` — is completely unaffected.
+
 ## Writing your own profile
 
 Operator-defined profiles go in `<deployment-dir>/profiles/<name>.toml` (the

@@ -133,3 +133,7 @@
 {"ts":"2026-08-21T04:48:57.182265+00:00","type":"pr_reply","pr":191,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-08-21T04:48:57.195315+00:00","type":"pr_batch_replied","pr":191,"count":4,"resolved":0}
 {"ts":"2026-08-21T04:48:57.874967+00:00","type":"pr_webhook_posted","pr":191,"event":"pr_replied"}
+{"ts":"2026-08-23T05:02:00.537705+00:00","type":"pr_opened","pr":193,"title":"feat(cortex): local llama.cpp GGUF cortex on the Jetson AGX Orin (sm_87) \u2014 the catalog's first non-vLLM gear"}
+{"ts":"2026-08-23T05:02:02.420149+00:00","type":"pr_review_triggered","pr":193,"command":"/agentic_review"}
+{"ts":"2026-08-23T05:03:07.551679+00:00","type":"readiness_arrived","pr":193,"waited_secs":60}
+{"ts":"2026-08-23T05:03:15.250106+00:00","type":"pr_read","pr":193,"comment_count":2,"threads_unresolved":0,"ci_state":"failure"}

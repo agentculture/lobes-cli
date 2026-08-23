@@ -1,0 +1,161 @@
+# reasoning_effort on the Qwen3.8 cortex — a COST measurement, not a #108 acceptance
+#
+# Box: DGX Spark GB10 (spark-f8a9), cortex served LOCALLY per the 2026-08-20
+#   dual-cortex decision (docs/evidence/2026-08-20-accept-dual-cortex-mesh.txt).
+# Date: 2026-08-21. Model: unsloth/Qwen3.8-27B-NVFP4 @ 1M YaRN, util 0.58, MTP on.
+# Engine: vLLM 0.26.1rc1.dev942+g5a4c8d992 (system_fingerprint, live).
+# Route: the box's own gateway, http://localhost:8001/v1/chat/completions, model=cortex.
+# Method: read-only. No repo, .env, or container change. temperature=0, max_tokens=4096.
+#
+# SCOPE WARNING (#108). This transcript measures TOKEN COST and single-answer
+# agreement at n=1 per cell over 4 prompts. It is NOT a quality validation and
+# no doc may cite it as one. See "What this does NOT show" at the bottom.
+
+## What the knob is
+
+The served chat_template.jinja (snapshot 7d6f8d4d, lines 57-71) implements
+`reasoning_effort` itself — lobes passes it nowhere, and no lobes env var,
+profile TOML, or compose line references it (verified by grep across the repo).
+
+  {%- if enable_thinking is undefined or enable_thinking is true %}
+      {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+      {%- if resolved_reasoning_effort == 'high' %}
+          {%- set resolved_reasoning_effort = 'xhigh' %}
+      ...
+      {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
+          {{- raise_exception('Unexpected reasoning effort ...') }}
+
+Three consequences, all confirmed live below:
+  1. The DEFAULT is `xhigh` — the most expensive rung — because lobes sets nothing.
+  2. `high` is an ALIAS for `xhigh`. There is no true middle-high rung.
+  3. The mechanism is ONE INJECTED SYSTEM SENTENCE, not a token budget. It
+     steers verbosity; it bounds nothing. Only max_tokens bounds anything.
+  `medium` injects NO sentence at all — it is the un-nudged baseline model.
+
+## Probe 1 — the kwarg reaches the template (not silently ignored)
+
+  chat_template_kwargs={"reasoning_effort":"bogus"}
+  -> HTTP 400 {"error":{"message":"Unexpected reasoning effort bogus. Supported
+     types are xhigh (default), medium, and low.","type":"BadRequestError"}}
+  The template's own raise_exception fired => the request kwarg is live end to end.
+
+## Probe 2 — `default` IS `xhigh`, measured
+
+Identical prompt_tokens AND identical completion_tokens on all 3 shared prompts:
+
+  prompt      default          xhigh
+  decide      ptok=123 ctok=2718   ptok=123 ctok=2718
+  multistep   ptok=117 ctok=1066   ptok=117 ctok=1066
+  route       ptok= 88 ctok=  59   ptok= 88 ctok=  59
+
+## Probe 3 — the injected sentence, measured in prompt tokens
+
+  prompt      xhigh  low  medium  thinking-OFF
+  decide       123   111    81       83
+  multistep    117   105    75       77
+  route         88    76    46       48
+  judge        113   101    71       73
+  => xhigh sentence = 42 tok, low = 30 tok, medium = 0 tok (bare baseline),
+     constant across all four prompts. thinking-OFF = medium+2, the
+     '<think>\n\n</think>\n\n' stub the template emits at lines 178-179.
+
+## Probe 4 — the A/B (4 prompts x 3 efforts, n=1, temperature=0)
+
+think = usage.completion_tokens_details.reasoning_tokens; answer = the remainder.
+NOTE: on this build the trace field is message.reasoning, NOT reasoning_content.
+
+  prompt      cfg      sec   think  answer  total  correct?
+  decide      xhigh   145.6   2712      6   2718   B 0        <- correct
+  decide      medium  125.2   2256    319   2575   Plan B, 0  <- correct
+  decide      low     134.8   2591    192   2783   Plan A,700 <- DIVERGED
+  multistep   xhigh    48.7    982     84   1066   36.88 GiB  <- correct
+  multistep   medium   87.1   1722    229   1951   36.88 GiB  <- correct
+  multistep   low      56.8   1084    190   1274   36.88 GiB  <- correct
+  route       xhigh     3.3     54      5     59   transcribe <- correct
+  route       medium    6.9    131      5    136   transcribe <- correct
+  route       low       6.3    118      5    123   transcribe <- correct
+  judge       xhigh   181.6   3388     38   3426   No         <- correct
+  judge       medium   72.7   1332     59   1391   No         <- correct
+  judge       low      68.5   1265     56   1321   No         <- correct
+
+  AGGREGATE   xhigh  379.3s  think=7136 (+0.0%)  total=7269 (+0.0%)
+              medium 291.9s  think=5441 (-23.8%) total=6053 (-16.7%)
+              low    266.3s  think=5058 (-29.1%) total=5501 (-24.3%)
+
+Determinism: at temperature=0 the cells reproduce exactly. decide/xhigh was run
+twice (once via an accidental module re-import) and returned 2718 completion
+tokens both times. The per-prompt spread below is therefore REAL trajectory
+difference, not sampling noise.
+
+### The aggregate saving is NOT monotonic per prompt
+
+  multistep: medium used 1722 think tokens vs xhigh's 982  => +75% WORSE
+  route:     medium 131 and low 118 vs xhigh's 54          => 2.2-2.4x WORSE
+  judge:     low 1265 vs xhigh's 3388                      => -63% better
+The -29% aggregate is carried almost entirely by `judge`. Lowering effort made
+two of four prompts MORE expensive.
+
+### The one correctness divergence
+
+decide/low answered "Plan A - 700" where xhigh, medium and thinking-OFF all
+answered B/0. Reading its output, this is not an arithmetic error: low adopted a
+different unstated assumption -- "The service is unavailable for 7 days. All
+incoming traffic errors out." -> B = 70,000 -- and stated "Plan A - 700" flatly
+without surfacing that assumption. The prompt was genuinely ambiguous on this
+point. Recorded as an assumption flip, NOT as a wrong answer.
+
+### Instruction-following got WORSE at lower effort
+
+decide said "Answer with the plan letter and the number". xhigh returned "B 0"
+(6 answer tokens). medium/low emitted 319/192 tokens of tables and working.
+For a caller PARSING cortex output, lower effort is worse, not just cheaper.
+
+## Probe 5 — thinking OFF beats every effort rung for shallow calls
+
+chat_template_kwargs={"enable_thinking": false} (what lobes/cli/_commands/route.py:60
+and lobes/realtime/_turn.py:143 already do). think=0 in all four, as expected.
+
+  prompt      OFF              low             xhigh           correct?
+  decide      1258 /  58.9s    2783 / 134.8    2718 / 145.6    "B 0"      OK
+  multistep    459 /  18.5s    1274 /  56.8    1066 /  48.7    "36.88"    OK
+  route          3 /   0.4s     123 /   6.3      59 /   3.3    transcribe OK
+  judge         74 /   4.3s    1321 /  68.5    3426 / 181.6    No         OK
+
+  TOTAL       1794 tokens vs xhigh 7269  =>  -75%   (vs low's -24%)
+
+route is the clearest case: 3 tokens / 0.4 s with thinking off, against 123
+tokens / 6.3 s at `low`. Turning effort DOWN made that call ~20x more expensive
+than turning thinking OFF. thinking-OFF scored 4/4 on these prompts -- including
+`decide`, where `low` diverged.
+
+## Conclusions
+
+1. Do NOT change the fleet default. templates/fleet/docker-compose.yml:236 stays
+   as is. xhigh was the CHEAPEST option on 2 of 4 prompts, and it is the
+   final-authority role's default.
+2. For shallow calls use enable_thinking:false, NOT a lower effort. 75% vs 24%,
+   and it is already the established in-repo pattern.
+3. low/medium are situational -- open-ended judgement where xhigh over-deliberates
+   (judge: 3388 -> 1265 think tokens, same correct answer) -- applied per
+   call-site, never as a default.
+4. A per-request kwarg merges PER KEY over --default-chat-template-kwargs, so
+   sending only reasoning_effort leaves the #93 preserve_thinking:true intact.
+
+## What this does NOT show
+
+- NOT a quality validation (#108). n=1 per cell, 4 prompts, one box, one day.
+- thinking-OFF matching xhigh 4/4 most likely means THE PROMPTS WERE TOO EASY TO
+  DISCRIMINATE, not that thinking is useless. A task that genuinely needs the
+  trace -- long-context synthesis, multi-constraint planning, the work cortex's
+  final-authority role exists for -- would likely separate them. Untested here.
+- No measurement of effort x tool-calling, effort x strict/xgrammar, effort at
+  depth in the 1M window, or effort on any other role (senses/muse/hand have
+  their own templates and may not implement reasoning_effort at all).
+- Not measured on the Thor's no-MTP cortex, which is the mesh's other cortex.
+
+## Reproduce
+
+  scripts under /tmp scratchpad at authoring time; the method is 4 prompts x
+  {xhigh,medium,low,enable_thinking:false}, temperature=0, max_tokens=4096,
+  reading usage.completion_tokens_details.reasoning_tokens and message.reasoning
+  from POST /v1/chat/completions with model=cortex.

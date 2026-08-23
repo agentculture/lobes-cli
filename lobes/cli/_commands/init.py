@@ -13,10 +13,12 @@ gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
-``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|thor-muse|thor-worker|orin-small>``
+``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|thor-muse|
+thor-worker|orin-small>``
 (brain-shapes t4, issue #113; ``orin-small`` added by the mesh-brain
 end-state's t2, issue #112; ``thor-muse`` added with the seventh role, muse;
-``orin-lobe`` added by the Orin variation)
+``orin-lobe`` added by the Orin variation; ``orin-cortex`` by the
+qwen3-8-gguf-llamacpp plan)
 selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
 — composed on top of whichever per-machine
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
@@ -32,11 +34,25 @@ its GPU-memory budget: ``spark-lobe`` (drops ``senses``), ``thor-lobe`` (drops
 ``cortex``). ``orin-lobe`` is ``thor-lobe``'s sm_87 sibling — senses + the
 pooling gears, no ``cortex`` (Ampere cannot run the NVFP4 primary) and no
 ``stt``/``tts`` (the Parakeet base image carries no sm_87 kernels, so audio is
-forwarded to a peer via ``AUDIO_URL``). ``orin-small`` drops BOTH heavy lobes
-and hosts the opt-in ``minor`` gear instead. Both Orin shapes are **declared,
-UNVALIDATED** data only (no physical Jetson AGX Orin has booted either; the
-#108 rule). An unknown ``--shape`` value is a user error naming the valid
-(sorted) shapes.
+forwarded to a peer via ``AUDIO_URL``). ``orin-cortex`` is the same board's
+opposite answer — it keeps ``cortex`` LOCAL, on the **llama.cpp** lane (the
+``orin`` card declares a GGUF gear, which is weight-only and decodes on
+Ampere) and drops ``senses``, which cannot co-reside with it in 61.3 GiB.
+``orin-small`` drops BOTH heavy lobes and hosts the opt-in ``minor`` gear
+instead. All three Orin shapes are **declared, UNVALIDATED** data only (no
+physical Jetson AGX Orin has booted any of them; the #108 rule). An unknown
+``--shape`` value is a user error naming the valid (sorted) shapes.
+
+A card may also REFUSE the default shape. A card profile can declare
+mutually-exclusive roles (``[[exclusive_roles]]``, see
+:class:`~lobes.profiles.schema.ExclusiveRoles`) — roles the board can each
+serve, but not both at once — and ``machine-as-brain`` hosts every role a card
+marks feasible, so on such a card the decision-free path is exactly the one
+that would over-commit the box. :func:`_guard_coresidency` turns that into a
+:class:`~lobes.cli._errors.ModelGearError` naming the shapes the card declares
+as the way out, on the dry run as well as ``--apply``. An EXPLICIT ``--shape``
+warns and proceeds instead — only the *defaulted* shape is refused. A card
+declaring no group (every built-in profile but ``orin``) is unaffected.
 
 A third thing ``--apply`` may generate is the **GPU-access override** pair
 (``docker-compose.gpu.yml`` / ``docker-compose.gpu-audio.yml``): a card profile
@@ -52,6 +68,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Sequence
 
 from lobes import __version__
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
@@ -59,8 +76,15 @@ from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import GPU_ACCESS_RUNTIME
 from lobes.profiles.schema import ROLES as CORE_ROLES
-from lobes.profiles.schema import Profile
-from lobes.profiles.shape_render import GATEWAY_SERVICE, ROLE_SERVICE, render_shape
+from lobes.profiles.schema import ExclusiveRoles, Profile
+from lobes.profiles.shape_render import (
+    GATEWAY_SERVICE,
+    ROLE_SERVICE,
+    compose_profile,
+    overcommitted_groups,
+    render_shape,
+    role_service,
+)
 from lobes.profiles.shapes import (
     OPT_IN_CORE_ROLES,
     Shape,
@@ -83,29 +107,46 @@ DEFAULT_SHAPE = "machine-as-brain"
 SHAPE_DROPPED_PROFILE = "shape-dropped"
 
 
-def _shape_dropped_services(shape: Shape) -> list[str]:
-    """The base-fleet core compose SERVICES this shape drops (does not host), sorted.
+def _shape_dropped_services(shape: Shape, profile: Profile) -> list[str]:
+    """The base-fleet core compose SERVICES a (shape, card) pair must NOT run, sorted.
 
-    A pure function of the shape's ``hosts`` (the deployment-shape axis) via t3's
-    render API ``ROLE_SERVICE`` map over the DEFAULT-HOSTED Profile-machinery
+    Primarily a function of the shape's ``hosts`` (the deployment-shape axis) via
+    t3's render API ``ROLE_SERVICE`` map over the DEFAULT-HOSTED Profile-machinery
     core roles — never hardcoded per shape. Card feasibility is a SEPARATE axis
     (#107) and is deliberately not folded in: this override exists to enforce the
     SHAPE's own drop decision, so machine-as-brain (hosts every default role)
-    always yields ``[]``. Opt-in core roles (``muse``) are excluded: their
-    services are already parked behind their own Docker Compose profile in the
-    base template (nothing activates it unless a hosting shape renders
-    ``COMPOSE_PROFILES``), so a non-hosting shape has nothing to park — and
-    machine-as-brain keeps writing NO override file at all.
+    always yields ``[]`` on every card whose roles are vLLM-served. Opt-in core
+    roles (``muse``/``worker``) are excluded: their services are already parked
+    behind their own Docker Compose profile in the base template (nothing
+    activates it unless a hosting shape renders ``COMPOSE_PROFILES``), so a
+    non-hosting shape has nothing to park.
+
+    The card DOES enter through one narrow door: the ENGINE axis
+    (qwen3-8-gguf-llamacpp t5). A role the shape HOSTS whose composed model is a
+    non-vLLM catalog gear runs its alternative lane
+    (:func:`~lobes.profiles.shape_render.role_service`), so the base template's
+    vLLM service for that role must be parked too — otherwise ``docker compose
+    up`` would start BOTH cortex lanes and the vLLM one would crash-loop trying
+    to load a ``.gguf``. Every card whose roles are vLLM-served (all of them
+    before this axis) yields exactly what it yielded before, machine-as-brain's
+    empty list included.
     """
-    return sorted(
-        ROLE_SERVICE[role]
-        for role in CORE_ROLES
-        if role not in OPT_IN_CORE_ROLES and not shape.hosts_role(role)
-    )
+    composed = compose_profile(shape, profile)
+    dropped: set[str] = set()
+    for role in CORE_ROLES:
+        if role in OPT_IN_CORE_ROLES:
+            continue
+        if not shape.hosts_role(role):
+            dropped.add(ROLE_SERVICE[role])
+            continue
+        if role_service(role, composed.role(role)) != ROLE_SERVICE[role]:
+            # Hosted, but by another engine's lane — park the vLLM one.
+            dropped.add(ROLE_SERVICE[role])
+    return sorted(dropped)
 
 
-def render_shape_override(shape: Shape) -> str | None:
-    """The ``docker-compose.shape.yml`` override text for ``shape``.
+def render_shape_override(shape: Shape, profile: Profile) -> str | None:
+    """The ``docker-compose.shape.yml`` override text for a (shape, card) pair.
 
     ``None`` when the shape drops no core role (machine-as-brain / bare init) — the
     caller writes no file, keeping the scaffold byte-identical to before this flag.
@@ -114,7 +155,7 @@ def render_shape_override(shape: Shape) -> str | None:
     and the gateway's ``depends_on`` is cleared with the compose ``!reset`` tag so
     it no longer references the now-profile-disabled service.
     """
-    dropped = _shape_dropped_services(shape)
+    dropped = _shape_dropped_services(shape, profile)
     if not dropped:
         return None
     lines = [
@@ -149,7 +190,7 @@ def render_shape_override(shape: Shape) -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def _sync_shape_override(target: Path, shape: Shape) -> None:
+def _sync_shape_override(target: Path, shape: Shape, profile: Profile) -> None:
     """Write the shape override for a role-dropping shape, or REMOVE a stale one.
 
     Re-initialising to machine-as-brain (or any shape that drops no core role) over
@@ -158,7 +199,7 @@ def _sync_shape_override(target: Path, shape: Shape) -> None:
     (brain-shapes t4b, criterion 3).
     """
     override_path = target / _compose.SHAPE_OVERLAY
-    text = render_shape_override(shape)
+    text = render_shape_override(shape, profile)
     if text is None:
         if override_path.exists():
             override_path.unlink()
@@ -166,13 +207,13 @@ def _sync_shape_override(target: Path, shape: Shape) -> None:
     override_path.write_text(text, encoding="utf-8")
 
 
-def _shape_override_plan(target: Path, shape: Shape) -> dict:
+def _shape_override_plan(target: Path, shape: Shape, profile: Profile) -> dict:
     """What ``--apply`` would do to ``docker-compose.shape.yml`` — for the dry-run plan.
 
     ``action`` is ``write`` (shape drops a lobe), ``remove`` (a stale override is on
     disk but the selected shape drops nothing), or ``none``.
     """
-    dropped = _shape_dropped_services(shape)
+    dropped = _shape_dropped_services(shape, profile)
     if dropped:
         return {"file": _compose.SHAPE_OVERLAY, "action": "write", "disables": dropped}
     if (target / _compose.SHAPE_OVERLAY).exists():
@@ -192,13 +233,13 @@ def _shape_override_plan_line(plan: dict) -> str | None:
     return None
 
 
-def _shape_override_written(shape: Shape) -> dict:
+def _shape_override_written(shape: Shape, profile: Profile) -> dict:
     """Post-``--apply`` shape-override state, for the JSON payload.
 
-    ``_sync_shape_override`` has just run, so ``written`` (True iff the shape drops
-    a core role) matches the file now on disk.
+    ``_sync_shape_override`` has just run, so ``written`` (True iff the pair parks
+    a core service) matches the file now on disk.
     """
-    dropped = _shape_dropped_services(shape)
+    dropped = _shape_dropped_services(shape, profile)
     return {"file": _compose.SHAPE_OVERLAY, "written": bool(dropped), "disables": dropped}
 
 
@@ -339,16 +380,104 @@ def _templates(fleet: bool, audio: bool) -> dict[str, str]:
     return templates
 
 
-def _resolve_fleet_profile(target: Path, profile_name: str | None):
+def _resolve_fleet_profile(
+    target: Path,
+    profile_name: str | None,
+    shape: Shape,
+    *,
+    shape_explicit: bool,
+):
     """Resolve the per-machine profile for a fleet init; emits a stderr warning
     when ``--profile`` forces a name onto a card it wasn't validated for (or an
     undetected one), and likewise when detection itself comes back UNKNOWN with
     no ``--profile`` override — that case now resolves the conservative 'base'
-    built-in (t14) rather than refusing; see ``resolve_init_profile``."""
+    built-in (t14) rather than refusing; see ``resolve_init_profile``.
+
+    The resolved card is also where the co-residency guard runs
+    (:func:`_guard_coresidency`) — BOTH the dry-run and ``--apply`` paths reach
+    the profile through here, so putting it here is what makes the check
+    impossible to reach around."""
     profile, card, warning = resolve_init_profile(profile_name, target)
     if warning:
         emit_diagnostic(f"warning: {warning}")
+    _guard_coresidency(shape, profile, shape_explicit=shape_explicit)
     return profile, card
+
+
+def _coresidency_lines(
+    shape: Shape, profile: Profile, groups: Sequence[ExclusiveRoles]
+) -> list[str]:
+    """One human line per over-hosted group: what clashes, why, and the way out."""
+    lines = []
+    for group in groups:
+        hosted = ", ".join(role for role in group.roles if shape.hosts_role(role))
+        line = (
+            f"card profile {profile.name!r} declares {hosted} mutually exclusive, "
+            f"but shape {shape.name!r} hosts them together"
+        )
+        if group.reason:
+            line += f" — {group.reason}"
+        lines.append(line)
+    return lines
+
+
+def _coresidency_shapes(groups: Sequence[ExclusiveRoles]) -> list[str]:
+    """The resolving shapes the card itself names, de-duplicated, in declared order."""
+    seen: list[str] = []
+    for group in groups:
+        for name in group.shapes:
+            if name not in seen:
+                seen.append(name)
+    return seen
+
+
+def _guard_coresidency(shape: Shape, profile: Profile, *, shape_explicit: bool) -> None:
+    """Refuse a DEFAULTED shape that would over-host a card's exclusive roles.
+
+    ``feasible`` answers "can this board serve this role at all?" — a per-role
+    question both members of an exclusive group answer honestly with yes. The
+    default ``machine-as-brain`` shape hosts every feasible role, so on a card
+    that declares a co-residency limit the bare, decision-free path is exactly
+    the one that renders a deployment expected to OOM at boot. This is where
+    the card's declaration
+    (:attr:`~lobes.profiles.schema.Profile.exclusive_roles`) reaches something
+    real: it turns that silent over-commit into a user error that names the
+    shapes resolving it.
+
+    **An EXPLICIT ``--shape`` warns and proceeds**, it is not refused, and no
+    override flag is added. That is this CLI's existing precedent, not a new
+    one: ``--profile`` already documents "overrides detection, including
+    forcing a profile onto a card it was not validated for (warns, but
+    proceeds)" — an operator who types the shape has made the call knowingly,
+    and lobes' job is then to be loud, not to be in the way. A second
+    ``--force``-style flag would also be ambiguous next to the ``--force``
+    ``init`` already has (overwrite existing files), and it would let the
+    DEFAULT path be forced past the guard, which is the one thing this must
+    never allow.
+
+    Runs on the dry run as well as ``--apply``: a plan that quietly describes
+    a deployment that cannot boot is the same bug one step earlier.
+    """
+    groups = overcommitted_groups(shape, profile)
+    if not groups:
+        return
+    detail = "; ".join(_coresidency_lines(shape, profile, groups))
+    if shape_explicit:
+        emit_diagnostic(
+            f"warning: {detail}. Proceeding — you named --shape {shape.name} explicitly."
+        )
+        return
+    resolving = _coresidency_shapes(groups)
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=f"refusing to scaffold the default {shape.name!r} shape: {detail}",
+        remediation=(
+            f"choose a shape that hosts one of them: {', '.join(resolving)} "
+            f"(e.g. 'lobes init --shape {resolving[0]}'). "
+            f"To scaffold {shape.name} anyway, name it explicitly "
+            f"('lobes init --shape {shape.name}') — it warns, then proceeds."
+        ),
+    )
 
 
 def _profile_plan_lines(profile, card, profile_name: str | None, shape: Shape) -> list[str]:
@@ -452,7 +581,7 @@ def _dry_run_payload(
     }
     if fleet:
         payload.update(_profile_plan_dict(profile, card, profile_name, shape))
-        payload["shape_override"] = _shape_override_plan(target, shape)
+        payload["shape_override"] = _shape_override_plan(target, shape, profile)
         payload["gpu_override"] = _gpu_override_plan(target, profile)
     return payload
 
@@ -509,7 +638,7 @@ def _dry_run_lines(
     if fleet:
         lines.extend(_profile_plan_lines(profile, card, profile_name, shape))
         for line in (
-            _shape_override_plan_line(_shape_override_plan(target, shape)),
+            _shape_override_plan_line(_shape_override_plan(target, shape, profile)),
             _gpu_override_plan_line(_gpu_override_plan(target, profile)),
         ):
             if line:
@@ -525,6 +654,7 @@ def _emit_dry_run(
     json_mode: bool,
     profile_name: str | None,
     shape: Shape | None,
+    shape_explicit: bool = False,
     force: bool = False,
 ) -> None:
     plan = _compose.scaffold_plan(target, _templates(fleet, audio))
@@ -533,7 +663,9 @@ def _emit_dry_run(
         # Detection/warning happens on a dry run too — the plan must be honest
         # about what --apply would do, including the fallback profile it would
         # serve on an UNKNOWN card.
-        profile, card = _resolve_fleet_profile(target, profile_name)
+        profile, card = _resolve_fleet_profile(
+            target, profile_name, shape, shape_explicit=shape_explicit
+        )
         # The tool-parser plugin file (t2) is fleet-only — mounted into
         # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
         plan = plan + [_compose.plugin_plan(target)]
@@ -555,13 +687,17 @@ def _emit_apply(
     json_mode: bool,
     profile_name: str | None,
     shape: Shape | None,
+    shape_explicit: bool = False,
 ) -> None:
     profile = card = None
     if fleet:
-        # Resolve BEFORE writing anything — an explicit --profile mismatch or an
-        # UNKNOWN card (falling back to the conservative 'base' profile, t14)
-        # both warn here, before any file is written.
-        profile, card = _resolve_fleet_profile(target, profile_name)
+        # Resolve BEFORE writing anything — an explicit --profile mismatch, an
+        # UNKNOWN card (falling back to the conservative 'base' profile, t14) or
+        # a shape that would over-host the card's mutually-exclusive roles all
+        # surface here, before any file is written.
+        profile, card = _resolve_fleet_profile(
+            target, profile_name, shape, shape_explicit=shape_explicit
+        )
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
@@ -590,7 +726,7 @@ def _emit_apply(
         # A mesh-brain shape that DROPS a core role needs the generated compose
         # override so the dropped lobe does not RUN (t4b, #113); a shape that drops
         # nothing (machine-as-brain) writes none and scrubs any stale one.
-        _sync_shape_override(target, shape)
+        _sync_shape_override(target, shape, profile)
         # A csv-mode board (the card profile's gpu_access declaration) needs its
         # GPU request expressed as `runtime: nvidia` instead of the template's
         # deploy.resources stanza; every other card writes nothing and scrubs a
@@ -626,7 +762,7 @@ def _emit_apply(
             payload["profile_forced"] = bool(profile_name)
             payload["detected_card"] = card.resolved
             payload["shape"] = shape.name
-            payload["shape_override"] = _shape_override_written(shape)
+            payload["shape_override"] = _shape_override_written(shape, profile)
             payload["gpu_override"] = _gpu_override_written(profile)
         emit_result(payload, json_mode=True)
         return
@@ -638,7 +774,7 @@ def _emit_apply(
     profile_note = f"\n>> profile: {profile.name}\n>> shape: {shape.name}" if fleet else ""
     override_note = ""
     if fleet:
-        dropped = _shape_dropped_services(shape)
+        dropped = _shape_dropped_services(shape, profile)
         if dropped:
             override_note = (
                 f"\n  {_compose.SHAPE_OVERLAY} (drops {', '.join(dropped)}: "
@@ -695,10 +831,25 @@ def cmd_init(args: argparse.Namespace) -> int:
     shape = resolve_shape(shape_name or DEFAULT_SHAPE) if fleet else None
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
     profile_name = getattr(args, "profile", None)
+    # An EXPLICIT --shape is the operator's own decision (see
+    # _guard_coresidency): it warns past a co-residency clash, where the
+    # defaulted shape refuses.
+    shape_explicit = shape_name is not None
     if args.apply:
-        _emit_apply(target, fleet, audio, args.force, json_mode, profile_name, shape)
+        _emit_apply(
+            target, fleet, audio, args.force, json_mode, profile_name, shape, shape_explicit
+        )
     else:
-        _emit_dry_run(target, fleet, audio, json_mode, profile_name, shape, args.force)
+        _emit_dry_run(
+            target,
+            fleet,
+            audio,
+            json_mode,
+            profile_name,
+            shape,
+            shape_explicit=shape_explicit,
+            force=args.force,
+        )
     return 0
 
 
@@ -764,7 +915,9 @@ def register(sub: argparse._SubParsersAction) -> None:
         "(drops senses), 'thor-lobe' (drops cortex). 'orin-lobe' is "
         "thor-lobe's sm_87 sibling (senses + pooling gears; no cortex, and no "
         "stt/tts — the Parakeet image has no sm_87 kernels, so audio forwards "
-        "to a peer). 'thor-muse' drops BOTH "
+        "to a peer); 'orin-cortex' is that board's opposite answer — cortex "
+        "LOCAL on the llama.cpp GGUF lane, senses dropped (the two do not fit "
+        "in 61.3 GiB). 'thor-muse' drops BOTH "
         "heavy default lobes and hosts the opt-in 31B 'muse' creative lobe "
         "instead; 'thor-worker' drops BOTH and hosts the opt-in 35B-A3B "
         "multimodal 'worker' ground-work lobe instead. 'orin-small' (issue "
@@ -772,7 +925,11 @@ def register(sub: argparse._SubParsersAction) -> None:
         "physical Jetson AGX Orin has booted it) drops both heavy lobes and "
         "hosts the opt-in 'minor' generate gear instead. Fleet topology only "
         "— incompatible with --single. An unknown value is a user error "
-        "naming the valid shapes.",
+        "naming the valid shapes. On a card that declares mutually-exclusive "
+        "roles (today only 'orin', whose cortex and senses do not both fit in "
+        "61.3 GiB), OMITTING --shape is refused with an error naming the shapes "
+        "that resolve it; naming 'machine-as-brain' explicitly warns and "
+        "proceeds.",
     )
     p.add_argument(
         "--force",

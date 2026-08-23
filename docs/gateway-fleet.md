@@ -398,6 +398,20 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   are internal-only, so the gateway is the only thing that can see them — this is
   the source for `lobes overview --live`.
 
+  **Non-vLLM backends and telemetry honesty.** Prometheus series are namespaced
+  per engine (`vllm:*` vs llama.cpp's `llamacpp:*`), so a parser keyed on vLLM
+  alone would read a *busy* llama.cpp lane as all-zeros and `/status` would
+  present those zeros as real. Instead `lobes._metrics` sniffs the engine from
+  the series present: a llama.cpp backend's `metrics` object carries
+  `engine: "llamacpp"` plus an `unsupported: [...]` list naming the live-view
+  fields that engine genuinely cannot export (today: `requests_succeeded` and
+  `by_finish_reason` — llama.cpp has no per-finish-reason success counter), and
+  **omits those keys entirely** rather than emitting `0`. A field that IS present
+  is measured, so `0` always means idle. A scrape from an engine lobes has never
+  parsed yields `engine: "unknown"` and no numbers at all. When any backend
+  cannot report in-flight counts, the top-level `busy` object gains
+  `partial: true`; an all-vLLM fleet's payload is unchanged.
+
 The gateway image is built from the scaffolded `Dockerfile.gateway`
 (`pip install lobes-cli==${MODEL_GEAR_VERSION}`, as a non-root user); `lobes init
 --fleet` pins `MODEL_GEAR_VERSION` to the running lobes-cli release. The version

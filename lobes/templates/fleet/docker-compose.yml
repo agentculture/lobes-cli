@@ -248,6 +248,157 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in llama.cpp cortex lane (GGUF, the fleet's first non-vLLM engine) --
+  # qwen3-8-gguf-llamacpp plan t4. Serves the `cortex` role from a GGUF
+  # checkpoint through `llama-server`'s OWN OpenAI-compatible API, for a card
+  # that cannot run the NVFP4 primary at all: the NVFP4 exports quantize
+  # ACTIVATIONS to FP4 (W4A4) and need Blackwell FP4 tensor cores, while a GGUF
+  # Q4_K_M is weight-only and decodes on Ampere. See lobes/catalog.py's `engine`
+  # axis (ENGINE_LLAMA_CPP / serves_with_vllm) and
+  # docs/qwen3.8-27b-gguf-llamacpp.md.
+  #
+  # OPT-IN, exactly like vllm-muse / vllm-worker / vllm-minor: parked behind the
+  # `llamacpp` Docker Compose profile, so no existing deployment starts it and
+  # every pre-t4 render stays byte-identical. A shape whose composed `cortex`
+  # model is a llama.cpp catalog gear renders COMPOSE_PROFILES=llamacpp plus
+  # PRIMARY_URL=http://llamacpp-primary:8000 (lobes/profiles/shape_render.py's
+  # LLAMA_CPP_* constants), and the generated docker-compose.shape.yml parks
+  # `vllm-primary` in the same render — the two cortex lanes never run together,
+  # and the gateway reaches whichever one is up at the SAME role alias.
+  #
+  # THIS LANE CARRIES llama.cpp SERVER FLAGS ONLY (plan acceptance criterion 3).
+  # `llama-server` has no --quantization (Q4_K_M lives inside the .gguf file), no
+  # --tool-call-parser and no --reasoning-parser (it takes --jinja plus the
+  # model's own embedded chat template), no --gpu-memory-utilization (memory
+  # follows -ngl/-c), and it IGNORES the checkpoint's MTP head. Each of those
+  # vLLM knobs is deliberately ABSENT here rather than translated into something
+  # that looks equivalent — the catalog entry records the same emptiness.
+  llamacpp-primary:
+    # PINNED BY DIGEST, never a floating tag — the same discipline every other
+    # lane follows. MEASURED on the fleet's Jetson AGX Orin 64GB (sm_87),
+    # 2026-08-23: llama.cpp build 38406d597 (10373) on CUDA 13, arm64/linux,
+    # `llama-bench -p 512 -n 128 -ngl 99` at pp512 64.79 / tg128 2.61 tok/s with
+    # flash attention ON. The RUNNER-UP, kept here as the recorded alternative
+    # (do not silently swap to it — re-measure first), was
+    # ghcr.io/ggml-org/llama.cpp@sha256:f74f5805191a8030bff26e2a7890d737fc2b5d0931220c953d25e1b7d7613ef5
+    # (CUDA 12, build d775b8967/10573): pp512 63.10 / tg128 2.53. The pinned
+    # image declares CUDAARCHS=87;110, i.e. kernels for BOTH Jetson generations
+    # in this mesh, and carries llama-server at /usr/local/bin/llama-server plus
+    # bash and curl (both verified in the image — the entrypoint wrapper and the
+    # healthcheck below depend on them).
+    image: ${LLAMACPP_IMAGE:-ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191}
+    container_name: model-gear-llamacpp-primary
+    profiles:
+      - llamacpp
+    restart: unless-stopped
+    # The GPU request stays in the SHIPPED `deploy.resources` form every other
+    # lane uses, and is NOT hardcoded to `runtime: nvidia` here. A board whose
+    # NVIDIA container toolkit resolves to the legacy csv mode — where this
+    # stanza fails at container CREATE — declares `gpu_access = "runtime"` on its
+    # MACHINE PROFILE (lobes/profiles/builtin/orin.toml), and `lobes init`
+    # generates docker-compose.gpu.yml, which `!reset`s this stanza and sets
+    # `runtime: nvidia` for every service in lobes.runtime._compose.GPU_SERVICES
+    # — this one included. That is what makes the csv-mode form survive a
+    # re-render instead of being a hand edit; hardcoding it here would instead
+    # bake one board's toolkit mode into a card-neutral template and break the
+    # lane on a CDI/devices-mode box.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    # NOTE what is deliberately absent versus the vLLM lanes: no `ipc: host` and
+    # no memlock/stack `ulimits` (those exist for vLLM's shared-memory/NCCL
+    # worker path, which llama.cpp has no equivalent of), and no `env_file` —
+    # this lane serves a LOCAL file and never downloads a checkpoint, so it needs
+    # no HF_TOKEN and has no reason to read the deployment .env wholesale.
+    # Compose still interpolates every ${VAR} below from .env at render time.
+    environment:
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=llamacpp-primary   # → /logs/model-gear/llamacpp-primary-<boot>.log
+    volumes:
+      # The GGUF, mounted READ-ONLY. llama.cpp mmaps the file and nothing in this
+      # lane ever writes to it, so read-only is the structural statement of that.
+      # It also rules out the `-hf <repo>:<quant>` auto-download path on purpose:
+      # the served file is the one the operator placed, byte-for-byte (the spike
+      # verified its sha256), not whatever a registry resolves today.
+      - ${LLAMACPP_MODEL_DIR:-${HOME:-/root}/.cache/llama.cpp}:/models:ro
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://llamacpp-primary:8000 on the
+    # compose net, matching the vllm-multimodal precedent (`expose`, never
+    # `ports`). `docker ps` shows no published port for this container; the
+    # gateway origin is the only way in.
+    expose:
+      - "8000"
+    # mg-logwrap tees output to /logs/model-gear, then `exec`s the command
+    # (llama-server stays the signal target). The image's own entrypoint is null
+    # with CMD /bin/bash, so the command below names the binary explicitly.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: a LIST of separate tokens, `--flag value`, never `--flag=value`
+    # llama.cpp's own arg parser does NOT accept the `=` form — verified against
+    # this exact image: `llama-server --ctx-size=4096 …` exits with
+    #   error: invalid argument: --ctx-size=4096
+    # So every flag and its value are separate list items here, unlike the vLLM
+    # lanes' `--flag=value` spellings. Nothing in this list can substitute to an
+    # empty token (every ${VAR} carries a default), so the folded-string trick the
+    # vLLM lanes need for their conditionally-omitted flags is not needed here.
+    #
+    # The flag set is the MEASURED-BEST one from the 2026-08-23 Orin spike:
+    #   -ngl 99   offload every layer to the GPU (65 blocks; 99 is the usual
+    #             "all of them" spelling). Confirmed in the boot log rather than
+    #             trusted from the flag.
+    #   -c        the served context. 262144 is this GGUF's OWN declared native
+    #             ceiling and the window the spike served; KV costs 64 KiB/token
+    #             (only 16 of 65 layers hold a per-token cache — GQA
+    #             head_count_kv=4, key_length=value_length=256 — because the other
+    #             49 are Mamba/SSM with constant state), i.e. 16.00 GiB of KV at
+    #             the full window on top of 15.33 GiB of weights.
+    #   --jinja   use the model's own embedded chat template. This is what gives
+    #             the lane tool calling (the template emits the qwen3_coder XML
+    #             dialect) and `reasoning_content` — llama.cpp auto-detects both,
+    #             so there is no parser flag to pass.
+    #   -np 1     one server slot. llama.cpp splits the -c window across slots, so
+    #             more slots would divide the served context rather than add
+    #             capacity; the spike measured single-stream only.
+    #   -fa on    flash attention. Measured faster than off on this box on both
+    #             candidate images (64.79 vs 63.56 pp512; 2.61 vs 2.57 tg128).
+    #
+    # --alias is llama.cpp's `--served-model-name`: it sets the id this backend
+    # reports on /v1/models, and the gateway builds its routing table from
+    # PRIMARY_SERVED_NAME — so the two MUST agree or `model=cortex` rewrites to an
+    # id the engine does not serve (a 404 behind a healthy backend, observed live
+    # on the vLLM lane 2026-07-31). Both read the same variable here.
+    command:
+      - llama-server
+      - --model
+      - /models/${LLAMACPP_GGUF:-Qwen3.8-27B-UD-Q4_K_M.gguf}
+      - --alias
+      - ${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --n-gpu-layers
+      - ${LLAMACPP_N_GPU_LAYERS:-99}
+      - --ctx-size
+      - ${PRIMARY_MAX_MODEL_LEN:-262144}
+      - --parallel
+      - ${LLAMACPP_PARALLEL:-1}
+      - --flash-attn
+      - ${LLAMACPP_FLASH_ATTN:-on}
+      - --jinja
+    healthcheck:
+      # llama-server answers /health with {"status":"ok"} once the model is
+      # loaded (verified live in the spike). start_period covers a COLD load:
+      # 84 s measured cold, 15.6 s warm-cache, on the Orin at the full window.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   # A warm *generate* fallback backend can be added here. The default fleet runs
   # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
   # the primary keeps its solo generate headroom. To add
@@ -1368,7 +1519,14 @@ services:
       # deployment resolves audio_url to unset (stt/tts report loaded=false),
       # instead of a 404ing endpoint /capabilities still calls ready=true.
       - AUDIO_URL=${AUDIO_URL:-}
-      - PRIMARY_URL=http://vllm-primary:8000
+      # The cortex backend origin. Defaults to the vLLM lane — byte-identical
+      # to the hardcoded value this replaced — and is overridable so a card
+      # serving cortex on the ALTERNATIVE engine can point it at the llama.cpp
+      # lane instead (a shape whose composed cortex model is a llama.cpp
+      # catalog gear renders PRIMARY_URL=http://llamacpp-primary:8000; see
+      # lobes/profiles/shape_render.py's LLAMA_CPP_ACTIVATION_ENV). The role
+      # alias the caller uses does not move with the engine.
+      - PRIMARY_URL=${PRIMARY_URL:-http://vllm-primary:8000}
       # MUST match vllm-primary's own --served-model-name default above. The
       # gateway builds its routing table from THIS value, so a mismatch makes it
       # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
