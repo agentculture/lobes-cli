@@ -106,6 +106,47 @@ a fresh clean run against an older one taken under unknown load. Re-measuring a
 number you already have is cheap; a wrong conclusion drawn from mismatched
 conditions is not.
 
+## Which measurements need a quiet box, and which do not
+
+Not every metric has the same sensitivity to machine load, and treating them
+alike wastes time in one direction and corrupts results in the other.
+
+| Metric | Load-sensitive? | Consequence |
+|---|---|---|
+| throughput (prefill, decode, TTFT) | **yes** | a concurrent download or a resident model lane changes the number — enforce a quiet box (Rule 3) |
+| perplexity / quality | **no** | a deterministic function of (model, corpus); load changes how long it takes to compute, never the value |
+
+So quality sweeps can run **in parallel** with downloads and other I/O, while
+speed benchmarks must not. Serialising quality measurements wastes hours;
+parallelising speed measurements silently corrupts them.
+
+Record the conditions either way — a reader should not have to know this rule to
+trust the number.
+
+## Measuring the quality axis, not just the cost axis
+
+A throughput table alone cannot answer *"how slow is worth the quality?"* — it
+measures only the numerator. A claim like *"this quant costs 15% for a quality
+step up"* has a **measured** cost and an **assumed** benefit unless the benefit
+was measured too.
+
+`llama-perplexity` over a fixed corpus gives the missing axis:
+
+```bash
+docker run --rm --runtime nvidia -v "$PWD/models:/models:ro" -v "$PWD:/data:ro" \
+  --entrypoint /usr/local/bin/llama-perplexity <image> \
+  -m /models/<file>.gguf -f /data/wikitext.raw -ngl 99 -c 512 --chunks 40
+```
+
+Use the **canonical wikitext-2 test set** so the numbers compare to published
+figures, not only to each other, and hold the chunk count identical across
+quants.
+
+**Report it as a perplexity delta, never as a "quality delta".** Perplexity is a
+proxy: it correlates with quality but does not capture reasoning or tool-use
+degradation, which is what a reasoning lane actually does. Pair it with the
+correctness probes rather than substituting for them.
+
 ## Recording the result
 
 Emit `--json` and append it to the lane's evidence transcript under
