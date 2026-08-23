@@ -65,7 +65,7 @@ from typing import Mapping
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.render import profile_env, role_engine
-from lobes.profiles.schema import ROLES, Profile, RoleProfile
+from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
 
 # role -> the compose SERVICE (the `services:` key the compose template
@@ -274,6 +274,39 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         host_env=profile.host_env,
         gpu_access=profile.gpu_access,
     )
+
+
+def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles, ...]:
+    """The card's mutually-exclusive role groups this ``shape`` would OVER-HOST.
+
+    A card declares co-residency as data
+    (:attr:`~lobes.profiles.schema.Profile.exclusive_roles`): "this board can
+    serve either of these, never both at once". Feasibility cannot express
+    that — it is per-role, and both members are genuinely feasible — so a
+    shape that hosts every feasible role (``machine-as-brain``, the default a
+    bare ``lobes init`` resolves) will happily render a deployment that
+    over-commits the board's memory and crash-loops at boot.
+
+    This is the predicate that catches it, and it is entirely DATA-DRIVEN:
+    nothing here matches a card name, a role name or a shape name. A group is
+    over-hosted when the composed (shape, card) pair would actually RUN more
+    than one of its members — i.e. the shape hosts the role AND the card still
+    marks it feasible (:func:`compose_profile` is the single source of truth
+    for both, so a shape-dropped or card-vetoed role never counts). One
+    member, or none, is fine.
+
+    Pure, and empty for every card that declares no group at all — which is
+    every built-in profile but ``orin``.
+    """
+    composed = compose_profile(shape, profile)
+    over: list[ExclusiveRoles] = []
+    for group in profile.exclusive_roles:
+        hosted = [
+            role for role in group.roles if shape.hosts_role(role) and composed.role(role).feasible
+        ]
+        if len(hosted) > 1:
+            over.append(group)
+    return tuple(over)
 
 
 def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:

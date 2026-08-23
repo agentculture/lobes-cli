@@ -220,6 +220,16 @@ validation, `thor-muse` is now DORMANT: the physical Thor that measured it
 moved to hosting `worker` instead (see the support table above), so no box
 currently renders this shape at all.
 
+- **A card may REFUSE the default shape.** A card profile can declare
+  mutually-exclusive roles (`[[exclusive_roles]]` — see
+  [`machine-profiles.md`](machine-profiles.md#exclusive_roles--roles-this-board-can-each-serve-but-not-together)),
+  and `machine-as-brain` hosts every role a card marks feasible. On such a
+  card — today only `orin`, where `cortex` (~33 GiB) and `senses` (~27.6 GiB)
+  do not both fit in 61.3 GiB with zero swap — a **shape-less** `lobes init`
+  is refused with a user error naming the shapes that resolve it
+  (`orin-cortex`, `orin-lobe`), on the dry run as well as `--apply`. Typing
+  `--shape machine-as-brain` explicitly warns and proceeds: only the
+  *defaulted* shape is refused. Every other card is untouched.
 - **Dry-run by default** — prints the resolved profile, the shape and its
   `hosts` list, how many env vars would be set, and (for a mesh shape)
   whether `docker-compose.shape.yml` would be written or removed. Changes

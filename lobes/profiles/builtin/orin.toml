@@ -21,9 +21,20 @@
 # and co-residency (which roles fit together?) are different axes here, and only
 # the first is a card fact — so BOTH roles are declared feasible below and the
 # DEPLOYMENT SHAPE is what picks one: `orin-cortex` (hosts cortex, drops senses)
-# or `orin-lobe` (hosts senses, drops cortex). `machine-as-brain` hosts every
-# role a card declares feasible, so on THIS card it over-commits memory and is
-# not a shape this board can boot — pass --shape.
+# or `orin-lobe` (hosts senses, drops cortex).
+#
+# That used to be a WARNING in this banner and nothing more, which left the
+# DEFAULT path broken: `machine-as-brain` hosts every role a card declares
+# feasible, so a bare `lobes init --apply` on this board rendered a deployment
+# that starts both and is expected to OOM. It is now a DECLARATION the tool
+# acts on — the `[[exclusive_roles]]` table below, read by `lobes init`'s
+# co-residency guard (lobes/profiles/shape_render.py's `overcommitted_groups`).
+# A bare `lobes init` on this card REFUSES, naming `orin-cortex` / `orin-lobe`;
+# an explicitly typed `--shape machine-as-brain` warns and proceeds, matching
+# --profile's own "forcing a profile onto a card it was not validated for
+# (warns, but proceeds)" precedent. Nothing about the RENDER changed: the
+# declaration writes no .env key and no compose file, and every other card,
+# declaring no group at all, is untouched.
 #
 # Two knobs are deliberately ABSENT from the pooling roles at the bottom
 # (embedder.attention_backend, reranker.attention_backend +
@@ -73,6 +84,21 @@ summary = "Jetson AGX Orin 64GB (Ampere sm_87, 64 GB unified) — senses + pooli
 # board consumes them (#108) — `docker compose config` renders them correctly,
 # which proves the compose merge, not the container create.
 gpu_access = "runtime"
+
+# --- co-residency: the pair this board cannot host together ------------------
+#
+# The machine-readable half of the banner above. `roles` is the group itself;
+# `shapes` names the deployment shapes that resolve it, so the refusal points at
+# a concrete alternative instead of a bare "pass --shape" (deriving that from
+# the built-in shape set would offer `spark-lobe`/`thor-lobe` too — shapes that
+# "resolve" a cortex/senses clash on the wrong board); `reason` is the measured
+# arithmetic, quoted back verbatim so the operator can check it. Both named
+# shapes are proven to exist and to actually resolve the group by
+# tests/test_init_coresidency.py, so this cannot drift into a lie.
+[[exclusive_roles]]
+roles = ["cortex", "senses"]
+shapes = ["orin-cortex", "orin-lobe"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB, against 61.3 GiB of unified memory with ZERO swap"
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
 #

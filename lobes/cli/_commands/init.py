@@ -43,6 +43,17 @@ instead. All three Orin shapes are **declared, UNVALIDATED** data only (no
 physical Jetson AGX Orin has booted any of them; the #108 rule). An unknown
 ``--shape`` value is a user error naming the valid (sorted) shapes.
 
+A card may also REFUSE the default shape. A card profile can declare
+mutually-exclusive roles (``[[exclusive_roles]]``, see
+:class:`~lobes.profiles.schema.ExclusiveRoles`) — roles the board can each
+serve, but not both at once — and ``machine-as-brain`` hosts every role a card
+marks feasible, so on such a card the decision-free path is exactly the one
+that would over-commit the box. :func:`_guard_coresidency` turns that into a
+:class:`~lobes.cli._errors.ModelGearError` naming the shapes the card declares
+as the way out, on the dry run as well as ``--apply``. An EXPLICIT ``--shape``
+warns and proceeds instead — only the *defaulted* shape is refused. A card
+declaring no group (every built-in profile but ``orin``) is unaffected.
+
 A third thing ``--apply`` may generate is the **GPU-access override** pair
 (``docker-compose.gpu.yml`` / ``docker-compose.gpu-audio.yml``): a card profile
 that declares ``gpu_access = "runtime"`` (a board whose NVIDIA container
@@ -57,6 +68,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Sequence
 
 from lobes import __version__
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
@@ -64,11 +76,12 @@ from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import GPU_ACCESS_RUNTIME
 from lobes.profiles.schema import ROLES as CORE_ROLES
-from lobes.profiles.schema import Profile
+from lobes.profiles.schema import ExclusiveRoles, Profile
 from lobes.profiles.shape_render import (
     GATEWAY_SERVICE,
     ROLE_SERVICE,
     compose_profile,
+    overcommitted_groups,
     render_shape,
     role_service,
 )
@@ -367,16 +380,104 @@ def _templates(fleet: bool, audio: bool) -> dict[str, str]:
     return templates
 
 
-def _resolve_fleet_profile(target: Path, profile_name: str | None):
+def _resolve_fleet_profile(
+    target: Path,
+    profile_name: str | None,
+    shape: Shape,
+    *,
+    shape_explicit: bool,
+):
     """Resolve the per-machine profile for a fleet init; emits a stderr warning
     when ``--profile`` forces a name onto a card it wasn't validated for (or an
     undetected one), and likewise when detection itself comes back UNKNOWN with
     no ``--profile`` override — that case now resolves the conservative 'base'
-    built-in (t14) rather than refusing; see ``resolve_init_profile``."""
+    built-in (t14) rather than refusing; see ``resolve_init_profile``.
+
+    The resolved card is also where the co-residency guard runs
+    (:func:`_guard_coresidency`) — BOTH the dry-run and ``--apply`` paths reach
+    the profile through here, so putting it here is what makes the check
+    impossible to reach around."""
     profile, card, warning = resolve_init_profile(profile_name, target)
     if warning:
         emit_diagnostic(f"warning: {warning}")
+    _guard_coresidency(shape, profile, shape_explicit=shape_explicit)
     return profile, card
+
+
+def _coresidency_lines(
+    shape: Shape, profile: Profile, groups: Sequence[ExclusiveRoles]
+) -> list[str]:
+    """One human line per over-hosted group: what clashes, why, and the way out."""
+    lines = []
+    for group in groups:
+        hosted = ", ".join(role for role in group.roles if shape.hosts_role(role))
+        line = (
+            f"card profile {profile.name!r} declares {hosted} mutually exclusive, "
+            f"but shape {shape.name!r} hosts them together"
+        )
+        if group.reason:
+            line += f" — {group.reason}"
+        lines.append(line)
+    return lines
+
+
+def _coresidency_shapes(groups: Sequence[ExclusiveRoles]) -> list[str]:
+    """The resolving shapes the card itself names, de-duplicated, in declared order."""
+    seen: list[str] = []
+    for group in groups:
+        for name in group.shapes:
+            if name not in seen:
+                seen.append(name)
+    return seen
+
+
+def _guard_coresidency(shape: Shape, profile: Profile, *, shape_explicit: bool) -> None:
+    """Refuse a DEFAULTED shape that would over-host a card's exclusive roles.
+
+    ``feasible`` answers "can this board serve this role at all?" — a per-role
+    question both members of an exclusive group answer honestly with yes. The
+    default ``machine-as-brain`` shape hosts every feasible role, so on a card
+    that declares a co-residency limit the bare, decision-free path is exactly
+    the one that renders a deployment expected to OOM at boot. This is where
+    the card's declaration
+    (:attr:`~lobes.profiles.schema.Profile.exclusive_roles`) reaches something
+    real: it turns that silent over-commit into a user error that names the
+    shapes resolving it.
+
+    **An EXPLICIT ``--shape`` warns and proceeds**, it is not refused, and no
+    override flag is added. That is this CLI's existing precedent, not a new
+    one: ``--profile`` already documents "overrides detection, including
+    forcing a profile onto a card it was not validated for (warns, but
+    proceeds)" — an operator who types the shape has made the call knowingly,
+    and lobes' job is then to be loud, not to be in the way. A second
+    ``--force``-style flag would also be ambiguous next to the ``--force``
+    ``init`` already has (overwrite existing files), and it would let the
+    DEFAULT path be forced past the guard, which is the one thing this must
+    never allow.
+
+    Runs on the dry run as well as ``--apply``: a plan that quietly describes
+    a deployment that cannot boot is the same bug one step earlier.
+    """
+    groups = overcommitted_groups(shape, profile)
+    if not groups:
+        return
+    detail = "; ".join(_coresidency_lines(shape, profile, groups))
+    if shape_explicit:
+        emit_diagnostic(
+            f"warning: {detail}. Proceeding — you named --shape {shape.name} explicitly."
+        )
+        return
+    resolving = _coresidency_shapes(groups)
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=f"refusing to scaffold the default {shape.name!r} shape: {detail}",
+        remediation=(
+            f"choose a shape that hosts one of them: {', '.join(resolving)} "
+            f"(e.g. 'lobes init --shape {resolving[0]}'). "
+            f"To scaffold {shape.name} anyway, name it explicitly "
+            f"('lobes init --shape {shape.name}') — it warns, then proceeds."
+        ),
+    )
 
 
 def _profile_plan_lines(profile, card, profile_name: str | None, shape: Shape) -> list[str]:
@@ -527,6 +628,7 @@ def _emit_dry_run(
     json_mode: bool,
     profile_name: str | None,
     shape: Shape | None,
+    shape_explicit: bool = False,
 ) -> None:
     plan = _compose.scaffold_plan(target, _templates(fleet, audio))
     profile = card = None
@@ -534,7 +636,9 @@ def _emit_dry_run(
         # Detection/warning happens on a dry run too — the plan must be honest
         # about what --apply would do, including the fallback profile it would
         # serve on an UNKNOWN card.
-        profile, card = _resolve_fleet_profile(target, profile_name)
+        profile, card = _resolve_fleet_profile(
+            target, profile_name, shape, shape_explicit=shape_explicit
+        )
         # The tool-parser plugin file (t2) is fleet-only — mounted into
         # vllm-primary/cortex, never scaffolded for the legacy single-model dir.
         plan = plan + [_compose.plugin_plan(target)]
@@ -556,13 +660,17 @@ def _emit_apply(
     json_mode: bool,
     profile_name: str | None,
     shape: Shape | None,
+    shape_explicit: bool = False,
 ) -> None:
     profile = card = None
     if fleet:
-        # Resolve BEFORE writing anything — an explicit --profile mismatch or an
-        # UNKNOWN card (falling back to the conservative 'base' profile, t14)
-        # both warn here, before any file is written.
-        profile, card = _resolve_fleet_profile(target, profile_name)
+        # Resolve BEFORE writing anything — an explicit --profile mismatch, an
+        # UNKNOWN card (falling back to the conservative 'base' profile, t14) or
+        # a shape that would over-host the card's mutually-exclusive roles all
+        # surface here, before any file is written.
+        profile, card = _resolve_fleet_profile(
+            target, profile_name, shape, shape_explicit=shape_explicit
+        )
     written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
@@ -686,10 +794,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     shape = resolve_shape(shape_name or DEFAULT_SHAPE) if fleet else None
     target = Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
     profile_name = getattr(args, "profile", None)
+    # An EXPLICIT --shape is the operator's own decision (see
+    # _guard_coresidency): it warns past a co-residency clash, where the
+    # defaulted shape refuses.
+    shape_explicit = shape_name is not None
     if args.apply:
-        _emit_apply(target, fleet, audio, args.force, json_mode, profile_name, shape)
+        _emit_apply(
+            target, fleet, audio, args.force, json_mode, profile_name, shape, shape_explicit
+        )
     else:
-        _emit_dry_run(target, fleet, audio, json_mode, profile_name, shape)
+        _emit_dry_run(target, fleet, audio, json_mode, profile_name, shape, shape_explicit)
     return 0
 
 
@@ -765,7 +879,11 @@ def register(sub: argparse._SubParsersAction) -> None:
         "physical Jetson AGX Orin has booted it) drops both heavy lobes and "
         "hosts the opt-in 'minor' generate gear instead. Fleet topology only "
         "— incompatible with --single. An unknown value is a user error "
-        "naming the valid shapes.",
+        "naming the valid shapes. On a card that declares mutually-exclusive "
+        "roles (today only 'orin', whose cortex and senses do not both fit in "
+        "61.3 GiB), OMITTING --shape is refused with an error naming the shapes "
+        "that resolve it; naming 'machine-as-brain' explicitly warns and "
+        "proceeds.",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     p.add_argument("--apply", action="store_true", help="Actually write the files.")
