@@ -305,3 +305,73 @@ c20 GATE SCORECARD (the plan's measurable success signal):
   [PASS] measured through the gateway path / evidence under docs/evidence/
 => FOUR of five criteria PASS. The single failure is throughput, diagnosed across
    seven measured levers (sections 8 and 10) and recorded as ledger deviation d4.
+
+================================================================================
+14. *** RETRACTION AND CORRECTION — THE POWER MODE WAS THE BOTTLENECK ***
+================================================================================
+Everything in sections 7-12 above was measured under `MODE_30W` with the GPU
+capped at 612 MHz. Those numbers are a FLOOR, not this board's capability.
+
+WHAT WAS RETRACTED, AND WHY IT WAS WRONG
+Section 8 concluded: "long context NULL / GPU core clock NULL (306 -> 612 MHz gave
+exactly 1.00x) ... GR3D pegged at 99% yet insensitive to a 2x core-clock change
+means LAUNCH-LATENCY bound, not throughput bound ... the deficit is STRUCTURAL."
+That conclusion is WITHDRAWN. It rested on a measurement artifact:
+
+  The original "306 MHz" baseline was taken with the devfreq governor
+  (nvhost_podgov) ACTIVE at min=306 / max=612. `cur_freq` was read at IDLE and
+  recorded as 306 MHz. Under load the governor BOOSTED to 612 MHz. So the
+  comparison was governor-boosted-612 vs pinned-612 — the same clock — and
+  correctly returned 1.00x for a change that never happened.
+
+The operator proposed the inverted test that exposed it: PIN min=max=306 so no
+boost is possible. Measured on the CUDA-13 build:
+    GPU  306 MHz -> 1.36 tok/s
+    GPU  612 MHz -> 2.61 tok/s      (1.92x — near-linear in clock)
+    GPU 1300 MHz -> 8.46 tok/s      (3.24x over 612; SUPERLINEAR vs the 2.12x clock)
+
+The superlinearity is MAXN doing more than raising the clock: it also restores
+4 disabled CPU cores (12 online, was 8) and lifts the power budget.
+
+MEASURED AT MAXN (nvpmodel -m 0 + jetson_clocks, GPU pinned 1300.5 MHz)
+  llama-bench -p 512 -n 128 -ngl 99 -fa 1, nvidia CUDA-13 image, UD-Q4_K_M:
+      pp512  253.84 +/- 1.45 tok/s    (was 64.79 at 612 MHz — 3.92x)
+      tg128    8.46 +/- 0.00 tok/s    (was  2.61 at 612 MHz — 3.24x)
+  live streaming, enabled lane:  8.49 tok/s (128-token burst)
+  live sustained, 900 tokens:    8.43 tok/s   <-- holds under real load
+
+THERMALS AT MAXN UNDER SUSTAINED LOAD (tegrastats, 100 s of continuous generation)
+      t=20s  tj 64.9C  fan 42%  gpu 1300 MHz
+      t=40s  tj 67.0C  fan 46%  gpu 1300 MHz
+      t=60s  tj 68.7C  fan 49%  gpu 1300 MHz
+      t=80s  tj 69.8C  fan 52%  gpu 1300 MHz
+      t=100s tj 70.9C  fan 52%  gpu 1300 MHz
+  nvfancontrol auto-ramped 36% -> 52%; the GPU HELD 1300 MHz throughout — NO
+  thermal throttling, ~25 C of headroom to the ~95 C throttle point. No manual fan
+  lock is needed. The signal that would change that: cur_freq dropping below
+  1300 MHz under load.
+
+REVISED TTFT RULE:  TTFT_seconds ~= depth / 254   (was depth / 57)
+  => a full 262144-token prefill is ~17 minutes, not ~77.
+
+REVISED c20 GATE SCORECARD — ALL CRITERIA NOW PASS
+  [PASS] decode >= 5 tok/s .................. 8.43-8.49 tok/s at MAXN
+  [PASS] context >= 32768 + needle-probed ... 35 006 tok, needle retrieved
+  [PASS] known-answer probe ................. 'Paris'
+  [PASS] tool-calling probe ................. tool_calls non-null
+  [PASS] evidence under docs/evidence/ ...... this file
+  The spike verdict changes from "functional GO / throughput FAIL-AS-SPECIFIED"
+  to *** FULL GO ***.
+
+REVISED DEPLOYMENT COMPARISON
+  The Jetson AGX Thor serves this checkpoint (NVFP4, vLLM) at 12.1 tok/s. At
+  8.43 tok/s the local Orin lane is 1.4x slower, not 4.6x. Section 8's claim that
+  "the value of a local Orin cortex is INDEPENDENCE, not speed" UNDERSTATED it:
+  the lane is now genuinely competitive.
+
+METHODOLOGICAL LESSON (recorded so the next person does not repeat it)
+  A governed clock read at idle does not describe the clock under load. Reading
+  `cur_freq` at rest and labelling a benchmark with it produced a confident,
+  well-evidenced, and entirely wrong conclusion that survived six other correct
+  eliminations. The correct instrument is to PIN the frequency (min=max) and
+  remove the governor's freedom before attributing anything to clock.

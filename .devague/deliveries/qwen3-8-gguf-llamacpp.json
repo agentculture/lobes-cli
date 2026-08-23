@@ -2,7 +2,7 @@
   "plan_slug": "qwen3-8-gguf-llamacpp",
   "schema_version": 1,
   "created": "2026-08-22T21:57:52Z",
-  "updated": "2026-08-23T00:01:26Z",
+  "updated": "2026-08-23T04:21:23Z",
   "deviations": [
     {
       "id": "d1",
@@ -90,6 +90,21 @@
       "reason": "My t4 instruction said to hardcode 'runtime: nvidia' because this JetPack runs csv mode. The delivered lane instead declares the shipped deploy.resources stanza and registers in _compose.GPU_SERVICES; the orin card's existing gpu_access='runtime' then generates docker-compose.gpu.yml which !resets the stanza and sets runtime: nvidia. Verified end-to-end with a real 'lobes init --profile orin --shape orin-cortex --apply' + 'docker compose config': runtime: nvidia, deploy: null. This is BETTER than the instruction: csv-vs-CDI is a fact about a BOARD, and hardcoding it would bake one board's toolkit mode into a card-neutral template and break the lane on a devices-mode box. It also uses the very mechanism built to stop the hand-edit debt orin.toml:48 documents.",
       "affects": [
         "t4"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "d4 is RETRACTED: the throughput deficit was the MODE_30W power cap, not a structural limit",
+      "task_ref": "t1",
+      "reason": "d4 concluded the ~2.5 tok/s deficit was 'structural ... not reachable by any configuration lever'. WITHDRAWN. It rested on a measurement artifact: the '306 MHz' baseline was read from cur_freq at IDLE while the nvhost_podgov governor was active (min=306/max=612); under load the governor boosted to 612, so the comparison was boosted-612 vs pinned-612 and correctly returned 1.00x for a change that never occurred. The operator proposed pinning min=max=306, which exposed it: 306 MHz -> 1.36, 612 -> 2.61, 1300 (MAXN) -> 8.46 tok/s. MEASURED AT MAXN: pp512 253.84 (3.92x), tg128 8.46 (3.24x), sustained 8.43 over 900 tokens. Superlinear because MAXN also restores 4 CPU cores (12 vs 8) and lifts the power budget. ALL FIVE c20 criteria now PASS; the spike verdict changes from split to FULL GO. Thermals verified: tj 70.9C after 100s sustained, fan auto-ramped to 52%, GPU held 1300 MHz with no throttling.",
+      "affects": [
+        "t1",
+        "t5",
+        "t10",
+        "t11"
       ],
       "origin": "llm",
       "status": "approved",

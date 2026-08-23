@@ -220,3 +220,62 @@ was correct about the *requirement* and wrong about the *mechanism*.
   holding the `.gguf`, an operator path like `HF_CACHE`. Defaults to
   `${HOME}/.cache/llama.cpp`; `env.example` documents the knob and the
   `hf download` line.
+
+---
+
+## d8 — **d4 IS RETRACTED**: the throughput deficit was the power cap, not a structural limit
+
+- **Task:** t1 · **Classification:** acceptable · **Origin:** llm · **State:** approved
+- **Affects:** t1, t5, t10, t11 — and **supersedes d4**
+
+**What d4 claimed.** That measured decode of ~2.5 tok/s against the >=5 gate was
+"structural ... not reachable by any configuration lever", citing seven measured
+levers including a null result for GPU core clock (306 -> 612 MHz = exactly 1.00x).
+
+**Why it was wrong.** The "306 MHz" baseline was a **measurement artifact**. The
+devfreq governor (`nvhost_podgov`) was active at `min=306 / max=612`. I read
+`cur_freq` **at idle**, recorded "306 MHz", and benchmarked — but under load the
+governor **boosted to 612 MHz**. The comparison was therefore
+*governor-boosted-612* against *pinned-612*: the same clock. It correctly returned
+1.00x for a change that never happened, and that false null propagated into a
+confident structural conclusion.
+
+**How it was caught.** The operator proposed the inverted test — pin
+`min=max=306` so no boost is possible — which costs a sysfs write instead of a
+reboot and is decisive in either direction. Measured on the CUDA-13 build:
+
+| GPU clock | decode |
+|---|---|
+| 306 MHz (pinned) | 1.36 tok/s |
+| 612 MHz | 2.61 tok/s |
+| **1300.5 MHz (MAXN)** | **8.46 tok/s** |
+
+**Measured at MAXN** (`nvpmodel -m 0` + `jetson_clocks`, reboot required):
+
+| metric | 612 MHz | MAXN | gain |
+|---|---|---|---|
+| pp512 prefill | 64.79 | **253.84 ± 1.45** | **3.92x** |
+| tg128 decode | 2.61 | **8.46 ± 0.00** | **3.24x** |
+| sustained (900 tok) | — | **8.43** | — |
+
+The gain is **superlinear** against the 2.12x clock increase because MAXN also
+restores 4 disabled CPU cores (12 online, was 8) and lifts the power budget.
+
+**Consequences.**
+- **All five c20 criteria now PASS.** The spike verdict changes from
+  "functional GO / throughput FAIL-AS-SPECIFIED" to **FULL GO**.
+- TTFT rule revised: `TTFT_seconds ~= depth / 254` (was `/ 57`).
+- The deployment comparison changes: against the Thor's 12.1 tok/s the local lane
+  is **1.4x slower, not 4.6x** — competitive, not a consolation prize.
+- Evidence section 8's "launch-latency bound, not throughput bound" is withdrawn
+  in section 14.
+
+**Thermals verified at MAXN**, since the power increase is real: 100 s of
+sustained generation took `tj` to 70.9 C with `nvfancontrol` auto-ramping 36% ->
+52%, and the GPU **held 1300 MHz with no throttling** (~25 C of headroom). No
+manual fan lock is required.
+
+**Methodological lesson.** A governed clock read at idle does not describe the
+clock under load. That single error produced a confident, well-evidenced, entirely
+wrong conclusion that survived six other *correct* eliminations. Pin the frequency
+(`min=max`) before attributing anything to clock.
