@@ -233,3 +233,75 @@ Extrapolating to the full window: 262 144 / 57 ~= 77 minutes to first token.
    34K-token prompt was processed end-to-end) but it is a BATCH capability.
    Interactive use is bounded at roughly the low thousands of tokens, where TTFT
    is still seconds rather than minutes.
+
+--------------------------------------------------------------------------------
+10. QUANT ARM — a SMALLER quant is SLOWER (the decisive streaming test)
+--------------------------------------------------------------------------------
+Same image (nvidia CUDA-13), same flags, same box, `-fa 1`:
+
+| quant       | file size | pp512 (t/s)  | tg128 (t/s) |
+|-------------|-----------|--------------|-------------|
+| UD-Q4_K_M   | 15.32 GiB | 64.79 ± 0.10 | 2.61 ± 0.00 |  <-- SELECTED
+| UD-Q3_K_XL  | 12.23 GiB | 63.55 ± 0.69 | 2.46 ± 0.00 |
+
+A 20% smaller model runs 6% SLOWER. If decode were memory-bandwidth bound, fewer
+weight bytes would yield MORE tokens/s. It yields fewer. Q3_K dequantisation costs
+more compute per weight than Q4_K on sm_87.
+=> Weight streaming is definitively NOT the bottleneck. This is the strongest form
+   of that answer available: the experiment moved the number the WRONG WAY.
+
+--------------------------------------------------------------------------------
+11. SELECTED CONFIGURATION (what is enabled)
+--------------------------------------------------------------------------------
+  image ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+  model /models/Qwen3.8-27B-UD-Q4_K_M.gguf
+  flags --host 0.0.0.0 --port 8090 -ngl 99 -c 262144 --jinja -np 1 -fa on
+
+Chosen as the fastest of FIVE measured configurations (section 7 + section 10),
+not as a default. Live confirmation on the enabled lane: 2.64 tok/s decode,
+/health {"status":"ok"} — matching the 2.61 benchmark within noise.
+
+--------------------------------------------------------------------------------
+12. WHAT IS AND IS NOT PROVEN ABOUT THE 262144 WINDOW
+--------------------------------------------------------------------------------
+PROVEN:
+  - the server ALLOCATES and advertises it: n_ctx_slot = 262144, kv_unified=false,
+    /v1/models reports n_ctx 262144 / n_ctx_train 262144
+  - ~33 GiB resident at that setting, matching the 31.33 GiB header prediction
+  - a 34 024-token prompt was PROCESSED end-to-end (604.95 s prefill) and answered
+NOT PROVEN at the time of writing:
+  - needle RETRIEVAL at depth (probe running; see section 13)
+  - any prompt beyond 34 024 tokens. The full 262144 window has NEVER been filled.
+    At ~57 tok/s that would take ~77 minutes of prefill for a single request.
+HONEST STATEMENT: the 256K window is SERVED and PARTIALLY EXERCISED (to ~13% of
+its depth). It is not demonstrated at full depth, and this transcript does not
+claim it is.
+
+--------------------------------------------------------------------------------
+13. NEEDLE-IN-HAYSTACK RETRIEVAL — the c20 context gate, PASSED
+--------------------------------------------------------------------------------
+Method: a unique sentinel ("The maintenance access code for the Orin lobe is
+TANGERINE-4417.") planted at the MIDPOINT of a filler haystack, with the question
+asked at the very END. Depth is reported as the server's OWN measured
+prompt_tokens, not the requested figure.
+
+  requested ctx      : 32768
+  prompt_tokens      : 35 006   (server-measured — EXCEEDS the c20 floor of 32768)
+  answer returned    : 'TANGERINE-4417'
+  NEEDLE FOUND       : True                          <-- THE GATE, PASSED
+  prefill            : 58.8 tok/s
+  decode             : 2.74 tok/s
+
+=> The 262144-token window is not merely ALLOCATED — content planted 17.5K tokens
+   deep is RETRIEVED VERBATIM. This distinguishes a usable context from a nominal
+   one: a model can accept a long prompt and still have lost its contents. It has
+   not.
+
+c20 GATE SCORECARD (the plan's measurable success signal):
+  [PASS] context >= 32768 served AND needle-probed ....... 35 006 tok, needle found
+  [PASS] known-answer probe .............................. 'Paris'
+  [PASS] tool-calling probe .............................. tool_calls non-null
+  [FAIL] decode >= 5 tok/s single-stream ................. 2.61-2.74 tok/s
+  [PASS] measured through the gateway path / evidence under docs/evidence/
+=> FOUR of five criteria PASS. The single failure is throughput, diagnosed across
+   seven measured levers (sections 8 and 10) and recorded as ledger deviation d4.
