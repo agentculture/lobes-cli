@@ -387,8 +387,12 @@ boxes serve as `cortex` — was **never benchmarked here, and cannot be**: it is
 W4A4 and needs Blackwell FP4 tensor cores, which is the whole reason this lane
 exists.
 
-So the intuition *"Q4_K_M is close to NVFP4"* is **plausible but unverified**.
-What is actually established:
+The operator's assessment that *"Q4_K_M is close to NVFP4"* rests on **published
+quant-comparison benchmarks** — a legitimate basis, and the right one to use when
+the two formats cannot meet on the same silicon. What this work did **not** do is
+reproduce that comparison locally, and it should not be read as having done so.
+
+What is established *by measurement here*:
 
 - Q4_K_M sits within **0.39% perplexity** of Q6_K, two quantisation levels above
   it — *measured here*
