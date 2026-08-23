@@ -46,6 +46,8 @@ from .test_init_shape import _ComposeTagLoader, _fake_card
 # The card whose live toolkit measured csv mode. Every other built-in stays on
 # the default — pinned below, so promoting a second card is a deliberate edit.
 CSV_MODE_CARD = "orin"
+# A deployment shape the csv-mode card can actually boot — see `_init` below.
+CSV_MODE_SHAPE = "orin-lobe"
 
 
 def _load_gpu_override(target, name: str) -> dict:
@@ -180,7 +182,19 @@ def test_each_half_only_names_services_its_own_base_file_declares() -> None:
 
 
 def _init(tmp_path, monkeypatch, *args, card: str = CSV_MODE_CARD):
+    """Run `lobes init` against an injected card, naming a shape on the csv card.
+
+    The csv-mode card (`orin`) declares `cortex` and `senses` mutually exclusive
+    (`[[exclusive_roles]]`), so a SHAPE-LESS init on it is now refused outright —
+    the default `machine-as-brain` would host both and over-commit 61.3 GiB (see
+    `tests/test_init_coresidency.py`). That refusal is not what this module is
+    about: gpu_access is a CARD fact, orthogonal to which roles the box hosts.
+    So these runs name a resolving shape and go on testing the override pair.
+    A caller that passes its own `--shape` keeps it.
+    """
     monkeypatch.setattr(_detect, "detect_card", lambda: _fake_card(card))
+    if card == CSV_MODE_CARD and "--shape" not in args:
+        args = (*args, "--shape", CSV_MODE_SHAPE)
     return main(["init", str(tmp_path), *args])
 
 

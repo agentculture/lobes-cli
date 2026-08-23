@@ -19,7 +19,11 @@ data by booting it, and this boot is what earned Orin's. The repo's built-in
 > co-reside with `senses` (MEASURED: ~33 GiB + ~27.6 GiB against 61.3 GiB with
 > zero swap), so it comes with its own shape, `orin-cortex`, which drops `senses`
 > the way `orin-lobe` drops `cortex`. Both are **DECLARED, UNVALIDATED** — no box
-> has booted either. See `docs/qwen3.8-27b-gguf-llamacpp.md` and
+> has booted either. That non-co-residency is now DECLARED DATA the tool acts on
+> (`[[exclusive_roles]]` in the card profile), not just prose: a shape-less
+> `lobes init` on this board is REFUSED, naming `orin-cortex`/`orin-lobe`, rather
+> than rendering a deployment that starts both and OOMs. See
+> `docs/qwen3.8-27b-gguf-llamacpp.md`, `docs/machine-profiles.md` and
 > `docs/deployment-shapes.md`.
 
 ## What this box serves
