@@ -81,8 +81,10 @@ llamacpp:kv_cache_usage_ratio 0.5
 def test_parse_metrics_llamacpp_parses_its_own_series() -> None:
     m = _metrics.parse_metrics(LLAMACPP_SAMPLE)
     assert m["engine"] == "llamacpp"
-    assert m["running"] == 2 and m["waiting"] == 1
-    assert m["prompt_tokens"] == 100 and m["generation_tokens"] == 40
+    assert m["running"] == 2
+    assert m["waiting"] == 1
+    assert m["prompt_tokens"] == 100
+    assert m["generation_tokens"] == 40
     assert m["kv_cache_usage"] == 0.5
 
 
@@ -96,7 +98,8 @@ def test_parse_metrics_llamacpp_marks_finish_reasons_unsupported() -> None:
     # llama.cpp has no per-finish-reason success counter at all: the fields are
     # ABSENT and named in ``unsupported`` — never emitted as a zero.
     m = _metrics.parse_metrics(LLAMACPP_SAMPLE)
-    assert "requests_succeeded" not in m and "by_finish_reason" not in m
+    assert "requests_succeeded" not in m
+    assert "by_finish_reason" not in m
     assert m["unsupported"] == ["requests_succeeded", "by_finish_reason"]
 
 
@@ -105,7 +108,9 @@ def test_parse_metrics_llamacpp_absent_series_is_unknown_not_zero() -> None:
     # distinguishing "0 because idle" from "unknown because unsupported".
     m = _metrics.parse_metrics("llamacpp:prompt_tokens_total 7\n")
     assert m["prompt_tokens"] == 7
-    assert "running" not in m and "waiting" not in m and "kv_cache_usage" not in m
+    assert "running" not in m
+    assert "waiting" not in m
+    assert "kv_cache_usage" not in m
     assert set(m["unsupported"]) >= {"running", "waiting", "kv_cache_usage"}
 
 
@@ -119,7 +124,8 @@ def test_parse_metrics_unrecognised_engine_reports_no_numbers() -> None:
 def test_parse_metrics_vllm_output_is_unchanged() -> None:
     # Byte-identity guard: the vLLM dict grows no engine/unsupported keys.
     m = _metrics.parse_metrics(SAMPLE)
-    assert "engine" not in m and "unsupported" not in m
+    assert "engine" not in m
+    assert "unsupported" not in m
     assert _metrics.parse_metrics("") == {
         "running": 0,
         "waiting": 0,
@@ -133,7 +139,8 @@ def test_parse_metrics_vllm_output_is_unchanged() -> None:
 def test_parse_metrics_prefers_vllm_when_both_prefixes_present() -> None:
     text = 'vllm:num_requests_running{e="0"} 5.0\nllamacpp:requests_processing 1\n'
     m = _metrics.parse_metrics(text)
-    assert m["running"] == 5 and "engine" not in m
+    assert m["running"] == 5
+    assert "engine" not in m
 
 
 # --- http_get_text body cap + probe short-circuit -------------------------
@@ -237,7 +244,9 @@ def test_single_sections_llamacpp_reports_busy_and_unknown() -> None:
     )
     busy = "\n".join(secs[2]["items"])
     usage = "\n".join(secs[3]["items"])
-    assert "running: 2" in busy and "waiting: 1" in busy  # busy, not idle
+    # busy, not idle
+    assert "running: 2" in busy
+    assert "waiting: 1" in busy
     assert "prompt tokens: 100" in usage
     # No success counter on this engine → "unknown", never a fabricated 0.
     assert "requests succeeded: unknown" in usage
@@ -248,7 +257,8 @@ def test_single_sections_unknown_engine_reports_unknown_everywhere() -> None:
     m = _metrics.parse_metrics("someengine:running 4.0\n")
     secs = _live.single_sections(8000, "X", healthy=True, metrics=m)
     busy = "\n".join(secs[2]["items"])
-    assert "unknown" in busy and "running: 0" not in busy
+    assert "unknown" in busy
+    assert "running: 0" not in busy
 
 
 def _fleet_status_with_llamacpp() -> dict:
@@ -269,7 +279,8 @@ def _fleet_status_with_llamacpp() -> dict:
 def test_fleet_sections_flags_partial_usage_totals() -> None:
     secs = _live.fleet_sections(_fleet_status_with_llamacpp())
     online = "\n".join(secs[0]["items"])
-    assert "cortex-llamacpp (generate): ok" in online and "run 2 wait 1" in online
+    assert "cortex-llamacpp (generate): ok" in online
+    assert "run 2 wait 1" in online
     busy = "\n".join(secs[2]["items"])
     assert "partial" in busy  # the aggregate is known-incomplete, and says so
     usage = "\n".join(secs[3]["items"])

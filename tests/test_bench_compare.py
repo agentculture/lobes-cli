@@ -266,7 +266,8 @@ def test_qwen_variants_never_pick_a_non_vllm_gear_as_the_bf16_side() -> None:
     ), "precondition: a non-vLLM 27B Qwen gear with no quantization flag exists"
     nvfp4, bf16 = C.qwen_nvfp4_bf16_variants()
     assert bf16 is None
-    assert nvfp4 is not None and nvfp4.engine == "vllm"
+    assert nvfp4 is not None
+    assert nvfp4.engine == "vllm"
 
 
 def test_qwen_variants_both_present_with_injected_catalog() -> None:
