@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.4] - 2026-08-23
+
+### Added
+
+- docs/qwen3.8-27b-gguf-llamacpp.md — three sections measured *after* #193 merged:
+  - **Agentic clients and prompt caching.** The `qwen` CLI sends ~35 000 tokens of
+    preamble per turn, which cold costs ~150 s of prefill. llama.cpp's prompt cache
+    (on by default) cuts warm turns to ~0.3 s — a ~500x reduction — so the preamble
+    is paid **once per session, not per turn**. This retracts an earlier note that
+    called agentic use impractical; that note generalised from two consecutive
+    *cold* turns and was wrong.
+  - **What was NOT compared: NVFP4.** It was never benchmarked on this box and
+    cannot be (W4A4 needs Blackwell FP4 tensor cores — the reason this lane
+    exists). Cross-engine quality parity rests on published benchmarks, not on
+    anything measured here, and the doc now says so.
+  - Throughput under real agentic load (8.2 tok/s) matches the synthetic benchmark
+    (8.46 tok/s), so the lane behaves as characterised when a genuine client drives it.
+
+### Changed
+
+### Fixed
+
 ## [0.58.3] - 2026-08-23
 
 ### Added
