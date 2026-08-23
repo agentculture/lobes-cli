@@ -158,3 +158,84 @@ container** — the same protection every "needs a compose edit" gear gets, so a
 healthy deployment is never taken down by a switch that could not have worked.
 The llama.cpp lane itself is rendered from repo data (compose template + machine
 profile + deployment shape) by the plan's tasks t4/t5, not from `VLLM_*` keys.
+
+## Measured performance (plan task t10, evidence `docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt`)
+
+**Status: functional GO / throughput FAIL-AS-SPECIFIED.** Measured on a Jetson
+AGX Orin 64 GB (sm_87, L4T R39.2 / JetPack 7.x, driver 595.78), `MODE_30W` with
+clocks pinned via `jetson_clocks` (GPU 612 MHz, EMC 3199 MHz), senses stopped.
+
+### The selected configuration
+
+    image  ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191
+    flags  -ngl 99 -c 262144 --jinja -np 1 -fa on
+
+This is the fastest of **five** measured configurations, not a default:
+
+| build | CUDA | fa | quant | pp512 (t/s) | tg128 (t/s) |
+|---|---|---|---|---|---|
+| ggml-org 10573 | 12 | 1 | Q4_K_M | 63.10 | 2.53 |
+| ggml-org 10573 | 12 | 0 | Q4_K_M | 61.98 | 2.52 |
+| **nvidia 10373** | **13** | **1** | **Q4_K_M** | **64.79** | **2.61** |
+| nvidia 10373 | 13 | 0 | Q4_K_M | 63.56 | 2.57 |
+| nvidia 10373 | 13 | 1 | Q3_K_XL | 63.55 | 2.46 |
+
+Note the CUDA-13 image carries an **older** llama.cpp (10373 < 10573), so its win
+is the CUDA generation, not newer llama.cpp code. Note also that the **smaller**
+quant is **slower** — see "Why it is 2.6 tok/s".
+
+### Latency and depth
+
+| prompt depth | TTFT | decode |
+|---|---|---|
+| 0 | 1.6 s | 2.61 tok/s |
+| 512 | 12.4 s | 2.62 tok/s |
+| 2 048 | 41.6 s | 2.62 tok/s |
+| 8 192 | 143 s | 2.58 tok/s |
+| 32 768 | 610 s (10.2 min) | 2.43 tok/s |
+
+Sustained prefill is 56-63 tok/s and both curves degrade **gently** with depth
+(decode -7%, prefill -10% across the measured range). There is no cliff, so:
+
+> **TTFT is a near-linear function of prompt size: `TTFT_seconds ~= depth / 57`.**
+
+Extrapolated to the full window that is ~77 minutes to first token at 262144.
+The window is genuinely served, but on this hardware it is a **batch capability,
+not an interactive one**. Interactive use is bounded at roughly the low thousands
+of tokens. This caveat must travel with every claim about the context length.
+
+### Why it is 2.6 tok/s — seven levers, all measured
+
+| lever | effect |
+|---|---|
+| long context (8192 vs 262144) | **null** — identical |
+| GPU core clock (306 -> 612 MHz) | **null** — exactly 1.00x |
+| memory / EMC clock | n/a — already pinned at max |
+| CPU saturation | **null** — no core above 54% |
+| flash attention | +1.5% |
+| CUDA generation (12 -> 13) | +3.2% |
+| GGUF quant (Q4_K_M -> Q3_K_XL) | **-6%** — smaller is *slower* |
+
+`GR3D_FREQ` sits at 99-100% throughout yet decode is completely insensitive to a
+2x core-clock change: that is **launch-latency bound**, not compute bound
+(`GR3D_FREQ` on Tegra measures work *submitted*, not ALU occupancy). And a 20%
+smaller model running 6% slower rules out weight streaming — if decode were
+bandwidth bound, fewer bytes would mean more tokens/s.
+
+**The deficit against the plan's >=5 tok/s gate is structural**, not a
+misconfiguration: the Gated-DeltaNet path is launch-latency bound on sm_87.
+
+For context, the Jetson AGX Thor serves this same checkpoint (NVFP4, vLLM) at
+12.1 tok/s. Proxying `cortex` to a peer is ~4.6x faster than serving it locally
+here. **The value of a local Orin cortex is independence, not speed.**
+
+## Feature parity vs the vLLM cortex lane
+
+| feature | this lane | note |
+|---|---|---|
+| reasoning_content | **PASS** | on default flags; `<think>` does not leak into content |
+| preserve_thinking (#93) | **PASS** | the GGUF template preserves *by default* — better than the vLLM lane, which needs an explicit flag |
+| tool calling | **PASS** | `tool_calls` non-null, `finish_reason: "tool_calls"`; llama.cpp ships a `Qwen 3 Coder` parser for this XML dialect |
+| MTP / speculative decoding | **ABSENT** | llama.cpp ignores `blk.64.nextn.*`; ~0.9 GiB of the file is dead weight |
+| vision / ViT | **ABSENT** | text-only GGUF; no mmproj companion |
+
