@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.0] - 2026-08-25
+
+### Added
+
+- docs/dspark-speculation.md: a measured-here section recording the 2026-08-24 DSpark block-speculation spike on the deployed Spark cortex — vLLM DSpark loads and serves against the fleet's W4A4 NVFP4 target with no code/engine change, beats the incumbent MTP-n2 arm on code (+64%) and reasoning (+39%) but loses on prose (-27%), and beats the no-speculation floor on every shape and content type.
+
+### Changed
+
+- docs/qwen3.8-27b-nvfp4.md and docs/dspark-speculation.md: the 19.9-24.0 tok/s incumbent figure is now consistently cited as a DATED 2026-08-19 measurement (docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt), never as a live baseline, alongside the new DSpark numbers.
+
 ## [0.59.1] - 2026-08-23
 
 ### Added

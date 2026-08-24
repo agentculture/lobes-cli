@@ -136,8 +136,80 @@ issue #93 `preserve_thinking: true` intact.
 > free to drop. Effort x tool-calling, x strict/xgrammar, and x depth in the 1M
 > window are all unmeasured.
 
+## Speculative decoding — DSpark spike, MEASURED 2026-08-24, and the d4 adoption
+
+The self-hosted MTP head (`{"method":"mtp","num_speculative_tokens":2}`,
+above) is not the only speculative arm this checkpoint's vLLM lane can run.
+On **2026-08-24**, box **DGX Spark GB10** (`spark-f8a9`), image digest
+`sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303`
+(vLLM `0.26.1rc1.dev942+g5a4c8d992` — the same nightly as this doc's own
+1M measurements), this lane was spiked against `RadixArk/Qwen3.8-27B-DSpark`
+(revision `85ef153be924f17ce4bf62726954eeaa4a73e854`), a third-party
+block-speculative drafter published for a different (SGLang, RadixArk NVFP4)
+recipe. Full transcript:
+`docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt`; the full reading
+lives in `docs/dspark-speculation.md#measured-here-dspark-on-the-fleets-own-vllm-lane`.
+Headline, all MEASURED-HERE (dated) 2026-08-24, single-stream batch-1:
+
+- **DSpark loads and serves against this checkpoint on vLLM**, no code
+  change, no engine swap.
+- **Config diff:** only `--speculative-config` changed, to
+  `{"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153b...","num_speculative_tokens":7}`.
+- **It does not fit at the 1M window.** At this doc's own
+  `gpu_mem_util=0.58` / `max_model_len=1048576`, vLLM refused the DSpark boot
+  (`needs 51.47 GiB KV; available 40.76 GiB; est. max model length 824000`).
+  DSpark was measured at `max_model_len=786432` and `262144` instead — a
+  **served-contract change**, not a private dial.
+- **@262144, decode tok/s (code / reasoning / prose), single-stream:** none
+  9.93 / 9.95 / 10.01; incumbent mtp-n2 24.69 / 21.90 / 16.65; dspark
+  46.20 / 31.73 / 13.71. DSpark beats the no-speculation floor on every
+  shape, beats mtp-n2 on code and reasoning, and loses to mtp-n2 on prose
+  (content-dependent acceptance: ~61.9% code, ~47–49% reasoning, ~28.6–32.1%
+  prose).
+- **This doc's own 19.9–24.0 tok/s figure, above, is a DATED 2026-08-19
+  measurement** taken under the incumbent MTP config at the full 1M YaRN
+  window — not a live baseline, and not directly comparable to the
+  262144/786432-window DSpark numbers above without naming the window
+  difference, per `docs/model-switch-playbook.md`'s re-measure-same-day rule.
+- **A deployment defect was found en route:** the deployed scaffold
+  generation on this box (0.57.2) hardcodes `--speculative-config` in the
+  rendered compose file, predating the `${PRIMARY_SPECULATIVE_CONFIG-...}`
+  substitution in this repo's current template (0.59.0); setting the env var
+  alone had no effect on the running container's argv there. Proven only by
+  reading the argv from `docker inspect`, never from `.env`.
+- **What this does NOT establish:** no output-quality/equivalence claim (only
+  speed and acceptance were measured); the FP8-trained-drafter-vs-W4A4-target
+  acceptance-mismatch hypothesis is narrowed, not proven, by a same-drafter
+  A16-target comparison that found acceptance within ~1 point of the W4A4
+  target on every shape; no `num_speculative_tokens` sweep, no
+  `dspark_draft_topk` tuning, no concurrency measurement, and single-run
+  variance of roughly ±10–13% was directly observed in the incumbent arm's
+  own re-measurements. See the spike transcript's own section 9 and section
+  13, and `docs/dspark-speculation.md`'s "What the spike does NOT establish",
+  for the full list.
+- **Deployment adoption (2026-08-25, deviation d4, operator-reported):**
+  following this spike, the deployed Spark `cortex` lane was switched to
+  DSpark at `max_model_len=262144`, **withdrawing the 1M YaRN window**
+  documented above. This is a hand-edit to the live deployment, not backed
+  by its own dated acceptance transcript. **Unresolved follow-up:** a plain
+  `lobes init --apply` re-render of this box would regenerate
+  `docker-compose.yml` from the shape/profile knobs, which do not know about
+  this hand-edit, and could silently revert the lane back to the incumbent
+  MTP config and/or the 1M window. Verify the live rendered argv via
+  `docker inspect` (never `.env` alone) before and after any re-render of
+  this box.
+
 ## Known limits
 
+- **The 1M window above is the VALIDATED shape, not necessarily the
+  currently-deployed one.** Per the d4 adoption note above, the Spark
+  `cortex` lane was hand-switched to DSpark at `max_model_len=262144` on
+  2026-08-25, which is NOT the 1,048,576 window this doc's "Serving shape"
+  and "Measured performance" sections describe. Those sections stay accurate
+  as a description of what was validated at 1M; they are not a live
+  guarantee of what this box currently serves. `lobes status` / `lobes
+  capabilities` on the box, or `docker inspect`'s rendered argv, are the
+  live source of truth.
 - 1.21× KV ceiling at 1M: one full-depth request effectively owns the lane
   for its multi-minute prefill; no per-request KV fairness in v1 (plan risk r3).
 - MTP acceptance at 1M depth beyond the probes above is lightly measured
