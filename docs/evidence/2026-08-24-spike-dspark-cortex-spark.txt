@@ -1,0 +1,229 @@
+# Spike — DSpark block-speculative decoding on the DGX Spark cortex
+# plan: docs/plans/2026-08-24-dspark-speculation-on-the-spark-cortex.md (t6)
+# box: DGX Spark GB10 (compute cap 12.1) · date: 2026-08-24
+
+## Section 1 — preflight (read-only, before any mutation)
+=== peer cortex state (read BEFORE any mutation) ===
+  read at        : 2026-08-24T17:30:39Z
+  from           : spark-f8a9 (this box)
+  peer thor@thor      reachable   deploy_dir=/home/thor/.lobes
+    PRIMARY_PEER_ORIGIN = <unset>
+    PRIMARY_PEER_PROXY  = <unset>
+    PRIMARY_FEASIBLE    = <unset>
+  peer orin@orin      reachable   deploy_dir=/home/orin/.lobes
+    PRIMARY_PEER_ORIGIN = http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_PROXY  = false
+    PRIMARY_FEASIBLE    = true
+
+  local cortex declaration (/home/spark/.lobes/.env):
+    PRIMARY_FEASIBLE         = <unset>
+    PRIMARY_PEER_ORIGIN      = <unset>
+    PRIMARY_PEER_PROXY       = <unset>
+    PRIMARY_MODEL            = unsloth/Qwen3.8-27B-NVFP4
+    PRIMARY_MAX_MODEL_LEN    = 1048576
+    PRIMARY_GPU_MEM_UTIL     = 0.58
+    PRIMARY_SPECULATIVE_CONFIG = <unset>
+    (the PRIMARY_SPECULATIVE_CONFIG line above is NOT the proof —
+     the rendered argv below is. They disagree when compose mangles it.)
+
+--- cortex container ---
+model-gear-vllm-primary  Up 3 days (healthy)  image=vllm/vllm-openai
+  image digest: sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+
+--- rendered argv proof (source: docker inspect model-gear-vllm-primary, NOT .env) ---
+  OK       --hf-overrides
+           {"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}
+  OK       --default-chat-template-kwargs
+           {"preserve_thinking": true}
+  OK       --speculative-config
+           {"method": "mtp", "num_speculative_tokens": 2}
+
+=== preflight verdict ===
+  PASS — peer state recorded, and the rendered --speculative-config
+         token is present and well-formed in the container argv.
+  (read-only mode: nothing was mutated)
+
+## Section 2 — ARM 1: incumbent mtp-n2, measured same-day BEFORE any stop (c9/h3)
+# window in force: PRIMARY_MAX_MODEL_LEN=1048576, gpu_mem_util=0.58, max_num_seqs=2
+
+## Section 3 — ARM 1 RESULT (incumbent mtp-n2, no downtime)
+  code       ttft=161.9ms  23.67 tok/s  accept=76.2% (docker_logs)
+  reasoning  ttft=159.5ms  21.76 tok/s  accept=76.2% (docker_logs)
+  prose      ttft=146.8ms  16.40 tok/s  accept=76.1% (docker_logs)
+  window: max_model_len=1048576, gpu_mem_util=0.58, max_num_seqs=2
+
+## Section 4 — operator stop announcement + cortex stop
+=== peer cortex state (read BEFORE any mutation) ===
+  read at        : 2026-08-24T17:34:31Z
+  from           : spark-f8a9 (this box)
+  peer thor@thor      reachable   deploy_dir=/home/thor/.lobes
+    PRIMARY_PEER_ORIGIN = <unset>
+    PRIMARY_PEER_PROXY  = <unset>
+    PRIMARY_FEASIBLE    = <unset>
+  peer orin@orin      reachable   deploy_dir=/home/orin/.lobes
+    PRIMARY_PEER_ORIGIN = http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_PROXY  = false
+    PRIMARY_FEASIBLE    = true
+
+  local cortex declaration (/home/spark/.lobes/.env):
+    PRIMARY_FEASIBLE         = <unset>
+    PRIMARY_PEER_ORIGIN      = <unset>
+    PRIMARY_PEER_PROXY       = <unset>
+    PRIMARY_MODEL            = unsloth/Qwen3.8-27B-NVFP4
+    PRIMARY_MAX_MODEL_LEN    = 1048576
+    PRIMARY_GPU_MEM_UTIL     = 0.58
+    PRIMARY_SPECULATIVE_CONFIG = <unset>
+    (the PRIMARY_SPECULATIVE_CONFIG line above is NOT the proof —
+     the rendered argv below is. They disagree when compose mangles it.)
+
+--- cortex container ---
+model-gear-vllm-primary  Up 3 days (healthy)  image=vllm/vllm-openai
+  image digest: sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+
+--- rendered argv proof (source: docker inspect model-gear-vllm-primary, NOT .env) ---
+  OK       --hf-overrides
+           {"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}
+  OK       --default-chat-template-kwargs
+           {"preserve_thinking": true}
+  OK       --speculative-config
+           {"method": "mtp", "num_speculative_tokens": 2}
+
+=== preflight verdict ===
+  PASS — peer state recorded, and the rendered --speculative-config
+         token is present and well-formed in the container argv.
+
+================= OPERATOR STOP ANNOUNCEMENT =================
+  ANNOUNCED AT : 2026-08-24T17:34:31Z
+  BOX          : spark-f8a9
+  LANE GOING DOWN : vllm-primary (model-gear-vllm-primary) — the fleet's `cortex` role
+  GATEWAY      : http://localhost:8001
+  DEPLOY DIR   : /home/spark/.lobes
+
+  WHY          : DSpark speculation spike — the cortex lane is stopped and
+                 re-booted with a different --speculative-config, then measured
+                 against its own baseline on this same box.
+
+  IMPACT       : model=cortex / main / hard 404s or fails on this gateway for
+                 the duration. Peers proxying cortex here: none detected
+                 Peers hosting their own cortex are unaffected.
+
+  DURATION     : one model load per arm (the 27B NVFP4 takes minutes, not
+                 seconds). Assume the lane is DOWN until an all-clear.
+
+  ALL-CLEAR    : scripts/spike-preflight.sh restore
+                 (proves `lobes status` + one live generate through the gateway)
+
+  ROLLBACK     : the incumbent config is the .env recorded above. Restoring it
+                 and re-running `restore` is the abort path.
+==============================================================
+
+--- APPLY: stopping vllm-primary ---
+ Container model-gear-vllm-primary Stopping 
+ Container model-gear-vllm-primary Stopped 
+STOPPED at 2026-08-24T17:34:43Z. The lane is DOWN. Announce the all-clear with:
+  /home/spark/git/lobes-cli/scripts/spike-preflight.sh restore
+
+## Section 5 — ARM 2 (DSpark) FIRST BOOT: refused on KV budget (risk r2 realised)
+  rendered argv PROVEN: --speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153b...","num_speculative_tokens":7}
+  vLLM resolved architecture: DSparkDraftModel  (the drafter LOADS — this is not a load failure)
+  ValueError: max seq len 1048576 needs 51.47 GiB KV; available 40.76 GiB; est. max model length 824000
+  => the 1.36B/2.53GiB drafter + its own 5 full-attention KV layers push KV/token up AND cut available memory.
+  => a WINDOW TRADE-DOWN is required. Per frame c24 this is a served-contract change, announced, not a private dial.
+
+## Section 6 — DEPLOYMENT DEFECT found en route (0.57.2 scaffold)
+  The deployed docker-compose.yml HARDCODES --speculative-config; it predates the
+  ${PRIMARY_SPECULATIVE_CONFIG-...} substitution in the repo's current template (0.59.0).
+  Setting PRIMARY_SPECULATIVE_CONFIG in .env had NO effect on the rendered argv.
+  The documented OFF-SWITCH is therefore also dead on this box — which the 'none' arm depends on.
+  Caught by t4's argv proof (c21/h16); .env alone would have reported success.
+
+## Section 7 — RESULTS (all arms, all shapes, window named per h18)
+
+Harness: scripts/spec-arms.py (t5). Acceptance surface: docker_logs (vLLM's own
+"SpecDecoding metrics ... Avg Draft acceptance rate"). Box: DGX Spark GB10,
+2026-08-24. Engine: vLLM 0.26.1rc1.dev942+g5a4c8d992. Target:
+unsloth/Qwen3.8-27B-NVFP4 (compressed-tensors, kv fp8, util 0.58, max_num_seqs 2).
+
+ARM 1 — mtp-n2 @ max_model_len=1048576 (the incumbent, measured before any stop)
+  code       ttft  161.9 ms   23.67 tok/s   accept 76.2%
+  reasoning  ttft  159.5 ms   21.76 tok/s   accept 76.2%
+  prose      ttft  146.8 ms   16.40 tok/s   accept 76.1%
+  KV pool 1,271,476 tok (from the 2026-08-19 acceptance run at this config)
+
+ARM 1b — mtp-n2 @ max_model_len=786432 (re-measured at the traded-down window)
+  code       ttft 7188.8 ms*  27.37 tok/s   accept 95.2%   *cold start, first request after boot
+  reasoning  ttft  222.3 ms   23.98 tok/s   accept 89.2%
+  prose      ttft  305.6 ms   18.21 tok/s   accept 74.5%
+  KV pool 1,274,831 tok, concurrency 1.62x
+
+ARM 2 — dspark (block 7) @ max_model_len=786432
+  code       ttft 1092.5 ms   44.85 tok/s   accept 61.9%
+  reasoning  ttft  249.7 ms   33.26 tok/s   accept 47.0%
+  prose      ttft  346.6 ms   13.33 tok/s   accept 28.6%
+  KV pool 830,827 tok, concurrency 1.06x  (drafter costs ~35% of the pool)
+
+ARM 2b — dspark (block 7) @ max_model_len=262144  [deviation d1]
+  code       ttft 1028.7 ms   46.20 tok/s   accept n/a (metrics window empty)
+  reasoning  ttft  254.2 ms   31.73 tok/s   accept 49.3%
+  prose      ttft  349.8 ms   13.71 tok/s   accept 32.1%
+  KV pool 766,403 tok, concurrency 2.92x
+
+ARM 3 — none (no speculative decoding at all) @ max_model_len=786432
+  code       ttft  609.8 ms   11.29 tok/s   n/a
+  reasoning  ttft  207.3 ms   11.14 tok/s   n/a
+  prose      ttft  138.6 ms   11.42 tok/s   n/a
+  KV pool 1,404,121 tok, concurrency 1.79x
+
+## Section 8 — READING THE RESULT
+
+Speed-up over the no-speculation floor (~11.3 tok/s, flat across shapes):
+  shape      none     mtp-n2@768K        dspark@768K
+  code       11.29    27.37 (2.42x)      44.85 (3.97x)
+  reasoning  11.14    23.98 (2.15x)      33.26 (2.99x)
+  prose      11.42    18.21 (1.59x)      13.33 (1.17x)
+
+1. DSpark LOADS AND SERVES on a W4A4 NVFP4 target in vLLM. c16 output (1) is YES.
+   vLLM resolved DSparkDraftModel; no code change, no SGLang, no checkpoint swap.
+2. It is a LARGE win on structured output (+64% over the incumbent on code) and a
+   NET LOSS on free-form prose (-27% vs mtp-n2) — but still ABOVE the floor on
+   every shape. DSpark never loses to no-speculation; it loses to MTP on prose.
+3. The content dependence tracks ACCEPTANCE, not the window: 61.9/47.0/28.6% for
+   code/reasoning/prose. This mirrors the published SGLang spread (43-47 code,
+   12-18 prose) closely enough to be the same phenomenon.
+4. Deviation d1 REFUTES the extrapolation hypothesis. At 262144 — where neither
+   target nor drafter is asked to exceed its declared range — the numbers are
+   unchanged within noise (46.20/31.73/13.71 vs 44.85/33.26/13.33). The prose
+   collapse is NOT a YaRN artifact. The remaining candidate explanation is the
+   recorded FP8-trained-drafter vs W4A4-target mismatch (c20/r1) — still a
+   hypothesis, NOT established here.
+5. The floor is 11.3 tok/s and FLAT across shapes, as a bandwidth-bound dense
+   decode should be. Every headline in this repo's cortex history is a
+   speculation multiplier on that floor.
+6. COST: the drafter takes ~35% of the KV pool and forced the 1M window down to
+   <=824000 (vLLM's own estimate). At util 0.58 you cannot have both DSpark and
+   the advertised 1M window. This is the served-contract change c24 named.
+7. The window trade-down is itself a speed-up: mtp-n2 gained +10-16% going from
+   1048576 to 786432 with nothing else changed.
+
+## Section 9 — WHAT THIS DOES NOT ESTABLISH
+
+- No quality claim. Block speculation is lossless BY CONSTRUCTION (the target
+  verifies every drafted token); this run did not test output equivalence.
+- The FP8-vs-W4A4 acceptance hypothesis is NOT proven — only the YaRN/range
+  explanation was tested and refuted.
+- num_speculative_tokens was 7 (the drafter's declared block size) throughout.
+  No sweep was run; a lower block may suit prose better. UNMEASURED.
+- dspark_draft_topk was never set. UNMEASURED.
+- Single-stream batch-1 only. No concurrency measurement.
+- One prompt per shape, one run each. No repeat-variance figure.
+- ARM 2b code acceptance is missing: the metrics window held no completed
+  SpecDecoding line. Reported as unavailable, NOT inferred from ARM 2.
+
+## Section 10 — RESTORE
+
+  compose  md5 4628408e0e3d == backup   (byte-for-byte)
+  .env     md5 599339f1a335 == backup   (byte-for-byte)
+  PRIMARY_MAX_MODEL_LEN=1048576 restored; argv proof OK on mtp n=2
+  scripts/spike-preflight.sh restore -> PASS (healthy + argv intact + live 200 'awake')
+  cortex DOWN  17:34:43Z -> ALL-CLEAR 18:24:23Z  (49m40s)
+  Peers: none proxying cortex here (checked pre-stop); Thor serves its own.
