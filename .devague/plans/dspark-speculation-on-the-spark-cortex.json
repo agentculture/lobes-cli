@@ -1,0 +1,501 @@
+{
+  "slug": "dspark-speculation-on-the-spark-cortex",
+  "title": "DSpark speculation on the Spark cortex",
+  "frame_slug": "dspark-speculation-on-the-spark-cortex",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-24T16:18:06Z",
+  "updated": "2026-08-24T16:25:50Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Spark's cortex got faster without swapping the model or the engine: a DSpark block-speculative drafter now rides the deployed vLLM NVFP4 lane, measured against its own 19.9-24.0 tok/s baseline on the same box \u2014 and the repo records SGLang as a known engine axis, so the framework that first demonstrated this is in the history rather than lost to a forum post.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The announced speedup is measured on the physical DGX Spark GB10 against a same-day re-measured baseline, with conditions recorded per docs/measuring-lane-performance.md rule 3 \u2014 or the announcement is not made.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The lobes fleet operator and the Culture mesh consumers of the Spark's cortex lane \u2014 plus the next agent who reads this repo's git history looking for what was tried on GB10 and why.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The transcript is written to be readable by someone who was not in this conversation: it names the box, the date, the image digest, the config diff, and what it does NOT establish.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "after_state",
+      "text": "The Spark's cortex serves the same unsloth/Qwen3.8-27B-NVFP4 checkpoint on the same vLLM engine, with a measured decode figure taken under a DSpark speculative config, and an evidence transcript that reports the result either way.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The lane is returned to a healthy, serving state at the end of the run regardless of the result, and lobes status confirms it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "before_state",
+      "text": "Today the Spark cortex decodes at 19.9-24.0 tok/s (measured 2026-08-19, t8) using vLLM's generic self-hosted MTP at num_speculative_tokens=2, acceptance 54.4-61.1%. A published SGLang+DSpark recipe reaches 34-38 tok/s on the same GB10 silicon with the same base model, and nothing in this repo records why that gap exists or whether it is reachable from here.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The 19.9-24.0 baseline is cited as a DATED measurement from a named transcript, never as the lane's current rate \u2014 and c9's same-day re-measurement is what any comparison actually uses.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "why_it_matters",
+      "text": "cortex is the fleet's reasoning/deciding/final-authority lobe \u2014 every role contract routes final decisions through it, so its decode rate is the fleet's thinking speed. A 1.4x-1.6x speedup with no checkpoint change, no engine change and no quality trade (block speculation is lossless by construction \u2014 the target model verifies every drafted token) is the cheapest large win available on this box.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The 'lossless by construction' claim is stated as a property of block speculation (the target verifies every drafted token), not as something this run measures \u2014 and if the spike observes any output difference, that claim is retracted rather than defended.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The spike tests whether the DEPLOYED vLLM nightly can drive a DSpark drafter against the deployed NVFP4 cortex. This is not speculative on the engine side: the pinned image (0.26.1rc1.dev942+g5a4c8d992) already declares method 'dspark' \u2014 and 'dflash' \u2014 in vllm.config.speculative.SpeculativeMethod, probed live in the running container. What is unknown is whether RadixArk/Qwen3.8-27B-DSpark, trained with SpecForge against the FP8 target and shipped for SGLang, loads and accepts against an NVFP4 target in vLLM.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "vLLM's dspark method is verified against the ACTUAL pinned image, not a release note \u2014 the SpeculativeMethod literal was probed inside the running container, and the load attempt is run before any throughput claim.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The baseline is re-measured, not quoted. The 19.9-24.0 figures were taken 2026-08-19 on a different .env generation; the run re-measures the incumbent config immediately before the DSpark arm, on the same harness, same prompts, same day \u2014 the model-switch-playbook's own rule that the incumbent baseline is unrecoverable afterwards.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The incumbent baseline is captured BEFORE the DSpark config is applied, on the same prompts and harness, and its numbers appear in the same transcript \u2014 a quoted 2026-08-19 figure is not accepted as the comparison.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Throughput is reported ACROSS CONTENT TYPES, not as one number. The published DSpark result is 43-47 tok/s on math/code and 12-18 on free-form prose against a 34-38 headline \u2014 a 3x spread driven by acceptance rate. A single-shape measurement of a speculative lane is not a description of it, and cortex-shaped work (reasoning traces, tool calls, prose) spans that whole range.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "At least three content shapes are measured (structured/code, reasoning trace, free-form prose), and any headline figure states which shape produced it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The SGLang axis is recorded as DATA in the catalog's existing engine field \u2014 an ENGINE_SGLANG constant alongside ENGINE_VLLM and ENGINE_LLAMA_CPP, with the RadixArk NVFP4 checkpoint and its DSpark drafter as catalog entries carrying role_hint=candidate \u2014 so the framework and the recipe survive in-tree even if no lane ever serves them. serves_with_vllm already exists as the single predicate that gates vLLM-only behaviour, so a third engine value is an addition, not a refactor.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "ENGINE_SGLANG lands with tests pinning it the way tests/test_catalog.py pins the existing engine set, and no existing lane's behaviour changes \u2014 serves_with_vllm keeps returning the same answer for every current entry.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "The deployed checkpoint and engine do not change. This frame does NOT adopt SGLang as a serving lane, does NOT swap unsloth/Qwen3.8-27B-NVFP4 for RadixArk's export, and does NOT re-point any role \u2014 the whole value of the vLLM route is that it changes ONE thing. If the DSpark arm fails in vLLM, the answer is a recorded negative, not an engine migration.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "At the end of the run, git diff shows no change to PRIMARY_MODEL, no change to the engine, and no role re-pointed \u2014 only the speculative-config knob and whatever budget it forced.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "The GGUF-on-Spark question is CLOSED by this frame, not carried into it: published GB10 measurements put llama.cpp Q4_K_M at 15-18 tok/s against a 16.6 tok/s bandwidth ceiling, below the incumbent lane. The prior frame qwen3-8-27b-gguf-on-the-spark keeps that survey and its 12 scope entries; nothing here re-opens it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The prior frame and its 12 scope entries stay in-tree unmodified; this frame cites the GGUF numbers as published third-party measurements, never as ones this repo took.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "Stopping vllm-primary is operator-gated: the run announces the stop before the mesh's cortex goes down, and the box returns to the incumbent config by re-rendering the prior shape. Permission was granted conditionally, not standingly.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The stop announcement precedes the stop in wall-clock order and is visible in the transcript, and lobes status shows the lane healthy again before the run is called done.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "The frame succeeds when the transcript answers three things under named conditions: (1) does vLLM load the DSpark drafter against this NVFP4 target at all \u2014 yes/no with the exact error if no; (2) if yes, the measured tok/s and accepted-tokens-per-step across at least three content shapes, against a same-day re-measured baseline; (3) what it cost in memory, since the drafter is 1.36B of bf16 on a box already at util 0.58. A clean NO with the loader error is a success \u2014 it closes the cheap route and justifies the expensive one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "All three outputs appear in the transcript even when the first is a NO \u2014 a failed load reports the exact error text, the incumbent baseline it was compared against, and the memory state at the time.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "Secondarily: git history contains the SGLang recipe \u2014 checkpoint, revision pin, image, flags, drafter, acceptance \u2014 whether or not this repo ever serves it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The recorded SGLang recipe cites its source (the NVIDIA forum thread and the RadixArk cards) and is marked UNVALIDATED-by-this-repo, since no lane here has run it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "Peers must be checked before the cortex goes down, not just the local box: the Jetson AGX Orin's .env declares PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 \u2014 this Spark \u2014 from the dual-cortex era, with PRIMARY_PEER_PROXY currently false after its 2026-08-23 local-GGUF cutover. A referral origin is a live declaration even when proxy is off, so the run reads each peer's PRIMARY_PEER_* state and reports what pointed here.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "Every peer's PRIMARY_PEER_ORIGIN / PRIMARY_PEER_PROXY state is read and quoted in the transcript before the stop, so 'no peer depended on this lane' is a checked fact rather than an assumption.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The speculative-config knob is a KNOWN-FRAGILE compose substitution and must be changed with that in mind. docker-compose.yml records that a brace-containing default corrupts compose's interpolation of every later brace pair \u2014 the speculative-config default was the measured victim, losing its closing brace \u2014 and that --hf-overrides must stay LAST while its value stays single-quoted so the spark-lobe YaRN JSON survives as one argv token. A DSpark config adds a model path plus more braces and spaces to exactly that fragile string, so the run verifies the rendered argv (docker compose config / the container's own command line) BEFORE trusting any measurement.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The transcript shows the actual rendered --speculative-config argv token, not just the .env line \u2014 a silently mangled flag can boot a lane that is quietly serving without speculation at all.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "boundary",
+      "text": "Acceptance rate is NOT observable through this repo's own metrics surface: lobes/_metrics.py maps no spec-decode, draft, or acceptance fields for either engine. So c16's accepted-tokens-per-step figure comes from vLLM's own /metrics endpoint and boot//runtime logs, read directly \u2014 and the run does NOT quietly assume lobes measure would have surfaced it. Whether to add a mapping is a follow-up, not this frame's work.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Any acceptance figure names the surface it was read from (vLLM /metrics field or the specific log line), so a later reader can reproduce the reading without guessing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "The drafter is UNTRUSTED CODE-ADJACENT WEIGHT running inside the cortex container, from a publisher this repo has never pulled before (RadixArk). It is pinned by revision \u2014 the SGLang recipe pins its target checkpoint to 52d1adc5f38aa5ebf099c29ed7025ba34cfbb854 and this repo's convention is digest/revision pinning everywhere \u2014 and the catalog entry records the pin, not a floating main.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Any catalog entry or .env value naming the drafter carries an explicit revision, and the transcript records the resolved commit actually loaded.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "If the drafter can only be funded by trading the 1M window down, that is a SERVED-CONTRACT change, not a tuning knob: max_model_len is advertised through lobes capabilities and GET /capabilities, was validated live 2026-08-19 with a 328K needle beyond the native ceiling, and consumers were given operator guidance about streaming near-1M requests. Any window reduction is announced with the same weight as the cortex stop, reported in the transcript, and reverted with it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The transcript states the max_model_len in force for every number it reports, so no DSpark figure is ever compared against a baseline taken at a different window.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The run has a stated ABORT condition, because a spike on a live mesh lane can fail in a way that leaves the fleet worse than it started: if the cortex lane does not return healthy on the incumbent config within a bounded attempt, the run stops, restores, and reports \u2014 it does not keep iterating on the DSpark arm with the mesh's reasoning lobe down.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Restoration is verified by lobes status plus one live generate through the gateway, not by container health alone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The run measures THREE arms in one cortex-down window: (1) incumbent self-hosted MTP at num_speculative_tokens=2, re-measured same-day per c9; (2) DSpark with the RadixArk drafter; (3) speculation fully OFF via the template's documented set-but-empty off-switch with PRIMARY_MAX_NUM_SEQS cleared. Arm 3 is what makes arms 1 and 2 interpretable \u2014 without it, a weak DSpark result cannot be distinguished from speculation being unhelpful on this hardware generally.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "All three arms are measured on the same prompts, the same harness and the same day, and the arm in force is named on every reported number; a missing arm is reported as missing rather than inferred from an earlier transcript.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Add ENGINE_SGLANG to the catalog's engine axis",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/catalog.py declares ENGINE_SGLANG alongside ENGINE_VLLM and ENGINE_LLAMA_CPP, and the ENGINES set that tests/test_catalog.py pins includes it",
+        "serves_with_vllm() returns an unchanged answer for every catalog entry that exists today \u2014 pinned by a test that enumerates the current ids",
+        "uv run pytest tests/test_catalog.py passes; no lane, profile, shape or rendered .env changes"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Add the RadixArk NVFP4 target and DSpark drafter as revision-pinned candidate catalog entries",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Both entries carry role_hint=candidate so no tier alias resolves to them, and the NVFP4 target declares engine=ENGINE_SGLANG",
+        "Each entry pins an explicit HF revision (the SGLang recipe's 52d1adc5f38aa5ebf099c29ed7025ba34cfbb854 for the target), never a floating ref, and a test asserts the pin is non-empty",
+        "uv run pytest tests/test_catalog.py passes and lobes overview --list renders both without error"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c23",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Write docs/dspark-speculation.md \u2014 the SGLang recipe and the lossless framing, both marked UNVALIDATED-by-this-repo",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Records the full 34-38 tok/s recipe (checkpoint, revision, image, drafter, block size, flags, content-dependent 43-47 / 12-18 spread) with its NVIDIA-forum and RadixArk sources cited inline",
+        "Every third-party number is labelled as published-elsewhere, never as measured here; the GGUF 15-18 tok/s figures are cited the same way and the doc states the GGUF question is closed, not re-opened",
+        "States 'lossless by construction' as a property of block speculation (the target verifies every drafted token) explicitly NOT measured by this work",
+        "markdownlint-cli2 passes on the new file"
+      ],
+      "deps": [],
+      "covers": [
+        "c17",
+        "h14",
+        "c13",
+        "h11",
+        "c7",
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Build scripts/spike-preflight.sh \u2014 peer-state read, rendered-argv proof, stop announcement, restore verification",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Reads and prints every reachable peer's PRIMARY_PEER_ORIGIN / PRIMARY_PEER_PROXY / PRIMARY_FEASIBLE before any mutation, in a form that pastes into the transcript",
+        "Prints the container's ACTUAL rendered --speculative-config argv token (from docker inspect or the live command line), not the .env line, and exits non-zero if the token is absent or brace-mangled",
+        "Emits the operator stop-announcement block BEFORE issuing any stop, and refuses to proceed without an explicit --apply flag (repo mutation-safety convention)",
+        "restore mode verifies recovery with lobes status AND one live generate through the gateway, exiting non-zero if either fails",
+        "Run read-only against the current healthy lane, it exits 0 and mutates nothing (verified by git status + docker ps unchanged)"
+      ],
+      "deps": [],
+      "covers": [
+        "c18",
+        "h20",
+        "c21",
+        "h16",
+        "c14",
+        "h12",
+        "c26",
+        "h19",
+        "c12",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Build scripts/spec-arms.py \u2014 the three-arm, multi-shape measurement runner",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Measures at least three content shapes (structured/code, reasoning trace, free-form prose) and labels every reported number with both the shape and the arm in force",
+        "Drives all three arms \u2014 mtp-n2, dspark, none \u2014 over identical prompts and harness, and reports a missing arm as MISSING rather than falling back to a figure from an earlier transcript",
+        "Reads acceptance rate from vLLM's own /metrics or a named log line and prints WHICH surface each figure came from",
+        "stdlib-only, same convention as lobes/assess.py and scripts/prefill-depth-curve.py; --max-seconds bounds any single measurement"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h4",
+        "c27",
+        "h22",
+        "c9",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Run the live three-arm spike on the DGX Spark and land the evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt exists and answers all three c16 outputs \u2014 load yes/no with exact error text, per-shape tok/s and accepted-tokens-per-step, and the memory delta from the 1.36B drafter",
+        "The vLLM DSpark load attempt is run and reported BEFORE any throughput claim; a failed load is recorded as a complete result, not a failed run",
+        "Every number names the max_model_len in force, and any window reduction is announced and reported with the same weight as the cortex stop",
+        "The lane ends the run healthy on the incumbent config, proven by lobes status and one live generate; if it does not within the bounded attempt, the run aborts, restores and reports"
+      ],
+      "deps": [
+        "t2",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c3",
+        "h7",
+        "c8",
+        "h2",
+        "c16",
+        "h13",
+        "c22",
+        "h21",
+        "c24",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Fold the measured result back into the docs and bump the version",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/qwen3.8-27b-nvfp4.md and docs/dspark-speculation.md carry the measured outcome, and the 19.9-24.0 baseline is cited as a DATED measurement from its named transcript wherever it appears",
+        "The transcript and doc updates name the box, the date, the image digest, the config diff, and an explicit 'what this does NOT establish' section",
+        "python3 .claude/skills/version-bump/scripts/bump.py minor run with a CHANGELOG entry; version-check CI passes against main"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c2",
+        "h6",
+        "c6",
+        "h8"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The DSpark drafter may load but accept poorly because its aux-hidden-state statistics were learned against an FP8 target, not this W4A4 one \u2014 a weak result must not be mis-reported as a verdict on DSpark as a technique (frame c20).",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The 1.36B bf16 drafter may not fit alongside a cortex at gpu_mem_util 0.58 with a 1M KV pool, forcing a window trade-down mid-run \u2014 a served-contract change (frame c24), not a private budget dial.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "vLLM's dspark path may never have been exercised against an NVFP4 target by anyone; the published recipe is SGLang and vLLM's reference artifact targets an unquantized 8B. Expect rough edges, and budget the run for a diagnostic outcome rather than a clean number.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "t1 and t2 both write lobes/catalog.py, so they are dependency-serialized rather than file-disjoint; they must not be fanned out into the same wave.",
+      "kind": "follow_up",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
