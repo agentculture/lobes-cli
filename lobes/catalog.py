@@ -56,9 +56,14 @@ _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 # off so the exemption cannot be re-derived (and drift) per call site.
 ENGINE_VLLM = "vllm"
 ENGINE_LLAMA_CPP = "llama.cpp"
+# A third engine value (dspark-speculation-on-the-spark-cortex plan t1). No
+# catalog entry declares it yet — that is a later task in the same plan; this
+# task only adds the axis value itself, so `serves_with_vllm` (keyed off
+# `engine == ENGINE_VLLM`) is unchanged for every existing entry.
+ENGINE_SGLANG = "sglang"
 
 #: Every engine a catalog entry may declare. ``tests/test_catalog.py`` pins it.
-ENGINES: tuple[str, ...] = (ENGINE_VLLM, ENGINE_LLAMA_CPP)
+ENGINES: tuple[str, ...] = (ENGINE_VLLM, ENGINE_LLAMA_CPP, ENGINE_SGLANG)
 
 
 @dataclass(frozen=True)
