@@ -8,7 +8,17 @@
 #
 #   1. A peer box is proxying `cortex` to this one (or has stopped doing so).
 #      Stopping the lane without knowing that turns a local spike into a mesh
-#      outage. `preflight` reads every peer's OWN declaration first.
+#      outage. `preflight` reads every peer's OWN declaration first — and an
+#      UNREACHABLE peer FAILS the preflight, because "we could not ask" is not
+#      "nobody depends on us". `--allow-unreachable-peers` is the operator's
+#      explicit, loudly-recorded override.
+#
+#   1b. The `docker compose -f` chain. This deployment needs an explicit
+#      multi-file chain (base + audio + shape + override); omitting one silently
+#      changes what is rendered — the deployment's own docker-compose.override.yml
+#      records a service left "running-but-unroutable for days" that way. So a
+#      FAILED `lobes fleet files` is a hard refusal, never an empty argv list:
+#      a broken resolver must not be mistaken for a legitimately empty chain.
 #
 #   2. THE SILENT ONE. The fleet compose template records as a MEASURED bug
 #      that a brace-containing substitution corrupts compose's interpolation of
@@ -37,8 +47,10 @@
 # Modes:
 #   preflight     READ-ONLY. Prints local cortex state, every peer's
 #                 PRIMARY_PEER_ORIGIN / PRIMARY_PEER_PROXY / PRIMARY_FEASIBLE,
-#                 and the container's ACTUAL rendered --speculative-config argv
-#                 token. Non-zero if the token is absent or brace-mangled.
+#                 the resolved `docker compose -f` chain, and the container's
+#                 ACTUAL rendered --speculative-config argv token. Non-zero if
+#                 the token is absent or brace-mangled, if the compose chain
+#                 cannot be resolved, or if any peer is UNREACHABLE.
 #   stop          Runs preflight, prints the operator stop-announcement block,
 #                 then stops the cortex lane — only with --apply.
 #   restore       Verifies the lane recovered: `lobes status`, the argv proof
@@ -56,16 +68,30 @@
 #                           ~/.lobes, ~/.model-gear)
 #   --container NAME        Cortex container (default: model-gear-vllm-primary)
 #   --service NAME          Cortex compose service (default: vllm-primary)
-#   --peer user@host        Peer to read (repeatable; default: thor@thor and
-#                           orin@orin). --peer none reads no peers.
+#   --peer user@host        Peer to read (repeatable). --peer none reads no
+#                           peers. Peer addressing is CONFIGURATION, never
+#                           derived (#92) — see "Peer set", below.
 #   --port N                Gateway host port (default: VLLM_PORT in .env, 8000)
 #   --base-url URL          Gateway origin (overrides --port)
 #   --model NAME            Model/alias for the restore generate (default: cortex)
 #   --allow-absent-spec     Treat a MISSING --speculative-config as OK. For the
 #                           deliberate `none` arm only — never for a spec arm.
+#   --allow-unreachable-peers
+#                           Treat an UNREACHABLE peer as acceptable instead of a
+#                           preflight failure. The operator has decided the
+#                           unknown is fine; the decision is printed as a loud
+#                           OVERRIDE block so it lands in the transcript.
 #   --timeout SECS          Health-wait budget for `restore --apply` (default 1500)
 #   --ssh-timeout SECS      Per-peer ssh connect timeout (default 5)
 #   -h, --help              Show this help and exit
+#
+# Peer set (configuration-driven, in precedence order — the source that supplied
+# the list is printed in every peer phase, so a transcript always says where the
+# addresses came from):
+#   1. --peer user@host     one or more flags on the command line
+#   2. $LOBES_SPIKE_PEERS   comma- or space-separated list in the environment
+#   3. the documented fallback default, `thor@thor orin@orin` — the mesh this
+#      harness was written for. It is a fallback, not the configuration.
 #
 # Exit code: 0 iff every check in the selected mode passes.
 #
@@ -86,6 +112,12 @@ PORT=""
 BASE_URL=""
 GEN_MODEL="cortex"
 ALLOW_ABSENT_SPEC=0
+ALLOW_UNREACHABLE_PEERS=0
+PEER_SOURCE=""
+# The documented fallback peer set: the mesh this harness was written for. It is
+# LAST in precedence, behind --peer and $LOBES_SPIKE_PEERS, and the phase output
+# always names which source won.
+DEFAULT_PEERS=(thor@thor orin@orin)
 TIMEOUT=1500
 SSH_TIMEOUT=5
 CHECK_TOKEN_ARG=""
@@ -108,6 +140,7 @@ while [[ $# -gt 0 ]]; do
     --base-url)          BASE_URL="$2"; shift 2 ;;
     --model)             GEN_MODEL="$2"; shift 2 ;;
     --allow-absent-spec) ALLOW_ABSENT_SPEC=1; shift ;;
+    --allow-unreachable-peers) ALLOW_UNREACHABLE_PEERS=1; shift ;;
     --timeout)           TIMEOUT="$2"; shift 2 ;;
     --ssh-timeout)       SSH_TIMEOUT="$2"; shift 2 ;;
     -h|--help)           _usage ;;
@@ -116,7 +149,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${MODE}" ]] || { printf 'error: a mode is required (preflight|stop|restore|check-token)\n' >&2; exit 2; }
-if [[ ${PEERS_SET} -eq 0 ]]; then PEERS=(thor@thor orin@orin); fi
+
+# --- peer set resolution (configuration-driven, #92: operator-typed, never
+# derived). Precedence: --peer > $LOBES_SPIKE_PEERS > the fallback default. The
+# winning source is recorded in PEER_SOURCE and printed by every peer phase.
+if [[ ${PEERS_SET} -eq 1 ]]; then
+  PEER_SOURCE="--peer flag(s) on the command line"
+elif [[ -n "${LOBES_SPIKE_PEERS:-}" ]]; then
+  PEER_SOURCE="\$LOBES_SPIKE_PEERS in the environment"
+  _spike_peers_raw="${LOBES_SPIKE_PEERS//,/ }"
+  # shellcheck disable=SC2206  # deliberate word-splitting of a configured list
+  _spike_peers_arr=(${_spike_peers_raw})
+  for _p in ${_spike_peers_arr[@]+"${_spike_peers_arr[@]}"}; do
+    [[ "${_p}" == "none" ]] || PEERS+=("${_p}")
+  done
+  unset _spike_peers_raw _spike_peers_arr _p
+else
+  PEER_SOURCE="built-in fallback default (no --peer, no \$LOBES_SPIKE_PEERS)"
+  PEERS=("${DEFAULT_PEERS[@]}")
+fi
 
 # check-token is deliberately dependency-free (python3 only) so the offline test
 # suite can drive it on a CI box with no docker, no ssh and no fleet.
@@ -359,8 +410,74 @@ AUTH_ARGS=()
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 THIS_HOST="$(hostname)"
 
-_compose_files() { # the resolved -f chain, from the CLI's single authority
-  (cd "${DEPLOY_DIR}" && lobes fleet files --compose-dir "${DEPLOY_DIR}" 2>/dev/null) || true
+# ---------------------------------------------------------------------------
+# The `docker compose -f` chain, from the CLI's single authority.
+#
+# A FAILED resolver must never degrade to an empty argv list: compose would then
+# implicitly discover whatever files happen to sit in the deployment dir, and a
+# broken/missing resolver would be indistinguishable from a valid empty chain.
+# This deployment needs its explicit chain (base + audio + shape + override) —
+# the deployment's own docker-compose.override.yml records a service left
+# "running-but-unroutable for days" after one file was omitted. So:
+#
+#   resolver missing / non-zero -> hard error, the operation is REFUSED
+#   resolver ok, zero tokens    -> a legitimately EMPTY chain (a plain
+#                                  deployment with no lobes overlay: `lobes
+#                                  fleet files` documents that as its contract),
+#                                  reported as such and clearly NOT a failure
+# ---------------------------------------------------------------------------
+COMPOSE_FILES=()
+COMPOSE_CHAIN_RESOLVED=0
+
+_compose_argv() { printf '%s' "${COMPOSE_FILES[*]-}"; }
+
+_resolve_compose_files() { # → 0 iff the chain is KNOWN (possibly known-empty)
+  [[ ${COMPOSE_CHAIN_RESOLVED} -eq 1 ]] && return 0
+  if [[ -z "${DEPLOY_DIR}" || ! -d "${DEPLOY_DIR}" ]]; then
+    printf '  ERROR    no deployment dir (%s) — the compose -f chain is UNKNOWN.\n' \
+      "${DEPLOY_DIR:-<unset>}"
+    printf '           Refusing: docker compose must not be run on a guessed chain.\n'
+    return 1
+  fi
+  if ! command -v lobes >/dev/null 2>&1; then
+    printf '  ERROR    `lobes` is not on PATH — the compose -f chain is UNKNOWN.\n'
+    printf '           Refusing: without the resolved chain, docker compose would\n'
+    printf '           implicitly discover files in %s and could mutate a DIFFERENT\n' "${DEPLOY_DIR}"
+    printf '           rendered configuration than the fleet actually runs.\n'
+    return 1
+  fi
+  local out rc
+  set +e
+  out="$(cd "${DEPLOY_DIR}" && lobes fleet files --compose-dir "${DEPLOY_DIR}" 2>&1)"
+  rc=$?
+  set -e
+  if [[ ${rc} -ne 0 ]]; then
+    printf '  ERROR    `lobes fleet files` FAILED (exit %d) — the compose -f chain is\n' "${rc}"
+    printf '           UNKNOWN. Refusing: a failed resolver is NOT an empty chain.\n'
+    printf '%s\n' "${out}" | sed 's/^/           | /'
+    return 1
+  fi
+  COMPOSE_FILES=()
+  local line
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && COMPOSE_FILES+=("${line}")
+  done <<<"${out}"
+  COMPOSE_CHAIN_RESOLVED=1
+  return 0
+}
+
+_phase_compose() {
+  printf '\n--- docker compose -f chain (resolved by `lobes fleet files`) ---\n'
+  _resolve_compose_files || return 1
+  if [[ ${#COMPOSE_FILES[@]} -eq 0 ]]; then
+    printf '  EMPTY    the resolver SUCCEEDED and returned no overlay tokens.\n'
+    printf '           That is a plain deployment (no lobes overlay): compose applies\n'
+    printf '           its own base+override resolution in %s.\n' "${DEPLOY_DIR}"
+    printf '           This is a KNOWN-empty chain, not a resolver failure.\n'
+  else
+    printf '  OK       %d argv token(s): %s\n' "${#COMPOSE_FILES[@]}" "$(_compose_argv)"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -369,7 +486,9 @@ _compose_files() { # the resolved -f chain, from the CLI's single authority
 # Reads each peer's OWN .env (the operator-typed declaration, per #92 — never
 # derived). An unreachable peer is reported as UNREACHABLE and counted; it is
 # never silently skipped, because "no output" and "no proxying" must not look
-# the same in a transcript.
+# the same in a transcript — and, since it means the peer's cortex dependency is
+# UNKNOWN rather than absent, it FAILS the preflight (and therefore blocks
+# `stop --apply`) unless the operator passes --allow-unreachable-peers.
 # ---------------------------------------------------------------------------
 PEERS_UNREACHABLE=0
 PEERS_PROXYING=""
@@ -420,8 +539,10 @@ _phase_peers() {
   printf '=== peer cortex state (read BEFORE any mutation) ===\n'
   printf '  read at        : %s\n' "${STAMP}"
   printf '  from           : %s (this box)\n' "${THIS_HOST}"
+  printf '  peer source    : %s\n' "${PEER_SOURCE}"
+  printf '  peers          : %s\n' "${PEERS[*]:-(none)}"
   if [[ ${#PEERS[@]} -eq 0 ]]; then
-    printf '  (no peers requested: --peer none)\n'
+    printf '  (no peers to read — the configured peer set is empty)\n'
   else
     command -v ssh >/dev/null 2>&1 \
       || { printf '  ERROR: ssh not found; peer state UNKNOWN\n'; return 1; }
@@ -536,6 +657,12 @@ _gateway_generate() { # bounded retry around a transient shed → 0 iff it answe
 _announcement() {
   local proxying_note="none detected"
   [[ -n "${PEERS_PROXYING}" ]] && proxying_note="${PEERS_PROXYING}(these peers forward model=cortex HERE)"
+  local unknown_note="none — every configured peer was read"
+  if [[ ${PEERS_UNREACHABLE} -gt 0 ]]; then
+    unknown_note="${PEERS_UNREACHABLE} peer(s) UNREACHABLE — their dependency on this lane is UNKNOWN"
+    [[ ${ALLOW_UNREACHABLE_PEERS} -eq 1 ]] \
+      && unknown_note="${unknown_note} (ACCEPTED via --allow-unreachable-peers)"
+  fi
   cat <<EOF
 
 ================= OPERATOR STOP ANNOUNCEMENT =================
@@ -552,6 +679,10 @@ _announcement() {
   IMPACT       : model=cortex / main / hard 404s or fails on this gateway for
                  the duration. Peers proxying cortex here: ${proxying_note}
                  Peers hosting their own cortex are unaffected.
+
+  PEER SET     : ${PEERS[*]:-(none)}
+                 source: ${PEER_SOURCE}
+  UNKNOWNS     : ${unknown_note}
 
   DURATION     : one model load per arm (the 27B NVFP4 takes minutes, not
                  seconds). Assume the lane is DOWN until an all-clear.
@@ -579,20 +710,50 @@ case "${MODE}" in
   preflight|stop)
     RC=0
     _phase_peers || RC=1
+    _phase_compose || RC=1
     _phase_container || RC=1
     _argv_proof || RC=1
 
+    # An UNREACHABLE peer means UNKNOWN, and UNKNOWN must not read as safe: we
+    # cannot say whether that box proxies `cortex` through this lane, which is
+    # the whole reason the peer read happens BEFORE the mutation.
+    UNREACHABLE_OVERRIDDEN=0
+    if [[ ${PEERS_UNREACHABLE} -gt 0 ]]; then
+      if [[ ${ALLOW_UNREACHABLE_PEERS} -eq 1 ]]; then
+        UNREACHABLE_OVERRIDDEN=1
+        printf '\n'
+        printf '!!!!!!!!!!!!!!!!!!!!!! OPERATOR OVERRIDE IN EFFECT !!!!!!!!!!!!!!!!!!!!!!\n'
+        printf '  --allow-unreachable-peers WAS PASSED.\n'
+        printf '  %d peer(s) could not be read, so it is UNKNOWN whether they proxy\n' "${PEERS_UNREACHABLE}"
+        printf '  model=cortex through this lane. The operator accepted that risk at\n'
+        printf '  %s on %s. This is a recorded decision, not a clean check.\n' "${STAMP}" "${THIS_HOST}"
+        printf '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
+      else
+        RC=1
+      fi
+    fi
+
     printf '\n=== preflight verdict ===\n'
     if [[ ${RC} -eq 0 ]]; then
-      printf '  PASS — peer state recorded, and the rendered --speculative-config\n'
-      printf '         token is present and well-formed in the container argv.\n'
+      printf '  PASS — peer state recorded, the compose -f chain is known, and the\n'
+      printf '         rendered --speculative-config token is present and well-formed\n'
+      printf '         in the container argv.\n'
     else
       printf '  FAIL — see the phases above. If the argv proof failed, DO NOT\n'
       printf '         measure this lane: it is not serving what .env claims.\n'
     fi
     if [[ ${PEERS_UNREACHABLE} -gt 0 ]]; then
-      printf '  WARN — %d peer(s) UNREACHABLE; their cortex state is UNKNOWN, not "fine".\n' \
-        "${PEERS_UNREACHABLE}"
+      if [[ ${UNREACHABLE_OVERRIDDEN} -eq 1 ]]; then
+        printf '  OVERRIDDEN — %d peer(s) UNREACHABLE; state UNKNOWN, accepted via\n' \
+          "${PEERS_UNREACHABLE}"
+        printf '               --allow-unreachable-peers.\n'
+      else
+        printf '  FAIL — %d peer(s) UNREACHABLE; their cortex state is UNKNOWN, not\n' \
+          "${PEERS_UNREACHABLE}"
+        printf '         "fine". Fix reachability, drop them from the peer set\n'
+        printf '         (--peer / $LOBES_SPIKE_PEERS), or accept the unknown\n'
+        printf '         explicitly with --allow-unreachable-peers.\n'
+      fi
     fi
 
     if [[ "${MODE}" == "preflight" ]]; then
@@ -606,22 +767,21 @@ case "${MODE}" in
     if [[ ${RC} -ne 0 ]]; then
       printf '\nerror: preflight FAILED — refusing to stop the lane on an unproven\n' >&2
       printf 'baseline. Fix the failure above (or pass --allow-absent-spec if the\n' >&2
-      printf 'lane is deliberately unspeculated) and re-run.\n' >&2
+      printf 'lane is deliberately unspeculated, or --allow-unreachable-peers if an\n' >&2
+      printf 'unreadable peer is an accepted risk) and re-run.\n' >&2
       exit 1
     fi
 
     if [[ ${APPLY} -eq 0 ]]; then
       printf '\nDRY RUN — no stop was issued and nothing was mutated.\n'
       printf 'Would run, in %s:\n' "${DEPLOY_DIR}"
-      printf '  docker compose %s stop %s\n' \
-        "$(_compose_files | tr '\n' ' ')" "${SERVICE}"
+      printf '  docker compose %s stop %s\n' "$(_compose_argv)" "${SERVICE}"
       printf 'Re-run with --apply to commit (repo mutation-safety convention).\n'
       exit 0
     fi
 
     printf '\n--- APPLY: stopping %s ---\n' "${SERVICE}"
-    mapfile -t CF < <(_compose_files)
-    (cd "${DEPLOY_DIR}" && docker compose "${CF[@]}" stop "${SERVICE}")
+    (cd "${DEPLOY_DIR}" && docker compose ${COMPOSE_FILES[@]+"${COMPOSE_FILES[@]}"} stop "${SERVICE}")
     printf 'STOPPED at %s. The lane is DOWN. Announce the all-clear with:\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '  %s/scripts/spike-preflight.sh restore\n' "${REPO_ROOT}"
@@ -637,10 +797,17 @@ case "${MODE}" in
     printf '  gateway      : %s\n' "${BASE_URL}"
 
     if [[ ${APPLY} -eq 1 ]]; then
+      # Resolve the -f chain BEFORE mutating. A failed resolver refuses the
+      # bring-up rather than letting compose guess which files to render.
+      if ! _phase_compose; then
+        printf '\nerror: refusing to bring the lane up — the docker compose -f chain\n' >&2
+        printf 'could not be resolved (see above). Compose would implicitly discover\n' >&2
+        printf 'files and could render a DIFFERENT configuration than the fleet runs.\n' >&2
+        exit 1
+      fi
       printf '\n--- APPLY: bringing %s up and waiting for health (<= %ss) ---\n' \
         "${SERVICE}" "${TIMEOUT}"
-      mapfile -t CF < <(_compose_files)
-      (cd "${DEPLOY_DIR}" && docker compose "${CF[@]}" up -d "${SERVICE}")
+      (cd "${DEPLOY_DIR}" && docker compose ${COMPOSE_FILES[@]+"${COMPOSE_FILES[@]}"} up -d "${SERVICE}")
       DEADLINE=$(( $(date +%s) + TIMEOUT ))
       while :; do
         H="$(docker inspect "${CONTAINER}" --format '{{.State.Health.Status}}' 2>/dev/null || echo unknown)"
