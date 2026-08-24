@@ -20,7 +20,10 @@ between arms (see scripts/spike-preflight.sh), and this script is run once per
 arm with ``--arm`` naming which one is currently loaded. Each run's ``--json``
 output is one transcript file; ``--combine`` reads up to three such transcripts
 back in and refuses to print a silently-incomplete three-arm table — a missing
-arm is reported as MISSING, never backfilled from an earlier run.
+arm is reported as MISSING, never backfilled from an earlier run, and any
+MISSING or FAILED cell makes ``--combine`` exit NONZERO unless
+``--allow-partial`` is passed (Qodo finding 4), so automation cannot accept a
+partial comparison by accident.
 
 USAGE
 -----
@@ -56,8 +59,31 @@ every reported acceptance figure NAMES which one produced it:
 
 Neither surface is required. With neither flag, or when the arm is ``none``
 (no speculation to accept), acceptance is reported as ``"not_applicable"`` /
-``"unavailable"`` — never a fabricated number. ``--max-seconds`` bounds every
-individual shape's request so one hung shape cannot stall the run.
+``"unavailable"`` — never a fabricated number.
+
+BOTH surfaces are ENGINE-WIDE, not per-request (Qodo finding 9). vLLM exposes
+no per-request spec-decode counter, so what is measured is "everything this
+engine accepted/drafted during this shape's window" — if another client is
+served concurrently, its tokens land in this figure too. The script is honest
+about that rather than hiding it:
+
+  * every acceptance dict carries ``"scope": "engine_wide_over_shape_window"``
+    and ``"request_scoped": false``, and the table prints ``engine-wide``;
+  * with ``--metrics-url`` the engine's own ``vllm:request_success_total``
+    counter is deltaed over the same window and compared against the ONE
+    request this tool issued. More completions than that means someone else's
+    traffic is in the number, so the entry is marked
+    ``"contaminated": true`` and the table prints ``CONTAMINATED``. Fewer (or
+    the counter absent) is inconclusive and reported as ``null``, never as
+    clean.
+  * the ``docker logs`` surface has no request identifier at all, so its
+    ``"contaminated"`` is always ``null`` (unknown) — it can never be shown
+    clean. Run it on a quiescent lane or treat the figure as an upper bound.
+
+``--max-seconds`` is a real WALL-CLOCK deadline across the whole streaming
+read, not merely urllib's per-operation socket timeout (Qodo finding 10): a
+shape that exceeds it is reported as TIMED OUT (an ``error`` entry carrying
+``"timed_out": true``), never as a completed measurement.
 """
 
 from __future__ import annotations
@@ -73,6 +99,26 @@ import urllib.request
 from datetime import datetime, timezone
 
 ARMS: tuple[str, ...] = ("mtp-n2", "dspark", "none")
+
+# vLLM Prometheus counter names, and the keys this script reports them under.
+ACCEPTED_METRIC = "vllm:spec_decode_num_accepted_tokens_total"
+DRAFTED_METRIC = "vllm:spec_decode_num_draft_tokens_total"
+REQUESTS_METRIC = "vllm:request_success_total"
+
+_ACCEPTED_KEY = "accepted_tokens"
+_DRAFTED_KEY = "drafted_tokens"
+_RATE_KEY = "acceptance_rate"
+_SURFACE_KEY = "surface"
+_SCOPE_KEY = "scope"
+_CONTAMINATED_KEY = "contaminated"
+
+# Neither acceptance surface can attribute tokens to a single request — see the
+# module docstring's ACCEPTANCE-RATE SURFACES section.
+ENGINE_WIDE_SCOPE = "engine_wide_over_shape_window"
+
+# Throughput basis markers (Qodo finding 3): a chunk count is NOT a token count.
+BASIS_USAGE = "usage_completion_tokens"
+BASIS_CHUNKS = "sse_chunk_count_estimate"
 
 # Three content shapes with markedly different draft-acceptance behaviour —
 # see the module docstring. Each has its own prompt and generation kwargs.
@@ -120,15 +166,17 @@ SHAPES: dict[str, dict] = {
 def parse_metrics_text(text: str) -> dict[str, float]:
     """Parse vLLM Prometheus ``/metrics`` text into a flat counter dict.
 
-    Only the two spec-decoding counters this script needs are extracted, keyed
-    by their bare metric name (labels are ignored — this fleet runs one engine
-    per lane, so a single label set is expected). Missing metrics are simply
-    absent from the returned dict; callers must not assume presence.
+    Only the counters this script needs are extracted, keyed by their bare
+    metric name (labels are ignored — this fleet runs one engine per lane, so a
+    single label set is expected). Missing metrics are simply absent from the
+    returned dict; callers must not assume presence.
+
+    ``vllm:request_success_total`` is collected alongside the two spec-decoding
+    counters purely so the engine-wide acceptance window can be checked for
+    contamination by other clients' traffic (Qodo finding 9); it is summed
+    across its ``finished_reason`` label sets.
     """
-    wanted = (
-        "vllm:spec_decode_num_accepted_tokens_total",
-        "vllm:spec_decode_num_draft_tokens_total",
-    )
+    wanted = (ACCEPTED_METRIC, DRAFTED_METRIC, REQUESTS_METRIC)
     out: dict[str, float] = {}
     for line in text.splitlines():
         if line.startswith("#") or not line.strip():
@@ -147,27 +195,83 @@ def parse_metrics_text(text: str) -> dict[str, float]:
     return out
 
 
-def acceptance_delta(before: dict[str, float], after: dict[str, float]) -> dict | None:
-    """Delta two ``/metrics`` snapshots into an acceptance-rate figure.
+def requests_delta(before: dict[str, float], after: dict[str, float]) -> float | None:
+    """Completed-request count over the window, or ``None`` if the counter is absent."""
+    if REQUESTS_METRIC not in before or REQUESTS_METRIC not in after:
+        return None
+    return after[REQUESTS_METRIC] - before[REQUESTS_METRIC]
 
-    Returns ``None`` when either snapshot lacks both counters, or when no
+
+def acceptance_delta(
+    before: dict[str, float], after: dict[str, float], expected_requests: int = 1
+) -> dict | None:
+    """Delta two ``/metrics`` snapshots into an ENGINE-WIDE acceptance-rate figure.
+
+    The counters are engine-wide, so the returned rate covers every request the
+    engine served during the window, not just the one this tool issued — the
+    returned dict says so explicitly (``scope``/``request_scoped``) and never
+    presents itself as a per-request measurement (Qodo finding 9).
+
+    Contamination is detected where the engine makes it detectable: the
+    ``vllm:request_success_total`` delta is compared against
+    ``expected_requests`` (the number of requests THIS tool issued in the
+    window). More completions than that means foreign traffic is folded in and
+    ``contaminated`` is ``True``. When the counter is missing — or reports
+    FEWER completions than expected, which happens when a request is still
+    in flight at sampling time — the answer is unknown and ``contaminated`` is
+    ``None``. It is never reported ``False`` on absent evidence.
+
+    Returns ``None`` when either snapshot lacks both spec counters, or when no
     draft tokens were produced in the window (rate is undefined, not zero).
     """
-    accepted_key = "vllm:spec_decode_num_accepted_tokens_total"
-    drafted_key = "vllm:spec_decode_num_draft_tokens_total"
-    if accepted_key not in before or accepted_key not in after:
+    if ACCEPTED_METRIC not in before or ACCEPTED_METRIC not in after:
         return None
-    if drafted_key not in before or drafted_key not in after:
+    if DRAFTED_METRIC not in before or DRAFTED_METRIC not in after:
         return None
-    accepted = after[accepted_key] - before[accepted_key]
-    drafted = after[drafted_key] - before[drafted_key]
+    accepted = after[ACCEPTED_METRIC] - before[ACCEPTED_METRIC]
+    drafted = after[DRAFTED_METRIC] - before[DRAFTED_METRIC]
     if drafted <= 0:
         return None
+
+    observed = requests_delta(before, after)
+    if observed is None:
+        contaminated: bool | None = None
+        note = (
+            f"{REQUESTS_METRIC} absent — cannot tell whether other requests "
+            "were served in this window"
+        )
+    elif observed > expected_requests:
+        contaminated = True
+        note = (
+            f"{observed:g} requests completed in this window but this tool "
+            f"issued {expected_requests} — the acceptance figure includes "
+            "other clients' traffic and is NOT a valid per-shape measurement"
+        )
+    elif observed < expected_requests:
+        contaminated = None
+        note = (
+            f"only {observed:g} of {expected_requests} issued request(s) had "
+            "completed at sampling time — window boundaries are approximate, "
+            "contamination undetermined"
+        )
+    else:
+        contaminated = False
+        note = (
+            f"exactly {expected_requests} request completed in this window — "
+            "no foreign traffic detected, but the counters remain engine-wide"
+        )
+
     return {
-        "accepted_tokens": accepted,
-        "drafted_tokens": drafted,
-        "acceptance_rate": round(accepted / drafted, 4),
-        "surface": "vllm_metrics_http",
+        _ACCEPTED_KEY: accepted,
+        _DRAFTED_KEY: drafted,
+        _RATE_KEY: round(accepted / drafted, 4),
+        _SURFACE_KEY: "vllm_metrics_http",
+        _SCOPE_KEY: ENGINE_WIDE_SCOPE,
+        "request_scoped": False,
+        "requests_in_window": observed,
+        "expected_requests": expected_requests,
+        _CONTAMINATED_KEY: contaminated,
+        "note": note,
     }
 
 
@@ -191,27 +295,41 @@ def parse_acceptance_log_line(line: str) -> dict | None:
         return None
     return {
         "mean_acceptance_length": float(m.group("mean_len")),
-        "accepted_tokens": int(m.group("accepted")),
-        "drafted_tokens": int(m.group("drafted")),
-        "acceptance_rate": round(float(m.group("rate_pct")) / 100.0, 4),
+        _ACCEPTED_KEY: int(m.group("accepted")),
+        _DRAFTED_KEY: int(m.group("drafted")),
+        _RATE_KEY: round(float(m.group("rate_pct")) / 100.0, 4),
     }
 
 
 def summarize_log_lines(lines: list[str]) -> dict | None:
-    """Mean acceptance rate across every ``SpecDecoding metrics:`` line in a window."""
+    """Mean acceptance rate across every ``SpecDecoding metrics:`` line in a window.
+
+    vLLM's periodic log line carries NO request identifier, so this aggregate
+    covers every request the engine served while the shape ran — and unlike the
+    ``/metrics`` surface there is nothing to cross-check it against. Its
+    ``contaminated`` is therefore always ``None`` (unknown), never ``False``
+    (Qodo finding 9).
+    """
     parsed = [p for p in (parse_acceptance_log_line(ln) for ln in lines) if p]
     if not parsed:
         return None
-    total_accepted = sum(p["accepted_tokens"] for p in parsed)
-    total_drafted = sum(p["drafted_tokens"] for p in parsed)
+    total_accepted = sum(p[_ACCEPTED_KEY] for p in parsed)
+    total_drafted = sum(p[_DRAFTED_KEY] for p in parsed)
     return {
-        "accepted_tokens": total_accepted,
-        "drafted_tokens": total_drafted,
-        "acceptance_rate": (
-            round(total_accepted / total_drafted, 4) if total_drafted > 0 else None
-        ),
+        _ACCEPTED_KEY: total_accepted,
+        _DRAFTED_KEY: total_drafted,
+        _RATE_KEY: (round(total_accepted / total_drafted, 4) if total_drafted > 0 else None),
         "sample_count": len(parsed),
-        "surface": "docker_logs",
+        _SURFACE_KEY: "docker_logs",
+        _SCOPE_KEY: ENGINE_WIDE_SCOPE,
+        "request_scoped": False,
+        _CONTAMINATED_KEY: None,
+        "note": (
+            "docker log lines carry no request id — this aggregates every "
+            "request the engine served during the shape's window and cannot "
+            "be shown clean; treat it as an upper bound unless the lane was "
+            "known-quiescent"
+        ),
     }
 
 
@@ -223,10 +341,11 @@ def build_comparison(
     ``transcripts`` maps arm name -> its loaded JSON dict (as emitted by this
     script's ``--json`` mode). Returns ``(rows, missing_arms)``: ``rows`` has
     one entry per (shape, arm) pair for EVERY required arm — a missing arm's
-    entries carry ``"status": "MISSING"`` and no fabricated numbers — and
+    entries carry ``"status": "MISSING"`` and no fabricated numbers, and a
+    shape whose measurement errored carries ``"status": "FAILED"`` — and
     ``missing_arms`` lists which required arms had no transcript at all. This
     function never raises on missing data; it is the caller's job to decide
-    whether MISSING data is acceptable to print (see ``--allow-partial``).
+    whether incomplete data is acceptable to print (see ``--allow-partial``).
     """
     missing_arms = [arm for arm in required_arms if arm not in transcripts]
     rows: list[dict] = []
@@ -247,10 +366,81 @@ def build_comparison(
                     }
                 )
                 continue
-            row = {"shape": shape_name, "arm": arm, "status": "ok"}
+            # A shape the arm's own run reported as errored (including a
+            # wall-clock timeout) is FAILED, not a usable cell — see
+            # incomplete_cells() and --allow-partial (Qodo finding 4).
+            status = "FAILED" if entry.get("error") else "ok"
+            row = {"shape": shape_name, "arm": arm}
             row.update(entry)
+            row["status"] = status
             rows.append(row)
     return rows, missing_arms
+
+
+def consume_sse_stream(raw_lines, *, now, t0: float, deadline: float) -> dict:
+    """Consume an OpenAI SSE stream, bounded by a WALL-CLOCK ``deadline``.
+
+    Pure over its inputs — ``raw_lines`` is any iterable of ``bytes``/``str``
+    lines and ``now`` is a monotonic clock callable — so the deadline and the
+    chunk/usage bookkeeping are testable without a server (Qodo finding 10).
+
+    Returns ``{"ttft", "chunks", "usage", "last", "timed_out"}``. ``chunks``
+    counts nonempty SSE deltas, which is NOT a token count — see
+    ``measure_shape`` (Qodo finding 3). ``timed_out`` is ``True`` when the
+    clock passed ``deadline`` before ``[DONE]``; the caller must not treat such
+    a stream as a completed measurement.
+    """
+    ttft: float | None = None
+    chunks = 0
+    last = t0
+    usage: dict = {}
+    timed_out = False
+    for raw in raw_lines:
+        if now() > deadline:
+            timed_out = True
+            break
+        line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        line = line.strip()
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except ValueError:
+            continue
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+        # A reasoning-mode shape streams its trace on delta.reasoning /
+        # delta.reasoning_content, NOT delta.content (the served build varies
+        # which key it uses — see lobes/assess.py's _trace_field for the same
+        # split) — content only carries text once the model exits <think>.
+        # Counting only "content" here would report a reasoning-heavy
+        # generation as having streamed nothing at all.
+        text = delta.get("content") or delta.get("reasoning") or delta.get("reasoning_content")
+        if text:
+            if ttft is None:
+                ttft = now() - t0
+            chunks += 1
+            last = now()
+    return {"ttft": ttft, "chunks": chunks, "usage": usage, "last": last, "timed_out": timed_out}
+
+
+def incomplete_cells(rows: list[dict]) -> list[dict]:
+    """Every comparison cell that is not a usable measurement.
+
+    A three-arm comparison is only complete when every (shape, arm) cell is
+    ``ok``. MISSING (no transcript / no shape) and FAILED (the shape errored or
+    timed out) both make the table an incomplete comparison, and ``--combine``
+    exits nonzero on either unless ``--allow-partial`` is given.
+    """
+    return [
+        {"shape": r["shape"], "arm": r["arm"], "status": r.get("status", "MISSING")}
+        for r in rows
+        if r.get("status") != "ok"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -335,62 +525,86 @@ def measure_shape(
     )
 
     t0 = time.perf_counter()
-    ttft = None
-    n_content = 0
-    last = t0
-    usage: dict = {}
     try:
         with urllib.request.urlopen(req, timeout=max_seconds) as resp:
-            for raw in resp:
-                line = raw.decode("utf-8", "replace").strip()
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except ValueError:
-                    continue
-                if chunk.get("usage"):
-                    usage = chunk["usage"]
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-                # A reasoning-mode shape streams its trace on delta.reasoning /
-                # delta.reasoning_content, NOT delta.content (the served build
-                # varies which key it uses — see lobes/assess.py's
-                # _trace_field for the same split) — content only carries
-                # text once the model exits <think>. Counting only "content"
-                # here would report a reasoning-heavy generation as having
-                # streamed nothing at all.
-                text = (
-                    delta.get("content") or delta.get("reasoning") or delta.get("reasoning_content")
-                )
-                if text:
-                    if ttft is None:
-                        ttft = time.perf_counter() - t0
-                    n_content += 1
-                    last = time.perf_counter()
+            stream = consume_sse_stream(
+                resp, now=time.perf_counter, t0=t0, deadline=t0 + max_seconds
+            )
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return {"shape": shape_name, "label": shape_spec["label"], "error": str(exc)}
 
+    base = {"shape": shape_name, "label": shape_spec["label"]}
+
+    # A shape that blew the wall-clock deadline is a TIMED-OUT shape, never a
+    # completed measurement, even though partial content did stream (Qodo
+    # finding 10). urllib's own timeout is per-socket-operation: a server that
+    # keeps emitting chunks resets it forever, so the deadline below is the
+    # only thing that actually bounds a shape.
+    if stream["timed_out"]:
+        return {
+            **base,
+            "error": (
+                f"wall-clock deadline of {max_seconds:g}s exceeded while "
+                f"streaming (--max-seconds); {stream['chunks']} content "
+                "chunk(s) had arrived — reported as TIMED OUT, not measured"
+            ),
+            "timed_out": True,
+            "elapsed_s": round(stream["last"] - t0, 2),
+            "sse_content_chunks": stream["chunks"],
+        }
+
+    ttft = stream["ttft"]
     if ttft is None:
         return {
-            "shape": shape_name,
-            "label": shape_spec["label"],
+            **base,
             "error": "no content or reasoning tokens streamed "
             "(lane may be pressure-shedding — a 429/busy body arrives as a "
             "non-SSE 200 payload with no 'data: ' lines)",
         }
 
-    gen_window = max(last - t0 - ttft, 1e-9)
-    completion_tokens = usage.get("completion_tokens", n_content)
-    return {
-        "shape": shape_name,
-        "label": shape_spec["label"],
+    gen_window = max(stream["last"] - t0 - ttft, 1e-9)
+    n_chunks = stream["chunks"]
+    # NEVER label a chunk count as a token count (Qodo finding 3). One SSE
+    # delta may carry several tokens, so the chunk count is a property of
+    # server/network chunking, not of generation. The real
+    # usage.completion_tokens is preferred (this script asks for it via
+    # stream_options.include_usage); when the server omits it, the chunk count
+    # is reported under its OWN key and the derived tok/s is flagged an
+    # estimate everywhere it appears.
+    completion_tokens = (stream["usage"] or {}).get("completion_tokens")
+    if isinstance(completion_tokens, (int, float)):
+        basis, tokens, estimated = BASIS_USAGE, completion_tokens, False
+    else:
+        completion_tokens = None
+        basis, tokens, estimated = BASIS_CHUNKS, n_chunks, True
+
+    row = {
+        **base,
         "ttft_ms": round(ttft * 1000, 1),
         "completion_tokens": completion_tokens,
-        "decode_tok_s": round(completion_tokens / gen_window, 2),
-        "wall_s": round(last - t0, 2),
+        "sse_content_chunks": n_chunks,
+        "decode_tok_s": round(tokens / gen_window, 2),
+        "decode_tok_s_estimated": estimated,
+        "throughput_basis": basis,
+        "wall_s": round(stream["last"] - t0, 2),
+    }
+    if estimated:
+        row["throughput_note"] = (
+            "server returned no usage.completion_tokens; decode_tok_s is an "
+            "ESTIMATE derived from the count of nonempty SSE deltas, which "
+            "depends on server/network chunking rather than tokens generated"
+        )
+    return row
+
+
+def _no_acceptance(surface: str) -> dict:
+    """A no-number acceptance entry, shaped like the real ones (never fabricates a rate)."""
+    return {
+        _RATE_KEY: None,
+        _SURFACE_KEY: surface,
+        _SCOPE_KEY: None,
+        "request_scoped": False,
+        _CONTAMINATED_KEY: None,
     }
 
 
@@ -417,19 +631,20 @@ def run_arm(
 
         acceptance = None
         if arm == "none":
-            acceptance = {"acceptance_rate": None, "surface": "not_applicable"}
+            acceptance = _no_acceptance("not_applicable")
         elif metrics_url:
             metrics_after = fetch_metrics_snapshot(metrics_url, max_seconds)
             if metrics_before is not None and metrics_after is not None:
-                acceptance = acceptance_delta(metrics_before, metrics_after)
+                # exactly one request was issued for this shape, above
+                acceptance = acceptance_delta(metrics_before, metrics_after, expected_requests=1)
             if acceptance is None:
-                acceptance = {"acceptance_rate": None, "surface": "unavailable"}
+                acceptance = _no_acceptance("unavailable")
         elif docker_container:
             lines = fetch_docker_log_window(docker_container, since, max_seconds)
             summary = summarize_log_lines(lines) if lines else None
-            acceptance = summary or {"acceptance_rate": None, "surface": "unavailable"}
+            acceptance = summary or _no_acceptance("unavailable")
         else:
-            acceptance = {"acceptance_rate": None, "surface": "unconfigured"}
+            acceptance = _no_acceptance("unconfigured")
 
         row["acceptance"] = acceptance
         shapes_out[shape_name] = row
@@ -454,15 +669,28 @@ def _fmt_row(shape_name: str, entry: dict) -> str:
     if entry.get("status") == "MISSING":
         return f"  [{label:>16} | {arm:>7}]  MISSING"
     if "error" in entry:
-        return f"  [{label:>16} | {arm:>7}]  FAILED — {entry['error']}"
+        verdict = "TIMED OUT" if entry.get("timed_out") else "FAILED"
+        return f"  [{label:>16} | {arm:>7}]  {verdict} — {entry['error']}"
     acc = entry.get("acceptance") or {}
-    rate = acc.get("acceptance_rate")
+    rate = acc.get(_RATE_KEY)
     rate_str = f"{rate * 100:.1f}%" if isinstance(rate, (int, float)) else "n/a"
-    surface = acc.get("surface", "unconfigured")
+    surface = acc.get(_SURFACE_KEY, "unconfigured")
+    # Say out loud what the acceptance figure actually covers (Qodo finding 9).
+    if acc.get(_SCOPE_KEY) == ENGINE_WIDE_SCOPE:
+        contaminated = acc.get(_CONTAMINATED_KEY)
+        if contaminated is True:
+            surface += ", engine-wide, CONTAMINATED"
+        elif contaminated is None:
+            surface += ", engine-wide, contamination unknown"
+        else:
+            surface += ", engine-wide"
+    # ... and never let an estimated tok/s pass for a measured one (finding 3).
+    tok_s = entry.get("decode_tok_s", "?")
+    tok_s_str = f"~{tok_s} tok/s (est)" if entry.get("decode_tok_s_estimated") else f"{tok_s} tok/s"
     return (
         f"  [{label:>16} | {arm:>7}]  "
         f"ttft {entry.get('ttft_ms', '?'):>8} ms | "
-        f"decode {entry.get('decode_tok_s', '?'):>6} tok/s | "
+        f"decode {tok_s_str:>18} | "
         f"accept {rate_str:>7} (via {surface}) | "
         f"max_model_len {entry.get('max_model_len', '?')}"
     )
@@ -478,7 +706,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--arm", choices=ARMS, help="the speculation arm currently loaded on --url")
     ap.add_argument("--api-key", default=None, help="bearer token, if the gateway gate is armed")
     ap.add_argument(
-        "--max-seconds", type=float, default=180.0, help="per-shape request ceiling (default 180)"
+        "--max-seconds",
+        type=float,
+        default=180.0,
+        help="per-shape WALL-CLOCK ceiling (default 180); a shape that "
+        "exceeds it is reported TIMED OUT, not measured",
     )
     ap.add_argument(
         "--gen-tokens", type=int, default=256, help="tokens to generate per shape (default 256)"
@@ -504,8 +736,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--allow-partial",
         action="store_true",
-        help="with --combine, exit 0 even when an arm's transcript is missing "
-        "(default: exit 1, MISSING rows still printed either way)",
+        help="with --combine, exit 0 even when a (shape, arm) cell is MISSING "
+        "or FAILED (default: exit 1; the rows are printed either way)",
     )
     args = ap.parse_args(argv)
 
@@ -528,8 +760,19 @@ def main(argv: list[str] | None = None) -> int:
             transcripts[arm] = data
 
         rows, missing_arms = build_comparison(transcripts)
+        incomplete = incomplete_cells(rows)
         if args.json:
-            print(json.dumps({"rows": rows, "missing_arms": missing_arms}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "rows": rows,
+                        "missing_arms": missing_arms,
+                        "incomplete_cells": incomplete,
+                        "complete": not incomplete,
+                    },
+                    indent=2,
+                )
+            )
         else:
             if missing_arms:
                 print(
@@ -539,7 +782,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             for row in rows:
                 print(_fmt_row(row["shape"], row))
-        if missing_arms and not args.allow_partial:
+        # Any MISSING or FAILED cell means this is not the three-arm comparison
+        # the caller asked for; exit nonzero so automation cannot accept it by
+        # accident (Qodo finding 4).
+        if incomplete and not args.allow_partial:
+            print(
+                f"INCOMPLETE comparison: {len(incomplete)} of {len(rows)} "
+                "(shape, arm) cells are not usable measurements — "
+                + ", ".join(f"{c['shape']}/{c['arm']}={c['status']}" for c in incomplete)
+                + ". Re-run the affected arms, or pass --allow-partial to "
+                "accept an incomplete table.",
+                file=sys.stderr,
+            )
             return 1
         return 0
 

@@ -14,6 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - docs/qwen3.8-27b-nvfp4.md and docs/dspark-speculation.md: the 19.9-24.0 tok/s incumbent figure is now consistently cited as a DATED 2026-08-19 measurement (docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt), never as a live baseline, alongside the new DSpark numbers.
 
+### Fixed
+
+- `scripts/spec-arms.py` no longer presents an engine-wide acceptance aggregate as a per-request measurement (Qodo finding 9). Both surfaces now carry `scope: "engine_wide_over_shape_window"` / `request_scoped: false`, and the `/metrics` surface deltas `vllm:request_success_total` over the same window against the one request the tool issued — more completions than that marks the entry `contaminated: true` and prints `CONTAMINATED`. The `docker logs` surface has no request id at all, so its `contaminated` is always `null` (unknown) and can never be shown clean.
+- `scripts/spec-arms.py` never labels a count of SSE deltas as `completion_tokens` (Qodo finding 3). One delta may carry several tokens, so the chunk count is now reported under its own `sse_content_chunks` key, `completion_tokens` stays `null` when the server omits `usage`, and the derived throughput is flagged `decode_tok_s_estimated: true` / `throughput_basis: "sse_chunk_count_estimate"` in JSON and `~N tok/s (est)` in the table.
+- `scripts/spec-arms.py --max-seconds` is a real wall-clock deadline across the whole streaming read, not just urllib's per-operation socket timeout (Qodo finding 10). A server that keeps emitting chunks could previously reset that timeout forever and run a shape indefinitely; a shape that blows the deadline is now reported TIMED OUT rather than as a completed measurement.
+- `scripts/spec-arms.py --combine` exits nonzero on any MISSING **or FAILED** cell, not only on a wholly absent arm file (Qodo finding 4). A transcript whose shape errored or timed out no longer yields a successful exit alongside a printed FAILED row, so automation cannot accept an incomplete three-arm comparison; `--allow-partial` is the explicit opt-in.
+
 ## [0.59.1] - 2026-08-23
 
 ### Added
