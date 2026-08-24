@@ -284,3 +284,33 @@ variance of roughly +/-10-13% is present and is the more likely explanation.
 CLAIM 7 IS WITHDRAWN. The large deltas survive it comfortably (dspark code
 +64% vs mtp, prose -27% vs mtp, ~4x vs floor); nothing at or below ~15% in this
 transcript should be read as a real effect.
+
+## Section 14 — ADOPTION (deviation d4), captured live 2026-08-25
+# Sections 1-13 above end with the spike RESTORING the incumbent (1048576 + mtp n=2).
+# That restore is what the transcript recorded, and it is why nothing above backs a
+# claim about the CURRENTLY deployed contract. This section closes that gap: it is the
+# live state read back AFTER the operator's d4 adoption. (Qodo review #200, finding 11.)
+
+$ docker inspect model-gear-vllm-primary --format '{{json .Args}}'   # rendered argv, not .env
+    unsloth/Qwen3.8-27B-NVFP4
+    --served-model-name=unsloth/Qwen3.8-27B-NVFP4
+    --max-model-len=262144
+    --speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153be924f17ce4bf62726954eeaa4a73e854","num_speculative_tokens":7}
+
+$ scripts/spike-preflight.sh restore
+   --- check 1/3: lobes status ---
+     PASS  lobes status
+   --- check 2/3: rendered argv proof (the incumbent config came back intact) ---
+   --- check 3/3: one live generate through the gateway ---
+     POST http://localhost:8001/v1/chat/completions  model=cortex  -> HTTP 200
+     reply: 'awake'  (finish_reason=stop)
+     PASS  live generate
+   === restore verdict ===
+     PASS — cortex is back: status healthy, argv intact, and it answered.
+
+$ docker logs model-gear-vllm-primary | grep 'GPU KV cache size'
+   (EngineCore pid=409) INFO 08-24 21:58:14 [kv_cache_utils.py:1916] GPU KV cache size: 760,806 tokens, Maximum concurrency for 262,144 tokens per request: 2.90x
+
+   => DEPLOYED CONTRACT as of this reading: unsloth/Qwen3.8-27B-NVFP4 served with
+      method=dspark (block 7) at max_model_len=262144. The 1,048,576 YaRN window
+      validated on 2026-08-19 is NOT the deployed window.

@@ -79,7 +79,7 @@ exactly what it rendered before the field existed.
 
 from __future__ import annotations
 
-from lobes.catalog import ENGINE_VLLM, SUPPORTED_MODELS
+from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM, SUPPORTED_MODELS
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 
@@ -189,7 +189,14 @@ def _engine_activation_env(role: str, rp: RoleProfile) -> dict[str, str]:
     engine = role_engine(rp)
     if engine == ENGINE_VLLM:
         return {}
-    activation = LLAMA_CPP_ACTIVATION_ENV.get(role)
+    # Gate the lookup on the engine, not merely on "not vLLM". LLAMA_CPP_ACTIVATION_ENV
+    # is keyed by ROLE, so an ungated `.get(role)` hands a THIRD engine (sglang, since
+    # 0.60.0) the llama.cpp lane's activation env — a cortex gear declaring
+    # engine="sglang" would silently render PRIMARY_URL=http://llamacpp-primary:8000
+    # and COMPOSE_PROFILES=llamacpp, pointing the gateway at a `llama-server` lane that
+    # cannot load it. shape_render._role_service already gates this way; this is the
+    # matching half, so both paths refuse an engine with no lane instead of disagreeing.
+    activation = LLAMA_CPP_ACTIVATION_ENV.get(role) if engine == ENGINE_LLAMA_CPP else None
     if activation is None:
         raise ModelGearError(
             code=EXIT_USER_ERROR,

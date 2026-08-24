@@ -696,3 +696,27 @@ def test_host_env_key_pattern_stays_ascii_not_unicode_word_chars() -> None:
         assert bad_key in exc.value.message
     # the ASCII form still works
     assert Profile.from_dict("x", {"host_env": {"LOBES_OK_1": "1"}}).host_env == {"LOBES_OK_1": "1"}
+
+
+def test_a_third_engine_never_borrows_the_llama_cpp_lane() -> None:
+    # Qodo #200-2 (HIGH, correctness). `LLAMA_CPP_ACTIVATION_ENV` is keyed by ROLE,
+    # so an ungated `.get(role)` handed ANY non-vLLM engine the llama.cpp activation:
+    # a cortex gear declaring engine="sglang" (added 0.60.0) silently rendered
+    # PRIMARY_URL=http://llamacpp-primary:8000 + COMPOSE_PROFILES=llamacpp, pointing
+    # the gateway at a `llama-server` lane that cannot load it. shape_render already
+    # gated on the engine; render.py did not, so the two disagreed. Both must refuse.
+    from lobes.cli._errors import ModelGearError
+    from lobes.profiles.render import _engine_activation_env
+    from lobes.profiles.shape_render import role_service
+
+    sglang_cortex = RoleProfile(feasible=True, model="RadixArk/Qwen3.8-27B-NVFP4")
+
+    for call, surface in (
+        (lambda: _engine_activation_env("cortex", sglang_cortex), "render"),
+        (lambda: role_service("cortex", sglang_cortex), "shape_render"),
+    ):
+        with pytest.raises(ModelGearError) as excinfo:
+            call()
+        message = str(excinfo.value)
+        assert "sglang" in message, f"{surface} did not name the engine it refused"
+        assert "llamacpp-primary" not in message

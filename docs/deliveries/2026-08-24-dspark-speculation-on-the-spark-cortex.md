@@ -47,6 +47,17 @@ After: The Spark's cortex serves the same unsloth/Qwen3.8-27B-NVFP4 checkpoint o
 | `t6` (`d3`) | Operator request. Deviation d1 measured dspark at 262144 but the other two arms were only measured at 786432, so the drafter-aligned window currently has no floor and no incumbent to compare against — exactly the interpretability gap that arm 3 fixed at 768K. c27's own rationale (arm 3 is what makes arms 1 and 2 interpretable) applies per-window, not once globally. | `acceptable` |
 | `t6` (`d4`) | Operator decision after reading the five-arm result. t6 was scoped as a SPIKE that ends by restoring the incumbent (c3/h7); adopting a measured arm is a change of deployed serving configuration and therefore beyond that scope. Two consequences are accepted deliberately: (1) the advertised 1M YaRN window is withdrawn in favour of the 262144 native window -- the served-contract change c24 named, chosen for 46.2 tok/s on code (4.65x the floor) and 2.92x concurrency; (2) free-form prose decode drops from ~16.7 to ~13.7 tok/s versus MTP, an accepted trade for structured/tool work. Classified NEEDS-FOLLOW-UP because the deployed 0.57.2 scaffold HARDCODES --speculative-config: this adoption survives only as a hand-edit to the deployment's docker-compose.yml and would be silently reverted by any 'lobes init' re-render. Making it durable requires either re-scaffolding to the current template (where `PRIMARY_SPECULATIVE_CONFIG` is live) or carrying the `speculative_config` as repo data in the shape/catalog. | `needs-follow-up` |
 
+> **Terminology note (raised in review — Qodo PR #200, finding 6).** The `d4`
+> record quoted above says "2.92x concurrency". That figure is vLLM's own
+> **KV-capacity ratio** — KV pool tokens divided by the declared window, i.e. how
+> many requests each occupying the FULL window would fit. It is a modelled
+> capacity estimate, **not observed concurrent throughput**: every measurement in
+> this run was single-stream batch-1, and `PRIMARY_MAX_NUM_SEQS=2` caps the
+> scheduler at two sequences regardless of KV headroom. The deviation records are
+> quoted verbatim by contract, so the wording inside them is left as written; read
+> "concurrency" there as "KV-capacity ratio". See the Remaining Work entry on the
+> absent concurrency measurement.
+
 ## Evidence
 
 - tests: `uv run pytest -n auto -q` — 3140 passed, 15 skipped (skips pre-existing, live/optional-dependency gated)
