@@ -127,7 +127,7 @@ class _Harness:
         return "COMPOSE-RAN" in self.log.read_text()
 
 
-@pytest.fixture()
+@pytest.fixture
 def harness(tmp_path) -> _Harness:
     return _Harness(tmp_path)
 
@@ -330,7 +330,8 @@ def test_resolved_chain_is_printed_and_passed_to_compose(harness):
 def test_resolver_failure_refuses_the_operation(harness):
     proc = harness.run(STOP, APPLY, *NO_PEERS, STUB_LOBES_RC="3")
     assert proc.returncode != 0
-    assert "FAILED" in proc.stdout and "UNKNOWN" in proc.stdout
+    assert "FAILED" in proc.stdout
+    assert "UNKNOWN" in proc.stdout
     assert not harness.compose_ran, (
         "docker compose ran without the intended -f chain — it would have "
         "implicitly discovered files in the deployment dir"
@@ -345,7 +346,8 @@ def test_resolver_failure_is_distinguishable_from_an_empty_chain(harness):
     # prints nothing for a plain deployment) — it must NOT be a failure...
     assert empty.returncode == 0, empty.stdout + empty.stderr
     # ...and the two must not read the same in a transcript.
-    assert "EMPTY" in empty.stdout and "not a resolver failure" in empty.stdout
+    assert "EMPTY" in empty.stdout
+    assert "not a resolver failure" in empty.stdout
     assert "EMPTY" not in failed.stdout
 
 

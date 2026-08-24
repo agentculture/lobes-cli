@@ -19,7 +19,8 @@ _RATE_KEY = "acceptance_rate"
 
 def _load():
     spec = importlib.util.spec_from_file_location("spec_arms", _SCRIPT)
-    assert spec and spec.loader
+    assert spec is not None
+    assert spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
