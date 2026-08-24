@@ -143,7 +143,8 @@ def test_upgrade_request_strips_the_callers_credentials() -> None:
     assert b"super-secret" not in raw
     assert b"sid=abc" not in raw
     lowered = raw.decode("latin-1").lower()
-    assert "authorization" not in lowered and "cookie" not in lowered
+    assert "authorization" not in lowered
+    assert "cookie" not in lowered
     assert "sec-websocket-key" in lowered  # the upgrade itself still intact
 
 
@@ -235,7 +236,8 @@ def test_read_head_reassembles_a_head_split_across_reads() -> None:
         b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\nZ", chunk=8
     )
     head, leftover = R.read_head(reader)
-    assert head.endswith(b"\r\n\r\n") and b"Upgrade: websocket" in head
+    assert head.endswith(b"\r\n\r\n")
+    assert b"Upgrade: websocket" in head
     assert R.status_of(head) == 101
     # `leftover` is only what was ALREADY read past the terminator — here the
     # loop stopped on the chunk that completed it, so the trailing byte is

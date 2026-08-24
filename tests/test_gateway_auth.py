@@ -215,7 +215,8 @@ def test_post_no_header_401_openai_shape_zero_upstreams(auth_gateway) -> None:
     payload = json.loads(err.read())
     assert payload["error"]["type"] == "invalid_api_key"
     assert payload["error"]["code"] == "invalid_api_key"
-    assert isinstance(payload["error"]["message"], str) and payload["error"]["message"]
+    assert isinstance(payload["error"]["message"], str)
+    assert payload["error"]["message"]
     assert err.headers.get("WWW-Authenticate") == "Bearer"
     # The gate runs BEFORE the request body is read, so the 401 closes the
     # connection — an unread body must not poison keep-alive framing.
@@ -333,7 +334,8 @@ def test_capabilities_answers_keyless_while_api_key_set(auth_gateway) -> None:
     with urllib.request.urlopen(auth_gateway.base + "/capabilities", timeout=5) as r:
         assert r.status == 200
         payload = json.load(r)
-    assert "cortex" in payload and "senses" in payload
+    assert "cortex" in payload
+    assert "senses" in payload
 
 
 # --- api_key unset: byte-identical to the pre-auth gateway --------------------

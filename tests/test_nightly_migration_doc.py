@@ -147,7 +147,11 @@ def test_doc_records_baselines_to_beat() -> None:
     assert re.search(
         r"19(\.\d+)?\s*tok/s", doc_text
     ), "doc must cite the 27B ~19 tok/s decode baseline"
-    assert "72" in doc_text and "79" in doc_text, (
+    assert "72" in doc_text, (
+        "doc must cite the 72-79% MTP draft acceptance range from "
+        "docs/qwen3.6-27b-text-nvfp4-mtp.md"
+    )
+    assert "79" in doc_text, (
         "doc must cite the 72-79% MTP draft acceptance range from "
         "docs/qwen3.6-27b-text-nvfp4-mtp.md"
     )

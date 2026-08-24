@@ -83,7 +83,8 @@ def test_dead_owner_refused_yields_retryable_503() -> None:
     opener, calls = _opener({"primary": S.UpstreamError("refused"), "fallback": 200})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
     assert [c[0] for c in calls] == ["primary"]  # fallback is never dialed
-    assert resp.status == 503 and resp.upstream is None
+    assert resp.status == 503
+    assert resp.upstream is None
     headers = dict(resp.headers)
     assert headers["Retry-After"] == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
     assert json.loads(resp.body)["error"]["type"] == "backend_unavailable"
@@ -134,7 +135,8 @@ def test_dead_owner_all_down_returns_503_with_single_attempt() -> None:
     opener, calls = _opener({"primary": S.UpstreamError("x"), "fallback": S.UpstreamError("y")})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
     assert [c[0] for c in calls] == ["primary"]  # fallback never dialed
-    assert resp.status == 503 and resp.upstream is None
+    assert resp.status == 503
+    assert resp.upstream is None
     assert json.loads(resp.body)["error"]["attempts"] == ["x"]
     assert json.loads(resp.body)["error"]["type"] == "backend_unavailable"
     assert dict(resp.headers)["Retry-After"] == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
@@ -154,7 +156,8 @@ def test_empty_order_backends_is_terminal_502() -> None:
     opener, calls = _opener({})
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"P"}', opener)
     assert calls == []  # nothing to dial — no owner exists
-    assert resp.status == 502 and resp.upstream is None
+    assert resp.status == 502
+    assert resp.upstream is None
     assert json.loads(resp.body)["error"]["type"] == "upstream_unavailable"
     assert "Retry-After" not in dict(resp.headers)  # terminal, not retryable
 
@@ -389,7 +392,8 @@ def test_integration_streaming_post_is_chunked(gateway) -> None:
                 break
             buf += chunk
     assert b"Transfer-Encoding: chunked" in buf
-    assert b"data: a\n\n" in buf and b"data: b\n\n" in buf
+    assert b"data: a\n\n" in buf
+    assert b"data: b\n\n" in buf
     assert buf.rstrip().endswith(b"0")  # final zero-length chunk terminates the body
 
 
@@ -748,8 +752,10 @@ def test_busy_429_is_distinguishable_from_503_owner_down() -> None:
     down = S.handle_post(
         table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', down_opener
     )
-    assert busy.status == 429 and json.loads(busy.body)["error"]["type"] == "server_busy"
-    assert down.status == 503 and json.loads(down.body)["error"]["type"] == "backend_unavailable"
+    assert busy.status == 429
+    assert json.loads(busy.body)["error"]["type"] == "server_busy"
+    assert down.status == 503
+    assert json.loads(down.body)["error"]["type"] == "backend_unavailable"
 
 
 def test_handle_post_override_forces_main_under_pressure() -> None:
@@ -956,7 +962,8 @@ def test_dead_primary_never_opens_multimodal_connection() -> None:
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"PRIMARY"}', opener)
     dialed = [c[0] for c in calls]
     assert dialed == ["primary"]  # ONLY the owner
-    assert "multimodal" not in dialed and "minor" not in dialed  # never a foreign gear
+    assert "multimodal" not in dialed
+    assert "minor" not in dialed
     assert resp.status == 503
     assert json.loads(resp.body)["error"]["type"] == "backend_unavailable"
 

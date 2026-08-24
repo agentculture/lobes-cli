@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.1] - 2026-08-27
+
+### Changed
+
+- **Cleared every open SonarCloud issue on the project — all 96, all in
+  `tests/`.** Two rules, both test-only: `python:S9073` ("Split this composite
+  assertion into separate assertions", 92 MAJOR) and `python:S9083` ("Remove
+  empty parentheses from this decorator", 4 MINOR). No file under `lobes/` is
+  touched and no runtime behaviour changes — a failing conjunct now names
+  itself instead of hiding behind a compound `and`.
+  - **92 composite assertions split** across 30 test modules. 83 were
+    single-line with no message and split mechanically; **9 carried assertion
+    messages**, and each conjunct now gets **its own message naming which
+    condition failed** — a strict improvement, since `assert A and B, "X"`
+    reported `X` regardless of which half broke.
+  - **4 empty-paren `@pytest.fixture()` decorators** reduced to
+    `@pytest.fixture` (`test_assess_perf.py`, `test_bench_compare.py`,
+    `test_cli_benchmark_profiles.py`, `test_minor_client.py`).
+
+### Fixed
+
+- **Indentation integrity of a mechanical rewrite, proven structurally rather
+  than by a green suite.** An earlier substring-based pass matched *mid-line*
+  and dedented the second `assert` of a split pair out of its enclosing block —
+  out of a `try` in `test_minor_logprobs.py` and out of a `for` in
+  `test_realtime_conversation.py` — and **the full suite still passed**, because
+  the asserts ran, just at the wrong nesting. The diff is now verified by an
+  AST-level equivalence check: main's tree with the canonical split applied
+  in place must `ast.dump`-match this branch's tree for all 142 test files
+  (assert messages normalised out). That check passes, so no statement escaped
+  its block. An independent AST audit reproduces SonarCloud's counts exactly —
+  92 + 4 on `main`, **0 + 0** here.
+
 ## [0.66.0] - 2026-08-27
 
 ### Added

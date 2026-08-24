@@ -27,8 +27,10 @@ vllm:request_success_total{engine="0",finished_reason="length",model_name="m"} 2
 
 def test_parse_metrics_full() -> None:
     m = _metrics.parse_metrics(SAMPLE)
-    assert m["running"] == 2 and m["waiting"] == 1
-    assert m["prompt_tokens"] == 100 and m["generation_tokens"] == 40
+    assert m["running"] == 2
+    assert m["waiting"] == 1
+    assert m["prompt_tokens"] == 100
+    assert m["generation_tokens"] == 40
     assert m["requests_succeeded"] == 7
     assert m["by_finish_reason"] == {"stop": 5, "length": 2}
     assert m["kv_cache_usage"] == 0.5
@@ -41,7 +43,8 @@ def test_parse_metrics_sums_across_engines() -> None:
 
 def test_parse_metrics_empty_and_no_kv() -> None:
     m = _metrics.parse_metrics("")
-    assert m["running"] == 0 and m["by_finish_reason"] == {}
+    assert m["running"] == 0
+    assert m["by_finish_reason"] == {}
     assert "kv_cache_usage" not in m  # absent gauge → key omitted
 
 
@@ -214,11 +217,14 @@ def test_fleet_sections_shape_and_content() -> None:
     secs = _live.fleet_sections(_fleet_status())
     assert [s["title"] for s in secs] == ["Online (live)", "Offered", "Busy", "Usage", "Endpoints"]
     online = "\n".join(secs[0]["items"])
-    assert "primary (generate): ok" in online and "embed (embed): unreachable" in online
+    assert "primary (generate): ok" in online
+    assert "embed (embed): unreachable" in online
     offered = "\n".join(secs[1]["items"])
-    assert "default model: P" in offered and "task families: embed, generate" in offered
+    assert "default model: P" in offered
+    assert "task families: embed, generate" in offered
     usage = "\n".join(secs[3]["items"])
-    assert "prompt tokens: 100" in usage and "stop=7" in usage
+    assert "prompt tokens: 100" in usage
+    assert "stop=7" in usage
     assert secs[4]["items"] == ["GET /health", "POST /v1/chat/completions", "POST /v1/embeddings"]
 
 
@@ -302,7 +308,8 @@ def test_fleet_sections_all_vllm_has_no_partial_note() -> None:
 def test_live_sections_fleet(monkeypatch) -> None:
     monkeypatch.setattr(_metrics, "http_get_json", lambda url, **k: _fleet_status())
     secs = _live.live_sections(8000, None)
-    assert secs[0]["title"] == "Online (live)" and "primary" in "\n".join(secs[0]["items"])
+    assert secs[0]["title"] == "Online (live)"
+    assert "primary" in "\n".join(secs[0]["items"])
 
 
 def test_live_sections_single(monkeypatch) -> None:
@@ -335,7 +342,9 @@ def test_overview_live_cli_single(monkeypatch, capsys) -> None:
     )
     assert main(["overview", "--live", "--port", "8000"]) == 0
     out = capsys.readouterr().out
-    assert "lobes (live)" in out and "Usage" in out and "generation tokens: 9" in out
+    assert "lobes (live)" in out
+    assert "Usage" in out
+    assert "generation tokens: 9" in out
 
 
 def test_overview_live_cli_json(monkeypatch, capsys) -> None:

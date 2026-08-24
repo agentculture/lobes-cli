@@ -104,9 +104,11 @@ def test_verification_run_checks_gemma4_arch():
     # and check for a Gemma4 architecture entry.
     has_registry = "ModelRegistry" in text or "get_supported_archs" in text
     has_gemma4_arch = "Gemma4" in text
-    assert has_registry and has_gemma4_arch, (
-        "Expected verification RUN to check vllm.ModelRegistry for a 'Gemma4' arch. "
-        f"has_registry={has_registry}, has_gemma4_arch={has_gemma4_arch}"
+    assert has_registry, (
+        "Expected verification RUN to check vllm.ModelRegistry. " f"has_registry={has_registry}"
+    )
+    assert has_gemma4_arch, (
+        "Expected verification RUN to name a 'Gemma4' arch. " f"has_gemma4_arch={has_gemma4_arch}"
     )
 
 

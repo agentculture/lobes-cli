@@ -65,7 +65,7 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def local_server():
     """Start HTTPServer on 127.0.0.1:0 (OS picks the port); yield (server, base_url)."""
     server = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
@@ -122,7 +122,8 @@ def test_request_body_is_well_formed(local_server) -> None:
 
     # Must carry a messages array.
     messages = body.get("messages")
-    assert isinstance(messages, list) and len(messages) >= 1
+    assert isinstance(messages, list)
+    assert len(messages) >= 1
 
     # The user prompt must appear in the messages array.
     user_messages = [m for m in messages if m.get("role") == "user"]

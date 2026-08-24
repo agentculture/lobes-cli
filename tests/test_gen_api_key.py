@@ -14,7 +14,8 @@ _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "gen-api-key.py"
 
 def _load():
     spec = importlib.util.spec_from_file_location("gen_api_key", _SCRIPT)
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -27,7 +28,8 @@ def test_sets_key_when_absent(tmp_path) -> None:
     (tmp_path / ".env").write_text("VLLM_PORT=8001\n", encoding="utf-8")
     assert gen.main(["--dir", str(tmp_path)]) == 0
     value = gen._read_key(tmp_path / ".env")
-    assert value and value.startswith("mg-")
+    assert value
+    assert value.startswith("mg-")
     # the unrelated line is preserved
     assert "VLLM_PORT=8001" in (tmp_path / ".env").read_text(encoding="utf-8")
 
@@ -43,7 +45,8 @@ def test_force_rotates(tmp_path) -> None:
     (tmp_path / ".env").write_text("CULTURE_VLLM_API_KEY=mg-old\n", encoding="utf-8")
     assert gen.main(["--dir", str(tmp_path), "--force"]) == 0
     rotated = gen._read_key(tmp_path / ".env")
-    assert rotated and rotated != "mg-old"
+    assert rotated
+    assert rotated != "mg-old"
 
 
 def test_missing_dir_is_env_error(tmp_path, capsys) -> None:
@@ -64,7 +67,8 @@ def test_secret_not_printed_by_default(tmp_path, capsys) -> None:
     assert gen.main(["--dir", str(tmp_path)]) == 0
     captured = capsys.readouterr()
     key = gen._read_key(tmp_path / ".env")
-    assert key and key not in captured.out  # no leak to stdout without --show
+    assert key
+    assert key not in captured.out
 
 
 def test_env_perms_are_owner_only(tmp_path) -> None:

@@ -60,7 +60,8 @@ def test_durable_log_dir_absolute_wins(tmp_path) -> None:
 
 def test_ensure_log_dir_creates(tmp_path) -> None:
     d = _compose.ensure_log_dir(tmp_path)
-    assert d.is_dir() and d == tmp_path / "logs"
+    assert d.is_dir()
+    assert d == tmp_path / "logs"
 
 
 # --- collect_logs / tail_lines (pure) --------------------------------------
@@ -205,7 +206,8 @@ def test_logwrap_template_shipped_and_safe() -> None:
     assert 'exec "$@"' in content
     # ... tees to a durable file, and is parameterised per service.
     assert "tee -a" in content
-    assert "MG_LOG_NAME" in content and "MG_LOG_DIR" in content
+    assert "MG_LOG_NAME" in content
+    assert "MG_LOG_DIR" in content
     # In both template sets (single + fleet).
     assert "mg-logwrap.sh" in _compose.SINGLE_TEMPLATES
     assert "mg-logwrap.sh" in _compose.FLEET_TEMPLATES

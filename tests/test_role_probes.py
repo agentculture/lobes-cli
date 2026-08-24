@@ -530,7 +530,8 @@ def test_cli_assess_probes_custom_timeout_reaches_the_probe(
         ]
     )
     assert rc == 0
-    assert seen_timeouts and all(t == 7.5 for t in seen_timeouts)
+    assert seen_timeouts
+    assert all(t == 7.5 for t in seen_timeouts)
 
 
 def test_cli_assess_probes_never_touches_docker(
