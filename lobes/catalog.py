@@ -117,6 +117,17 @@ class SupportedModel:
     # (tool_parser / quantization / moe_backend / speculative_config /
     # hf_overrides); see :func:`serves_with_vllm`.
     engine: str = ENGINE_VLLM
+    # An explicit Hugging Face revision (a full commit SHA) this entry is pinned
+    # to, when the entry needs to name one that differs from — or simply is not
+    # implied by — its `id`. "" (the default) means no pin is declared here,
+    # which is the case for every pre-existing entry: their ids are the vLLM
+    # `--served-model-name` and this repo has never needed to distinguish a
+    # revision from the id for them. A candidate entry describing a checkpoint
+    # this repo has only read a published card for (never booted, never pulled)
+    # is exactly the case that needs one: `id` alone floats to whatever `main`
+    # currently is, and the recipe this entry documents quotes a specific
+    # commit. dspark-speculation-on-the-spark-cortex plan t2.
+    hf_revision: str = ""
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -1072,6 +1083,87 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         doc="qwen3.8-27b-gguf-llamacpp.md",
         task="generate",
         engine=ENGINE_LLAMA_CPP,
+    ),
+    SupportedModel(
+        id="RadixArk/Qwen3.8-27B-NVFP4",
+        # The catalog's FIRST SGLang-engine gear (dspark-speculation-on-the-spark-
+        # cortex plan t2). PUBLISHED-ELSEWHERE facts, cited to the RadixArk model
+        # card and the NVIDIA DGX Spark developer-forum recipe it is served under
+        # — see docs/dspark-speculation.md, the authoritative in-repo record.
+        # This repo has NEVER pulled or booted this checkpoint (#108: nothing may
+        # be claimed validated without a docs/evidence/ transcript).
+        #
+        # NOT the checkpoint the fleet's cortex serves — a DIFFERENT publisher's
+        # W4A4 NVFP4 export of the same upstream Qwen3.8-27B base than the
+        # deployed unsloth/Qwen3.8-27B-NVFP4 (see docs/qwen3.8-27b-nvfp4.md).
+        # Recorded here only as the SGLang recipe's target, for the covering
+        # plan's later spike task to boot against.
+        #
+        # hf_revision is pinned to a full commit SHA because the published
+        # recipe quotes one, and this repo pins every checkpoint by revision and
+        # every image by digest — a floating `main` would not be carryable here
+        # even as a citation.
+        role_hint="candidate",
+        shape="hybrid Mamba/linear-attn, W4A4 NVFP4 (SGLang export, different publisher)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        # tool_parser / quantization are vLLM-only fields (see the dataclass
+        # docstring and serves_with_vllm) — SGLang has neither vLLM flag, so both
+        # stay empty exactly as the llama.cpp gear above leaves them empty.
+        tool_parser="",
+        quantization="",
+        # status="configured", not "load-tested": per #108, this repo has never
+        # booted this checkpoint, so there is nothing measured to promote it
+        # with. Unlike the GGUF gear above (whose header facts were at least
+        # measured off a locally downloaded file), even these facts are
+        # PUBLISHED-ELSEWHERE — read off the upstream model card, not this
+        # repo's own inspection. "configured" is still the correct (and only
+        # available lesser) status value; the doc/comment provenance is what
+        # carries the distinction.
+        status="configured",
+        doc="dspark-speculation.md",
+        task="generate",
+        engine=ENGINE_SGLANG,
+        hf_revision="52d1adc5f38aa5ebf099c29ed7025ba34cfbb854",
+    ),
+    SupportedModel(
+        id="RadixArk/Qwen3.8-27B-DSpark",
+        # The standalone block-speculative drafter for the target gear above
+        # (dspark-speculation-on-the-spark-cortex plan t2) — NOT a checkpoint
+        # this repo serves on its own; it exists only to draft for a target
+        # under speculative decoding. Recorded as its own candidate entry
+        # (rather than folded into the target's speculative_config, the way
+        # this repo's self-hosted MTP drafters are) because DSpark is an
+        # EXTERNAL, separately-published checkpoint, not a module baked into
+        # the target's own safetensors — see docs/dspark-speculation.md.
+        #
+        # STRUCTURAL facts, read off the RadixArk model card (PUBLISHED-
+        # ELSEWHERE, not measured by this repo — #108): 1.36B bf16, 5
+        # full-attention layers, GQA 40 query / 8 KV heads, rank-256 Markov
+        # confidence head choosing draft length dynamically, block size 7
+        # (verification width 8), 262144 positions, trained with SpecForge
+        # against a stated FP8 target and a stated SGLang serving engine —
+        # BOTH of which differ from this fleet's deployed cortex (W4A4 NVFP4
+        # on vLLM), which is exactly why docs/dspark-speculation.md flags any
+        # weak spike result as a target-mismatch hypothesis, not a verdict.
+        #
+        # hf_revision: the published recipe/model card does not quote one for
+        # this checkpoint (only the target table above has a quoted pin), so
+        # this pins the current HEAD commit of the RadixArk/Qwen3.8-27B-DSpark
+        # repo as resolved via the HF Hub API on 2026-08-24 — a real, existing
+        # revision, not a fabricated one — rather than leave a floating `main`
+        # uncarried the way this repo pins every other checkpoint.
+        role_hint="candidate",
+        shape="dense, bf16 standalone block-speculative drafter (5 full-attention layers)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="dspark-speculation.md",
+        task="generate",
+        engine=ENGINE_SGLANG,
+        hf_revision="85ef153be924f17ce4bf62726954eeaa4a73e854",
     ),
 )
 

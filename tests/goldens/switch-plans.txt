@@ -330,3 +330,31 @@
   msg: tool-call parser: skipped (llama.cpp gear — no vLLM --tool-call-parser on this engine)
   msg: quantization: skipped (llama.cpp gear — quantization is baked into the checkpoint file, not a serve flag)
   note: llama.cpp-served gear — `lobes switch` configures the vLLM lane (llama.cpp takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/qwen3.8-27b-gguf-llamacpp.md.
+### RadixArk/Qwen3.8-27B-NVFP4
+  VLLM_MODEL=RadixArk/Qwen3.8-27B-NVFP4
+  VLLM_SERVED_NAME=RadixArk/Qwen3.8-27B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  msg: tool-call parser: skipped (sglang gear — no vLLM --tool-call-parser on this engine)
+  msg: quantization: skipped (sglang gear — quantization is baked into the checkpoint file, not a serve flag)
+  note: sglang-served gear — `lobes switch` configures the vLLM lane (sglang takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/dspark-speculation.md.
+### RadixArk/Qwen3.8-27B-DSpark
+  VLLM_MODEL=RadixArk/Qwen3.8-27B-DSpark
+  VLLM_SERVED_NAME=RadixArk/Qwen3.8-27B-DSpark
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  msg: tool-call parser: skipped (sglang gear — no vLLM --tool-call-parser on this engine)
+  msg: quantization: skipped (sglang gear — quantization is baked into the checkpoint file, not a serve flag)
+  note: sglang-served gear — `lobes switch` configures the vLLM lane (sglang takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/dspark-speculation.md.
