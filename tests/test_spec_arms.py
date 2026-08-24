@@ -12,6 +12,9 @@ import importlib.util
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "spec-arms.py"
+_ACCEPTED_KEY = "accepted_tokens"
+_DRAFTED_KEY = "drafted_tokens"
+_RATE_KEY = "acceptance_rate"
 
 
 def _load():
@@ -61,9 +64,9 @@ def test_acceptance_delta_computes_rate_over_window() -> None:
     before = sa.parse_metrics_text(_METRICS_TEXT_BEFORE)
     after = sa.parse_metrics_text(_METRICS_TEXT_AFTER)
     delta = sa.acceptance_delta(before, after)
-    assert delta["accepted_tokens"] == 90.0
-    assert delta["drafted_tokens"] == 100.0
-    assert delta["acceptance_rate"] == 0.9
+    assert delta[_ACCEPTED_KEY] == 90.0
+    assert delta[_DRAFTED_KEY] == 100.0
+    assert delta[_RATE_KEY] == 0.9
     assert delta["surface"] == "vllm_metrics_http"
 
 
@@ -80,9 +83,9 @@ def test_acceptance_delta_none_when_counters_absent() -> None:
 def test_parse_acceptance_log_line_matches_real_vllm_line() -> None:
     parsed = sa.parse_acceptance_log_line(_LOG_LINE)
     assert parsed["mean_acceptance_length"] == 2.77
-    assert parsed["accepted_tokens"] == 55
-    assert parsed["drafted_tokens"] == 62
-    assert parsed["acceptance_rate"] == 0.887
+    assert parsed[_ACCEPTED_KEY] == 55
+    assert parsed[_DRAFTED_KEY] == 62
+    assert parsed[_RATE_KEY] == 0.887
 
 
 def test_parse_acceptance_log_line_none_on_unrelated_line() -> None:
@@ -94,8 +97,8 @@ def test_summarize_log_lines_aggregates_across_window() -> None:
         "Accepted: 55 tokens, Drafted: 62 tokens", "Accepted: 45 tokens, Drafted: 50 tokens"
     )
     summary = sa.summarize_log_lines([_LOG_LINE, line2, "unrelated"])
-    assert summary["accepted_tokens"] == 100
-    assert summary["drafted_tokens"] == 112
+    assert summary[_ACCEPTED_KEY] == 100
+    assert summary[_DRAFTED_KEY] == 112
     assert summary["sample_count"] == 2
     assert summary["surface"] == "docker_logs"
 

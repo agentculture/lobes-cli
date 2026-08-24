@@ -22,11 +22,12 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "spike-preflight.sh"
+CHECK_TOKEN = "check-token"
 
 
 def _check(token: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(SCRIPT), "check-token", token],
+        ["bash", str(SCRIPT), CHECK_TOKEN, token],
         capture_output=True,
         text=True,
         timeout=60,
@@ -111,7 +112,7 @@ def test_unrelated_flag_is_rejected():
 
 def test_check_token_requires_an_argument():
     proc = subprocess.run(
-        ["bash", str(SCRIPT), "check-token"],
+        ["bash", str(SCRIPT), CHECK_TOKEN],
         capture_output=True,
         text=True,
         timeout=60,
