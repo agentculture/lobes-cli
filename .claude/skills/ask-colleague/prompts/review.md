@@ -5,13 +5,8 @@ Focus the review on:
 
 $ARGUMENTS
 
-The change under review is the committed diff on this branch versus its base
-(`$BASE`). Start by running, read-only:
-
-    git diff $BASE...HEAD --stat
-    git diff $BASE...HEAD
-
-then read the touched files for the context you need.
+The diff for this change is ALREADY PROVIDED below the instructions (filtered +
+capped). Read specific files only if you need more context.
 
 Rules:
 - READ-ONLY. Do NOT modify, create, or delete any file. Only read and run
@@ -29,6 +24,12 @@ Rules:
   NOTHING and wastes the entire drive — so the moment you have enough to write a
   useful review (or you are within a few steps of the budget), STOP reading and
   call `finish`. Err on the side of finishing early.
+- NARRATE PROGRESS: with EVERY tool call, write one short line of plain text
+  first — what you just learned and what you are checking next. That line rides
+  the run's flight feed, so the operator can see where you are instead of a
+  silent turn. A long think with nothing written looks like a stall. If you are
+  within ~3 steps of the budget, STOP and write the answer-so-far (partial is
+  fine, mark it partial) rather than reading one more file.
 
 When you are done, call finish with a structured review:
 1. Correctness risks / likely bugs (with file:line).
