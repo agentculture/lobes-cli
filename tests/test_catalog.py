@@ -10,6 +10,7 @@ import pytest
 
 from lobes.catalog import (
     ENGINE_LLAMA_CPP,
+    ENGINE_SGLANG,
     ENGINE_VLLM,
     ENGINES,
     SUPPORTED_MODELS,
@@ -941,6 +942,25 @@ def test_engine_defaults_to_vllm_so_existing_declarations_are_untouched() -> Non
     )
     assert entry.engine == ENGINE_VLLM
     assert serves_with_vllm(entry)
+
+
+def test_engines_axis_includes_sglang() -> None:
+    # dspark-speculation-on-the-spark-cortex plan t1: a third engine value
+    # joins the axis. Pin the full set so a future addition/removal is a
+    # deliberate test edit, not a silent drift.
+    assert ENGINES == (ENGINE_VLLM, ENGINE_LLAMA_CPP, ENGINE_SGLANG)
+
+
+def test_serves_with_vllm_unchanged_for_every_current_catalog_entry() -> None:
+    # Adding ENGINE_SGLANG to the axis must not change serves_with_vllm's
+    # answer for any entry that exists today. Pin the exact set of ids that
+    # are NOT vLLM gears as of this task landing — today that is exactly the
+    # GGUF llama.cpp cortex candidate; every other id must still be True.
+    non_vllm_ids = {m.id for m in SUPPORTED_MODELS if not serves_with_vllm(m)}
+    assert non_vllm_ids == {_GGUF_ID}
+    vllm_ids = {m.id for m in SUPPORTED_MODELS if serves_with_vllm(m)}
+    assert _GGUF_ID not in vllm_ids
+    assert len(vllm_ids) == len(SUPPORTED_MODELS) - 1
 
 
 def test_exactly_one_non_vllm_gear_and_it_is_the_gguf_cortex() -> None:
