@@ -2,7 +2,7 @@
   "plan_slug": "dspark-speculation-on-the-spark-cortex",
   "schema_version": 1,
   "created": "2026-08-24T17:51:56Z",
-  "updated": "2026-08-24T19:48:35Z",
+  "updated": "2026-08-24T21:52:29Z",
   "deviations": [
     {
       "id": "d1",
@@ -44,6 +44,20 @@
       "origin": "user",
       "status": "approved",
       "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "ADOPT the DSpark arm as the deployed cortex configuration: unsloth/Qwen3.8-27B-NVFP4 + RadixArk DSpark drafter at max_model_len=262144, replacing self-hosted MTP n=2 at 1048576.",
+      "task_ref": "t6",
+      "reason": "Operator decision after reading the five-arm result. t6 was scoped as a SPIKE that ends by restoring the incumbent (c3/h7); adopting a measured arm is a change of deployed serving configuration and therefore beyond that scope. Two consequences are accepted deliberately: (1) the advertised 1M YaRN window is withdrawn in favour of the 262144 native window -- the served-contract change c24 named, chosen for 46.2 tok/s on code (4.65x the floor) and 2.92x concurrency; (2) free-form prose decode drops from ~16.7 to ~13.7 tok/s versus MTP, an accepted trade for structured/tool work. Classified NEEDS-FOLLOW-UP because the deployed 0.57.2 scaffold HARDCODES --speculative-config: this adoption survives only as a hand-edit to the deployment's docker-compose.yml and would be silently reverted by any 'lobes init' re-render. Making it durable requires either re-scaffolding to the current template (where PRIMARY_SPECULATIVE_CONFIG is live) or carrying the speculative_config as repo data in the shape/catalog.",
+      "affects": [
+        "c12",
+        "c24",
+        "c16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
     }
   ]
 }
