@@ -314,3 +314,41 @@ $ docker logs model-gear-vllm-primary | grep 'GPU KV cache size'
    => DEPLOYED CONTRACT as of this reading: unsloth/Qwen3.8-27B-NVFP4 served with
       method=dspark (block 7) at max_model_len=262144. The 1,048,576 YaRN window
       validated on 2026-08-19 is NOT the deployed window.
+
+## Section 15 — CORRECTION: the acceptance figures are engine-wide, not per-request
+
+Raised by review (Qodo PR #200, finding 9) and confirmed by inspecting the
+committed transcripts afterwards. Every acceptance percentage in Sections 7-12
+was read from the `docker_logs` surface — vLLM's own
+"SpecDecoding metrics ... Avg Draft acceptance rate" line — for all nine runs
+(`surface: "docker_logs"` in each `arm-*.json`; the only other values present are
+`not_applicable`, on the no-speculation arms, and one `unavailable` cell).
+
+That surface carries NO REQUEST IDENTIFIER. It is an engine-wide running average
+over the shape's measurement window, so any other request the lane served in that
+window is folded into the number. The gateway was up throughout and the mesh
+could reach it, so these runs cannot be asserted to have been single-caller.
+
+**Therefore:**
+
+- The acceptance percentages (code ~61.9%, reasoning ~47-49%, prose ~28.6-32.1%)
+  are ENGINE-WIDE-OVER-THE-WINDOW figures. They cannot be shown uncontaminated,
+  and `spec-arms.py` now reports that surface as permanently `contaminated: null`
+  rather than ever printing it clean.
+- Their internal CONSISTENCY is still meaningful: the same ordering
+  (code > reasoning > prose) reproduced across independent runs, windows and two
+  different target checkpoints. Read the ordering, not the third digit.
+- The DECODE tok/s figures are UNAFFECTED. Those are measured client-side from
+  this tool's own stream (TTFT, wall time, `usage.completion_tokens`) and never
+  came from an engine-wide counter.
+
+The exactly-equal acceptance values flagged in Section 12 (0.619, 0.4926 across
+two different targets) are better explained by this: a coarse, engine-wide running
+average, not two independent measurements that happened to coincide.
+
+**What would fix it:** vLLM exposes no per-request spec-decode counter today, so
+the honest options are a quiesced lane (no other traffic) or a per-request metric
+upstream. `spec-arms.py` can now DETECT contamination on the `/metrics` surface
+(via a `vllm:request_success_total` delta against the one request it issued), but
+that surface needs the engine's own port reachable — it was not, here, because the
+lane publishes no host port.

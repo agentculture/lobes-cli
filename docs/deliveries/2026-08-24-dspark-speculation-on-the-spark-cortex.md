@@ -79,12 +79,21 @@ After: The Spark's cortex serves the same unsloth/Qwen3.8-27B-NVFP4 checkpoint o
 | The no-speculation floor is ~9.9-11.4 tok/s and flat across content shapes | high | `arm-none-768k.json`, `arm-none-262k.json` |
 | The 1.36B drafter costs ~35% of the KV pool and makes the 1M window infeasible at util 0.58 (vLLM's own estimated ceiling: 824000) | high | transcript §5 (the `ValueError`) · KV pool 1,274,831 -> 830,827 |
 | The prose acceptance collapse is NOT caused by context extrapolation (d1) | high | `arm-dspark-262k.json` vs `arm-dspark-768k.json` — unchanged within noise |
-| The prose acceptance collapse is NOT caused by activation quantization (d2) | medium | `arm-a16-dspark-262k.json` — acceptance within ~1 point of W4A4 on every shape; two figures exactly equal, so the log-derived surface may be coarse (transcript §12 caveat) |
+| The prose acceptance collapse is NOT caused by activation quantization (d2) | low | `arm-a16-dspark-262k.json` — acceptance within ~1 point of W4A4 on every shape; two figures exactly equal, so the log-derived surface may be coarse (transcript §12 caveat) |
 | The deployed 0.57.2 scaffold HARDCODES `--speculative-config`, making `PRIMARY_SPECULATIVE_CONFIG` and the documented off-switch dead knobs on that box | high | transcript §6 · caught by `scripts/spike-preflight.sh` argv proof |
 | The Spark cortex now serves DSpark @262144 and is healthy (d4 adoption) | high | `spike-preflight.sh restore` PASS · argv proof shows the dspark token + `--max-model-len=262144` |
 | Single-run measurement variance is ~±10-13%; the earlier "window trade-down is worth +10-16%" claim is WITHDRAWN | high | transcript §13 (non-monotonic across 1M/768K/262K; two floors 13% apart) |
 | Block speculation is lossless (output equivalence preserved) | unverified | not measured — structural property of the technique only; no output-equivalence test was run |
 | The FP8-trained-drafter vs W4A4-target mismatch explains the prose collapse | unverified | d2 removed only the activation-quantization explanation; the hypothesis itself is untested |
+
+> **Correction (post-review, Qodo #200 finding 9).** Every acceptance percentage
+> in this delivery came from the `docker_logs` surface, which carries no request
+> identifier and is therefore an ENGINE-WIDE running average over each shape's
+> window — not a per-request measurement, and not assertable as uncontaminated
+> (the gateway was reachable by the mesh throughout). The d2 claim's confidence is
+> lowered to `low` accordingly. The decode tok/s figures are unaffected: those are
+> measured client-side from this tool's own stream. See Section 15 of the evidence
+> transcript.
 
 ## Remaining Work / Follow-up
 

@@ -137,3 +137,10 @@
 {"ts":"2026-08-23T05:02:02.420149+00:00","type":"pr_review_triggered","pr":193,"command":"/agentic_review"}
 {"ts":"2026-08-23T05:03:07.551679+00:00","type":"readiness_arrived","pr":193,"waited_secs":60}
 {"ts":"2026-08-23T05:03:15.250106+00:00","type":"pr_read","pr":193,"comment_count":2,"threads_unresolved":0,"ci_state":"failure"}
+{"ts":"2026-08-24T22:02:14.128272+00:00","type":"pr_opened","pr":200,"title":"feat: DSpark block-speculative decoding on the Spark cortex \u2014 measured, adopted, and honestly bounded (0.60.0)"}
+{"ts":"2026-08-24T22:02:15.319199+00:00","type":"pr_review_triggered","pr":200,"command":"/agentic_review"}
+{"ts":"2026-08-24T22:02:16.010147+00:00","type":"pr_webhook_posted","pr":200,"event":"pr_opened"}
+{"ts":"2026-08-24T22:03:19.137141+00:00","type":"readiness_arrived","pr":200,"waited_secs":60}
+{"ts":"2026-08-24T22:03:23.267542+00:00","type":"pr_read","pr":200,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-24T22:03:43.624150+00:00","type":"readiness_arrived","pr":200,"waited_secs":0}
+{"ts":"2026-08-24T22:03:48.094063+00:00","type":"pr_read","pr":200,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
