@@ -104,7 +104,14 @@ from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.gateway._config import build_config
-from lobes.roles import ROLES, RoleInfo, annotate_peer_referrals, role_registry_from_env
+from lobes.gateway._selection import Selection, select_replica
+from lobes.roles import (
+    ROLES,
+    RoleInfo,
+    annotate_peer_referrals,
+    annotate_replicas,
+    role_registry_from_env,
+)
 
 _JSON_HELP = "Emit structured JSON."
 _COMPOSE_DIR_HELP = "Deployment dir (default: $LOBES_DIR or ~/.lobes)."
@@ -233,7 +240,13 @@ def _offline_payload(args: argparse.Namespace) -> dict[str, dict]:
     registry = role_registry_from_env(env, gateway_url=gateway_url)
     payload = {role: _role_payload(registry[role]) for role in ROLES}
     table, _server = build_config(env)
-    return annotate_peer_referrals(payload, table)
+    payload = annotate_peer_referrals(payload, table)
+    # Additive replica-pool keys (#199, t6): a no-pool deployment (no
+    # *_PEER_ORIGINS anywhere) leaves this a no-op — see
+    # lobes.roles.annotate_replicas's own docstring for the exact gate. The
+    # CLI's offline path never has a live ReplicaCache snapshot to hand, so
+    # this always renders the DECLARED-only view (every live field `None`).
+    return annotate_replicas(payload, table)
 
 
 def _role_payload(info: RoleInfo) -> dict[str, object]:
@@ -342,8 +355,98 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
     return "\n".join(lines)
 
 
+@dataclasses.dataclass(frozen=True)
+class _ReplicaCandidate:
+    """A ``replicas`` row, coerced to :class:`~lobes.gateway._selection.ReplicaLike`.
+
+    ``select_replica`` filters on ``compatible and ready and not busy`` before
+    it ever reads ``running``/``waiting``, so a ``None`` live field (the
+    offline "not probed" view) coerces to a falsy bool and the candidate is
+    simply never selectable — never a crash, never a guessed selection.
+    """
+
+    origin: str
+    local: bool
+    ready: bool
+    busy: bool
+    compatible: bool
+    running: int
+    waiting: int
+    weight: float
+
+
+def _candidate_from_row(row: dict) -> _ReplicaCandidate:
+    return _ReplicaCandidate(
+        origin=str(row.get("origin") or ""),
+        local=bool(row.get("local")),
+        ready=bool(row.get("ready")),
+        busy=bool(row.get("busy")),
+        compatible=bool(row.get("compatible")),
+        running=row.get("running") or 0,
+        waiting=row.get("waiting") or 0,
+        weight=row.get("weight") or 1.0,
+    )
+
+
+def _tri(value: object) -> str:
+    """Render a nullable bool as yes/no/unknown — never guess a null."""
+    if value is None:
+        return "unknown"
+    return "yes" if value else "no"
+
+
+def _opt(value: object) -> str:
+    return "?" if value is None else str(value)
+
+
+def _render_replica_lines(role: str, rows: list[dict]) -> list[str]:
+    """The per-replica candidate table for one role, plus the would-choose line.
+
+    ``select_replica`` (task t5) is the SAME pure policy the gateway will use
+    once t8 wires dispatch — this is a read-only, offline-safe RENDER of what
+    it would decide right now, over whatever candidates the payload carries
+    (live snapshot rows from a pooled gateway, or the declared-only offline
+    view). A `null` live field never fabricates a selection: it coerces to
+    "not selectable" in :func:`_candidate_from_row`, so an all-offline row set
+    always renders ``would choose: none (none)``.
+    """
+    lines = [f"  replicas for {role}:"]
+    header = (
+        f"    {'origin':<32} {'loc':<5} {'ready':<9} {'busy':<9} "
+        f"{'run/wait':<10} {'compat':<9} reason"
+    )
+    lines.append(header)
+    for row in rows:
+        loc = "local" if row.get("local") else "peer"
+        run_wait = f"{_opt(row.get('running'))}/{_opt(row.get('waiting'))}"
+        lines.append(
+            f"    {str(row.get('origin') or ''):<32} {loc:<5} "
+            f"{_tri(row.get('ready')):<9} {_tri(row.get('busy')):<9} "
+            f"{run_wait:<10} {_tri(row.get('compatible')):<9} {row.get('reason') or ''}"
+        )
+    selection: Selection = select_replica([_candidate_from_row(r) for r in rows])
+    chosen = selection.origin if selection.origin is not None else "none"
+    lines.append(f"  would choose: {chosen} ({selection.reason})")
+    return lines
+
+
+def _render_replicas_section(registry: dict[str, dict]) -> str:
+    lines: list[str] = []
+    for role in ROLES:
+        rows = registry[role].get("replicas")
+        if not rows:
+            continue
+        if lines:
+            lines.append("")
+        lines.extend(_render_replica_lines(role, rows))
+    if not lines:
+        lines.append("(no replica set declared for any role)")
+    return "\n".join(lines)
+
+
 def cmd_capabilities(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
+    replicas_mode = bool(getattr(args, "replicas", False))
     _port, deploy_dir = _runtime_ops.resolve_port_soft(args)
     with _runtime_ops.friendly_unauthorized_errors(deploy_dir):
         payload, source = _capabilities_view(args)
@@ -358,16 +461,24 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
         # revision's top-level "source" sibling broke exactly that
         # contract). The offline/gateway distinction still needs to be
         # discoverable, so it goes out-of-band: stderr, never stdout JSON.
+        # `--replicas` changes nothing here — the additive `replicas`/
+        # `fingerprint` keys are already IN the payload whenever present
+        # (see lobes.roles.annotate_replicas); `--replicas` only toggles the
+        # human-readable table below.
         if source == "offline":
             emit_diagnostic(_OFFLINE_NOTICE)
         emit_result(payload, json_mode=True)
     else:
-        emit_result(_render_table(payload, source), json_mode=False)
+        text = _render_table(payload, source)
+        if replicas_mode:
+            text = f"{text}\n\n{_render_replicas_section(payload)}"
+        emit_result(text, json_mode=False)
     return 0
 
 
 def cmd_endpoint(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
+    replicas_mode = bool(getattr(args, "replicas", False))
     role = args.role
     if role not in ROLES:
         raise ModelGearError(
@@ -382,7 +493,14 @@ def cmd_endpoint(args: argparse.Namespace) -> int:
     if json_mode:
         emit_result({"role": role, "endpoint": endpoint}, json_mode=True)
     else:
-        emit_result(endpoint, json_mode=False)
+        lines = [endpoint]
+        if replicas_mode:
+            rows = payload[role].get("replicas")
+            if rows:
+                lines.extend(_render_replica_lines(role, rows))
+            else:
+                lines.append("(no replica set declared for this role)")
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -390,6 +508,14 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--port", type=int, help=_PORT_HELP)
     p.add_argument("--compose-dir", help=_COMPOSE_DIR_HELP)
     p.add_argument("--json", action="store_true", help=_JSON_HELP)
+    p.add_argument(
+        "--replicas",
+        action="store_true",
+        help=(
+            "Also render each pooled role's candidate replicas (origin, ready, "
+            "busy, load, compatible, reason) and the would-choose line (#199)."
+        ),
+    )
 
 
 def register(sub: argparse._SubParsersAction) -> None:

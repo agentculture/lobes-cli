@@ -70,12 +70,15 @@ refined without breaking the machine-readable shape.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
+from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
+from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._routing import RoutingTable
 
 # The nine first-class roles, in canonical order: generate lanes (cortex,
@@ -1001,6 +1004,173 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
             entry["hosted_by"] = origin
             if backend in table.peer_proxied:
                 entry["proxied"] = True
+    return payload
+
+
+# The five DECLARED lane-fingerprint suffixes a role's backend may carry in
+# `table.lane_fingerprints` (see `lobes.gateway._config.LANE_FINGERPRINT_SUFFIXES`)
+# do NOT include "RUNTIME" — no `<PREFIX>_RUNTIME` knob exists yet (t2 landed
+# only the five engine knobs an operator would reasonably expect identical
+# across a role's replica pool). So the offline fingerprint fallback below
+# always reads "runtime" as unknown; that is honest, not a bug in this module
+# — inventing a runtime from the catalog is exactly what c33/h25 forbid.
+_FINGERPRINT_DECLARED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("runtime", "RUNTIME"),
+    ("quantization", "QUANTIZATION"),
+    ("kv_cache_dtype", "KV_CACHE_DTYPE"),
+    ("reasoning_parser", "REASONING_PARSER"),
+    ("tool_parser", "TOOL_PARSER"),
+    ("speculative_config", "SPECULATIVE_CONFIG"),
+)
+
+
+def _offline_fingerprint(declared: Mapping[str, str], entry: Mapping[str, object]) -> dict:
+    """Build a fingerprint dict with NO live probe: declared knobs + the
+    payload's own served id/context, 'unknown' for everything else.
+
+    Never touches the catalog (c33/h25) — `entry["model"]`/`entry["context"]`
+    are already the SERVED values `lobes.roles.build_role_registry` resolved
+    (deployment override, or the catalog default when unwired), which is the
+    same honesty basis :class:`~lobes.gateway._replicas.Fingerprint` uses for
+    its own LIVE `served_id`/`max_model_len` fields — just sourced from the
+    payload instead of a live `/v1/models` probe.
+    """
+    served_id = entry.get("model") or _REPLICA_UNKNOWN
+    max_len = entry.get("context") or None
+    fingerprint: dict[str, object] = {
+        "served_id": served_id,
+        "max_model_len": max_len,
+    }
+    for field_name, suffix in _FINGERPRINT_DECLARED_FIELDS:
+        fingerprint[field_name] = declared.get(suffix, _REPLICA_UNKNOWN)
+    return fingerprint
+
+
+def _replica_row_from_state(state: ReplicaState) -> dict[str, object]:
+    return {
+        "origin": state.origin,
+        "local": state.local,
+        "ready": state.ready,
+        "busy": state.busy,
+        "running": state.running,
+        "waiting": state.waiting,
+        "compatible": state.compatible,
+        "reason": state.reason,
+        "fingerprint": dataclasses.asdict(state.fingerprint) if state.fingerprint else None,
+        "weight": state.weight,
+    }
+
+
+def _offline_replica_rows(
+    table: RoutingTable, backend: str, local_fingerprint: dict | None
+) -> list[dict[str, object]]:
+    """The declared-only replica view: no probe ran, so every live field is
+    honestly `None` rather than guessed — see :func:`annotate_replicas`.
+    """
+    local_origin = table.self_origin or "local"
+    rows: list[dict[str, object]] = [
+        {
+            "origin": local_origin,
+            "local": True,
+            "ready": None,
+            "busy": None,
+            "running": None,
+            "waiting": None,
+            "compatible": None,
+            "reason": "not probed (offline)",
+            "fingerprint": local_fingerprint,
+            "weight": 1.0,
+        }
+    ]
+    for origin in table.replica_origins.get(backend, ()):
+        rows.append(
+            {
+                "origin": origin,
+                "local": False,
+                "ready": None,
+                "busy": None,
+                "running": None,
+                "waiting": None,
+                "compatible": None,
+                "reason": "not probed (offline)",
+                "fingerprint": None,
+                "weight": 1.0,
+            }
+        )
+    return rows
+
+
+def annotate_replicas(
+    payload: dict[str, dict],
+    table: RoutingTable,
+    snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
+) -> dict[str, dict]:
+    """Add the additive per-role ``fingerprint``/``replicas`` keys (#199, t6).
+
+    Sibling of :func:`annotate_peer_referrals` — same "one shared annotator,
+    both the gateway and the CLI offline fallback call it" discipline, kept
+    as a SEPARATE function rather than folded into that one so
+    ``annotate_peer_referrals``'s own behaviour (and every test that pins it)
+    stays byte-identical. Mutates ``payload`` in place and returns it.
+
+    A role is annotated only when it has a declared replica pool: its
+    backend name (:data:`ROLE_BACKEND`) appears in ``table.replica_origins``,
+    OR ``snapshot`` carries a (non-empty) tuple for it. This is the gate that
+    keeps a pre-pool deployment (no ``*_PEER_ORIGINS`` anywhere, no snapshot)
+    byte-identical: with both empty, this function is a no-op for every role,
+    so ``payload`` never gains a ``fingerprint``/``replicas`` key it did not
+    already have — the spec's h1/c9 requirement.
+
+    **fingerprint** — what THIS box's own replica of the role is actually
+    serving, as a plain dict: ``{served_id, max_model_len, runtime,
+    quantization, kv_cache_dtype, reasoning_parser, tool_parser,
+    speculative_config}``. Two provenances, mirroring
+    :class:`~lobes.gateway._replicas.Fingerprint`'s own rule and NEVER the
+    catalog (c33/h25 — the exact defect that mislabels the Orin's llama.cpp
+    replica as ``quant=modelopt``):
+
+    * ``snapshot`` supplied and this role's local :class:`ReplicaState`
+      carries a live-probed ``fingerprint`` → that fingerprint, verbatim
+      (:func:`dataclasses.asdict`).
+    * otherwise → :func:`_offline_fingerprint`: the payload's own SERVED
+      ``model``/``context`` (already deployment-resolved by
+      :func:`build_role_registry`) plus ``table.lane_fingerprints`` for the
+      five declared engine knobs, ``"unknown"`` for anything undeclared.
+
+    **replicas** — one entry per replica of the role, local first:
+    ``{origin, local, ready, busy, running, waiting, compatible, reason,
+    fingerprint, weight}``. With a ``snapshot`` this is a straight
+    :class:`ReplicaState` → dict projection (live numbers, `None` fingerprint
+    for an unprobed/incompatible peer). Without one (the CLI's offline path,
+    which never has a live snapshot to hand) it is the DECLARED list only —
+    :func:`_offline_replica_rows` — with every live field honestly ``None``
+    and ``reason: "not probed (offline)"``, rather than guessing readiness
+    from a config file (the same #96 lesson ``lobes capabilities``'s ``ready``
+    clamp already applies one level up).
+
+    Existing keys are never touched: ``feasible``/``proxied``/``hosted_by``/
+    ``ready``/``loaded`` keep their documented type and single-owner meaning
+    exactly as :func:`annotate_peer_referrals` left them.
+    """
+    resolved_snapshot: Mapping[str, tuple[ReplicaState, ...]] = snapshot or {}
+    for role, backend in ROLE_BACKEND.items():
+        entry = payload.get(role)
+        if not isinstance(entry, dict):
+            continue
+        declared_peers = table.replica_origins.get(backend, ())
+        role_snapshot = resolved_snapshot.get(role, ())
+        if not declared_peers and not role_snapshot:
+            continue  # no replica pool declared or probed for this role
+        local_state = next((s for s in role_snapshot if s.local), None)
+        if local_state is not None and local_state.fingerprint is not None:
+            fingerprint = dataclasses.asdict(local_state.fingerprint)
+        else:
+            fingerprint = _offline_fingerprint(table.lane_fingerprints.get(backend, {}), entry)
+        entry["fingerprint"] = fingerprint
+        if role_snapshot:
+            entry["replicas"] = [_replica_row_from_state(s) for s in role_snapshot]
+        else:
+            entry["replicas"] = _offline_replica_rows(table, backend, fingerprint)
     return payload
 
 
