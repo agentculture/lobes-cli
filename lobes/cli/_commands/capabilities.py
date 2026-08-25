@@ -134,7 +134,7 @@ _GATEWAY_TIMEOUT_SECONDS = 2.0
 
 # The full RoleInfo field set — used to sanity-check a gateway response before
 # trusting it. A 200 from *something* listening on the resolved port whose
-# body happens to be a dict keyed by all nine role names but missing fields a
+# body happens to be a dict keyed by all ten role names but missing fields a
 # real /capabilities response always carries is treated as malformed, not
 # authoritative (see _fetch_gateway_capabilities).
 _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
@@ -153,7 +153,7 @@ _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 # The core field set below is already conclusive for the check's ACTUAL job —
 # telling a real gateway from a stray daemon on a guessed port (see the
 # lobes.roles._gateway_base_url docstring for why that hazard is real on this
-# rig). Nothing that answers with every core field, keyed by all nine role
+# rig). Nothing that answers with every core field, keyed by all ten role
 # names, is a stray uvicorn. `_render_table` already `.get`s both keys with
 # safe defaults, so an older payload renders without fabricating either.
 _ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible"})
@@ -521,8 +521,9 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     cap = sub.add_parser(
         "capabilities",
-        help="Read-only: the nine first-class roles (cortex/senses/muse/worker/hand/embedder/"
-        "reranker/stt/tts) resolved to live endpoint + metadata (issue #81).",
+        help="Read-only: the ten first-class roles (cortex/senses/muse/worker/"
+        "associate/hand/embedder/reranker/stt/tts) resolved to live endpoint "
+        "+ metadata (issue #81).",
     )
     _add_common_args(cap)
     cap.set_defaults(func=cmd_capabilities)

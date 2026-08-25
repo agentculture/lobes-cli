@@ -64,7 +64,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain tuning` (purpose + machine profiles)
 - `lobes explain fleet`
 - `lobes explain gateway`
-- `lobes explain roles` (the nine-role Colleague contract:
+- `lobes explain roles` (the ten-role Colleague contract:
   cortex/senses/muse/embedder/reranker/stt/tts)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
@@ -840,7 +840,7 @@ _SHAPES = """\
 
 A **deployment shape** is the axis orthogonal to the machine profile: not
 "how is each role tuned on this card?" (that's the profile, `lobes explain
-profiles`) but "which of the nine Colleague roles does this box host at
+profiles`) but "which of the ten Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
@@ -1001,7 +1001,7 @@ its own follow-up.
   co-residency tax numbers, the mesh-brain end-state decisions, the
   acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
-- `lobes explain roles` — the nine-role Colleague contract
+- `lobes explain roles` — the ten-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
 - `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script

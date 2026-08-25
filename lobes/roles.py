@@ -1,10 +1,10 @@
-"""The role registry — the nine first-class, Colleague-facing lobes (issue #81).
+"""The role registry — the ten first-class, Colleague-facing lobes (issue #81).
 
-lobes exposes the fleet not as a bag of model ids but as NINE discoverable
+lobes exposes the fleet not as a bag of model ids but as TEN discoverable
 *roles*, each resolved to a live endpoint + metadata so a caller (Colleague)
 can address a capability by role — ``cortex``, ``senses``, ``muse``,
-``worker``, ``hand``, ``embedder``, ``reranker``, ``stt``, ``tts`` — without
-hardcoding any single model endpoint:
+``worker``, ``associate``, ``hand``, ``embedder``, ``reranker``, ``stt``,
+``tts`` — without hardcoding any single model endpoint:
 
 * ``cortex``   → the ``primary`` generate backend (Qwen 3.6 27B NVFP4 MTP).
   The authoritative reasoning/action/decision layer — the final authority.
@@ -31,6 +31,12 @@ hardcoding any single model endpoint:
   stays with ``senses``/the talker lane — worker is a doer, not a seer.
   OPT-IN like ``muse``: hosted only by a worker-hosting deployment shape,
   never by the default ``machine-as-brain``.
+* ``associate`` → the ``associate`` generate backend (the SAME Nemotron 3.5
+  Lightning checkpoint the ``worker`` seat holds). ``worker`` MINUS
+  ``repo_action``: it executes, drafts, inspects and calls tools, then hands
+  the result BACK rather than enacting it. OPT-IN, like muse/worker: hosted
+  only by an explicit associate-hosting deployment shape, never by
+  ``machine-as-brain``.
 * ``hand``     → the ``hand`` generate backend (LiquidAI LFM2.5-1.2B-Instruct).
   The fleet's designated FINE-TUNING BASE and its trained specialist: one cheap
   base, many LoRA adapters, each mastering a domain ("muscle memory"). Where
@@ -81,20 +87,28 @@ from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
 from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._routing import RoutingTable
 
-# The nine first-class roles, in canonical order: generate lanes (cortex,
+# The ten first-class roles, in canonical order: generate lanes (cortex,
 # senses, muse, worker, hand), pooling lanes, then the opt-in audio overlay.
 # Downstream (CLI/gateway) iterate this for a stable ordering.
 #
 # ADDING A ROLE IS EFFECTIVELY IRREVERSIBLE. Every name here becomes a public
 # address on `GET /capabilities`, `lobes capabilities`, the `model=` alias
 # space and the `lobes up <role>` surface — and removing one later breaks every
-# caller that learned to use it. Nine is the count today; read
+# caller that learned to use it. Ten is the count today (the tenth,
+# `associate`, landed with the lightning-on-orin plan's t6); read
 # docs/colleague-stack.md before proposing a tenth.
 ROLES: tuple[str, ...] = (
     "cortex",
     "senses",
     "muse",
     "worker",
+    # The TENTH role (lightning-on-orin plan, t6): `associate` is `worker`
+    # MINUS `repo_action` — it executes, drafts, inspects and calls tools, and
+    # hands the result BACK rather than enacting it. It is a SEPARATE PUBLIC
+    # ADDRESS on purpose, not a responsibilities token on `worker`: the
+    # operator wants the `worker` seat left free for a possible future
+    # worker/cortex switch, and only a distinct name can carry that.
+    "associate",
     "hand",
     "embedder",
     "reranker",
@@ -108,7 +122,7 @@ ROLES: tuple[str, ...] = (
 # map to themselves — they are path-routed audio lanes, not model-routed
 # backends (still resolved from ``ServerConfig.audio_url`` below), but their
 # names now ride the SAME ``FEASIBLE_ENV`` / peer origin/proxy/key channels,
-# so :func:`annotate_peer_referrals` covers all nine roles uniformly.
+# so :func:`annotate_peer_referrals` covers all ten roles uniformly.
 # NOTE the name↔role_hint mismatch for the pooling lane: the *backend* is named
 # ``embed``/``rerank`` while the *catalog* role_hint is ``embedding``/``reranker``.
 # ``muse`` and ``worker`` each use their own name as their backend name.
@@ -117,6 +131,9 @@ ROLE_BACKEND: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
+    # `associate` is its own backend name too (the `vllm-associate` compose
+    # lane, ASSOCIATE_BASE_URL) — like `muse`, `worker` and `hand`.
+    "associate": "associate",
     "hand": "hand",
     "embedder": "embed",
     "reranker": "rerank",
@@ -132,6 +149,15 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
+    # `associate` serves the SAME catalog gear the `worker` role_hint names
+    # (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — one checkpoint,
+    # two public addresses with different authority. The catalog holds ONE
+    # entry per checkpoint id (tests/test_catalog.py::test_catalog_ids_are_unique),
+    # so the honest mapping is a shared role_hint, not a duplicated entry —
+    # the same name↔role_hint indirection the pooling lanes already use
+    # (`embedder` → "embedding"). See lobes.catalog.BACKEND_ROLE_CATALOG_HINT,
+    # which carries the identical alias for the tier layer.
+    "associate": "worker",
     "hand": "hand",
     "embedder": "embedding",
     "reranker": "reranker",
@@ -147,6 +173,7 @@ ROLE_PATH: dict[str, str] = {
     "senses": _CHAT_PATH,
     "muse": _CHAT_PATH,
     "worker": _CHAT_PATH,
+    "associate": _CHAT_PATH,
     "hand": _CHAT_PATH,
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
@@ -264,6 +291,37 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "tool_use",
         "repo_action",
     ),
+    # The `associate` lobe (lightning-on-orin plan, t6): worker MINUS
+    # `repo_action`. It DOES, but it does not ACT — every doer token worker
+    # carries for producing a result is here (execution, ground_work,
+    # bulk_transform, drafting, repo_inspection, run_authorized_commands,
+    # tool_use), and the one token that lets a lobe CHANGE the repo is not.
+    # associate inspects, drafts and hands the result back; cortex (or worker,
+    # under cortex's direction) enacts it.
+    #
+    # The list is deliberately SHORTER than worker's, following the `hand`
+    # precedent recorded in docs/colleague-stack.md: ADDING a responsibility
+    # later is contract-compatible, REMOVING one is a break, so the
+    # conservative list ships first. worker's agent-work tokens
+    # (`action_selection`, `retrieval_synthesis`, `summarization`,
+    # `log_digestion`, `structured_extraction`) are NOT claimed here — not
+    # because associate could not serve them (it serves the same checkpoint),
+    # but because nothing has been measured that says it should own them in
+    # the division of labour, and a responsibilities list is a
+    # division-of-labour claim, not a capability boast.
+    #
+    # No image_understanding / video_understanding: the checkpoint
+    # (Nemotron 3.5 Lightning) carries no vision_config — text-only, exactly
+    # like `worker`.
+    "associate": (
+        "execution",
+        "ground_work",
+        "bulk_transform",
+        "drafting",
+        "repo_inspection",
+        "run_authorized_commands",
+        "tool_use",
+    ),
     # The `hand` lobe: a TRAINED SPECIALIST, not a generalist doer. Its value
     # is the LoRA adapter riding on it, so its responsibilities describe mastery
     # of a taught domain rather than raw capability. Deliberately NO
@@ -321,6 +379,17 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "senses": ("final_decision", "repo_action", "security_decision"),
     "muse": ("final_decision", "repo_action", "security_decision"),
     "worker": ("final_decision", "security_decision", "code_authoring"),
+    # `associate` is worker's forbidden list PLUS `repo_action` — the single
+    # token that separates the two roles. "They do, but not act": associate may
+    # run authorized commands and inspect a repo, but it never changes one, and
+    # like worker it never makes the final call, a security call, or authors
+    # code. See ROLE_RESPONSIBILITIES above.
+    "associate": (
+        "final_decision",
+        "security_decision",
+        "code_authoring",
+        "repo_action",
+    ),
     # `hand` withholds repo_action deliberately for v1: ADDING a responsibility
     # later is contract-compatible, REMOVING one is a break, so the conservative
     # list ships first. Granting it once adapters exist is issue #180.
@@ -341,6 +410,7 @@ ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "senses": "MULTIMODAL_MAX_MODEL_LEN",
     "muse": "MUSE_MAX_MODEL_LEN",
     "worker": "WORKER_MAX_MODEL_LEN",
+    "associate": "ASSOCIATE_MAX_MODEL_LEN",
     "hand": "HAND_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
@@ -419,7 +489,7 @@ class RoleInfo:
     # build_role_registry: `backend_ready` (keyed by the ROLE_BACKEND name)
     # for the six gateway-fronted roles, `audio_ready` for stt/tts (issue
     # #89). Generalised from the stt/tts-only split (issue #89/#90) to all
-    # nine roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
+    # ten roles (issue #81 t5) — `ready` is no longer a bare alias of `loaded`.
     #
     # `backend_ready` is TRI-STATE PER BACKEND but resolves to `ready` under a
     # SUPPLIED-vs-OMITTED rule the builder self-enforces (issue #92 / honesty
@@ -443,7 +513,7 @@ class RoleInfo:
     # `False` (task t6) can never report `ready=True`, no matter what signal a
     # caller passes in. This mirrors — and is enforced by the same code path
     # as — the stt/tts clamp on `audio_configured` (issue #89/#90 review
-    # finding), now applied to all nine roles by build_role_registry itself,
+    # finding), now applied to all ten roles by build_role_registry itself,
     # not left to caller discipline. The `feasible` clamp is what makes an
     # infeasible-but-HEALTHY role (a live `backend_ready=True` signal) still
     # report `ready=False` — a healthy PROCESS is not evidence this MACHINE
@@ -701,7 +771,7 @@ def build_role_registry(
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_ready: Mapping[str, bool | None] | None = None,
 ) -> dict[str, RoleInfo]:
-    """Resolve the nine first-class roles to live metadata — the #81 contract.
+    """Resolve the ten first-class roles to live metadata — the #81 contract.
 
     This is the ONE canonical builder both the CLI (t5) and gateway (t6) call.
     Its inputs are exactly what :func:`lobes.gateway._config.build_config`
@@ -776,14 +846,14 @@ def build_role_registry(
         and every deployment with no proxied roles) leaves every role's
         ``ready`` exactly as before: a proxied role without a live peer
         signal is honestly not-ready, never hardcoded true.
-    :returns: an ordered ``dict`` keyed by role name with EXACTLY the nine roles.
+    :returns: an ordered ``dict`` keyed by role name with EXACTLY the ten roles.
         Every role is always present — an unconfigured/opt-in role (stt/tts with
         ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
         returned with ``loaded=False``, never omitted and never raising.
 
     Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
     (issue #81 t5 — generalising the stt/tts split from issue #89/#90 to all
-    nine roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
+    ten roles). When a caller supplies ``backend_ready``/``audio_ready`` it is
     AUTHORITATIVE (a present ``None``/``False`` or a missing key ⇒ not ready);
     only an OMITTED signal falls back to the coarse "configured/wired"
     ``loaded`` proxy. Either way it is CLAMPED, here, to ``False`` whenever a

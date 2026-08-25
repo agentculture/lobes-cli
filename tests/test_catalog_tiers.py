@@ -208,18 +208,23 @@ def test_resolve_tier_muse_returns_the_31b_gear() -> None:
     assert model.id == "nvidia/Gemma-4-31B-IT-NVFP4"
 
 
-def test_tier_role_capability_order_is_ascending_with_muse_and_worker() -> None:
+def test_tier_role_capability_order_is_ascending_with_muse_worker_and_associate() -> None:
     """tier_aliases derives ascending capability order from each role's LAST
     occurrence in TIER_ROLE — worker must land between multimodal and muse,
-    and muse between worker and primary (minor < multimodal < worker < muse
-    < primary), or the upward-fallback ladder breaks. Pinned here against the
-    dict's insertion order."""
+    muse between worker and associate, and associate between muse and primary
+    (hand < multimodal < worker < muse < associate < primary), or the
+    upward-fallback ladder breaks. Pinned here against the dict's insertion
+    order.
+
+    `associate` (lightning-on-orin plan, t6) takes the HIGHEST non-cortex rung
+    by operator decision: measured ~78-81 tok/s with working structured tool
+    calls on sm_87, faster than the Spark-hosted worker on weaker silicon."""
     last_pos: dict[str, int] = {}
     for i, role in enumerate(TIER_ROLE.values()):
         last_pos[role] = i
     roles_asc = sorted(last_pos, key=last_pos.__getitem__)
     # `hand` replaced `minor` at the bottom rung — same position, new name.
-    assert roles_asc == ["hand", "multimodal", "worker", "muse", "primary"]
+    assert roles_asc == ["hand", "multimodal", "worker", "muse", "associate", "primary"]
 
 
 # ---------------------------------------------------------------------------

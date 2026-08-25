@@ -92,6 +92,7 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
         "multimodal": "MULTIMODAL_FEASIBLE",
         "muse": "MUSE_FEASIBLE",
         "worker": "WORKER_FEASIBLE",
+        "associate": "ASSOCIATE_FEASIBLE",
         # `hand` is feasibility-tracked but NEVER proxied — see
         # NEVER_PROXIED_BACKENDS and test_gateway_config_proxy.py.
         "hand": "HAND_FEASIBLE",
@@ -108,7 +109,7 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
 # `muse` and `worker` are the honest baseline members of table.infeasible.
 # Every pre-muse (and pre-worker) expectation below composes with these two
 # deliberate deltas.
-_BASELINE = frozenset({"muse", "worker"})
+_BASELINE = frozenset({"muse", "worker", "associate"})
 
 
 # --- worker (the eighth/opt-in-core role): mirrors muse's own coverage ------

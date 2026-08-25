@@ -18,12 +18,13 @@ from lobes.profiles.shapes import resolve_shape
 # --- role -> prefix table ----------------------------------------------------
 
 
-def test_role_env_prefix_covers_all_six_roles() -> None:
+def test_role_env_prefix_covers_every_profile_role() -> None:
     assert ROLE_ENV_PREFIX == {
         "cortex": "PRIMARY",
         "senses": "MULTIMODAL",
         "muse": "MUSE",
         "worker": "WORKER",
+        "associate": "ASSOCIATE",
         "hand": "HAND",
         "embedder": "EMBED",
         "reranker": "RERANK",

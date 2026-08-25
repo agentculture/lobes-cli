@@ -110,14 +110,15 @@ class TestSingleModelDeploymentSkipsTheCheck:
         assert "gateway_passthrough" not in ids
 
 
-class TestKeyEnumerationCoversAllNinePrefixes:
-    def test_all_nine_role_prefixes_present(self):
+class TestKeyEnumerationCoversAllTenPrefixes:
+    def test_all_ten_role_prefixes_present(self):
         prefixes = set(doctor_module._GATEWAY_ROLE_PREFIXES)
         assert prefixes == {
             "PRIMARY",
             "MULTIMODAL",
             "MUSE",
             "WORKER",
+            "ASSOCIATE",
             "HAND",
             "EMBED",
             "RERANK",

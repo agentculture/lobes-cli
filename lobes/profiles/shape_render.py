@@ -78,6 +78,7 @@ ROLE_SERVICE: dict[str, str] = {
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
     "worker": "vllm-worker",
+    "associate": "vllm-associate",
     # `hand` is DEFAULT-ON in the fleet template (no compose profile gate), so
     # unlike `minor`/`muse`/`worker` it needs no OPT_IN_*_ACTIVATION_ENV entry —
     # hosting it is simply naming its service.
@@ -140,10 +141,20 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "worker": {
         "WORKER_BASE_URL": "http://vllm-worker:8000",
     },
+    # `associate` mirrors `muse`/`worker` exactly: the vllm-associate service
+    # is parked behind the "associate" Docker Compose profile in the base
+    # fleet template (lightning-on-orin plan t7), and its gateway backend is
+    # wired only when ASSOCIATE_BASE_URL is non-empty. Its model + budget
+    # knobs render through profile_env from an associate-hosting shape's own
+    # overrides, so the activation env carries ONLY the base-URL wiring.
+    "associate": {
+        "ASSOCIATE_BASE_URL": "http://vllm-associate:8000",
+    },
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
     "worker": "worker",
+    "associate": "associate",
 }
 
 
@@ -232,7 +243,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     * a DEFAULT core role the shape DROPS -> ``RoleProfile(feasible=False)``
       -- the box does not serve it, so it renders the #110 flagged-off marker
       (``<PREFIX>_FEASIBLE=false``) and no model/knobs;
-    * an OPT-IN core role (:data:`OPT_IN_CORE_ROLES` -- ``muse``) the shape
+    * an OPT-IN core role (:data:`OPT_IN_CORE_ROLES` -- ``muse``/``worker``/``associate``) the shape
       does NOT host -> the card's own declaration passes through VERBATIM
       (usually: undeclared -> renders nothing). No flagged-off marker is
       forced: the gateway already treats an UNWIRED opt-in backend as

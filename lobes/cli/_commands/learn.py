@@ -126,7 +126,7 @@ More detail
   lobes explain rerank       (POST /v1/rerank + /v1/score — the reranker gear)
   lobes explain realtime     (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
   lobes explain api          (the full OpenAI-compatible endpoint surface)
-  lobes explain roles        (the nine-role Colleague contract: cortex/senses/hand + services)
+  lobes explain roles        (the ten-role Colleague contract: cortex/senses/hand + services)
   lobes explain gateway      (the fleet front — routing, /status, auth limitation)
   lobes explain tunnel       (expose the local API anywhere via Cloudflare Tunnel)
 

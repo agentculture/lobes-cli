@@ -68,6 +68,7 @@ def test_peer_origins_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_ORIGINS",
         "muse": "MUSE_PEER_ORIGINS",
         "worker": "WORKER_PEER_ORIGINS",
+        "associate": "ASSOCIATE_PEER_ORIGINS",
         "hand": "HAND_PEER_ORIGINS",
         "embed": "EMBED_PEER_ORIGINS",
         "rerank": "RERANK_PEER_ORIGINS",
@@ -83,6 +84,7 @@ def test_peer_api_keys_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_API_KEYS",
         "muse": "MUSE_PEER_API_KEYS",
         "worker": "WORKER_PEER_API_KEYS",
+        "associate": "ASSOCIATE_PEER_API_KEYS",
         "hand": "HAND_PEER_API_KEYS",
         "embed": "EMBED_PEER_API_KEYS",
         "rerank": "RERANK_PEER_API_KEYS",
@@ -271,7 +273,7 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         backends=(primary,),
         default_model=_CORTEX_ID,
         aliases=tier_aliases([primary], TIER_ROLE),
-        infeasible=frozenset({"muse", "worker"}),
+        infeasible=frozenset({"muse", "worker", "associate"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding
