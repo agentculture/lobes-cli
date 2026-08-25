@@ -687,10 +687,11 @@ parsers/speculative config are informational only. With no
 `*_PEER_ORIGINS` declared, every response stays byte-identical to the
 pre-pool contract. **Status: implemented and offline-tested, NOT yet
 live-validated (#108)** — the pre-pool baseline is captured
-(`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`: three
-concurrent `model=cortex` requests to one gateway queued at 11.0 tok/s
-aggregate while the peer idled, and local pressure shed 429 without
-consulting it), but the pooled acceptance transcript on the live Spark+Thor
+(`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`: an 8-way
+flood of raw-id requests to one gateway queued at 11.0 tok/s aggregate —
+the same as a single request — while the peer idled at `running=0`, and
+organic iowait pressure shed three concurrent `model=cortex` alias
+requests 429 without consulting it), but the pooled acceptance transcript on the live Spark+Thor
 pair has not landed yet. Validated scope is `cortex` on the Spark+Thor
 NVFP4 pair only — the Orin's llama.cpp cortex is exempt (a separate
 candidate), and any other pooled role (senses/muse/worker/embedder/
