@@ -203,7 +203,8 @@ def test_passthrough_under_another_service_does_not_count(tmp_path, monkeypatch)
 
     (tmp_path / "docker-compose.yml").write_text(
         "services:\n  gateway:\n    environment:\n      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}\n"
-        "  vllm-primary:\n    environment:\n      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
+        "  vllm-primary:\n    environment:\n"
+        "      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
