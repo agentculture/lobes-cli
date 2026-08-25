@@ -174,3 +174,24 @@ class TestPackagedTemplatePassesEveryKeyThrough:
         ids = {c["id"]: c for c in payload["checks"]}
         check = ids["gateway_passthrough"]
         assert check["passed"] is True, check["message"]
+
+
+def test_passthrough_in_override_overlay_counts(tmp_path, monkeypatch):
+    """An operator override.yml carrying the passthrough satisfies the check."""
+    from lobes.cli._commands import doctor as D
+
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  gateway:\n    environment:\n      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docker-compose.override.yml").write_text(
+        "services:\n  gateway:\n    environment:\n"
+        "      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "PRIMARY_PEER_ORIGINS=http://peer-a.example:8000\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
+    result = D._gateway_passthrough_check(tmp_path)
+    assert result["passed"] is True, result

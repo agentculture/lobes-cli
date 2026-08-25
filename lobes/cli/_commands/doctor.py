@@ -323,6 +323,14 @@ def _has_passthrough(compose_text: str, key: str) -> bool:
     return f"{key}=${{{key}" in compose_text
 
 
+_PASSTHROUGH_COMPOSE_FILES: tuple[str, ...] = (
+    _compose.COMPOSE_FILE,
+    "docker-compose.audio.yml",
+    "docker-compose.shape.yml",
+    "docker-compose.override.yml",
+)
+
+
 def _gateway_passthrough_check(deploy_dir: Path) -> dict:
     """A ``.env`` key set (non-empty) must reach the gateway container.
 
@@ -355,7 +363,17 @@ def _gateway_passthrough_check(deploy_dir: Path) -> dict:
             "docker-compose.yml absent — see scaffold_files",
         )
     deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
-    compose_text = compose_path.read_text(encoding="utf-8")
+    # A passthrough may legitimately live in an overlay rather than the base
+    # file: an operator-owned docker-compose.override.yml (the deployed Spark
+    # already adds HAND_FEASIBLE there) or the generated shape/audio overlays.
+    # Scan every overlay present so an override-placed passthrough is not
+    # falsely reported missing — the check is about whether the value REACHES
+    # the container, not which file carries it.
+    compose_text = "\n".join(
+        (deploy_dir / name).read_text(encoding="utf-8")
+        for name in _PASSTHROUGH_COMPOSE_FILES
+        if (deploy_dir / name).is_file()
+    )
     missing = sorted(
         key
         for key in _gateway_relevant_keys()
@@ -369,7 +387,7 @@ def _gateway_passthrough_check(deploy_dir: Path) -> dict:
             False,
             "warn",
             f"{len(missing)} .env key(s) set but missing a gateway passthrough "
-            f"in docker-compose.yml: {shown}{more}",
+            f"in docker-compose*.yml: {shown}{more}",
             "re-scaffold docker-compose.yml from the packaged template "
             "('lobes init --apply') — doctor never patches compose directly",
         )
