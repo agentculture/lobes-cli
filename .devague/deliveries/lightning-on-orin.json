@@ -1,0 +1,20 @@
+{
+  "plan_slug": "lightning-on-orin",
+  "schema_version": 1,
+  "created": "2026-08-25T20:22:52Z",
+  "updated": "2026-08-25T20:22:57Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t8's measured budget knobs move from the Orin CARD profile to the orin-associate SHAPE overrides; the card declares [roles.associate] feasible = false and keeps the measured numbers as documentation",
+      "task_ref": "t8",
+      "reason": "t8 acceptance criterion 1 ('builtin/orin.toml declares associate feasible with model, gpu_mem_util and max_model_len') contradicts the OPT_IN_CORE_ROLES architecture that t6 correctly placed associate into. For muse and worker the card profiles declare feasible=false and the HOSTING SHAPE carries the full model+budget declaration in its overrides (thor-muse.toml states this in its header; orin.toml already does it for both). Declaring associate on the card made orin-lobe -- a shape that DROPS associate -- render its full model and knobs, which test_every_dropped_core_role_renders_only_the_feasible_marker rejects as 'card passthrough broken', and made machine-as-brain over-host the board, which is precisely what the exclusive_roles guard exists to prevent. The criterion was authored during /spec-to-plan without checking the opt-in pattern; the MEASUREMENT itself (util 0.63, 128000, KV 10.95 GiB / 1,249,280 tokens / 9.76x, and the recorded refusal of the vendor's 0.70) is unaffected and simply lands in the shape. Shipped behaviour is identical.",
+      "affects": [
+        "t9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

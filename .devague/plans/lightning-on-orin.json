@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-25T19:20:25Z",
-  "updated": "2026-08-25T19:28:01Z",
+  "updated": "2026-08-25T20:00:07Z",
   "targets": [
     {
       "id": "c1",
@@ -618,7 +618,8 @@
         "[[exclusive_roles]] names the group associate collides with, its reason quoting measured arithmetic and naming its instrument"
       ],
       "deps": [
-        "t2"
+        "t2",
+        "t6"
       ],
       "covers": [
         "c4",
@@ -731,6 +732,14 @@
       "text": "OPPORTUNITY from #199: the Orin's associate and the Spark's worker serve the SAME checkpoint (Nemotron 3.5 Lightning NVFP4). The replica pool's compatibility test is a live-probed fingerprint of served id + quantization + max context + runtime, so the two boxes may be poolable replicas of one lobe rather than two separately-addressed roles. Not evaluated by this frame; it bears directly on c35 (the case for proxying instead) and possibly on v7's tier placement.",
       "kind": "follow_up",
       "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "WAVE-GRAPH ERROR, found at merge time 2026-08-25: t6 and t8 were declared same-wave and are NOT independent. lobes/profiles/schema.py validates profile role names against roles.py's ROLES, so t8's [roles.associate] declaration raises ModelGearError('unknown role(s) [associate]') until t6 lands -- 76 test failures standing alone. Dependency t8->t6 added after the fact; t8's branch must be rebased onto merged t6 and its goldens regenerated before it can pass the TDD gate. Lesson for the remaining waves: a task that DECLARES a role depends on the task that DEFINES it, and devague plan waves cannot infer that.",
+      "kind": "follow_up",
+      "task_id": "t8",
       "resolved": false,
       "resolution": ""
     }
