@@ -707,6 +707,24 @@ live probe of the peer's own `/v1/models` confirms it actually serves that
 id — the same "advertised implies reachable" rule (issue #92) a local backend
 is already held to, extended across the box boundary.
 
+**Replica-pool markers (issue #199, opt-in, VALIDATED live for cortex on
+Spark+Thor 2026-08-25, declared-only for other roles — see [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)).**
+When a box declares a `<PREFIX>_PEER_ORIGINS` pool for a role it also hosts,
+every pooled answer carries one honest placement marker plus why:
+
+| Header | Present on | Meaning |
+|---|---|---|
+| `X-Lobes-Served-By` | a LOCALLY-served pooled answer | this box's own `GATEWAY_SELF_ORIGIN`, or `local` if unset |
+| `X-Lobes-Proxied-By` | a FORWARDED pooled answer | the peer origin that actually served it (same header proxy-lobes already defines) |
+| `X-Lobes-Route-Reason` | every pooled answer | why: `local-idle` \| `peer-less-loaded` \| `local-busy-forwarded` \| `affinity` \| `sole-ready` \| `none` |
+| `X-Lobes-Route-Attempts` | only when >1 replica was dispatched to | a pre-dispatch failure retried the next selectable replica |
+
+A caller may also send `X-Lobes-Affinity: <key>` on a request to a pooled
+role to prefer a sticky replica (honoured only when it stays selectable and
+not worse-placed by more than a declared margin); it is forwarded to
+whichever peer is chosen. With no pool declared, none of these headers ever
+appear — byte-identical to the pre-pool response.
+
 ### Public exposure via Cloudflare Tunnel
 
 `lobes tunnel --apply` publishes the local API at an owner-chosen hostname through

@@ -1709,6 +1709,131 @@ services:
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
       - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}
       - TTS_PEER_API_KEY=${TTS_PEER_API_KEY:-}
+      # Replica-pool plural peer family (issue #199, t3): the SINGULAR
+      # *_PEER_ORIGIN/*_PEER_API_KEY pair above names exactly ONE peer per
+      # dropped role (referral/proxy-lobes, #112/#115/#127); the PLURAL family
+      # below names a whole POOL of same-role replicas this box can spread
+      # `model=cortex`-shaped load across (issue #199's replica pool), and can
+      # be set alongside a role this box ITSELF hosts — a hosted role can
+      # still have peers in its pool. Comma-separated, POSITIONAL: origin[i]
+      # pairs with key[i]; an empty key slot is legal ("this peer has no
+      # inbound gate"); a shorter or longer key list than the origin list is
+      # a startup configuration error (see lobes/gateway/_config.py, t2).
+      # Parsed the SAME way as the singular origin (trailing slash + outer
+      # whitespace stripped per entry). Unset everywhere (the default) yields
+      # empty replica maps — byte-identical to the pre-pool contract. See
+      # env.example's "Replica pool" section for the worked example; the
+      # peer SET differs per box (each box lists every OTHER pool member,
+      # never itself).
+      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}
+      - MULTIMODAL_PEER_ORIGINS=${MULTIMODAL_PEER_ORIGINS:-}
+      - MUSE_PEER_ORIGINS=${MUSE_PEER_ORIGINS:-}
+      - WORKER_PEER_ORIGINS=${WORKER_PEER_ORIGINS:-}
+      - HAND_PEER_ORIGINS=${HAND_PEER_ORIGINS:-}
+      - EMBED_PEER_ORIGINS=${EMBED_PEER_ORIGINS:-}
+      - RERANK_PEER_ORIGINS=${RERANK_PEER_ORIGINS:-}
+      - STT_PEER_ORIGINS=${STT_PEER_ORIGINS:-}
+      - TTS_PEER_ORIGINS=${TTS_PEER_ORIGINS:-}
+      - PRIMARY_PEER_API_KEYS=${PRIMARY_PEER_API_KEYS:-}
+      - MULTIMODAL_PEER_API_KEYS=${MULTIMODAL_PEER_API_KEYS:-}
+      - MUSE_PEER_API_KEYS=${MUSE_PEER_API_KEYS:-}
+      - WORKER_PEER_API_KEYS=${WORKER_PEER_API_KEYS:-}
+      - HAND_PEER_API_KEYS=${HAND_PEER_API_KEYS:-}
+      - EMBED_PEER_API_KEYS=${EMBED_PEER_API_KEYS:-}
+      - RERANK_PEER_API_KEYS=${RERANK_PEER_API_KEYS:-}
+      - STT_PEER_API_KEYS=${STT_PEER_API_KEYS:-}
+      - TTS_PEER_API_KEYS=${TTS_PEER_API_KEYS:-}
+      # GATEWAY_SELF_ORIGIN (issue #199): this box's OWN origin, as its peers
+      # would dial it (e.g. http://peer-a.example:8000) — used to stamp
+      # X-Lobes-Served-By on a locally-answered pooled request so a caller
+      # can tell which replica actually served it. OPERATOR-TYPED, never
+      # derived from hostname/interface (the same #92 rule every other
+      # origin knob here follows). Unset (the default) falls back to the
+      # literal string 'local' on that header — byte-identical to a
+      # pre-#199 deployment that never declares it.
+      - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}
+      # Declared lane fingerprint (issue #199, t3): the SAME knobs each
+      # vLLM lane below is started with, passed through to the gateway
+      # container too so GET /capabilities and the replica pool's
+      # compatibility check (t4/t5) can compare what THIS box's lane
+      # actually declares against a peer's fingerprint — without this the
+      # gateway can only guess from the catalog. Not every prefix's lane
+      # actually reads its own copy of these five suffixes from .env today
+      # (several vLLM services hardcode the flag instead of taking an env
+      # override — see the per-service --quantization/--reasoning-parser/
+      # --tool-call-parser lines above) — passed through for EVERY prefix
+      # anyway for uniformity (${VAR:-} is harmless when nothing sets it),
+      # with the ones a lane does NOT consume called out below.
+      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}
+      - PRIMARY_KV_CACHE_DTYPE=${PRIMARY_KV_CACHE_DTYPE:-}
+      # PRIMARY_REASONING_PARSER: no such lane knob exists — vllm-primary
+      # hardcodes --reasoning-parser=qwen3. Passed through anyway so
+      # /capabilities can still report the fixed value once t4 fills it in.
+      - PRIMARY_REASONING_PARSER=${PRIMARY_REASONING_PARSER:-}
+      - PRIMARY_TOOL_CALL_PARSER=${PRIMARY_TOOL_CALL_PARSER:-}
+      - PRIMARY_SPECULATIVE_CONFIG=${PRIMARY_SPECULATIVE_CONFIG-}
+      - MULTIMODAL_QUANTIZATION=${MULTIMODAL_QUANTIZATION:-}
+      # MULTIMODAL_KV_CACHE_DTYPE / MULTIMODAL_REASONING_PARSER /
+      # MULTIMODAL_TOOL_CALL_PARSER: no such lane knobs exist —
+      # vllm-multimodal hardcodes --reasoning-parser=gemma4 and
+      # --tool-call-parser=gemma4 (no --kv-cache-dtype override). Passed
+      # through anyway per the uniformity note above.
+      - MULTIMODAL_KV_CACHE_DTYPE=${MULTIMODAL_KV_CACHE_DTYPE:-}
+      - MULTIMODAL_REASONING_PARSER=${MULTIMODAL_REASONING_PARSER:-}
+      - MULTIMODAL_TOOL_CALL_PARSER=${MULTIMODAL_TOOL_CALL_PARSER:-}
+      - MULTIMODAL_SPECULATIVE_CONFIG=${MULTIMODAL_SPECULATIVE_CONFIG-}
+      # MUSE_KV_CACHE_DTYPE / MUSE_REASONING_PARSER / MUSE_TOOL_CALL_PARSER /
+      # MUSE_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-muse
+      # hardcodes all four (reasoning/tool parser gemma4, no kv-cache-dtype
+      # override, a fixed --speculative-config). Passed through anyway.
+      - MUSE_QUANTIZATION=${MUSE_QUANTIZATION:-}
+      - MUSE_KV_CACHE_DTYPE=${MUSE_KV_CACHE_DTYPE:-}
+      - MUSE_REASONING_PARSER=${MUSE_REASONING_PARSER:-}
+      - MUSE_TOOL_CALL_PARSER=${MUSE_TOOL_CALL_PARSER:-}
+      - MUSE_SPECULATIVE_CONFIG=${MUSE_SPECULATIVE_CONFIG-}
+      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER: no such lane knobs
+      # exist — vllm-worker hardcodes --tool-call-parser=qwen3_coder (no
+      # --kv-cache-dtype override). Passed through anyway.
+      - WORKER_QUANTIZATION=${WORKER_QUANTIZATION:-}
+      - WORKER_KV_CACHE_DTYPE=${WORKER_KV_CACHE_DTYPE:-}
+      - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
+      - WORKER_TOOL_CALL_PARSER=${WORKER_TOOL_CALL_PARSER:-}
+      - WORKER_SPECULATIVE_CONFIG=${WORKER_SPECULATIVE_CONFIG-}
+      # HAND_QUANTIZATION / HAND_KV_CACHE_DTYPE / HAND_REASONING_PARSER /
+      # HAND_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-hand is
+      # bf16 (deliberately NO --quantization flag), has no thinking mode
+      # (no --reasoning-parser), no kv-cache-dtype override, and no
+      # speculative decoding. HAND_TOOL_CALL_PARSER also has no lane knob —
+      # vllm-hand hardcodes --tool-call-parser=lfm2. Passed through anyway.
+      - HAND_QUANTIZATION=${HAND_QUANTIZATION:-}
+      - HAND_KV_CACHE_DTYPE=${HAND_KV_CACHE_DTYPE:-}
+      - HAND_REASONING_PARSER=${HAND_REASONING_PARSER:-}
+      - HAND_TOOL_CALL_PARSER=${HAND_TOOL_CALL_PARSER:-}
+      - HAND_SPECULATIVE_CONFIG=${HAND_SPECULATIVE_CONFIG-}
+      # EMBED_*/RERANK_*/STT_*/TTS_*: the pooling gears and the audio overlay
+      # have no analogous fingerprint knobs at all today (no thinking mode,
+      # no tool calling, no speculative decoding). Passed through anyway for
+      # uniformity — every one of these is a harmless ${VAR:-} no-op today.
+      - EMBED_QUANTIZATION=${EMBED_QUANTIZATION:-}
+      - EMBED_KV_CACHE_DTYPE=${EMBED_KV_CACHE_DTYPE:-}
+      - EMBED_REASONING_PARSER=${EMBED_REASONING_PARSER:-}
+      - EMBED_TOOL_CALL_PARSER=${EMBED_TOOL_CALL_PARSER:-}
+      - EMBED_SPECULATIVE_CONFIG=${EMBED_SPECULATIVE_CONFIG-}
+      - RERANK_QUANTIZATION=${RERANK_QUANTIZATION:-}
+      - RERANK_KV_CACHE_DTYPE=${RERANK_KV_CACHE_DTYPE:-}
+      - RERANK_REASONING_PARSER=${RERANK_REASONING_PARSER:-}
+      - RERANK_TOOL_CALL_PARSER=${RERANK_TOOL_CALL_PARSER:-}
+      - RERANK_SPECULATIVE_CONFIG=${RERANK_SPECULATIVE_CONFIG-}
+      - STT_QUANTIZATION=${STT_QUANTIZATION:-}
+      - STT_KV_CACHE_DTYPE=${STT_KV_CACHE_DTYPE:-}
+      - STT_REASONING_PARSER=${STT_REASONING_PARSER:-}
+      - STT_TOOL_CALL_PARSER=${STT_TOOL_CALL_PARSER:-}
+      - STT_SPECULATIVE_CONFIG=${STT_SPECULATIVE_CONFIG-}
+      - TTS_QUANTIZATION=${TTS_QUANTIZATION:-}
+      - TTS_KV_CACHE_DTYPE=${TTS_KV_CACHE_DTYPE:-}
+      - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
+      - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
+      - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

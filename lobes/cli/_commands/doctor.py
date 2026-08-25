@@ -38,6 +38,7 @@ from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
+from lobes.gateway._config import FEASIBLE_ENV
 from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
@@ -244,6 +245,190 @@ def _version_skew_check(port: int, deploy_dir: Path | None) -> dict:
         True,
         "error",
         f"gateway and CLI both report lobes-cli {__version__}",
+    )
+
+
+# --- gateway passthrough (issue #199, t3) -----------------------------------
+#
+# The role-prefix set every per-role gateway env family (FEASIBLE, the
+# singular/plural peer channels, the declared lane fingerprint) is keyed on.
+# Derived from FEASIBLE_ENV rather than hand-typed so this list can never
+# drift from the prefixes lobes.gateway._config already recognises.
+_GATEWAY_ROLE_PREFIXES: tuple[str, ...] = tuple(
+    key[: -len("_FEASIBLE")] for key in FEASIBLE_ENV.values()
+)
+
+# Per-role env suffixes the gateway service is expected to pass through:
+# FEASIBLE (the existing shape/feasibility flag), the singular "refer to one
+# peer" pair (PEER_ORIGIN/PEER_API_KEY, issue #112/#115/#127), and the
+# plural "pool of replicas" pair (PEER_ORIGINS/PEER_API_KEYS, issue #199).
+# PEER_PROXY is a boolean opt-in knob, not a peer identity, but it rides the
+# exact same per-role channel and is just as silently inert if the gateway
+# container never receives it — included for the same reason.
+_GATEWAY_PEER_SUFFIXES: tuple[str, ...] = (
+    "FEASIBLE",
+    "PEER_ORIGIN",
+    "PEER_ORIGINS",
+    "PEER_PROXY",
+    "PEER_API_KEY",
+    "PEER_API_KEYS",
+)
+
+# The declared lane fingerprint (issue #199): the same five knobs a role's
+# own vLLM service is started with, mirrored to the gateway so GET
+# /capabilities and the replica pool's compatibility check can see what this
+# box's lane actually declares. Not every prefix's lane consumes an env
+# override for every one of these five suffixes (several vLLM services
+# hardcode the flag instead — see the packaged compose template's own
+# per-service comments) — that is a lane-authoring fact, irrelevant here:
+# doctor only cares whether a KEY THE OPERATOR SET IN .env reaches the
+# gateway container, and the packaged template passes all five through for
+# every prefix uniformly.
+_GATEWAY_FINGERPRINT_SUFFIXES: tuple[str, ...] = (
+    "QUANTIZATION",
+    "KV_CACHE_DTYPE",
+    "REASONING_PARSER",
+    "TOOL_CALL_PARSER",
+    "SPECULATIVE_CONFIG",
+)
+
+# Gateway-scoped singletons with no per-role prefix: the inbound auth key and
+# this box's own advertised origin (issue #199's X-Lobes-Served-By source).
+_GATEWAY_SINGLETON_KEYS: tuple[str, ...] = ("GATEWAY_SELF_ORIGIN", "GATEWAY_API_KEY")
+
+
+def _gateway_relevant_keys() -> tuple[str, ...]:
+    """Every ``.env`` key the deployed gateway service is expected to read.
+
+    Purely a naming enumeration (role prefix x suffix, plus the two
+    singletons) — it does not read any file itself.
+    """
+    keys: list[str] = list(_GATEWAY_SINGLETON_KEYS)
+    for prefix in _GATEWAY_ROLE_PREFIXES:
+        for suffix in _GATEWAY_PEER_SUFFIXES + _GATEWAY_FINGERPRINT_SUFFIXES:
+            keys.append(f"{prefix}_{suffix}")
+    return tuple(keys)
+
+
+def _gateway_environment_block(text: str) -> str:
+    """Only the ``services.gateway.environment`` lines of one compose file.
+
+    A ``KEY=${KEY...}`` substitution under ANOTHER service (or anywhere else
+    in an overlay) does not reach the gateway container, so matching it would
+    report a passthrough that is not there (Qodo, PR #213). Same stdlib
+    indentation scan as :func:`lobes.runtime._compose._override_service_keys`
+    (the runtime carries no YAML parser): a service is a two-space key, its
+    ``environment:`` a four-space key, and the block is every deeper-indented
+    line that follows until the indent comes back up.
+    """
+    out: list[str] = []
+    in_gateway = False
+    in_env = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 2 and stripped.endswith(":"):
+            in_gateway = stripped == "gateway:"
+            in_env = False
+            continue
+        if not in_gateway:
+            continue
+        if indent == 4:
+            in_env = stripped == "environment:"
+            continue
+        if in_env and indent > 4:
+            out.append(stripped)
+    return "\n".join(out)
+
+
+def _has_passthrough(compose_text: str, key: str) -> bool:
+    """True iff the compose text contains a ``KEY=${KEY...`` substitution.
+
+    Matches both ``${KEY:-default}`` and bare ``${KEY}`` forms — both start
+    with the literal ``KEY=${KEY`` this checks for. A key name that is a
+    strict prefix of another declared key (e.g. ``PRIMARY_PEER_ORIGIN`` vs
+    ``PRIMARY_PEER_ORIGINS``) cannot false-match: the shared prefix is always
+    followed by ``=`` in a real passthrough line, so a differently-suffixed
+    neighbour (which continues with another letter, not ``=``) never matches.
+    """
+    return f"{key}=${{{key}" in compose_text
+
+
+_PASSTHROUGH_COMPOSE_FILES: tuple[str, ...] = (
+    _compose.COMPOSE_FILE,
+    "docker-compose.audio.yml",
+    "docker-compose.shape.yml",
+    "docker-compose.override.yml",
+)
+
+
+def _gateway_passthrough_check(deploy_dir: Path) -> dict:
+    """A ``.env`` key set (non-empty) must reach the gateway container.
+
+    The 2026-07-17 incident this guards against: the ``MUSE_*`` keys were set
+    in ``.env`` but the deployed ``docker-compose.yml`` had no passthrough
+    line for them in the gateway service's ``environment:`` block, so the
+    values silently never reached the gateway container while every other
+    check (including ``/health``) stayed green. Read-only: this check only
+    reports; it never patches ``docker-compose.yml`` (that is a compose
+    re-scaffold via ``lobes init --apply``, never doctor's ``--fix``, per its
+    own "never rewrites/patches compose" contract).
+
+    Fleet-only (the legacy single-model scaffold has no gateway service at
+    all) and tolerant of an absent compose file — that is the pre-existing
+    ``scaffold_files``/``compose_present`` finding's job, not this one's.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return _check(
+            "gateway_passthrough",
+            True,
+            "info",
+            "gateway passthrough check applies to fleet deployments only",
+        )
+    compose_path = deploy_dir / _compose.COMPOSE_FILE
+    if not compose_path.is_file():
+        return _check(
+            "gateway_passthrough",
+            True,
+            "info",
+            "docker-compose.yml absent — see scaffold_files",
+        )
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    # A passthrough may legitimately live in an overlay rather than the base
+    # file: an operator-owned docker-compose.override.yml (the deployed Spark
+    # already adds HAND_FEASIBLE there) or the generated shape/audio overlays.
+    # Scan every overlay present so an override-placed passthrough is not
+    # falsely reported missing — the check is about whether the value REACHES
+    # the container, not which file carries it.
+    compose_text = "\n".join(
+        _gateway_environment_block((deploy_dir / name).read_text(encoding="utf-8"))
+        for name in _PASSTHROUGH_COMPOSE_FILES
+        if (deploy_dir / name).is_file()
+    )
+    missing = sorted(
+        key
+        for key in _gateway_relevant_keys()
+        if (deployed.get(key) or "").strip() and not _has_passthrough(compose_text, key)
+    )
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = "" if len(missing) <= 8 else f" (+{len(missing) - 8} more)"
+        return _check(
+            "gateway_passthrough",
+            False,
+            "warn",
+            f"{len(missing)} .env key(s) set but missing a gateway passthrough "
+            f"in docker-compose*.yml: {shown}{more}",
+            "re-scaffold docker-compose.yml from the packaged template "
+            "('lobes init --apply') — doctor never patches compose directly",
+        )
+    return _check(
+        "gateway_passthrough",
+        True,
+        "info",
+        "every set gateway-relevant .env key has a compose passthrough",
     )
 
 
@@ -536,7 +721,8 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
         if _compose.is_fleet(deploy_dir):
             files_check, missing_files = _scaffold_files_check(deploy_dir)
             stale_check, missing_env = _profile_staleness_check(deploy_dir)
-            checks.extend([files_check, stale_check])
+            passthrough_check = _gateway_passthrough_check(deploy_dir)
+            checks.extend([files_check, stale_check, passthrough_check])
             fix_plan = {"files": missing_files, "env": missing_env}
 
     checks.append(_health_check(port))

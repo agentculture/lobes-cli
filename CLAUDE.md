@@ -665,6 +665,52 @@ the fields that say it is usable, and `loaded` is a *wiring* fact, not a
 running one. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
 and `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`.
 
+**The cortex replica pool (issue #199) — landed and VALIDATED live
+2026-08-25 on the Spark+Thor NVFP4 pair, cortex-only.** Where proxy-lobes forwards a *dropped* role to its one peer,
+a replica pool lets a box that already HOSTS a role forward *some* of that
+role's requests to an equally-compatible peer replica when the peer is less
+loaded — the mirror case, and a property of the awake/proxy states, not a
+fourth one. Declaring the plural `<PREFIX>_PEER_ORIGINS` (positionally
+paired with `<PREFIX>_PEER_API_KEYS`, an empty key slot legal) beside the
+existing singular `<PREFIX>_PEER_ORIGIN`, plus an operator-typed
+`GATEWAY_SELF_ORIGIN`, arms a background `ReplicaCache` that live-probes
+each peer's `GET /status` (load) and `GET /capabilities` (fingerprint) and
+picks the least-loaded compatible, ready, non-busy replica — local wins
+ties, an `X-Lobes-Affinity` header stickies within a margin, and every
+pooled answer carries `X-Lobes-Served-By` (local) or `X-Lobes-Proxied-By`
+(forwarded) plus `X-Lobes-Route-Reason` on both. Under local pressure a
+pooled request forwards to a selectable peer instead of shedding 429; only
+"no replica anywhere is selectable" still sheds, and at most one forward
+happens per request. Compatibility is a live-probed fingerprint (served id +
+quantization + max context + runtime), never the catalog — `kv_cache_dtype`/
+parsers/speculative config are informational only. With no
+`*_PEER_ORIGINS` declared, every response stays byte-identical to the
+pre-pool contract. **Status: VALIDATED live (#108)** — `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`:
+three concurrent requests to the Spark front, with the Spark under organic
+iowait pressure, were all served by the Thor at **19.1 tok/s aggregate vs
+the 11.0 tok/s single-owner baseline (+74%)** with
+`X-Lobes-Route-Reason: local-busy-forwarded`; with the Thor's gateway
+stopped the Spark kept serving alias and raw id (`sole-ready`); a marked
+arrival at the Thor never re-forwarded. Two divergences are recorded, not
+hidden: a **raw-id request under local PRESSURE is not forwarded** (the
+pressure gate is tier-alias-only, #85 → issue #215; under load alone raw id
+and alias place identically), and affinity yields whenever the preferred
+replica's box flips busy. The drafter difference (DSpark vs MTP) is NOT
+visible in the fingerprint yet because neither box declares
+`PRIMARY_SPECULATIVE_CONFIG` in `.env` (#214). The pre-pool baseline is captured
+(`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`: an 8-way
+flood of raw-id requests to one gateway queued at 11.0 tok/s aggregate —
+the same as a single request — while the peer idled at `running=0`, and
+organic iowait pressure shed three concurrent `model=cortex` alias
+requests 429 without consulting it), Validated scope is `cortex` on the Spark+Thor
+NVFP4 pair only — the Orin's llama.cpp cortex is exempt (a separate
+candidate), and any other pooled role (senses/muse/worker/embedder/
+reranker/hand/stt/tts) is declared/unvalidated data only, even though the
+plural peer family is generic across all nine role prefixes. See
+`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`,
+`docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
+schema: additive `replicas`/`fingerprint` fields).
+
 ## Deployment model
 
 lobes is **scaffold-based, not checkout-based.** The canonical

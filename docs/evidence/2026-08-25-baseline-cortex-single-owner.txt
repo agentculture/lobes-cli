@@ -1,0 +1,75 @@
+# t1 — PRE-POOL BASELINE: cortex single-owner per box (issue #199)
+# date: 2026-08-25T16:43:26Z   host: spark-f8a9   read-only traffic, no config changed
+
+## Pins
+spark: MODEL_GEAR_VERSION=0.57.2  lobes --version: lobes 0.61.2  gateway image lobes: 0.57.2
+thor:  MODEL_GEAR_VERSION=0.61.2 lobes --version: gateway image lobes: 0.61.2
+spark .env peers: (none — cortex has no peer declared; PRIMARY_PEER_ORIGINS does not exist yet)
+thor  .env peers: (none)
+spark pressure thresholds: (none set in .env -> gateway defaults swap>75% / iowait>50% apply; the 2026-07-14 'thresholds=100' note is stale)
+
+## Idle state before the run
+spark /status: busy={'running': 1, 'waiting': 0} primary.health=ok running=1 waiting=0 pressure={'mode': 'busy', 'shed': True, 'reason': 'pressure', 'swap_used_percent': 16.47252538636478, 'iowait_percent': 57.859531772575245}
+thor  /status: busy={'running': 0, 'waiting': 0} primary.health=ok running=0 waiting=0 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 0.0, 'iowait_percent': 0.0}
+
+## Scenario A — three concurrent model=cortex requests to ONE gateway (the Spark)
+cmd: 3x parallel curl -X POST http://localhost:8001/v1/chat/completions model=cortex max_tokens=300 enable_thinking=false
+  req A3: HTTP 429 finish=unparsable:'choices' completion_tokens=None wall=0.02s tok/s=0.0 | X-Lobes-Tier-Reason: busy
+  req A1: HTTP 429 finish=unparsable:'choices' completion_tokens=None wall=0.02s tok/s=0.0 | X-Lobes-Tier-Reason: busy
+  req A2: HTTP 429 finish=unparsable:'choices' completion_tokens=None wall=0.02s tok/s=0.0 | X-Lobes-Tier-Reason: busy
+  mid-run spark /status: busy={'running': 1, 'waiting': 0} primary.health=ok running=1 waiting=0 pressure={'mode': 'busy', 'shed': True, 'reason': 'pressure', 'swap_used_percent': 16.45808318007488, 'iowait_percent': 55.218855218855225}
+  mid-run thor  /status: busy={'running': 0, 'waiting': 0} primary.health=ok running=0 waiting=0 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 0.0, 'iowait_percent': 0.0}
+  aggregate: 0 completion tokens — all three alias requests were SHED (429, X-Lobes-Tier-Reason: busy) by the Spark's own pressure policy
+  (iowait 55-58% > 50% default) while the Thor's cortex sat at running=0. This is Scenario C observed organically, see below.
+
+## Scenario A' — the same three requests addressed by the RAW served id (how deployed consumers actually address cortex)
+  req R3: HTTP 200 finish=length completion_tokens=300 wall=27.25s tok/s=11.0 | (no X-Lobes-* headers)
+  req R2: HTTP 200 finish=length completion_tokens=300 wall=54.95s tok/s=5.5 | (no X-Lobes-* headers)
+  req R1: HTTP 200 finish=length completion_tokens=300 wall=81.77s tok/s=3.7 | (no X-Lobes-* headers)
+
+## Scenario B — saturate the Spark (8 concurrent) while the Thor idles: capacity is stranded, nothing spills over
+cmd: 8x parallel curl model=cortex max_tokens=300 to the Spark; /status sampled mid-run on both boxes
+  mid-run spark /status: busy={'running': 2, 'waiting': 7} primary.health=ok running=2 waiting=7 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 16.460962084589127, 'iowait_percent': 8.333333333333332}
+  mid-run thor  /status: busy={'running': 0, 'waiting': 0} primary.health=ok running=0 waiting=0 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 0.0, 'iowait_percent': 0.0}
+  mid-run spark /status: busy={'running': 2, 'waiting': 7} primary.health=ok running=2 waiting=7 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 16.46069386367165, 'iowait_percent': 49.83050847457628}
+  mid-run thor  /status: busy={'running': 0, 'waiting': 0} primary.health=ok running=0 waiting=0 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 0.0, 'iowait_percent': 0.0}
+  req B2: HTTP 200 finish=length completion_tokens=300 wall=26.94s tok/s=11.1 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B6: HTTP 200 finish=length completion_tokens=300 wall=53.07s tok/s=5.7 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B5: HTTP 200 finish=length completion_tokens=300 wall=79.10s tok/s=3.8 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B3: HTTP 200 finish=length completion_tokens=300 wall=106.48s tok/s=2.8 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B8: HTTP 200 finish=length completion_tokens=300 wall=133.58s tok/s=2.2 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B4: HTTP 200 finish=length completion_tokens=300 wall=160.12s tok/s=1.9 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B7: HTTP 200 finish=length completion_tokens=300 wall=187.46s tok/s=1.6 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req B1: HTTP 200 finish=length completion_tokens=300 wall=218.29s tok/s=1.4 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  aggregate: 2400 completion tokens in 218.32s = 11.0 tok/s across 8 requests — every one served by the Spark, the Thor served zero
+
+## Scenario C — pressure shed (429) while the peer idles — OBSERVED ORGANICALLY
+The Spark was under real iowait pressure for the whole run (pressure.mode=busy, shed=true, iowait 49-58%, swap 16%;
+no thresholds set in .env so the gateway defaults swap>75%/iowait>50% apply). Consequences visible above:
+- Scenario A: every model=cortex ALIAS request -> HTTP 429, X-Lobes-Tier-Reason: busy, in 0.02 s, while thor /status showed running=0.
+- Scenario A': the same requests by RAW served id -> HTTP 200. The pressure policy applies to tier aliases only
+  (is_tier_alias gate in handle_post), so a raw-id caller is never shed — it queues instead.
+Both halves are the pre-pool contract the pool changes: a shed or a queue on this box, never a forward to the idle Thor.
+X-Lobes-Override was NOT used (it forces serving, not shedding).
+
+## Scenario D — single-owner reference: the Thor answers its own cortex, one request
+  req D1: HTTP 200 finish=length completion_tokens=300 wall=89.03s tok/s=3.4 | X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+
+## Idle state after the run
+spark /status: busy={'running': 1, 'waiting': 0} primary.health=ok running=1 waiting=0 pressure={'mode': 'busy', 'shed': True, 'reason': 'pressure', 'swap_used_percent': 16.463095930999273, 'iowait_percent': 53.51170568561873}
+thor  /status: busy={'running': 1, 'waiting': 0} primary.health=ok running=1 waiting=0 pressure={'mode': 'warm', 'shed': False, 'reason': 'default', 'swap_used_percent': 0.0, 'iowait_percent': 0.0}
+
+## Caveats (measurement honesty)
+- Background load was present: spark /status showed running=1 before AND after the run (a mesh agent's request in flight),
+  and iowait ~50% throughout — so the per-request tok/s here are NOT clean single-stream numbers and sit far below the
+  documented lane figures (Spark DSpark 46.2 code / 13.7 prose tok/s; Thor MTP 26.8 tok/s). Requests completed in strict
+  sequence (~27 s apart at 300 tokens => ~11 tok/s per slot) with running=2 / waiting=7 under the 8-way flood: the Spark
+  cortex lane admits ~2 concurrent sequences on the DSpark configuration, everything else queues.
+- Thor D1 (3.4 tok/s) also ran with running=1 on the Thor afterwards — contaminated the same way. Treat every tok/s here as
+  'contended box, single owner', which is exactly the condition the pool addresses; t11 must re-measure the baseline
+  side-by-side with the pooled run under the same background load, not compare against these absolute numbers alone.
+
+## Reading
+- Every 200 was served by the dialed gateway's own cortex; no header names another box (there is no X-Lobes-Served-By yet, and X-Lobes-Proxied-By never appears for a hosted role). Every 429 was a local shed with the Thor idle.
+- Under 8-way saturation the Spark queues (running=2, waiting=7) while the Thor reports running=0 — the capacity the pool exists to merge. Aggregate 11.0 tok/s for 8 requests vs 11.1 tok/s for one: throughput does not scale on a single owner.
+- This transcript is the h20/h21 comparison baseline for t11 (aggregate tok/s across concurrent requests, single box).

@@ -284,6 +284,63 @@ PEER_API_KEY_ENV: dict[str, str] = {
 }
 
 
+class ReplicaConfigError(ValueError):
+    """A ``<PREFIX>_PEER_API_KEYS`` list disagrees in length with its origins.
+
+    Raised by :func:`_replica_api_keys` (cortex-replica-pool, issue #199,
+    t2). The two lists are POSITIONAL — index *i* of
+    ``<PREFIX>_PEER_API_KEYS`` is the credential for replica *i* of
+    ``<PREFIX>_PEER_ORIGINS`` — so a shorter or longer key list cannot be
+    resolved without either silently dropping a replica's credential or
+    silently shifting one replica's key onto another replica's origin (the
+    exact wrong-credential-to-wrong-box failure the #92 "operator-declared,
+    never derived" lesson exists to prevent). An empty slot is legal (it
+    means "no key for this replica"); a length MISMATCH is not, and this is
+    the loud startup failure that says so rather than a routing table that
+    quietly authenticates to the wrong peer.
+    """
+
+
+# Per-backend "the DECLARED plural family of peer replicas hosting this
+# role" channel (cortex-replica-pool, issue #199, t2). Sibling of
+# :data:`PEER_ORIGIN_ENV`, not a replacement: the singular channel names ONE
+# peer for a DROPPED role (mesh-brain referral/proxy, issue #112); this
+# plural channel names MULTIPLE origins for a role that is hosted as an
+# interchangeable REPLICA POOL (e.g. several "cortex" boxes behind one
+# gateway). Same nine ``<PREFIX>_<KNOB>`` backend-name keys as every other
+# channel in this module, values comma-separated and parsed by
+# :func:`_replica_origins`. This task PARSES the field only — no selection
+# logic (round-robin, health-aware pick, …) consumes it yet; that lands in a
+# later cortex-replica-pool task.
+PEER_ORIGINS_ENV: dict[str, str] = {
+    "primary": "PRIMARY_PEER_ORIGINS",
+    "multimodal": "MULTIMODAL_PEER_ORIGINS",
+    "muse": "MUSE_PEER_ORIGINS",
+    "worker": "WORKER_PEER_ORIGINS",
+    "hand": "HAND_PEER_ORIGINS",
+    "embed": "EMBED_PEER_ORIGINS",
+    "rerank": "RERANK_PEER_ORIGINS",
+    "stt": "STT_PEER_ORIGINS",
+    "tts": "TTS_PEER_ORIGINS",
+}
+
+# The plural, per-replica counterpart to :data:`PEER_API_KEY_ENV` (t2). Values
+# are comma-separated and POSITIONAL against :data:`PEER_ORIGINS_ENV`'s parsed
+# list for the same backend name — see :func:`_replica_api_keys` and
+# :class:`ReplicaConfigError` for the length-parity contract.
+PEER_API_KEYS_ENV: dict[str, str] = {
+    "primary": "PRIMARY_PEER_API_KEYS",
+    "multimodal": "MULTIMODAL_PEER_API_KEYS",
+    "muse": "MUSE_PEER_API_KEYS",
+    "worker": "WORKER_PEER_API_KEYS",
+    "hand": "HAND_PEER_API_KEYS",
+    "embed": "EMBED_PEER_API_KEYS",
+    "rerank": "RERANK_PEER_API_KEYS",
+    "stt": "STT_PEER_API_KEYS",
+    "tts": "TTS_PEER_API_KEYS",
+}
+
+
 def _peer_origins(env: Mapping[str, str]) -> dict[str, str]:
     """The declared peer origins, keyed by backend name; blank/unset omitted.
 
@@ -343,6 +400,137 @@ def _peer_api_keys(env: Mapping[str, str], peer_origins: Mapping[str, str]) -> d
         value = (env.get(key) or "").strip()
         if value and name in peer_origins:
             out[name] = value
+    return out
+
+
+def _replica_origins(env: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """The declared REPLICA origins, keyed by backend name; absent/blank omitted.
+
+    Comma-separated (see :data:`PEER_ORIGINS_ENV`); each item is stripped and
+    trailing-slash-trimmed exactly like :func:`_peer_origins`'s single value,
+    and an empty item (a stray double comma, a trailing comma) is dropped
+    rather than kept as a blank origin — there is no such thing as a replica
+    at the empty-string origin. A key with no non-empty items after that
+    filtering gets no entry at all (mirrors the singular channel's "blank ⇒
+    omitted" contract). Values are taken VERBATIM from the operator's env —
+    nothing is derived, resolved via DNS, or probed (the #92 lesson, restated
+    for the plural case). An empty mapping (no ``*_PEER_ORIGINS`` set
+    anywhere) is the default, and this task wires nothing that consumes it
+    yet — see :attr:`lobes.gateway._routing.RoutingTable.replica_origins`.
+    """
+    out: dict[str, tuple[str, ...]] = {}
+    for name, key in PEER_ORIGINS_ENV.items():
+        raw = (env.get(key) or "").strip()
+        if not raw:
+            continue
+        origins = tuple(item.strip().rstrip("/") for item in raw.split(",") if item.strip())
+        if origins:
+            out[name] = origins
+    return out
+
+
+def _replica_api_keys(
+    env: Mapping[str, str],
+    replica_origins: Mapping[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    """Outbound per-REPLICA API keys, keyed by backend name; positional.
+
+    Comma-separated (see :data:`PEER_API_KEYS_ENV`), index *i* of the parsed
+    tuple is the credential for replica *i* of :func:`_replica_origins`'s
+    tuple for the same backend name. Unlike the origins list, an empty SLOT
+    is kept (not dropped) — ``"k1,"`` for two origins yields ``("k1", "")``,
+    meaning "replica 0 authenticates with k1, replica 1 needs no key" — and a
+    declared-but-entirely-blank value (``PRIMARY_PEER_API_KEYS=`` with two
+    origins) yields ``("", "")``, one empty slot per origin, rather than the
+    single empty string ``"".split(",")`` would otherwise produce.
+
+    A key with no declared origins for its name is inert (mirrors
+    :func:`_peer_api_keys`: a key without a peer to authenticate to is
+    dropped, never an error) and omitted from the result. A list whose
+    length disagrees with its origins list — shorter OR longer — is not
+    silently truncated/padded: it raises :class:`ReplicaConfigError` naming
+    the backend, since a length mismatch cannot be resolved without either
+    dropping a credential or shifting it onto the wrong replica.
+    """
+    out: dict[str, tuple[str, ...]] = {}
+    for name, key in PEER_API_KEYS_ENV.items():
+        raw = env.get(key)
+        if raw is None:
+            continue
+        origins = replica_origins.get(name)
+        if not origins:
+            continue  # no peer declared for this name — the key is inert
+        if raw.strip() == "":
+            keys: tuple[str, ...] = ("",) * len(origins)
+        else:
+            keys = tuple(item.strip() for item in raw.split(","))
+        if len(keys) != len(origins):
+            raise ReplicaConfigError(
+                f"{name.upper()}: {key} declares {len(keys)} key slot(s) but "
+                f"{PEER_ORIGINS_ENV[name]} declares {len(origins)} origin(s) — "
+                "the two lists are positional and must be the same length "
+                "(an empty slot is legal and means 'no key for that replica')."
+            )
+        out[name] = keys
+    return out
+
+
+def _self_origin(env: Mapping[str, str]) -> str:
+    """This box's own OPERATOR-DECLARED origin, from ``GATEWAY_SELF_ORIGIN``.
+
+    Stripped and trailing-slash-trimmed, matching every other origin value
+    in this module. Per the #92 lesson this is NEVER derived from the local
+    box's own view of its network (hostname, bound interface, container
+    name) — an operator types it, exactly like a peer's origin. Default
+    ``""`` (undeclared); a later cortex-replica-pool task uses this to
+    recognise (and refuse) a replica pool that names this box as one of its
+    own peers.
+    """
+    return (env.get("GATEWAY_SELF_ORIGIN") or "").strip().rstrip("/")
+
+
+# The engine knobs a caller might reasonably expect to be IDENTICAL across
+# every replica in a role's pool (cortex-replica-pool, issue #199, t2) — two
+# "cortex" replicas silently disagreeing on, say, TOOL_CALL_PARSER would answer a
+# strict-tools request differently depending on which replica happened to
+# serve it. Read per backend name as ``<PREFIX>_<SUFFIX>`` — the same
+# ``<PREFIX>_<KNOB>`` convention every other per-backend channel in this
+# module uses — by :func:`_lane_fingerprints`. Exported so a later task
+# (cross-replica consistency checking) reuses the exact same suffix list
+# rather than re-typing it.
+LANE_FINGERPRINT_SUFFIXES: tuple[str, ...] = (
+    "QUANTIZATION",
+    "KV_CACHE_DTYPE",
+    "REASONING_PARSER",
+    "TOOL_CALL_PARSER",
+    "SPECULATIVE_CONFIG",
+)
+
+
+def _lane_fingerprints(env: Mapping[str, str]) -> dict[str, dict[str, str]]:
+    """Declared per-backend engine knobs, keyed by backend name then suffix.
+
+    Iterates the same nine backend names :data:`FEASIBLE_ENV` knows about
+    (``<PREFIX> = name.upper()``) and, for each of
+    :data:`LANE_FINGERPRINT_SUFFIXES`, reads ``<PREFIX>_<SUFFIX>`` verbatim
+    (stripped) when non-blank. Only SET knobs appear — a backend with none of
+    the five set gets no entry in the outer mapping at all, and a backend
+    with some-but-not-all set carries only the ones it declared. Parsing
+    only in this task: nothing yet compares one backend's fingerprint
+    against another's (a later cortex-replica-pool task does that
+    cross-replica consistency check). Empty mapping (the default) when no
+    such knob is set anywhere, leaving every existing deployment unaffected.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for name in FEASIBLE_ENV:
+        prefix = name.upper()
+        lane: dict[str, str] = {}
+        for suffix in LANE_FINGERPRINT_SUFFIXES:
+            value = (env.get(f"{prefix}_{suffix}") or "").strip()
+            if value:
+                lane[suffix] = value
+        if lane:
+            out[name] = lane
     return out
 
 
@@ -987,6 +1175,10 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # origins, empty by default — see PEER_ORIGIN_ENV above. Computed once
     # here because the proxy-lobes channels below both gate on it.
     peer_origins = _peer_origins(env)
+    # cortex-replica-pool config channels (issue #199, t2) — parsed only,
+    # nothing selects or dials a replica in this task; see PEER_ORIGINS_ENV /
+    # PEER_API_KEYS_ENV / _self_origin / _lane_fingerprints above.
+    replica_origins = _replica_origins(env)
     table = RoutingTable(
         backends=tuple(backends),
         default_model=env.get("GATEWAY_DEFAULT_MODEL") or primary.served_name,
@@ -997,6 +1189,10 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         # dials them in this task; see PEER_PROXY_ENV / PEER_API_KEY_ENV above.
         peer_proxied=_peer_proxied(env, peer_origins, infeasible),
         peer_api_keys=_peer_api_keys(env, peer_origins),
+        replica_origins=replica_origins,
+        replica_api_keys=_replica_api_keys(env, replica_origins),
+        self_origin=_self_origin(env),
+        lane_fingerprints=_lane_fingerprints(env),
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container

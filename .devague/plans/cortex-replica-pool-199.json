@@ -1,0 +1,707 @@
+{
+  "slug": "cortex-replica-pool-199",
+  "title": "cortex replica pool (#199)",
+  "frame_slug": "cortex-replica-pool-199",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-25T16:10:01Z",
+  "updated": "2026-08-25T18:01:17Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves one logical cortex from every box that hosts a compatible replica (Spark, Thor, Orin at 256K); each gateway routes model=cortex to the most available compatible replica and every answer says which replica served it \u2014 so when one box is overloaded, new requests land on a free one without callers changing anything",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A request never fails or degrades because pooling exists: with the pool disabled (no *_PEER_ORIGINS) every response, header and capabilities byte is identical to the pre-pool release",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "RoutingTable gains a per-role REPLICA SET \u2014 the local Backend (if hosted) plus N operator-declared peer origins \u2014 and selection returns exactly one replica per request; a role with one owner is the degenerate one-replica case and every no-pool deployment stays byte-identical (lobes/gateway/_routing.py: Backend.base_url and RoutingTable.peer_origins are scalar per name, order_backends returns a 0-or-1 list by design)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The replica set is a NEW structure beside Backend/RoutingTable.peer_origins; order_backends still returns 0-or-1 for single-owner roles and every existing routing test passes unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The gateway can forward model=cortex to a peer replica even when THIS box hosts cortex \u2014 today _proxied_owner only engages for feasible:false roles; the pool path must sit before local dispatch and pick local-vs-peer by availability (lobes/gateway/server.py handle_post -> _proxied_owner -> _proxy_to_peer)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A hosted cortex request is dispatched to a peer only when the selection snapshot says the peer is ready AND better-placed (lower estimated load) than the local replica; a local replica that is ready and unloaded always wins the tie (locality tie-breaker)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Single-hop stays: an inbound request carrying X-Lobes-Proxied is served by the receiving box's LOCAL replica only \u2014 never re-dispatched to a third replica \u2014 and the existing 508 proxy_loop refusal remains for a box with no local replica (server.py _arriving_hop_marker / _PROXY_LOOP_STATUS)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "An inbound request carrying X-Lobes-Proxied is served by the local replica or refused \u2014 it is never forwarded again, proven by a three-gateway loopback test where hop 2 never opens an outbound socket",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Replica selection reads an O(1) cached snapshot refreshed by a background thread \u2014 the ReadinessCache pattern (local /health + peer /v1/models, 5s/3s timeouts, separate peer thread) extended with a per-replica LOAD snapshot; no probe ever runs inline on the request path (lobes/gateway/_readiness.py ReadinessCache.current())",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "No socket is opened on the request path for selection: the snapshot read is a dict lookup, and the load probe runs on the ReadinessCache background threads at the existing intervals (a hung peer never delays local dispatch)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Under local swap/iowait pressure a cortex request is FORWARDED to a ready peer replica instead of shed \u2014 the 429 busy + Retry-After answer is reserved for 'no replica anywhere is available' (lobes/gateway/_pressure_policy.py decide, _tier_request.PressureCache; proxied requests already bypass local pressure per #85)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Under local busy pressure a cortex request is forwarded to a ready peer replica; only when no replica in the set is ready does the caller receive the existing 429 busy + Retry-After (or 503 backend_unavailable when all are down)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "GET /capabilities, lobes capabilities and lobes endpoint expose an additive per-role 'replicas' list (origin/node, ready, load, fingerprint, local:true|false) while feasible/proxied/hosted_by/ready/loaded keep their documented single-owner meaning as a summary \u2014 no existing key changes type (lobes/roles.py annotate_peer_referrals; docs/colleague-stack.md:334-363 contract)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The replicas list is ADDITIVE: every existing /capabilities key keeps its type and single-owner meaning, tests/test_colleague_contract.py passes unchanged, and a no-pool payload has no replicas key at all",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "The three role states awake / asleep (referral) / proxy stay exactly as documented \u2014 a pool is a property of an awake or proxied role, not a fourth state; hosted_by stays a string, never a list (docs/gateway-fleet.md:534-542, docs/colleague-stack.md:437-461)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "hosted_by remains a string and proxied a bool in every rendered payload; a pooled role reports feasible:true when hosted locally, exactly as today",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "Replica origins stay operator-typed in .env, never rendered by a shape or profile and never discovered \u2014 #92 (origins are operator-declared, never derived) holds for the list exactly as for the scalar, which also keeps replica config out of the #204 force-write lifecycle gap (lobes/profiles/shape_render.py emits no *_PEER_* key today)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "shape_render emits no *_PEER_ORIGINS key; all builtin shape goldens stay byte-identical; the operator types the list in .env",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "The control-plane 'which replica would serve this and why' view lands on the capabilities/endpoint surface (e.g. lobes endpoint cortex --replicas / lobes capabilities --replicas), NOT on lobes route \u2014 lobes route is an LLM task->tier classifier that calls the hand model (lobes/cli/_commands/route.py cmd_route) and has no --explain flag; the issue's 'lobes route --explain' wording must not be taken literally",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "lobes route is untouched; the replica view (candidates, ready, load, fingerprint, which one would be chosen and why) renders from lobes capabilities / lobes endpoint cortex and GET /capabilities",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Replica compatibility is checked against a LIVE-probed serving fingerprint per replica (served model id, runtime, quantization, max context, draft/MTP mode, tool/reasoning parser where the engine reports it), not the catalog or .env \u2014 the Spark gateway (up 4 days, pre-d4 env) still advertises cortex context=1048576 while ~/.lobes/.env says 262144, and the Orin advertises quant=modelopt/mtp=true/runtime=vllm for what is actually llama.cpp Q4_K_M, because RoleInfo falls back to catalog data for its unknown served id 'cortex'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "A peer whose live-probed fingerprint (served id, quant, max context, runtime) differs from the local replica's never enters the candidate set \u2014 it is listed in replicas with compatible:false and a reason, never silently pooled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "A replica failing mid-stream ends the client's stream honestly; nothing is replayed \u2014 the relay is a one-shot byte tunnel with no buffering (server.py _relay_streaming), and retry-on-another-replica applies only before the upstream returned 2xx",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "A mid-stream peer failure ends the client's stream with no automatic replay; a pre-dispatch failure (refused/timeout/5xx before any 2xx) retries on the next ready replica at most once per replica",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "Every replica origin carries its own outbound key that is a copy of that peer's inbound GATEWAY_API_KEY (O(machines) key material, never per-pair), the caller's Authorization is stripped before every forward, and a box whose inbound gate is unset gets no key \u2014 exactly the #115/#127 pairwise rules applied per origin (lobes/gateway/_config.py _peer_api_keys; docs/gateway-fleet.md proxy-lobes)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Each entry in <PREFIX>_PEER_API_KEYS is matched positionally to <PREFIX>_PEER_ORIGINS; a mismatch in list length is a startup configuration error, not a silent unauthenticated forward",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "An EMPTY slot in <PREFIX>_PEER_API_KEYS is legal and means 'this peer has no inbound gate' (the Thor sets no GATEWAY_API_KEY today); only a list SHORTER than the origins list is a startup error",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Every cortex answer identifies the serving replica: locally-served answers gain a marker naming this box's own origin (today only proxied answers carry X-Lobes-Proxied-By, so a caller cannot distinguish 'served here' from 'served on the peer I dialed' once the pool exists) and proxied answers keep X-Lobes-Proxied-By verbatim",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "Every cortex response carries a serving-replica marker: X-Lobes-Served-By: <this box's own declared origin> for local answers and the existing X-Lobes-Proxied-By for forwarded ones; both are testable in the loopback suite",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Docs and in-CLI text describing the single-peer contract are updated alongside the code: docs/gateway-fleet.md (proxy-lobes), docs/deployment-shapes.md (referral/proxy), docs/colleague-stack.md (capabilities schema), docs/openai-api.md (markers), lobes/explain/catalog.py _GATEWAY/_SHAPES/_API/_ROLES blocks, CLAUDE.md \u2014 and the feature is DECLARED until a live three-box acceptance transcript lands under docs/evidence/ (#108)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "docs/gateway-fleet.md, docs/deployment-shapes.md, docs/colleague-stack.md, docs/openai-api.md, lobes/explain/catalog.py and CLAUDE.md describe the pool, and no doc or capabilities output claims it validated until the docs/evidence transcript lands",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "audience",
+      "text": "Colleague parent agents and their concurrent subagents that address model=cortex through whichever lobes gateway is local to them (Spark or Thor), plus the operator who declares the replica set per box in .env",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The culture backend's vllm-local provider needs no change to benefit: it keeps sending model=cortex to its local gateway; only X-Lobes-Affinity is new and optional",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "after_state",
+      "text": "A caller dials any one gateway with model=cortex and is served by whichever compatible replica (local or peer) is free; when the local cortex is saturated or under pressure the request goes to the free peer instead of a 429; every answer names the replica that served it; a box with no *_PEER_ORIGINS declared behaves byte-identically to today",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "In the acceptance run, a request sent to the Spark gateway while the Spark cortex is saturated returns 200 with X-Lobes-Proxied-By naming the Thor, not a 429",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "before_state",
+      "text": "Each box owns cortex alone: a hosted role never consults a peer, order_backends returns exactly one owner (#91), local pressure sheds with 429 even while the other box idles, and three concurrent subagents all queue on the one gateway they dialed \u2014 the Spark's and Thor's capacity never merge",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The baseline transcript (taken before the pool lands) shows three concurrent cortex requests to one gateway all served by that box and a 429 under local pressure while the peer idles",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "why_it_matters",
+      "text": "Two boxes now serve the same Qwen3.8-27B-NVFP4 cortex at 256K with very different speeds (Spark DSpark ~46 tok/s code, Thor MTP ~27 tok/s); without a pool that capacity is stranded behind per-box ownership and a busy box turns callers away while its twin idles",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "The pooled acceptance run's aggregate throughput for three concurrent requests exceeds the single-box baseline's \u2014 the merged capacity is measured, not asserted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "Live three-scenario acceptance transcript under docs/evidence/ on the real Spark+Thor pair: (1) three concurrent model=cortex requests to ONE gateway are served by both boxes (markers prove it); (2) with the Spark made busy, new requests land on the Thor; (3) with the Thor down, the Spark keeps serving with no caller change \u2014 plus a byte-identical no-pool golden and the offline test suite green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "The transcript lands under docs/evidence/ with the exact commands, headers and gateway pins for all three scenarios, and the offline suite includes a byte-identical no-pool golden",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "The pool applies to requests addressed by the RAW served id (model=unsloth/Qwen3.8-27B-NVFP4) exactly as to the cortex alias \u2014 every deployed consumer pins the raw id in culture.yaml and none addresses 'cortex' (the 2026-07-31 audit finding still holds), so an alias-only pool would never see a real caller",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "A request with model=unsloth/Qwen3.8-27B-NVFP4 and one with model=cortex are placed by the same selection and carry the same markers, proven by the loopback suite",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "Each gateway exposes a per-role serving fingerprint that peers read through the gateway: served id and max_model_len taken LIVE from the lane's own /v1/models (vLLM reports max_model_len=262144 on the Thor), plus the lane's DECLARED config (quantization, kv_cache_dtype, reasoning/tool parser, speculative config) passed into the gateway env \u2014 never the catalog fallback that today mislabels the Orin. GET /status carries none of these fields and the gateway config carries no quant/parser/kv keys at all",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "For a served id the catalog does not know, the fingerprint still reports the live id and max_model_len and marks undeclared fields as unknown rather than inventing quant/mtp/runtime values",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "The per-replica load snapshot is read from the PEER GATEWAY's GET /status (top-level busy, backends[].health and metrics.running/waiting) on the readiness background thread \u2014 measured ~110 ms on the Thor \u2014 using the peer key; a replica whose /status reports busy:true or health!=ok is not selected. vLLM /metrics is not reachable cross-box (the vLLM port is unpublished on the Spark), so the local replica's own load comes from the same /status aggregation run locally",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "Selection never dials vLLM directly on a peer; with the peer gateway down the snapshot marks the replica unavailable within one refresh interval",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "At most ONE forward per request: a request the local box forwards is served or refused at the receiver under the receiver's own pressure policy (its 429 rides back through the existing 4xx relay, server.py:1025) and the forwarder never retries it locally afterwards \u2014 two mutually-loaded boxes cannot ping-pong, and the caller gets an honest 429 + Retry-After",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "In a loopback test with both gateways marked busy, a request produces exactly one outbound forward and one 429, never two forwards",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "The new *_PEER_ORIGINS / *_PEER_API_KEYS keys are added to the gateway service passthrough in lobes/templates/fleet/docker-compose.yml AND lobes doctor flags a deployed docker-compose.yml that lacks them \u2014 a .env key with no passthrough silently never reaches the container (the 2026-07-17 MUSE_* trap); both the Spark's hand-edited compose and the Thor's must be re-scaffolded before the pool can arm",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "lobes doctor on a compose file missing the passthrough prints the missing keys; the loopback suite starts the gateway from the packaged template with the keys present",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Every pooled answer carries X-Lobes-Route-Reason naming why the replica was chosen (local-idle | peer-less-loaded | local-busy-forwarded | affinity | sole-ready) so a trace can distinguish a deliberate forward from a fallback without reading gateway logs; the same reason appears in the replica view's would-choose line",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "The header is present on every cortex answer when a pool is declared and absent when no pool is declared",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "boundary",
+      "text": "The plural peer family is generic across the nine prefixes but v1 VALIDATES and documents pooling for cortex only; a pooled embed/rerank/senses/worker lane is declared-unvalidated (#108) and the acceptance transcript claims nothing about them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "docs and lobes capabilities describe pooling for cortex; any other pooled role is labelled declared/unvalidated and the acceptance transcript names cortex only",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Capture the PRE-POOL baseline transcript on the live Spark+Thor pair (docs/evidence/2026-08-XX-baseline-cortex-single-owner.txt): three concurrent model=cortex requests to one gateway, then the same under local pressure while the peer idles; record gateway pins and headers",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Transcript shows all three concurrent requests answered by the dialed box (no X-Lobes-Proxied-By) and a 429 busy under local pressure while the peer's /status shows running=0",
+        "Transcript records MODEL_GEAR_VERSION and lobes --version on both boxes and the exact curl commands"
+      ],
+      "deps": [],
+      "covers": [
+        "c28",
+        "h20"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Config: parse the plural peer family and self-origin \u2014 <PREFIX>_PEER_ORIGINS / <PREFIX>_PEER_API_KEYS (comma-separated, positional, empty key slot legal, shorter key list = startup error) and GATEWAY_SELF_ORIGIN \u2014 into new RoutingTable fields (replica_origins: Mapping[str, tuple[str,...]], replica_api_keys, self_origin) plus per-lane declared fingerprint keys (quantization, kv_cache_dtype, reasoning/tool parser, speculative config); existing scalar fields and order_backends untouched. Files: lobes/gateway/_config.py, lobes/gateway/_routing.py (fields only), tests/test_gateway_config_replicas.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PRIMARY_PEER_ORIGINS=http://a:8000,http://b:8000 with PRIMARY_PEER_API_KEYS=k1, yields two origins, keys (k1, '') \u2014 an empty slot is legal",
+        "PRIMARY_PEER_API_KEYS shorter than PRIMARY_PEER_ORIGINS raises a startup configuration error naming the prefix; a longer list is also an error",
+        "A trailing slash and surrounding whitespace on each origin are stripped exactly as _peer_origins does; an env with no *_PEER_ORIGINS produces empty replica maps and a RoutingTable equal to today's",
+        "The parity test iterates PEER_ORIGINS_ENV / PEER_API_KEYS_ENV against FEASIBLE_ENV keys (extends tests/test_gateway_config_proxy.py's invariant)",
+        "All builtin shape goldens (tests/test_shape_goldens.py) stay byte-identical \u2014 shape_render emits no *_PEER_ORIGINS or GATEWAY_SELF_ORIGIN key",
+        "Every existing routing test passes unchanged; order_backends still returns a 0-or-1 list"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c11",
+        "h9",
+        "c18",
+        "h13",
+        "h29"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Templates + doctor: add gateway-service passthrough lines for <PREFIX>_PEER_ORIGINS, <PREFIX>_PEER_API_KEYS, GATEWAY_SELF_ORIGIN and the per-lane declared fingerprint keys (PRIMARY_QUANTIZATION, PRIMARY_KV_CACHE_DTYPE, PRIMARY_REASONING_PARSER, PRIMARY_TOOL_PARSER, PRIMARY_SPECULATIVE_CONFIG and the other prefixes' equivalents) in lobes/templates/fleet/docker-compose.yml and document them in env.example; teach lobes doctor to flag a deployed docker-compose.yml lacking any passthrough for a key set in .env. Files: lobes/templates/fleet/docker-compose.yml, lobes/templates/fleet/env.example, lobes/cli/_commands/doctor.py, tests",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A deployed compose missing the PRIMARY_PEER_ORIGINS passthrough while .env sets it makes lobes doctor print the missing key under a 'gateway passthrough' finding; doctor --fix --apply does not edit compose (compose is re-scaffolded, not patched)",
+        "The packaged template passes every key through as ${VAR:-} in the gateway service; the template test that pins the gateway environment block covers the new keys",
+        "env.example documents the plural block next to the singular one with the empty-slot rule and the 'peer set differs per box' note; no hostname appears"
+      ],
+      "deps": [],
+      "covers": [
+        "c36",
+        "h28"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Replica snapshot: new lobes/gateway/_replicas.py with ReplicaState (origin, local: bool, ready, busy, health, running, waiting, fingerprint, compatible: bool, reason, last_seen) and a ReplicaCache that, on the ReadinessCache daemon-thread pattern (separate peer thread, bounded timeouts, O(1) current()), probes each peer gateway's GET /status (busy, backends[].health, metrics.running/waiting) and GET /capabilities fingerprint with the peer key, probes the local lane's own /v1/models (id, max_model_len) and merges the declared lane config; computes compatible from served id + quantization + max context + runtime only, with kv_cache_dtype/draft/rope recorded as informational. Files: lobes/gateway/_replicas.py, tests/test_gateway_replicas.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "current() is a dict read that opens no socket (asserted by a fake urlopen that fails the test if called from the request thread)",
+        "A peer whose fingerprint differs in served id, quant, max_model_len or runtime is marked compatible=false with a reason string naming the differing field; a peer differing only in kv_cache_dtype or draft mode stays compatible=true with the field recorded",
+        "A peer gateway that is down, times out, or reports busy:true or health!=ok for the role is marked not selectable within one refresh interval",
+        "For a served id absent from the catalog the fingerprint reports the live id and max_model_len and 'unknown' for undeclared fields \u2014 never catalog values",
+        "No probe dials a vLLM port directly on a peer; only the peer gateway origin is contacted"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h5",
+        "c13",
+        "h11",
+        "c33",
+        "h25",
+        "c34",
+        "h26"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Selection policy: pure function select_replica(candidates: Sequence[ReplicaState], *, affinity: str | None, local_busy: bool) -> Selection(origin, local, reason) in new lobes/gateway/_selection.py \u2014 deterministic weighted least-load: filter compatible+ready+not-busy, estimated wait = (running+waiting)/declared_weight, local wins ties (locality), affinity (a stable hash of the key -> preferred replica) honoured only when the preferred replica is selectable and not worse than the best by more than a declared margin; reason vocabulary local-idle | peer-less-loaded | local-busy-forwarded | affinity | sole-ready | none. Files: lobes/gateway/_selection.py, tests/test_gateway_selection.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Local ready and idle vs peer ready and idle -> local, reason local-idle",
+        "Local running=3 waiting=2 vs peer running=0 -> peer, reason peer-less-loaded; local_busy=True with a ready peer -> peer, reason local-busy-forwarded",
+        "Affinity key present, preferred replica within the margin -> preferred, reason affinity; preferred replica busy or dead -> availability wins and the reason is not affinity; absent key -> selection is purely availability-driven",
+        "Incompatible or unready candidates never appear in the result; all unavailable -> Selection(None, reason none)",
+        "Same input always yields the same output (no randomness, no clock)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h3",
+        "c37"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Capabilities surfaces: additive per-role 'replicas' list (origin, local, ready, busy, running, waiting, compatible, reason, fingerprint) and per-role 'fingerprint' object on the payload built by lobes/roles.py, rendered by lobes capabilities / lobes capabilities --replicas and lobes endpoint <role> --replicas including a 'would choose: <origin> (<reason>)' line; existing keys keep type and meaning; lobes route untouched. Files: lobes/roles.py, lobes/cli/_commands/capabilities.py, lobes/cli/_commands/endpoint.py, tests/test_roles_replicas.py, tests/test_cli_capabilities_replicas.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A payload built with no replica_origins has no 'replicas' key and is byte-identical to today's; tests/test_colleague_contract.py and tests/test_roles_proxied.py pass unchanged",
+        "With two replicas declared, hosted_by is still absent/str and proxied still bool; feasible stays true for the locally hosted role",
+        "The CLI replica view shows each candidate's ready/busy/load/compatible/reason and the would-choose line derived from select_replica; the offline fallback renders the declared list with ready unknown",
+        "lobes/cli/_commands/route.py has no diff"
+      ],
+      "deps": [
+        "t2",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c9",
+        "h7",
+        "c10",
+        "h8",
+        "c12",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Gateway dispatch (part 1): pool path in lobes/gateway/server.py \u2014 for a request whose model resolves (alias OR raw served id) to a role with a declared replica set, consult ReplicaCache.current() + select_replica before local dispatch; forward to a chosen peer origin via a generalized _proxy_to_peer(origin, api_key) that stamps X-Lobes-Proxied and returns X-Lobes-Proxied-By; an inbound X-Lobes-Proxied request is served by the local replica only (508 only when no local replica); read X-Lobes-Affinity; stamp X-Lobes-Served-By: <GATEWAY_SELF_ORIGIN or 'local'> on local answers and X-Lobes-Route-Reason on every pooled answer; forward X-Lobes-Affinity to the peer. Files: lobes/gateway/server.py, tests/test_gateway_pool.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "model=cortex and model=unsloth/Qwen3.8-27B-NVFP4 produce identical selection, forward target and markers in the same snapshot",
+        "With no replica set declared, every response, header and body is byte-identical to the pre-pool release (golden comparison over chat, models, capabilities, and error paths)",
+        "An inbound request carrying X-Lobes-Proxied never opens an outbound socket even when the snapshot prefers a peer; a box with no local replica still answers 508 proxy_loop",
+        "Local answers carry X-Lobes-Served-By (self origin, or 'local' when GATEWAY_SELF_ORIGIN is unset) and forwarded answers carry X-Lobes-Proxied-By; both carry X-Lobes-Route-Reason from the selection",
+        "Streaming forwarded answers relay through the existing byte tunnel; a drop mid-stream ends the client stream with no replay"
+      ],
+      "deps": [
+        "t2",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c4",
+        "h4",
+        "c19",
+        "h14",
+        "c31",
+        "h23",
+        "h30"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Gateway dispatch (part 2): pressure and failure semantics in lobes/gateway/server.py \u2014 under local busy pressure a pooled request is forwarded to a selectable peer instead of shed; 429 busy + Retry-After only when no replica is selectable (503 backend_unavailable when all are down); at most ONE forward per request (a peer's 429/4xx rides back via the existing relay and the forwarder never retries locally); pre-dispatch failure (refused/timeout/5xx before any 2xx) retries the next selectable replica at most once per replica; wire the replicas/fingerprint payload from t5 into GET /capabilities and start ReplicaCache in serve(). Files: lobes/gateway/server.py, tests/test_gateway_pool_pressure.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PressureCache busy + peer selectable -> 200 with X-Lobes-Proxied-By and reason local-busy-forwarded; busy + no selectable peer -> the existing 429 body and Retry-After",
+        "Both gateways busy: exactly one outbound forward and one 429 relayed to the caller, never two forwards (counted via a fake open_upstream)",
+        "First replica refuses the connection -> the next selectable replica is tried once; all refuse -> 503 backend_unavailable listing every attempt; a 2xx that then drops mid-stream is not retried",
+        "GET /capabilities on a pooled box carries the replicas list with live ready/busy from ReplicaCache; serve() starts the cache before binding so the first request has a snapshot"
+      ],
+      "deps": [
+        "t7",
+        "t6"
+      ],
+      "covers": [
+        "c7",
+        "h6",
+        "c15",
+        "h12",
+        "c35",
+        "h27",
+        "c37"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "N-gateway loopback integration suite: extend tests/test_proxy_integration.py with _n_gateways(n, pool_env) and drive the acceptance scenarios offline \u2014 spread across two replicas, local-busy forward, peer down, single hop under a marked request, mutual busy, raw-id equivalence, affinity stickiness within margin, and a no-pool byte-identical golden. Files: tests/test_proxy_integration.py, tests/goldens/ (no-pool golden)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Three concurrent requests to gateway A with A's local replica loaded are answered by both A and B as proven by X-Lobes-Served-By / X-Lobes-Proxied-By",
+        "With B stopped, A keeps answering with reason sole-ready; with A marked busy and B up, new requests carry X-Lobes-Proxied-By naming B",
+        "A request that arrives at B already marked X-Lobes-Proxied is served locally by B and B opens no outbound socket",
+        "Same X-Lobes-Affinity across five sequential requests lands on the same replica while it stays selectable",
+        "The no-pool golden run of the suite matches the pre-pool byte-for-byte fixture"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c4",
+        "h4",
+        "c35",
+        "h27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Docs, explain and changelog: describe the replica pool (config family, empty-slot rule, GATEWAY_SELF_ORIGIN, selection policy, affinity header, markers, route reasons, failure table, compose passthrough + doctor check, rollback = delete the *_PEER_ORIGINS line and recreate the gateway) in docs/gateway-fleet.md, docs/deployment-shapes.md, docs/colleague-stack.md (capabilities schema), docs/openai-api.md, lobes/explain/catalog.py (_GATEWAY/_SHAPES/_API/_ROLES), CLAUDE.md, CHANGELOG.md \u2014 all labelled DECLARED/UNVALIDATED until t10's transcript lands, cortex-only validation stated explicitly. Files: docs/*.md, lobes/explain/catalog.py, CLAUDE.md, CHANGELOG.md, pyproject.toml (version bump)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every doc that names hosted_by or X-Lobes-Proxied-By also names the replicas list, X-Lobes-Served-By and X-Lobes-Route-Reason; grep finds no doc claiming the pool validated before the evidence file exists",
+        "lobes explain gateway / api / shapes / roles render the new text (snapshot tests updated); docs state that any non-cortex pooled role is declared/unvalidated",
+        "Version bumped (minor) and a CHANGELOG entry added; markdownlint passes on every touched doc"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c21",
+        "h15",
+        "c38",
+        "h31"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Live acceptance on Spark+Thor: re-scaffold both deployed docker-compose.yml from the packaged template, set GATEWAY_SELF_ORIGIN, PRIMARY_PEER_ORIGINS and PRIMARY_PEER_API_KEYS per box (Spark lists the Thor at :8000 with an empty key slot; Thor lists the Spark at :8001 with the Spark's key), align MODEL_GEAR_VERSION on both, recreate only the gateway containers, and run the three scenarios \u2014 spread, Spark busy -> Thor, Thor down -> Spark \u2014 plus the affinity check; record docs/evidence/2026-XX-XX-accept-cortex-replica-pool-spark-thor.txt and flip the docs from DECLARED to VALIDATED for cortex only. Files: docs/evidence/, docs/*.md (status flip), CLAUDE.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Both gateways list each other under cortex.replicas with compatible=true, ready=true and the live fingerprint (id unsloth/Qwen3.8-27B-NVFP4, max_model_len 262144), with kv_cache_dtype shown as fp8 vs auto",
+        "Three concurrent requests to the Spark gateway are served by both boxes (markers in the transcript); with the Spark saturated a new request returns 200 with X-Lobes-Proxied-By naming the Thor, not 429; with the Thor's gateway stopped the Spark keeps serving with reason sole-ready and no caller change",
+        "Aggregate throughput of the three concurrent requests exceeds t0's single-box baseline and the numbers are in the transcript with commands, headers and both pins",
+        "The culture backend was not changed; requests were sent as the deployed consumers send them (raw served id) and with X-Lobes-Affinity added by curl"
+      ],
+      "deps": [
+        "t1",
+        "t9",
+        "t10"
+      ],
+      "covers": [
+        "c26",
+        "h18",
+        "c27",
+        "h19",
+        "c29",
+        "h21",
+        "c30",
+        "h22"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Version skew: until both gateways run the pool release, a forward to a pre-pool peer works (plain request) but its answer carries no X-Lobes-Served-By and its /capabilities has no fingerprint, so the pre-pool peer shows compatible=unknown and is not selectable \u2014 t10 aligns pins before measuring",
+      "kind": "unknown_nonblocking",
+      "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Which client sets X-Lobes-Affinity is out of this plan: the vllm-local provider lives outside ../culture and was not examined; affinity is exercised via curl only (t8, t10) and a culture-side follow-up issue is filed from t9",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "llama.cpp load/fingerprint adapter (the Orin) is out of scope \u2014 the Orin is exempt (decision c22); a pooled llama.cpp replica needs its own /status field mapping before it could ever be compatible",
+      "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Declared per-replica weight: t4 takes a declared decode weight per origin (default 1.0) because no measurement of pool behaviour exists; t10 records the measured spread so a later PR can calibrate or replace it with a latency EMA",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Spec gap surfaced by t9: a forwarded pooled request arrives at the peer with model rewritten to the raw served id, which is not a tier alias, so the RECEIVING box's pressure gate never sheds it \u2014 'both boxes busy -> one forward + relayed 429' cannot occur at the tier gate; instead the forwarder's snapshot carries the peer's busy from /status and selects nothing (local 429, reason none). Only a peer ENGINE 429 relays. Decide whether the receiver should apply pressure to marked raw-id arrivals (follow-up on #199).",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Live finding (t11, 2026-08-25): pressure->forward applies to TIER-ALIAS requests only (the pre-existing #85 gate), so a RAW-ID request to a box under pressure is served/queued locally while the same request by alias forwards \u2014 raw id and alias diverge under pressure, against h23's 'placed identically'. Under load-only conditions they are identical. Follow-up: run the pooled busy dispatch for raw-id requests too, or document the divergence as the contract.",
+      "kind": "follow_up",
+      "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

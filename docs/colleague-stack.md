@@ -349,7 +349,22 @@ by role name, each value carrying exactly these fields:
     "loaded": bool,                       # is this role's backend wired in THIS deployment? (LOCAL wiring only — see below)
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
     "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
-    "proxied": bool                       # OPTIONAL — present (and true) only when this box also forwards to that peer
+    "proxied": bool,                      # OPTIONAL — present (and true) only when this box also forwards to that peer
+    "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a *_PEER_ORIGINS pool is declared
+      {
+        "origin": str,                    # "local" for this box's own replica, else the peer origin
+        "local": bool,
+        "ready": bool,
+        "busy": bool,
+        "running": int,
+        "waiting": int,
+        "compatible": bool,               # served id + quantization + max context + runtime all agree
+        "reason": str,                    # e.g. "" when compatible, else which field differs
+        "fingerprint": {...} | None,
+      },
+      ...
+    ],
+    "fingerprint": {...} | None           # OPTIONAL, ADDITIVE (issue #199) — this box's OWN live-probed lane fingerprint
   },
   ...
 }
@@ -360,7 +375,22 @@ by role name, each value carrying exactly these fields:
 `proxied` are **optional keys**, added only for a role this box does not
 host, and only when the operator declared a peer for it — see
 [A third role state: proxied](#a-third-role-state-proxied) below for the full
-three-state contract.
+three-state contract. `replicas` and `fingerprint` are a SEPARATE, purely
+**additive** extension (issue #199, the cortex replica pool): every existing
+key here — `feasible`, `hosted_by`, `proxied`, `ready`, `loaded` — keeps its
+documented type and single-owner meaning even on a pooled role; a payload
+built with no `*_PEER_ORIGINS` declared anywhere has no `replicas` key at all
+and is byte-identical to the pre-pool contract. The pool composes on top of
+the awake/proxied states above, not a fourth state, and its full mechanism —
+selection policy, marker headers (`X-Lobes-Served-By` alongside the existing
+`X-Lobes-Proxied-By`, plus `X-Lobes-Route-Reason` on every pooled answer),
+the `<PREFIX>_PEER_ORIGINS`/`_PEER_API_KEYS` config family, and the
+failure/rollback table — lives in
+[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only).
+**Status: VALIDATED live 2026-08-25 (#108) — cortex only**, on the Spark+Thor
+NVFP4 pair (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the CLI view is `lobes capabilities --replicas` / `lobes endpoint
+<role> --replicas`, which also prints a "would choose: `<origin>`
+(`<reason>`)" line.
 
 **`tools`** answers "can I put an OpenAI `tools` array on a request to this
 role?" — `true` for the four generate lobes (`cortex`/`senses`/`muse`/`worker`), `false`

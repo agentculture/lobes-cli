@@ -1,0 +1,318 @@
+{
+  "capabilities": {
+    "body": {
+      "cortex": {
+        "context": 262144,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": true,
+        "forbidden_responsibilities": [],
+        "loaded": true,
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "mtp": true,
+        "path": "/v1/chat/completions",
+        "quant": "compressed-tensors",
+        "ready": true,
+        "responsibilities": [
+          "reasoning",
+          "deciding",
+          "planning",
+          "tool_use",
+          "code_repo_actions",
+          "validation",
+          "final_authority",
+          "image_understanding",
+          "video_understanding"
+        ],
+        "role": "cortex",
+        "runtime": "vllm",
+        "tools": true
+      },
+      "embedder": {
+        "context": 32768,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": true,
+        "forbidden_responsibilities": [],
+        "loaded": false,
+        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "mtp": false,
+        "path": "/v1/embeddings",
+        "quant": "",
+        "ready": false,
+        "responsibilities": [
+          "vectorization",
+          "memory_retrieval_input"
+        ],
+        "role": "embedder",
+        "runtime": "vllm",
+        "tools": false
+      },
+      "hand": {
+        "context": 32768,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": true,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "repo_action",
+          "security_decision"
+        ],
+        "loaded": false,
+        "model": "LiquidAI/LFM2.5-1.2B-Instruct",
+        "mtp": false,
+        "path": "/v1/chat/completions",
+        "quant": "none",
+        "ready": false,
+        "responsibilities": [
+          "domain_mastery",
+          "learned_skill",
+          "specialized_task",
+          "tool_use"
+        ],
+        "role": "hand",
+        "runtime": "vllm",
+        "tools": true
+      },
+      "muse": {
+        "context": 262144,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": false,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "repo_action",
+          "security_decision"
+        ],
+        "loaded": false,
+        "model": "nvidia/Gemma-4-31B-IT-NVFP4",
+        "mtp": true,
+        "path": "/v1/chat/completions",
+        "quant": "modelopt",
+        "ready": false,
+        "responsibilities": [
+          "creative_generation",
+          "long_form_writing",
+          "ideation",
+          "style_variation",
+          "divergent_second_opinion",
+          "tool_use"
+        ],
+        "role": "muse",
+        "runtime": "vllm",
+        "tools": true
+      },
+      "reranker": {
+        "context": 32768,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": true,
+        "forbidden_responsibilities": [],
+        "loaded": false,
+        "model": "Qwen/Qwen3-Reranker-0.6B",
+        "mtp": false,
+        "path": "/v1/rerank",
+        "quant": "",
+        "ready": false,
+        "responsibilities": [
+          "retrieval_ordering",
+          "relevance_refinement"
+        ],
+        "role": "reranker",
+        "runtime": "vllm",
+        "tools": false
+      },
+      "senses": {
+        "context": 131072,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": true,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "repo_action",
+          "security_decision"
+        ],
+        "loaded": false,
+        "model": "coolthor/gemma-4-12B-it-NVFP4A16",
+        "mtp": true,
+        "path": "/v1/chat/completions",
+        "quant": "compressed-tensors",
+        "ready": false,
+        "responsibilities": [
+          "intake",
+          "normalize_input",
+          "classify_intent",
+          "prepare_context_packet",
+          "speak_back"
+        ],
+        "role": "senses",
+        "runtime": "vllm",
+        "tools": true
+      },
+      "stt": {
+        "context": 0,
+        "endpoint": "",
+        "feasible": true,
+        "forbidden_responsibilities": [],
+        "loaded": false,
+        "model": "nvidia/parakeet-tdt-0.6b-v2",
+        "mtp": false,
+        "path": "/v1/audio/transcriptions",
+        "quant": "",
+        "ready": false,
+        "responsibilities": [
+          "transcribe",
+          "audio_input_to_text"
+        ],
+        "role": "stt",
+        "runtime": "parakeet",
+        "tools": false
+      },
+      "tts": {
+        "context": 0,
+        "endpoint": "",
+        "feasible": true,
+        "forbidden_responsibilities": [],
+        "loaded": false,
+        "model": "ResembleAI/chatterbox",
+        "mtp": false,
+        "path": "/v1/audio/speech",
+        "quant": "",
+        "ready": false,
+        "responsibilities": [
+          "speech_output",
+          "synthesize"
+        ],
+        "role": "tts",
+        "runtime": "chatterbox",
+        "tools": false
+      },
+      "worker": {
+        "context": 1048576,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": false,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "security_decision",
+          "code_authoring"
+        ],
+        "loaded": false,
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "mtp": false,
+        "path": "/v1/chat/completions",
+        "quant": "modelopt",
+        "ready": false,
+        "responsibilities": [
+          "execution",
+          "ground_work",
+          "bulk_transform",
+          "drafting",
+          "action_selection",
+          "retrieval_synthesis",
+          "summarization",
+          "log_digestion",
+          "structured_extraction",
+          "repo_inspection",
+          "run_authorized_commands",
+          "tool_use",
+          "repo_action"
+        ],
+        "role": "worker",
+        "runtime": "vllm",
+        "tools": true
+      }
+    },
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ]
+    ],
+    "status": 200
+  },
+  "chat-by-alias": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "answered-by-unsloth/Qwen3.8-27B-NVFP4",
+            "role": "assistant"
+          }
+        }
+      ],
+      "id": "chatcmpl-fake-unsloth/Qwen3.8-27B-NVFP4",
+      "model": "unsloth/Qwen3.8-27B-NVFP4",
+      "object": "chat.completion"
+    },
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "X-Lobes-Tier",
+        "main"
+      ],
+      [
+        "X-Lobes-Tier-Reason",
+        "default"
+      ]
+    ],
+    "status": 200
+  },
+  "chat-by-raw-id": {
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "answered-by-unsloth/Qwen3.8-27B-NVFP4",
+            "role": "assistant"
+          }
+        }
+      ],
+      "id": "chatcmpl-fake-unsloth/Qwen3.8-27B-NVFP4",
+      "model": "unsloth/Qwen3.8-27B-NVFP4",
+      "object": "chat.completion"
+    },
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ]
+    ],
+    "status": 200
+  },
+  "chat-unknown-model": {
+    "body": {
+      "error": {
+        "code": "model_not_found",
+        "message": "The model `no-such-model-anywhere` does not exist.",
+        "type": "model_not_found"
+      }
+    },
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ]
+    ],
+    "status": 404
+  },
+  "v1-models": {
+    "body": {
+      "data": [
+        {
+          "id": "unsloth/Qwen3.8-27B-NVFP4",
+          "object": "model",
+          "owned_by": "lobes"
+        }
+      ],
+      "object": "list"
+    },
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ]
+    ],
+    "status": 200
+  }
+}

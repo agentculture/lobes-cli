@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0] - 2026-08-25
+
+### Added
+
+- Docs, `lobes explain`, and CLAUDE.md coverage for the cortex replica pool (issue #199): the plural `<PREFIX>_PEER_ORIGINS`/`_PEER_API_KEYS` config family and `GATEWAY_SELF_ORIGIN`, live-probed compatibility (served id + quantization + max context + runtime, with `kv_cache_dtype`/parsers/speculative config informational), the deterministic least-load selection policy with `X-Lobes-Affinity` stickiness, the `X-Lobes-Served-By`/`X-Lobes-Route-Reason`/`X-Lobes-Route-Attempts` markers alongside the existing `X-Lobes-Proxied-By`, the compose passthrough + `lobes doctor` `gateway_passthrough` finding, the additive `replicas`/`fingerprint` capabilities fields and `--replicas` CLI view, and the failure/rollback table -- in `docs/gateway-fleet.md`, `docs/deployment-shapes.md`, `docs/colleague-stack.md`, `docs/openai-api.md`, `lobes/explain/catalog.py`, and `CLAUDE.md`
+
+### Changed
+
+- Every doc naming `hosted_by` or `X-Lobes-Proxied-By` now also names the replicas list, `X-Lobes-Served-By`, and `X-Lobes-Route-Reason`, and states explicitly that the pool is DECLARED/UNVALIDATED (#108) except `cortex` on the Spark+Thor NVFP4 pair, citing the pre-pool baseline transcript
+
+## [0.62.1] - 2026-08-25
+
+### Added
+
+- Spec + plan for issue #199 — the cortex replica pool: one logical cortex
+  served by N compatible replicas (Spark + Thor NVFP4 vLLM; the Orin's
+  llama.cpp cortex exempt), every gateway a front, availability-aware
+  selection from a cached peer `/status` snapshot, `X-Lobes-Affinity` as a
+  preference, honest `X-Lobes-Served-By` / `X-Lobes-Proxied-By` /
+  `X-Lobes-Route-Reason` markers, per-role comma-separated
+  `<PREFIX>_PEER_ORIGINS` / `_PEER_API_KEYS`, and an operator-typed
+  `GATEWAY_SELF_ORIGIN` (`docs/specs/2026-08-25-cortex-replica-pool-199.md`,
+  `docs/plans/2026-08-25-cortex-replica-pool-199.md`). Scoped, thought,
+  challenged and planned with devague; no code change in this PR.
+
 ## [0.62.0] - 2026-08-25
 
 ### Added

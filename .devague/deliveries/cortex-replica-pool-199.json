@@ -1,0 +1,21 @@
+{
+  "plan_slug": "cortex-replica-pool-199",
+  "schema_version": 1,
+  "created": "2026-08-25T17:25:44Z",
+  "updated": "2026-08-25T17:47:07Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t11: do NOT re-scaffold the Spark's docker-compose.yml from the packaged template \u2014 the deployed file is hand-edited with the DSpark speculative config baked into the vllm-primary command (d4, 2026-08-25; issue #204: no per-box override exists), and the template would silently revert it to the MTP default. Instead the Spark gets the new gateway passthrough lines in its existing docker-compose.override.yml (precedent: HAND_FEASIBLE already lives there) and only the gateway container is rebuilt; the Thor, whose deployed compose is byte-identical to the template, IS re-scaffolded as planned. lobes doctor was taught to scan every overlay so the override placement is not flagged.",
+      "task_ref": "t11",
+      "reason": "Live inspection during t11 prep: diff of ~/.lobes/docker-compose.yml vs the packaged template shows 20+ Spark-only lines including the DSpark --speculative-config; the Thor diff is empty.",
+      "affects": [
+        "t11",
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    }
+  ]
+}

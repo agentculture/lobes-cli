@@ -152,7 +152,16 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # llama.cpp lane can point it at `llamacpp-primary` instead. `gateway` is the
     # ONLY pre-existing service that moved; the new `llamacpp-primary` lane is an
     # ADDITION and carries its own entry below.
-    "gateway": "1b2bc15fa576035dac0bc2cd930821994c993d3baa3242adf4142389d2c8e9b4",
+    #
+    # Recomputed 2026-08-25 for the cortex-replica-pool plan (issue #199, t3):
+    # `gateway` gained the plural `*_PEER_ORIGINS`/`*_PEER_API_KEYS` replica
+    # family, `GATEWAY_SELF_ORIGIN`, and the per-role declared lane
+    # fingerprint (`*_QUANTIZATION`/`*_KV_CACHE_DTYPE`/`*_REASONING_PARSER`/
+    # `*_TOOL_CALL_PARSER`/`*_SPECULATIVE_CONFIG`) passthroughs, for all nine
+    # role prefixes — the config half of the replica pool (t4/t5 add the
+    # data-plane use of these). `gateway` is again the ONLY service that
+    # moved; every vLLM lane's own command/volumes are untouched.
+    "gateway": "824ca3213357d6d73aaed60da855eb643783d555002114ce85a3ca93a384a717",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

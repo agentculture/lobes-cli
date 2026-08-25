@@ -54,11 +54,16 @@ import contextlib
 import http.client
 import io
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from time import monotonic as _monotonic
 from types import SimpleNamespace
+from unittest import mock
 from urllib.parse import urlsplit
 
 import pytest
@@ -66,6 +71,14 @@ import pytest
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 from lobes.gateway._readiness import ReadinessCache
+from lobes.gateway._selection import (
+    REASON_AFFINITY,
+    REASON_LOCAL_BUSY_FORWARDED,
+    REASON_LOCAL_IDLE,
+    REASON_NONE,
+    REASON_PEER_LESS_LOADED,
+    REASON_SOLE_READY,
+)
 
 _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"  # the catalog multimodal default
@@ -82,6 +95,10 @@ _CALLER_KEY = "sk-proxying-box-inbound-2233"
 # A loopback port with nothing listening — the peer box's dropped-cortex URL
 # refuses instantly instead of hanging a readiness refresh on DNS.
 _CLOSED_URL = "http://127.0.0.1:9"
+
+_MODELS_PATH = "/v1/models"
+_METRICS_PATH = "/metrics"
+_CHAT_PATH = "/v1/chat/completions"
 
 _SSE_EVENTS = (
     b'data: {"choices":[{"delta":{"content":"pro"}}]}\n\n',
@@ -142,10 +159,44 @@ class _FakeBackendHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text(self, status: int, text: str) -> None:
+        body = text.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; version=0.0.4")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         self._record()
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
+        elif self.path == _MODELS_PATH:
+            # The vLLM-shaped model list the LOCAL replica probe fingerprints
+            # off (served id + max_model_len live, runtime from `owned_by`).
+            self._send_json(
+                200,
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": self.server.served_id,
+                            "object": "model",
+                            "owned_by": "vllm",
+                            "max_model_len": self.server.max_model_len,
+                        }
+                    ],
+                },
+            )
+        elif self.path == _METRICS_PATH:
+            # The in-flight counters both load paths read: this box's own
+            # replica probe scrapes them directly, and a PEER sees the same
+            # numbers one hop out through that box's gateway `/status`.
+            self._send_text(
+                200,
+                f"vllm:num_requests_running {float(self.server.running)}\n"
+                f"vllm:num_requests_waiting {float(self.server.waiting)}\n",
+            )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -171,15 +222,30 @@ class _FakeBackendHandler(BaseHTTPRequestHandler):
             for event in _SSE_EVENTS[1:]:
                 self.wfile.write(event)
                 self.wfile.flush()
+        elif self.server.post_status is not None:
+            # The engine's own authoritative refusal (e.g. its 429 shed) —
+            # relayed by the gateway exactly like any other 4xx.
+            self._send_json(
+                self.server.post_status, {"error": {"type": "server_busy", "message": "busy"}}
+            )
         else:
             self._send_json(200, _chat_completion_body(self.server.served_id))
 
 
 class _FakeBackend(ThreadingHTTPServer):
-    """One fake vLLM engine on an ephemeral loopback port."""
+    """One fake vLLM engine on an ephemeral loopback port.
 
-    def __init__(self, served_id: str) -> None:
+    ``running``/``waiting``/``post_status`` are plain mutable attributes a test
+    sets between requests: they are what make "this replica is loaded" and
+    "this replica refuses" controllable without a clock or a real engine.
+    """
+
+    def __init__(self, served_id: str, *, max_model_len: int = 262144) -> None:
         self.served_id = served_id
+        self.max_model_len = max_model_len
+        self.running = 0
+        self.waiting = 0
+        self.post_status: int | None = None
         self.log: list = []
         self.sse_gate: threading.Event | None = None
         self.sse_gate_released: bool | None = None
@@ -220,7 +286,9 @@ def _recording_handler(base_handler: type, log: list) -> type:
     return _Recording
 
 
-def _spawn_gateway(env: dict[str, str], *, log: list | None = None) -> SimpleNamespace:
+def _spawn_gateway(
+    env: dict[str, str], *, log: list | None = None, pressure=None
+) -> SimpleNamespace:
     """A REAL gateway: build_config → peer specs → a real ReadinessCache
     (``start=False``; tests seed it deterministically via ``refresh()``) → the
     real handler dispatch on a real ``ThreadingHTTPServer``. Nothing is
@@ -230,7 +298,7 @@ def _spawn_gateway(env: dict[str, str], *, log: list | None = None) -> SimpleNam
     cache = ReadinessCache.from_backends(
         table.backends, peer_specs=tuple(specs.values()), start=False
     )
-    handler = S._make_handler(table, cfg, None, cache, specs)
+    handler = S._make_handler(table, cfg, pressure, cache, specs)
     if log is not None:
         handler = _recording_handler(handler, log)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -1036,3 +1104,623 @@ def test_golden_role_infeasible_404_bytes_referral_only() -> None:
         _assert_no_feature_trace(err.headers, raw)
     finally:
         _shutdown(gw.httpd, backend)
+
+
+# ============================================================================
+# The replica pool, end to end: N REAL gateways on loopback (t9, issue #199)
+# ============================================================================
+#
+# Everything above proves the PROXY branch (a role this box does not host).
+# The pool is the other direction: a role every box DOES host, placed per
+# request onto whichever replica the live snapshot says is least loaded. The
+# per-task suites (tests/test_gateway_pool.py,
+# tests/test_gateway_pool_pressure.py, tests/test_replicas.py) drive that
+# through injected seams — a fake `replica_snapshot`, a scripted opener, a
+# fixed pressure dict. Nothing there ever runs a REAL probe against a REAL
+# peer gateway, so nothing there can catch a fingerprint that fails to
+# round-trip through `/capabilities`, a load number that never reaches
+# `/status`, or a marker that a live relay drops.
+#
+# `_n_gateways` closes that gap: N gateways, each with its own fake vLLM
+# engine, each declaring the others as `PRIMARY_PEER_ORIGINS` replicas of the
+# same `cortex`. Every hop is a genuine socket. Determinism comes from
+# refreshing the caches SYNCHRONOUSLY (`start=False` — the same discipline the
+# ReadinessCache harness above uses) and from a hand-driven pressure provider,
+# never from sleeping past a background interval.
+
+_POOL_CORTEX_ID = "unsloth/Qwen3.8-27B-NVFP4"
+_POOL_MAX_MODEL_LEN = 262144
+_POOL_QUANTIZATION = "compressed-tensors"
+
+_POOL_NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
+_POOL_HIGH_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 90.0}
+
+_READY_TIMEOUT_SECONDS = 10.0
+
+
+class _ManualPressure:
+    """A hand-driven stand-in for :class:`~lobes.gateway._tier_request.PressureCache`.
+
+    The handler only ever calls ``current()``, so a two-line duck type keeps
+    the busy/idle verdict a TEST DECISION rather than a race against a 2 s
+    background sampler. Flipping it is instantaneous and total-ordered with
+    the request that reads it.
+    """
+
+    def __init__(self) -> None:
+        self.value: dict[str, float] = dict(_POOL_NO_PRESSURE)
+
+    def current(self) -> dict[str, float]:
+        return dict(self.value)
+
+    def set_busy(self, busy: bool = True) -> None:
+        self.value = dict(_POOL_HIGH_PRESSURE if busy else _POOL_NO_PRESSURE)
+
+
+def _reserve_gateway() -> tuple[ThreadingHTTPServer, str]:
+    """Bind a loopback port WITHOUT serving, so its origin is known before the
+    handler exists.
+
+    The pool is circular by construction — box *i*'s env names every other
+    box's origin — so the ports must all be known before any table is built.
+    Binding first and swapping ``RequestHandlerClass`` in afterwards keeps
+    that race-free; reserving a port with a throwaway socket and re-binding it
+    would not.
+    """
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+    host, port = httpd.server_address
+    return httpd, f"http://{host}:{port}"
+
+
+def _pool_env(backend_base: str, self_origin: str, peers: Sequence[str]) -> dict[str, str]:
+    """One box's `.env`: hosts cortex locally, declares every other box as a
+    replica of the SAME role, with an empty (no-inbound-gate) key slot each."""
+    return {
+        "PRIMARY_URL": backend_base,
+        "PRIMARY_SERVED_NAME": _POOL_CORTEX_ID,
+        # The declared half of the fingerprint. Without it the lane's
+        # quantization reads `unknown`, and the unknown-rule (spec h11) would
+        # disqualify every peer — the pool would silently never form.
+        "PRIMARY_QUANTIZATION": _POOL_QUANTIZATION,
+        "GATEWAY_SELF_ORIGIN": self_origin,
+        "PRIMARY_PEER_ORIGINS": ",".join(peers),
+        "PRIMARY_PEER_API_KEYS": ",".join("" for _ in peers),
+    }
+
+
+def _bind_handler(box) -> None:
+    """(Re)bind this box's handler class from its current caches, live."""
+    box.httpd.RequestHandlerClass = _recording_handler(
+        S._make_handler(
+            box.table,
+            box.cfg,
+            box.pressure,
+            box.cache,
+            box.specs,
+            S.replica_snapshot_provider(box.replicas),
+            box.replicas,
+        ),
+        box.log,
+    )
+
+
+def _wire_gateway(httpd, base: str, env: dict[str, str], log: list):
+    """Serve an already-bound gateway with the pool DORMANT (no caches yet).
+
+    Two phases, deliberately: :func:`S.build_replica_caches` probes every
+    declared peer synchronously, and a peer that is bound-but-not-yet-serving
+    accepts the connection and then says nothing — so building the caches
+    before every box is answering would stall each box for the full 3 s probe
+    timeout. Serving first, then attaching the caches (:func:`_attach_replicas`)
+    keeps the harness fast AND keeps the probes real.
+    """
+    table, cfg = build_config(env)
+    specs = S.peer_specs_from_table(table, env)
+    box = SimpleNamespace(
+        httpd=httpd,
+        base=base,
+        table=table,
+        cfg=cfg,
+        specs=specs,
+        cache=ReadinessCache.from_backends(
+            table.backends, peer_specs=tuple(specs.values()), start=False
+        ),
+        replicas={},
+        pressure=_ManualPressure(),
+        log=log,
+    )
+    _bind_handler(box)
+    _serve_in_thread(httpd)
+    return box
+
+
+def _attach_replicas(box) -> None:
+    """Build this box's live ReplicaCaches and rebind the handler onto them.
+
+    ``start=False``: no daemon threads, so every snapshot a test reads is one
+    a test explicitly asked for. The constructor still refreshes once, which
+    populates the LOCAL fingerprint (its engine is already up) — that is what
+    a peer reads off this box's ``/capabilities``.
+    """
+    box.replicas = S.build_replica_caches(box.table, start=False)
+    _bind_handler(box)
+
+
+def _posts(box) -> list:
+    """Every POST this gateway actually received (probe GETs excluded)."""
+    return [r for r in box.log if r.method == "POST"]
+
+
+class _Pool:
+    """The N-box world, plus the two verbs every scenario needs."""
+
+    def __init__(self, boxes, backends) -> None:
+        self.boxes = list(boxes)
+        self.backends = list(backends)
+
+    def __getitem__(self, index: int):
+        return self.boxes[index]
+
+    def refresh(self) -> None:
+        """One synchronous probe pass on every box, local lanes before peers.
+
+        Two passes over the replica caches, not one: a peer's compatibility is
+        decided against the fingerprint it publishes on ITS /capabilities,
+        which is only as fresh as ITS OWN last local probe. Refreshing every
+        local lane first makes the peer pass read current fingerprints rather
+        than whatever the previous pass happened to leave behind.
+        """
+        for box in self.boxes:
+            box.cache.refresh()
+            for cache in box.replicas.values():
+                cache._refresh_local()  # noqa: SLF001 - the local half only
+        for box in self.boxes:
+            for cache in box.replicas.values():
+                cache.refresh()
+
+    def wait_ready(self, box_index: int = 0, *, expect: bool = True) -> list[dict]:
+        """Refresh until this box's own /capabilities agrees about its peers.
+
+        Bounded polling on the OBSERVABLE surface — never a fixed sleep — so a
+        slow loopback round trip costs latency, not a flake.
+        """
+        deadline = _monotonic() + _READY_TIMEOUT_SECONDS
+        rows: list[dict] = []
+        while True:
+            self.refresh()
+            rows = _capabilities_replicas(self.boxes[box_index])
+            peers = [row for row in rows if not row["local"]]
+            if peers and all(row["ready"] is expect for row in peers):
+                return rows
+            if _monotonic() > deadline:  # pragma: no cover - only on a wedged box
+                raise AssertionError(f"replicas never reached ready={expect}: {rows}")
+
+
+def _capabilities_replicas(box) -> list[dict]:
+    with _request(box.base, "/capabilities", key=None) as resp:
+        payload = json.loads(resp.read())
+    return payload["cortex"]["replicas"]
+
+
+@contextlib.contextmanager
+def _n_gateways(n: int = 2, pool_env=None):
+    """N real loopback gateways, each a replica of the same ``cortex``.
+
+    ``pool_env`` is either one dict applied to every box or a per-box sequence
+    of dicts (``None`` for "no override"), so a scenario can arm an inbound
+    key on one box and the matching outbound slot on another.
+    """
+    backends = [_FakeBackend(_POOL_CORTEX_ID, max_model_len=_POOL_MAX_MODEL_LEN) for _ in range(n)]
+    reserved = [_reserve_gateway() for _ in range(n)]
+    origins = [origin for _, origin in reserved]
+    if pool_env is None or isinstance(pool_env, Mapping):
+        overrides = [dict(pool_env or {}) for _ in range(n)]
+    else:
+        overrides = [dict(item or {}) for item in pool_env]
+    boxes = []
+    try:
+        for index, (httpd, base) in enumerate(reserved):
+            env = _pool_env(
+                backends[index].base,
+                origins[index],
+                [o for j, o in enumerate(origins) if j != index],
+            )
+            env.update(overrides[index])
+            boxes.append(_wire_gateway(httpd, base, env, []))
+        for box in boxes:
+            _attach_replicas(box)
+        pool = _Pool(boxes, backends)
+        pool.refresh()
+        yield pool
+    finally:
+        _shutdown(*[b.httpd for b in boxes], *backends)
+
+
+@pytest.fixture
+def pool():
+    with _n_gateways(2) as p:
+        p.wait_ready()
+        yield p
+
+
+def _pool_chat(box, model: str = "cortex", *, headers=None, key=None):
+    return _request(
+        box.base, _CHAT_PATH, method="POST", body=_chat_body(model), headers=headers, key=key
+    )
+
+
+def _serving_origin(resp) -> str:
+    """Who answered: the forwarding attribution when relayed, else this box.
+
+    ``X-Lobes-Proxied-By`` wins deliberately — a relayed answer also carries
+    the PEER's own ``X-Lobes-Served-By`` (the peer stamped it before handing
+    the bytes back), and the caller's question is "which box produced this",
+    which the proxy attribution answers.
+    """
+    proxied = resp.headers.get(S.PROXIED_BY_HEADER)
+    return proxied if proxied else resp.headers.get(S.SERVED_BY_HEADER)
+
+
+# --- (1) spread: the pool actually places work off a loaded box --------------
+
+
+def test_pool_forwards_to_the_idle_peer_when_this_box_is_loaded(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    pool.backends[0].running, pool.backends[0].waiting = 3, 2
+    pool.wait_ready()
+    with _pool_chat(spark) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.PROXIED_BY_HEADER) == thor.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_PEER_LESS_LOADED
+        assert json.loads(resp.read())["model"] == _POOL_CORTEX_ID
+    # It really crossed the wire: the peer gateway received exactly one
+    # forwarded POST and its OWN engine produced the answer.
+    assert len(_posts(thor)) == 1
+    assert any(r.method == "POST" for r in pool.backends[1].log)
+    assert not any(r.method == "POST" for r in pool.backends[0].log)
+
+
+def test_pool_serves_locally_when_both_replicas_are_idle(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    with _pool_chat(spark) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.SERVED_BY_HEADER) == spark.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_LOCAL_IDLE
+        assert resp.headers.get(S.PROXIED_BY_HEADER) is None
+    assert _posts(thor) == []
+    assert any(r.method == "POST" for r in pool.backends[0].log)
+
+
+def test_concurrent_requests_to_a_loaded_box_reach_the_pool(pool) -> None:
+    # The exact split is policy-dependent (and the snapshot is deliberately
+    # frozen between refreshes), so this asserts only what the pool GUARANTEES:
+    # every request is attributed to a replica, and the loaded box's peer is
+    # among the boxes that served.
+    spark, thor = pool[0], pool[1]
+    pool.backends[0].running, pool.backends[0].waiting = 3, 2
+    pool.wait_ready()
+    origins: list[str] = []
+    lock = threading.Lock()
+
+    def one() -> None:
+        with _pool_chat(spark) as resp:
+            assert resp.status == 200
+            origin = _serving_origin(resp)
+        with lock:
+            origins.append(origin)
+
+    threads = [threading.Thread(target=one) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    assert len(origins) == 3
+    assert set(origins) <= {spark.base, thor.base}
+    assert thor.base in origins
+
+
+# --- (2) peer down ----------------------------------------------------------
+
+
+def test_a_stopped_peer_leaves_the_local_replica_sole_ready(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    pool.backends[0].running = 9  # loaded, so ONLY the peer's death keeps it local
+    _shutdown(thor.httpd)
+    rows = pool.wait_ready(expect=False)
+    peer_row = next(row for row in rows if not row["local"])
+    assert peer_row["origin"] == thor.base
+    assert peer_row["ready"] is False
+    with _pool_chat(spark) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.SERVED_BY_HEADER) == spark.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+        assert resp.headers.get(S.PROXIED_BY_HEADER) is None
+
+
+# --- (3) local pressure forwards instead of shedding ------------------------
+
+
+def test_local_pressure_forwards_a_pooled_request_to_the_peer(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    spark.pressure.set_busy()
+    with _pool_chat(spark) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.PROXIED_BY_HEADER) == thor.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+    assert len(_posts(thor)) == 1
+    assert not any(r.method == "POST" for r in pool.backends[0].log)
+
+
+def test_a_peers_refusal_is_relayed_after_exactly_one_forward(pool) -> None:
+    # The one-forward rule (c35/h27): the peer's own authoritative refusal
+    # rides back untouched — never retried locally (pressure forbade that) and
+    # never forwarded onward, which is what would ping-pong two loaded boxes.
+    #
+    # The refusal is the PEER ENGINE's 429 rather than the peer gateway's own
+    # pressure shed, and that is not a shortcut: a forwarded pooled request
+    # arrives with its `model` already rewritten to the raw served id (see
+    # `_relay_to_target`), which is not a tier alias, so the receiving
+    # gateway's tier/pressure branch never runs for it. A peer under pressure
+    # therefore cannot shed a forwarded pooled request at the tier gate at all
+    # — the pool's own snapshot (`busy`) is what keeps work off a loaded peer,
+    # and the test below covers that half.
+    spark, thor = pool[0], pool[1]
+    spark.pressure.set_busy()
+    pool.backends[1].post_status = 429
+    err = _expect_error(429, spark.base, _CHAT_PATH, method="POST", body=_chat_body("cortex"))
+    assert err.headers.get(S.PROXIED_BY_HEADER) == thor.base
+    assert len(_posts(thor)) == 1  # exactly one forward, never two
+    assert not any(r.method == "POST" for r in pool.backends[0].log)
+
+
+def test_both_boxes_busy_sheds_locally_and_never_forwards(pool) -> None:
+    # The other half: once the snapshot KNOWS the peer is shedding, the pool
+    # has nothing selectable, so the caller gets this box's own 429 — with the
+    # honest `none` route reason — and no socket leaves the box.
+    spark, thor = pool[0], pool[1]
+    thor.pressure.set_busy()
+    pool.refresh()  # the snapshot now carries the peer's own busy verdict
+    spark.pressure.set_busy()
+    err = _expect_error(429, spark.base, _CHAT_PATH, method="POST", body=_chat_body("cortex"))
+    assert err.headers.get(S.ROUTE_REASON_HEADER) == REASON_NONE
+    assert err.headers.get("X-Lobes-Tier-Reason") == "busy"
+    assert _posts(thor) == []
+
+
+# --- (4) single hop ---------------------------------------------------------
+
+
+def test_a_marked_arrival_is_served_locally_and_never_re_placed(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    pool.backends[1].running, pool.backends[1].waiting = 5, 5  # thor is the LOADED box
+    pool.wait_ready()
+    before = len(pool.backends[0].log)
+    with _pool_chat(thor, headers={S.PROXIED_HEADER: "primary"}) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.SERVED_BY_HEADER) == thor.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+        assert resp.headers.get(S.PROXIED_BY_HEADER) is None
+    assert any(r.method == "POST" for r in pool.backends[1].log)
+    # The other box's engine never saw it — the marked arrival was not placed.
+    assert len(pool.backends[0].log) == before
+    assert _posts(spark) == []
+
+
+# --- (5) raw id and alias take the identical path ---------------------------
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_raw_served_id_and_alias_place_identically(pool, loaded) -> None:
+    spark = pool[0]
+    if loaded:
+        pool.backends[0].running, pool.backends[0].waiting = 3, 2
+    pool.wait_ready()
+    with _pool_chat(spark, "cortex") as resp:
+        by_alias = (_serving_origin(resp), resp.headers.get(S.ROUTE_REASON_HEADER))
+    with _pool_chat(spark, _POOL_CORTEX_ID) as resp:
+        by_raw_id = (_serving_origin(resp), resp.headers.get(S.ROUTE_REASON_HEADER))
+    assert by_alias == by_raw_id
+    assert by_alias[1] == (REASON_PEER_LESS_LOADED if loaded else REASON_LOCAL_IDLE)
+
+
+# --- (6) affinity -----------------------------------------------------------
+
+
+def _affinity_origin(box, key: str) -> str:
+    with _pool_chat(box, headers={S.AFFINITY_HEADER: key}) as resp:
+        assert resp.status == 200
+        return _serving_origin(resp)
+
+
+def test_one_affinity_key_sticks_to_one_replica(pool) -> None:
+    spark = pool[0]
+    seen = {_affinity_origin(spark, "sess-1") for _ in range(5)}
+    assert len(seen) == 1
+    assert seen <= {spark.base, pool[1].base}
+
+
+def test_a_different_affinity_key_may_land_elsewhere(pool) -> None:
+    # Rendezvous hashing gives no guarantee that two keys DIFFER — only that
+    # each is stable. So this pins what is actually contracted: whatever a new
+    # key resolves to is a real replica of the pool, and it is stable too.
+    spark = pool[0]
+    origins = {key: _affinity_origin(spark, key) for key in ("sess-1", "sess-2", "sess-3")}
+    assert set(origins.values()) <= {spark.base, pool[1].base}
+    for key, origin in origins.items():
+        assert _affinity_origin(spark, key) == origin
+
+
+def test_affinity_yields_when_its_preferred_replica_is_gone(pool) -> None:
+    spark, thor = pool[0], pool[1]
+    peer_key = next(
+        (
+            key
+            for key in (f"sess-{i}" for i in range(40))
+            if _affinity_origin(spark, key) == thor.base
+        ),
+        None,
+    )
+    assert peer_key is not None, "no affinity key preferred the peer replica"
+    _shutdown(thor.httpd)
+    pool.wait_ready(expect=False)
+    with _pool_chat(spark, headers={S.AFFINITY_HEADER: peer_key}) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.SERVED_BY_HEADER) == spark.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) != REASON_AFFINITY
+
+
+# --- pairwise auth across a pooled forward ----------------------------------
+
+
+def test_a_pooled_forward_carries_the_pairwise_key_and_never_the_callers() -> None:
+    peer_key = "sk-pool-peer-inbound-5150"
+    caller_key = "sk-pool-caller-inbound-6270"
+    with _n_gateways(
+        2,
+        pool_env=[
+            {"GATEWAY_API_KEY": caller_key, "PRIMARY_PEER_API_KEYS": peer_key},
+            {"GATEWAY_API_KEY": peer_key},
+        ],
+    ) as p:
+        p.wait_ready()
+        spark, thor = p[0], p[1]
+        p.backends[0].running = 9
+        p.wait_ready()
+        with _pool_chat(spark, key=caller_key) as resp:
+            assert resp.status == 200
+            assert resp.headers.get(S.PROXIED_BY_HEADER) == thor.base
+        forwarded = _posts(thor)
+        assert len(forwarded) == 1
+        sent = {k.lower(): v for k, v in forwarded[0].headers}
+        assert sent["authorization"] == f"Bearer {peer_key}"
+        assert caller_key not in json.dumps(forwarded[0].headers)
+        # And the inbound gate is real: an unkeyed caller never reaches the pool.
+        _expect_error(
+            401, spark.base, _CHAT_PATH, method="POST", body=_chat_body("cortex"), key=None
+        )
+        assert len(_posts(thor)) == 1
+
+
+# --- (7) the no-pool golden -------------------------------------------------
+#
+# h1's byte-identity claim, pinned as a FILE rather than as literals inline:
+# the fixture is generated by this very code path WITH the pool code present,
+# so a regression that leaks a pool marker (or a fingerprint/replicas key)
+# onto a no-pool deployment moves the diff, and the companion assertion below
+# proves none of the five pool headers appear on any of the five responses.
+
+NO_POOL_GOLDEN = Path(__file__).resolve().parent / "goldens" / "no-pool-gateway.json"
+
+_NO_POOL_REGEN = "uv run python tests/goldens/regen.py"
+
+# Headers whose value is a function of when/where the test ran, not of the
+# gateway's behaviour. Content-Length rides along because the normalised body
+# below no longer has the length the wire carried.
+_VOLATILE_HEADERS = frozenset({"date", "server", "content-length"})
+
+_POOL_HEADERS = (
+    S.SERVED_BY_HEADER,
+    S.PROXIED_BY_HEADER,
+    S.ROUTE_REASON_HEADER,
+    S.ROUTE_ATTEMPTS_HEADER,
+    S.AFFINITY_HEADER,
+)
+
+#: ``(name, method, path, model)`` — the fixed request list the golden pins.
+NO_POOL_REQUESTS: tuple[tuple[str, str, str, str | None], ...] = (
+    ("chat-by-alias", "POST", _CHAT_PATH, "cortex"),
+    ("chat-by-raw-id", "POST", _CHAT_PATH, _POOL_CORTEX_ID),
+    ("chat-unknown-model", "POST", _CHAT_PATH, "no-such-model-anywhere"),
+    ("v1-models", "GET", _MODELS_PATH, None),
+    ("capabilities", "GET", "/capabilities", None),
+)
+
+
+def _no_pool_exchange(base: str, method: str, path: str, model: str | None) -> dict:
+    """One request against the no-pool gateway, reduced to its comparable shape."""
+    body = _chat_body(model) if model is not None else None
+    try:
+        resp = _request(
+            base, path, method=method, body=body, key=None, headers={"Host": _GOLDEN_HOST}
+        )
+        raw = resp.read()
+        resp.close()
+        status, headers = resp.status, resp.headers
+    except urllib.error.HTTPError as err:
+        raw, status, headers = err.read(), err.code, err.headers
+    return {
+        "status": status,
+        "headers": sorted(
+            [key, value] for key, value in headers.items() if key.lower() not in _VOLATILE_HEADERS
+        ),
+        "body": json.loads(raw),
+    }
+
+
+#: ``capabilities_payload`` reads the served-context overlay off ``os.environ``
+#: on the HTTP route, so an operator shell that happens to export one of these
+#: would move the golden. Scrubbed inside the capture itself (not in a pytest
+#: fixture) so ``regen.py`` — which has no fixtures — captures the same bytes.
+_CONTEXT_OVERLAY_VARS = (
+    "PRIMARY_MAX_MODEL_LEN",
+    "MULTIMODAL_MAX_MODEL_LEN",
+    "EMBED_MAX_MODEL_LEN",
+    "RERANK_MAX_MODEL_LEN",
+)
+
+
+def capture_no_pool_golden() -> dict:
+    """Drive :data:`NO_POOL_REQUESTS` against a gateway with NO pool declared.
+
+    Called by the test below AND by ``tests/goldens/regen.py`` — one capture
+    function, so the committed fixture can never disagree with what the test
+    compares against.
+    """
+    backend = _FakeBackend(_POOL_CORTEX_ID, max_model_len=_POOL_MAX_MODEL_LEN)
+    env = {
+        "PRIMARY_URL": backend.base,
+        "PRIMARY_SERVED_NAME": _POOL_CORTEX_ID,
+    }
+    # patch.dict snapshots the whole mapping and restores it on exit, so the
+    # pops below are undone even if the capture raises.
+    with mock.patch.dict(os.environ, {}, clear=False):
+        for var in _CONTEXT_OVERLAY_VARS:
+            os.environ.pop(var, None)
+        # An IDLE pressure provider, not None: without one `handle_post`
+        # skips the tier branch entirely, and the by-alias request would pin a
+        # response that no deployed gateway (which always has a PressureCache)
+        # actually produces.
+        box = _spawn_gateway(env, pressure=_ManualPressure())
+        try:
+            box.cache.refresh()
+            return {
+                name: _no_pool_exchange(box.base, method, path, model)
+                for name, method, path, model in NO_POOL_REQUESTS
+            }
+        finally:
+            _shutdown(box.httpd, backend)
+
+
+@pytest.fixture
+def no_pool_capture():
+    return capture_no_pool_golden()
+
+
+def test_no_pool_gateway_matches_the_committed_golden(no_pool_capture) -> None:
+    assert NO_POOL_GOLDEN.is_file(), f"missing golden {NO_POOL_GOLDEN} — run {_NO_POOL_REGEN}"
+    expected = json.loads(NO_POOL_GOLDEN.read_text(encoding="utf-8"))
+    assert no_pool_capture == expected, (
+        f"{NO_POOL_GOLDEN.name} drifted — a no-pool deployment's wire bytes changed.\n"
+        f"If that is deliberate, regenerate with `{_NO_POOL_REGEN}` and review the diff."
+    )
+
+
+def test_no_pool_gateway_emits_no_pool_headers_and_no_replica_keys(no_pool_capture) -> None:
+    lowered = {header.lower() for header in _POOL_HEADERS}
+    for name, exchange in no_pool_capture.items():
+        present = {key.lower() for key, _value in exchange["headers"]} & lowered
+        assert not present, f"{name} leaked pool markers: {sorted(present)}"
+    payload = no_pool_capture["capabilities"]["body"]
+    for role, entry in payload.items():
+        assert "replicas" not in entry, f"{role} gained a replicas key with no pool declared"
+        assert "fingerprint" not in entry, f"{role} gained a fingerprint key with no pool declared"

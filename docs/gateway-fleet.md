@@ -653,6 +653,174 @@ the six Profile-machinery core roles (`PRIMARY_` / `MULTIMODAL_` / `MUSE_` /
 map exactly. See [`docs/openai-api.md`](openai-api.md#auth-and-exposure) for
 the wire-level header/401 detail.
 
+### Replica pools — one lobe, N replicas (opt-in, cortex-validated only)
+
+Proxy-lobes (above) is one-peer-per-role: a dropped role forwards to exactly
+the one box that hosts it. **Replica pools (issue #199)** generalize that to
+N compatible replicas of a role a box *itself hosts* — the pool composes on
+top of the **awake** or **proxy** state, it is not a fourth lobe state
+(`docs/deployment-shapes.md`'s three states — awake / asleep (referral) /
+proxy — stay exactly as documented). Two or more boxes serving the same
+checkpoint (today: Spark and Thor, both `unsloth/Qwen3.8-27B-NVFP4` at
+262144) can each answer `model=cortex` (or the raw served id) themselves
+*or* on the other box's behalf, whichever is less loaded — so a caller
+dialing either gateway gets served by whichever replica is actually free,
+with no change to the request it sends.
+
+> **Status: VALIDATED live 2026-08-25 (issue #108), cortex-only** — on the
+> Spark+Thor NVFP4 pair, `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`:
+> three concurrent requests to one front served by the peer at 19.1 tok/s
+> aggregate vs the 11.0 tok/s single-owner baseline, busy→forward, peer-down
+> continuity, and single-hop all measured. Two divergences are recorded there
+> rather than hidden: a raw-id request under local *pressure* is not
+> forwarded (the pressure gate is tier-alias-only — issue #215), and affinity
+> yields whenever the preferred replica's box turns busy. Every other pooled
+> role stays declared/unvalidated. The pre-pool baseline this is measured
+> against:
+> `docs/evidence/2026-08-25-baseline-cortex-single-owner.txt` — three
+> concurrent `model=cortex` requests to one gateway queued to **11.0 tok/s
+> aggregate** while the Thor sat idle, and the dialed box's own alias
+> requests shed **429** under organic iowait pressure with the peer
+> unconsulted. A pooled embed/rerank/senses/worker/muse/hand/stt/tts
+> deployment is likewise declared-unvalidated — the plural peer family below
+> is generic across all nine role prefixes, but only `cortex` on the
+> Spark+Thor pair has (or will have) a live acceptance run. The Orin's
+> llama.cpp `Q4_K_M` cortex is exempt from the pool entirely — it stays a
+> separately-addressed candidate; a llama.cpp replica needs its own
+> `/status` field mapping before it could ever be compatible.
+
+**Declaring a pool — the plural peer family.** Beside each role's existing
+singular `<PREFIX>_PEER_ORIGIN` (proxy-lobes, above), a new **plural**
+channel declares a whole set of same-role replicas:
+
+```bash
+# On the Spark (lists the Thor; the Thor has no inbound GATEWAY_API_KEY):
+PRIMARY_PEER_ORIGINS=http://thor.example.ts.net:8000
+PRIMARY_PEER_API_KEYS=
+GATEWAY_SELF_ORIGIN=http://spark.example.ts.net:8001
+
+# On the Thor (lists the Spark; the Spark DOES gate inbound):
+PRIMARY_PEER_ORIGINS=http://spark.example.ts.net:8001
+PRIMARY_PEER_API_KEYS=<spark's own inbound GATEWAY_API_KEY>
+GATEWAY_SELF_ORIGIN=http://thor.example.ts.net:8000
+```
+
+- `<PREFIX>_PEER_ORIGINS` is comma-separated, one entry per replica peer (the
+  peer set differs per box — each box lists the *others*, never itself, so
+  no hostname is ever the same across two boxes' declarations).
+- `<PREFIX>_PEER_API_KEYS` is **positional** against `_PEER_ORIGINS` — index
+  *i* is the outbound key for replica *i*, exactly the peer's own inbound
+  `GATEWAY_API_KEY` (never a value minted per pairing, same O(machines) rule
+  as proxy-lobes). An **empty slot is legal** (`k1,,k3` — the second peer has
+  no inbound gate, e.g. the Thor today); a key list **shorter or longer**
+  than the origins list is a startup `ReplicaConfigError` naming the prefix,
+  not a silent unauthenticated forward.
+- `GATEWAY_SELF_ORIGIN` is this box's own operator-typed origin (the #92
+  never-derived rule, same as every peer origin) — it is what a *local*
+  answer's `X-Lobes-Served-By` names. Unset, local answers say `local` and
+  the pool still works.
+- Every deployment that never sets `<PREFIX>_PEER_ORIGINS` anywhere is
+  **byte-identical** to the pre-pool release: no `replicas` key, no new
+  headers, no behavior change.
+
+**Live-probed compatibility, not catalog trust.** A background `ReplicaCache`
+thread (the same daemon-thread/O(1)-`current()` pattern as the existing
+readiness cache — no probe ever runs on the request path) reads each local
+lane's own `GET /v1/models` (served id, `max_model_len`) and each peer
+gateway's `GET /status` (busy, backend health, `metrics.running`/`waiting`)
+and `GET /capabilities` (that peer's own fingerprint, fetched with the
+declared peer key). Two replicas are **compatible** only when served id,
+quantization, max context length, and runtime all agree — an `unknown` on
+either side disqualifies. `kv_cache_dtype`, the reasoning/tool-call parser,
+and speculative/draft config (`LANE_FINGERPRINT_SUFFIXES` in
+`lobes/gateway/_config.py`) are recorded as **informational** fields on the
+fingerprint, never disqualifiers — the Spark+Thor pair differs in exactly
+these (Spark `fp8` KV + DSpark draft, Thor `auto` KV + MTP draft) and pools
+anyway, by explicit operator decision, not bit-equivalence. An incompatible
+peer still appears in the `replicas` list, with `compatible: false` and a
+`reason` naming the differing field — never silently pooled.
+
+**Selection.** A request is served locally when the local replica is
+`compatible`, `ready`, and not `busy`; otherwise the least-loaded selectable
+peer wins. Estimated wait is `(running + waiting) / declared weight`; a
+local replica that is ready and idle always wins a tie (locality); a
+declared `X-Lobes-Affinity` request header is honoured — sticky to a
+rendezvous-hashed preferred replica — only when that replica is selectable
+and not worse-placed than the best candidate by more than a declared margin
+(1.0). No candidate selectable at all → `Selection(None, "none")`. Every
+choice carries a reason from a closed vocabulary: `local-idle` |
+`peer-less-loaded` | `local-busy-forwarded` | `affinity` | `sole-ready` |
+`none`. This is deliberately NOT learned routing (no latency EMA, no
+history, no clock) — that stays parked in issue #128.
+
+**Dispatch and markers.** The pool path applies identically whether the
+request names the role alias (`model=cortex`) or the raw served id
+(`model=unsloth/Qwen3.8-27B-NVFP4`) — every deployed Culture consumer pins
+the raw id, so an alias-only pool would never see a real caller. Every
+pooled answer carries exactly one of:
+
+| Header | Meaning |
+|---|---|
+| `X-Lobes-Served-By` | this box's own `GATEWAY_SELF_ORIGIN` (or literal `local` if unset) — present on every LOCALLY-served pooled answer |
+| `X-Lobes-Proxied-By` | the peer origin that actually served it — present on every FORWARDED pooled answer, exactly as proxy-lobes already defines it |
+| `X-Lobes-Route-Reason` | the selection reason (above) — present on EVERY pooled answer, local or forwarded |
+| `X-Lobes-Route-Attempts` | how many replicas were actually dispatched to — present ONLY when more than one (a pre-dispatch retry happened) |
+
+plus one request-side header a caller may set: `X-Lobes-Affinity` (forwarded
+to whichever peer is chosen, so a session can stick to one replica while it
+stays selectable). An inbound request already carrying `X-Lobes-Proxied` is
+served by the LOCAL replica only, single-hop, exactly as proxy-lobes — `508
+proxy_loop` only when this box has no local replica for the role at all.
+
+**Pressure integrates, it doesn't compete.** Under this box's own
+swap/iowait pressure, a pooled request that would have shed `429` is instead
+forwarded to a selectable peer; the `429 busy` + `Retry-After` (with
+`X-Lobes-Route-Reason: none`) is reserved for "no replica anywhere is
+selectable" — never a mid-tier substitution (issue #91 still holds: no
+cross-model fallback, only cross-*replica* of the identical model). At most
+**one** forward happens per request: a peer's own `429`/4xx relays straight
+back to the caller and is never retried locally, so two mutually-busy boxes
+cannot ping-pong.
+
+**Failure modes, extending the proxy-lobes table above:**
+
+| Outcome | Response |
+|---|---|
+| Local busy, a peer selectable | forward; `200` + `X-Lobes-Proxied-By` + `X-Lobes-Route-Reason: local-busy-forwarded` |
+| Local busy, no replica selectable anywhere | the unchanged `429 busy` + `Retry-After`, `X-Lobes-Route-Reason: none` |
+| Chosen replica refuses / times out / ≥500 BEFORE any response body | retry the next selectable replica once each; all exhausted → `503 backend_unavailable` listing every attempt in `error.attempts` |
+| Chosen replica drops mid-stream (after a 2xx body started) | the client's stream ends; nothing is replayed and no other replica is tried |
+| Inbound request already marked `X-Lobes-Proxied` | served by the LOCAL replica only; `508 proxy_loop` if none exists here |
+
+**Compose passthrough + doctor.** `<PREFIX>_PEER_ORIGINS`,
+`<PREFIX>_PEER_API_KEYS`, `GATEWAY_SELF_ORIGIN`, and the five declared
+fingerprint knobs (`<PREFIX>_QUANTIZATION` / `_KV_CACHE_DTYPE` /
+`_REASONING_PARSER` / `_TOOL_CALL_PARSER` / `_SPECULATIVE_CONFIG`) all ride
+the gateway service's environment passthrough in the packaged
+`docker-compose.yml`, exactly like every other per-role knob — the 2026-07-17
+`MUSE_*` trap (a `.env` key set with no compose passthrough, silently never
+reaching the container) applies here too. `lobes doctor`'s `gateway_passthrough`
+finding flags a deployed compose missing any of these while `.env` sets
+them; the remedy is always **re-scaffolding** (`lobes init --apply`), never a
+hand-patch — doctor never edits `docker-compose.yml` itself.
+
+**Discovery.** `GET /capabilities`, `lobes capabilities --replicas`, and
+`lobes endpoint <role> --replicas` render an additive per-role `replicas`
+list (origin, local, ready, busy, running, waiting, compatible, reason,
+fingerprint) and a `fingerprint` object, plus a "would choose: `<origin>`
+(`<reason>`)" line derived from the same `select_replica` function the
+gateway itself calls — see
+[`docs/colleague-stack.md#capabilities-schema`](colleague-stack.md) for the
+JSON shape. A payload built with no declared pool has no `replicas` key at
+all and is byte-identical to the pre-pool contract; `lobes route` (the
+task→tier classifier) is untouched — this view lives on capabilities/endpoint,
+not route.
+
+**Rollback.** Delete the `*_PEER_ORIGINS` line (and, if set,
+`GATEWAY_SELF_ORIGIN`) from `.env` and recreate the gateway container. There
+is no migration and no persisted state — every response reverts to
+byte-identical pre-pool behavior immediately.
+
 ### Supported catalog vs. warm backends
 
 Two questions that look alike but aren't:
