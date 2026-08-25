@@ -1253,15 +1253,45 @@ TIER_ROLE: dict[str, str] = {
     # hand/muse/worker are their own backends). Order matters: ``tier_aliases``
     # derives ascending capability order from each role's *last* occurrence
     # position here, so the hand-role alias must appear before a multimodal one,
-    # multimodal before the worker one, worker before the muse one, and muse
-    # before a primary-role one (hand < senses < worker < muse < cortex) to keep
+    # multimodal before the worker one, worker before the muse one, muse before
+    # the associate one, and associate before a primary-role one
+    # (hand < senses < worker < muse < associate < cortex) to keep
     # the last-occurrence sequence ascending
-    # (hand < multimodal < worker < muse < primary).
+    # (hand < multimodal < worker < muse < associate < primary).
     "hand": "hand",
     "senses": "multimodal",
     "worker": "worker",
     "muse": "muse",
+    # `associate` (lightning-on-orin plan, t6) takes the HIGHEST non-cortex
+    # rung — operator decision, on the measurement: ~78-81 tok/s single-stream
+    # with working structured tool calls on sm_87, faster than the
+    # Spark-hosted `worker` on far weaker silicon. It sits ABOVE muse and
+    # BELOW primary/cortex, so it must appear after "muse" and before
+    # "cortex" here (see the last-occurrence ordering rule above).
+    "associate": "associate",
     "cortex": "primary",
+}
+
+#: Backend role name -> the catalog ``role_hint`` that names its gear, for the
+#: roles where the two DIFFER. Empty for the nine roles that shipped before
+#: `associate`: each of them owns a catalog entry whose ``role_hint`` IS its
+#: backend role name, so :func:`resolve_tier` could look the role up directly.
+#:
+#: `associate` breaks that 1:1 assumption honestly rather than by duplication.
+#: It serves the SAME checkpoint the `worker` seat holds
+#: (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``) — one gear, two
+#: public addresses with different authority (worker MAY act on a repo,
+#: associate may not). The catalog holds exactly one entry per checkpoint id
+#: (``tests/test_catalog.py::test_catalog_ids_are_unique``), so a second
+#: ``role_hint="associate"`` entry would mean a duplicated id — a lie about
+#: how many gears exist — while pointing the tier layer at the gear that IS
+#: served is simply true. :data:`lobes.roles.ROLE_ROLE_HINT` carries the
+#: identical alias for the role registry.
+#:
+#: A role added here MUST also be added there, or the two layers disagree
+#: about which model a role serves.
+BACKEND_ROLE_CATALOG_HINT: dict[str, str] = {
+    "associate": "worker",
 }
 
 
@@ -1283,8 +1313,12 @@ def resolve_tier(tier: str) -> "SupportedModel":
     if role is None:
         known = ", ".join(sorted(TIER_ROLE))
         raise ValueError(f"unknown tier {tier!r} — must be one of: {known}")
+    # A backend role whose gear is catalogued under a DIFFERENT role_hint
+    # (only `associate` today — it shares `worker`'s checkpoint) resolves
+    # through the alias; every other role is its own hint.
+    hint = BACKEND_ROLE_CATALOG_HINT.get(role, role)
     for model in SUPPORTED_MODELS:
-        if model.role_hint == role and model.task == "generate":
+        if model.role_hint == hint and model.task == "generate":
             return model
     # Should never happen if the catalog is internally consistent.
     raise LookupError(  # pragma: no cover

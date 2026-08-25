@@ -16,6 +16,9 @@ role       env prefix
 cortex     PRIMARY
 senses     MULTIMODAL
 muse       MUSE
+worker     WORKER
+associate  ASSOCIATE
+hand       HAND
 embedder   EMBED
 reranker   RERANK
 =========  ============
@@ -89,6 +92,10 @@ ROLE_ENV_PREFIX: dict[str, str] = {
     "senses": "MULTIMODAL",
     "muse": "MUSE",
     "worker": "WORKER",
+    # `associate` (lightning-on-orin plan, t6) — the tenth role's compose lane
+    # is `vllm-associate`, parameterised by the ASSOCIATE_* prefix the t7 lane
+    # already established in docker-compose.yml / env.example.
+    "associate": "ASSOCIATE",
     "hand": "HAND",
     "embedder": "EMBED",
     "reranker": "RERANK",

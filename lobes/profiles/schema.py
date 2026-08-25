@@ -59,6 +59,12 @@ ROLES: tuple[str, ...] = (
     "senses",
     "muse",
     "worker",
+    # `associate` (Nemotron 3.5 Lightning, the doer that does not act —
+    # lightning-on-orin plan t6) is in scope for the same reason muse/worker
+    # are: it carries the full per-machine knob set (its own model, budget,
+    # window and Mamba knobs) and is hosted only by an explicit
+    # associate-hosting shape, never by machine-as-brain.
+    "associate",
     # `hand` (LiquidAI LFM2.5-1.2B, the fine-tuning base) is in scope and
     # carries the full per-machine knob set like every other generate lane —
     # but unlike muse/worker it is DEFAULT-HOSTED: ~2.4 GiB of bf16 weights fit

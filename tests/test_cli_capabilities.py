@@ -437,6 +437,7 @@ def test_endpoint_works_for_every_role(tmp_path, capsys) -> None:
         "senses": "http://localhost:8000",
         "muse": "http://localhost:8000",
         "worker": "http://localhost:8000",
+        "associate": "http://localhost:8000",
         "hand": "http://localhost:8000",
         "embedder": "http://localhost:8000",
         "reranker": "http://localhost:8000",

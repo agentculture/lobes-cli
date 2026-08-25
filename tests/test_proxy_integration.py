@@ -875,6 +875,43 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "associate": {
+        "role": "associate",
+        # The TENTH Colleague role (lightning-on-orin plan, t6): worker MINUS
+        # repo_action. Opt-in like muse/worker, unwired in this no-knob
+        # deployment, so honestly infeasible-by-default (OPT_IN_BACKENDS) and
+        # named by the catalog gear it shares with `worker` — one checkpoint,
+        # two public addresses with different authority.
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/chat/completions",
+        "context": 1048576,
+        "quant": "modelopt",
+        "mtp": False,
+        "tools": True,
+        "responsibilities": [
+            "execution",
+            "ground_work",
+            "bulk_transform",
+            "drafting",
+            "repo_inspection",
+            "run_authorized_commands",
+            "tool_use",
+        ],
+        # The ONE token that separates associate from worker: repo_action is
+        # FORBIDDEN here and merely absent-from-forbidden there. "They do, but
+        # not act."
+        "forbidden_responsibilities": [
+            "final_decision",
+            "security_decision",
+            "code_authoring",
+            "repo_action",
+        ],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
     "hand": {
         "role": "hand",
         # The ninth Colleague role. DEFAULT-HOSTED, so unlike muse/worker above

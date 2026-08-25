@@ -382,6 +382,9 @@ def test_spark_cli_and_gateway_agree_on_dropped_senses() -> None:
         "senses": False,
         "muse": False,
         "worker": False,
+        # `associate` (the tenth role) is opt-in-hosted like muse/worker and
+        # no shape hosts it, so it is infeasible on both boxes.
+        "associate": False,
         "hand": True,
         "embedder": True,
         "reranker": True,
@@ -401,6 +404,9 @@ def test_thor_cli_and_gateway_agree_on_dropped_cortex() -> None:
         "senses": True,
         "muse": False,
         "worker": False,
+        # `associate` (the tenth role) is opt-in-hosted like muse/worker and
+        # no shape hosts it, so it is infeasible on both boxes.
+        "associate": False,
         "hand": True,
         "embedder": True,
         "reranker": True,

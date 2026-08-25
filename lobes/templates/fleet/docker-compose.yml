@@ -1708,6 +1708,13 @@ services:
       # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
       - WORKER_BASE_URL=${WORKER_BASE_URL:-}
       - WORKER_SERVED_NAME=${WORKER_SERVED_NAME:-}
+      # The opt-in `associate` lobe (the tenth Colleague role — the doer that
+      # does NOT act; lightning-on-orin plan t6). Same mechanics as muse/worker
+      # above: an associate-hosting shape sets ASSOCIATE_BASE_URL +
+      # COMPOSE_PROFILES=associate in .env; empty default = backend unwired =
+      # `model=associate` 404s role_infeasible, never a silent fallback.
+      - ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}
+      - ASSOCIATE_SERVED_NAME=${ASSOCIATE_SERVED_NAME:-}
       # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
       # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
       # every supported card, which is the whole point of the role, so it is
@@ -1757,6 +1764,7 @@ services:
       # so a deployment with no worker shape reports the catalog native for the
       # sleeping lobe; a worker-hosting shape renders the served value into .env.
       - WORKER_MAX_MODEL_LEN=${WORKER_MAX_MODEL_LEN:-}
+      - ASSOCIATE_MAX_MODEL_LEN=${ASSOCIATE_MAX_MODEL_LEN:-}
       - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
       - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
@@ -1779,6 +1787,7 @@ services:
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
+      - ASSOCIATE_FEASIBLE=${ASSOCIATE_FEASIBLE:-}
       # hand joined the peer channels 2026-08-20 (d1 reversal — see
       # lobes/gateway/_config.py's NEVER_PROXIED_BACKENDS): a box whose card
       # cannot serve LFM2.5 correctly (Thor sm_110) declares HAND_FEASIBLE=false
@@ -1802,6 +1811,7 @@ services:
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
+      - ASSOCIATE_PEER_ORIGIN=${ASSOCIATE_PEER_ORIGIN:-}
       - HAND_PEER_ORIGIN=${HAND_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
@@ -1830,6 +1840,7 @@ services:
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
+      - ASSOCIATE_PEER_PROXY=${ASSOCIATE_PEER_PROXY:-}
       - HAND_PEER_PROXY=${HAND_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
@@ -1846,6 +1857,7 @@ services:
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
+      - ASSOCIATE_PEER_API_KEY=${ASSOCIATE_PEER_API_KEY:-}
       - HAND_PEER_API_KEY=${HAND_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
@@ -1871,6 +1883,7 @@ services:
       - MULTIMODAL_PEER_ORIGINS=${MULTIMODAL_PEER_ORIGINS:-}
       - MUSE_PEER_ORIGINS=${MUSE_PEER_ORIGINS:-}
       - WORKER_PEER_ORIGINS=${WORKER_PEER_ORIGINS:-}
+      - ASSOCIATE_PEER_ORIGINS=${ASSOCIATE_PEER_ORIGINS:-}
       - HAND_PEER_ORIGINS=${HAND_PEER_ORIGINS:-}
       - EMBED_PEER_ORIGINS=${EMBED_PEER_ORIGINS:-}
       - RERANK_PEER_ORIGINS=${RERANK_PEER_ORIGINS:-}
@@ -1880,6 +1893,7 @@ services:
       - MULTIMODAL_PEER_API_KEYS=${MULTIMODAL_PEER_API_KEYS:-}
       - MUSE_PEER_API_KEYS=${MUSE_PEER_API_KEYS:-}
       - WORKER_PEER_API_KEYS=${WORKER_PEER_API_KEYS:-}
+      - ASSOCIATE_PEER_API_KEYS=${ASSOCIATE_PEER_API_KEYS:-}
       - HAND_PEER_API_KEYS=${HAND_PEER_API_KEYS:-}
       - EMBED_PEER_API_KEYS=${EMBED_PEER_API_KEYS:-}
       - RERANK_PEER_API_KEYS=${RERANK_PEER_API_KEYS:-}
@@ -1941,6 +1955,15 @@ services:
       - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
       - WORKER_TOOL_CALL_PARSER=${WORKER_TOOL_CALL_PARSER:-}
       - WORKER_SPECULATIVE_CONFIG=${WORKER_SPECULATIVE_CONFIG-}
+      # ASSOCIATE_TOOL_CALL_PARSER has no lane knob — vllm-associate hardcodes
+      # --tool-call-parser=qwen3_coder (the vendor recipe's own pairing) — but
+      # it is passed through here like every other role prefix so a card
+      # profile that declares it is never silently dead.
+      - ASSOCIATE_QUANTIZATION=${ASSOCIATE_QUANTIZATION:-}
+      - ASSOCIATE_KV_CACHE_DTYPE=${ASSOCIATE_KV_CACHE_DTYPE:-}
+      - ASSOCIATE_REASONING_PARSER=${ASSOCIATE_REASONING_PARSER:-}
+      - ASSOCIATE_TOOL_CALL_PARSER=${ASSOCIATE_TOOL_CALL_PARSER:-}
+      - ASSOCIATE_SPECULATIVE_CONFIG=${ASSOCIATE_SPECULATIVE_CONFIG-}
       # HAND_QUANTIZATION / HAND_KV_CACHE_DTYPE / HAND_REASONING_PARSER /
       # HAND_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-hand is
       # bf16 (deliberately NO --quantization flag), has no thinking mode

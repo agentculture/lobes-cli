@@ -62,7 +62,7 @@ from lobes.profiles.schema import RoleProfile
 # dependency stays lobes.profiles.schema, per the brain-shapes t1 scope.
 AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
-# The nine first-class, Colleague-facing roles (issue #81): the seven
+# The ten first-class, Colleague-facing roles (issue #81): the seven
 # Profile-machinery core roles plus the two audio-overlay sidecars. This is
 # the Colleague CONTRACT set (`lobes capabilities` / GET /capabilities key
 # exactly these roles).
@@ -80,13 +80,13 @@ COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
 # likewise too heavy to co-reside with the default duo, so it is hosted only
 # by an explicit worker-hosting shape and renders nothing by default -- which
 # is what keeps machine-as-brain byte-identical when the role vocabulary grew.
-OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker")
+OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker", "associate")
 
 # The "whole brain" set machine-as-brain hosts exactly -- the identity-shape
 # invariant (see shape_render.py's module docstring and
 # tests/goldens/regen.py's `_shape_needs_goldens`) is defined against THIS
 # set, not :data:`COLLEAGUE_ROLES` or the broader :data:`SHAPE_ROLES` below:
-# the opt-in `minor` gear and the opt-in core roles (`muse`, `worker`) are
+# the opt-in `minor` gear and the opt-in core roles (`muse`, `worker`, `associate`) are
 # deliberately excluded from "every role this card can serve" -- machine-as-brain
 # never hosts them, and a NON-hosted opt-in core role renders nothing at all (the
 # gateway's OPT_IN_BACKENDS unwired-by-default rule carries the honesty), so

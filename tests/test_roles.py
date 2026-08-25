@@ -53,6 +53,8 @@ _EXPECTED_ROLES = {
     "senses",
     "muse",
     "worker",
+    # The TENTH role (lightning-on-orin plan, t6) — worker MINUS repo_action.
+    "associate",
     "hand",
     "embedder",
     "reranker",
@@ -120,14 +122,14 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 
 
 # ---------------------------------------------------------------------------
-# Acceptance 1 — exactly the nine roles, each with the full metadata block
+# Acceptance 1 — exactly the ten roles, each with the full metadata block
 # ---------------------------------------------------------------------------
 
 
-def test_registry_returns_exactly_the_nine_roles() -> None:
+def test_registry_returns_exactly_the_ten_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 9
+    assert len(registry) == 10
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -244,7 +246,7 @@ def test_absent_pooling_and_multimodal_roles_present_but_unloaded() -> None:
     registry = _registry(_primary_only_env())
     # All seven still present even though only the primary is wired.
     assert set(registry) == _EXPECTED_ROLES
-    for name in ("senses", "muse", "worker", "embedder", "reranker"):
+    for name in ("senses", "muse", "worker", "associate", "embedder", "reranker"):
         assert registry[name].loaded is False
     # An unloaded role still names the model it WOULD serve (the catalog default),
     # with that model's catalog metadata — never blank, never an error.
@@ -355,7 +357,7 @@ def test_tools_is_derived_from_the_catalog_tool_parser_not_hardcoded() -> None:
     is built from, so the contract cannot claim tool support the deployment does
     not actually wire (or vice versa)."""
     registry = _registry(_full_env())
-    for role in ("cortex", "senses", "muse", "worker", "embedder", "reranker"):
+    for role in ("cortex", "senses", "muse", "worker", "associate", "embedder", "reranker"):
         entry = next(m for m in SUPPORTED_MODELS if m.id == registry[role].model)
         assert registry[role].tools is bool(entry.tool_parser)
 
@@ -383,7 +385,7 @@ def test_senses_has_tools_but_not_the_tool_use_responsibility() -> None:
     assert "tool_use" not in senses.responsibilities
 
 
-def test_static_responsibility_maps_cover_all_nine_roles() -> None:
+def test_static_responsibility_maps_cover_all_ten_roles() -> None:
     assert set(ROLE_RESPONSIBILITIES) == _EXPECTED_ROLES
     assert set(ROLE_FORBIDDEN) == _EXPECTED_ROLES
     assert ROLE_RESPONSIBILITIES["muse"] == (
@@ -679,6 +681,7 @@ def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "associate",
         "hand",
         "embedder",
         "reranker",
@@ -892,6 +895,7 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
         "multimodal",
         "muse",
         "worker",
+        "associate",
         "hand",
         "embed",
         "rerank",
@@ -912,7 +916,17 @@ def test_all_nine_roles_expose_identical_key_set() -> None:
 
     registry = _registry(_full_env())
     first_keys = set(dataclasses.asdict(registry["cortex"]).keys())
-    for name in ("senses", "muse", "worker", "hand", "embedder", "reranker", "stt", "tts"):
+    for name in (
+        "senses",
+        "muse",
+        "worker",
+        "associate",
+        "hand",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    ):
         assert set(dataclasses.asdict(registry[name]).keys()) == first_keys
 
 
@@ -964,9 +978,10 @@ def test_every_gateway_role_has_an_entry_in_every_gateway_role_table(table_name:
     assert not extra, f"{table_name} has entries for non-roles: {extra}"
 
 
-def test_roles_has_nine_entries_including_hand() -> None:
-    assert len(roles_mod.ROLES) == 9
+def test_roles_has_ten_entries_including_hand_and_associate() -> None:
+    assert len(roles_mod.ROLES) == 10
     assert "hand" in roles_mod.ROLES
+    assert "associate" in roles_mod.ROLES
 
 
 def test_hand_responsibilities_and_forbidden_match_the_v1_contract() -> None:

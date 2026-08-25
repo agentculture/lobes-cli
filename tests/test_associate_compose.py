@@ -220,24 +220,44 @@ class TestDeclaredKnobsRenderNoDeadDeclarations:
         ), "vllm-associate must NOT start without COMPOSE_PROFILES=associate"
 
 
-class TestAssociatePrefixIsInertToTheRoleSystem:
-    """Scope guard: t7 wires the LANE only. No role-system surface should
-    reference ASSOCIATE_ yet (that is t6/t10's job)."""
+class TestAssociateLaneIsWiredToTheRoleSystem:
+    """t7 shipped the LANE with the role system deliberately untouched; t6
+    (this plan's tenth-role task) connected the two. These assertions are the
+    INVERSE of t7's scope guard, and they are what keeps the lane from being a
+    container nothing can address."""
 
-    def test_gateway_environment_does_not_reference_associate(self) -> None:
+    def test_gateway_environment_passes_the_associate_prefix_through(self) -> None:
         svc = _load_fleet()["services"]["gateway"]
         env: list[str] = svc.get("environment", [])
         keys = {e.split("=", 1)[0] for e in env if "=" in e}
-        assert not any(k.startswith("ASSOCIATE_") for k in keys), (
-            "the gateway must not wire any ASSOCIATE_* key yet — that surface "
-            "belongs to a later task (t6/t10)"
-        )
+        # The wiring key plus every channel the other nine role prefixes carry.
+        for key in (
+            "ASSOCIATE_BASE_URL",
+            "ASSOCIATE_SERVED_NAME",
+            "ASSOCIATE_FEASIBLE",
+            "ASSOCIATE_MAX_MODEL_LEN",
+            "ASSOCIATE_PEER_ORIGIN",
+            "ASSOCIATE_PEER_PROXY",
+            "ASSOCIATE_PEER_API_KEY",
+            "ASSOCIATE_PEER_ORIGINS",
+            "ASSOCIATE_PEER_API_KEYS",
+        ):
+            assert key in keys, f"gateway must pass {key} through"
 
-    def test_no_associate_role_in_roles_module(self) -> None:
-        import lobes.roles as roles_module
+    def test_associate_base_url_defaults_empty_so_the_backend_stays_unwired(self) -> None:
+        # The opt-in contract: no ASSOCIATE_BASE_URL in .env => no backend =>
+        # `model=associate` 404s role_infeasible. A non-empty default here
+        # would silently wire a lane no card has budgeted.
+        svc = _load_fleet()["services"]["gateway"]
+        env: list[str] = svc.get("environment", [])
+        line = next(e for e in env if e.startswith("ASSOCIATE_BASE_URL="))
+        assert line == "ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}"
 
-        source = Path(roles_module.__file__).read_text(encoding="utf-8")
-        assert "associate" not in source.lower()
+    def test_roles_module_declares_the_associate_role(self) -> None:
+        from lobes.roles import ROLE_BACKEND, ROLES
+
+        assert "associate" in ROLES
+        assert ROLE_BACKEND["associate"] == "associate"
 
 
 class TestEnvExampleDocumentsAssociateKnobs:

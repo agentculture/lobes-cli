@@ -161,7 +161,15 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # role prefixes — the config half of the replica pool (t4/t5 add the
     # data-plane use of these). `gateway` is again the ONLY service that
     # moved; every vLLM lane's own command/volumes are untouched.
-    "gateway": "824ca3213357d6d73aaed60da855eb643783d555002114ce85a3ca93a384a717",
+    #
+    # Recomputed 2026-08-25 for the lightning-on-orin plan (t6, the tenth
+    # role): `gateway` gained the ASSOCIATE_ prefix on every channel the other
+    # nine role prefixes already carry — BASE_URL/SERVED_NAME (wiring),
+    # MAX_MODEL_LEN (served-context overlay), FEASIBLE, the four peer channels
+    # (singular + plural) and the declared lane fingerprint. `gateway` is again
+    # the ONLY pre-existing service that moved; `vllm-associate` (t7) is
+    # untouched.
+    "gateway": "c1eb74e4fdd31e9a48a40e47c932969ffd2e713ca17e3f7038c5e1f7b2590502",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
@@ -171,8 +179,10 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # gives NVIDIA's published Jetson serve recipe's eight previously-
     # unexpressible flags a real home (five Mamba-cache flags,
     # --enable-prefix-caching, --max-num-batched-tokens, --trust-remote-code).
-    # It is DELIBERATELY not a Colleague role — no roles.py entry, no gateway
-    # wiring — see tests/test_associate_compose.py.
+    # t6 then made `associate` the TENTH Colleague role and wired the gateway
+    # to it; this LANE's own command/volumes were not touched by that, which is
+    # exactly what this unchanged hash proves. See
+    # tests/test_associate_compose.py.
     "vllm-associate": "5f8a3ca5a1731de52f122967e32057123db94cbeb4b2d7903f7615e16ee183da",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",

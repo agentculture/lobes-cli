@@ -89,6 +89,7 @@ _MODEL_ID: dict[str, str] = {
     "senses": "coolthor/gemma-4-12B-it-NVFP4A16",
     "muse": "nvidia/Gemma-4-31B-IT-NVFP4",
     "worker": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+    "associate": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
     "hand": "LiquidAI/LFM2.5-1.2B-Instruct",
     "embedder": "Qwen/Qwen3-Embedding-0.6B",
     "reranker": "Qwen/Qwen3-Reranker-0.6B",
@@ -103,6 +104,7 @@ _WIRE_ENV: dict[str, tuple[str, str]] = {
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
     "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
     "worker": ("WORKER_BASE_URL", "WORKER_SERVED_NAME"),
+    "associate": ("ASSOCIATE_BASE_URL", "ASSOCIATE_SERVED_NAME"),
     "hand": ("HAND_BASE_URL", "HAND_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
@@ -158,7 +160,10 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     (all but thor-muse) contributes a muse cell too. `worker` — the second
     opt-in core role (thor-worker-lobe plan) — joined `muse` in
     OPT_IN_CORE_ROLES with NO hosting shape built yet, so EVERY shape
-    (including thor-muse) contributes a worker cell too. If this fails
+    (including thor-muse) contributes a worker cell too. `associate` — the
+    THIRD opt-in core role (lightning-on-orin plan t6) — is in the same
+    position: no built-in shape hosts it yet (that is t9), so EVERY shape
+    contributes an associate cell. If this fails
     because a NEW built-in shape landed: the parametrized cell tests below
     already cover it — just extend this documented set to match its declared
     drops.
@@ -166,12 +171,14 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     assert set(CELLS) == {
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
+        ("machine-as-brain", "associate"),
         # orin-cortex is orin-lobe with the heavies swapped: it hosts cortex
         # (on the llama.cpp lane) and drops senses to a peer, so it contributes
         # a senses cell where orin-lobe contributes a cortex one.
         ("orin-cortex", "senses"),
         ("orin-cortex", "muse"),
         ("orin-cortex", "worker"),
+        ("orin-cortex", "associate"),
         # orin-lobe is thor-lobe's sm_87 sibling: it hosts senses and drops
         # cortex (which the orin CARD also declares infeasible — NVFP4 W4A4
         # needs Blackwell), so it contributes the same three cells thor-lobe
@@ -179,28 +186,38 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-lobe", "cortex"),
         ("orin-lobe", "muse"),
         ("orin-lobe", "worker"),
+        ("orin-lobe", "associate"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),
         ("orin-small", "worker"),
+        ("orin-small", "associate"),
         ("spark-lobe", "senses"),
         ("spark-lobe", "muse"),
         ("spark-lobe", "worker"),
+        ("spark-lobe", "associate"),
         ("thor-lobe", "cortex"),
         ("thor-lobe", "muse"),
         ("thor-lobe", "worker"),
+        ("thor-lobe", "associate"),
         ("thor-muse", "cortex"),
         ("thor-muse", "senses"),
         ("thor-muse", "worker"),
+        ("thor-muse", "associate"),
         # thor-worker hosts the opt-in `worker` lobe and drops BOTH heavy
         # defaults AND muse (the mesh moved off muse to worker) — three cells.
         ("thor-worker", "cortex"),
         ("thor-worker", "senses"),
         ("thor-worker", "muse"),
+        ("thor-worker", "associate"),
     }
     # machine-as-brain contributes ONLY the opt-in-core cells (muse, worker)
     # — never a default-role drop (its default path is golden-pinned instead).
-    assert all(role in ("muse", "worker") for shape, role in CELLS if shape == "machine-as-brain")
+    assert all(
+        role in ("muse", "worker", "associate")
+        for shape, role in CELLS
+        if shape == "machine-as-brain"
+    )
 
 
 def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
