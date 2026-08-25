@@ -53,8 +53,15 @@ renders the #110-conventional ``<PREFIX>_FEASIBLE=false`` marker and nothing
 else — no ``<PREFIX>_MODEL``, no knobs — exactly like a card that finds the
 role infeasible (see :func:`lobes.profiles.render.profile_env`'s
 ``feasible=False`` convention). Its compose service is likewise absent from
-:func:`shape_services`. A role the CARD marks infeasible is dropped the same
-way even if the shape would host it — feasibility stays the card's call.
+:func:`shape_services`. For a DEFAULT role, the CARD marks infeasible and the
+shape has no say — hosting a role the board genuinely cannot serve would be
+half-honest. For an OPT_IN_CORE_ROLE (``muse``/``worker``/``associate``) the
+relationship inverts: the card's own ``feasible=False`` for one of these means
+"not on by default" (or, on ``base.toml``'s conservative fallback, "no
+declared budget"), not "cannot serve" — so a shape that HOSTS one and supplies
+its own full override (model + budget knobs) is itself the feasibility call
+(see :func:`_overlay_opt_in_core`); a shape that does NOT host one passes the
+card's own declaration through unchanged, feasible=False included.
 """
 
 from __future__ import annotations
@@ -231,6 +238,37 @@ def _overlay(base: RoleProfile, override: RoleProfile) -> RoleProfile:
     return RoleProfile(**merged)
 
 
+def _overlay_opt_in_core(base: RoleProfile, override: RoleProfile) -> RoleProfile:
+    """Like :func:`_overlay`, for an :data:`OPT_IN_CORE_ROLE` THIS shape hosts.
+
+    ``_overlay``'s "feasible always comes from the card" rule fits the default
+    roles, where the card is the sole authority on whether the board can
+    serve a role at all. It does not fit an opt-in core role (``muse`` /
+    ``worker`` / ``associate``): a card's ``feasible=False`` there means "not
+    hosted by default" (or, for ``base.toml``'s conservative veto on an
+    unrecognised card, "no declared budget") — never "this box cannot serve
+    it" — and the shape's own full declaration (model + budget knobs, per
+    :data:`OPT_IN_CORE_ROLES`'s contract) IS the feasibility call, since
+    hosting the role at all was the shape's decision, not the card's. Every
+    non-``feasible`` field overlays exactly like ``_overlay``: the override
+    wins wherever it takes a position, ``base`` fills in the rest.
+
+    For a card that leaves the role undeclared (``base.feasible`` already
+    ``True``, e.g. ``thor.toml``'s ``muse``/``worker``), this is byte-identical
+    to ``_overlay`` — the case that motivated this split (``orin.toml``'s
+    ``[roles.associate] feasible = false``, approved deviation d1 of the
+    ``lightning-on-orin`` plan) simply never arose for muse/worker before.
+    """
+    merged: dict = {}
+    for f in fields(RoleProfile):
+        if f.name == "feasible":
+            merged["feasible"] = True
+            continue
+        override_value = getattr(override, f.name)
+        merged[f.name] = override_value if override_value is not None else getattr(base, f.name)
+    return RoleProfile(**merged)
+
+
 def compose_profile(shape: Shape, profile: Profile) -> Profile:
     """The synthetic per-role :class:`Profile` a (shape, card) pair resolves to.
 
@@ -269,7 +307,13 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
         if shape.hosts_role(role):
-            roles[role] = _overlay(profile.role(role), shape.override(role))
+            if role in OPT_IN_CORE_ROLES:
+                # See _overlay_opt_in_core: hosting an opt-in core role is the
+                # SHAPE's own feasibility call, not the card's -- unlike the
+                # default roles, where the card is sole authority.
+                roles[role] = _overlay_opt_in_core(profile.role(role), shape.override(role))
+            else:
+                roles[role] = _overlay(profile.role(role), shape.override(role))
         elif role in OPT_IN_CORE_ROLES:
             # Pass the card's opt-in-role declaration through unchanged (a
             # base.toml veto keeps its marker; an undeclared role renders

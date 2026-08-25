@@ -104,10 +104,10 @@ gpu_access = "runtime"
 #   cortex / senses  MEASURED 2026-08-23 (below, unchanged).
 # `shapes` names only shapes that EXIST — the guard in
 # tests/test_init_coresidency.py asserts each one resolves the group, so a name
-# added before its shape file would be a lie. `orin-associate` joins this list in
-# the task that creates it; until then an operator is pointed at the two shapes
-# that do exist, both of which genuinely resolve the group by hosting neither
-# associate nor more than one other member.
+# added before its shape file would be a lie. `orin-associate` joined this list
+# in the task that creates it (plan `lightning-on-orin`, t9); it resolves the
+# group by hosting associate and dropping both cortex and senses, exactly like
+# `orin-cortex` and `orin-lobe` resolve it by hosting one of the other two.
 #
 #   associate        MEASURED 2026-08-25 — util 0.63 at 128000 holds ~37.7 GiB
 #                    resident (instrument: docker stats), with vLLM's own startup
@@ -115,7 +115,7 @@ gpu_access = "runtime"
 #                    other two. docs/evidence/2026-08-25-measure-associate-budget-orin.txt
 [[exclusive_roles]]
 roles = ["cortex", "senses", "associate"]
-shapes = ["orin-cortex", "orin-lobe"]
+shapes = ["orin-cortex", "orin-lobe", "orin-associate"]
 reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB; MEASURED 2026-08-25: associate (Lightning NVFP4 at util 0.63, 128000) holds ~37.7 GiB resident (docker stats) with vLLM's startup check seeing 42.89/61.34 GiB free — against 61.34 GiB of unified memory with ZERO swap"
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
