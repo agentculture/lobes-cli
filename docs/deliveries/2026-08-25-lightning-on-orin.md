@@ -100,6 +100,69 @@ Quoted verbatim from `devague plan show`:
 - issues: `#216` (headless recovers unified memory — opened during this run)
 - spec/plan: `docs/specs/2026-08-25-lightning-on-orin.md`, `docs/plans/2026-08-25-lightning-on-orin.md`
 
+## Specs and Benchmarks
+
+### What `associate` is on this board
+
+| | |
+|---|---|
+| Checkpoint | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` |
+| Architecture | `NemotronHForCausalLM` — Mamba-2 SSM + sparse MoE + attention, 52 layers |
+| Active params | ~3B of 30B (128 routed experts, 1 shared, 6/token) |
+| Modality | Text-only (no `vision_config`) |
+| Quantization | `MIXED_PRECISION` → `W4A16_NVFP4` experts (WEIGHT-only) + FP8 `in_proj`/`out_proj` |
+| Served as | vLLM `modelopt_mixed` → Marlin FP8 + NVFP4 GEMM + NVFP4 MoE, FlashAttention 2 |
+| Board | Jetson AGX Orin 64GB, Ampere **sm_87**, 61.34 GiB unified, **ZERO swap** |
+| Window | 128,000 served (native ceiling 1,048,576 — unexercised) |
+| KV dtype | `bfloat16` — sm_87 has no FP8 KV path, so the checkpoint's declared FP8 `kv_cache_quant_algo` is overridden |
+| `gpu_mem_util` | **0.56** — 0.70 (vendor's) and 0.63 both REFUSED at boot |
+| Weights / KV / pool | 17.81 GiB / 9.35 GiB / **1,524,000 tokens** (11.91× @ 128k) |
+| Speculation | **OFF** — `ASSOCIATE_SPECULATIVE_CONFIG` exists, default-off, unmeasured on the shape |
+| Engine | `vllm/vllm-openai@sha256:7c5a10e9…` (see the engine-drift drift entry) |
+
+### Depth sweep — same board, same depths, same output length
+
+Both rows sets at 128 max output tokens. The associate figures use
+cache-defeating unique prompts with `prompt_tokens` read back from the server;
+an earlier repetitive-filler sweep was discarded as a prefix-caching artifact.
+
+| Depth | associate TTFT | associate decode | incumbent TTFT | incumbent decode | TTFT gain |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 129 ms | 50.28 tok/s | 1,566 ms | 2.61 tok/s | 12× |
+| 512 | 316 ms | 51.52 tok/s | 12,407 ms | 2.62 tok/s | 39× |
+| 2,048 | 1,179 ms | 50.98 tok/s | 41,581 ms | 2.62 tok/s | 35× |
+| 8,192 | 3,749 ms | 50.52 tok/s | 143,122 ms | 2.58 tok/s | 38× |
+| 32,768 | **16,939 ms** | **52.53 tok/s** | **610,020 ms** | **2.43 tok/s** | **36×** |
+| decay 0→32k | — | **none** | — | ~7% | — |
+
+Incumbent = `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` on llama.cpp, this same Orin,
+`docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt`.
+
+| Metric | associate | incumbent | Ratio |
+|---|---:|---:|---:|
+| Decode @ 32,768 | 52.53 tok/s | 2.43 tok/s | **21.6×** |
+| End-to-end @ 32,768 | 19.4 s | 662.7 s | **34×** |
+| Prefill | ~1,612 tok/s | ~64 tok/s | **25×** |
+| `lobes benchmark` decode (×3 runs) | 54.3 tok/s | — | — |
+
+### Cross-box context — NOT same-harness
+
+| Host | Role | Engine | Speculation | Decode |
+|---|---|---|---|---:|
+| Orin sm_87 | `associate` | vLLM | off | 52.5–54.3 tok/s |
+| Spark GB10 | `worker` | vLLM | off | 75.1 tok/s |
+| Orin sm_87 | `cortex` | llama.cpp | n/a | 2.61 tok/s |
+| Orin (lane spike) | — | vLLM v0.27.1 | DSpark ×5 | ~78–81 tok/s |
+
+The Orin reaches **~72%** of the Spark's plain-decode rate on materially weaker
+silicon. These rows are **not** a controlled comparison — different engine
+builds and resident sets — so the DSpark row is indicative only.
+
+**Deliberately absent:** NVIDIA's "89 tokens/sec on Jetson AGX Orin". It is a
+multi-step agentic-workload aggregate WITH speculation, not a single-stream
+decode figure, and jetson-ai-lab publishes no Orin command to reproduce it —
+three separate defects were found in its published recipes.
+
 ## Delivery Claims
 
 | Claim | Confidence | Evidence |
