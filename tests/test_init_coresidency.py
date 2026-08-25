@@ -79,11 +79,13 @@ def test_exactly_one_builtin_card_declares_a_co_residency_limit() -> None:
     assert _declaring_cards() == [_DECLARING_CARD]
 
 
-def test_the_declared_group_is_the_measured_cortex_senses_pair() -> None:
+def test_the_declared_group_is_the_measured_heavy_generate_lobes() -> None:
     groups = resolve_profile(_DECLARING_CARD).exclusive_roles
     assert len(groups) == 1
     group = groups[0]
-    assert set(group.roles) == {"cortex", "senses"}
+    # associate joined 2026-08-25 (t8): the board hosts AT MOST ONE heavy
+    # generate lobe, expressed as ONE group rather than pairwise clashes.
+    assert set(group.roles) == {"cortex", "senses", "associate"}
     assert set(group.roles) <= set(ROLES)
     # The refusal quotes the reason back at the operator; an empty one would
     # make the error unverifiable.
@@ -133,7 +135,12 @@ def test_every_declared_resolving_shape_exists_and_actually_resolves_the_group()
 def test_default_shape_over_hosts_the_declaring_card() -> None:
     profile = resolve_profile(_DECLARING_CARD)
     over = overcommitted_groups(resolve_shape(_DEFAULT_SHAPE), profile)
-    assert [tuple(g.roles) for g in over] == [("cortex", "senses")]
+    # The GROUP names three members since 2026-08-25 (t8), but only cortex and
+    # senses are the ones actually clashing here: `associate` is an opt-in core
+    # role the card marks feasible = false, and an infeasible member is not a
+    # clash (see test_an_infeasible_member_is_not_a_clash below). The group is
+    # reported whole so the refusal can name every shape that resolves it.
+    assert [tuple(g.roles) for g in over] == [("cortex", "senses", "associate")]
 
 
 @pytest.mark.parametrize("card", [name for name in builtin_names() if name != _DECLARING_CARD])
