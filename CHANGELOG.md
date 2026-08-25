@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.63.1] - 2026-08-25
 
+### Added
+
+- New opt-in `vllm-associate` fleet lane (lightning-on-orin plan, t7) giving
+  NVIDIA's published Jetson serve recipe for
+  `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` its eight previously
+  unexpressible `vllm serve` flags a real home: `--mamba-backend`,
+  `--mamba-ssm-cache-dtype`, `--enable-mamba-cache-stochastic-rounding`,
+  `--mamba-cache-philox-rounds`, `--mamba-cache-mode`,
+  `--enable-prefix-caching`, `--max-num-batched-tokens` (all env-parameterized
+  knobs), and `--trust-remote-code` (hardcoded, matching every other lane).
+  `ASSOCIATE_IMAGE` overrides the lane's image, proven by `docker compose
+  config`. Gated behind the `associate` Compose profile; deliberately not
+  wired into the Colleague role system yet (no `roles.py` entry, no gateway
+  passthrough) — that lands in a later task.
+
 ### Fixed
 
 - The Orin card's W4A4 infeasibility claim is now PER-CHECKPOINT (plan `lightning-on-orin`, t4). `lobes/machines/orin.py` and `lobes/profiles/builtin/orin.toml` used to blame one reason -- "NVFP4 quantizes ACTIVATIONS to FP4, sm_87 is Ampere" -- for all three NVFP4 generate lobes, naming `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` among them. That is false for Lightning: its own `hf_quant_config.json` (fetched 2026-08-25) declares `quant_algo` `MIXED_PRECISION`, with every routed and shared expert `up_proj`/`down_proj` at `W4A16_NVFP4` (`group_size` 16, WEIGHT-only, 16-bit activations), the mixer `in_proj`/`out_proj` at `FP8`, and `kv_cache_quant_algo` `FP8` -- structurally the same weight-only exception the board already runs for the int4 W4A16 `senses` gear. Both files now carry a named Lightning carve-out citing that config and the live sm_87 run (`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`: vLLM v0.27.1 accepted `quantization=modelopt_mixed`, selected a full Marlin fallback stack plus FlashAttention 2, and served correct output at ~78-81 tok/s with `--kv-cache-dtype bfloat16` working around the real FP8 KV barrier). The W4A4 sentence itself is untouched and still names `unsloth/Qwen3.8-27B-NVFP4` and `nvidia/Gemma-4-31B-IT-NVFP4`, which it still describes; two new tests in `tests/test_profile_schema.py` pin both halves. No role feasibility changed -- `worker` stays `feasible = false` on this card

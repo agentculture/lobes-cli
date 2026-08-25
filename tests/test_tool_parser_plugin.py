@@ -166,6 +166,14 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
     "llamacpp-primary": "56507a02c50560eb2ab2d620b33121c605fd2b0f3b6092f17451889cac7c2004",
+    # NEW (lightning-on-orin plan, t7): the opt-in `vllm-associate` lane, gated
+    # behind the `associate` profile so no existing deployment starts it. It
+    # gives NVIDIA's published Jetson serve recipe's eight previously-
+    # unexpressible flags a real home (five Mamba-cache flags,
+    # --enable-prefix-caching, --max-num-batched-tokens, --trust-remote-code).
+    # It is DELIBERATELY not a Colleague role — no roles.py entry, no gateway
+    # wiring — see tests/test_associate_compose.py.
+    "vllm-associate": "5f8a3ca5a1731de52f122967e32057123db94cbeb4b2d7903f7615e16ee183da",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
     "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",

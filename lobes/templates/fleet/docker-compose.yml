@@ -1472,6 +1472,148 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- Opt-in associate generate backend (Nemotron 3.5 Lightning, NVFP4 MoE) -
+  # lightning-on-orin plan, t7. This lane exists to give EIGHT vLLM serve
+  # flags from NVIDIA's published Jetson recipe a real home in this repo —
+  # nothing more. It DELIBERATELY does NOT wire a Colleague role: no entry in
+  # lobes/roles.py, no TIER_ROLE placement in lobes/catalog.py, no gateway
+  # ASSOCIATE_BASE_URL/ASSOCIATE_FEASIBLE/peer-proxy environment (that whole
+  # surface is t6/t10's job). The ASSOCIATE_ prefix here is INERT: setting
+  # COMPOSE_PROFILES=associate starts this container and nothing in the
+  # gateway or CLI knows it exists yet. Gated behind the "associate" Compose
+  # profile, exactly like vllm-muse/vllm-worker, so a plain `docker compose up`
+  # never starts it.
+  #
+  # Checkpoint: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — the SAME
+  # checkpoint family the `worker` role serves on the Spark (see vllm-worker
+  # above); this lane rides the same Qwen/vLLM nightly image lane by default.
+  # GPU budget (gpu_mem_util / max_model_len) is a PLACEHOLDER here, same as
+  # the worker lane's own placeholder was before ITS live boot — the Orin's
+  # measured budget is t8's job (builtin/orin.toml), not this lane's.
+  #
+  # THE EIGHT FLAGS (the reason this block exists — see
+  # docs/specs/2026-08-25-lightning-on-orin.md and
+  # docs/plans/2026-08-25-lightning-on-orin.md, task t7):
+  #
+  #   --mamba-backend                Governs the Mamba2 SSU (state-space
+  #     update) kernel selection, NOT the SSD Triton warmup (measured live on
+  #     the Orin 2026-08-25: the warmup runs and completes regardless of this
+  #     flag — see docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt).
+  #     ASSOCIATE_MAMBA_BACKEND, default flashinfer (the recipe's value).
+  #
+  #   --mamba-ssm-cache-dtype        The SSM state cache dtype.
+  #     ASSOCIATE_MAMBA_SSM_CACHE_DTYPE, default float16 (the recipe's value).
+  #
+  #   --enable-mamba-cache-stochastic-rounding / --no-...  A boolean toggle,
+  #     so — like RERANK_ENFORCE_EAGER above — the env var holds the FULL flag
+  #     text (enabled or its --no- negation), not just a value:
+  #     ASSOCIATE_MAMBA_CACHE_STOCHASTIC_ROUNDING, default
+  #     --enable-mamba-cache-stochastic-rounding (the recipe's value).
+  #
+  #   --mamba-cache-philox-rounds    ASSOCIATE_MAMBA_CACHE_PHILOX_ROUNDS,
+  #     default 5 (the recipe's value).
+  #
+  #   --mamba-cache-mode             ASSOCIATE_MAMBA_CACHE_MODE, default align
+  #     (the recipe's value).
+  #
+  #   --enable-prefix-caching / --no-...  Same full-flag-text idiom as the
+  #     stochastic-rounding knob above: ASSOCIATE_PREFIX_CACHING, default
+  #     --enable-prefix-caching. (The `cortex` primary lane above hardcodes
+  #     this same flag unconditionally on a different checkpoint family — this
+  #     lane keeps it a knob because Mamba prefix caching on a THIRD
+  #     architecture, on THIS card, is unmeasured.)
+  #
+  #   --max-num-batched-tokens       ASSOCIATE_MAX_NUM_BATCHED_TOKENS, default
+  #     16384 (the recipe's value).
+  #
+  #   --trust-remote-code            HARDCODED, not a knob — every generate
+  #     lane in this file (primary/senses/worker/muse) hardcodes this
+  #     unconditionally; it is a fixed security posture (run the model repo's
+  #     own code in-container), not a per-deployment tuning choice, so this
+  #     lane follows the same fleet-wide convention rather than inventing an
+  #     eighth on/off switch nothing else in the file has.
+  #
+  # Two flags NVIDIA's recipe also carries are covered by mechanism this repo
+  # ALREADY has (verified, not rebuilt here): --kv-cache-dtype
+  # (ASSOCIATE_KV_CACHE_DTYPE, the same knob shape as PRIMARY_KV_CACHE_DTYPE)
+  # and --max-model-len / --gpu-memory-utilization / the speculative-config
+  # off-switch (same ${VAR-default} idiom as WORKER_SPECULATIVE_CONFIG).
+  #
+  # ASSOCIATE_IMAGE overrides the lane's OCI image — verified by
+  # `docker compose config` in tests/test_associate_compose.py — falling back
+  # to the SAME fleet-wide Qwen/vLLM nightly digest pin every other
+  # non-Gemma generate lane uses.
+  vllm-associate:
+    image: ${ASSOCIATE_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    container_name: model-gear-vllm-associate
+    profiles:
+      - associate
+    # Same Thor/unified-memory first-boot ordering mitigation as vllm-muse and
+    # vllm-worker: wait for the two cheap pooling gears to be healthy first.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=associate   # → /logs/model-gear/associate-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-associate:8000 on the
+    # compose net (and only that, until a later task wires a gateway backend).
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: ONE shell-lexed STRING, same mechanism/reason as
+    # vllm-primary/vllm-multimodal/vllm-worker above (an empty variable must
+    # leave NO argv token, which a YAML list command cannot do).
+    command: >-
+      vllm serve ${ASSOCIATE_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --served-model-name=${ASSOCIATE_SERVED_NAME:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${ASSOCIATE_QUANTIZATION:-modelopt}
+      --kv-cache-dtype=${ASSOCIATE_KV_CACHE_DTYPE:-bfloat16}
+      --max-model-len=${ASSOCIATE_MAX_MODEL_LEN:-65536}
+      --gpu-memory-utilization=${ASSOCIATE_GPU_MEM_UTIL:-0.30}
+      --mamba-backend=${ASSOCIATE_MAMBA_BACKEND:-flashinfer}
+      --mamba-ssm-cache-dtype=${ASSOCIATE_MAMBA_SSM_CACHE_DTYPE:-float16}
+      ${ASSOCIATE_MAMBA_CACHE_STOCHASTIC_ROUNDING:---enable-mamba-cache-stochastic-rounding}
+      --mamba-cache-philox-rounds=${ASSOCIATE_MAMBA_CACHE_PHILOX_ROUNDS:-5}
+      --mamba-cache-mode=${ASSOCIATE_MAMBA_CACHE_MODE:-align}
+      ${ASSOCIATE_PREFIX_CACHING:---enable-prefix-caching}
+      --max-num-batched-tokens=${ASSOCIATE_MAX_NUM_BATCHED_TOKENS:-16384}
+      ${ASSOCIATE_SPECULATIVE_CONFIG-}
+      --enable-auto-tool-choice
+      --tool-call-parser=qwen3_coder
+      --reasoning-parser=${ASSOCIATE_REASONING_PARSER:-nemotron_v3}
+      --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
   gateway:
     build:
       context: .

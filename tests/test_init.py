@@ -361,16 +361,18 @@ _NEW_DIGEST = "sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c3
 _OLD_DIGEST = "sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
 
 
-def test_init_fleet_apply_pins_the_new_digest_on_all_six_qwen_lanes_only(tmp_path) -> None:
+def test_init_fleet_apply_pins_the_new_digest_on_all_seven_qwen_lanes_only(tmp_path) -> None:
     target = tmp_path / "fleet"
     rc = main(["init", "--fleet", str(target), "--apply"])
     assert rc == 0
     compose = (target / "docker-compose.yml").read_text()
-    # Exactly six defaults reference the new digest: vllm-primary, vllm-embed,
-    # vllm-embed-deep, vllm-rerank, vllm-hand (via HAND_IMAGE fallback), and
-    # vllm-worker (via WORKER_IMAGE fallback) — see the vllm-primary comment
-    # block for the t5 rationale.
-    assert compose.count(_NEW_DIGEST) == 6
+    # Exactly seven defaults reference the new digest: vllm-primary,
+    # vllm-embed, vllm-embed-deep, vllm-rerank, vllm-hand (via HAND_IMAGE
+    # fallback), vllm-worker (via WORKER_IMAGE fallback) — see the
+    # vllm-primary comment block for the t5 rationale — and, since the
+    # lightning-on-orin plan's t7, vllm-associate (via ASSOCIATE_IMAGE
+    # fallback), which rides the same Qwen/vLLM nightly lane.
+    assert compose.count(_NEW_DIGEST) == 7
     # The old digest is gone from every VLLM_NIGHTLY_IMAGE default line.
     assert f"VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@{_OLD_DIGEST}" not in compose
 
