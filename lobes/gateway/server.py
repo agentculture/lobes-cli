@@ -84,6 +84,7 @@ from lobes.gateway._realtime import (
     status_of,
     upgrade_request_bytes,
 )
+from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
@@ -96,6 +97,7 @@ from lobes.gateway._routing import (
     resolve_model,
     supported_models_payload,
 )
+from lobes.gateway._selection import REASON_SOLE_READY, select_replica
 from lobes.gateway._tier_request import (
     PressureCache,
     is_tier_alias,
@@ -697,6 +699,48 @@ def _busy_body(requested_tier: str) -> bytes:
 PROXIED_HEADER = "X-Lobes-Proxied"
 PROXIED_BY_HEADER = "X-Lobes-Proxied-By"
 
+# --- replica-pool markers (cortex-replica-pool t7, issue #199) --------------
+#
+# Once a role can be served by more than one replica, "which box answered?"
+# stops being inferable from "which gateway did I dial?". Before the pool the
+# only marker was PROXIED_BY_HEADER, present exactly when the answer came from
+# somewhere else — so its ABSENCE meant "served here". That inference dies with
+# the pool for a caller who cannot see the config, so a pooled LOCAL answer now
+# says so explicitly.
+#
+# * ``X-Lobes-Served-By`` — this box's OWN operator-declared origin
+#   (``GATEWAY_SELF_ORIGIN`` → ``RoutingTable.self_origin``), or the literal
+#   ``"local"`` when undeclared. It is never derived from the box's own view of
+#   its network: the #92 lesson (origins are typed, never discovered) applies to
+#   a box's self-name exactly as to a peer's.
+# * ``X-Lobes-Route-Reason`` — WHY that replica was chosen, from the closed
+#   vocabulary in :mod:`lobes.gateway._selection` (local-idle |
+#   peer-less-loaded | local-busy-forwarded | affinity | sole-ready | none), so
+#   a trace can tell a deliberate forward from a fallback without gateway logs.
+# * ``X-Lobes-Affinity`` — an INBOUND, optional caller hint (a session/thread
+#   key) that makes selection sticky to one replica while it stays selectable.
+#   It is forwarded verbatim on a hop so the receiving gateway would make the
+#   same sticky choice.
+#
+# Both response markers appear ONLY on a pooled role's answers (h1: a
+# deployment with no ``*_PEER_ORIGINS`` is byte-identical to the pre-pool
+# release, headers included).
+SERVED_BY_HEADER = "X-Lobes-Served-By"
+ROUTE_REASON_HEADER = "X-Lobes-Route-Reason"
+AFFINITY_HEADER = "X-Lobes-Affinity"
+
+# The snapshot seam: role/backend name → that role's replicas as of the last
+# background probe, local first. Injected into :func:`handle_post` exactly as
+# ``open_upstream`` is, so dispatch is unit-testable with no sockets, no clock
+# and no cache. ``None`` (every pre-pool call site) disables the pool path
+# outright. :meth:`lobes.gateway._replicas.ReplicaCache.current` satisfies it —
+# binding one is t8's job.
+ReplicaSnapshot = Callable[[str], "tuple[ReplicaState, ...]"]
+
+# The literal ``X-Lobes-Served-By`` value for a box whose operator declared no
+# GATEWAY_SELF_ORIGIN: honest ("I served it") without inventing a hostname.
+_SELF_ORIGIN_FALLBACK = "local"
+
 # 508 Loop Detected — the refusal for a marked request that would re-proxy.
 _PROXY_LOOP_STATUS = 508
 
@@ -857,16 +901,59 @@ def _proxied_owner(
     return None
 
 
-def _arriving_hop_marker(req_headers: Iterable[tuple[str, str]]) -> str | None:
-    """The inbound ``X-Lobes-Proxied`` marker value, if the request carries one."""
-    marker_key = PROXIED_HEADER.lower()
+def _request_header(req_headers: Iterable[tuple[str, str]], name: str) -> str | None:
+    """The first inbound header value matching ``name``, case-insensitively."""
+    wanted = name.lower()
     for key, value in req_headers:
-        if key.lower() == marker_key:
+        if key.lower() == wanted:
             return value
     return None
 
 
-def _proxy_loop_body(arriving: str, spec: PeerSpec) -> bytes:
+def _arriving_hop_marker(req_headers: Iterable[tuple[str, str]]) -> str | None:
+    """The inbound ``X-Lobes-Proxied`` marker value, if the request carries one."""
+    return _request_header(req_headers, PROXIED_HEADER)
+
+
+@dataclass(frozen=True)
+class _ForwardTarget:
+    """Where one outbound gateway→gateway forward is going, and as whom.
+
+    Introduced by the replica pool (t7, issue #199) so :func:`_proxy_to_peer`
+    stops being coupled to :class:`~lobes.gateway._readiness.PeerSpec`. The two
+    callers now supply the same four facts from different config channels:
+
+    * the REFERRAL/PROXY branch (issues #115/#127) builds one from a
+      ``PeerSpec`` — the singular ``<PREFIX>_PEER_ORIGIN`` naming the box that
+      hosts a role THIS box dropped;
+    * the POOL branch builds one from the plural ``<PREFIX>_PEER_ORIGINS`` /
+      ``<PREFIX>_PEER_API_KEYS`` pair — one of N interchangeable replicas of a
+      role this box DOES host.
+
+    Same wire contract either way (credential swap, single-hop marker,
+    ``X-Lobes-Proxied-By`` attribution), which is the point of sharing the
+    helper rather than growing a second forwarder that could drift out of
+    agreement with it. ``api_key`` is ``repr=False``: the empty slot is legal
+    (h29 — a peer with no inbound gate) and a non-empty one is a SECRET that
+    must never reach a log, traceback or ``--json`` dump.
+    """
+
+    name: str
+    origin: str
+    served_name: str
+    api_key: str = field(default="", repr=False)
+
+    @classmethod
+    def from_spec(cls, spec: PeerSpec) -> "_ForwardTarget":
+        return cls(
+            name=spec.name,
+            origin=spec.origin,
+            served_name=spec.served_name,
+            api_key=spec.api_key or "",
+        )
+
+
+def _proxy_loop_body(arriving: str, spec: _ForwardTarget) -> bytes:
     """The 508 ``proxy_loop`` refusal body — names BOTH hops: the one already
     taken (the arriving marker value, stamped by the gateway that forwarded
     this request) and the one refused (this box's declared peer origin for the
@@ -888,7 +975,7 @@ def _proxy_loop_body(arriving: str, spec: PeerSpec) -> bytes:
     ).encode("utf-8")
 
 
-def _peer_unavailable_response(spec: PeerSpec, attempts: list[str]) -> GatewayResponse:
+def _peer_unavailable_response(spec: _ForwardTarget, attempts: list[str]) -> GatewayResponse:
     """The retryable 503 for a refused/timed-out/5xx'ing peer — the same
     owner-down convention local backends get (#14/#91: the peer is the ONE
     place this model lives; never a cross-model fallback), with the proxied-by
@@ -909,7 +996,7 @@ def _peer_unavailable_response(spec: PeerSpec, attempts: list[str]) -> GatewayRe
     )
 
 
-def _peer_declined_body(spec: PeerSpec, raw: bytes) -> bytes | None:
+def _peer_declined_body(spec: _ForwardTarget, raw: bytes) -> bytes | None:
     """The terminal body for a peer that answered 404 ``role_infeasible``.
 
     That verdict means the PEER also dropped the role — the operator's
@@ -944,15 +1031,29 @@ def _peer_declined_body(spec: PeerSpec, raw: bytes) -> bytes | None:
 
 def _proxy_to_peer(
     cfg: ServerConfig,
-    spec: PeerSpec,
+    spec: PeerSpec | _ForwardTarget,
     path: str,
     req_headers: Iterable[tuple[str, str]],
     body: bytes,
     open_upstream: OpenUpstream,
     *,
     rewrite: bool = True,
+    extra_response_headers: Iterable[tuple[str, str]] = (),
 ) -> GatewayResponse:
-    """Forward one request to its proxied role's peer and relay the outcome.
+    """Forward one request to a peer gateway and relay the outcome.
+
+    Accepts a :class:`PeerSpec` (the referral/proxy branch's config channel)
+    or a :class:`_ForwardTarget` (the replica pool's, t7/#199) — the forward
+    itself is identical either way, which is why both share this one function
+    rather than growing a second forwarder that could drift out of agreement
+    with the credential-swap / single-hop / attribution rules.
+
+    ``extra_response_headers`` (t7) rides on EVERY outcome this produces —
+    relay, peer-declined 404, peer-down 503 — so the pool can attach
+    ``X-Lobes-Route-Reason`` beside ``X-Lobes-Proxied-By`` without the
+    reason going missing on the failure paths a trace most needs it on. The
+    508 loop refusal is the one exception below: nothing was proxied, so it
+    carries no proxy attribution at all.
 
     See the section comment above for the full contract. The synthetic
     :class:`Backend` (``peer:<name>`` at the operator-declared origin) lets
@@ -967,6 +1068,7 @@ def _proxy_to_peer(
     one did.
     """
     req_headers = list(req_headers)
+    target = spec if isinstance(spec, _ForwardTarget) else _ForwardTarget.from_spec(spec)
     arriving = _arriving_hop_marker(req_headers)
     if arriving is not None:
         # Single-hop guard: this request was already forwarded once by a peer
@@ -976,8 +1078,27 @@ def _proxy_to_peer(
         return GatewayResponse(
             status=_PROXY_LOOP_STATUS,
             headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-            body=_proxy_loop_body(arriving, spec),
+            body=_proxy_loop_body(arriving, target),
         )
+    response = _relay_to_target(cfg, target, path, req_headers, body, open_upstream, rewrite)
+    extra = list(extra_response_headers)
+    if extra:
+        response.headers = extra + response.headers
+    return response
+
+
+def _relay_to_target(
+    cfg: ServerConfig,
+    spec: _ForwardTarget,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    rewrite: bool,
+) -> GatewayResponse:
+    """The forward itself, past the single-hop guard: credential swap, dial,
+    and outcome mapping. Split out of :func:`_proxy_to_peer` only to keep that
+    function's marker/guard bookkeeping legible (Sonar S3776)."""
     streaming = is_streaming(body)
     fwd_body = rewrite_model(body, spec.served_name) if rewrite else body
     # Credential swap: the caller's Authorization authenticated it to THIS box
@@ -1064,17 +1185,26 @@ def _resolve_tier(
     requested: str | None,
     pressure: dict[str, float],
     override: bool,
-) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]]]:
+) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]], bool]:
     """The tier-alias branch of :func:`handle_post`: hardware feasibility gate,
     then pressure-aware busy shedding (#85), then the resolved served name.
 
-    Returns ``(early_response, served, tier_headers)``. When ``early_response``
-    is not ``None`` the caller must return it immediately without dialing any
-    backend; ``served``/``tier_headers`` are only meaningful otherwise.
+    Returns ``(early_response, served, tier_headers, busy)``. When
+    ``early_response`` is not ``None`` the caller must return it immediately
+    without dialing any backend; ``served``/``tier_headers`` are only
+    meaningful otherwise.
+
+    ``busy`` is the pressure verdict for THIS request, surfaced (t7, #199) so
+    the pool's ``local_busy`` input is the decision already taken rather than a
+    second sample of a moving signal. In t7 it is inert by construction: a busy
+    request returns the 429 early, so the value reaching the pool is always
+    ``False``. It is t8 that stops returning early and forwards a busy pooled
+    request to a selectable peer instead (spec c7/h6) — this return slot is the
+    seam that lets it do so without re-sampling.
     """
     early = _feasibility_response(table, requested)
     if early is not None:
-        return early, None, []
+        return early, None, [], False
     decision = resolve_tier_request(requested, pressure, override, table)
     if decision["busy"]:
         busy_response = GatewayResponse(
@@ -1086,13 +1216,13 @@ def _resolve_tier(
             ],
             body=_busy_body(decision["requested_tier"]),
         )
-        return busy_response, None, []
+        return busy_response, None, [], True
     served = decision["served_name"]
     tier_headers = [
         ("X-Lobes-Tier", decision["served_tier"]),
         ("X-Lobes-Tier-Reason", decision["reason"]),
     ]
-    return None, served, tier_headers
+    return None, served, tier_headers, False
 
 
 def _resolve_plain_model(
@@ -1115,6 +1245,121 @@ def _resolve_plain_model(
     if early is not None:
         return early, None
     return None, resolve_model(table, requested)
+
+
+# --- the replica pool: local-vs-peer dispatch (t7, issue #199) --------------
+#
+# The pool is the FOURTH thing that can happen to a model-routed POST, and it
+# differs from the referral/proxy branch above in one decisive way: that branch
+# replaces a 404 for a role this box does NOT host, while the pool may forward
+# a role this box DOES host, because a declared peer replica of the same role
+# is better placed. So it cannot live beside `_proxied_owner`; it sits after
+# the model has resolved to its owning backend and BEFORE that backend is
+# dialed.
+#
+# Three rules make it safe to bolt onto a one-owner router (#91: never a
+# different model):
+#
+# * **Same role, same model, or nothing.** A peer only enters the candidate set
+#   when its live-probed fingerprint matches the local lane's
+#   (`_replicas.py`). #91 forbids answering from a different model — it says
+#   nothing about answering from an identical one on another box.
+# * **Alias and raw served id take the identical path** (c31). Selection runs
+#   off the OWNING BACKEND NAME, which both `model=cortex` and
+#   `model=unsloth/Qwen3.8-27B-NVFP4` resolve to — and every deployed consumer
+#   pins the raw id (the 2026-07-31 audit), so an alias-only pool would never
+#   see a real caller.
+# * **One hop, always** (c4/h4). An arriving `X-Lobes-Proxied` request skips
+#   SELECTION entirely and is served by the local replica — not "selected, and
+#   the local one happened to win", which a loaded box would get wrong. A box
+#   with no local replica is the pre-existing `_proxied_owner` case and still
+#   answers 508 `proxy_loop`.
+#
+# With no `<PREFIX>_PEER_ORIGINS` declared, `_select_pool_target` returns None
+# before touching the snapshot and not one byte of the response changes (h1).
+
+
+def _replica_api_key(table: RoutingTable, backend_name: str, origin: str) -> str:
+    """This box's outbound credential for one replica ``origin``, or ``""``.
+
+    Positional against ``table.replica_origins[backend_name]`` — index *i* of
+    the keys tuple belongs to origin *i*, the parity `_config._replica_api_keys`
+    enforces at startup (a length mismatch is a config error there, never a
+    silent shift onto the wrong replica here). An EMPTY slot is legal and means
+    "this peer runs no inbound gate" (h29 — the Thor sets no
+    ``GATEWAY_API_KEY`` today); the forward then sends no Authorization at all
+    rather than a blank Bearer. Key material never leaves this function except
+    into the ``repr``-hidden :attr:`_ForwardTarget.api_key`.
+    """
+    origins = table.replica_origins.get(backend_name, ())
+    keys = table.replica_api_keys.get(backend_name, ())
+    try:
+        index = origins.index(origin)
+    except ValueError:
+        return ""
+    return keys[index] if index < len(keys) else ""
+
+
+def _select_pool_target(
+    table: RoutingTable,
+    backend_name: str,
+    req_headers: list[tuple[str, str]],
+    *,
+    replica_snapshot: ReplicaSnapshot | None,
+    local_busy: bool,
+) -> tuple[str | None, str, str] | None:
+    """Decide who serves this pooled request: ``(peer_origin, api_key, reason)``.
+
+    ``None`` means **this request is not pooled at all** — no snapshot provider
+    injected, or no ``<PREFIX>_PEER_ORIGINS`` declared for the owning backend —
+    and the caller must take the pre-pool path with no markers whatsoever (h1).
+    Otherwise ``peer_origin`` is ``None`` for "serve locally" and an origin
+    string for "forward there", and ``reason`` is always one of the closed
+    vocabulary in :mod:`lobes.gateway._selection`.
+
+    Reading the snapshot is a dict lookup: no socket is ever opened here (the
+    probes run on :class:`~lobes.gateway._replicas.ReplicaCache`'s background
+    threads), so a hung peer can never delay local dispatch.
+    """
+    if replica_snapshot is None or not table.replica_origins.get(backend_name):
+        return None
+    if _arriving_hop_marker(req_headers) is not None:
+        # Single hop (c4/h4): a request a peer already forwarded is served
+        # HERE or refused — never selected again, or two mutually-loaded boxes
+        # would ping-pong it. `sole-ready` is the honest reason: the local
+        # replica is the only one this request may consider.
+        return None, "", REASON_SOLE_READY
+    affinity = (_request_header(req_headers, AFFINITY_HEADER) or "").strip()
+    selection = select_replica(
+        replica_snapshot(backend_name),
+        affinity=affinity or None,
+        local_busy=local_busy,
+    )
+    if selection.origin is None or selection.local:
+        # Nothing selectable (reason `none`), or the local replica won. t7
+        # dispatches locally in BOTH cases; t8 is what turns "nothing
+        # selectable" into the 429/503 semantics the spec (c35/h27) requires.
+        return None, "", selection.reason
+    return (
+        selection.origin,
+        _replica_api_key(table, backend_name, selection.origin),
+        selection.reason,
+    )
+
+
+def _stamp_pool_headers(table: RoutingTable, reason: str) -> list[tuple[str, str]]:
+    """The markers a LOCALLY-served pooled answer carries (c19/h14, c37/h30).
+
+    ``X-Lobes-Served-By`` names this box by its operator-declared
+    ``GATEWAY_SELF_ORIGIN``, falling back to the literal ``"local"`` — never a
+    hostname derived from the box's own view of its network (#92). A FORWARDED
+    answer gets ``X-Lobes-Proxied-By`` from :func:`_proxy_to_peer` instead, plus
+    the same reason header.
+    """
+    return [
+        (SERVED_BY_HEADER, table.self_origin or _SELF_ORIGIN_FALLBACK),
+        (ROUTE_REASON_HEADER, reason),
+    ]
 
 
 def _try_backends(
@@ -1344,6 +1589,7 @@ def handle_post(
     pressure: dict[str, float] | None = None,
     override: bool = False,
     peer_specs: Mapping[str, PeerSpec] | None = None,
+    replica_snapshot: ReplicaSnapshot | None = None,
 ) -> GatewayResponse:
     """Resolve the model to its ONE owning backend and try it exactly once.
 
@@ -1420,6 +1666,23 @@ def handle_post(
     — hosted, referral-only infeasible, unknown — take exactly the paths below,
     byte-identically; so does EVERY request when ``peer_specs`` is ``None``
     (every pre-t6 call site, and any deployment with no proxy config).
+
+    The replica pool (``replica_snapshot``, cortex-replica-pool t7, issue
+    #199): AFTER the model has resolved to its single owning backend and
+    BEFORE that backend is dialed, a role with a declared
+    ``<PREFIX>_PEER_ORIGINS`` set is placed by :func:`_select_pool_target` —
+    local or one declared peer replica of the SAME role, chosen from an O(1)
+    cached snapshot. This is not a hole in #91: a peer enters the candidate set
+    only when its live-probed fingerprint matches the local lane's, so a caller
+    who asked for cortex is never answered by a different model — only by an
+    identical one on another box. The alias and the raw served id take the
+    identical path, because selection keys off the OWNING BACKEND NAME both
+    resolve to (c31). An arriving ``X-Lobes-Proxied`` request skips selection
+    entirely and is served locally (c4/h4). Pooled answers carry
+    ``X-Lobes-Served-By`` (local) or ``X-Lobes-Proxied-By`` (forwarded), both
+    with ``X-Lobes-Route-Reason``. With ``replica_snapshot`` ``None`` (every
+    pre-pool call site) or no ``*_PEER_ORIGINS`` declared, not one byte of any
+    response changes — success or error path (h1).
     """
     requested = extract_model(body)
     if peer_specs:
@@ -1429,6 +1692,7 @@ def handle_post(
                 cfg, peer_specs[proxied_name], path, req_headers, body, open_upstream
             )
     tier_headers: list[tuple[str, str]] = []
+    local_busy = False
     if pressure is not None and is_tier_alias(requested):
         # Hardware feasibility gate (issue #92 extended to the HARDWARE
         # dimension, task t6) runs BEFORE pressure-shedding/upward-fallback: an
@@ -1438,8 +1702,13 @@ def handle_post(
         # infeasible role (e.g. "cortex") is rejected outright, never silently
         # re-routed to a different, feasible gear via the tier system's normal
         # upward-fallback substitution.
-        early, served, tier_headers = _resolve_tier(table, requested, pressure, override)
+        early, served, tier_headers, local_busy = _resolve_tier(
+            table, requested, pressure, override
+        )
         if early is not None:
+            # t7 keeps the pre-pool 429 verbatim. t8 replaces THIS return for a
+            # pooled+busy request with a forward to a selectable peer, using the
+            # `local_busy` value captured above (spec c7/h6).
             return early
     else:
         # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
@@ -1458,10 +1727,7 @@ def handle_post(
         early, served = _resolve_plain_model(table, requested)
         if early is not None:
             return early
-    streaming = is_streaming(body)
-    fwd_body = rewrite_model(body, served)
-    fwd_headers = filter_headers(req_headers)
-
+    req_headers = list(req_headers)
     ordered = order_backends(table, served)
     if not ordered:
         # DEGENERATE case ONLY: no backend owns `served` AND none owns
@@ -1476,6 +1742,41 @@ def handle_post(
             body=_error_body("no backend owns the requested model", []),
             attempts=[],
         )
+
+    # --- replica pool (t7, #199): local-vs-peer placement, before dialing ---
+    pool = _select_pool_target(
+        table,
+        ordered[0].name,
+        req_headers,
+        replica_snapshot=replica_snapshot,
+        local_busy=local_busy,
+    )
+    if pool is not None:
+        peer_origin, replica_key, reason = pool
+        if peer_origin is not None:
+            return _proxy_to_peer(
+                cfg,
+                _ForwardTarget(
+                    name=ordered[0].name,
+                    origin=peer_origin,
+                    served_name=served,
+                    api_key=replica_key,
+                ),
+                path,
+                req_headers,
+                body,
+                open_upstream,
+                extra_response_headers=[(ROUTE_REASON_HEADER, reason)],
+            )
+        # Served here — say so explicitly. Prepending to `tier_headers` puts the
+        # markers on EVERY local outcome below (relay, owner-down 503) with no
+        # extra plumbing, and keeps them streaming-safe (they precede the
+        # upstream's own headers, so nothing is emitted after the first chunk).
+        tier_headers = _stamp_pool_headers(table, reason) + tier_headers
+
+    streaming = is_streaming(body)
+    fwd_body = rewrite_model(body, served)
+    fwd_headers = filter_headers(req_headers)
 
     response, attempts = _dial_owner(
         ordered, cfg, path, fwd_body, fwd_headers, open_upstream, streaming, tier_headers
@@ -1996,6 +2297,12 @@ class _Handler(BaseHTTPRequestHandler):
     # data plane is inert and every request behaves byte-identically to the
     # pre-proxy gateway.
     peer_specs: Mapping[str, PeerSpec] | None = None
+    # The replica-pool snapshot provider (t7, #199): backend name → that role's
+    # replicas as of the last background probe. None → the pool path is inert
+    # and every request behaves byte-identically to the pre-pool gateway. t8
+    # binds this to a live ReplicaCache started in serve(); until then no
+    # deployment sets it, so the pool ships wired but dormant.
+    replica_snapshot: ReplicaSnapshot | None = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -2307,6 +2614,7 @@ class _Handler(BaseHTTPRequestHandler):
                 pressure=pressure,
                 override=override,
                 peer_specs=self.peer_specs,
+                replica_snapshot=self.replica_snapshot,
             )
         if resp.upstream is None:
             self._send_simple(resp.status, resp.headers, resp.body or b"")
@@ -2379,6 +2687,7 @@ def _make_handler(
     pressure_cache: PressureCache | None = None,
     readiness_cache: ReadinessCache | None = None,
     peer_specs: Mapping[str, PeerSpec] | None = None,
+    replica_snapshot: ReplicaSnapshot | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
@@ -2389,6 +2698,7 @@ def _make_handler(
             "pressure_cache": pressure_cache,
             "readiness_cache": readiness_cache,
             "peer_specs": peer_specs,
+            "replica_snapshot": replica_snapshot,
         },
     )
     return bound
