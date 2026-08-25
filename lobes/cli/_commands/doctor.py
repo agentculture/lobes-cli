@@ -440,6 +440,63 @@ _FIX_REMEDIATION = (
     "existing .env line is never rewritten)"
 )
 
+# --- the associate lane's authenticated front (lightning-on-orin plan, t10) --
+# Grounded in a REAL incident, not a hypothetical. On 2026-08-25 the Lightning
+# spike ran NVIDIA's published Jetson recipe verbatim, which binds an
+# OpenAI-compatible 30B generate endpoint on the box's tailnet with no
+# credential. Within seconds of the API server starting, two DISTINCT tailnet
+# peers queried it, neither initiated by the operator — see
+# docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt (the two `GET
+# /v1/models 200 OK` lines from 100.127.105.72 and 100.105.216.63) and
+# docs/evidence/2026-08-26-associate-gateway-auth-front.txt.
+#
+# The shipped lane publishes NO host port (the gateway is the only front
+# door), so the remaining way to leave it uncredentialed is to run the gateway
+# itself with no inbound key. This check is what makes "the associate lane
+# binds behind GATEWAY_API_KEY" a CHECKED property of a deployment rather than
+# something the operator is trusted to have remembered.
+#
+# Deliberately scoped to a LOCALLY HOSTED associate (ASSOCIATE_BASE_URL set —
+# the activation env an associate-hosting shape renders). A box that merely
+# refers or proxies associate to a peer hosts nothing, and every pre-associate
+# deployment is byte-identically unaffected: the finding is not emitted at all.
+_ASSOCIATE_HOST_KEY = "ASSOCIATE_BASE_URL"
+#: Same precedence the gateway itself resolves its inbound key by
+#: (lobes.gateway._config.inbound_api_key): explicit knob first, legacy
+#: Culture-wide channel second. Either one arms the bearer gate.
+_INBOUND_KEY_VARS: tuple[str, ...] = ("GATEWAY_API_KEY", "CULTURE_VLLM_API_KEY")
+
+
+def _associate_auth_gate_check(deploy_dir: Path) -> dict | None:
+    """``associate`` is hosted here ⇒ the gateway must require a bearer key.
+
+    Returns ``None`` (no finding at all) when this box does not host the lane.
+    Never echoes key material — only whether a non-blank value is present.
+    """
+    env_path = deploy_dir / _compose.ENV_FILE
+    hosted = (_env.read_env(env_path, _ASSOCIATE_HOST_KEY) or "").strip()
+    if not hosted:
+        return None
+    armed = [var for var in _INBOUND_KEY_VARS if (_env.read_env(env_path, var) or "").strip()]
+    if armed:
+        return _check(
+            "associate_auth_gate",
+            True,
+            "info",
+            f"associate lane is behind the gateway bearer gate ({armed[0]} set)",
+        )
+    return _check(
+        "associate_auth_gate",
+        False,
+        "error",
+        "associate lane is hosted here but the gateway requires no credential "
+        "(neither GATEWAY_API_KEY nor CULTURE_VLLM_API_KEY is set)",
+        "set GATEWAY_API_KEY in .env (scripts/gen-api-key.py mints one), then "
+        "'lobes fleet up --apply' — an uncredentialed generate lane was queried "
+        "by two tailnet peers within seconds on 2026-08-25",
+    )
+
+
 # The packaged template tree every scaffold file is materialised from — the
 # same resource root `lobes init` / `lobes.runtime._compose` read.
 _TEMPLATES_PACKAGE = "lobes.templates"
@@ -723,6 +780,10 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
             stale_check, missing_env = _profile_staleness_check(deploy_dir)
             passthrough_check = _gateway_passthrough_check(deploy_dir)
             checks.extend([files_check, stale_check, passthrough_check])
+            # Only emitted when this box actually HOSTS the associate lane.
+            auth_gate = _associate_auth_gate_check(deploy_dir)
+            if auth_gate is not None:
+                checks.append(auth_gate)
             fix_plan = {"files": missing_files, "env": missing_env}
 
     checks.append(_health_check(port))

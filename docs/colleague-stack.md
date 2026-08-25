@@ -232,6 +232,18 @@ Three facts follow from it being an **opt-in core role**
   cortex/senses/worker/muse. It is **not** a servable floor — `hand` remains
   the only one.
 
+A fourth fact is specific to this role: **hosting it requires an inbound
+gateway key.** The `vllm-associate` container publishes no host port (the
+gateway is the only way in), and the checkpoint's published Jetson recipe —
+run verbatim during the 2026-08-25 spike — put an uncredentialed 30B generate
+lane on the operator's tailnet that two distinct peers queried unprompted
+within seconds. The shipped lane does not inherit that recipe's host
+networking, and `lobes doctor` fails (error severity, `associate_auth_gate`)
+any deployment that wires `ASSOCIATE_BASE_URL` while setting neither
+`GATEWAY_API_KEY` nor `CULTURE_VLLM_API_KEY`. See
+`docs/evidence/2026-08-26-associate-gateway-auth-front.txt` and
+[`docs/gateway-fleet.md`](gateway-fleet.md)'s auth section.
+
 In the capability ladder it takes the **highest non-cortex rung**:
 `hand` < `multimodal` < `worker` < `muse` < `associate` < `main`/`cortex`.
 Its role name IS its backend/tier name, like `muse` and `worker`.
