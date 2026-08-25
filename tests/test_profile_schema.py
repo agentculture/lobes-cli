@@ -20,6 +20,7 @@ import pytest
 
 from lobes import machines, profiles
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.machines import orin as machines_orin
 from lobes.profiles import loader, schema
 from lobes.profiles.schema import (
     KNOB_NAMES,
@@ -455,9 +456,14 @@ def test_orin_builtin_records_the_measured_budget_with_its_boot_order_caveat() -
 
 
 def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:
-    # muse/worker are NVFP4 exports that quantize ACTIVATIONS to FP4, which needs
-    # Blackwell tensor cores; sm_87 is Ampere. A hard architecture line, not a
-    # memory tradeoff — so they carry no model and no knobs either.
+    # Both stay declared infeasible, carrying no model and no knobs — but for
+    # two DIFFERENT reasons, which lightning-on-orin t4 separated:
+    #   * muse (nvidia/Gemma-4-31B-IT-NVFP4) quantizes ACTIVATIONS to FP4, which
+    #     needs Blackwell tensor cores; sm_87 is Ampere. A hard architecture
+    #     line, not a memory tradeoff.
+    #   * worker (Lightning) is W4A16 weight-only per its own hf_quant_config
+    #     and DID boot live on this board — it stays false only because no gear
+    #     is declared for it here yet. See the two carve-out tests below.
     #
     # `cortex` is deliberately NOT in this list any more (qwen3-8-gguf-llamacpp
     # t5): the NVFP4 line is about the CHECKPOINT FORMAT, and this card serves
@@ -472,6 +478,77 @@ def test_orin_builtin_marks_every_nvfp4_generate_lobe_infeasible() -> None:
     text = _orin_toml_text()
     assert "Blackwell" in text
     assert "W4A16" in text  # the contrasting weight-only scheme senses uses
+
+
+# --- the W4A4 line is PER-CHECKPOINT, not per-board -------------------------
+#
+# lightning-on-orin t4. The Orin card used to blame ONE reason — "NVFP4
+# quantizes activations to FP4, sm_87 is Ampere" — for all three NVFP4 generate
+# lobes. That reason is checkpoint-specific, and it is FALSE for Lightning,
+# whose own hf_quant_config.json declares MIXED_PRECISION with W4A16_NVFP4
+# (weight-only) experts. These two tests pin the carve-out in BOTH directions:
+# Lightning is carved out with its config cited, and the two checkpoints the
+# W4A4 sentence still describes stay named and stay infeasible.
+
+_W4A4_CHECKPOINTS = ("unsloth/Qwen3.8-27B-NVFP4", "nvidia/Gemma-4-31B-IT-NVFP4")
+_LIGHTNING_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+_CARVE_OUT_MARKER = "Lightning carve-out"
+
+
+def _split_on_carve_out(text: str) -> tuple[str, str]:
+    """(the surviving W4A4 statement, the Lightning carve-out that follows)."""
+    assert _CARVE_OUT_MARKER in text, "the carve-out must be a findable, named block"
+    before, after = text.split(_CARVE_OUT_MARKER, 1)
+    return before.split("NVFP4 architecture line", 1)[-1], after
+
+
+def test_orin_w4a4_line_still_names_the_two_checkpoints_it_describes() -> None:
+    """The W4A4 statement must survive intact for the checkpoints it is TRUE of.
+
+    Carving Lightning out must not become "the Orin can serve NVFP4 after all".
+    unsloth/Qwen3.8-27B-NVFP4 (as an NVFP4 export) and
+    nvidia/Gemma-4-31B-IT-NVFP4 do quantize activations to FP4 and remain
+    infeasible on Ampere sm_87 — declared, not merely narrated.
+    """
+    orin = loader.load_builtin("orin")
+
+    # nvidia/Gemma-4-31B-IT-NVFP4 is the `muse` lobe: declared infeasible, and
+    # carrying no model/knob opinion at all.
+    assert orin.role("muse") == RoleProfile(feasible=False)
+    # unsloth/Qwen3.8-27B-NVFP4 is the `cortex` NVFP4 export: the role is served
+    # here, but ONLY off the weight-only GGUF — the NVFP4 export is never
+    # declared on this card.
+    assert orin.role("cortex").model != "unsloth/Qwen3.8-27B-NVFP4"
+
+    for text in (_orin_toml_text(), machines_orin.__doc__ or ""):
+        surviving, carve_out = _split_on_carve_out(text)
+        assert "W4A4" in surviving or "activations" in surviving
+        for checkpoint in _W4A4_CHECKPOINTS:
+            assert checkpoint in surviving, f"{checkpoint} must stay named as W4A4-blocked"
+        # ...and Lightning must NOT be one of them any more.
+        assert _LIGHTNING_ID not in surviving
+        assert _LIGHTNING_ID in carve_out
+
+
+def test_orin_carves_lightning_out_citing_its_own_quant_config_and_the_live_run() -> None:
+    """Both files must justify the carve-out from Lightning's OWN config.
+
+    "we tried it and it worked" is not the correction — the correction is that
+    the checkpoint never had FP4 activations to begin with, which its
+    hf_quant_config.json states, and which a live sm_87 boot then confirmed.
+    """
+    for text in (_orin_toml_text(), machines_orin.__doc__ or ""):
+        _, carve_out = _split_on_carve_out(text)
+        assert "hf_quant_config.json" in carve_out  # the primary source
+        assert "W4A16_NVFP4" in carve_out  # weight-only experts
+        assert "in_proj" in carve_out and "out_proj" in carve_out
+        assert "FP8" in carve_out  # ...and the barrier half that IS real
+        assert "docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt" in carve_out
+        assert "Marlin" in carve_out  # the kernel stack the live boot selected
+
+    # The correction is to the REASON only — t4 flips no role. `worker` stays
+    # declared infeasible here; hosting Lightning is t6/t8/t9's decision.
+    assert loader.load_builtin("orin").role("worker") == RoleProfile(feasible=False)
 
 
 def test_orin_builtin_serves_cortex_on_the_llama_cpp_engine() -> None:

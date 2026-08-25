@@ -7,16 +7,41 @@ real hostname is literally that, and its device-tree model string
 (``/proc/device-tree/model``, the Jetson-only fallback signal) also carries
 it (``"NVIDIA Jetson AGX Orin Developer Kit"``).
 
-**Ampere cannot serve the NVFP4 `cortex` primary.** The 27B checkpoint
-(`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` / the current primary
-`unsloth/Qwen3.8-27B-NVFP4`, and its predecessor `unsloth/Qwen3.6-27B-NVFP4`)
-quantizes *activations* to FP4, which needs
+**Ampere cannot serve the NVFP4 `cortex` primary, nor the NVFP4 `muse`
+export.** The 27B checkpoint (`sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP` / the
+current primary `unsloth/Qwen3.8-27B-NVFP4`, and its predecessor
+`unsloth/Qwen3.6-27B-NVFP4`), and muse's `nvidia/Gemma-4-31B-IT-NVFP4`,
+quantize *activations* to FP4 (W4A4 on the MLP path), which needs
 Blackwell-class tensor cores — sm_87 is Ampere, one generation short. That is
 a hard architecture line, not a memory tradeoff, and it is a per-role
 *feasibility* fact (declared in a fleet ``Profile`` TOML — out of scope here;
 see the `orin.toml` operator profile in docs/orin-profiles.md and the
 built-in `lobes/profiles/builtin/orin.toml`). This module only
 owns card *detection* plus the knob divergences the live boot measured.
+
+That statement is PER-CHECKPOINT, and it stands unweakened for those exports.
+What it is NOT is a property of "NVFP4" as a word — which is what the next
+paragraph carves out.
+
+**The Lightning carve-out (2026-08-25).** ``worker``'s
+`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` used to be swept into the
+W4A4 sentence above. That was false for it: the checkpoint's OWN
+``hf_quant_config.json`` (fetched 2026-08-25) declares ``quant_algo`` =
+``"MIXED_PRECISION"``, with every routed *and* shared expert
+``up_proj``/``down_proj`` at ``"W4A16_NVFP4"`` (``group_size`` 16) — WEIGHT-only
+FP4 with 16-bit activations — the mixer ``in_proj``/``out_proj`` at ``"FP8"``,
+and ``kv_cache_quant_algo`` ``"FP8"``. W4A16 is structurally the same exception
+this board already runs for the int4 W4A16 ``senses`` gear: weights dequantize
+through Marlin into 16-bit arithmetic, so there is no FP4 activation path to be
+a generation short of. CONFIRMED LIVE on this physical board
+(docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt): vLLM v0.27.1 took
+``quantization=modelopt_mixed`` on sm_87, selected a full Marlin fallback stack
+(``MarlinFP8ScaledMMLinearKernel``, ``MarlinNvFp4LinearKernel``, the ``MARLIN``
+NvFp4 MoE backend) plus native FlashAttention 2, and served correct output at
+~78-81 tok/s. The FP8 halves ARE a real sm_87 barrier — the FP8 KV cache needed
+``--kv-cache-dtype bfloat16`` to get past it. This is a correction to the
+stated REASON only; no feasibility declaration moves with it, and this module
+owns none of them anyway.
 
 Note the line is about the CHECKPOINT FORMAT, not the ROLE: since 2026-08-23
 ``builtin/orin.toml`` declares ``cortex`` feasible on a **GGUF** gear served by
