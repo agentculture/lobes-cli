@@ -152,23 +152,21 @@ def test_replica_api_keys_without_origins_is_inert() -> None:
 
 
 def test_replica_api_keys_shorter_list_raises_naming_prefix() -> None:
+    env = _base_env(
+        PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}",
+        PRIMARY_PEER_API_KEYS="k1",
+    )
     with pytest.raises(ReplicaConfigError, match="PRIMARY"):
-        build_config(
-            _base_env(
-                PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}",
-                PRIMARY_PEER_API_KEYS="k1",
-            )
-        )
+        build_config(env)
 
 
 def test_replica_api_keys_longer_list_raises_naming_prefix() -> None:
+    env = _base_env(
+        PRIMARY_PEER_ORIGINS=_ORIGIN_A,
+        PRIMARY_PEER_API_KEYS="k1,k2",
+    )
     with pytest.raises(ReplicaConfigError, match="PRIMARY"):
-        build_config(
-            _base_env(
-                PRIMARY_PEER_ORIGINS=_ORIGIN_A,
-                PRIMARY_PEER_API_KEYS="k1,k2",
-            )
-        )
+        build_config(env)
 
 
 def test_replica_api_keys_stripped_not_transformed() -> None:

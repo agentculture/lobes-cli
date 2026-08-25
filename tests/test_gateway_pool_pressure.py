@@ -285,7 +285,8 @@ def test_busy_with_no_selectable_peer_keeps_the_pre_pool_429() -> None:
 
     assert pooled.status == plain.status == 429
     assert pooled.body == plain.body
-    assert pooled_calls == [] and plain_calls == []
+    assert pooled_calls == []
+    assert plain_calls == []
     assert pooled.headers == [(S.ROUTE_REASON_HEADER, REASON_NONE)] + plain.headers
     assert _header(pooled, "Retry-After") == str(S.BUSY_RETRY_AFTER_SECONDS)
     assert _header(pooled, "X-Lobes-Tier-Reason") == "busy"
@@ -758,18 +759,22 @@ def test_build_replica_caches_refreshes_before_returning() -> None:
     # The publication job (c33): the co-resident senses lane gets a local-only
     # cache so its fingerprint reaches /capabilities too.
     assert "multimodal" in caches
-    assert f"{_LOCAL_URL}/v1/models" in seen and f"{_THOR_ORIGIN}/status" in seen
+    assert f"{_LOCAL_URL}/v1/models" in seen
+    assert f"{_THOR_ORIGIN}/status" in seen
 
     states = caches["primary"].current()
     assert [s.origin for s in states] == [_LOCAL_URL, _THOR_ORIGIN]
     local, peer = states
-    assert local.local is True and local.ready is True
+    assert local.local is True
+    assert local.ready is True
     assert local.fingerprint.served_id == _CORTEX_ID
     assert local.fingerprint.max_model_len == 262144
     assert local.fingerprint.runtime == "vllm"  # live, from owned_by
     assert local.fingerprint.kv_cache_dtype == "fp8"  # declared
     assert local.fingerprint.tool_parser == "qwen3_coder"  # the adapted suffix
-    assert peer.ready is True and peer.compatible is True and peer.busy is False
+    assert peer.ready is True
+    assert peer.compatible is True
+    assert peer.busy is False
 
     # And the dispatch seam reads it by BACKEND name, socket-free.
     provider = S.replica_snapshot_provider(caches)
@@ -814,7 +819,8 @@ def test_capabilities_payload_carries_live_replicas_on_a_pooled_box() -> None:
     assert cortex["fingerprint"]["kv_cache_dtype"] == "fp8"
     origins = {row["origin"]: row for row in cortex["replicas"]}
     assert set(origins) == {_LOCAL_URL, _THOR_ORIGIN}
-    assert origins[_LOCAL_URL]["local"] is True and origins[_LOCAL_URL]["ready"] is True
+    assert origins[_LOCAL_URL]["local"] is True
+    assert origins[_LOCAL_URL]["ready"] is True
     assert origins[_THOR_ORIGIN]["ready"] is True
     assert origins[_THOR_ORIGIN]["busy"] is False
     assert origins[_THOR_ORIGIN]["running"] == 3

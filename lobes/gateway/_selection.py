@@ -152,6 +152,61 @@ def _preferred_by_affinity(
     return best
 
 
+def _selectable(candidates: Sequence[ReplicaLike], *, local_busy: bool) -> list[ReplicaLike]:
+    """The subset of *candidates* eligible to serve at all (step 1)."""
+    return [c for c in candidates if _is_selectable(c, local_busy=local_busy)]
+
+
+def _rank(selectable: Sequence[ReplicaLike]) -> list[ReplicaLike]:
+    """*selectable*, ordered by :func:`_rank_key` (step 4's ranking)."""
+    return sorted(selectable, key=_rank_key)
+
+
+def _sole_reason(
+    only: ReplicaLike,
+    candidates: Sequence[ReplicaLike],
+    *,
+    local_busy: bool,
+    has_local_input: bool,
+) -> str:
+    """The reason for the exactly-one-selectable case (step 3)."""
+    if only.local:
+        if len(candidates) == 1 and only.running + only.waiting == 0:
+            return REASON_LOCAL_IDLE
+        return REASON_SOLE_READY
+    if local_busy and has_local_input:
+        return REASON_LOCAL_BUSY_FORWARDED
+    return REASON_SOLE_READY
+
+
+def _reason_for(best: ReplicaLike, *, local_busy: bool) -> str:
+    """The availability-ranking reason for *best* (step 4, pre-affinity)."""
+    if not best.local and local_busy:
+        return REASON_LOCAL_BUSY_FORWARDED
+    if best.local and estimated_wait(best) == 0:
+        return REASON_LOCAL_IDLE
+    if not best.local:
+        return REASON_PEER_LESS_LOADED
+    return REASON_SOLE_READY
+
+
+def _affinity_pick(
+    selectable: Sequence[ReplicaLike],
+    best: ReplicaLike,
+    best_reason: str,
+    *,
+    affinity: Optional[str],
+    affinity_margin: float,
+) -> Selection:
+    """Apply step 5's affinity override on top of the availability winner."""
+    if affinity:
+        preferred = _preferred_by_affinity(selectable, affinity)
+        if preferred is not None:
+            if estimated_wait(preferred) - estimated_wait(best) <= affinity_margin:
+                return Selection(preferred.origin, preferred.local, REASON_AFFINITY)
+    return Selection(best.origin, best.local, best_reason)
+
+
 def select_replica(
     candidates: Sequence[ReplicaLike],
     *,
@@ -162,42 +217,22 @@ def select_replica(
     """Deterministically choose which replica (if any) should serve a
     pooled request. See the module docstring for the full policy."""
 
-    selectable = [c for c in candidates if _is_selectable(c, local_busy=local_busy)]
+    selectable = _selectable(candidates, local_busy=local_busy)
 
     if not selectable:
         return Selection(None, False, REASON_NONE)
 
     has_local_input = any(c.local for c in candidates)
-    ranked = sorted(selectable, key=_rank_key)
+    ranked = _rank(selectable)
     best = ranked[0]
 
     if len(selectable) == 1:
-        only = best
-        if only.local:
-            if len(candidates) == 1 and only.running + only.waiting == 0:
-                best_reason = REASON_LOCAL_IDLE
-            else:
-                best_reason = REASON_SOLE_READY
-        else:
-            if local_busy and has_local_input:
-                best_reason = REASON_LOCAL_BUSY_FORWARDED
-            else:
-                best_reason = REASON_SOLE_READY
-        return Selection(only.origin, only.local, best_reason)
+        reason = _sole_reason(
+            best, candidates, local_busy=local_busy, has_local_input=has_local_input
+        )
+        return Selection(best.origin, best.local, reason)
 
-    if not best.local and local_busy:
-        best_reason = REASON_LOCAL_BUSY_FORWARDED
-    elif best.local and estimated_wait(best) == 0:
-        best_reason = REASON_LOCAL_IDLE
-    elif not best.local:
-        best_reason = REASON_PEER_LESS_LOADED
-    else:
-        best_reason = REASON_SOLE_READY
-
-    if affinity:
-        preferred = _preferred_by_affinity(selectable, affinity)
-        if preferred is not None:
-            if estimated_wait(preferred) - estimated_wait(best) <= affinity_margin:
-                return Selection(preferred.origin, preferred.local, REASON_AFFINITY)
-
-    return Selection(best.origin, best.local, best_reason)
+    best_reason = _reason_for(best, local_busy=local_busy)
+    return _affinity_pick(
+        selectable, best, best_reason, affinity=affinity, affinity_margin=affinity_margin
+    )

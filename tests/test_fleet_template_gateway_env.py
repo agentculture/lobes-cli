@@ -212,7 +212,8 @@ class TestEnvExampleDocumentsTheReplicaPool:
         text = _ENV_EXAMPLE.read_text(encoding="utf-8")
         section = text[text.index("Replica pool") : text.index("GATEWAY_SELF_ORIGIN=")]
         assert "empty" in section.lower()
-        assert "startup" in section.lower() and "error" in section.lower()
+        assert "startup" in section.lower()
+        assert "error" in section.lower()
 
     def test_per_box_differs_note_documented(self) -> None:
         text = _ENV_EXAMPLE.read_text(encoding="utf-8")
