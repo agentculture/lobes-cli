@@ -89,6 +89,15 @@ KNOB_NAMES: tuple[str, ...] = (
     # same way kv_cache_dtype/attention_backend already do.
     "hf_overrides",
     "allow_long_max_model_len",
+    # speculative_config (dspark-adopt-shape-default): the raw
+    # ``--speculative-config=...`` argv token a shape/card wants on the lane,
+    # threaded to the compose command's ${PREFIX_SPECULATIVE_CONFIG-default}
+    # slot. A shape needs this to declare a draft that is NOT the checkpoint's
+    # own baked-in MTP head -- e.g. spark-lobe's DSpark block drafter. Like
+    # hf_overrides it is a plain string, so the str-knob render path handles
+    # it with no special case. See the QUOTING note on the dataclass field
+    # below: the value carries its own shell quotes, and that is deliberate.
+    "speculative_config",
 )
 
 
@@ -366,6 +375,7 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "max_num_seqs": (_is_optional_int, "int or None"),
     "hf_overrides": (_is_optional_str, _STR_OR_NONE),
     "allow_long_max_model_len": (_is_optional_str, _STR_OR_NONE),
+    "speculative_config": (_is_optional_str, _STR_OR_NONE),
 }
 
 
@@ -400,6 +410,26 @@ class RoleProfile:
     # the same str-knob path as kv_cache_dtype/attention_backend — vLLM reads
     # the env var as a raw string, not a "true"/"false" token.
     allow_long_max_model_len: str | None = None
+    # The lane's ``--speculative-config=...`` argv token, or None for "no
+    # opinion" (the compose template's own default applies -- for cortex that
+    # is the checkpoint's self-hosted MTP head at n=2).
+    #
+    # QUOTING (load-bearing, and the reason this is a raw token rather than a
+    # parsed JSON dataclass): the compose slot is UNQUOTED --
+    # ``${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={...}'}`` -- because
+    # the DEFAULT supplies its own single quotes. A value substituted there
+    # crosses compose's dotenv parser first and its shell-lexer second, so it
+    # must carry BOTH layers itself: the .env line is double-quoted (so dotenv
+    # keeps the inner quotes) and the value inside is single-quoted (so the
+    # shell-lexer yields ONE argv token instead of splitting on the JSON's
+    # spaces and eating its double quotes). Authors write those exact bytes
+    # here; ``lobes.profiles.render`` renders them verbatim. The empty string
+    # is the documented OFF switch (the flag is omitted from the argv, not
+    # blanked) -- that is why the dash-only ``${VAR-default}`` operator is used
+    # in the template, and why None (silent) and "" (off) mean different
+    # things here. See lobes/templates/fleet/env.example's
+    # PRIMARY_SPECULATIVE_CONFIG / MULTIMODAL_SPECULATIVE_CONFIG blocks.
+    speculative_config: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view — every declared field, ``None`` included.

@@ -38,6 +38,7 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "max_num_seqs",
         "hf_overrides",
         "allow_long_max_model_len",
+        "speculative_config",
     }
 
 
@@ -54,6 +55,7 @@ def test_role_profile_round_trips_through_dict() -> None:
         max_num_seqs=4,
         hf_overrides='{"text_config": {"rope_parameters": {"rope_type": "yarn"}}}',
         allow_long_max_model_len="1",
+        speculative_config='"\'--speculative-config={\\"method\\":\\"mtp\\"}\'"',
     )
     again = RoleProfile.from_dict("cortex", rp.to_dict())
     assert again == rp

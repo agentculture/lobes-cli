@@ -453,6 +453,18 @@ services, and the 2026-07-14 boot measured only **59.35 GiB free** at
 primary startup against the **73.01 GiB** that util 0.60 demands. 0.44
 (53.5 GiB) fits the measured reality with margin.
 
+**What `spark-lobe` declares TODAY is not that 0.44 / 262144 pair.** The table
+and paragraph above report the 2026-07-14 acceptance run and stay accurate as
+history. The shape has moved twice since: to `gpu_mem_util=0.58` at a
+YaRN-extended 1,048,576 window (2026-08-19), and then — deviation d4,
+2026-08-25 — back to the checkpoint's native **262144** at the same 0.58,
+adopting the **DSpark** block drafter, whose KV cost cannot co-exist with the
+1M window at that budget. Measured KV pool at the adopted pair: **760,806
+tokens**, **2.90×** concurrency at 262144. The reclaim *argument* this section
+makes is unchanged — dropping `senses` is still what funds the budget — only
+the numbers moved. See `docs/dspark-speculation.md#adopted-in-tree-2026-08-25`
+and the shape TOML's own d4 comment block.
+
 **thor-lobe** (measured live, 2026-07-14): dropping `cortex` lets `senses`
 reclaim budget. `MULTIMODAL_GPU_MEM_UTIL=0.30` /
 `MULTIMODAL_MAX_MODEL_LEN=131072` — its full native 128K context. Measured KV
