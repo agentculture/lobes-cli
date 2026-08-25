@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.1] - 2026-08-25
+
+### Changed
+
+- `speculative_config` is REFUSED at load for a role whose compose lane cannot expand `<PREFIX>_SPECULATIVE_CONFIG` (`schema.SPECULATIVE_CONFIG_ROLES` = cortex / senses / worker). `muse` hardcodes its `--speculative-config` token as a YAML list element, and `hand`/`embedder`/`reranker` carry no speculative flag at all, so declaring the knob there used to render an `.env` key nothing reads — a silent no-op. It now fails loudly with a message naming why, matching the existing rule that an unknown knob is a load error rather than a silently dropped one. Raised by review on PR #202 (Qodo finding 4).
+- docs, CLAUDE.md and `spark-lobe.toml` no longer claim a per-box override for the DSpark default that does not exist. A shape override beats the card profile and a re-render force-writes the rendered key, so the honest routes are "select a different shape" or "fork the shape file" — the missing mechanism is tracked in #204 rather than papered over. Raised by review on PR #202 (Qodo finding 5).
+
+### Fixed
+
+- docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt RETRACTS a false claim: it said an operator re-rendering the live box would drop the now-undeclared `PRIMARY_ALLOW_LONG_MAX_MODEL_LEN`. It will not — `.env` is merge-only, so a key the profile no longer renders is left in place, not removed. The error came from reading a fresh render, where nothing stale can survive. The transcript now also bounds its own argv-equivalence result to fresh renders. Raised by review on PR #202 (Qodo finding 3).
+
+## [0.61.0] - 2026-08-25
+
+### Added
+
+- `speculative_config` — a new per-role machine-profile knob (`lobes/profiles/schema.py`, rendered to `<PREFIX>_SPECULATIVE_CONFIG`) carrying the lane's raw `--speculative-config=…` argv token. Until now a shape could declare a *window* and a *rope* opinion but not a *draft* opinion, so serving anything other than a checkpoint's own baked-in MTP head could only ever be a hand-edit to a rendered compose file. `None` still means "no opinion" (the template default applies); `""` still means "no speculative decoding at all".
+- docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt — a RENDER acceptance transcript (explicitly not a performance run): the three .env quoting spellings resolved through real `docker compose config`, a fresh `lobes init --shape spark-lobe --profile spark --apply` into a scratch dir, and its resolved cortex argv diffed against the live container's own `docker inspect` output — identical token sets.
+
+### Changed
+
+- **`spark-lobe` now declares the adopted DSpark @ 262144 cortex lane** (deviation d4, 2026-08-25), replacing the 1M-YaRN declaration: `max_model_len` 1048576 → 262144 (the checkpoint's native ceiling), `speculative_config` set to the RadixArk DSpark block-7 drafter with its revision pinned, and `allow_long_max_model_len` dropped as inert at exactly the native ceiling. `hf_overrides` (the YaRN rope block) is deliberately KEPT: every DSpark arm in the 2026-08-24 spike was measured with it in force, so removing it would ship a rope configuration nothing has been measured under. The prose regression this default carries is real and named — DSpark wins on code (46.20 vs 24.69 tok/s) and reasoning, loses on prose (13.71 vs 16.65) — and a prose-heavy box overrides the knob back.
+- docs/qwen3.8-27b-nvfp4.md, docs/dspark-speculation.md, docs/deployment-shapes.md, CLAUDE.md: the 1M YaRN window is now described as the RETIRED validated shape (withdrawn, not disproven — it cannot be served alongside the DSpark drafter at `gpu_mem_util=0.58`), with the adopted 262144/DSpark pair as the current declaration. The 1M recipe and the older 0.44/262144 pair stay in-tree as documented rollbacks (cite-don't-delete).
+- lobes/templates/fleet/env.example: the `PRIMARY_SPECULATIVE_CONFIG` block now spells out the VERIFIED retarget form instead of deferring to the `MULTIMODAL_*` caveat, and names the two spellings that fail silently.
+
+### Fixed
+
+- A `lobes init --apply` re-render of the DGX Spark can no longer silently revert its cortex lane. The 2026-08-25 DSpark adoption lived only as a hand-edit to the deployed compose file while the shape/profile knobs still said "mtp-n2 at `max_model_len=1048576`" — so a routine re-render would have either restored the incumbent MTP config or emitted DSpark argv at a window vLLM refuses outright (`needs 51.47 GiB KV; available 40.76 GiB`). The shape now renders an argv whose token set is identical to the deployed container's, proven by diff rather than by inspection.
+- The `${PRIMARY_SPECULATIVE_CONFIG-…}` compose slot is unquoted (its default carries its own quotes), so a value substituted there must survive compose's dotenv parser AND its shell-lexer. Checked against real `docker compose config`: the bare-single-quote and unquoted spellings both degrade `{"method":"dspark",…}` to `{method:dspark,…}` — silently, with no error, and a boot failure far from the cause. The shape declares the one surviving form, and `tests/test_profile_render.py` models both parsers so a future edit cannot regress it unnoticed.
+
 ## [0.60.1] - 2026-08-25
 
 ### Added

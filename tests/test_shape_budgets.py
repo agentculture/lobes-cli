@@ -143,19 +143,20 @@ def test_spark_lobe_cortex_util_is_the_reclaim_sum_that_fits_the_box() -> None:
 def test_spark_lobe_cortex_max_model_len_rises_to_full_native() -> None:
     # t2b (issue #113, user decision): the co-resident lobe (senses) this
     # shape drops is GONE from the box entirely, so the trim's original
-    # reason is gone too -- cortex got its full native 262144 (256K) from
-    # that task. t5 (qwen3.8-cortex-upgrade, 2026-08-19) goes further and
-    # DECLARES a 1M-token (1048576) YaRN hypothesis on top of that -- reached
-    # only via an hf_overrides rope-scaling override past the Qwen3.8
-    # checkpoint's own 262144 native ceiling, DECLARED not measured (#108).
+    # reason is gone too -- cortex gets the checkpoint's full native 262144
+    # (256K) window.
+    #
+    # t5 (2026-08-19) once DECLARED a 1M (1048576) YaRN reach on top of that.
+    # d4 (2026-08-25) WITHDREW it: the DSpark drafter this shape now adopts
+    # cannot co-exist with a 1M window at gpu_mem_util 0.58 -- vLLM refused
+    # the boot ("max seq len 1048576 needs 51.47 GiB KV; available 40.76
+    # GiB"). So the window lands back on native, which is where the DSpark
+    # arms were measured. See spark-lobe.toml's d4 block.
     override = load_builtin_shape("spark-lobe").override("cortex")
-    assert override.max_model_len == 1048576
+    assert override.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN
     composed = _compose(_SPARK_PROFILE.role("cortex"), override)
-    assert composed.max_model_len == 1048576
+    assert composed.max_model_len == _CORTEX_FULL_NATIVE_MAX_LEN
     assert composed.max_model_len > _SPARK_CORTEX_MAX_LEN  # strictly > co-resident 131072
-    assert (
-        composed.max_model_len > _CORTEX_FULL_NATIVE_MAX_LEN
-    )  # strictly > checkpoint native 262144
 
 
 # --- thor-lobe: senses reclaims the dropped cortex's budget, symmetrically ---

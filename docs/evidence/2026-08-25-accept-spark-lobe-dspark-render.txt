@@ -1,0 +1,122 @@
+================================================================================
+ ACCEPTANCE — spark-lobe renders the ADOPTED DSpark @ 262144 cortex lane
+ date : 2026-08-25
+ box  : DGX Spark GB10 (spark-f8a9)
+ scope: a RENDER proof, not a performance run. It establishes that a routine
+        `lobes init --apply` can no longer drift the deployed cortex lane back
+        to the incumbent MTP-n2 / 1M-YaRN config. It measures NOTHING about
+        throughput, acceptance or quality — for those, see
+        docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt.
+ why  : deviation d4 (2026-08-25) adopted DSpark on the live box as a HAND-EDIT
+        to the rendered compose file. Until this change, the shape/profile
+        knobs still declared mtp-n2 at max_model_len=1048576, so a re-render
+        would have silently reverted the lane — or booted DSpark argv at a
+        window vLLM refuses (needs 51.47 GiB KV, has 40.76).
+================================================================================
+
+## Section 1 — the quoting question, settled empirically BEFORE choosing a spelling
+
+The compose slot is UNQUOTED, because its default carries its own quotes:
+
+    ${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'}
+
+So a value substituted there crosses compose's dotenv parser first and its
+shell-lexer second. Three candidate .env spellings were rendered through a
+REAL `docker compose config` against that exact slot shape:
+
+  A  bare single quotes    PRIMARY_SPECULATIVE_CONFIG='--speculative-config={"method":"dspark",...}'
+     -> --speculative-config={method:dspark,model:RadixArk/Qwen3.8-27B-DSpark,...}
+        FAIL — silently degraded. dotenv stripped the single quotes, then the
+        shell-lexer ate the JSON's double quotes. No error is raised.
+
+  C  unquoted              PRIMARY_SPECULATIVE_CONFIG=--speculative-config={"method":"dspark",...}
+     -> --speculative-config={method:dspark,model:RadixArk/Qwen3.8-27B-DSpark,...}
+        FAIL — same silent degradation.
+
+  B  double-wrapped        PRIMARY_SPECULATIVE_CONFIG="'--speculative-config={\"method\":\"dspark\",...}'"
+     -> --speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark",...}
+        PASS — one argv token, JSON intact.
+
+Spelling B is what lobes/profiles/builtin_shapes/spark-lobe.toml declares, and
+tests/test_profile_render.py::test_spark_lobe_speculative_config_survives_both_quoting_layers
+models both parsers so a future edit cannot regress it silently.
+
+## Section 2 — render the shape with the real CLI (scratch dir, live box untouched)
+
+$ uv run lobes init --shape spark-lobe --profile spark --apply <scratch>
+
+$ grep -n 'PRIMARY_SPECULATIVE_CONFIG="' <scratch>/.env
+756:PRIMARY_SPECULATIVE_CONFIG="'--speculative-config={\"method\":\"dspark\",\"model\":\"RadixArk/Qwen3.8-27B-DSpark\",\"revision\":\"85ef153be924f17ce4bf62726954eeaa4a73e854\",\"num_speculative_tokens\":7}'"
+
+$ grep -nE '^PRIMARY_(MAX_MODEL_LEN|GPU_MEM_UTIL)=' <scratch>/.env
+57:PRIMARY_MAX_MODEL_LEN=262144
+58:PRIMARY_GPU_MEM_UTIL=0.58
+
+
+## Section 3 — resolve it through real compose, and read the cortex argv
+$ docker compose config   # in <scratch>
+      - --max-model-len=262144
+      - --gpu-memory-utilization=0.58
+      - --speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153be924f17ce4bf62726954eeaa4a73e854","num_speculative_tokens":7}
+      - '--hf-overrides={"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}'
+      PRIMARY_SPECULATIVE_CONFIG: '''--speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153be924f17ce4bf62726954eeaa4a73e854","num_speculative_tokens":7}'''
+
+## Section 4 — diff the rendered argv against the LIVE container's own argv
+# The live container is the one the d4 hand-edit produced and that
+# docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt Section 14 read back.
+# Compared as TOKEN SETS: the live entry carries the mg-logwrap entrypoint the
+# 0.57.2 scaffold on that box injects, and flag ORDER differs between the
+# hand-edited file and the template. Neither is a config difference.
+
+$ docker inspect model-gear-vllm-primary --format '{{json .Args}}'   # live
+$ docker compose config --format json | jq -r '.services["vllm-primary"].command[]'  # rendered
+$ diff <(live, minus mg-logwrap, sorted) <(rendered, sorted)
+  (no output — TOKEN SETS IDENTICAL)
+
+  => PASS. A fresh render of spark-lobe on this card reproduces the
+     deployed cortex argv exactly. The re-render trap is closed.
+
+## Section 5 — the ONE intended difference (an env var, not an argv token)
+
+  live     VLLM_ALLOW_LONG_MAX_MODEL_LEN=1     (left over from the 1M generation)
+  rendered VLLM_ALLOW_LONG_MAX_MODEL_LEN=0     (the template default; the shape
+                                                no longer declares the knob)
+
+  Deliberate. That variable exists only to let vLLM serve PAST the checkpoint's
+  declared 262144 ceiling. At exactly 262144 it is inert — it changes no argv
+  and no engine behaviour — so leaving it armed on a shape that no longer
+  exceeds any ceiling would misdeclare what the shape does.
+
+  CORRECTION (added after review of PR #202, Qodo finding 3). An earlier
+  version of this section claimed "an operator re-rendering the live box drops
+  an inert variable and nothing else." THAT IS WRONG, and the error came from
+  reading a FRESH render: the scratch directory above had no prior .env, so
+  nothing stale could survive in it.
+
+  `.env` is merge-only. `lobes init --apply` force-writes the keys the
+  resolved profile RENDERS and leaves every other line untouched, so a key the
+  shape no longer declares is not removed — it is simply no longer managed.
+  Re-rendering the deployed box therefore leaves its existing
+  `PRIMARY_ALLOW_LONG_MAX_MODEL_LEN=1` line in place, and the container keeps
+  getting VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 until an operator deletes that line
+  by hand. Behaviour is unchanged either way (the variable is inert at the
+  native ceiling), but the CLAIM was false and is retracted.
+
+  This cuts both ways and is worth stating plainly: the argv equivalence in
+  Section 4 is a property of a FRESH render of this shape. It is evidence that
+  the shape now declares the right thing. It is NOT evidence about what any
+  particular already-scaffolded box will render, because that box's .env can
+  carry managed-then-abandoned keys from earlier generations. Read the
+  container's argv on the box, as always.
+
+## Section 6 — what this does NOT establish
+
+  - No throughput, acceptance, latency or quality measurement of any kind.
+  - Nothing about a BOOT: no container was started, stopped or restarted by
+    this run. `docker compose config` resolves configuration; it does not run
+    vLLM. The deployed lane was already running the argv compared against.
+  - Nothing about any card other than `spark`, or any shape other than
+    `spark-lobe`.
+  - Nothing about concurrency at 262144. The 760,806-token KV pool / 2.90x
+    figure quoted in the docs is read from the 2026-08-24 transcript's own
+    boot log, not re-measured here.

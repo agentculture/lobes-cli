@@ -109,7 +109,73 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 # Profile carries hf_overrides=None / allow_long_max_model_len=None and
 # renders nothing for either key (profile_env's "None = no opinion"
 # convention) -- byte-identical to before t5 for those renders.
+#
+# --- d4 2026-08-25: DSpark ADOPTED, the 1M YaRN window WITHDRAWN -----------
+# Everything above this line is the 1M shape as it was declared and measured
+# on 2026-08-19. It is retained (cite-don't-delete) as the rollback recipe,
+# but it is NO LONGER what this shape renders. What changed, and why:
+#
+#   speculative_config -- NEW. The cortex lane's draft moves from the
+#   checkpoint's own baked-in MTP head (n=2, the compose template's default)
+#   to the RadixArk DSpark block drafter at block 7. MEASURED live on the
+#   GB10, 2026-08-24, against this exact target checkpoint
+#   (docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt,
+#   docs/dspark-speculation.md): at 262144 it beats mtp-n2 on code
+#   (46.20 vs 24.69 tok/s) and reasoning, and LOSES on prose (13.71 vs
+#   16.65 tok/s). That prose regression is a real, named cost of this
+#   default, not an oversight -- a prose-heavy box wants the incumbent MTP
+#   head back, or no speculative decoding at all ("").
+#
+#   HOW to do that today, stated honestly: a CARD PROFILE CANNOT WIN HERE. A
+#   shape override composes ON TOP of the card, so this non-None value beats
+#   any speculative_config an operator writes in <deploy-dir>/profiles/
+#   spark.toml, and a re-render force-writes the key back over a hand-edited
+#   .env line. The supported routes are therefore: pick a different shape, or
+#   fork this shape file. Neither is ergonomic -- the missing mechanism (an
+#   operator-authored shape, or card-wins precedence for knob values) is a
+#   real gap, raised by review on PR #202 (Qodo finding 5) and tracked in
+#   issue #204 rather than papered over here.
+#   The revision is PINNED: a drafter is executable weights, and an
+#   unpinned draft repo is a silent config change on the next pull.
+#
+#   max_model_len 1048576 -> 262144 -- FORCED, not preferred. The 1.36B
+#   drafter's own 5 full-attention KV layers add per-token KV cost on top of
+#   its 2.53 GiB of weights, and at gpu_mem_util 0.58 vLLM REFUSED the DSpark
+#   boot at 1M outright: "max seq len 1048576 needs 51.47 GiB KV; available
+#   40.76 GiB". DSpark and the 1M YaRN window cannot both be served on this
+#   box at this budget. 262144 is the checkpoint's own native ceiling, so the
+#   served contract lands exactly on it. Measured KV pool at the adopted
+#   pair: 760,806 tokens = 2.90x concurrency at 262144 -- BETTER headroom
+#   than the 1.21x the 1M window bought.
+#
+#   hf_overrides -- KEPT, deliberately, even though the window it was added
+#   to reach is gone. It is NOT dead config: every DSpark arm in the
+#   2026-08-24 transcript was measured with this YaRN block in force ("only
+#   --speculative-config changed ... everything else held constant"), and the
+#   deployed container's argv carries it today. Removing it would render a
+#   rope configuration NOTHING has been measured under, which is the exact
+#   trade this repo refuses. The 2026-08-19 QA pass also measured zero
+#   quality cost from always-on YaRN (7/8 native vs 7/8 YaRN, identical
+#   failure). Retire it only WITH a fresh transcript at 262144 + stock rope.
+#
+#   allow_long_max_model_len -- DROPPED. Its only job was to let vLLM serve
+#   PAST the checkpoint's declared 262144 ceiling; at exactly 262144 it is
+#   inert, and leaving a ceiling-bypass armed on a shape that no longer
+#   exceeds any ceiling would misdeclare what this shape does. This is the
+#   one rendered key that differs from the deployed box's own .env (which
+#   still carries it from the 1M generation) -- an operator re-render drops
+#   an inert var, changing no argv.
+#
+# QUOTING of speculative_config (verified, not inferred): the compose slot
+# ${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={...}'} is UNQUOTED, so
+# the value must carry both quoting layers itself -- an outer double-quote
+# pair (so compose's dotenv parser keeps the inner quotes) wrapping a
+# single-quoted token (so the shell-lexer emits ONE argv token instead of
+# eating the JSON's double quotes). Checked with `docker compose config`
+# against the real template: the bare-single-quote and unquoted spellings
+# both silently degrade the JSON to {method:dspark,...}. See
+# tests/test_profile_render.py::test_spark_lobe_speculative_config_survives_both_quoting_layers.
 gpu_mem_util = 0.58
-max_model_len = 1048576
+max_model_len = 262144
 hf_overrides = '{"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 262144, "mrope_interleaved": true, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}'
-allow_long_max_model_len = "1"
+speculative_config = '''"'--speculative-config={\"method\":\"dspark\",\"model\":\"RadixArk/Qwen3.8-27B-DSpark\",\"revision\":\"85ef153be924f17ce4bf62726954eeaa4a73e854\",\"num_speculative_tokens\":7}'"'''

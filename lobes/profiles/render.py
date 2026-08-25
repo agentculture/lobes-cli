@@ -115,6 +115,22 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     # "model" and "enforce_eager" get one).
     "hf_overrides": "HF_OVERRIDES",
     "allow_long_max_model_len": "ALLOW_LONG_MAX_MODEL_LEN",
+    # speculative_config -> PRIMARY_SPECULATIVE_CONFIG: the compose command's
+    # ${PREFIX_SPECULATIVE_CONFIG-'--speculative-config={...}'} slot. Rendered
+    # VERBATIM (a plain str knob, no re-quoting here) because the value already
+    # carries both quoting layers the slot needs -- see RoleProfile's field
+    # comment in lobes.profiles.schema for why that is the author's job and not
+    # this module's. An empty string is meaningful (spec-decode OFF), which is
+    # why the loop below skips only None.
+    #
+    # This mapping is deliberately uniform across role prefixes even though
+    # only three lanes expand the variable today. The gate lives at LOAD time
+    # instead (schema.SPECULATIVE_CONFIG_ROLES), so a role whose lane has no
+    # slot is refused when it is DECLARED -- with a message naming why --
+    # rather than silently rendering a key nothing reads. Keeping the render
+    # side uniform means wiring a new lane's slot is a one-line change there,
+    # not two changes that can drift apart.
+    "speculative_config": "SPECULATIVE_CONFIG",
 }
 
 # The two argparse.BooleanOptionalAction tokens vLLM's --enforce-eager /

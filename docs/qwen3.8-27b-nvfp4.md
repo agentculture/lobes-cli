@@ -14,8 +14,10 @@ incumbent baseline it was measured against).
 - `architectures: ["Qwen3_5ForConditionalGeneration"]`, `model_type: qwen3_5` —
   the same architecture family as the 3.6 it replaced, so the swap was a
   checkpoint change, not a new-arch bring-up.
-- 262,144 native context; 64 layers, hybrid linear-attention; **1M
-  (1,048,576) served via YaRN** `hf-overrides` (below).
+- 262,144 native context; 64 layers, hybrid linear-attention. A YaRN
+  `hf-overrides` reach to **1M (1,048,576)** was declared and measured
+  2026-08-19 and **withdrawn 2026-08-25** when DSpark was adopted (the two
+  do not fit together at `gpu_mem_util=0.58`) — see "Serving shape" below.
 - **Multimodal** — own ViT (image + video intake); no `--language-model-only`.
 - **Self-hosted MTP draft**: a separate 849 MB `model_mtp.safetensors` module;
   the generic `{"method": "mtp"}` speculative config applies, no external
@@ -42,7 +44,37 @@ incumbent baseline it was measured against).
 FlashInfer autotuning under an `121a` arch path. No third-party image was
 needed; official-first order was followed (operator decision q3).
 
-## Serving shape (spark-lobe, MEASURED 2026-08-19)
+## Serving shape (spark-lobe, ADOPTED 2026-08-25)
+
+This is what `spark-lobe.toml` **declares today** and what the deployed GB10
+runs. The 1M YaRN window below it is the previous declaration, retired.
+
+| knob | value | provenance |
+|---|---|---|
+| `gpu_mem_util` | **0.58** | unchanged from the 1M shape (2026-08-19 measurement) |
+| `max_model_len` | **262,144** | the checkpoint's own native ceiling — forced back down from 1M by the DSpark drafter's KV cost |
+| `hf-overrides` | `{"text_config":{"rope_parameters":{"rope_type":"yarn",…}}}` | **kept**: every DSpark arm was measured with this rope config in force, so removing it would serve a shape nothing has been measured under |
+| `VLLM_ALLOW_LONG_MAX_MODEL_LEN` | *(unset — renders 0)* | inert at exactly 262,144; it exists only to serve PAST the declared ceiling |
+| KV pool | 760,806 tokens | **2.90× concurrency at 262,144** — better headroom than the 1M window's 1.21× |
+| speculative | `{"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark","revision":"85ef153b…","num_speculative_tokens":7}` | see the DSpark section below; the revision is pinned deliberately |
+
+**The prose cost is real and named:** against the incumbent MTP head at n=2,
+DSpark wins on code (46.20 vs 24.69 tok/s) and reasoning, and **loses on
+prose** (13.71 vs 16.65 tok/s).
+
+A prose-heavy deployment wants the incumbent MTP head back, or spec-decode off
+entirely — but **there is no ergonomic per-box override today.** A shape
+override composes on top of the card profile, so an operator profile's own
+`speculative_config` loses to the shape's, and `lobes init --apply`
+force-writes the rendered key back over a hand-edited `.env` line. The
+supported routes are to select a different shape or to fork the shape file.
+That gap is real and tracked in issue #204 (raised by review on PR #202); it
+is named here rather than papered over.
+
+### Retired shape: the 1M YaRN window (MEASURED 2026-08-19, no longer declared)
+
+Retained per cite-don't-delete, in this doc and in `spark-lobe.toml`'s own
+comment block, as the rollback recipe.
 
 | knob | value | provenance |
 |---|---|---|
@@ -54,7 +86,7 @@ needed; official-first order was followed (operator decision q3).
 | speculative | `{"method":"mtp","num_speculative_tokens":2}` | 54–61% draft acceptance at n=2 |
 | co-residency cost | the opt-in `embed-deep` 4B gear is **stopped** on this box | operator reclaim decision (spec q4) |
 
-Rollback pair (measured 2026-07-31, retained in `spark-lobe.toml`):
+Older rollback pair (measured 2026-07-31, also retained in `spark-lobe.toml`):
 `gpu_mem_util=0.44` / `max_model_len=262144`, no YaRN knobs.
 
 ## Measured performance (single-stream, via gateway, `usage.completion_tokens`)
@@ -187,29 +219,35 @@ Headline, all MEASURED-HERE (dated) 2026-08-24, single-stream batch-1:
   own re-measurements. See the spike transcript's own section 9 and section
   13, and `docs/dspark-speculation.md`'s "What the spike does NOT establish",
   for the full list.
-- **Deployment adoption (2026-08-25, deviation d4, operator-reported):**
-  following this spike, the deployed Spark `cortex` lane was switched to
-  DSpark at `max_model_len=262144`, **withdrawing the 1M YaRN window**
-  documented above. This is a hand-edit to the live deployment, not backed
-  by its own dated acceptance transcript. **Unresolved follow-up:** a plain
-  `lobes init --apply` re-render of this box would regenerate
-  `docker-compose.yml` from the shape/profile knobs, which do not know about
-  this hand-edit, and could silently revert the lane back to the incumbent
-  MTP config and/or the 1M window. Verify the live rendered argv via
-  `docker inspect` (never `.env` alone) before and after any re-render of
-  this box.
+- **Deployment adoption (2026-08-25, deviation d4):** following this spike,
+  the deployed Spark `cortex` lane was switched to DSpark at
+  `max_model_len=262144`, **withdrawing the 1M YaRN window**. It began as a
+  hand-edit to the live deployment; the `spark-lobe` shape now **declares
+  it**, so the two agree.
+- **The re-render trap that came with it is CLOSED.** While the adoption
+  lived only as a hand-edit, a plain `lobes init --apply` on this box would
+  have regenerated `docker-compose.yml` from shape/profile knobs that still
+  said "mtp-n2 at 1M" — silently reverting the lane, or worse, booting DSpark
+  argv at a window vLLM refuses. The shape now carries the DSpark
+  `speculative_config` and the 262,144 window, and a fresh
+  `lobes init --shape spark-lobe --profile spark --apply` was rendered into a
+  scratch dir and diffed against the live container: **identical argv token
+  sets** (`docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt`).
+  The `docker inspect`-not-`.env` rule still stands for verifying any box.
 
 ## Known limits
 
-- **The 1M window above is the VALIDATED shape, not necessarily the
-  currently-deployed one.** Per the d4 adoption note above, the Spark
-  `cortex` lane was hand-switched to DSpark at `max_model_len=262144` on
-  2026-08-25, which is NOT the 1,048,576 window this doc's "Serving shape"
-  and "Measured performance" sections describe. Those sections stay accurate
-  as a description of what was validated at 1M; they are not a live
-  guarantee of what this box currently serves. `lobes status` / `lobes
-  capabilities` on the box, or `docker inspect`'s rendered argv, are the
-  live source of truth.
+- **The "Measured performance" section below is dated 2026-08-19 and was
+  taken at the RETIRED 1M window under the MTP head** — not at the adopted
+  262,144/DSpark shape. Read it as history, never as the current rate; the
+  DSpark section further down carries the 2026-08-24 numbers for the shape
+  that ships today. `lobes status` / `lobes capabilities` on the box, or
+  `docker inspect`'s rendered argv, remain the live source of truth for any
+  particular box.
+- **The 1M window is withdrawn, not disproven.** It was measured and it
+  worked; it simply cannot be served alongside the DSpark drafter at
+  `gpu_mem_util=0.58` on this box. Restoring it means restoring the MTP
+  draft too — the rollback recipe is in `spark-lobe.toml`'s d4 block.
 - 1.21× KV ceiling at 1M: one full-depth request effectively owns the lane
   for its multi-minute prefill; no per-request KV fairness in v1 (plan risk r3).
 - MTP acceptance at 1M depth beyond the probes above is lightly measured

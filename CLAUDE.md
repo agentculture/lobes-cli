@@ -37,24 +37,44 @@ had to be handed to a role barred from making it.
 
 **Served context depends on deployment shape:** the legacy single-model scaffold
 (`lobes serve`, no fleet) serves the full 256K solo; the **spark-lobe** shape
-(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at
-**1M tokens** (`max_model_len=1048576`) via a YaRN `hf_overrides` rope-scaling
-override, **MEASURED live 2026-08-19** (`docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt`):
-`gpu_mem_util=0.58` (the 0.60 hypothesis was refused twice at boot; 0.58
-booted after the opt-in embed-deep 4B gear was stopped to fund the budget —
-the operator's reclaim decision), KV pool 42.07 GiB = 1,271,476 tokens =
-**1.21× ceiling at full 1M** (arithmetic, effectively single-request at max
-depth). A 328K-token needle retrieval — beyond the 262144 native ceiling —
-passed live, and an 8-prompt QA comparison measured ZERO quality cost from
-always-on YaRN (7/8 native vs 7/8 YaRN, identical failure). The shape's prior
-MEASURED 2026-07-31 pair (`gpu_mem_util=0.44` / `max_model_len=262144`, no
-YaRN) is kept in the shape TOML as the documented rollback value. The machine-as-brain
+(what the DGX Spark runs — `senses` dropped to a peer) serves cortex at its
+**full native 262144 (256K)** window with `gpu_mem_util=0.58`, drafting with
+**DSpark** (`RadixArk/Qwen3.8-27B-DSpark`, block 7, revision pinned) rather
+than the checkpoint's own MTP head — the **d4 adoption, 2026-08-25**
+(`docs/dspark-speculation.md`; measured 2026-08-24,
+`docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt`; the shape's render
+proved against the live container in
+`docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt`). DSpark beats
+MTP-n2 on code (46.20 vs 24.69 tok/s) and reasoning and **loses on prose**
+(13.71 vs 16.65) — a named cost of this default. Note there is **no ergonomic
+per-box override** for it today: a shape override beats the card profile and a
+re-render force-writes the key, so changing it means selecting a different
+shape or forking the shape file (issue #204). Measured KV pool at the adopted pair:
+760,806 tokens = **2.90× concurrency at 262144**.
+
+That shape previously declared a YaRN-extended **1M window**
+(`max_model_len=1048576`), MEASURED live 2026-08-19
+(`docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt`): same `gpu_mem_util=0.58`
+(the 0.60 hypothesis was refused twice at boot; 0.58 booted after the opt-in
+embed-deep 4B gear was stopped to fund the budget — the operator's reclaim
+decision), KV pool 42.07 GiB = 1,271,476 tokens = **1.21× ceiling at full 1M**
+(arithmetic, effectively single-request at max depth). A 328K-token needle
+retrieval — beyond the 262144 native ceiling — passed live, and an 8-prompt QA
+comparison measured ZERO quality cost from always-on YaRN (7/8 native vs 7/8
+YaRN, identical failure). **That window is WITHDRAWN, not disproven:** the
+1.36B DSpark drafter's KV cost does not fit beside it at util 0.58 (vLLM
+refused the boot outright), so adopting DSpark meant trading the window back
+down to native. The YaRN `hf_overrides` block itself is **kept** — every
+DSpark arm was measured with it in force — while `allow_long_max_model_len`
+was dropped as inert at exactly the native ceiling. The 1M recipe and the
+older MEASURED 2026-07-31 pair (`gpu_mem_util=0.44` / `max_model_len=262144`,
+no YaRN) are both kept in the shape TOML as documented rollbacks. The machine-as-brain
 **fleet duo** declares **128K** (`PRIMARY_MAX_MODEL_LEN=131072`) so cortex can
 co-reside with a local multimodal gear — that duo budget is **inherited from the
 previous text-only checkpoint and has not been booted with a ViT** (see
 `lobes/profiles/builtin/spark.toml`). See `docs/colleague-stack.md#migration-before--after`
-and `lobes/profiles/builtin_shapes/spark-lobe.toml` for the 1M hypothesis's
-full rationale.
+and `lobes/profiles/builtin_shapes/spark-lobe.toml` — whose d4 comment block
+carries the full rationale for the adopted pair and both rollbacks.
 
 **Deviation d1 (2026-08-20) moved `cortex` off the Spark, onto the Jetson
 AGX Thor, locally.** The `spark-lobe`-on-Spark measurements above are now

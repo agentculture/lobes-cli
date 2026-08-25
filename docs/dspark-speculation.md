@@ -277,21 +277,21 @@ the deployment defect below). Everything else — image, target checkpoint,
    `.env` value is a declaration, not a proof of what the container is
    actually running.** Re-rendering the compose file on this box (e.g. via
    `lobes init --apply`) would pick up the fixed template.
-8. **Deployment adoption (2026-08-25, operator-reported, deviation d4).**
-   Following this spike, the operator adopted DSpark on the deployed Spark
-   `cortex` lane, at `max_model_len=262144` — withdrawing the 1M YaRN window
-   documented in `docs/qwen3.8-27b-nvfp4.md`, per point 2 above. This is a
+8. **Deployment adoption (2026-08-25, deviation d4), and the re-render trap
+   it opened — now closed.** Following this spike, the operator adopted
+   DSpark on the deployed Spark `cortex` lane at `max_model_len=262144`,
+   withdrawing the 1M YaRN window documented in
+   `docs/qwen3.8-27b-nvfp4.md`, per point 2 above. That began as a
    **hand-edit to the live deployment's compose/`.env`**, made directly on
-   the box; it is not backed by its own dated evidence transcript in this
-   repo (the spike above measured the arm, it did not itself flip the
-   deployed default). **Follow-up risk, unresolved:** a plain `lobes init
-   --apply` re-render of this box — a normally-safe, routine operation since
-   0.59.0 — would regenerate `docker-compose.yml` from the current template
-   and shape/profile knobs, which do not know about this hand-edit, and
-   would silently revert the lane to whatever `--speculative-config` and
-   `max_model_len` the shape declares. Anyone re-rendering this box's
-   compose file should check the live rendered argv (`docker inspect`, not
-   `.env`) before and after, exactly as this spike's own harness does.
+   the box, and for a day it was ONLY that. The risk was concrete: a plain
+   `lobes init --apply` — a normally-safe, routine operation since 0.59.0 —
+   regenerates `docker-compose.yml` from shape/profile knobs that still said
+   "mtp-n2 at 1M", so a re-render would have silently reverted the lane, or
+   booted DSpark argv at a window vLLM refuses outright. **The shape now
+   declares the adopted config** (see "Adopted in-tree" below), so the
+   declaration and the box agree. The lesson that produced this section
+   stands regardless: **an `.env` value is a declaration, not a proof of
+   what the container is actually running** — check `docker inspect`.
 
 ### What the spike does NOT establish
 
@@ -406,11 +406,51 @@ What remains genuinely unestablished:
   behavior, or repeat-run variance below the ~10–13% floor already observed.**
   All unmeasured — see "What the spike does NOT establish" above for the
   full list.
-- **That the 2026-08-25 deployment adoption (deviation d4, `max_model_len`
-  traded down to 262144) is itself backed by its own acceptance transcript.**
-  It is an operator hand-edit made after this spike, not a new measurement;
-  the 262144-window DSpark numbers it relies on are the ones already in this
-  document (`ARM 2b` / the d3 262144 arms).
+- **That the 2026-08-25 adoption (deviation d4, `max_model_len` traded down
+  to 262144) rests on any NEW measurement.** It does not. The in-tree
+  declaration described below is backed by a *render* proof — the shape's
+  rendered argv matches the deployed container's, byte for byte — not by a
+  fresh performance run. The 262144-window DSpark numbers it relies on are
+  the ones already in this document (`ARM 2b` / the d3 262144 arms), with
+  their stated ±10–13% single-run variance.
+
+## Adopted in-tree (2026-08-25)
+
+The `spark-lobe` shape declares the adopted config, so a box rendering that
+shape gets DSpark at 262144 rather than the template's default MTP head at
+1M. Three things landed together:
+
+1. **A new profile knob, `speculative_config`** — the raw
+   `--speculative-config=…` argv token a shape or card wants on a lane,
+   rendered to `<PREFIX>_SPECULATIVE_CONFIG`. Before this, a shape could
+   express *window* and *rope* opinions but not *draft* opinions, so a
+   non-default drafter could only ever be a hand-edit. `None` still means
+   "no opinion" (the template default applies) and `""` still means "no
+   speculative decoding at all".
+2. **`spark-lobe.toml` moved to the adopted pair** — `max_model_len` 1048576
+   → 262144, `allow_long_max_model_len` dropped (inert at exactly the native
+   ceiling), `hf_overrides` **kept** (every DSpark arm was measured with that
+   YaRN block in force; removing it would ship a rope config nothing has been
+   measured under), and the DSpark `speculative_config` added with its
+   revision pinned.
+3. **A quoting fix that had to be found empirically.** The compose slot
+   `${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={…}'}` is *unquoted*,
+   because the default supplies its own quotes. A value substituted there
+   crosses compose's dotenv parser and then its shell-lexer, and must carry
+   both layers itself. Tested against real `docker compose config`: the
+   bare-single-quote and unquoted spellings **both silently degrade** the
+   JSON to `{method:dspark,…}` — no error, an invalid config, and a boot
+   failure far from the cause. Only the double-wrapped form survives, and
+   `tests/test_profile_render.py` now models both parsers to keep it that
+   way.
+
+**Verification (`docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt`):**
+a fresh `lobes init --shape spark-lobe --profile spark --apply` into a scratch
+directory, its compose resolved with `docker compose config`, and the
+resulting argv diffed against the live container's own `docker inspect` output
+— identical token sets. This is a **render proof, not a performance run**: it
+establishes that a re-render can no longer drift the lane, and says nothing
+new about throughput.
 
 ## Sources
 

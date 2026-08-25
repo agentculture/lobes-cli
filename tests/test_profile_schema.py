@@ -21,7 +21,13 @@ import pytest
 from lobes import machines, profiles
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles import loader, schema
-from lobes.profiles.schema import KNOB_NAMES, ROLES, Profile, RoleProfile
+from lobes.profiles.schema import (
+    KNOB_NAMES,
+    ROLES,
+    SPECULATIVE_CONFIG_ROLES,
+    Profile,
+    RoleProfile,
+)
 
 # --- schema: round-trip + validation ---------------------------------------
 
@@ -38,7 +44,40 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "max_num_seqs",
         "hf_overrides",
         "allow_long_max_model_len",
+        "speculative_config",
     }
+
+
+def test_speculative_config_is_rejected_for_lanes_that_cannot_consume_it() -> None:
+    """A knob that cannot take effect must fail LOUDLY at load, not render a dead key.
+
+    Only three compose lanes expand ``<PREFIX>_SPECULATIVE_CONFIG``
+    (vllm-primary / vllm-multimodal / vllm-worker). `muse` hardcodes its
+    token as a YAML list element, and `hand`/`embedder`/`reranker` carry no
+    speculative flag at all — so rendering the key for them would write an
+    `.env` variable nothing reads. Raised by review on PR #202 (Qodo finding
+    4), which caught exactly that silent no-op for `muse`.
+    """
+    for role in ("muse", "hand", "embedder", "reranker"):
+        with pytest.raises(ModelGearError) as excinfo:
+            RoleProfile.from_dict(role, {"speculative_config": "'--speculative-config={}'"})
+        assert "speculative_config" in str(excinfo.value)
+        # The message must say WHY, not just "no".
+        assert "SPECULATIVE_CONFIG" in str(excinfo.value)
+
+    # The empty string is a MEANINGFUL value (spec-decode off), so it must be
+    # rejected on those lanes too rather than slipping through as falsy.
+    with pytest.raises(ModelGearError):
+        RoleProfile.from_dict("muse", {"speculative_config": ""})
+
+
+def test_speculative_config_is_accepted_for_lanes_that_do_consume_it() -> None:
+    for role in sorted(SPECULATIVE_CONFIG_ROLES):
+        assert RoleProfile.from_dict(role, {"speculative_config": ""}).speculative_config == ""
+        token = '\'--speculative-config={"method":"mtp"}\''
+        assert (
+            RoleProfile.from_dict(role, {"speculative_config": token}).speculative_config == token
+        )
 
 
 def test_role_profile_round_trips_through_dict() -> None:
@@ -54,6 +93,7 @@ def test_role_profile_round_trips_through_dict() -> None:
         max_num_seqs=4,
         hf_overrides='{"text_config": {"rope_parameters": {"rope_type": "yarn"}}}',
         allow_long_max_model_len="1",
+        speculative_config='"\'--speculative-config={\\"method\\":\\"mtp\\"}\'"',
     )
     again = RoleProfile.from_dict("cortex", rp.to_dict())
     assert again == rp

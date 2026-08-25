@@ -69,15 +69,39 @@ def test_profile_env_is_a_dict_of_str_to_str() -> None:
 # --- t5: spark-lobe's 1M YaRN hypothesis renders the three new knobs -------
 
 
-def test_spark_lobe_render_carries_the_1m_yarn_knobs() -> None:
+# The argv token the cortex lane must end up running, byte-for-byte identical
+# to the one `docker inspect` read off the deployed container on 2026-08-25
+# (docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt, Section 14).
+_DSPARK_ARGV = (
+    "--speculative-config="
+    '{"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark",'
+    '"revision":"85ef153be924f17ce4bf62726954eeaa4a73e854",'
+    '"num_speculative_tokens":7}'
+)
+
+
+def test_spark_lobe_render_carries_the_dspark_262k_knobs() -> None:
+    """The ADOPTED shape (d4, 2026-08-25): DSpark at the native 262144 window.
+
+    Supersedes the 1M-YaRN assertions this test carried until 2026-08-25. The
+    1M window was withdrawn because DSpark and 1M cannot both be served at
+    gpu_mem_util 0.58 on the GB10 — vLLM refused the boot outright. See
+    spark-lobe.toml's d4 block and docs/dspark-speculation.md.
+    """
     spark = resolve_profile("spark")
     spark_lobe = resolve_shape("spark-lobe")
     env = render_shape(spark_lobe, spark).env
     assert env["PRIMARY_MODEL"] == "unsloth/Qwen3.8-27B-NVFP4"
-    assert env["PRIMARY_MAX_MODEL_LEN"] == "1048576"
-    assert env["PRIMARY_ALLOW_LONG_MAX_MODEL_LEN"] == "1"
+    # The checkpoint's own native ceiling — no longer a YaRN-extended reach.
+    assert env["PRIMARY_MAX_MODEL_LEN"] == "262144"
+    # Dropped with the 1M window: at exactly 262144 nothing needs a
+    # ceiling-bypass, so the shape must not arm one.
+    assert "PRIMARY_ALLOW_LONG_MAX_MODEL_LEN" not in env
     import json
 
+    # KEPT, deliberately: every DSpark arm was measured with this rope config
+    # in force, so removing it would render a shape nothing has been measured
+    # under. See the d4 block in spark-lobe.toml.
     hf_overrides = json.loads(env["PRIMARY_HF_OVERRIDES"])
     rope = hf_overrides["text_config"]["rope_parameters"]
     assert rope["rope_type"] == "yarn"
@@ -92,9 +116,54 @@ def test_spark_lobe_render_carries_the_1m_yarn_knobs() -> None:
     assert rope["rope_theta"] == 10000000
 
 
-def test_only_spark_lobe_renders_the_1m_yarn_knobs() -> None:
-    # Every OTHER card/shape stays untouched by t5's YaRN wiring — no other
-    # built-in shape declares hf_overrides/allow_long_max_model_len anywhere.
+def test_spark_lobe_speculative_config_survives_both_quoting_layers() -> None:
+    """The rendered .env value must reach vLLM as ONE intact argv token.
+
+    The compose slot is UNQUOTED —
+    ``${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={...}'}`` — because
+    the DEFAULT carries its own single quotes. So a value substituted there
+    crosses TWO parsers, and must survive both:
+
+    1. compose's dotenv reader, which strips an outer quote pair and expands
+       ``\"`` escapes inside a double-quoted value; then
+    2. compose's shell-lexer, which splits the command string on whitespace
+       and consumes any quotes it finds.
+
+    A value quoted for only one layer degrades SILENTLY: the bare-single-quote
+    and unquoted spellings both survive dotenv and are then stripped by the
+    lexer into ``{method:dspark,...}`` — no error, an invalid config, and vLLM
+    fails at boot far from the cause. Checked against the real template with
+    ``docker compose config``; this test is that check's offline standing
+    guard, so the pipeline below deliberately MODELS the two parsers rather
+    than asserting the opaque byte string alone.
+    """
+    import shlex
+
+    env = render_shape(resolve_shape("spark-lobe"), resolve_profile("spark")).env
+    raw = env["PRIMARY_SPECULATIVE_CONFIG"]
+
+    # Layer 1 — dotenv: a double-quoted value keeps its inner quotes.
+    assert raw.startswith('"') and raw.endswith('"'), raw
+    after_dotenv = raw[1:-1].replace('\\"', '"')
+    # Layer 2 — shell-lexer: the surviving single quotes make it one token.
+    tokens = shlex.split(after_dotenv)
+    assert tokens == [_DSPARK_ARGV], tokens
+
+    # And the JSON inside is still JSON (the failure mode is that it isn't).
+    import json
+
+    payload = json.loads(tokens[0].split("=", 1)[1])
+    assert payload["method"] == "dspark"
+    assert payload["model"] == "RadixArk/Qwen3.8-27B-DSpark"
+    # PINNED: a draft model is executable weights, so an unpinned revision
+    # would make the next pull a silent config change.
+    assert payload["revision"] == "85ef153be924f17ce4bf62726954eeaa4a73e854"
+    assert payload["num_speculative_tokens"] == 7
+
+
+def test_only_spark_lobe_renders_the_cortex_lane_overrides() -> None:
+    # Every OTHER card/shape stays untouched by t5's YaRN wiring and by d4's
+    # DSpark adoption — no other built-in shape declares any of these knobs.
     for card_name in ("spark", "thor", "base"):
         card = resolve_profile(card_name)
         for shape_name in ("machine-as-brain", "thor-lobe", "thor-muse", "thor-worker"):
@@ -102,6 +171,7 @@ def test_only_spark_lobe_renders_the_1m_yarn_knobs() -> None:
             env = render_shape(shape, card).env
             assert "PRIMARY_HF_OVERRIDES" not in env
             assert "PRIMARY_ALLOW_LONG_MAX_MODEL_LEN" not in env
+            assert "PRIMARY_SPECULATIVE_CONFIG" not in env
 
 
 # --- silence: a profile with no opinion on a knob emits nothing -------------
