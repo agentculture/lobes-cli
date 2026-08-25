@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.60.0] - 2026-08-25
+## [0.60.1] - 2026-08-25
 
 ### Added
 
@@ -20,6 +20,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/spec-arms.py` never labels a count of SSE deltas as `completion_tokens` (Qodo finding 3). One delta may carry several tokens, so the chunk count is now reported under its own `sse_content_chunks` key, `completion_tokens` stays `null` when the server omits `usage`, and the derived throughput is flagged `decode_tok_s_estimated: true` / `throughput_basis: "sse_chunk_count_estimate"` in JSON and `~N tok/s (est)` in the table.
 - `scripts/spec-arms.py --max-seconds` is a real wall-clock deadline across the whole streaming read, not just urllib's per-operation socket timeout (Qodo finding 10). A server that keeps emitting chunks could previously reset that timeout forever and run a shape indefinitely; a shape that blows the deadline is now reported TIMED OUT rather than as a completed measurement.
 - `scripts/spec-arms.py --combine` exits nonzero on any MISSING **or FAILED** cell, not only on a wholly absent arm file (Qodo finding 4). A transcript whose shape errored or timed out no longer yields a successful exit alongside a printed FAILED row, so automation cannot accept an incomplete three-arm comparison; `--allow-partial` is the explicit opt-in.
+
+## [0.60.0] - 2026-08-24
+
+### Added
+
+- **`ask-colleague resume <task-id|last> [--detach]`** — pick a cut /
+  timed-out / SIGTERM'd run back up from its persisted artifact, continuing on
+  the original `colleague/<id>` work branch. `--detach` runs it under
+  `setsid`/`nohup` and returns at once.
+- **Per-seat thinking effort** for `ask-colleague` (colleague#416) —
+  `--effort RUNG` (acting seat), `--seat-effort S=R` (any seat), `--role NAME`.
+  `off` for small well-specified briefs, `xhigh` for open-ended judgement,
+  `default` as the kill-switch.
+
+### Changed
+
+- **`ask-colleague` re-vendored byte-verbatim from `agentculture/colleague`
+  @ 1.63.0** — all five files (`SKILL.md`, `scripts/ask-colleague.sh`,
+  `prompts/{explore,review,write}.md`) match
+  `diff -r ../colleague/.claude/skills/ask-colleague`.
+- **Default colleague model is now `unsloth/Qwen3.8-27B-NVFP4`** (was the
+  Qwen3.6 pin) — the lobes gateway on `:8001` no longer serves 3.6, so the old
+  default only worked via colleague's auto-refresh warning path.
+- `ask-colleague review` front-loads a filtered, capped diff into the review
+  instruction so the model does not spend turns running `git diff` itself.
 
 ## [0.59.1] - 2026-08-23
 

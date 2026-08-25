@@ -43,11 +43,19 @@ PROMPTS_DIR="$SKILL_DIR/prompts"
 # ── resolve the colleague CLI (installed, then local-dev fallback) ─────────
 COLLEAGUE=()
 
+_pyproject_is_colleague() {
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == 'name = "colleague"'* ]] && return 0
+    done < "$1"
+    return 1
+}
+
 _colleague_via_uv() {
     local dir="$1"
     while [[ -n "$dir" ]] && [[ "$dir" != "/" ]]; do
         if [[ -f "$dir/pyproject.toml" ]] \
-            && grep -q '^name = "colleague"' "$dir/pyproject.toml" 2>/dev/null; then
+            && _pyproject_is_colleague "$dir/pyproject.toml"; then
             command -v uv >/dev/null 2>&1 || return 1
             COLLEAGUE=(uv run --project "$dir" colleague)
             return 0
@@ -81,22 +89,38 @@ Usage:
   ask-colleague explore "<question or area>"     Read-only investigation -> findings (no side effects)
   ask-colleague review  "<what to focus on>"     Diverse second-opinion on the committed diff (no side effects)
   ask-colleague write   "<task>" [--apply|--pr]  Implement a change (preview by default; --apply lands it)
+  ask-colleague plan    "<task>" [--no-workforce] Colleague PLANS a complex task (spec -> plan -> subagent workforce)
   ask-colleague feedback <id|last> [--rating N]  Grade a past drive (ROI loop); with --rating records, without shows
   ask-colleague feedback list                    List every recorded drive by request + grade (find one by its request)
   ask-colleague clean [--dry-run]                Reap stale/corrupt colleague/* branches + orphaned .colleague/ artifacts (#162)
-  ask-colleague monitor <task-id>                Watch a running flight's live feed
+  ask-colleague monitor <task-id>                Stream a running flight's live feed (--follow)
   ask-colleague guide   <task-id> "<msg>"         Send mid-flight guidance to a running flight
   ask-colleague stop    <task-id>                Ask a running flight to stop (cooperative)
+  ask-colleague resume  <task-id|last> [--detach] Resume a cut/timed-out/SIGTERM'd run from its artifact (work --continue)
 
 Options:
   --repo PATH        Target repo (default: .)
   --dry-run          (clean) report what would be reaped without changing anything
   --base BRANCH      Base for `review` diff (default: main)
   --engine NAME      Backend plugin (default: $COLLEAGUE_ENGINE or vllm-openai)
-  --model NAME       Model (default: $COLLEAGUE_MODEL or sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP)
+  --model NAME       Model (default: $COLLEAGUE_MODEL or unsloth/Qwen3.8-27B-NVFP4)
+  --role NAME        Typed subagent role (e.g. explorer, reviewer, writer); a top-level
+                     explorer runs at thinking effort "low" by default (#416)
+  --effort RUNG      Thinking effort for the ACTING seat: off|low|medium|high|xhigh|default
+                     (#416; default = colleague's table, medium for the acting seat;
+                     "default" = the kill-switch, send nothing). Exported as
+                     COLLEAGUE_CORTEX_REASONING_EFFORT + COLLEAGUE_WORKER_REASONING_EFFORT.
+  --seat-effort S=R  Per-seat override, comma-separated (seats: cortex, worker, deepthink,
+                     senses, evaluator, design), e.g. --seat-effort senses=off,deepthink=xhigh
+  --detach           (resume) run detached (setsid/nohup) and return at once; pilot it with
+                     monitor/guide/stop once the new flight id appears in the log
   --base-url URL     OpenAI base URL (default: $COLLEAGUE_BASE_URL or http://localhost:8001/v1)
-  --max-steps N      Loop step budget (default: 20)
+  --max-steps N      Loop step budget (default: 20; explore/review default from
+                     colleague's own "explore"/"review" mode profile, today 30 —
+                     an explicit --max-steps always overrides, lower or higher)
   --timeout N        Per-request timeout, seconds (default: $COLLEAGUE_TIMEOUT or 300)
+  --no-workforce     (plan) deliver the spec+plan only, skip the workforce fan-out (#215)
+  --quick / --no-spec (plan) skip the spec stage, plan directly from the request (#199)
   --apply            (write) apply the change in place (drive branch) instead of previewing
   --allow-dirty      (write) allow running on a dirty tree (only with --apply/--pr)
   --pr               (write) push + open a PR instead of a local drive branch (implies --apply)
@@ -123,11 +147,11 @@ EOF
 # ── parse the verb ──────────────────────────────────────────────────────────
 VERB="${1:-}"
 case "$VERB" in
-    explore | review | write | feedback | clean | monitor | guide | stop) shift ;;
+    explore | review | write | plan | feedback | clean | monitor | guide | stop | resume) shift ;;
     -h | --help) usage; exit 0 ;;
     "") usage >&2; exit 1 ;;  # missing arg -> user-input error (#161)
     *)
-        echo "error: unknown verb '$VERB' (expected explore|review|write|feedback|clean|monitor|guide|stop)" >&2
+        echo "error: unknown verb '$VERB' (expected explore|review|write|plan|feedback|clean|monitor|guide|stop|resume)" >&2
         echo "hint: run 'ask-colleague --help'" >&2
         exit 1  # bad verb -> user-input error (#161)
         ;;
@@ -139,9 +163,7 @@ esac
 # feedback/clean are thin pass-throughs to `colleague` plus the shared git
 # work-tree guard, so they need only git; the drive verbs (explore/review/write)
 # also render a prompt and parse colleague's --json result via python3, and the
-# worktree-isolated paths additionally need mktemp. grep is only used by the
-# uv-fallback resolver, which degrades to the clear "colleague not found" message
-# when absent, so it is not a hard requirement here.
+# worktree-isolated paths additionally need mktemp.
 require_tools() {  # $@ = tool names this verb path needs
     local missing=() t
     for t in "$@"; do
@@ -169,9 +191,10 @@ REPO="."
 BASE="main"
 # COLLEAGUE_* wins; the legacy CONVERTIBLE_* names are honored as a deprecated fallback.
 ENGINE="${COLLEAGUE_ENGINE:-${CONVERTIBLE_ENGINE:-vllm-openai}}"
-MODEL="${COLLEAGUE_MODEL:-${CONVERTIBLE_MODEL:-sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP}}"
+MODEL="${COLLEAGUE_MODEL:-${CONVERTIBLE_MODEL:-unsloth/Qwen3.8-27B-NVFP4}}"
 BASE_URL="${COLLEAGUE_BASE_URL:-${CONVERTIBLE_BASE_URL:-http://localhost:8001/v1}}"
 MAX_STEPS=20
+MAX_STEPS_EXPLICIT=0
 TIMEOUT="${COLLEAGUE_TIMEOUT:-${CONVERTIBLE_TIMEOUT:-300}}"
 ALLOW_DIRTY=0
 APPLY=0
@@ -183,6 +206,12 @@ NOTES=""
 BY=""
 ARG=""
 JSON_OUT=0
+ROLE=""
+EFFORT=""
+SEAT_EFFORT=""
+DETACH=0
+QUICK=0
+NO_WORKFORCE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -190,14 +219,20 @@ while [[ $# -gt 0 ]]; do
         --base) need_value "$#" "$1"; BASE="$2"; shift 2 ;;
         --engine) need_value "$#" "$1"; ENGINE="$2"; shift 2 ;;
         --model) need_value "$#" "$1"; MODEL="$2"; shift 2 ;;
+        --role) need_value "$#" "$1"; ROLE="$2"; shift 2 ;;
+        --effort) need_value "$#" "$1"; EFFORT="$2"; shift 2 ;;
+        --seat-effort) need_value "$#" "$1"; SEAT_EFFORT="$2"; shift 2 ;;
+        --detach) DETACH=1; shift ;;
         --base-url) need_value "$#" "$1"; BASE_URL="$2"; shift 2 ;;
-        --max-steps) need_value "$#" "$1"; MAX_STEPS="$2"; shift 2 ;;
+        --max-steps) need_value "$#" "$1"; MAX_STEPS="$2"; MAX_STEPS_EXPLICIT=1; shift 2 ;;
         --timeout) need_value "$#" "$1"; TIMEOUT="$2"; shift 2 ;;
         --apply) APPLY=1; shift ;;
         --watch) WATCH=1; shift ;;
         --allow-dirty) ALLOW_DIRTY=1; shift ;;
         --pr) OPEN_PR=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --quick | --no-spec) QUICK=1; shift ;;       # plan: skip the spec stage (#199)
+        --no-workforce) NO_WORKFORCE=1; shift ;;     # plan: deliver spec+plan only (#215)
         --rating) need_value "$#" "$1"; RATING="$2"; shift 2 ;;
         --notes) need_value "$#" "$1"; NOTES="$2"; shift 2 ;;
         --by) need_value "$#" "$1"; BY="$2"; shift 2 ;;
@@ -210,14 +245,28 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Per-verb default: explore and review get a modest higher budget (30) for wider
+# surveys and read-heavy diffs; write keeps the global default (20). Only apply
+# when the user did NOT pass an explicit --max-steps.
+#
+# t4/spec R1: this number now ALSO matches colleague's own native "explore"/
+# "review" mode profile (colleague/profiles.py), which is what actually drives
+# the step budget at runtime once `--mode` is selected below — this wrapper-side
+# value survives only so the "widen --max-steps" re-run hint (print_result)
+# still names the right number; whether --max-steps is actually FORWARDED to
+# colleague is decided later, once mode support is known.
+if [[ ( "$VERB" == "explore" || "$VERB" == "review" ) && "$MAX_STEPS_EXPLICIT" -eq 0 ]]; then
+    MAX_STEPS=30
+fi
+
 # Now that the verb and its flags are known, require only the tools THIS path
 # uses. feedback/clean shell straight to `colleague` (+ the git work-tree guard
 # below), so they need only git — not python3/mktemp (qodo: the old blanket check
 # failed those verbs in minimal envs). write --apply/--pr lands in place with no
 # throwaway worktree, so it needs no mktemp either.
 case "$VERB" in
-    feedback | clean) require_tools git ;;
-    monitor | guide | stop) : ;;
+    feedback | clean | plan) require_tools git ;;
+    monitor | guide | stop) : ;;  # resume needs the engine path like write, so it is NOT listed here
     write)
         if [[ "$APPLY" -eq 1 || "$OPEN_PR" -eq 1 ]]; then
             require_tools git python3
@@ -245,7 +294,7 @@ REPO="$(cd "$REPO" && pwd)"
 # The pilot verbs (monitor/guide/stop) are pure .colleague/flight/ file I/O — they
 # need no git work tree, so they are exempt from this fail-fast guard.
 case "$VERB" in
-    monitor | guide | stop) : ;;
+    monitor | guide | stop) : ;;  # resume needs the engine path like write, so it is NOT listed here
     *)
         git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
             || { echo "error: --repo is not a git repository: $REPO" >&2; exit 1; }
@@ -265,10 +314,128 @@ resolve_colleague || exit 2
 # Per-request timeout is config (no drive flag); EngineConfig reads it from env.
 # A local model can be slow on a growing context, so default generously.
 export COLLEAGUE_TIMEOUT="$TIMEOUT"
-COMMON_FLAGS=(--engine "$ENGINE" --model "$MODEL" --base-url "$BASE_URL" --max-steps "$MAX_STEPS" --json)
+
+# ── thinking effort (#416): per-seat, resolved by colleague where each seat is
+# built — the wrapper only sets the operator override env vars colleague reads
+# (flag > env > config.json > table). Validated here so a typo fails fast
+# (user-input error, #161) instead of as a refused run.
+_EFFORT_RUNGS="off|low|medium|high|xhigh|default"
+_check_rung() {
+    case "$1" in
+        off | low | medium | high | xhigh | default) : ;;
+        *) echo "error: unknown thinking effort '$1' (expected one of: ${_EFFORT_RUNGS//|/, })" >&2; exit 1 ;;
+    esac
+}
+if [[ -n "$EFFORT" ]]; then
+    _check_rung "$EFFORT"
+    export COLLEAGUE_CORTEX_REASONING_EFFORT="$EFFORT"
+    export COLLEAGUE_WORKER_REASONING_EFFORT="$EFFORT"
+fi
+if [[ -n "$SEAT_EFFORT" ]]; then
+    IFS=',' read -r -a _pairs <<< "$SEAT_EFFORT"
+    for _pair in "${_pairs[@]}"; do
+        _seat="${_pair%%=*}"; _rung="${_pair#*=}"
+        case "$_seat" in
+            cortex | worker | deepthink | senses | evaluator | design) : ;;
+            *) echo "error: unknown seat '$_seat' in --seat-effort (expected cortex|worker|deepthink|senses|evaluator|design)" >&2; exit 1 ;;
+        esac
+        _check_rung "$_rung"
+        export "COLLEAGUE_$(printf '%s' "$_seat" | tr '[:lower:]' '[:upper:]')_REASONING_EFFORT=$_rung"
+    done
+fi
+
+# ── plan: colleague does the planning (the inverse of /think) ────────────────
+# plan delegates the WHOLE planning arc to colleague via the `colleague plan`
+# verb — no throwaway worktree, no prompt template. Gated non-interactively
+# (--yes) so a delegating agent can hand off the arc and read the
+# spec -> plan -> workforce result. colleague is the planning mind; /think keeps
+# Claude as the planner (same arc, a different mind).
+if [[ "$VERB" == "plan" ]]; then
+    plan_flags=(--repo "$REPO" --engine "$ENGINE" --model "$MODEL" --base-url "$BASE_URL" --yes)
+    # --quick skips the spec stage (#199); --no-workforce delivers spec+plan only,
+    # skipping the timeout-prone fan-out (#215). --timeout already applies via the
+    # COLLEAGUE_TIMEOUT export above. These are forwarded, never auto-applied.
+    [[ "$QUICK" -eq 1 ]] && plan_flags+=(--quick)
+    [[ "$NO_WORKFORCE" -eq 1 ]] && plan_flags+=(--no-workforce)
+    [[ "${JSON_OUT:-0}" -eq 1 ]] && plan_flags+=(--json)
+    plan_rc=0
+    "${COLLEAGUE[@]}" plan run "$ARG" "${plan_flags[@]}" || plan_rc=$?
+    # No silent auto-degrade: name the recovery levers (those not already set) and
+    # let the caller choose. Human hints are TEXT-mode only — in --json mode the
+    # consumer is a machine and colleague's own structured {code,message,remediation}
+    # error already went to stderr, so suppress the prose there (Qodo #230 F4).
+    if [[ "$plan_rc" -ne 0 && "${JSON_OUT:-0}" -ne 1 ]]; then
+        echo "hint: plan mode did not complete on this backend. Recovery options (no auto-degrade):" >&2
+        [[ "$NO_WORKFORCE" -eq 0 ]] && echo "hint:   --no-workforce  deliver the spec+plan only, skip the timeout-prone workforce fan-out (#215)" >&2
+        [[ "$QUICK" -eq 0 ]] && echo "hint:   --quick         skip the spec stage, plan directly from the request (#199)" >&2
+        echo "hint:   --timeout N     widen the per-request window (currently ${TIMEOUT}s)" >&2
+    fi
+    exit "$plan_rc"
+fi
+
+# ── explore/review adopt colleague's native mode profile (t4/spec R1) ───────
+# explore/review's step budget + synthesis-reserve tail used to be caller-side
+# overrides baked into this script (a fixed --max-steps 30 plus an exported
+# COLLEAGUE_SYNTHESIS_RESERVE_STEPS=3). Those numbers now live in colleague's
+# own mode-profile catalog (colleague/profiles.py "explore"/"review") and are
+# applied runtime-side by `colleague work --mode explore|review`
+# (colleague/config.py apply_mode_profile) — so this wrapper's job shrinks to
+# "select the mode" instead of re-deriving the profile's numbers itself; a
+# future retune of the profile then reaches this wrapper for free.
+#
+# Honest limit: this wrapper prefers an installed `colleague` on PATH ahead of
+# a local checkout, and an installed CLI can be older than the one this repo
+# ships (it can predate --mode entirely). Detect that cheaply by checking the
+# resolved CLI's OWN --help text for the literal flag with a plain bash
+# substring match (no external text-search tool — the resolver stays as
+# dependency-free as the uv-fallback path above, #190); fall back to the old
+# caller-side defaults when --mode isn't there, so the wrapper keeps working
+# unmodified against a stale CLI.
+#
+# NOTE: the substring must be anchored past the flag name — "--mode" is
+# itself a literal prefix of "--model" (already a flag on every version), so
+# a naive `*--mode*` match false-positives on a stale --help that only has
+# --model. Requiring the next character NOT be a letter (or end-of-string)
+# distinguishes a genuine "--mode ..."/"--mode]" occurrence from "--model".
+MODE_SUPPORTED=0
+if [[ "$VERB" == "explore" || "$VERB" == "review" ]]; then
+    help_out="$("${COLLEAGUE[@]}" work --help 2>/dev/null)" || help_out=""
+    if [[ "$help_out" == *"--mode"[!a-zA-Z]* || "$help_out" == *--mode ]]; then
+        MODE_SUPPORTED=1
+    fi
+fi
+
+if [[ ( "$VERB" == "explore" || "$VERB" == "review" ) && "$MODE_SUPPORTED" -eq 0 ]]; then
+    # Legacy fallback (stale CLI without --mode): reserve a few steps for the
+    # final verdict turn so a big-diff review/explore yields findings instead
+    # of dying mid-read (#197). Caller env wins.
+    : "${COLLEAGUE_SYNTHESIS_RESERVE_STEPS:=3}"
+    export COLLEAGUE_SYNTHESIS_RESERVE_STEPS
+fi
+
+COMMON_FLAGS=(--engine "$ENGINE" --model "$MODEL" --base-url "$BASE_URL" --json)
+# --max-steps: forwarded unless this is a native-mode-capable explore/review run
+# with no explicit --max-steps — then the flag is withheld so colleague's own
+# mode profile supplies the step budget as a DEFAULT at runtime. An explicit
+# --max-steps always wins, in EITHER direction (lower or higher than the
+# profile's own number): it is still forwarded here, and the runtime resolves
+# an explicit flag ahead of any profile default (colleague/config.py
+# apply_mode_profile's explicit-knobs precedence).
+if [[ "$MAX_STEPS_EXPLICIT" -eq 1 || "$MODE_SUPPORTED" -eq 0 || ( "$VERB" != "explore" && "$VERB" != "review" ) ]]; then
+    COMMON_FLAGS+=(--max-steps "$MAX_STEPS")
+fi
+# --mode: select colleague's native explore/review constraint profile when the
+# resolved CLI supports it (detected above). write carries no --mode — its
+# profile is behavior-neutral (identical to no mode at all), so the numbers
+# stay exactly as documented (--max-steps 20 default, no reserve override).
+if [[ "$MODE_SUPPORTED" -eq 1 && ( "$VERB" == "explore" || "$VERB" == "review" ) ]]; then
+    COMMON_FLAGS+=(--mode "$VERB")
+fi
 # --watch arms a flight for EVERY drive verb (explore/review/write), so it lives on
 # the shared flag list — not inside one verb's path — so monitor/guide/stop work.
 [[ "${WATCH:-0}" -eq 1 ]] && COMMON_FLAGS+=(--watch)
+# --role forwards a typed-subagent role to the work item.
+[[ -n "${ROLE:-}" ]] && COMMON_FLAGS+=(--role "$ROLE")
 
 # ── render an instruction from a prompt template ────────────────────────────
 render_prompt() {
@@ -305,20 +472,38 @@ print_result() {
     # empty (its artifact was discarded with the worktree, so it is not gradable).
     # $3 (optional): exit code from the colleague drive command, propagated to
     # the caller when the drive itself failed.
-    ASK_COLLEAGUE_REAL_ARTIFACT_DIR="${1:-}" ASK_COLLEAGUE_GRADABLE="${2:-}" ASK_COLLEAGUE_DRIVE_RC="${3:-}" ASK_COLLEAGUE_JSON="${JSON_OUT:-0}" python3 -c '
+    ASK_COLLEAGUE_REAL_ARTIFACT_DIR="${1:-}" ASK_COLLEAGUE_GRADABLE="${2:-}" ASK_COLLEAGUE_DRIVE_RC="${3:-}" ASK_COLLEAGUE_JSON="${JSON_OUT:-0}" ASK_COLLEAGUE_MAX_STEPS="${MAX_STEPS:-20}" python3 -c '
 import sys, json, os
 raw = sys.stdin.read().strip()
 json_mode = os.environ.get("ASK_COLLEAGUE_JSON") == "1"
+def _fail(code, message, remediation, detail=None):
+    # #226: in --json mode emit a structured {code, message, remediation} object
+    # on stderr (matching colleague CliError shape) so a machine consumer parses
+    # a failure the same way it parses success; in text mode keep the standard
+    # error:/hint: contract. stdout stays clean (no result) on every path.
+    if json_mode:
+        obj = {"code": code, "message": message, "remediation": remediation}
+        if detail is not None:
+            obj["detail"] = detail
+        sys.stderr.write(json.dumps(obj) + "\n")
+    else:
+        sys.stderr.write("error: " + message + "\n")
+        if detail is not None:
+            sys.stderr.write(detail + "\n")
+        if remediation:
+            sys.stderr.write("hint: " + remediation + "\n")
+    sys.exit(code)
 if not raw:
-    sys.stderr.write("error: colleague produced no result on stdout (see diagnostics above)\n")
-    sys.exit(2)
+    _fail(2, "colleague produced no result on stdout (see diagnostics above)",
+          "re-run; if it persists, check the backend with colleague doctor --probe")
 try:
     d = json.loads(raw)
 except Exception:
-    sys.stderr.write("error: could not parse colleague --json output:\n")
-    sys.stderr.write(raw[:2000] + "\n")
-    sys.exit(2)
+    _fail(2, "could not parse colleague --json output",
+          "the backend may have emitted non-JSON; see the raw output and diagnostics above",
+          detail=raw[:2000])
 ok = d.get("status") == "ok"
+inc = d.get("incompletion") if isinstance(d.get("incompletion"), dict) else None
 tid = d.get("task_id") or ""
 # Resolve the artifact path to the preserved copy when the drive ran in a
 # throwaway worktree (read-only verbs); the raw JSON points into the now-deleted
@@ -332,11 +517,37 @@ if ap and real_dir:
 # trailing off mid-task. Warn so the caller treats it as a partial, not a verdict.
 # The warning is a DIAGNOSTIC -> always stderr (never stdout), so both the digest
 # and --json keep a clean, machine-readable stdout (no single quotes in this body).
+# Enriched partial warnings: include reached step count and a concrete larger
+# --max-steps to retry with, so the hint is actionable (#194).
+max_steps = int(os.environ.get("ASK_COLLEAGUE_MAX_STEPS", "20"))
+stats = d.get("stats") or {}
+model_turns = stats.get("model_turns")
+step_count = stats.get("step_count")
 if d.get("stopped_without_finish"):
-    print("warning: drive ended without calling finish — treat the summary as a", file=sys.stderr)
-    print("         partial (the model stopped mid-task), not an authoritative result.", file=sys.stderr)
+    reached = model_turns if model_turns is not None else step_count
+    if reached is not None:
+        print(f"warning: drive ended without calling finish (reached {reached} model turns of {max_steps}) — re-run with --max-steps {2 * max_steps} to go deeper.", file=sys.stderr)
+    else:
+        print("warning: drive ended without calling finish — treat the summary as a", file=sys.stderr)
+        print("         partial (the model stopped mid-task), not an authoritative result.", file=sys.stderr)
 elif d.get("not_finished"):
-    print("warning: drive ran out of steps without finishing — summary is partial.", file=sys.stderr)
+    reached = model_turns if model_turns is not None else step_count
+    if reached is not None:
+        print(f"warning: drive ran out of steps without finishing (reached {reached} model turns of {max_steps}) — re-run with --max-steps {2 * max_steps} to go deeper.", file=sys.stderr)
+    else:
+        print("warning: drive ran out of steps without finishing — summary is partial.", file=sys.stderr)
+# No-result sentinel: the drive produced nothing actionable (#192).
+summary = d.get("summary") or ""
+if summary == "__COLLEAGUE_NO_RESULT_PRODUCED__":
+    print("warning: no result produced — widen --max-steps or narrow the scope.", file=sys.stderr)
+# Incompletion: when the run did NOT deliver (status != "ok") and colleague
+# carried an incompletion record, surface it as a diagnostic to stderr so the
+# delegating caller knows WHY the run failed and what to do next. Always stderr
+# (never stdout) so --json stdout stays pure.
+if not ok and inc:
+    reason = inc.get("reason", "")
+    recommendation = inc.get("recommendation", "")
+    print(f"incomplete: {reason} — {recommendation}", file=sys.stderr)
 if json_mode:
     # --json contract: stdout carries ONLY the TaskResult JSON; every
     # human/diagnostic line already went to stderr above. The exit code still
@@ -359,7 +570,10 @@ if json_mode:
     # task_id is already in the payload, but echoing the copy-paste grade hint
     # keeps the convention every work item follows (rule 907536) without breaking
     # the stdout contract. Gated on gradable, exactly like the digest below.
-    if tid and gradable:
+    # Skip the grade hint for the no-result sentinel (#192). A FAILED/incomplete but
+    # gradable drive still gets the hint — a failure rated 1/5 is the ROI signal
+    # (#139); the incompletion diagnostic above already says it did not succeed.
+    if tid and gradable and summary != "__COLLEAGUE_NO_RESULT_PRODUCED__":
         print("task:", tid, file=sys.stderr)
         print("grade:", "ask-colleague feedback", tid, "--rating N", file=sys.stderr)
 else:
@@ -380,7 +594,10 @@ else:
     # drive (colleague writes an artifact on failure too, h5): a failure rated
     # 1/5 is exactly the ROI signal, so the hint must not be gated on `ok` (#139
     # qodo). It prints to `out` (stderr on failure), matching the failure digest.
-    if tid and os.environ.get("ASK_COLLEAGUE_GRADABLE") == "1":
+    # Skip the grade footer for the no-result sentinel (#192): a drive that
+    # produced nothing is not worth grading.
+    summary = d.get("summary") or ""
+    if tid and os.environ.get("ASK_COLLEAGUE_GRADABLE") == "1" and summary != "__COLLEAGUE_NO_RESULT_PRODUCED__":
         print("grade:", "ask-colleague feedback", tid, "--rating N", file=out)
 if ok:
     sys.exit(0)
@@ -474,7 +691,7 @@ _preserve_artifact() {
     local art_name="$1"
     [[ -n "$art_name" && -n "$_WT" ]] || return 1
     if ! _valid_segment "$art_name"; then
-        printf 'ask-colleague: refusing to preserve unsafe artifact name %q\n' "$art_name" >&2
+        printf 'error: refusing to preserve unsafe artifact name %q\n' "$art_name" >&2
         return 1
     fi
     local src="$_WT/.colleague"
@@ -484,7 +701,7 @@ _preserve_artifact() {
     # The JSON artifact is the record of the drive — surface a copy failure rather
     # than swallow it, so the caller can fall back to honest path reporting.
     if ! cp -f "$src/$art_name" "$dst/$art_name"; then
-        printf 'ask-colleague: could not preserve artifact %s\n' "$art_name" >&2
+        printf 'error: could not preserve artifact %s\n' "$art_name" >&2
         return 1
     fi
     # The trace shares the artifact stem (.json -> .trace.jsonl); a best-effort
@@ -508,7 +725,7 @@ run_readonly() {
     local instruction="$1"
     _add_worktree
     local out rc=0
-    out="$("${COLLEAGUE[@]}" drive "$instruction" --repo "$_WT" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
+    out="$("${COLLEAGUE[@]}" work "$instruction" --repo "$_WT" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
     _DRIVE_BRANCH="$(printf '%s' "$out" | _extract_branch)"
     # Preserve the artifact to the real repo BEFORE the EXIT trap removes the
     # worktree, so the drive can be graded by its task-id (`ask-colleague feedback
@@ -532,7 +749,7 @@ run_preview() {
     local instruction="$1"
     _add_worktree
     local out rc=0
-    out="$("${COLLEAGUE[@]}" drive "$instruction" --repo "$_WT" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
+    out="$("${COLLEAGUE[@]}" work "$instruction" --repo "$_WT" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
     _DRIVE_BRANCH="$(printf '%s' "$out" | _extract_branch)"
 
     # Capture the would-be patch before _cleanup_worktree deletes the drive branch.
@@ -568,9 +785,9 @@ run_write() {
         return
     fi
     if [[ "$ALLOW_DIRTY" -eq 0 ]] \
-        && [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then
+        && [[ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
         echo "error: working tree is dirty — commit/stash first, or pass --allow-dirty" >&2
-        echo "hint: 'colleague drive --no-pr' commits uncommitted edits onto the drive branch" >&2
+        echo "hint: 'colleague work --no-pr' commits uncommitted edits onto the work branch" >&2
         # User-fixable state guard -> exit 1, matching the runtime's own
         # dirty-tree guard (colleague/handoff.py _guard_clean_tree =
         # EXIT_USER_ERROR), not exit 2 (#161).
@@ -591,9 +808,9 @@ run_write() {
     # read-only / preview paths, which guard this way.
     local out rc=0
     if [[ "$OPEN_PR" -eq 1 ]]; then
-        out="$("${COLLEAGUE[@]}" drive "$instruction" --repo "$REPO" "${COMMON_FLAGS[@]}")" || rc=$?
+        out="$("${COLLEAGUE[@]}" work "$instruction" --repo "$REPO" "${COMMON_FLAGS[@]}")" || rc=$?
     else
-        out="$("${COLLEAGUE[@]}" drive "$instruction" --repo "$REPO" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
+        out="$("${COLLEAGUE[@]}" work "$instruction" --repo "$REPO" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
     fi
     # A landed write persists its artifact in the real repo and moves `last`, so it
     # is gradable — print the `grade:` hint (with the explicit task-id).
@@ -641,13 +858,61 @@ run_clean() {
     "${cmd[@]}"
 }
 
+# ── front-load a filtered, capped diff into the review instruction ──────────
+# Issue #220a: print a diffstat + filtered diff body so the model does not waste
+# turns running `git diff` itself. Lockfile/vendored noise is excluded; the body
+# is capped at ${COLLEAGUE_MAX_OUTPUT_CHARS:-100000} characters.
+front_load_review_diff() {
+    local cap="${COLLEAGUE_MAX_OUTPUT_CHARS:-100000}"
+    printf '%s\n' "--- DIFF UNDER REVIEW (filtered + capped; read specific files for more) ---"
+    git -C "$REPO" diff "$BASE"...HEAD --stat
+    printf '\n'
+    local diff_body
+    # #324: bound the buffering itself, not just the printed output — `head -c`
+    # caps what the substitution ever holds (cap+1 bytes, just enough to detect
+    # truncation) and SIGPIPEs git early on a pathological diff, instead of
+    # materializing the full diff in memory before the length check. `|| true`
+    # also absorbs the SIGPIPE exit under `set -o pipefail`.
+    diff_body="$(git -C "$REPO" diff "$BASE"...HEAD -- . ':(exclude)*.lock' ':(exclude)**/*.lock' ':(exclude)package-lock.json' ':(exclude)**/package-lock.json' ':(exclude)*.min.js' ':(exclude)**/*.min.js' 2>/dev/null | head -c "$((cap + 1))" || true)"
+    if [[ "${#diff_body}" -gt "$cap" ]]; then
+        printf '%s\n' "${diff_body:0:$cap}"
+        printf '%s\n' "[... diff body truncated at ${cap} chars; read specific files for the rest ...]"
+    else
+        printf '%s\n' "$diff_body"
+    fi
+}
+
 # ── piloting verbs: thin passthroughs to the `colleague flight` noun ─────────
 _flight_json_flag() { [[ "$JSON_OUT" -eq 1 ]] && printf -- '--json'; }
+
+# ── resume verb: pick a cut run back up from its artifact ───────────────────
+# `colleague work --continue <id|last>` resumes a timed-out / SIGTERM'd /
+# budget-exhausted run from its persisted artifact (continuation lineage lands on
+# TaskResult.continued_from). The wrapper adds nothing but the shared flags and
+# the effort/role env already exported above. `--detach` runs it under
+# setsid/nohup — NOT `colleague --background`, which drops the continue id
+# (colleague#418) — and returns at once; the log names the new flight id.
+run_resume() {
+    local fid="${ARG%% *}"
+    [[ -z "$fid" ]] && { echo "error: resume needs a task-id (or 'last')" >&2; exit 1; }
+    if [[ "$DETACH" -eq 1 ]]; then
+        local log="$REPO/.colleague/resume-$fid.log"
+        mkdir -p "$REPO/.colleague"
+        setsid nohup "${COLLEAGUE[@]}" work --continue "$fid" --repo "$REPO" --no-pr "${COMMON_FLAGS[@]}" \
+            > "$log" 2>&1 < /dev/null &
+        echo "resume: detached (pid $!) — log: $log" >&2
+        echo "hint: the new flight id appears in the log as 'flight: <id>'; then ask-colleague monitor <id>" >&2
+        return 0
+    fi
+    local out rc=0
+    out="$("${COLLEAGUE[@]}" work --continue "$fid" --repo "$REPO" --no-pr "${COMMON_FLAGS[@]}")" || rc=$?
+    printf '%s' "$out" | print_result "" "1" "$rc"
+}
 
 run_monitor() {
     local fid="${ARG%% *}"
     [[ -z "$fid" ]] && { echo "error: monitor needs a flight task-id" >&2; exit 1; }
-    "${COLLEAGUE[@]}" flight status "$fid" --repo "$REPO" $(_flight_json_flag)
+    "${COLLEAGUE[@]}" flight status "$fid" --repo "$REPO" --follow $(_flight_json_flag)
 }
 
 run_stop() {
@@ -665,11 +930,12 @@ run_guide() {
 
 case "$VERB" in
     explore) run_readonly "$(render_prompt explore)" ;;
-    review) run_readonly "$(render_prompt review)" ;;
+    review) run_readonly "$(render_prompt review)"$'\n\n'"$(front_load_review_diff)" ;;
     write) run_write "$(render_prompt write)" ;;
     feedback) run_feedback "$ARG" ;;
     clean) run_clean ;;
     monitor) run_monitor ;;
     guide) run_guide ;;
     stop) run_stop ;;
+    resume) run_resume ;;
 esac
