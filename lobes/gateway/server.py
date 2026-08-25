@@ -3174,7 +3174,16 @@ def _make_handler(
             "pressure_cache": pressure_cache,
             "readiness_cache": readiness_cache,
             "peer_specs": peer_specs,
-            "replica_snapshot": replica_snapshot,
+            # `staticmethod` is load-bearing, not decoration: `replica_snapshot`
+            # is the ONLY class attribute here that is a plain function, so it
+            # is the only one the descriptor protocol would turn into a BOUND
+            # method — `self.replica_snapshot(backend_name)` would then call
+            # `snapshot(self, backend_name)` and raise TypeError, taking the
+            # whole pooled POST path down with it (t9 caught this live; the
+            # unit suites call `handle_post` directly and never see the class).
+            "replica_snapshot": (
+                None if replica_snapshot is None else staticmethod(replica_snapshot)
+            ),
             "replica_caches": replica_caches,
         },
     )

@@ -39,6 +39,7 @@ didn't mean to touch is exactly the signal this suite exists to catch (see
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -282,6 +283,25 @@ def switch_plan_text() -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- the no-pool gateway golden (replica pool t9, issue #199) ---------------
+
+NO_POOL_GATEWAY_GOLDEN = _GOLDENS_DIR / "no-pool-gateway.json"
+
+
+def no_pool_gateway_text() -> str:
+    """The pretty-printed JSON capture of a NO-POOL gateway's wire responses.
+
+    Pure passthrough of ``tests.test_proxy_integration.capture_no_pool_golden``
+    — the same function the test compares against, so the fixture can never
+    disagree with the assertion. The import is deferred because capturing spins
+    real loopback servers (and pulls in pytest), which no other golden here
+    needs.
+    """
+    from tests.test_proxy_integration import capture_no_pool_golden
+
+    return json.dumps(capture_no_pool_golden(), indent=2, sort_keys=True) + "\n"
+
+
 def write_goldens() -> list[Path]:
     written: list[Path] = []
     for name in builtin_names():
@@ -294,6 +314,8 @@ def write_goldens() -> list[Path]:
     SWITCH_GOLDEN.write_text(switch_plan_text(), encoding="utf-8")
     written.append(SWITCH_GOLDEN)
     written.extend(write_shape_goldens())
+    NO_POOL_GATEWAY_GOLDEN.write_text(no_pool_gateway_text(), encoding="utf-8")
+    written.append(NO_POOL_GATEWAY_GOLDEN)
     return written
 
 
