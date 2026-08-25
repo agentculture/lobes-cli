@@ -32,11 +32,41 @@ feasible = true
 # known-answer + structured tool_calls PASS
 # (docs/evidence/2026-08-20-accept-cortex-local-thor.txt) — with ONE
 # sm_110-only caveat the schema deliberately cannot encode (it lives in the
-# compose lane, like the worker MoE-backend note): MTP MUST BE OFF. The
-# 8bd082 nightly ships no sm_110 image for fused_gdn_decode_post_conv_mtp
-# (the Qwen 27B line is GDN-hybrid); the non-MTP GDN decode path works. A
-# Thor deployment removes the primary lane's --speculative-config line until
-# a PRIMARY_SPECULATIVE_CONFIG knob ships or a nightly restores the kernel.
+# compose lane, like the worker MoE-backend note).
+#
+# That caveat used to read "MTP MUST BE OFF". It is now MEASURED to be
+# narrower than that, 2026-08-25
+# (docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt):
+#
+#   MTP must be off ONLY ON THE CUDA GDN DECODE PATH. The 8bd082 nightly
+#   ships no sm_110 image for fused_gdn_decode_post_conv_mtp (the Qwen 27B
+#   line is GDN-hybrid, not dense), and vLLM's own capability probe CANNOT
+#   detect that — it tests hasattr(torch.ops._C, ...) and
+#   has_device_capability(80), and on sm_110 the symbol IS built and the
+#   capability IS >= 8.0; only the SASS image is absent. So it launches and
+#   dies on the FIRST DECODE rather than falling back.
+#
+#   Setting VLLM_GDN_DECODE_KERNEL=triton routes around it. That env var is
+#   a REQUIRED conjunct of the fused-MTP gate in
+#   qwen_gdn_linear_attn.py:_can_use_fused_gdn_mtp_decode, so forcing the
+#   Triton path means the missing kernel is never launched. MEASURED on this
+#   board: the Triton path costs essentially NOTHING on the unspeculated
+#   floor (12.19-12.21 vs 12.1-12.2 tok/s on CUDA), and MTP-n2 then serves
+#   at 26.8 tok/s on code — +120%.
+#
+# Two traps recorded so they are not re-derived: swapping DRAFTER does not
+# dodge the gap (the gate keys off the target's verification batch,
+# num_spec_decodes > 0, not off which drafter produced the tokens), and MTP
+# is not the riskier arm (both the MTP head and the DSpark drafter are
+# layer_type="full_attention"; neither touches GDN).
+#
+# NOT resolved on this board: DSpark. It loads and its KV fits (630,029
+# tokens, 2.40x at 262144) but warmup dies with a CUDA illegal memory access
+# in the DRAFT ATTENTION path, and the hypothesis that FlashInfer-on-sm_110
+# is the cause cannot be tested because the generate lanes expose no
+# attention-backend knob (issue #206). Separately, MTP changes greedy output
+# on this GDN-hybrid lane (issue #207) — speed is measured, token-for-token
+# equivalence with no-speculation is REFUTED here.
 model = "unsloth/Qwen3.8-27B-NVFP4"
 # Budget INHERITED, not measured for this checkpoint — identical caveat to
 # spark.toml's duo values. 0.30 / 131072 were measured for the outgoing

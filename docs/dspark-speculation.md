@@ -452,6 +452,36 @@ resulting argv diffed against the live container's own `docker inspect` output
 establishes that a re-render can no longer drift the lane, and says nothing
 new about throughput.
 
+## Attempted on the Thor (sm_110), 2026-08-25 — BLOCKED, not disproven
+
+**MEASURED-HERE (dated).** Box: **Jetson AGX Thor** (sm_110). Transcript:
+`docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt`.
+
+DSpark was carried to the Thor's cortex lane on the same pinned image and the
+same pinned drafter revision. It **loads** — vLLM resolved `DSparkDraftModel`
+against the W4A4 target — and its KV **fits**: 630,029 tokens, 2.40×
+concurrency at 262144. It then dies during warmup with a CUDA **illegal memory
+access** in the *draft attention* path
+(`dflash/speculator.py:456 propose → _build_draft_attn_metadata →
+attn_utils.build_attn_metadata`).
+
+This is **not** the sm_110 GDN-MTP kernel gap. That gap is separately fixed on
+this board by `VLLM_GDN_DECODE_KERNEL=triton`, and MTP-n2 boots and decodes
+happily behind it at 26.8 tok/s on code (a +120% gain over the unspeculated
+floor). Two traps from that work are worth carrying here: swapping drafter does
+**not** dodge the GDN gap (the gate keys off the target's verification batch,
+not the drafter), and MTP is **not** the riskier arm — the MTP head and the
+DSpark drafter are both `full_attention` and neither touches GDN.
+
+The surviving hypothesis — that FlashInfer-on-sm_110 is the cause, which
+`lobes/machines/thor.py:40` already flags as "unvalidated/contradicted" — is
+**untestable today**: the generate lanes expose no attention-backend knob, and
+`VLLM_ATTENTION_BACKEND` is absent from this nightly. Tracked in **issue #206**.
+
+**So DSpark's viability on sm_110 is UNKNOWN.** This section records a missing
+knob, not evidence against the drafter. Nothing here revises the Spark results
+above.
+
 ## Sources
 
 - NVIDIA DGX Spark developer forum, *"Qwen3.8-27B at 34-38 tok/s on DGX
@@ -465,6 +495,9 @@ new about throughput.
   <https://github.com/ggml-org/llama.cpp/discussions/27080>
 - `docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt` — the incumbent
   MTP-n2 baseline, dated 2026-08-19
+- `docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt` — the Thor
+  (sm_110) three-arm run: the `VLLM_GDN_DECODE_KERNEL=triton` unlock, MTP-n2 at
+  +120%, and DSpark blocked in the draft attention path (issues #206, #207, #208)
 - `docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt` — the DSpark
   three-arm, three-shape spike this document's "Measured here" section
   reports, dated 2026-08-24

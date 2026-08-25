@@ -1,0 +1,95 @@
+{
+  "plan_slug": "thor-cortex-speculation",
+  "schema_version": 1,
+  "created": "2026-08-25T06:03:57Z",
+  "updated": "2026-08-25T07:45:25Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t2 must use --apply --force, not the plain --apply its instruction prefers",
+      "task_ref": "t2",
+      "reason": "Discovered by executing t2's own dry-run. Reading lobes/runtime/_compose.py and cli/_commands/init.py settles the force-vs-merge semantics the plan guessed at: (1) docker-compose.yml is scaffold_action 'skip' without --force (line 384), so a PLAIN --apply LEAVES THE COMPOSE FILE AS-IS \u2014 and the compose file is the only thing that can introduce the ${PRIMARY_SPECULATIVE_CONFIG} slot t2 exists to obtain; (2) _apply_profile_env (init.py:518-535) force-writes all 22 shape-rendered keys REGARDLESS of --force, so a plain --apply would still flip PRIMARY_MAX_MODEL_LEN 1048576 -> 262144 and add the DSpark PRIMARY_SPECULATIVE_CONFIG. The combination is the worst outcome available: .env would DECLARE DSpark at 262144 while the slot-less compose keeps serving 1M with no speculation \u2014 a silent declaration/reality split, the exact trap docs/dspark-speculation.md point 7 records and this spec exists to avoid. (3) The c27 fear that --force drops operator-typed peer keys is REFUTED: MERGE_ONLY_FILES makes .env merge-only ALWAYS, with or without --force (_compose.py:363, 483-485) \u2014 every existing line survives verbatim. --force governs scaffold FILES (compose, Dockerfiles), not .env lines.",
+      "affects": [
+        "t2",
+        "c27"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    },
+    {
+      "id": "d2",
+      "what": "t2 must render with the REPO CLI (0.61.2), not the installed lobes (0.57.1)",
+      "task_ref": "t2",
+      "reason": "The box's installed CLI is lobes 0.57.1 \u2014 the same generation whose template hardcodes --speculative-config and predates BOTH the ${PRIMARY_SPECULATIVE_CONFIG} substitution (0.59.0) and the speculative_config profile knob (0.61.0). Verified by grep: the deployed ~/.lobes/docker-compose.yml contains 0 occurrences of PRIMARY_SPECULATIVE_CONFIG while lobes/templates/fleet/docker-compose.yml in this repo contains 4. Rendering with the installed CLI therefore CANNOT satisfy t2's slot criterion no matter what flags are used. Use 'uv run lobes' from this checkout (0.61.2), or install the current wheel first. This also incidentally CONFIRMS claim c9 live.",
+      "affects": [
+        "t2",
+        "c9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "t2 acceptance PARTIAL \u2014 the hand referral is DANGLING, for a pre-existing mesh reason my render did not cause",
+      "task_ref": "t2",
+      "reason": "t2 required 'model=hand still answers 200 with X-Lobes-Proxied-By pointing at the Spark'. It does not, and the cause is upstream mesh drift, not this render. Evidence: (1) the Thor's gateway container has been running since 2026-08-20T19:52Z, days BEFORE this render, so it still holds its old environment and my .env edits have not reached it \u2014 it cannot have been affected; (2) HAND_PEER_ORIGIN/PROXY/API_KEY survived the render byte-identical (verified key-by-key, zero keys lost); (3) the Spark is reachable (HTTP 200 on /health) but its own GET /capabilities now reports hand feasible=false ready=false, and a direct authenticated call to spark:8001 with model=hand returns 404 role_infeasible, 'declared hardware-infeasible by this deployment per-machine profile'. So the Spark NO LONGER HOSTS hand. This contradicts docs/evidence/2026-08-20-accept-dual-cortex-mesh.txt, whose Notes say 'hand STAYS served on the Spark' \u2014 the mesh has drifted again since. The Thor therefore carries a dangling hand referral pointing at a box that will never serve it. Secondary observation, not diagnosed: the Thor's gateway HANGS (curl HTTP 000) rather than relaying the peer's clean 404 with hosted_by, which may be its own defect in the 0.57.1-era gateway build. Orthogonal to the cortex arms; does not block t3-t5.",
+      "affects": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d4",
+      "what": "ARM C (DSpark) BLOCKED on sm_110 \u2014 CUDA illegal memory access in the draft attention path, and the lane has no attention-backend knob to test the fix",
+      "task_ref": "t5",
+      "reason": "MEASURED live 2026-08-25 on the Thor. DSpark LOADS (vLLM resolved DSparkDraftModel against the pinned revision 85ef153b, argv proven from docker inspect) and KV sizing SUCCEEDS (630,029 tokens, 2.40x at 262144, so it is NOT a memory-fit failure). It then dies during warmup with 'torch.AcceleratorError: CUDA error: an illegal memory access was encountered', raised at v1/worker/gpu/spec_decode/dflash/speculator.py:456 propose -> _build_draft_attn_metadata -> attn_utils.build_attn_metadata. This is a DIFFERENT failure from the d1 GDN-MTP kernel gap, which VLLM_GDN_DECODE_KERNEL=triton already fixed (ARM B proves that: MTP-n2 boots and decodes fine on the same box, same knob). HYPOTHESIS, untested: the lane runs the FLASHINFER attention backend ('Using FLASHINFER attention backend out of potential backends: [FLASHINFER, TRITON_ATTN]'), and lobes/machines/thor.py:40 already records flashinfer as 'unvalidated/contradicted' on sm_110 while the SM_110 trait forces TRITON_ATTN for the pooling gears. The DSpark drafter is 5 FULL-ATTENTION layers, so it exercises that backend in a way MTP-n2's 3-token draft may not. BLOCKER: the hypothesis CANNOT be tested today. The vllm-primary lane has no --attention-config slot (only vllm-embed and vllm-embed-deep do), PRIMARY_ATTENTION_BACKEND is consumed by nothing, and VLLM_ATTENTION_BACKEND is confirmed ABSENT from this nightly's envs.py (verified by grepping the pinned image). Testing arm C therefore requires a REPO CHANGE first.",
+      "affects": [
+        "t5",
+        "c6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d5",
+      "what": "t6 OBSERVED AN OUTPUT DIVERGENCE between ARM A and ARM B \u2014 recorded before diagnosis, per h13",
+      "task_ref": "t6",
+      "reason": "RAW OBSERVATION, recorded first as h13 requires. At temperature 0, seed 12345, identical prompt, identical max_tokens, thinking disabled, same 262144/triton lane with ONLY --speculative-config differing: 2 of 3 deterministic probes were byte-identical across arms (count sha 9333a8ceb665e8bd 69 tok both; fact sha 097672f987333761 43 tok both) but the 'code' probe DIVERGED \u2014 ARM A sha fd571976baf6fe01 (63 tok, body 'a, b = 0, 1') vs ARM B sha 587b2b7fd854608c (76 tok, body 'if n == 1:'). known_answer and structured tool_calls PASSED identically on both arms with no content leak. Cheap causes checked so far: argv proven from docker inspect (A carries no speculative flag, B carries mtp n=2, both --max-model-len=262144 with VLLM_GDN_DECODE_KERNEL=triton); sampling parameters identical; same tool/reasoning parser. NOT YET CHECKED and the decisive control: whether ARM A is self-consistent run-to-run. vLLM's chunked-prefill/batching path is known to be non-bitwise-deterministic, so if the SAME arm produces different output on repeat runs then this divergence is not attributable to speculation at all. Running that control next; the losslessness claim is SUSPENDED, not asserted and not retracted, until it returns.",
+      "affects": [
+        "c21"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "h10 was FALSIFIED before it was satisfied \u2014 the gateway advertised a stale served contract for the whole spike",
+      "task_ref": "t8",
+      "reason": "MEASURED live. After the render moved PRIMARY_MAX_MODEL_LEN 1048576 -> 262144 and the cortex lane was recreated to serve 262144, BOTH capability surfaces still reported context 1048576: 'lobes capabilities' and GET /capabilities alike. Root cause is mundane but the consequence is not: the gateway container had been running since 2026-08-20 and holds its environment from ITS OWN start, so a .env change reaches the vLLM lane on the next lane recreate while the gateway keeps advertising the previous contract indefinitely. Recreating model-gear-gateway fixed it immediately (context now 262144, h10 SATISFIED). The hazard is that this repo's stated ethos is 'lobes never advertises a capability it cannot serve', and here it advertised a 1M window against a lane serving 262144, with NO warning on either surface and no drift check. A caller trusting /capabilities would have sent a 500k-token request to a 262144 lane. Filed as an issue.",
+      "affects": [
+        "c17"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d7",
+      "what": "recreating the gateway SILENTLY ARMED inbound auth \u2014 compose reads GATEWAY_API_KEY from the SHELL, not just .env",
+      "task_ref": "t8",
+      "reason": "Found by running the live gates, which came back HTTP 401 where the same calls had worked minutes earlier. The deployed gateway had run since 2026-08-20 with NO inbound key; recreating it to fix the stale-capabilities problem (d6) armed authentication. Root cause: docker-compose.yml wires 'GATEWAY_API_KEY=${GATEWAY_API_KEY:-}', and compose resolves that from the SHELL ENVIRONMENT as well as .env. ~/.bashrc:6 exports GATEWAY_API_KEY, so ANY 'docker compose up' or 'lobes up' run from an interactive login shell arms the inbound gate, while the same command run from cron, CI, or a non-login shell does not. .env itself has the key only COMMENTED OUT, so the file is not the source of truth and inspecting it would tell you the gate is off when it is on. RESTORED to the prior no-auth posture with 'env -u GATEWAY_API_KEY docker compose up -d --force-recreate --no-deps gateway' (verified: unauthenticated /v1/chat/completions -> 200, cortex context 262144). This is left for the OPERATOR to configure deliberately \u2014 the .bashrc export suggests intent to run authenticated, but the running deployment had no key for four days and quietly changing a box's auth posture is not mine to decide.",
+      "affects": [
+        "c17"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    }
+  ]
+}
