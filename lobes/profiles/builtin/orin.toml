@@ -506,5 +506,53 @@ max_model_len = 8192
 # A repo-level fix — PSI-based or disk-I/O-corroborated pressure sampling that
 # does not trust nr_iowait on Tegra — would retire this line. Until then it is
 # the honest declaration, not a workaround hidden in a shell history.
+# --- the associate lane's engine pin and DSpark: OPERATOR-TYPED, not here ---
+#
+# MEASURED 2026-08-26. These two keys are NOT declared here, and the reason is
+# the honesty rule: `host_env` renders on EVERY shape, so declaring them would
+# leak ASSOCIATE_* onto shapes that DROP associate — the half-served lobe #92
+# forbids, and exactly what tests/test_shape_goldens.py's
+# test_every_dropped_core_role_renders_only_the_feasible_marker catches. The
+# Shape dataclass has no env mechanism (name/summary/hosts/overrides only), so
+# these are OPERATOR-TYPED in the deployment's own .env — the same posture as
+# peer origins (#92: always operator-typed, never derived). They are a MATCHED
+# PAIR — arming one without the other does not degrade, it refuses to boot:
+#
+#   The fleet-wide nightly (either digest) does NOT KNOW the `dspark`
+#   speculative method. Armed against it, vLLM raises a pydantic
+#   ValidationError at startup listing the methods it does support
+#   ('...nemotron_h_mtp', 'mtp', 'gemma4_mtp', 'dflash', 'ngram_gpu') — `dspark`
+#   is absent. v0.27.1 accepts it. So ASSOCIATE_IMAGE pins v0.27.1 BECAUSE
+#   ASSOCIATE_SPECULATIVE_CONFIG names dspark; neither line stands alone.
+#
+# This is the SECOND lane to diverge from "one engine, fleet-wide" (the Gemma
+# senses/muse lane was the first) — and the first to diverge by NECESSITY
+# rather than by operator choice.
+#
+# WHY DSpark IS ON BY DEFAULT HERE, measured solo at util 0.80 on this board
+# (docs/evidence/2026-08-26-accept-orin-associate.txt), identical engine and
+# resident set with speculation the only variable:
+#
+#     depth        DSpark      plain     gain
+#         0     96.82 t/s   54.75 t/s   1.77x
+#       512    121.12 t/s   54.70 t/s   2.21x
+#      2048     90.58 t/s   54.57 t/s   1.66x
+#      8192     93.86 t/s   54.00 t/s   1.74x
+#     32768     59.05 t/s   52.13 t/s   1.13x
+#
+# The gain decays with depth because per-position draft acceptance decays
+# (0.93/0.81/0.67/0.49/0.28 at best, 0.75/0.45/0.30/0.17/0.11 at worst; mean
+# acceptance length 2.77-4.18 of 5). The drafter is NOT free: it costs KV,
+# taking the pool from 3,806,000 tokens (29.73x at 128000) down to 2,395,428
+# (18.71x). On a board serving one lobe that trade is worth it; on a shared
+# board it may not be.
+#
+# NOTE the drafter repo's -NVFP4 infix. NVIDIA's own published Jetson recipe
+# omits it and names a repo that does not exist.
+#
+# The two lines to put in .env on a box hosting associate:
+#   ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1
+#   ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
 [host_env]
 LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+

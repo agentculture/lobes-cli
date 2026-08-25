@@ -266,3 +266,62 @@
 #      a single-shot `docker compose up` of this shape unreliable.
 #   9. No cross-box probe: nothing has addressed this associate lane from a peer.
 #  10. Marlin NVFP4 correctness on sm_87 still rests on a small probe set.
+
+# ============================================================================
+# ADDENDUM 2026-08-26 — DSpark MEASURED, and two blockers to a solo box
+# ============================================================================
+#
+# Run after the operator asked for DSpark on and the other lanes removed.
+#
+# BLOCKER 1 — DSpark REQUIRES vLLM v0.27.1. Armed against the fleet nightly
+# (either digest) the engine refuses to boot:
+#   pydantic ValidationError: 2 validation errors for SpeculativeConfig
+#   Input should be 'ngram', 'medusa', ..., 'nemotron_h_mtp', 'mtp', ...,
+#   'gemma4_mtp', 'dflash' or 'ngram_gpu'  [input_value='dspark']
+# `dspark` is absent from that build's method list. ASSOCIATE_IMAGE and
+# ASSOCIATE_SPECULATIVE_CONFIG are therefore a MATCHED PAIR — arming one
+# without the other does not degrade to plain decode, it fails to start.
+# Note two alternatives the OLDER engine does offer and that nothing here has
+# measured: `nemotron_h_mtp` (this checkpoint's own family) and `dflash`.
+#
+# CONTROLLED A/B — solo at util 0.80 on vllm/vllm-openai:v0.27.1, identical
+# engine, image, util and resident set; speculation the ONLY variable.
+# Decode read from the server's own usage.completion_tokens (an earlier sweep
+# counted SSE CHUNKS and reported DSpark as SLOWER — speculation packs several
+# accepted tokens into one chunk; those figures were wrong and are discarded):
+#
+#     depth  | prompt_tok |    DSpark |     plain |  gain
+#     -------+------------+-----------+-----------+-------
+#          0 |         23 |  96.82 t/s|  54.75 t/s| 1.77x
+#        512 |       ~530 | 121.12 t/s|  54.70 t/s| 2.21x
+#       2048 |      ~2090 |  90.58 t/s|  54.57 t/s| 1.66x
+#       8192 |      ~8200 |  93.86 t/s|  54.00 t/s| 1.74x
+#      32768 |     ~32800 |  59.05 t/s|  52.13 t/s| 1.13x
+#
+#   Known-answer with DSpark armed: PASS ('Paris', finish=stop).
+#
+#   Acceptance (vLLM's own SpecDecoding metrics): mean acceptance length
+#   2.77-4.18 of 5 drafted; per-position 0.93/0.81/0.67/0.49/0.28 at best,
+#   0.75/0.45/0.30/0.17/0.11 at worst; average draft acceptance 35.3-63.6%.
+#   The decaying per-position rate is why the gain shrinks with depth.
+#
+#   THE DRAFTER IS NOT FREE — solo at util 0.80:
+#     with DSpark   KV 20.99 GiB  pool 2,395,428 tokens  18.71x @128k
+#     plain         KV 23.35 GiB  pool 3,806,000 tokens  29.73x @128k
+#   ~37% of the KV pool buys ~1.7-2.2x decode at shallow-to-moderate depth.
+#
+# BLOCKER 2 — a SOLO shape (hosts = ["associate"]) is NOT a config change.
+# `hand` is hosted by EVERY built-in shape by design: it is the pressure-policy
+# SERVABLE FLOOR and is named in NEVER_PROXIED_BACKENDS. Dropping it regresses
+# the gateway's honesty contract, MEASURED:
+#     model=hand on a shape that drops it -> 404 "model_not_found"
+#     expected                            -> 404 "role_infeasible"
+# `role_infeasible` is the honest error that can name a hosting peer;
+# `model_not_found` says nothing. Fixing it is a gateway change inside the
+# machinery honesty condition h36 constrains, so it was NOT attempted here.
+# The solo shape is therefore NOT shipped; `orin-associate` still hosts
+# associate + hand + embedder + reranker at util 0.56.
+#
+# WHAT IS DEPLOYED RIGHT NOW (not what ships): this board runs associate SOLO
+# on v0.27.1 at util 0.80 with DSpark armed, via operator-typed .env keys. That
+# is a hand-held deployment, not a rendered shape.
