@@ -2,7 +2,7 @@
   "plan_slug": "cortex-replica-pool-199",
   "schema_version": 1,
   "created": "2026-08-25T17:25:44Z",
-  "updated": "2026-08-25T17:25:44Z",
+  "updated": "2026-08-25T17:47:07Z",
   "deviations": [
     {
       "id": "d1",
@@ -14,7 +14,7 @@
         "t3"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "risky"
     }
   ]

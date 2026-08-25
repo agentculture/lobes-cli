@@ -399,7 +399,7 @@ refuses (`508 proxy_loop`) a request that would re-proxy. Default off,
 byte-identical. See `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`
 and `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`.
 
-## Replica pools (opt-in, DECLARED/UNVALIDATED except cortex — issue #199)
+## Replica pools (opt-in, VALIDATED live for cortex on Spark+Thor — issue #199)
 
 Beside proxy-lobes' one-peer-per-dropped-role, a role this box ALSO HOSTS
 can pool with N compatible peer replicas: declare `<PREFIX>_PEER_ORIGINS`
@@ -972,8 +972,9 @@ the plural `<PREFIX>_PEER_ORIGINS` beside the singular `<PREFIX>_PEER_ORIGIN`
 lets a box that HOSTS a role (awake) also forward some of its requests to an
 equally-compatible peer when that peer is less loaded — `hosted_by` stays a
 string, never a list, and the awake/asleep/proxy vocabulary is unchanged.
-**DECLARED, not VALIDATED (#108), and cortex-only**: only the Spark+Thor
-NVFP4 `cortex` pair has a pending live acceptance transcript; the Orin's
+**VALIDATED live 2026-08-25 for cortex only (#108)**: the Spark+Thor
+NVFP4 `cortex` pair has its acceptance transcript
+(`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the Orin's
 llama.cpp cortex is exempt, and any other pooled role is
 declared/unvalidated data only, exactly like `orin-small`/`thor-muse` above.
 See `lobes explain gateway`'s "Replica pools" section and
@@ -1350,7 +1351,7 @@ gateway`). A proxied role's `ready` reflects a live probe of the PEER, not a
 local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
 
 A role a box HOSTS can additionally be pooled with N peer replicas (issue
-#199, opt-in, DECLARED/UNVALIDATED except `cortex`): declaring
+#199, opt-in, VALIDATED live for `cortex` on Spark+Thor, declared-only elsewhere): declaring
 `<PREFIX>_PEER_ORIGINS` (plural) adds an ADDITIVE `replicas` list (per
 candidate: origin, local, ready, busy, running, waiting, compatible, reason,
 fingerprint) and a `fingerprint` object to that role's entry — every existing

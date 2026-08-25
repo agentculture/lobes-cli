@@ -667,13 +667,16 @@ checkpoint (today: Spark and Thor, both `unsloth/Qwen3.8-27B-NVFP4` at
 dialing either gateway gets served by whichever replica is actually free,
 with no change to the request it sends.
 
-> **Status: DECLARED, not VALIDATED (issue #108), and cortex-only.** The
-> mechanism below is implemented and covered by the offline test suite; the
-> live three-box acceptance transcript
-> (`docs/evidence/…accept-cortex-replica-pool-spark-thor.txt`) has not yet
-> landed, so treat every number and behavior here as designed-and-tested,
-> not measured-in-production. The pre-pool baseline this is measured
-> against is already captured:
+> **Status: VALIDATED live 2026-08-25 (issue #108), cortex-only** — on the
+> Spark+Thor NVFP4 pair, `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`:
+> three concurrent requests to one front served by the peer at 19.1 tok/s
+> aggregate vs the 11.0 tok/s single-owner baseline, busy→forward, peer-down
+> continuity, and single-hop all measured. Two divergences are recorded there
+> rather than hidden: a raw-id request under local *pressure* is not
+> forwarded (the pressure gate is tier-alias-only — issue #215), and affinity
+> yields whenever the preferred replica's box turns busy. Every other pooled
+> role stays declared/unvalidated. The pre-pool baseline this is measured
+> against:
 > `docs/evidence/2026-08-25-baseline-cortex-single-owner.txt` — three
 > concurrent `model=cortex` requests to one gateway queued to **11.0 tok/s
 > aggregate** while the Thor sat idle, and the dialed box's own alias

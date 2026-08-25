@@ -387,8 +387,8 @@ selection policy, marker headers (`X-Lobes-Served-By` alongside the existing
 the `<PREFIX>_PEER_ORIGINS`/`_PEER_API_KEYS` config family, and the
 failure/rollback table — lives in
 [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only).
-**Status: DECLARED, not VALIDATED (#108) — cortex only**, on the Spark+Thor
-NVFP4 pair; the CLI view is `lobes capabilities --replicas` / `lobes endpoint
+**Status: VALIDATED live 2026-08-25 (#108) — cortex only**, on the Spark+Thor
+NVFP4 pair (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the CLI view is `lobes capabilities --replicas` / `lobes endpoint
 <role> --replicas`, which also prints a "would choose: `<origin>`
 (`<reason>`)" line.
 

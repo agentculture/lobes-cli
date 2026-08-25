@@ -707,8 +707,8 @@ live probe of the peer's own `/v1/models` confirms it actually serves that
 id — the same "advertised implies reachable" rule (issue #92) a local backend
 is already held to, extended across the box boundary.
 
-**Replica-pool markers (issue #199, opt-in, DECLARED/UNVALIDATED except
-cortex — see [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)).**
+**Replica-pool markers (issue #199, opt-in, VALIDATED live for cortex on
+Spark+Thor 2026-08-25, declared-only for other roles — see [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)).**
 When a box declares a `<PREFIX>_PEER_ORIGINS` pool for a role it also hosts,
 every pooled answer carries one honest placement marker plus why:
 

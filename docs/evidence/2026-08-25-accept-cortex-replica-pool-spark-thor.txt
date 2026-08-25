@@ -1,0 +1,117 @@
+# t11 — LIVE ACCEPTANCE: cortex replica pool, Spark+Thor (#199)   2026-08-25T17:54:10Z   lobes-cli 0.63.0.dev428 (TestPyPI, PR #213)
+spark: MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://spark.tail0be7e0.ts.net:8001 PRIMARY_PEER_ORIGINS=http://thor.tail0be7e0.ts.net:8000 PRIMARY_PEER_API_KEYS= 
+thor:  MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://thor.tail0be7e0.ts.net:8000 PRIMARY_PEER_ORIGINS=http://spark.tail0be7e0.ts.net:8001 PRIMARY_PEER_API_KEYS=<spark key, set>
+
+## 0. Replica view on both fronts
+--- spark /capabilities cortex:
+  fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'fp8', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
+  replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+  replica: {'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 0, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+--- thor /capabilities cortex:
+  fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'auto', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
+  replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 0, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+  replica: {'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': False, 'ready': True, 'busy': True, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+
+## 1. Spread — three concurrent model=cortex to the SPARK front while the Spark lane is loaded
+  idle: spark pressure=busy running=1 waiting=0   thor pressure=warm running=0 waiting=0
+  loaded: spark pressure=busy running=1 waiting=0   thor pressure=warm running=2 waiting=2
+  req A1: HTTP 200 finish=length tokens=300 wall=33.4s tok/s=9.0 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req A2: HTTP 200 finish=length tokens=300 wall=35.3s tok/s=8.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req A3: HTTP 200 finish=length tokens=300 wall=47.0s tok/s=6.4 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  aggregate A1-A3: 900 tokens in 47.0s = 19.1 tok/s (baseline single owner under load: 11.0 tok/s aggregate)
+
+## 2. Raw id vs alias from the same front (same snapshot)
+  req R2: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req R1: HTTP 200 finish=length tokens=300 wall=28.7s tok/s=10.5 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready
+
+## 3. Affinity — five sequential requests, X-Lobes-Affinity: sess-199
+  req F1: HTTP 200 finish=length tokens=300 wall=15.2s tok/s=19.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req F2: HTTP 200 finish=length tokens=300 wall=27.8s tok/s=10.8 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req F3: HTTP 200 finish=length tokens=300 wall=13.2s tok/s=22.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req F4: HTTP 200 finish=length tokens=300 wall=29.0s tok/s=10.3 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req F5: HTTP 200 finish=length tokens=300 wall=14.5s tok/s=20.7 | X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+
+## 4. Spark busy -> Thor: current spark pressure=busy running=1 waiting=0
+  req P1: HTTP 200 finish=length tokens=300 wall=13.9s tok/s=21.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+
+## 5. Thor front: request from the THOR side
+  req T1: HTTP 200 finish=length tokens=300 wall=13.6s tok/s=22.1 | X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+
+## 6. Thor gateway DOWN -> Spark keeps serving (sole-ready), no caller change
+  thor gateway stopped
+  req D1: HTTP 200 finish=length tokens=300 wall=29.3s tok/s=10.2 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req D2: HTTP 200 finish=length tokens=300 wall=30.7s tok/s=9.8 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready
+  thor gateway started
+  recovered: [('http://vllm-primary:8000', True, True), ('http://thor.tail0be7e0.ts.net:8000', True, True)]
+
+## 7. Single hop — a request arriving at the Thor already marked X-Lobes-Proxied is served locally
+  req H1: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.8 | X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+
+## Final replica view
+--- spark /capabilities cortex:
+  fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'fp8', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
+  replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+  replica: {'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+--- thor /capabilities cortex:
+  fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'auto', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
+  replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+  replica: {'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+
+## Deploy record
+- Spark: lobes-cli 0.63.0.dev428 gateway (TestPyPI, PR #213 run 428) via GATEWAY_PIP_EXTRA_INDEX_URL; .env gained
+  GATEWAY_SELF_ORIGIN / PRIMARY_PEER_ORIGINS=<thor> / PRIMARY_PEER_API_KEYS= (empty slot: the Thor is ungated); the new
+  gateway passthrough lines were added to docker-compose.override.yml (deviation d1, approved: the Spark's base compose is
+  hand-edited with the DSpark speculative config and was NOT re-scaffolded — issue #214 proposes committing such files as a lock).
+  Only the gateway container was rebuilt; vllm-primary untouched (DSpark still armed).
+- Thor: docker-compose.yml re-scaffolded from the dev wheel's packaged template (verified additive-only: 0 removals, 64 additions);
+  .env gained GATEWAY_SELF_ORIGIN / PRIMARY_PEER_ORIGINS=<spark:8001> / PRIMARY_PEER_API_KEYS=<the Spark's inbound key>.
+  Only the gateway container was rebuilt.
+- Backups on both boxes: ~/.lobes.pre-199-20260825T173929Z. Rollback = restore .env + compose files, recreate the gateway.
+
+## Trap hit on the first run (recorded for the next operator)
+The first scenario pass returned HTTP 401 for every request that reached the Thor, direct or forwarded, while selection was
+already correct (peer-less-loaded / local-busy-forwarded markers present). Cause: thor@thor's ~/.bashrc exports GATEWAY_API_KEY
+(the SPARK's key, kept for calling the Spark); docker compose interpolates ${GATEWAY_API_KEY:-} from the process environment
+ahead of .env, so the ssh-driven recreate armed the Thor's INBOUND gate with it. The pre-pool container had been started
+interactively without it (the baseline's unauthenticated request to the Thor proves the box was ungated). Fix: recreate with
+`env -u GATEWAY_API_KEY docker compose ... up -d --no-deps --force-recreate gateway`, verify
+`docker exec model-gear-gateway sh -c 'echo ${GATEWAY_API_KEY:+set}'` prints nothing. The transcript above is the second run.
+
+## Reading (against the plan's t11 acceptance and the spec's honesty conditions)
+- h19 / scenario 1+4: with the Spark under ORGANIC iowait pressure (pressure=busy, the same condition the baseline caught) a
+  request to the Spark front returns 200 with X-Lobes-Proxied-By naming the Thor and X-Lobes-Route-Reason: local-busy-forwarded —
+  not the baseline's 429. PASS.
+- h21 / scenario 1: three concurrent requests to ONE front — 900 tokens in 47.0 s = 19.1 tok/s aggregate, vs the baseline's
+  11.0 tok/s aggregate on a single owner under load (+74%). The Thor served all three (it showed running=2 waiting=2 mid-run)
+  because the Spark was busy; the merged capacity is measured, not asserted. PASS.
+- scenario 6: with the Thor's gateway stopped, the Spark front kept answering both the alias and the raw id with
+  X-Lobes-Served-By: <spark> and reason sole-ready, no caller change; the replica view showed the Thor ready again within one
+  refresh after restart. PASS. (In the first, 401-spoiled run the same scenario returned 429 reason none for the alias — the
+  Spark was busy and nothing else was selectable — which is the specified answer for that state.)
+- scenario 7: a request arriving at the Thor already marked X-Lobes-Proxied was served locally (X-Lobes-Served-By: <thor>),
+  no second hop. PASS.
+- h23 / scenario 2: under LOAD the raw id and the alias are placed identically (t9's loopback suite; scenario 0's shared
+  snapshot). Under PRESSURE they DIVERGE: the alias forwarded (local-busy-forwarded) while the raw id was served locally
+  (sole-ready), because the pressure policy — and therefore the pool's busy->forward hook — applies to tier aliases only
+  (#85). Recorded as issue #215 and a plan follow-up risk; NOT hidden by this transcript.
+- h16 / scenario 3: affinity held the Spark on F2 and F4 (reason affinity) and yielded on F1/F3/F5, where the Spark's
+  pressure had flipped to busy (iowait oscillating around the 50% default) and the local replica was not selectable —
+  availability wins over affinity by design. Stickiness under STEADY conditions was not demonstrable on this contended box.
+- Markers: in this run a FORWARDED answer carried the peer's own X-Lobes-Served-By/X-Lobes-Route-Reason relayed next to the
+  forwarder's, i.e. two X-Lobes-Route-Reason values on one response. Fixed after the run in PR #213 (the relay now strips the
+  peer's pool markers; X-Lobes-Proxied-By already names the serving replica). The transcript shows the pre-fix headers.
+- Fingerprints are LIVE on both fronts: served id, max_model_len=262144 (from each lane's /v1/models), runtime=vllm (owned_by),
+  quantization=compressed-tensors (declared), kv_cache_dtype fp8 (Spark) vs auto (Thor) shown as informational — the explicit
+  operator compatibility policy from the spec. reasoning_parser and speculative_config read "unknown" on both: PRIMARY_REASONING_PARSER
+  is not a .env key (the lane hardcodes --reasoning-parser=qwen3) and PRIMARY_SPECULATIVE_CONFIG is unset on both boxes
+  (the Spark's DSpark config is baked into its compose command, the Thor's MTP into the template default) — so the
+  drafter difference is NOT visible in the fingerprint yet. Declared-only fields are only as honest as the .env; #214 (commit
+  the rendered compose as a lock) would close that gap.
+- Absolute tok/s remain contaminated by background mesh load on both boxes (the Spark sat at pressure=busy / running=1
+  before the run started, exactly as in the baseline); the comparison that counts is aggregate-vs-aggregate under the
+  same contention: 19.1 vs 11.0.
+
+VERDICT: the cortex replica pool is VALIDATED on the Spark+Thor NVFP4 pair for the spec's scenarios (spread, busy->forward,
+peer down, single hop, raw-id/alias equivalence under load, affinity-as-preference), with two recorded, non-hidden
+divergences: raw-id requests under PRESSURE are not forwarded (#215) and the relayed double marker (fixed in-PR). Cortex only;
+every other pooled role stays declared/unvalidated (#108). Both boxes were LEFT on the pooled 0.63.0.dev428 gateway.
