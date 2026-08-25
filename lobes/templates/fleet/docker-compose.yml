@@ -1648,7 +1648,7 @@ services:
       --max-num-batched-tokens=${ASSOCIATE_MAX_NUM_BATCHED_TOKENS:-16384}
       ${ASSOCIATE_SPECULATIVE_CONFIG-}
       --enable-auto-tool-choice
-      --tool-call-parser=qwen3_coder
+      --tool-call-parser=${ASSOCIATE_TOOL_CALL_PARSER:-qwen3_coder}
       --reasoning-parser=${ASSOCIATE_REASONING_PARSER:-nemotron_v3}
       --trust-remote-code
     healthcheck:
@@ -1999,10 +1999,15 @@ services:
       - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
       - WORKER_TOOL_CALL_PARSER=${WORKER_TOOL_CALL_PARSER:-}
       - WORKER_SPECULATIVE_CONFIG=${WORKER_SPECULATIVE_CONFIG-}
-      # ASSOCIATE_TOOL_CALL_PARSER has no lane knob — vllm-associate hardcodes
-      # --tool-call-parser=qwen3_coder (the vendor recipe's own pairing) — but
-      # it is passed through here like every other role prefix so a card
-      # profile that declares it is never silently dead.
+      # ASSOCIATE_TOOL_CALL_PARSER reaches BOTH the lane's --tool-call-parser
+      # (default qwen3_coder, the vendor recipe's own pairing) and this
+      # passthrough. It has to reach both: the gateway consumes the value for
+      # the capabilities `tool_parser` field and the replica-pool fingerprint
+      # (_config.py's FINGERPRINT_SUFFIXES), so a knob that fed only the
+      # passthrough would let `lobes capabilities` ADVERTISE a parser the lane
+      # is not actually running. That is worse than a dead knob -- it is a
+      # lying one. (WORKER_TOOL_CALL_PARSER still has the passthrough-only
+      # shape; pre-existing, not touched here.)
       - ASSOCIATE_QUANTIZATION=${ASSOCIATE_QUANTIZATION:-}
       - ASSOCIATE_KV_CACHE_DTYPE=${ASSOCIATE_KV_CACHE_DTYPE:-}
       - ASSOCIATE_REASONING_PARSER=${ASSOCIATE_REASONING_PARSER:-}

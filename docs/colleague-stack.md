@@ -223,12 +223,12 @@ measured says it should own them in the division of labour.
 Three facts follow from it being an **opt-in core role**
 (`OPT_IN_CORE_ROLES`, alongside `muse` and `worker`):
 
-* `machine-as-brain` NEVER hosts it, `base.toml` vetoes it on an unrecognised
+- `machine-as-brain` NEVER hosts it, `base.toml` vetoes it on an unrecognised
   card, and only an explicit associate-hosting shape serves it;
-* an **unwired** associate is INFEASIBLE by default (`OPT_IN_BACKENDS`), so
+- an **unwired** associate is INFEASIBLE by default (`OPT_IN_BACKENDS`), so
   `model=associate` 404s `role_infeasible` — referable and proxyable through
   the `ASSOCIATE_PEER_*` channels, never a silent fallback to cortex;
-* under pressure it **sheds** (HTTP 429 + `Retry-After`) exactly like
+- under pressure it **sheds** (HTTP 429 + `Retry-After`) exactly like
   cortex/senses/worker/muse. It is **not** a servable floor — `hand` remains
   the only one.
 

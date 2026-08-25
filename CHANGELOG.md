@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.1] - 2026-08-26
+
+### Fixed
+
+- **`base.toml`'s vetoes were being bypassed for every opt-in core role**
+  (Qodo review, PR #217). The overlay introduced for hosted opt-in roles set
+  `feasible=True` unconditionally, so `--shape thor-muse` on an unrecognised
+  card would render a full 31B budget the conservative fallback exists to
+  prevent — and the same for `worker` and `associate`. Root cause was deviation
+  `d1`, which had the Orin card declare `[roles.associate] feasible = false`;
+  the card is now **silent** on associate, exactly as every card already is for
+  `muse`/`worker`, so the plain overlay composes correctly and the special case
+  is gone. `thor-worker` on `base`/`orin` renders `WORKER_FEASIBLE=false` again
+  rather than a stale Qwen-era budget.
+- `ASSOCIATE_TOOL_CALL_PARSER` reached only the gateway passthrough, not the
+  lane. Since the gateway consumes it for the capabilities `tool_parser` field
+  and the replica-pool fingerprint, setting it made `lobes capabilities`
+  advertise a parser the lane was not running. It now reaches
+  `--tool-call-parser` too (default `qwen3_coder` unchanged).
+- markdownlint: three asterisk bullets added to `docs/colleague-stack.md`
+  became the file's first list and flipped MD004's expected style, breaking 18
+  pre-existing dash bullets. Converted to match the file's own convention
+  rather than rewriting untouched lines.
+
+### Changed
+
+- `tests/test_profile_schema.py` splits a composite `in_proj and out_proj`
+  assertion into two, so a failure names which projection is missing.
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## [0.65.0] - 2026-08-26
 
 ### Changed

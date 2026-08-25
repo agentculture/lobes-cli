@@ -228,7 +228,7 @@ feasible = true
 model = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
 max_model_len = 262144
 
-[roles.associate]
+# --- associate: DOCUMENTATION ONLY, no table (see the note at the end) ------
 # *** MEASURED LIVE on this box, 2026-08-25 (plan `lightning-on-orin`, task t8):
 # *** docs/evidence/2026-08-25-measure-associate-budget-orin.txt. The LANE is a GO
 # *** here — docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt: known-answer
@@ -321,7 +321,19 @@ max_model_len = 262144
 #                                 kv_cache_quant_algo — sm_87 has no FP8 KV path;
 #                                 the vendor recipe concedes this too, and every
 #                                 number above was measured with it in force)
-feasible = false
+#
+# THIS BLOCK DECLARES NOTHING — it is comment-only, and that is the fix for a
+# regression it caused. Declaring `feasible = false` here (the first shape of
+# deviation d1) forced shape_render to override feasibility unconditionally for
+# hosted opt-in roles, which then BYPASSED base.toml's vetoes for muse, worker
+# AND associate — so `--shape thor-muse` on an unrecognised card would render a
+# full 31B budget the conservative fallback exists to prevent. Staying SILENT
+# is what muse and worker already do on every card (see CLAUDE.md: "the card
+# profiles silent on it"), and it composes correctly without a special case:
+#   * a card that is silent  -> RoleProfile's default feasible=True, so a
+#     hosting shape's override lands and a non-hosting shape renders nothing
+#     (the gateway's OPT_IN_BACKENDS then defaults it infeasible);
+#   * base.toml's EXPLICIT veto -> survives, because nothing overrides it.
 
 [roles.muse]
 feasible = false

@@ -550,7 +550,11 @@ def test_orin_carves_lightning_out_citing_its_own_quant_config_and_the_live_run(
         _, carve_out = _split_on_carve_out(text)
         assert "hf_quant_config.json" in carve_out  # the primary source
         assert "W4A16_NVFP4" in carve_out  # weight-only experts
-        assert "in_proj" in carve_out and "out_proj" in carve_out
+        # Split from a composite `in_proj and out_proj` assertion: the two
+        # projections are separate facts about the checkpoint, and a composite
+        # reports only that "something was missing" rather than which.
+        assert "in_proj" in carve_out  # the FP8 half, input projection
+        assert "out_proj" in carve_out  # the FP8 half, output projection
         assert "FP8" in carve_out  # ...and the barrier half that IS real
         assert "docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt" in carve_out
         assert "Marlin" in carve_out  # the kernel stack the live boot selected

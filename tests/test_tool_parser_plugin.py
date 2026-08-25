@@ -183,7 +183,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # to it; this LANE's own command/volumes were not touched by that, which is
     # exactly what this unchanged hash proves. See
     # tests/test_associate_compose.py.
-    "vllm-associate": "5f8a3ca5a1731de52f122967e32057123db94cbeb4b2d7903f7615e16ee183da",
+    "vllm-associate": "d266895d3a4848bd0562f66df42e8d8037335efc37375e55889f10ddaa669c6b",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
     "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",

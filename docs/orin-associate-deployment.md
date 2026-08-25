@@ -189,4 +189,3 @@ Give it **plenty of `max_tokens`**: this is a thinking model, and a small budget
 is consumed by the reasoning trace before any content is emitted — you get an
 empty `content` and `finish_reason: "length"`, which looks like a broken model
 and is not.
-

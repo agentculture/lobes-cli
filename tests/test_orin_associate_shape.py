@@ -17,7 +17,7 @@ Two things have to line up for the declaration to be more than paperwork:
    role the card marks infeasible is a scenario no prior shape exercised
    (``thor-muse``/``thor-worker``'s card, ``thor.toml``, leaves ``muse``/
    ``worker`` undeclared, i.e. implicitly feasible) — this module is the
-   regression pin for :func:`lobes.profiles.shape_render._overlay_opt_in_core`,
+   regression pin for the opt-in-core overlay path in shape_render,
    the fix that makes a hosted opt-in core role's own shape override win
    feasibility over a card that abstains.
 2. **cortex/senses are dropped, honestly**, and **no audio is advertised**
@@ -120,7 +120,7 @@ def test_no_audio_and_the_reason_is_inherited() -> None:
     assert "CANNOT serve the audio overlay" in text
 
 
-# --- 2. the render actually activates the lobe (the _overlay_opt_in_core fix) ---
+# --- 2. the render actually activates the lobe (card silent + shape override) ---
 
 
 def test_associate_renders_feasible_with_its_full_declaration_despite_the_card_veto() -> None:
