@@ -135,10 +135,28 @@ def _aliases(role: str) -> tuple[str, ...]:
 # The matrix itself: every (built-in shape, dropped core role) cell, derived
 # from the shipped shape data. A future built-in shape's drops land here with
 # zero edits to this module.
+# Only roles that are actually addressable on /v1/chat/completions belong in
+# this matrix. The end-to-end cell POSTs `model=<role>` there and expects the
+# honest `role_infeasible`; for a POOLING or AUDIO role that is the wrong
+# expectation, because such a role is not a chat model at all and
+# `model_not_found` is the correct answer whether it is hosted or not.
+#
+# This mattered from 2026-08-26: `orin-associate` is the FIRST built-in shape
+# to drop `embedder`/`reranker`, so the blanket expectation had never been
+# exercised on a non-generate role before. Derived from TIER_ROLE rather than
+# hardcoded, so a future generate role joins the matrix with no edit here.
+_GENERATE_BACKENDS = frozenset(TIER_ROLE.values())
+
+
+def _is_generate_role(role: str) -> bool:
+    return ROLE_BACKEND.get(role, role) in _GENERATE_BACKENDS
+
+
 CELLS: tuple[tuple[str, str], ...] = tuple(
     (shape_name, role)
     for shape_name in builtin_shape_names()
     for role in _dropped_core_roles(resolve_shape(shape_name))
+    if _is_generate_role(role)
 )
 
 # Cells whose dropped role has generate-lane aliases (all of today's cells —
@@ -181,6 +199,12 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-associate", "senses"),
         ("orin-associate", "muse"),
         ("orin-associate", "worker"),
+        # orin-associate is the SOLO shape (operator decision 2026-08-26): it
+        # hosts `associate` alone, so it is the first built-in shape to drop
+        # `hand` -- until now hosted by every shape as the pressure-policy
+        # servable floor. A box on this shape has NO floor: under swap/iowait
+        # pressure it sheds 429 with nothing to degrade to.
+        ("orin-associate", "hand"),
         # orin-cortex is orin-lobe with the heavies swapped: it hosts cortex
         # (on the llama.cpp lane) and drops senses to a peer, so it contributes
         # a senses cell where orin-lobe contributes a cortex one.
@@ -450,6 +474,10 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
         expected += [("muse", "muse")]
     if shape.hosts_role("worker"):
         expected += [("worker", "worker")]
+    if shape.hosts_role("associate"):
+        # The tenth role (lightning-on-orin, t6): its role name IS its
+        # backend/tier name, like muse and worker.
+        expected += [("associate", "associate")]
     if shape.hosts_role("hand"):
         # All three spellings land on the `hand` backend: `hand` is the role
         # name, `minor`/`cheap` are the back-compat tier names it inherited when

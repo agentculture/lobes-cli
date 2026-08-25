@@ -2,7 +2,7 @@
   "plan_slug": "lightning-on-orin",
   "schema_version": 1,
   "created": "2026-08-25T20:22:52Z",
-  "updated": "2026-08-25T20:22:57Z",
+  "updated": "2026-08-25T22:37:53Z",
   "deviations": [
     {
       "id": "d1",
@@ -15,6 +15,16 @@
       "origin": "llm",
       "status": "approved",
       "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "orin-associate becomes a SOLO shape: hosts=[associate] only, dropping hand, embedder and reranker; util 0.56 -> 0.80; ASSOCIATE_IMAGE pinned to v0.27.1 and DSpark armed via operator-typed .env",
+      "task_ref": "t9",
+      "reason": "Operator decision 2026-08-25/26: the Orin becomes a single-lobe box serving associate as fast as possible. Accepted consequences: (1) hand is the pressure-policy SERVABLE FLOOR hosted by every other built-in shape, so this box has NO floor -- under pressure it sheds 429 with nothing to degrade to, leaning entirely on this card's LOBES_IOWAIT_DEGRADED_THRESHOLD=100 override since Tegra fakes ~59% iowait; (2) no local embeddings or rerank; (3) DSpark requires vLLM v0.27.1 (the fleet nightly refuses method 'dspark' outright), the first lane to diverge from 'one engine, fleet-wide' by NECESSITY. Measured payoff: 1.77-2.21x decode (96.8/121.1 vs 54.8/54.7 tok/s), KV pool 2,395,428 at util 0.80.",
+      "affects": [],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
     }
   ]
 }

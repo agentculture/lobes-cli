@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.0] - 2026-08-26
+
+### Changed
+
+- **`orin-associate` is now a SOLO shape** (operator decision, deviation `d2`):
+  hosts `associate` alone at `gpu_mem_util = 0.80`, dropping `hand`, `embedder`
+  and `reranker`. It is the **first built-in shape to drop `hand`** — the
+  pressure-policy servable floor every other shape hosts — so a box on this
+  shape has **no floor**: under swap/iowait pressure it sheds 429 with nothing
+  to degrade to, leaning entirely on this card's
+  `LOBES_IOWAIT_DEGRADED_THRESHOLD=100` override. Accepted deliberately.
+
+### Added
+
+- **DSpark speculative decoding, MEASURED** on the Orin
+  (`docs/evidence/2026-08-26-accept-orin-associate.txt`). Controlled A/B —
+  identical engine, image, util and resident set, speculation the only
+  variable: **96.8 / 121.1 / 90.6 / 93.9 / 59.1 tok/s** with DSpark versus
+  54.8 / 54.7 / 54.6 / 54.0 / 52.1 plain across depths 0 / 512 / 2048 / 8192 /
+  32768 — a **1.77–2.21× gain** at shallow-to-moderate depth. Draft acceptance
+  35–64%; the drafter costs ~37% of the KV pool (3,806,000 → 2,395,428 tokens).
+  Requires vLLM **v0.27.1**: the fleet nightly rejects `dspark` and refuses to
+  boot, so `ASSOCIATE_IMAGE` and `ASSOCIATE_SPECULATIVE_CONFIG` are a matched
+  pair.
+- `docs/orin-associate-deployment.md` — a copy-pasteable deployment reference:
+  the plain `docker run`, the compose service verbatim, the budget table for
+  every co-residency measured, and the five things that will bite you.
+
+### Fixed
+
+- `tests/test_shape_contract_matrix.py` built chat-completions cells for
+  **pooling and audio** roles, expecting `role_infeasible` where
+  `model_not_found` is correct — such a role is not a chat model whether hosted
+  or not. Never exercised until `orin-associate` became the first shape to drop
+  `embedder`/`reranker`. The matrix now derives generate-ness from `TIER_ROLE`,
+  and had also never been taught about `associate`.
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## [0.64.0] - 2026-08-26
 
 ### Added

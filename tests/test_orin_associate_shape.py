@@ -71,9 +71,9 @@ def _fake_card(resolved: str) -> _detect.DetectedCard:
 # --- 1. the shape's own data -------------------------------------------------
 
 
-def test_hosts_associate_hand_and_the_pooling_gears_and_drops_the_heavies() -> None:
+def test_hosts_associate_alone_and_drops_every_other_role() -> None:
     shape = resolve_shape(_SHAPE)
-    assert set(shape.hosts) == {"associate", "hand", "embedder", "reranker"}
+    assert set(shape.hosts) == {"associate"}
     assert not shape.hosts_role("cortex")
     assert not shape.hosts_role("senses")
     for role in AUDIO_ROLES:
@@ -86,7 +86,7 @@ def test_declares_the_full_associate_override_matching_the_card_documentation() 
     physical measurement."""
     rp = resolve_shape(_SHAPE).override("associate")
     assert rp.model == _MODEL_ID
-    assert rp.gpu_mem_util == 0.56
+    assert rp.gpu_mem_util == 0.80
     assert rp.max_model_len == 128000
     assert rp.quantization == "modelopt"
     assert rp.kv_cache_dtype == "bfloat16"
@@ -132,7 +132,7 @@ def test_associate_renders_feasible_with_its_full_declaration_despite_the_card_v
     assert "ASSOCIATE_FEASIBLE" not in env  # feasible=True renders no marker at all
     assert env["ASSOCIATE_MODEL"] == _MODEL_ID
     assert env["ASSOCIATE_SERVED_NAME"] == _MODEL_ID
-    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.56"
+    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.8"
     assert env["ASSOCIATE_MAX_MODEL_LEN"] == "128000"
     assert env["ASSOCIATE_QUANTIZATION"] == "modelopt"
     assert env["ASSOCIATE_KV_CACHE_DTYPE"] == "bfloat16"
@@ -164,8 +164,12 @@ def test_the_associate_compose_service_is_hosted_and_the_others_are_not() -> Non
     assert ROLE_SERVICE["associate"] in services
     assert ROLE_SERVICE["cortex"] not in services
     assert ROLE_SERVICE["senses"] not in services
+    # SOLO shape (operator decision 2026-08-26): hand, embedder and reranker are
+    # dropped too, so their lanes must NOT be in the composed service set. Note
+    # hand: it is the pressure-policy servable floor that every other built-in
+    # shape hosts, so a box on this shape has no floor at all.
     for role in ("hand", "embedder", "reranker"):
-        assert ROLE_SERVICE[role] in services
+        assert ROLE_SERVICE[role] not in services
 
 
 def test_the_card_keeps_its_tegra_iowait_declaration_under_this_shape() -> None:
@@ -213,7 +217,7 @@ def test_end_to_end_init_render_activates_associate(tmp_path, monkeypatch) -> No
     assert "vllm-associate" not in shape_override  # hosted lane is never parked
 
     dropped = init_cmd._shape_dropped_services(resolve_shape(_SHAPE), resolve_profile(_CARD))
-    assert dropped == ["vllm-multimodal", "vllm-primary"]
+    assert dropped == ["vllm-embed", "vllm-hand", "vllm-multimodal", "vllm-primary", "vllm-rerank"]
 
 
 def test_reapplying_orin_associate_after_a_different_shape_restores_byte_for_byte(
