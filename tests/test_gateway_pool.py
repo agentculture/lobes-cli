@@ -713,3 +713,18 @@ def test_pool_does_not_apply_to_audio_paths() -> None:
     opener, calls = _opener()
     resp = S.handle_audio_request(table, cfg, specs, "/v1/audio/speech", [], b"{}", opener)
     assert _header(resp, S.ROUTE_REASON_HEADER) is None
+
+
+def test_forwarded_answer_carries_only_the_forwarders_pool_markers():
+    """The peer's own Served-By / Route-Reason never ride back (#199 t11 live finding)."""
+    from lobes.gateway.server import _strip_peer_pool_markers
+
+    relayed = _strip_peer_pool_markers(
+        [
+            ("Content-Type", "application/json"),
+            ("X-Lobes-Served-By", "http://peer:8000"),
+            ("X-Lobes-Route-Reason", "sole-ready"),
+            ("X-Lobes-Tier", "main"),
+        ]
+    )
+    assert relayed == [("Content-Type", "application/json"), ("X-Lobes-Tier", "main")]

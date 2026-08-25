@@ -1158,16 +1158,35 @@ def _relay_to_target(
                 headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
                 body=declined,
             )
-        return GatewayResponse(status=404, headers=[proxied_by] + up.headers, body=raw)
+        return GatewayResponse(
+            status=404, headers=[proxied_by] + _strip_peer_pool_markers(up.headers), body=raw
+        )
     # 2xx or any other 4xx: the peer's authoritative verdict, relayed exactly
     # like the single-owner rules relay a local backend's (#91) — including
     # the peer's own 429 pressure shed riding back to the caller.
     return GatewayResponse(
         status=up.status,
-        headers=[proxied_by] + up.headers,
+        headers=[proxied_by] + _strip_peer_pool_markers(up.headers),
         upstream=up,
         streaming=streaming,
     )
+
+
+_PEER_POOL_MARKERS = frozenset({SERVED_BY_HEADER.lower(), ROUTE_REASON_HEADER.lower()})
+
+
+def _strip_peer_pool_markers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Drop the PEER's own placement markers from a relayed answer.
+
+    A pooled peer stamps ``X-Lobes-Served-By`` / ``X-Lobes-Route-Reason`` on
+    every answer it serves locally; relayed verbatim they would ride back next
+    to THIS box's markers and a caller would see two ``X-Lobes-Route-Reason``
+    values on one response (seen live 2026-08-25, #199 t11). The forwarder's
+    verdict is the honest one — ``X-Lobes-Proxied-By`` already names the
+    serving replica — so the peer's copies are dropped; every other upstream
+    header (tier markers included) relays unchanged.
+    """
+    return [(k, v) for k, v in headers if k.lower() not in _PEER_POOL_MARKERS]
 
 
 def _feasibility_response(table: RoutingTable, requested: str | None) -> GatewayResponse | None:
