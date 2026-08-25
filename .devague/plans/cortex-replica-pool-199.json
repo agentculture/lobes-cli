@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-25T16:10:01Z",
-  "updated": "2026-08-25T16:19:37Z",
+  "updated": "2026-08-25T17:36:12Z",
   "targets": [
     {
       "id": "c1",
@@ -684,6 +684,14 @@
       "text": "Declared per-replica weight: t4 takes a declared decode weight per origin (default 1.0) because no measurement of pool behaviour exists; t10 records the measured spread so a later PR can calibrate or replace it with a latency EMA",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Spec gap surfaced by t9: a forwarded pooled request arrives at the peer with model rewritten to the raw served id, which is not a tier alias, so the RECEIVING box's pressure gate never sheds it \u2014 'both boxes busy -> one forward + relayed 429' cannot occur at the tier gate; instead the forwarder's snapshot carries the peer's busy from /status and selects nothing (local 429, reason none). Only a peer ENGINE 429 relays. Decide whether the receiver should apply pressure to marked raw-id arrivals (follow-up on #199).",
+      "kind": "follow_up",
+      "task_id": "t9",
       "resolved": false,
       "resolution": ""
     }
