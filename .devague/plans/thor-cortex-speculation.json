@@ -1,0 +1,521 @@
+{
+  "slug": "thor-cortex-speculation",
+  "title": "thor cortex speculation",
+  "frame_slug": "thor-cortex-speculation",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-25T05:38:43Z",
+  "updated": "2026-08-25T05:44:11Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "the Thor cortex gets speculative decoding back \u2014 DSpark or MTP, behind the Triton GDN decode path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "VLLM_GDN_DECODE_KERNEL=triton actually prevents the fused_gdn_decode_post_conv_mtp launch on sm_110 under a real speculative batch. Verified by BOOTING the Thor cortex with triton set plus any --speculative-config and completing a multi-token decode \u2014 the d1 failure surfaced on the FIRST decode, so a healthy /health is not evidence. Falsified if the same 'no kernel image is available for execution on the device' RuntimeError appears, in which case the whole frame collapses to a negative result and is reported as one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "VLLM_GDN_DECODE_KERNEL=triton is the unlock, and it is a first-class vLLM env var (envs.py:131 and :1211, Literal['cuda','triton'], default 'cuda'). qwen_gdn_linear_attn.py:491-505 reads it, and :1807 makes 'gdn_decode_kernel == cuda' a REQUIRED conjunct of the fused-MTP gate \u2014 so setting triton routes the target's GDN layers down _forward_core (the Triton spec path) and the missing-image kernel is never launched. This turns the d1 'MTP MUST BE OFF on sm_110' blocker from a hard wall into a config knob, and it applies to MTP-n2 and DSpark alike",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "setting VLLM_GDN_DECODE_KERNEL=triton is sufficient on its own \u2014 no source patch, no image change. Verified by the arm-B boot completing a multi-token decode with --speculative-config present. Falsified if the boot still crashes, or if vLLM raises 'VLLM_GDN_DECODE_KERNEL=cuda is not supported' style config errors that reveal a second required knob",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "the vLLM build already on the Thor declares the method: probing vllm.config.speculative.SpeculativeMethod inside the running model-gear-vllm-primary lists 'dspark' (and 'dflash'), on the identical build string (0.26.1rc1.dev942+g5a4c8d992) the Spark's 2026-08-24 spike ran. No image change is needed to try this \u2014 only argv and one env var",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "no image bump is needed. Verified by the DSpark arm loading DSparkDraftModel on the Thor's currently pinned digest 8bd082c274fa. Falsified if the drafter fails to resolve, in which case the spike scope grows to an image change and should stop for a decision",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "the 1M YaRN window and DSpark cannot both survive on the Thor. The Spark refused the DSpark boot at max_model_len=1048576 / util 0.58 ('needs 51.47 GiB KV; available 40.76'), and the Thor is strictly worse per GiB of KV: it runs kv_cache_dtype=auto (the validated #109 divergence) where the Spark runs fp8, and its 1M pool is 1,114,504 tokens vs the Spark's 1,271,476 at the same util. So any Thor speculation arm inherits the same forced trade-down to the checkpoint's native 262144 \u2014 a served-contract change visible through lobes capabilities, not a private dial",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "262144 is genuinely the ceiling for a DSpark arm on this box. Verified by the DSpark arm booting at 262144 and, if headroom looks generous, one probe boot above it to record where vLLM actually refuses. Falsified if DSpark boots comfortably at a larger window, in which case the trade-down was over-conservative and the served contract should be revisited",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "PR #202 has ALREADY changed what the Thor would render, and nobody measured it on sm_110. The d1 transcript records the Thor deployment as 'lobes init --shape spark-lobe --apply --force on the thor card', so the Thor borrows spark-lobe \u2014 the very shape 830bbf3 moved to DSpark @ 262144. A routine re-render on the Thor today would arm DSpark argv on a box where the fused GDN MTP kernel has no image, AND silently drop the served window from 1M to 262144. This is the spark-lobe re-render trap that docs/dspark-speculation.md point 8 closed for the Spark, still open in the opposite direction for the Thor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the Thor really does render spark-lobe. Verified by reading LOBES_SHAPE / the shape provenance in ~/.lobes/.env and by a dry-run 'lobes init --shape spark-lobe --profile thor' diffed against the deployed compose. Falsified if the Thor renders something else, in which case this boundary is withdrawn",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the Thor's deployed compose predates the PRIMARY_SPECULATIVE_CONFIG slot: grep of ~/.lobes/docker-compose.yml finds only MULTIMODAL_SPECULATIVE_CONFIG expanded, and the .env carries no PRIMARY_SPECULATIVE_CONFIG line \u2014 MTP is off there by a hand-edit that deleted the hardcoded flag, exactly the deployment defect docs/dspark-speculation.md point 7 found on the Spark. So arming any drafter on the Thor requires re-rendering the compose first, which is the same operation that carries the spark-lobe trap above. Sequence them deliberately",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the deployed compose lacks the PRIMARY_SPECULATIVE_CONFIG slot. Already verified this session by grepping ~/.lobes/docker-compose.yml (only MULTIMODAL_SPECULATIVE_CONFIG expands) and the live argv (no --speculative-config). Falsified only if a later re-render happens before the spike starts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "arm order on the Thor is control -> MTP-n2 -> DSpark, all at 262144, all behind VLLM_GDN_DECODE_KERNEL=triton, all three content shapes (code/reasoning/prose), reported per shape. The control arm is triton + NO speculation, re-measured same-day: without it the 12.1 tok/s figure from 2026-08-20 is a cuda-path number and cannot serve as the baseline for a triton-path arm (docs/model-switch-playbook.md's same-day/same-harness rule). Deltas at or under ~15% are noise per the Spark spike's own variance floor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the control arm is genuinely comparable to the speculative arms \u2014 same day, same harness, same prompts, same box state. Verified by running all three arms back-to-back in one session with only PRIMARY_SPECULATIVE_CONFIG changing. Falsified if the box is rebooted, re-rendered, or the image changes mid-run, in which case the affected arms are re-measured, not reconciled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "the measurement itself is the win, independent of the outcome. Today the Thor's cortex \u2014 the fleet's reasoning/deciding/final-authority lobe \u2014 runs with NO speculative decoding at all because d1 recorded 'MTP MUST BE OFF on sm_110' as a flat kernel-gap fact. Whether speculation turns out to be worth deploying or not, this run replaces that flat fact with a measured, conditioned answer, and gives the repo its first sm_110 evidence for the Triton GDN decode path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the run produces a durable, citable artifact regardless of outcome \u2014 a dated docs/evidence transcript under this repo's measured-here labelling, with conditions attached per docs/measuring-lane-performance.md rule 3. Falsified if the spike ends with only a verbal 'it didn't work' and no transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "audience",
+      "text": "the lobes operator running the physical Jetson AGX Thor (sm_110) cortex, plus any future sm_110 board this fleet adds \u2014 and, second-hand, every mesh caller addressing model=cortex on this box, whose decode rate and served max_model_len both change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the served contract change is actually visible to callers. Verified by 'lobes capabilities' / GET /capabilities on the Thor reporting cortex context 262144 rather than 1048576 after the change. Falsified if the surfaces still advertise 1M, which would be a capabilities bug worth its own issue",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "after_state",
+      "text": "the Thor cortex serves Qwen3.8-27B at max_model_len=262144 with a speculative drafter chosen by measurement, and the choice \u2014 including 'neither, keep no-speculation' \u2014 is backed by a dated docs/evidence transcript covering a triton no-spec control, MTP-n2, and DSpark, each across code/reasoning/prose. thor.toml's flat 'MTP MUST BE OFF' comment is replaced by the measured condition under which speculation does or does not work on sm_110",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "thor.toml's cortex comment ends up stating a measured condition, not a flat prohibition. Verified by reading lines 35-39 after the change and finding the Triton knob named. Falsified if the spike lands numbers but leaves the profile comment untouched, which would recreate the exact drift this frame exists to fix",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "a docs/evidence/<date>-*-thor.txt transcript exists carrying: three arms x three content shapes with per-shape tok/s and acceptance, argv proven from docker inspect rather than .env, the same-day triton no-spec control, and an explicit statement of which arm was adopted and which rejected. A NEGATIVE result \u2014 the Triton path does not unlock speculation, or unlocks it at a net loss \u2014 satisfies this signal exactly as well as a positive one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "a negative result is written up with the same care as a positive one. Verified by the transcript existing and being cited from docs/dspark-speculation.md regardless of outcome. Falsified if a failed unlock produces no evidence file \u2014 that is the specific failure mode c16 exists to prevent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "no quality claim rides on this, and an observed divergence triggers INVESTIGATION before any verdict. Block speculation is lossless BY CONSTRUCTION (the target verifies every drafted token) \u2014 docs/dspark-speculation.md labels that STRUCTURAL, not measured, and explicitly notes it is 'not a claim that any particular implementation is bug-free: a broken verification path, a mangled config, or a silently-disabled speculative flag can all violate it in practice'. A Triton-vs-CUDA GDN decode swap is a further axis again, touching the non-speculative path too. So this spike measures speed and acceptance only; if an output difference IS observed on a speculative arm, the correct first move is to determine whether it is an implementation defect (config, verification path, parser) or a genuine algorithmic divergence \u2014 the structural claim is about the algorithm, and a defect falsifies the deployment, not the algorithm",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "an observed output divergence is reported IMMEDIATELY in the transcript and then investigated to a named cause \u2014 implementation defect or algorithmic divergence \u2014 with the losslessness claim SUSPENDED, not asserted, in the interim. Falsified by either failure mode: silently defending losslessness while a divergence sits unexplained, OR sitting on the observation until the investigation concludes. The investigation is bounded: if no cause is named, the claim is retracted rather than left suspended indefinitely",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "PRIMARY_MAX_NUM_SEQS must be pinned and held identical across all three arms, and its value stated in the transcript. The Thor's live .env carries PRIMARY_MAX_NUM_SEQS=2 with the comment 'MTP cap \u2014 4 OOMs at n=3/high context', and env.example explicitly instructs 'Clear PRIMARY_MAX_NUM_SEQS too' when speculation is turned off \u2014 so the box currently runs an MTP-era OOM cap with no MTP. A re-render or an arm-specific edit could change it silently between arms, which would confound every throughput number. Choose one value deliberately, justify it, and prove it per arm from docker inspect",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "max_num_seqs is identical across all three arms and stated in the transcript. Verified from each arm's docker inspect argv. Falsified if any arm's --max-num-seqs differs, in which case that arm is re-run rather than reported with a caveat",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "every arm needs a discarded warmup generation before its measured run, because the Triton GDN path JIT-compiles. qwen_gdn_linear_attn.py carries @triton.jit kernels and vLLM's own message at line 167 warns a backend choice can cost JIT time ('Set --gdn-prefill-backend triton to skip JIT'). Switching gdn_decode_kernel to triton moves decode onto kernels that were never compiled on this box, so the first measured generation of the control arm \u2014 the arm every later delta is compared against \u2014 is the one most likely to carry compile cost and read artificially slow",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "measured throughput excludes JIT compile cost. Verified by discarding a warmup generation per arm and confirming a second run reproduces the first within the stated ~10-15% variance floor. Falsified if warmup and measured runs differ by more than that, which would mean compile cost is still leaking into the numbers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "the DSpark arm executes third-party weights under --trust-remote-code, which the Thor's live cortex argv already carries. RadixArk/Qwen3.8-27B-DSpark is an outside publisher's repo, and a drafter is executable weights \u2014 spark-lobe.toml already says so ('an unpinned draft repo is a silent config change on the next pull') and pins the revision. That pin is the whole mitigation, so it must be carried verbatim into the Thor arm and proven from the container's rendered argv, never retyped from memory. Do not run the DSpark arm against a floating main",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "the DSpark arm runs the exact pinned revision 85ef153be924f17ce4bf62726954eeaa4a73e854. Verified from the container's rendered argv via docker inspect. Falsified by any floating or absent revision, in which case the arm is void and re-run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "the spike needs a stated rollback to the known-good config, exercised at least once. d1 snapshotted ~/.lobes.pre-lightning-<ts> before its swap and that is the pattern to repeat, but the frame only says 'snapshot' without naming what restoring actually requires: this box's compose is HAND-EDITED (the primary lane's --speculative-config line was deleted, and the file predates the PRIMARY_SPECULATIVE_CONFIG slot), so restoring the .env alone does not restore the working lane. Rollback = restore the snapshot directory AND recreate the container, then re-prove 12.1 tok/s and the known_answer probe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "rollback actually restores the working lane. Verified by exercising it at least once \u2014 restore the snapshot, recreate the container, and re-prove both the known_answer probe and ~12.1 tok/s on the cuda path. Falsified if the restored lane does not reproduce the 2026-08-20 numbers, which would mean the box drifted and the snapshot is not a rollback",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "the re-render required by c9 must PRESERVE this box's operator-typed peer keys, verified key by key against a pre-render copy of .env \u2014 but NOT for the HAND_FEASIBLE reason originally proposed, which a probe refuted. PROBED 2026-08-25: 'lobes init --fleet --shape spark-lobe --profile thor <scratch> --apply' into an empty directory renders HAND_FEASIBLE=false, not true \u2014 the thor card declares no hand role, so the shape's hosts list does not by itself stand up a local vllm-hand. What the same probe DID confirm is the real exposure: the fresh render emits max_model_len 262144, the DSpark speculative_config, and NO HAND_PEER_ORIGIN / HAND_PEER_API_KEY / MULTIMODAL_PEER_ORIGIN at all. Those three are operator-typed and per #92 never derived, so nothing regenerates them if a --force render drops them, and the Thor's hand and senses referrals would go dangling",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "no operator-typed peer key is lost by the re-render, and no local vllm-hand appears. Verified by diffing the post-render .env against a pre-render copy key by key, then confirming model=hand still answers with X-Lobes-Proxied-By pointing at the Spark and model=senses at the Orin. Falsified by any dropped *_PEER_ORIGIN / *_PEER_API_KEY, or by a vllm-hand container existing locally afterwards",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Build the rollback safety net and prove it works BEFORE touching anything",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "~/.lobes is copied to ~/.lobes.pre-speculation-<timestamp> following d1's naming, with .env captured separately for the key-by-key diff in t2",
+        "the rollback is EXERCISED once before any arm runs: restore the snapshot, recreate the cortex container, and re-prove BOTH the known_answer probe and ~12.1 tok/s on the cuda path",
+        "if the restored lane does not reproduce the 2026-08-20 numbers, the plan STOPS \u2014 the box has drifted and the snapshot is not a rollback",
+        "drop_caches (sync; echo 3 > /proc/sys/vm/drop_caches) runs BEFORE the recreate, not after it fails; tegrastats confirms the free-block recovery"
+      ],
+      "deps": [],
+      "covers": [
+        "c26",
+        "h18"
+      ],
+      "instruction": "Do this FIRST and do not skip the exercise step \u2014 an unexercised snapshot is a hope, not a rollback. Follow d1's naming (~/.lobes.pre-speculation-<timestamp>). Remember this box's memory quirk: MemAvailable LIES here, so read tegrastats for the real free-block picture, and run drop_caches BEFORE the recreate rather than after the boot fails and the restart policy loops it."
+    },
+    {
+      "id": "t2",
+      "summary": "Re-render the deployment scaffold, preserving every operator-typed key",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a DRY-RUN 'lobes init --fleet --shape spark-lobe --profile thor' is diffed against the deployed compose and the live 'docker inspect' argv BEFORE any --apply, confirming the Thor does render spark-lobe (falsifies or confirms c8)",
+        "the render uses a plain --apply, NOT --apply --force; --force is used only if a specific key demands it and then reconciled by hand",
+        "post-render .env is diffed key by key against the pre-render copy; MULTIMODAL_PEER_ORIGIN/PROXY, HAND_PEER_ORIGIN/PROXY/API_KEY, WORKER_FEASIBLE and every *_FEASIBLE flag are present and unchanged",
+        "the rendered docker-compose.yml contains the ${PRIMARY_SPECULATIVE_CONFIG-...} slot (absent on the deployed 0.57.x-era file), verified by grep",
+        "no local vllm-hand container exists; model=hand still answers 200 with X-Lobes-Proxied-By pointing at the Spark, and model=senses likewise at the Orin"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c8",
+        "h6",
+        "c9",
+        "h7",
+        "c27",
+        "h19"
+      ],
+      "instruction": "The riskiest step in the plan, because it regenerates a hand-edited deployment. Copy .env into the snapshot before rendering. Prefer a plain --apply: merge-only since 0.59.0 protects existing lines, whereas d1's --apply --force force-writes keys and nothing regenerates an operator-typed peer credential (#92). If --force proves necessary for a specific key, reconcile the rest by hand and re-verify both proxy paths."
+    },
+    {
+      "id": "t3",
+      "summary": "ARM A \u2014 the control: Triton GDN decode path, NO speculation, 262144",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "VLLM_GDN_DECODE_KERNEL=triton is set on the vllm-primary service and PROVEN to have landed via 'docker inspect --format {{json .Config.Env}}', with the container log line 'GDN decode kernel: triton' captured as proof the value was read",
+        "PRIMARY_SPECULATIVE_CONFIG= (set but EMPTY, so the flag is omitted from argv, not blanked) and max_model_len=262144; argv proven from docker inspect, never from .env",
+        "PRIMARY_MAX_NUM_SEQS is decided BEFORE this arm, stated in the transcript, and identical across all three arms \u2014 keeping 2 matches both the deployed box and the Spark spike's 262144 tables",
+        "one warmup generation is discarded before the measured set, and a second measured run reproduces the first within the ~10-15% variance floor \u2014 proving Triton JIT compile cost is not leaking into the baseline",
+        "three content shapes (code / reasoning / prose) measured, each labelled with the shape that produced it; KV pool size and concurrency multiple recorded as vLLM reports them",
+        "the d1 probe suite (known_answer, tool_calls, gateway smoke) runs on this arm and its outputs are retained for the cross-arm comparison in t6",
+        "wall-clock timestamps recorded so a mid-run environment change is detectable afterwards"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c14",
+        "h9",
+        "c22",
+        "h14",
+        "c24",
+        "h16"
+      ],
+      "instruction": "Decide max_num_seqs cold, before you start: keeping 2 matches both the deployed box and the Spark spike's 262144 tables, which is what makes the numbers comparable. This arm's number is the denominator for everything that follows, so the warmup discipline matters more here than anywhere else \u2014 a JIT-inflated control makes both speculation arms look better than they are."
+    },
+    {
+      "id": "t4",
+      "summary": "ARM B \u2014 MTP-n2: the unlock test",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the lane boots with the compose template's default MTP-n2 --speculative-config AND VLLM_GDN_DECODE_KERNEL=triton, and COMPLETES A MULTI-TOKEN DECODE \u2014 a healthy /health is explicitly NOT evidence, since the d1 failure surfaced on the first decode",
+        "no 'no kernel image is available for execution on the device' RuntimeError appears; if it does, h1 is falsified, the frame collapses to a negative result, and t7 reports it as one rather than the plan continuing",
+        "no second knob turns out to be required \u2014 if vLLM raises a config error revealing one, h3 is falsified and the finding is recorded",
+        "same three content shapes, same discarded warmup, same pinned max_num_seqs as ARM A; MTP draft acceptance read from vLLM's docker_logs SpecDecoding line and recorded per shape",
+        "the d1 probe suite runs on this arm and its outputs are retained for t6"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c4",
+        "h3"
+      ],
+      "instruction": "This is the arm that decides whether the whole idea works. Watch the FIRST decode, not /health \u2014 d1's failure surfaced there. If the missing-kernel RuntimeError returns, stop cleanly and hand t7 a negative result; that outcome satisfies the success signal and is not a failed plan."
+    },
+    {
+      "id": "t5",
+      "summary": "ARM C \u2014 DSpark block-7 against the pinned revision",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the speculative_config value is COPIED VERBATIM from lobes/profiles/builtin_shapes/spark-lobe.toml rather than retyped, preserving both quoting layers \u2014 the bare-single-quote and unquoted spellings degrade the JSON silently",
+        "revision 85ef153be924f17ce4bf62726954eeaa4a73e854 is proven present in the container's rendered argv via docker inspect; a floating or absent revision voids the arm and it is re-run",
+        "DSparkDraftModel resolves on the ALREADY-PINNED image digest 8bd082c274fa with no image bump; if it will not load, the plan STOPS and reports rather than bumping the nightly, which would confound every arm",
+        "KV pool and concurrency multiple recorded at 262144; if headroom looks generous, one probe boot above 262144 records where vLLM actually refuses, so the trade-down is measured on THIS box rather than inherited from the Spark",
+        "same three content shapes, same discarded warmup, same pinned max_num_seqs; DSpark draft acceptance recorded per shape",
+        "the d1 probe suite runs on this arm and its outputs are retained for t6"
+      ],
+      "deps": [
+        "t4",
+        "t10"
+      ],
+      "covers": [
+        "c6",
+        "h4",
+        "c7",
+        "h5",
+        "c25",
+        "h17"
+      ],
+      "instruction": "Copy the speculative_config value verbatim from spark-lobe.toml \u2014 both quoting layers, no retyping. The bare-single-quote and unquoted spellings degrade the JSON silently and the boot failure points nowhere near the cause. If DSpark will not load on the pinned digest, STOP: bumping the nightly to make it load would invalidate arms A and B."
+    },
+    {
+      "id": "t6",
+      "summary": "Cross-arm output comparison and the divergence protocol",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the retained probe outputs from all three arms are compared; known_answer and structured tool_calls behave identically across arms",
+        "IF any output difference is observed, the raw divergence is written into the transcript IMMEDIATELY, before diagnosis \u2014 sitting on the observation until the investigation concludes falsifies h13 just as much as defending losslessness does",
+        "diagnosis checks the CHEAP implementation causes first \u2014 argv via docker inspect, sampling parameters, the qwen3_coder_thinking parser \u2014 before reaching for an algorithmic explanation",
+        "the investigation is BOUNDED: it resolves to a named cause (implementation defect or algorithmic divergence) or the losslessness claim is retracted, never left suspended indefinitely",
+        "no speed or acceptance number in this plan is presented as a quality claim"
+      ],
+      "deps": [
+        "t3",
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c21",
+        "h13"
+      ],
+      "instruction": "Resist the pull to explain a divergence before recording it. Write the raw observation down first, then work the cheap causes \u2014 argv, sampling params, parser \u2014 before reaching for anything algorithmic. Most 'the model changed' findings are config findings."
+    },
+    {
+      "id": "t7",
+      "summary": "Write the evidence transcript \u2014 including if the answer is no",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-<date>-spike-thor-cortex-speculation.txt exists (spike-, not accept-, unless an arm is actually adopted, in which case a separate accept- transcript is added)",
+        "it carries three arms x three content shapes with per-shape tok/s and acceptance, the same-day triton no-spec control, argv proven from docker inspect, and an explicit statement of which arm was adopted and which rejected",
+        "every number carries its conditions per docs/measuring-lane-performance.md rule 3; deltas at or under ~15% are stated as noise, not as effects",
+        "a NEGATIVE result \u2014 Triton does not unlock speculation, or unlocks it at a net loss \u2014 is written up with the SAME care as a positive one; a verbal 'it did not work' with no transcript falsifies h2",
+        "the transcript does not compare against the published 34-38 tok/s SGLang figure, which is a different publisher, engine, target quantization and silicon"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c16",
+        "h2",
+        "c19",
+        "h12"
+      ],
+      "instruction": "Write this even if the answer is no, and write it with the same care. The negative transcript is the more valuable artifact, because it closes a question that would otherwise be reopened every few months. Keep 'measured here' and 'published elsewhere' in separate columns; never let a citation drift into a claim."
+    },
+    {
+      "id": "t8",
+      "summary": "Adopt the outcome in-tree and prove the served contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/profiles/builtin/thor.toml's cortex comment (lines ~35-39, currently a flat 'MTP MUST BE OFF') is replaced with the MEASURED condition naming VLLM_GDN_DECODE_KERNEL \u2014 in the SAME PR as the transcript, never a follow-up",
+        "'lobes capabilities' and GET /capabilities on the Thor report cortex context 262144, not 1048576; if they still advertise 1M that is a capabilities bug and gets its own issue rather than being papered over",
+        "the mesh is told BEFORE the window change lands \u2014 a caller relying on >262144 tokens breaks silently otherwise, and per q3 no box in the mesh will serve above 262144 afterwards",
+        "the Orin's cortex referral still resolves after the change (it proxies to the Spark, not here, per the dual-cortex topology \u2014 verify rather than assume)",
+        "docs/dspark-speculation.md and docs/qwen3.8-27b-nvfp4.md cite the new transcript"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c17",
+        "h10",
+        "c18",
+        "h11"
+      ],
+      "instruction": "Update thor.toml in the same PR as the transcript \u2014 a follow-up that never lands is how the flat 'MTP MUST BE OFF' comment became stale in the first place. Announce the window change before it lands: per q3, after this no box in the mesh serves cortex above 262144."
+    },
+    {
+      "id": "t9",
+      "summary": "Ship it: branch, version bump, PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "python3 .claude/skills/version-bump/scripts/bump.py minor runs \u2014 CI's version-check job fails the PR if the version equals main's, with no exception for docs-only changes",
+        "uv run pytest -n auto passes, plus black/isort/flake8/bandit and 'uv run afi cli doctor . --strict'",
+        "every reviewer thread (Qodo, Copilot, human) is replied to and resolved before merge"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [],
+      "instruction": "Standard repo flow: branch, bump, PR, and reply to every reviewer thread before merging. The version bump is not optional even for a docs-and-config PR."
+    },
+    {
+      "id": "t10",
+      "summary": "Pre-fetch and verify the DSpark drafter BEFORE the maintenance window",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "RadixArk/Qwen3.8-27B-DSpark at revision 85ef153be924f17ce4bf62726954eeaa4a73e854 is present in this box's HF cache, with the revision confirmed on disk rather than assumed from a successful download",
+        "free disk headroom is checked against the ~2.53 GiB of bf16 weights plus HF's staging overhead, before the pull rather than during it",
+        "a partial or interrupted download is detected and cleared here, not discovered later as a confusing model-load error inside ARM C",
+        "this task touches NO container and NO deployment file, so it is safe to run alongside t1 without affecting the cortex lane"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Run this alongside t1, before the maintenance window opens. A 2.53 GiB cold pull discovered mid-window is how a three-arm session becomes a two-arm session. NOTE: this task was briefly self-confirmed by the agent in error and flipped back to proposed \u2014 it needs the user's own confirm."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the DSpark drafter is a COLD PULL on this box \u2014 ~2.53 GiB of bf16 weights from RadixArk on Hugging Face, never fetched here. Neither the frame nor the challenge pass examined the Thor's HF cache state, disk headroom, or network path. A slow or failed pull stalls ARM C after the other two arms have already consumed the maintenance window, and a partial download can surface as a confusing load error rather than a clear network failure. Pre-fetch and verify the revision BEFORE the arm window opens",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "this plan has NO parallelism available \u2014 every arm mutates the same single physical box and the same cortex container, so 'devague plan waves' will emit narrow, effectively serial waves. That is honest, not a plan defect: do not fan this out to a workforce, and do not let wave width be read as an opportunity to run arms concurrently. Concurrent arms would also violate c14's same-day/same-harness/same-box-state condition",
+      "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "the Thor's cortex is DOWN for each container recreate across t2 through t5. Per the dual-cortex topology the mesh routes cortex to the Spark and the Orin proxies there, so blast radius is limited \u2014 but any local consumer on this box (the deployed lobes agent, culture-node containers) loses its local cortex for the duration. Announce the window; do not discover a dependent mid-arm",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "issue #204 \u2014 a shape override beats a card profile, so builtin/thor.toml cannot express a draft opinion that survives rendering spark-lobe. If t8 adopts a Thor-specific speculative config, the only supported homes are a new thor-cortex shape (orin-cortex.toml is the precedent) or forking spark-lobe. Neither is ergonomic; this plan does NOT close that gap",
+      "kind": "follow_up",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "no lobes surface exposes draft acceptance \u2014 lobes/_metrics.py maps no spec-decode, draft or acceptance families for either engine, so every acceptance figure here comes from vLLM's docker_logs read by hand. Fine for a dated spike; it means an ADOPTED speculative lane degrades invisibly, since a drafter whose acceptance collapses on a workload shift looks identical to a slow box from every lobes surface",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "retiring the YaRN hf_overrides block at 262144 is deliberately OUT of this plan. The operator's quality rationale for the native ceiling argues for stock rope too, but every DSpark arm ever measured ran with that YaRN block in force, and folding it in would add a second uncontrolled variable to a three-arm comparison. It needs its own transcript at 262144 + stock rope",
+      "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
