@@ -255,6 +255,19 @@ max_model_len = 262144
 # with hand actually co-resident is open follow-up work; until it runs, do not
 # describe this budget as "measured alongside hand".
 #
+# HEADLESS IS AN OPERATOR OPTION, NOT A CARD DEFAULT (issue #216): this board
+# runs graphical.target, and on Tegra the GUI holds UNIFIED memory — the same
+# pool this fraction is taken from (gnome-shell + Xorg + mutter + gdm ~0.35 GiB
+# RSS, and RSS undercounts the framebuffer/carveout). Recovering it would very
+# likely clear the 0.05 GiB that refused 0.70 above, and 0.70 measured solo is
+# worth +38% KV (15.07 GiB / 1,720,320 tokens / 13.44x). It is deliberately NOT
+# taken here: this file ships to EVERY Orin, lobes cannot detect whether a host
+# runs a desktop, and a headless-measured util would be declared for GUI boards
+# too and refused at boot on them — exactly as 0.70 was refused here. An operator
+# running multi-user.target can raise this in their own
+# <deploy-dir>/profiles/orin.toml and re-measure; #216 tracks measuring the real
+# delta.
+#
 # BOOT ORDER MATTERS, as everywhere on this card: gpu_memory_utilization is a
 # fraction of the ENTIRE device and KV is the only elastic term, so a gears-first
 # boot and an associate-first boot do not yield the same pool. These numbers are
