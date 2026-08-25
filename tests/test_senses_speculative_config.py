@@ -214,11 +214,15 @@ def test_knob_is_scoped_to_the_senses_lane_only() -> None:
     hardcoded (or absent) with no off-switch at all."""
     text = _FLEET_COMPOSE.read_text(encoding="utf-8")
 
-    # The senses knob is SUBSTITUTED exactly once — in its own command.
-    # (Prose mentions of the name in the comment block above it don't count.)
+    # The senses knob is SUBSTITUTED exactly twice: once in its own command,
+    # and once more (issue #199, t3) as a read-only gateway-service
+    # passthrough — the gateway mirrors every lane's declared fingerprint so
+    # GET /capabilities and the replica pool's compatibility check can see
+    # what this box's lane actually declares. (Prose mentions of the name in
+    # the comment block above it don't count.)
     assert (
-        text.count(f"${{{_KNOB}") == 1
-    ), f"${{{_KNOB} must be substituted exactly once in the fleet template"
+        text.count(f"${{{_KNOB}") == 2
+    ), f"${{{_KNOB} must be substituted exactly twice in the fleet template"
 
     for name in ("vllm-multimodal-coder", "vllm-muse"):
         command = _load_fleet()["services"][name]["command"]
