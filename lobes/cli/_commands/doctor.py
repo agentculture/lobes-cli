@@ -330,7 +330,7 @@ def _gateway_environment_block(text: str) -> str:
             continue
         indent = len(line) - len(line.lstrip(" "))
         if indent == 2 and stripped.endswith(":"):
-            in_gateway = stripped[:-1] == "gateway"
+            in_gateway = stripped == "gateway:"
             in_env = False
             continue
         if not in_gateway:
