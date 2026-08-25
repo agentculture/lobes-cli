@@ -1,3 +1,124 @@
+# GO — Lightning (NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) + DSpark speculation
+# boots and serves correctly on the Jetson AGX Orin 64GB (sm_87), lightning-on-orin t2.
+#
+# Board: Jetson AGX Orin 64GB (sm_87). Date: 2026-08-25. Engine: vLLM 0.27.1.
+# Checkpoint: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (NemotronHForCausalLM,
+# Mamba-2/MoE/attention hybrid), served at max_model_len=128000, gpu_memory_utilization=0.7,
+# kv_cache_dtype=bfloat16. Speculation: --speculative_config method=dspark, model=
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark, num_speculative_tokens=5
+# (from the 18:27:34 "non-default args" line; confirmed again in the 18:28:23 resolved
+# SpeculativeConfig line — see "Vendor-recipe defect #3" below. Citations below use
+# timestamps (HH:MM:SS, all 2026-08-25) rather than file line numbers, since this header
+# sits above the raw transcript and any line-number citation would be stale).
+#
+# ## GO summary (headline figures, each traced to its instrument)
+#
+# - Model weights: 19.45 GiB. Instrument: engine boot log, model_runner.py:329 —
+#   "Model loading took 19.45 GiB and 1770.646195 seconds" (18:57:55). This is vLLM's
+#   own weight-loader accounting, not an OS/tool memory sample.
+# - Available KV cache memory: 15.07 GiB. Instrument: engine boot log, gpu_worker.py:563 —
+#   "Available KV cache memory: 15.07 GiB" (19:00:44).
+# - KV pool: 1,720,320 tokens. Instrument: engine boot log, kv_cache_utils.py:2235 —
+#   "GPU KV cache size: 1,720,320 tokens" (19:00:44).
+# - Max concurrency: 13.44x at 128,000 tokens/request. Instrument: engine boot log,
+#   kv_cache_utils.py:2236 — "Maximum concurrency for 128,000 tokens per request: 13.44x"
+#   (19:00:44).
+# - Known-answer probe: PASS.
+# - Tool-call probe: PASS (auto tool choice, qwen3_coder parser armed — 18:27:34
+#   "non-default args": "'enable_auto_tool_choice': True, 'tool_call_parser': 'qwen3_coder'").
+# - Decode, two runs, both WITH DSpark speculation (5 draft tokens; see caveat below,
+#   NOT compared to the vendor's 89 tok/s agentic-workload aggregate):
+#     run 1: 900 completion tokens / 11.15 s
+#     run 2: 900 completion tokens / 11.52 s
+#   Honest comparisons instead: the Spark `worker` lane's 75.1 tok/s single-stream decode
+#   with NO speculation (docs/evidence/2026-08-20-accept-worker-hand-spark.txt), and this
+#   same board's own llama.cpp cortex figure of 2.61 tok/s.
+#
+# ## Memory-instrument note (Tegra board, no GPU-memory query)
+#
+# On this Tegra/Jetson board `nvidia-smi` reports `memory.used [N/A]` — there is no GPU
+# memory query on this platform at all. Every memory figure in this document and in the
+# raw log below therefore comes from the vLLM ENGINE'S OWN boot-log accounting (weight
+# loader, gpu_worker KV-cache sizer, kv_cache_utils), never from `nvidia-smi`, `free`,
+# `docker stats`, or `tegrastats` — none of those tools appear anywhere in this transcript
+# (grepped; zero hits). Treat every GiB/token figure above as engine-self-reported, not
+# independently cross-checked against an OS-level sampler.
+#
+# ## Mamba2 SSD Triton warmup: appeared and COMPLETED (distinct from the FlashInfer SSU pick)
+#
+# Two separate mechanisms, two separate log lines — do not conflate them:
+#
+# 1. Mamba2 SSD Triton kernel warmup (the line that wedged the physical Jetson AGX Thor
+#    indefinitely on TWO prior engine versions):
+#      18:58:24  mamba_mixer2.py:596  "Warming up Mamba2 SSD Triton kernels..."
+#      18:59:58  monitor.py:81  "Initial profiling/warmup run took 94.09 s"
+#    On THIS board/engine pairing it ran to completion in 94.09 s and boot proceeded —
+#    it did not wedge here. KV cache allocation followed two minutes later:
+#      19:00:44  gpu_worker.py:563  "Available KV cache memory: 15.07 GiB"
+#
+# 2. FlashInfer Mamba SSU backend selection (a DIFFERENT subsystem — SSU dispatch, not
+#    the SSD Triton warmup path — occurring after KV sizing, at 19:00:44):
+#      ssu_dispatch.py:129  "Using FlashInfer Mamba SSU algorithm: auto"
+#      ssu_dispatch.py:310  "Using flashinfer Mamba SSU backend."
+#
+# ## sm_87 kernel selection: modelopt_mixed admitted via Marlin (selection, not correctness)
+#
+# Quantization method resolves to `modelopt_mixed` (18:28:23 engine config line). Kernel
+# selection lines (all at 18:28:25-18:28:26):
+#   [__init__.py:665] Selected MarlinFP8ScaledMMLinearKernel for ModelOptFp8LinearMethod
+#   [__init__.py:1030] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+#   [nvfp4.py:285] Using 'MARLIN' NvFp4 MoE backend out of potential backends:
+#     ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTEDSL_BATCHED',
+#      'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION']
+#   [cuda.py:482] Using FLASH_ATTN attention backend out of potential backends:
+#     ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION']
+#   [flash_attn.py:789] Using FlashAttention version 2
+# Also present (three consecutive warnings at 18:56:12): Marlin weight-only-compression warnings confirming
+# this sm_87 part lacks native FP8/FP4 compute and is falling back to Marlin weight-only
+# kernels for both FP8 and FP4 paths.
+#
+# CAVEAT — kernel SELECTION is not kernel CORRECTNESS: vllm-project/vllm#34694 and #49070
+# both report garbled output from this exact Marlin NVFP4 fallback path on non-Blackwell
+# parts. Correctness on THIS board rests on exactly ONE known-answer probe and ONE tool
+# call (both PASS, above) — that is a thin correctness sample, not a validated guarantee,
+# and should not be read as clearing the Marlin-NVFP4-garbled-output risk generally.
+#
+# ## Vendor-recipe defect #3: --speculative_config.model name is missing the -NVFP4 infix
+#
+# The vendor's published recipe names the DSpark draft model as
+# `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DSpark` — that repo does not exist. The
+# real repo carries an `-NVFP4` infix: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark`.
+# This transcript's own invocation already uses the corrected name (18:27:34, non-default
+# args: `'speculative_config': {..., 'model':
+# 'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark', ...}`), confirmed again in
+# the resolved engine config (18:28:23):
+#   speculative_config=SpeculativeConfig(method='dspark',
+#     model='nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark', num_spec_tokens=5)
+# This transcript does not itself contain a failed attempt against the un-infixed name (no
+# 404/RepositoryNotFound lines appear here — grepped, zero hits); the defect is recorded
+# from the vendor recipe text compared against the resolved config actually used.
+#
+# ## DSpark acceptance: a decaying range, not a single headline number
+#
+# Mean acceptance length across the SpecDecoding metric samples in this transcript,
+# chronological (19:02:59, 19:03:09, 19:03:19, 19:03:29, 19:03:39): 5.42, 3.67, 4.88,
+# 3.45, 3.06 (then 5.71 at 19:04:09, a later, smaller sample after load dropped).
+# Per-position acceptance rate at the settled/steady sample (19:03:49): 0.746, 0.528,
+# 0.349, 0.270, 0.171 — decaying sharply with draft depth, as expected for speculative
+# decoding. Average draft acceptance rate ranges from 88.3% on the first short-turn
+# sample (19:02:59) down to ~41.3% sustained under load (19:03:39-19:03:49). Do not
+# summarize this as one acceptance-rate figure; report the decaying per-position curve
+# and the range across samples, as done here.
+#
+# ## Other boot warning of note
+#
+# "No published PyTorch CUDA builds for release 2.13.0+cu130 support this GPU." (appears
+# twice, pre-boot, before the 18:28:23 EngineCore init) — this board's CC 8.7 (Orin) is
+# not in this PyTorch build's supported CC list; the warning did not prevent a successful
+# boot in this transcript.
+#
+# ## Raw transcript (primary source, unmodified below this line)
+#
 WARNING 08-25 18:27:34 [argparse_utils.py:257] With `vllm serve`, you should provide the model as a positional argument or in a config file instead of via the `--model` option. The `--model` option will be removed in a future version.
 (APIServer pid=1) INFO 08-25 18:27:34 [api_utils.py:345] 
 (APIServer pid=1) INFO 08-25 18:27:34 [api_utils.py:345]        █     █     █▄   ▄█
