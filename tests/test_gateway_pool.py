@@ -584,11 +584,16 @@ def test_unpooled_role_in_a_pooled_deployment_is_unmarked() -> None:
 
 
 # ============================================================================
-# t7 keeps the 429 shed (t8 turns it into a forward)
+# t8 SUPERSEDED t7 here: the pressure shed became a forward
 # ============================================================================
 
 
-def test_pressure_shed_still_429s_in_t7() -> None:
+def test_pressure_shed_is_forwarded_once_a_pool_is_declared() -> None:
+    # This test asserted the pre-t8 behaviour (429 + zero outbound calls) and
+    # is kept, inverted, as the record of the change: with a selectable peer
+    # replica declared, #85's shed becomes a forward (spec c7/h6). The 429 is
+    # now reserved for "no replica anywhere is available" — proven in
+    # tests/test_gateway_pool_pressure.py, which owns the full t8 contract.
     table, cfg, specs = _build(_pool_env())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, busy=True),
@@ -602,9 +607,27 @@ def test_pressure_shed_still_429s_in_t7() -> None:
         pressure=_HIGH_PRESSURE,
         replica_snapshot=snapshot,
     )
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert _header(resp, S.PROXIED_BY_HEADER) == _THOR_ORIGIN
+    assert _header(resp, S.ROUTE_REASON_HEADER) == "local-busy-forwarded"
+
+
+def test_pressure_shed_on_an_unpooled_role_still_429s() -> None:
+    # The control: no *_PEER_ORIGINS ⇒ #85's shed is untouched, headers and all.
+    table, cfg, specs = _build(_base_env())
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_HIGH_PRESSURE,
+        replica_snapshot=_snapshot(_state("http://vllm-primary:8000", local=True, busy=True)),
+    )
     assert resp.status == 429
     assert calls == []
     assert _header(resp, "X-Lobes-Tier-Reason") == "busy"
+    assert _header(resp, S.ROUTE_REASON_HEADER) is None
 
 
 # ============================================================================
