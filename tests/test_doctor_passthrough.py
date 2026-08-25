@@ -195,3 +195,41 @@ def test_passthrough_in_override_overlay_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
     result = D._gateway_passthrough_check(tmp_path)
     assert result["passed"] is True, result
+
+
+def test_passthrough_under_another_service_does_not_count(tmp_path, monkeypatch):
+    """Only services.gateway.environment propagates a key to the gateway (Qodo, PR #213)."""
+    from lobes.cli._commands import doctor as D
+
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  gateway:\n    environment:\n      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}\n"
+        "  vllm-primary:\n    environment:\n      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "PRIMARY_PEER_ORIGINS=http://peer-a.example:8000\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
+    result = D._gateway_passthrough_check(tmp_path)
+    assert result["passed"] is False, result
+    assert "PRIMARY_PEER_ORIGINS" in result["message"]
+
+
+def test_gateway_environment_block_scan():
+    from lobes.cli._commands.doctor import _gateway_environment_block
+
+    text = (
+        "services:\n"
+        "  gateway:\n"
+        "    image: x\n"
+        "    environment:\n"
+        "      # comment\n"
+        "      - A=${A:-}\n"
+        "      - B=${B}\n"
+        "    ports:\n"
+        "      - '8001:8000'\n"
+        "  other:\n"
+        "    environment:\n"
+        "      - C=${C:-}\n"
+    )
+    assert _gateway_environment_block(text) == "- A=${A:-}\n- B=${B}"

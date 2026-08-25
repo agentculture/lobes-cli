@@ -273,3 +273,13 @@ def test_hosted_role_stays_feasible_true_with_replicas_declared() -> None:
     annotate_replicas(payload, table)
     assert payload["cortex"]["feasible"] is True
     assert "hosted_by" not in payload["cortex"]
+
+
+def test_offline_fingerprint_reads_tool_call_parser_suffix():
+    """The lane knob is *_TOOL_CALL_PARSER, and _lane_fingerprints stores that suffix."""
+    from lobes.roles import _offline_fingerprint
+
+    fp = _offline_fingerprint(
+        {"TOOL_CALL_PARSER": "qwen3_coder_thinking"}, {"model": "m", "context": 1}
+    )
+    assert fp["tool_parser"] == "qwen3_coder_thinking"

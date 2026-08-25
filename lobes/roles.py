@@ -1019,7 +1019,7 @@ _FINGERPRINT_DECLARED_FIELDS: tuple[tuple[str, str], ...] = (
     ("quantization", "QUANTIZATION"),
     ("kv_cache_dtype", "KV_CACHE_DTYPE"),
     ("reasoning_parser", "REASONING_PARSER"),
-    ("tool_parser", "TOOL_PARSER"),
+    ("tool_parser", "TOOL_CALL_PARSER"),  # the lane knob is *_TOOL_CALL_PARSER (Qodo, PR #213)
     ("speculative_config", "SPECULATIVE_CONFIG"),
 )
 

@@ -310,6 +310,39 @@ def _gateway_relevant_keys() -> tuple[str, ...]:
     return tuple(keys)
 
 
+def _gateway_environment_block(text: str) -> str:
+    """Only the ``services.gateway.environment`` lines of one compose file.
+
+    A ``KEY=${KEY...}`` substitution under ANOTHER service (or anywhere else
+    in an overlay) does not reach the gateway container, so matching it would
+    report a passthrough that is not there (Qodo, PR #213). Same stdlib
+    indentation scan as :func:`lobes.runtime._compose._override_service_keys`
+    (the runtime carries no YAML parser): a service is a two-space key, its
+    ``environment:`` a four-space key, and the block is every deeper-indented
+    line that follows until the indent comes back up.
+    """
+    out: list[str] = []
+    in_gateway = False
+    in_env = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 2 and stripped.endswith(":"):
+            in_gateway = stripped[:-1] == "gateway"
+            in_env = False
+            continue
+        if not in_gateway:
+            continue
+        if indent == 4:
+            in_env = stripped == "environment:"
+            continue
+        if in_env and indent > 4:
+            out.append(stripped)
+    return "\n".join(out)
+
+
 def _has_passthrough(compose_text: str, key: str) -> bool:
     """True iff the compose text contains a ``KEY=${KEY...`` substitution.
 
@@ -370,7 +403,7 @@ def _gateway_passthrough_check(deploy_dir: Path) -> dict:
     # falsely reported missing — the check is about whether the value REACHES
     # the container, not which file carries it.
     compose_text = "\n".join(
-        (deploy_dir / name).read_text(encoding="utf-8")
+        _gateway_environment_block((deploy_dir / name).read_text(encoding="utf-8"))
         for name in _PASSTHROUGH_COMPOSE_FILES
         if (deploy_dir / name).is_file()
     )
