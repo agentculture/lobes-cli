@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-25T04:57:22Z",
-  "updated": "2026-08-25T05:20:04Z",
+  "updated": "2026-08-25T05:27:53Z",
   "claims": [
     {
       "id": "c1",
@@ -348,6 +348,120 @@
       "links": [],
       "instruction": "Run the d1 probe suite (known_answer, tool_calls, gateway smoke) on EVERY arm, not just the fastest. If outputs differ, record the raw divergence in the transcript before diagnosing it, then check the cheap implementation causes first \u2014 argv via docker inspect, sampling parameters, the qwen3_coder_thinking parser \u2014 before reaching for an algorithmic explanation.",
       "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "PRIMARY_MAX_NUM_SEQS must be pinned and held identical across all three arms, and its value stated in the transcript. The Thor's live .env carries PRIMARY_MAX_NUM_SEQS=2 with the comment 'MTP cap \u2014 4 OOMs at n=3/high context', and env.example explicitly instructs 'Clear PRIMARY_MAX_NUM_SEQS too' when speculation is turned off \u2014 so the box currently runs an MTP-era OOM cap with no MTP. A re-render or an arm-specific edit could change it silently between arms, which would confound every throughput number. Choose one value deliberately, justify it, and prove it per arm from docker inspect",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "max_num_seqs is identical across all three arms and stated in the transcript. Verified from each arm's docker inspect argv. Falsified if any arm's --max-num-seqs differs, in which case that arm is re-run rather than reported with a caveat",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Decide the value BEFORE arm A: either keep 2 (matching the deployed box and the Spark spike's max_num_seqs=2) or clear it per env.example's guidance. Keeping 2 is the safer choice for comparability with the Spark's 262144 tables.",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "the re-render required by c9 must PRESERVE this box's operator-typed peer and feasibility keys, verified key by key against a pre-render copy of .env. The Thor's live .env carries MULTIMODAL_FEASIBLE=false + MULTIMODAL_PEER_ORIGIN/PROXY to the Orin, WORKER_FEASIBLE=false, and HAND_FEASIBLE=false + HAND_PEER_ORIGIN/PROXY/API_KEY to the Spark. But spark-lobe.toml declares hosts = [cortex, hand, embedder, reranker, stt, tts] \u2014 hand INCLUDED \u2014 so re-rendering that shape here would flip HAND_FEASIBLE to true and try to stand up a local vllm-hand, silently replacing a working proxy referral with a second local lane competing for the same unified memory. Per #92 peer origins are operator-typed and never derived, so nothing regenerates them if a --force render drops them",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "no operator-typed key is lost or flipped by the re-render. Verified by diffing the post-render .env against a pre-render copy key by key, with MULTIMODAL_/HAND_/WORKER_ feasibility and peer keys checked explicitly. Falsified by any silent change \u2014 in particular HAND_FEASIBLE flipping to true or a *_PEER_API_KEY disappearing",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "cp ~/.lobes/.env to the snapshot BEFORE rendering, diff after, and restore any dropped operator-typed key by hand. Confirm no vllm-hand container was created locally, and that model=hand still proxies to the Spark with X-Lobes-Proxied-By.",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "every arm needs a discarded warmup generation before its measured run, because the Triton GDN path JIT-compiles. qwen_gdn_linear_attn.py carries @triton.jit kernels and vLLM's own message at line 167 warns a backend choice can cost JIT time ('Set --gdn-prefill-backend triton to skip JIT'). Switching gdn_decode_kernel to triton moves decode onto kernels that were never compiled on this box, so the first measured generation of the control arm \u2014 the arm every later delta is compared against \u2014 is the one most likely to carry compile cost and read artificially slow",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "measured throughput excludes JIT compile cost. Verified by discarding a warmup generation per arm and confirming a second run reproduces the first within the stated ~10-15% variance floor. Falsified if warmup and measured runs differ by more than that, which would mean compile cost is still leaking into the numbers",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run one discarded warmup generation per arm before the measured set, and capture the 'GDN decode kernel: triton' log line once per boot as proof the path actually switched.",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "the DSpark arm executes third-party weights under --trust-remote-code, which the Thor's live cortex argv already carries. RadixArk/Qwen3.8-27B-DSpark is an outside publisher's repo, and a drafter is executable weights \u2014 spark-lobe.toml already says so ('an unpinned draft repo is a silent config change on the next pull') and pins the revision. That pin is the whole mitigation, so it must be carried verbatim into the Thor arm and proven from the container's rendered argv, never retyped from memory. Do not run the DSpark arm against a floating main",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "the DSpark arm runs the exact pinned revision 85ef153be924f17ce4bf62726954eeaa4a73e854. Verified from the container's rendered argv via docker inspect. Falsified by any floating or absent revision, in which case the arm is void and re-run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Copy the speculative_config value verbatim from lobes/profiles/builtin_shapes/spark-lobe.toml rather than retyping the revision. Mind the double-quoting layers documented there \u2014 the bare and unquoted spellings degrade the JSON silently.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "the spike needs a stated rollback to the known-good config, exercised at least once. d1 snapshotted ~/.lobes.pre-lightning-<ts> before its swap and that is the pattern to repeat, but the frame only says 'snapshot' without naming what restoring actually requires: this box's compose is HAND-EDITED (the primary lane's --speculative-config line was deleted, and the file predates the PRIMARY_SPECULATIVE_CONFIG slot), so restoring the .env alone does not restore the working lane. Rollback = restore the snapshot directory AND recreate the container, then re-prove 12.1 tok/s and the known_answer probe",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "rollback actually restores the working lane. Verified by exercising it at least once \u2014 restore the snapshot, recreate the container, and re-prove both the known_answer probe and ~12.1 tok/s on the cuda path. Falsified if the restored lane does not reproduce the 2026-08-20 numbers, which would mean the box drifted and the snapshot is not a rollback",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Snapshot to ~/.lobes.pre-speculation-<timestamp> following d1's naming. Exercise the rollback BEFORE running the arms, not after, so it is known-good when it is actually needed.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "the re-render required by c9 must PRESERVE this box's operator-typed peer keys, verified key by key against a pre-render copy of .env \u2014 but NOT for the HAND_FEASIBLE reason originally proposed, which a probe refuted. PROBED 2026-08-25: 'lobes init --fleet --shape spark-lobe --profile thor <scratch> --apply' into an empty directory renders HAND_FEASIBLE=false, not true \u2014 the thor card declares no hand role, so the shape's hosts list does not by itself stand up a local vllm-hand. What the same probe DID confirm is the real exposure: the fresh render emits max_model_len 262144, the DSpark speculative_config, and NO HAND_PEER_ORIGIN / HAND_PEER_API_KEY / MULTIMODAL_PEER_ORIGIN at all. Those three are operator-typed and per #92 never derived, so nothing regenerates them if a --force render drops them, and the Thor's hand and senses referrals would go dangling",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "no operator-typed peer key is lost by the re-render, and no local vllm-hand appears. Verified by diffing the post-render .env against a pre-render copy key by key, then confirming model=hand still answers with X-Lobes-Proxied-By pointing at the Spark and model=senses at the Orin. Falsified by any dropped *_PEER_ORIGIN / *_PEER_API_KEY, or by a vllm-hand container existing locally afterwards",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "cp ~/.lobes/.env into the snapshot BEFORE rendering and diff after. Note the merge-only guarantee (0.59.0) protects a plain --apply, but d1 used --apply --force here, and --force force-writes keys \u2014 so prefer a plain --apply and reconcile by hand rather than reaching for --force.",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -372,6 +486,15 @@
     {
       "id": "v3",
       "text": "whether choosing 262144 should ALSO retire the YaRN hf_overrides block. The operator's stated reason for 262144 is model quality at the native ceiling, which argues for stock rope too \u2014 but spark-lobe.toml keeps hf_overrides deliberately because every DSpark arm was measured with it in force, and the 2026-08-19 QA pass found zero quality cost from always-on YaRN (7/8 native vs 7/8 YaRN, identical failure \u2014 8 prompts, thin). Retiring it needs its own transcript at 262144 + stock rope; do not fold it into the speculation spike as a second uncontrolled variable",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "the adopted config would have NO first-class acceptance observability in lobes. docs/dspark-speculation.md already records that lobes/_metrics.py maps no spec-decode, draft or acceptance families for either engine, so every acceptance figure in this spike comes from vLLM's own docker_logs SpecDecoding line read by hand. That is acceptable for a dated spike transcript but means a deployed speculative lane silently degrades \u2014 a drafter whose acceptance collapses on a workload shift looks identical to a slow box from every lobes surface",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -501,6 +624,78 @@
       "surface": "spark-lobe.toml hf_overrides KEPT rationale + docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt QA pass",
       "finding": "YaRN-vs-stock-rope at 262144 is a separate, unmeasured axis; the one quality measurement that exists weakly contradicts the premise that native rope is better, so it must not ride along in the speculation spike",
       "seeds": []
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / adjacent-systems + overlooked-actors lens: docs/evidence/2026-08-20-accept-dual-cortex-mesh.txt and the Thor's live .env",
+      "finding": "the frame reasoned about the Thor as if d1's topology still held; a later same-day transcript supersedes it with a dual-cortex mesh in which the Thor's differentiating role is the 1M window. Neither the frame nor the exported spec mentions dual-cortex at all",
+      "seeds": []
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / unstated-assumptions lens: ~/.lobes/.env:59 + templates/fleet/env.example PRIMARY_SPECULATIVE_CONFIG note",
+      "finding": "max_num_seqs is a live, speculation-coupled knob the frame never named \u2014 an unpinned confound across the three arms",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / migration + reversibility lens: ~/.lobes/.env active keys vs builtin_shapes/spark-lobe.toml hosts",
+      "finding": "the spec treats the re-render as a safe enabling step, but on THIS box it is a big-bang regeneration over a hand-edited deployment carrying non-derivable peer credentials, and spark-lobe hosts hand where the Thor deliberately proxies it",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / failure-modes lens: qwen_gdn_linear_attn.py @triton.jit kernels + the backend JIT warning at line 167",
+      "finding": "first-call JIT on the newly-forced Triton decode path would inflate the control arm specifically, biasing every speculation delta upward \u2014 a warmup requirement the frame lacked",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / security lens: live docker inspect argv (--trust-remote-code present) + spark-lobe.toml revision-pin rationale",
+      "finding": "the existing revision pin is the only control on third-party executable weights loaded under trust_remote_code; the frame inherited the pin but never named the exposure it mitigates",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / rollback + recovery lens: docs/evidence/2026-08-20-accept-cortex-local-thor.txt rollback line vs the deployed hand-edited compose",
+      "finding": "the working state is a hand-edited compose, not a reproducible render, so rollback is directory-restore-plus-recreate and must be verified by probe, not assumed",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / observability lens: lobes/_metrics.py + dspark-speculation.md 'what remains genuinely unestablished'",
+      "finding": "no repo surface exposes draft acceptance; the spike is unaffected but a deployed speculative default would be unmonitorable \u2014 parked, not solved here",
+      "seeds": []
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / concurrency lens: PRIMARY_MAX_NUM_SEQS=2 and the single-stream batch-1 harness",
+      "finding": "CLEAN for the spike's own purposes \u2014 every arm is single-stream by design and the Spark spike was too, so the arms stay comparable. Residual, NOT closed: no arm measures concurrent behaviour, and a drafter's acceptance economics under batching are unmeasured on either box",
+      "seeds": []
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / prefill lens: gdn_prefill_backend selection, separate from gdn_decode_kernel",
+      "finding": "CLEAN \u2014 VLLM_GDN_DECODE_KERNEL affects the DECODE path only; prefill backend selection is independent, so TTFT should be unchanged across arms. Recording it as examined so a TTFT shift is read as a surprise rather than expected",
+      "seeds": []
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / probe: lobes init --fleet --shape spark-lobe --profile thor into scratch, --apply, read-only inspection of the rendered .env",
+      "finding": "PROBE REFUTED the HAND_FEASIBLE-flip prediction (renders false; the thor card declares no hand role) and CONFIRMED the window drop to 262144, the DSpark config, and the absence of every operator-typed peer key from a fresh render",
+      "seeds": [
+        "c27"
+      ]
     }
   ],
   "lapses": []
