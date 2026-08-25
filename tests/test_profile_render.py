@@ -142,8 +142,12 @@ def test_spark_lobe_speculative_config_survives_both_quoting_layers() -> None:
     env = render_shape(resolve_shape("spark-lobe"), resolve_profile("spark")).env
     raw = env["PRIMARY_SPECULATIVE_CONFIG"]
 
-    # Layer 1 — dotenv: a double-quoted value keeps its inner quotes.
-    assert raw.startswith('"') and raw.endswith('"'), raw
+    # Layer 1 — dotenv: a double-quoted value keeps its inner quotes. Asserted
+    # as two statements so a failure names WHICH end lost its quote — the two
+    # ends fail for different reasons (a truncated write vs. a value the author
+    # quoted on one side only), and a composite assert reports neither.
+    assert raw.startswith('"'), raw
+    assert raw.endswith('"'), raw
     after_dotenv = raw[1:-1].replace('\\"', '"')
     # Layer 2 — shell-lexer: the surviving single quotes make it one token.
     tokens = shlex.split(after_dotenv)
