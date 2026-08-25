@@ -24,6 +24,7 @@ Stdlib only, mirroring the gateway's dependency-free discipline and
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -241,7 +242,8 @@ def test_module_needs_no_catalog_import() -> None:
     with open(source, encoding="utf-8") as fh:
         text = fh.read()
     assert "lobes.catalog" not in text
-    assert "from ..catalog" not in text and "from .catalog" not in text
+    assert "from ..catalog" not in text
+    assert "from .catalog" not in text
 
 
 def test_local_lane_unreachable_is_not_ready() -> None:
@@ -518,7 +520,7 @@ def test_current_returns_a_tuple_of_frozen_states() -> None:
     cache.refresh()
     states = cache.current()
     assert isinstance(states, tuple)
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         states[0].ready = False  # type: ignore[misc]
 
 

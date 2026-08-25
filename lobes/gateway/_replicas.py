@@ -213,6 +213,17 @@ class ReplicaState:
     last_seen: float  # monotonic timestamp of the last SUCCESSFUL probe (0.0 = never)
     weight: float = 1.0  # declared decode weight for the selection policy
 
+    def evolve(self, **changes: object) -> "ReplicaState":
+        """Typed wrapper over :func:`dataclasses.replace`.
+
+        ``dataclasses.replace`` is typed as returning ``DataclassInstance`` in
+        the stdlib stubs (Sonar S5886), which loses the concrete
+        :class:`ReplicaState` type at every call site below. This method just
+        narrows the return annotation back to ``ReplicaState`` — same runtime
+        behaviour, precise type.
+        """
+        return replace(self, **changes)
+
 
 @dataclass(frozen=True)
 class LocalLane:
@@ -454,7 +465,8 @@ class ReplicaCache:
         """GET *url* → ``(payload | None, health)``. Never raises."""
         try:
             status, body = self._urlopen(url, timeout, api_key or None)
-        except BaseException as exc:  # noqa: BLE001 - every failure degrades, never crashes
+        except BaseException as exc:  # noqa: BLE001
+            # Every failure degrades, never crashes.
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             return None, _classify(exc)
@@ -518,15 +530,14 @@ class ReplicaCache:
             lane.base_url.rstrip("/") + _MODELS_PATH, self._timeout, None
         )
         if payload is None:
-            return replace(
-                previous, ready=False, health=health, fingerprint=None, running=0, waiting=0
+            return previous.evolve(
+                ready=False, health=health, fingerprint=None, running=0, waiting=0
             )
         fingerprint = self._local_fingerprint(payload, lane)
         if fingerprint is None:
-            return replace(previous, ready=False, health="error", fingerprint=None)
+            return previous.evolve(ready=False, health="error", fingerprint=None)
         running, waiting = self._local_load(lane)
-        return replace(
-            previous,
+        return previous.evolve(
             ready=True,
             busy=False,  # local pressure is the caller's own signal, not a probe
             health="ok",
@@ -599,8 +610,7 @@ class ReplicaCache:
         key = peer.api_key or None
         status_payload, health = self._get_json(origin + _STATUS_PATH, self._peer_timeout, key)
         if status_payload is None:
-            return replace(
-                previous,
+            return previous.evolve(
                 ready=False,
                 health=health,
                 running=0,
@@ -614,8 +624,7 @@ class ReplicaCache:
         entry = self._peer_backend_entry(status_payload, served_id)
         if entry is None:
             # The peer answered, but nothing on it serves this role.
-            return replace(
-                previous,
+            return previous.evolve(
                 ready=False,
                 busy=busy,
                 health="unknown",
@@ -634,8 +643,7 @@ class ReplicaCache:
         )
         fingerprint = self._peer_fingerprint(caps_payload) if caps_payload is not None else None
         compatible, reason = compare_fingerprints(local_fp, fingerprint)
-        return replace(
-            previous,
+        return previous.evolve(
             ready=backend_health == "ok",
             busy=busy,
             health=backend_health,
@@ -660,7 +668,7 @@ class ReplicaCache:
         try:
             state = self._probe_local(lane, previous)
         except Exception:  # nosec B110 - best-effort; never kill the daemon thread
-            state = replace(previous, ready=False, health="error", fingerprint=None)
+            state = previous.evolve(ready=False, health="error", fingerprint=None)
         with self._lock:
             self._local_state = state
 
@@ -674,8 +682,8 @@ class ReplicaCache:
             try:
                 updated[peer.origin] = self._probe_peer(peer, seed, local_fp)
             except Exception:  # nosec B110 - one bad peer never aborts the pass
-                updated[peer.origin] = replace(
-                    seed, ready=False, health="error", compatible=False, reason="probe failed"
+                updated[peer.origin] = seed.evolve(
+                    ready=False, health="error", compatible=False, reason="probe failed"
                 )
         with self._lock:
             self._peer_states = updated

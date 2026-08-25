@@ -174,7 +174,8 @@ def test_explain_gateway_replica_pool(capsys: pytest.CaptureFixture[str]) -> Non
     assert "X-Lobes-Served-By" in out
     assert "X-Lobes-Route-Reason" in out
     assert "cortex" in out
-    assert "VALIDATED" in out and "unvalidated" in out.lower()
+    assert "VALIDATED" in out
+    assert "unvalidated" in out.lower()
 
 
 def test_explain_shapes_replica_pool(capsys: pytest.CaptureFixture[str]) -> None:

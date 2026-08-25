@@ -1886,6 +1886,79 @@ def _dial_owner(
     )
 
 
+def _resolve_served_or_early(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    requested: str,
+    pressure: dict[str, float] | None,
+    override: bool,
+    replica_snapshot: ReplicaSnapshot | None,
+) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]], bool]:
+    """Resolve ``requested`` to its served backend name, or a short-circuit.
+
+    Extracted verbatim from :func:`handle_post` (Sonar S3776): this is the
+    two branches that decide what gets dialed — the pressure-aware tier path
+    (with its pooled-busy-forward carve-out) and the plain h23 unknown-model
+    path. Returns ``(early, served, tier_headers, local_busy)``: when
+    ``early`` is not ``None`` the caller must return it immediately without
+    dialing anything.
+    """
+    tier_headers: list[tuple[str, str]] = []
+    local_busy = False
+    if pressure is not None and is_tier_alias(requested):
+        # Hardware feasibility gate (issue #92 extended to the HARDWARE
+        # dimension, task t6) runs BEFORE pressure-shedding/upward-fallback: an
+        # infeasible role is an absolute hardware fact, not a load condition, so
+        # it takes priority over — and is never bypassed by — X-Lobes-Override.
+        # Checked on the LITERAL requested tier so an explicitly-named
+        # infeasible role (e.g. "cortex") is rejected outright, never silently
+        # re-routed to a different, feasible gear via the tier system's normal
+        # upward-fallback substitution.
+        early, served, tier_headers, local_busy = _resolve_tier(
+            table, requested, pressure, override
+        )
+        if early is not None:
+            # t8 (spec c7/h6): a POOLED role that this box is too loaded to
+            # serve is forwarded to a selectable peer replica instead of shed.
+            # `local_busy` is the verdict already taken above, not a second
+            # sample of a moving signal. Not pooled, or nothing selectable →
+            # the pre-pool 429 (with the honest route reason when pooled).
+            forwarded = _pooled_busy_dispatch(
+                table,
+                cfg,
+                path,
+                req_headers,
+                body,
+                open_upstream,
+                requested=requested,
+                replica_snapshot=replica_snapshot,
+                busy_response=early,
+                local_busy=local_busy,
+            )
+            return (forwarded if forwarded is not None else early), None, tier_headers, local_busy
+        return None, served, tier_headers, local_busy
+    # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
+    # backend's served name) must NOT be silently served under the default
+    # backend's weights — reject it with a 404 model_not_found BEFORE routing,
+    # matching what a real OpenAI/vLLM backend emits. Unknown-ness is decided
+    # against the ROUTING TABLE (is_unknown_model), never the readiness-filtered
+    # /v1/models list — so a wired-but-dead backend (dropped from /v1/models but
+    # still in the table) is KNOWN and routes on to the retryable 503 below, not
+    # a 404 (that distinction is what keeps issue #91 fixed). An UNSPECIFIED
+    # (missing/blank) model is not unknown — it routes to default_model. The
+    # hardware feasibility gate (task t6) mirrors the tier branch above: it
+    # runs AFTER the unknown-model check (a genuinely never-advertised id
+    # still gets model_not_found, not role_infeasible) but BEFORE
+    # resolving/dialing a backend.
+    early, served = _resolve_plain_model(table, requested)
+    return early, served, tier_headers, local_busy
+
+
 def handle_post(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -2015,56 +2088,20 @@ def handle_post(
             return _proxy_to_peer(
                 cfg, peer_specs[proxied_name], path, req_headers, body, open_upstream
             )
-    tier_headers: list[tuple[str, str]] = []
-    local_busy = False
-    if pressure is not None and is_tier_alias(requested):
-        # Hardware feasibility gate (issue #92 extended to the HARDWARE
-        # dimension, task t6) runs BEFORE pressure-shedding/upward-fallback: an
-        # infeasible role is an absolute hardware fact, not a load condition, so
-        # it takes priority over — and is never bypassed by — X-Lobes-Override.
-        # Checked on the LITERAL requested tier so an explicitly-named
-        # infeasible role (e.g. "cortex") is rejected outright, never silently
-        # re-routed to a different, feasible gear via the tier system's normal
-        # upward-fallback substitution.
-        early, served, tier_headers, local_busy = _resolve_tier(
-            table, requested, pressure, override
-        )
-        if early is not None:
-            # t8 (spec c7/h6): a POOLED role that this box is too loaded to
-            # serve is forwarded to a selectable peer replica instead of shed.
-            # `local_busy` is the verdict already taken above, not a second
-            # sample of a moving signal. Not pooled, or nothing selectable →
-            # the pre-pool 429 (with the honest route reason when pooled).
-            forwarded = _pooled_busy_dispatch(
-                table,
-                cfg,
-                path,
-                req_headers,
-                body,
-                open_upstream,
-                requested=requested,
-                replica_snapshot=replica_snapshot,
-                busy_response=early,
-                local_busy=local_busy,
-            )
-            return forwarded if forwarded is not None else early
-    else:
-        # h23 converse: an UNKNOWN non-empty id (never an alias, never a wired
-        # backend's served name) must NOT be silently served under the default
-        # backend's weights — reject it with a 404 model_not_found BEFORE routing,
-        # matching what a real OpenAI/vLLM backend emits. Unknown-ness is decided
-        # against the ROUTING TABLE (is_unknown_model), never the readiness-filtered
-        # /v1/models list — so a wired-but-dead backend (dropped from /v1/models but
-        # still in the table) is KNOWN and routes on to the retryable 503 below, not
-        # a 404 (that distinction is what keeps issue #91 fixed). An UNSPECIFIED
-        # (missing/blank) model is not unknown — it routes to default_model. The
-        # hardware feasibility gate (task t6) mirrors the tier branch above: it
-        # runs AFTER the unknown-model check (a genuinely never-advertised id
-        # still gets model_not_found, not role_infeasible) but BEFORE
-        # resolving/dialing a backend.
-        early, served = _resolve_plain_model(table, requested)
-        if early is not None:
-            return early
+    early, served, tier_headers, local_busy = _resolve_served_or_early(
+        table,
+        cfg,
+        path,
+        req_headers,
+        body,
+        open_upstream,
+        requested=requested,
+        pressure=pressure,
+        override=override,
+        replica_snapshot=replica_snapshot,
+    )
+    if early is not None:
+        return early
     ordered = order_backends(table, served)
     if not ordered:
         # DEGENERATE case ONLY: no backend owns `served` AND none owns
