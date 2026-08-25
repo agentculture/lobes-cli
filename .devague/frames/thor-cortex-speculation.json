@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-25T04:57:22Z",
-  "updated": "2026-08-25T05:27:53Z",
+  "updated": "2026-08-25T07:35:54Z",
   "claims": [
     {
       "id": "c1",
@@ -495,6 +495,15 @@
     {
       "id": "v4",
       "text": "the adopted config would have NO first-class acceptance observability in lobes. docs/dspark-speculation.md already records that lobes/_metrics.py maps no spec-decode, draft or acceptance families for either engine, so every acceptance figure in this spike comes from vLLM's own docker_logs SpecDecoding line read by hand. That is acceptable for a dated spike transcript but means a deployed speculative lane silently degrades \u2014 a drafter whose acceptance collapses on a workload shift looks identical to a slow box from every lobes surface",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "LOSSLESSNESS RETRACTED FOR THIS LANE (h13's bounded-investigation clause applied). Established: both arms are internally deterministic (3 runs each, all probes stable); 2 of 3 deterministic prompts are byte-identical across arms; 1 of 3 diverges REPRODUCIBLY (code prompt: arm A 63 tok 'a, b = 0, 1' vs arm B 76 tok 'if n == 1:'). Cheap causes are all excluded: argv proven per arm from docker inspect, identical sampling params/seed, identical parser, and run-to-run noise ruled out by the self-consistency control. At the divergence position (token 22) arm B's own top-2 gap is 1.25 logprob (' if' -0.365 vs ' a' -1.615), so this is NOT a last-bit numerical tie-flip in arm B's frame -- the two arms' DISTRIBUTIONS differ there. SURVIVING HYPOTHESIS, explicitly NOT PROVEN: the Qwen3.8 line is GDN/linear-attention hybrid, and speculative decode takes a DIFFERENT recurrent-state code path (the spec branch keyed by num_spec_decodes that _can_use_fused_gdn_mtp_decode selects) than plain decode. In a recurrent architecture a small state difference compounds over tokens, unlike a pure-attention model that recomputes from KV each step. DECISIVE TEST NOT RUN (costs one ~8-minute reboot): capture arm A's logprobs at the same position -- if A's distribution also favours ' if' yet A emitted ' a', that is a sampling/verification bug; if A's distribution favours ' a', the forward passes genuinely differ. Because no cause is PROVEN, h13's bounded clause applies and the practical claim is RETRACTED, not left suspended: on this lane, speculative decoding does NOT reliably yield the same tokens as no speculation. Note this does not touch the DISTRIBUTIONAL losslessness of block speculation as an algorithm, which this spike never measured",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,

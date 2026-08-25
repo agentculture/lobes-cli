@@ -1,0 +1,335 @@
+# Thor cortex speculation spike — the sm_110 GDN-MTP kernel gap is a CONFIG KNOB, not a wall
+#
+# Plan:  docs/plans/2026-08-25-thor-cortex-speculation.md
+# Spec:  docs/specs/2026-08-25-thor-cortex-speculation.md
+# Box:   Jetson AGX Thor (sm_110, 122.8 GB unified), hostname `thor`. Date: 2026-08-25.
+# Engine: vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+#         resolved vLLM 0.26.1rc1.dev942+g5a4c8d992 — the SAME pinned digest the box already
+#         ran. NO image bump was made, or needed (claim c6 CONFIRMED).
+# Target: unsloth/Qwen3.8-27B-NVFP4 (compressed-tensors, kv_cache_dtype=auto — the validated
+#         Thor divergence #109, NOT the Spark's fp8).
+# Rollback snapshot: ~/.lobes.pre-speculation-20260825T054944Z (exercised, see §1).
+#
+# HELD CONSTANT ACROSS ALL THREE ARMS (rule 3 conditions —
+# docs/measuring-lane-performance.md). Only `--speculative-config` differs:
+#   --max-model-len=262144        (traded down from 1048576 — operator decision q3)
+#   --gpu-memory-utilization=0.58
+#   --max-num-seqs=2              (pinned deliberately; claim c22)
+#   --hf-overrides=<YaRN block>   (KEPT — retiring it is a separate, unmeasured axis)
+#   VLLM_GDN_DECODE_KERNEL=triton (the unlock under test)
+#   prompts, max_tokens=500, temperature=0, enable_thinking=FALSE, single-stream batch 1,
+#   through the LOCAL GATEWAY at :8000 with model=cortex
+#   one DISCARDED warmup generation per arm before the measured set (claim c24)
+# EVERY arm's argv was proven from `docker inspect`, never from .env (claim c9's lesson).
+
+
+## 0. THE HEADLINE
+
+The d1 finding that "MTP MUST BE OFF on sm_110" is TRUE ONLY ON THE CUDA GDN DECODE PATH.
+`VLLM_GDN_DECODE_KERNEL=triton` routes around the missing kernel image, and speculative
+decoding then works on this board:
+
+    cortex decode, single-stream, code shape:   12.1 tok/s  ->  26.8 tok/s   (+120%)
+
+The knob costs NOTHING on the unspeculated floor (§2). It is a supported vLLM env var, not a
+patch. No image change was required.
+
+Two things did NOT work, and both are reported as findings rather than smoothed over:
+DSpark could not be measured at all (§4, issue #206), and MTP-n2 does NOT reproduce the
+no-speculation token stream (§5, issue #207).
+
+
+## 1. ROLLBACK, EXERCISED FIRST (task t1)
+
+Per claim c26 the snapshot was not merely taken but USED, before any arm ran.
+
+  baseline, pre-change, CUDA path @ 1048576:
+    known_answer: 'Paris'  PASS  (3.80 s)
+    decode: 900 completion tokens / 74.2 s = 12.1 tok/s single-stream
+    -> reproduces docs/evidence/2026-08-20-accept-cortex-local-thor.txt EXACTLY.
+       The box had not drifted; the snapshot is a real rollback.
+
+  restore test: ~/.lobes moved aside, snapshot copied back, diff -r (excluding live logs/)
+    RESTORE VERIFIED byte-identical
+  drop_caches, container recreated, healthy after ~380 s:
+    known_answer: 'Paris'  PASS  (3.70 s)
+    decode: 900 tok / 73.9 s = 12.2 tok/s
+    -> within noise of 12.1. Rollback works end to end.
+
+  MEMORY QUIRK REPRODUCED (documented, and it matters for every recreate on this box):
+    before drop_caches:  RAM 92826/125772MB (lfb  301x4MB)
+    after  drop_caches:  RAM 24045/125772MB (lfb 1907x4MB)
+    MemAvailable lies here; vLLM's free-memory check tracks it, so drop_caches BEFORE the
+    recreate, never after the boot fails.
+
+
+## 2. ARM A — Triton GDN decode, NO speculation (the control)
+
+Purpose: the 2026-08-20 baseline of 12.1 tok/s was taken on the CUDA path and cannot serve as
+the baseline for a Triton-path arm (claim c14). This arm re-measures the floor same-day, same
+harness, with ONLY the kernel path changed.
+
+  proof the knob was read:
+    [qwen_gdn_linear_attn.py:505] GDN decode kernel: triton
+  argv: --max-model-len=262144, no --speculative-config, VLLM_GDN_DECODE_KERNEL=triton
+  boot: healthy after ~430 s; model loading 21.68 GiB / 10.96 s
+  GPU KV cache size: 1,298,667 tokens; max concurrency 4.95x at 262144
+
+  warmup (DISCARDED): 120 tok /  10.6 s = 11.36 tok/s   <-- JIT cost, visible and excluded
+        code:  500 tok /  41.0 s =  12.19 tok/s
+   reasoning:  500 tok /  41.0 s =  12.19 tok/s
+       prose:  500 tok /  41.0 s =  12.21 tok/s
+   code(rpt):  500 tok /  40.9 s =  12.21 tok/s   (drift vs first run: 0.2%)
+
+  READ THIS RESULT CAREFULLY — it settles the spike's one BLOCKING unknown (v1):
+  forcing the Triton GDN decode path costs essentially NOTHING on the unspeculated floor.
+  12.19-12.21 tok/s here vs 12.1-12.2 tok/s on the CUDA path. The floor is also FLAT across
+  content shapes, as a bandwidth-bound dense decode should be, matching the Spark's own flat
+  ~9.9-11.4 floor. Every speculation number below is therefore a clean multiplier on 12.2,
+  not an artefact of the kernel swap.
+
+  The discarded warmup came in at 11.36 tok/s — 7% below the measured runs — so claim c24's
+  warmup requirement earned its place rather than being ceremony.
+
+
+## 3. ARM B — Triton GDN decode + MTP-n2  (THE UNLOCK, CONFIRMED)
+
+This is the arm d1 was denied. It boots, and — critically — it DECODES.
+
+  argv: --speculative-config={"method": "mtp", "num_speculative_tokens": 2}
+  [qwen_gdn_linear_attn.py:505] GDN decode kernel: triton
+  boot: healthy after ~460 s
+  GPU KV cache size: 1,060,491 tokens; max concurrency 4.05x at 262144
+    -> MTP's draft head costs ~238,000 tokens of KV pool vs ARM A.
+
+  FIRST DECODE (the d1 failure surfaced HERE, not at /health):
+    HTTP 200, 'Here are the numbers from 1 to 20 written in words: ...'
+    grep -c 'no kernel image is available' over the whole boot log:  0
+
+  warmup (DISCARDED): 120 tok /   6.7 s = 17.94 tok/s
+        code:  500 tok /  18.7 s =  26.79 tok/s
+   reasoning:  500 tok /  18.7 s =  26.73 tok/s
+       prose:  500 tok /  25.7 s =  19.46 tok/s
+   code(rpt):  500 tok /  18.7 s =  26.78 tok/s   (drift vs first run: 0.0%)
+
+  MTP draft acceptance (vLLM's own SpecDecoding metrics line, read from docker logs — this
+  repo exposes no first-class acceptance metric, see the parked observability gap):
+    mean acceptance length 1.92 - 2.88
+    per-position acceptance 0.583/0.333 (worst sample) .. 0.969/0.906 (best sample)
+    avg draft acceptance   45.8% .. 93.8%, strongly content-dependent
+
+  vs ARM A:  code +120%,  reasoning +119%,  prose +59%.
+  These clear the ~10-15% single-run noise floor by an order of magnitude.
+
+  Claims c1/c4 CONFIRMED; honesty conditions h1/h3 SATISFIED — the env var alone sufficed,
+  no source patch, no second knob, no image change.
+
+
+## 4. ARM C — Triton GDN decode + DSpark block-7:  BLOCKED, NOT DISPROVEN
+
+  argv (proven, revision pinned as claim c25 requires):
+    --speculative-config={"method":"dspark","model":"RadixArk/Qwen3.8-27B-DSpark",
+      "revision":"85ef153be924f17ce4bf62726954eeaa4a73e854","num_speculative_tokens":7}
+
+  What SUCCEEDED:
+    [model.py:672] Resolved architecture: DSparkDraftModel      <-- it loads
+    [qwen_gdn_linear_attn.py:505] GDN decode kernel: triton
+    GPU KV cache size: 630,029 tokens; max concurrency 2.40x at 262144
+      -> IT FITS. This is NOT a memory-fit failure. The drafter costs ~668,000 tokens of KV
+         pool vs ARM A, and 262144 still serves at 2.40x concurrency.
+
+  What FAILED — during warmup, before any measurement:
+    torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+      vllm/v1/worker/gpu/spec_decode/dflash/speculator.py:456   propose
+      -> _build_draft_attn_metadata
+      -> vllm/v1/worker/gpu/attn_utils.py:674   build_attn_metadata
+
+  This is a DIFFERENT failure from the d1 GDN-MTP kernel gap — ARM B proves that gap is fixed
+  on this very box with this very knob. It is in the DRAFT ATTENTION path.
+
+  Untested hypothesis, and why it stays untested:
+    the lane selects FlashInfer —
+      [cuda.py:486] Using FLASHINFER attention backend out of potential backends:
+                    ['FLASHINFER', 'TRITON_ATTN']
+    and lobes/machines/thor.py:40 already records flashinfer as "sm_110: flashinfer
+    unvalidated/contradicted here — use the exercised Triton path", with the SM_110 trait
+    forcing TRITON_ATTN for the pooling gears. The DSpark drafter is 5 FULL-ATTENTION layers,
+    exercising that backend far harder than MTP-n2's 3-token draft.
+
+    The hypothesis CANNOT be tested today:
+      1. vllm-primary has no --attention-config slot (only vllm-embed / vllm-embed-deep do);
+      2. PRIMARY_ATTENTION_BACKEND is consumed by NOTHING — setting it is a silent no-op;
+      3. VLLM_ATTENTION_BACKEND is ABSENT from this nightly's envs.py — verified by grepping
+         the pinned image directly, confirming the template's own comment.
+
+  Per the plan, the arm STOPPED rather than bumping the nightly, which would have confounded
+  ARMs A and B. Filed as issue #206. DSpark's viability on sm_110 remains UNKNOWN — this is a
+  missing-knob blocker, not evidence against DSpark.
+
+
+## 5. CROSS-ARM OUTPUT COMPARISON (task t6) — A DIVERGENCE, AND ITS INVESTIGATION
+
+Per claim c21 / honesty condition h13, the raw observation is recorded BEFORE diagnosis.
+
+  Three deterministic prompts, temperature 0, seed 12345, identical everything but the
+  speculative config. sha256 (first 16 hex) of the generated text:
+
+    probe    ARM A (no spec)          ARM B (MTP-n2)           verdict
+    count    9333a8ceb665e8bd 69 tok  9333a8ceb665e8bd 69 tok  IDENTICAL
+    code     fd571976baf6fe01 63 tok  587b2b7fd854608c 76 tok  *** DIVERGENT ***
+    fact     097672f987333761 43 tok  097672f987333761 43 tok  IDENTICAL
+
+    ARM A body: `a, b = 0, 1`        ARM B body: `if n == 1:`
+    Both are CORRECT implementations. This is an equivalence finding, not a quality one.
+
+  d1 probe suite, all 6 runs across both arms:
+    known_answer  PASS everywhere
+    tool_calls    PASS everywhere — {"name":"get_weather","arguments":{"city":"Paris"}},
+                  finish_reason=tool_calls, zero content leak
+
+  Cheap implementation causes checked FIRST, as h13 requires:
+    - run-to-run noise:  RULED OUT by control. Each arm run 3x; every probe hash STABLE
+                         within its arm (A/A2/A3 identical, B/B2/B3 identical).
+    - config drift:      RULED OUT. argv proven per arm from docker inspect.
+    - sampling params:   identical (temperature 0, same seed, same max_tokens).
+    - parser:            identical (qwen3_coder_thinking both arms).
+    - near-tie float flip: RULED OUT as a sufficient explanation. At the divergence position
+                         (token 22) ARM B's own top-2 gap is 1.25 logprob
+                         (' if' -0.365 vs ' a' -1.615) and ARM B chose its OWN top-ranked
+                         token. The two arms' DISTRIBUTIONS differ there; this is not a
+                         last-bit argmax flip in ARM B's frame.
+
+  SURVIVING HYPOTHESIS — explicitly NOT PROVEN:
+    The Qwen3.8-27B line is a GDN / linear-attention HYBRID. Speculative decode takes a
+    different recurrent-state code path (the spec branch keyed by num_spec_decodes that
+    _can_use_fused_gdn_mtp_decode selects) than plain decode. In a recurrent architecture a
+    small state difference COMPOUNDS across tokens, unlike a pure-attention model that
+    recomputes from the KV cache each step. That would explain a genuine distribution
+    difference 22 tokens in.
+
+  DECISIVE TEST NOT RUN (costs one ~8-minute reboot, deferred not dismissed):
+    capture ARM A's logprobs at the same position. If A's distribution also favours ' if'
+    yet A emitted ' a', that is a sampling/verification bug. If A's favours ' a', the forward
+    passes genuinely differ, supporting the state-path hypothesis.
+
+  RESOLUTION, applying h13's BOUNDED clause: because no cause is PROVEN, the claim is
+  RETRACTED rather than left suspended. On this lane, speculative decoding does NOT reliably
+  yield the same tokens as no speculation. This says NOTHING about the DISTRIBUTIONAL
+  losslessness of block speculation as an algorithm — that was never measured here.
+  Filed as issue #207.
+
+
+## 6. WHAT THIS SPIKE DOES NOT ESTABLISH
+
+  - DSpark on sm_110, in either direction (§4 — blocked on a missing knob, #206).
+  - Any quality claim. §5 is an equivalence finding; both outputs were correct.
+  - Concurrency. Every arm is single-stream batch 1 at max_num_seqs=2.
+  - Repeat variance beyond the one code-shape repeat per arm (0.0-0.2% drift observed,
+    which is far tighter than the Spark spike's ~10-13% and should NOT be assumed general).
+  - Any cross-box comparison with the Spark. Different silicon (sm_121 vs sm_110), different
+    KV dtype (fp8 vs auto), different window history. Not measured, not claimed.
+  - Behaviour with thinking ENABLED. All arms ran enable_thinking=false uniformly so they
+    stay comparable; the cortex role's real traffic uses thinking, so these are floor-and-
+    multiplier figures, not a traffic simulation.
+  - Whether the 1M YaRN window could ALSO have carried MTP-n2. Not tried — q3 traded the
+    window down first, and MTP's ~238k-token KV cost (§3) suggests it might have fit.
+    Genuinely open.
+
+
+## 7. DEPLOYED STATE AT END OF RUN
+
+  cortex on the Thor: unsloth/Qwen3.8-27B-NVFP4 @ max_model_len=262144, gpu_mem_util=0.58,
+  max_num_seqs=2, YaRN hf_overrides in force, VLLM_GDN_DECODE_KERNEL=triton,
+  MTP-n2 speculative decoding ON (ARM B config), ~26.8 tok/s on code.
+
+  Served-contract change: this box now advertises 262144, not 1048576. Per decision q3 the
+  mesh has NO cortex above 262144 anywhere — accepted deliberately, not overlooked.
+
+  Rollback to the pre-spike 1M/no-speculation lane:
+    restore ~/.lobes.pre-speculation-20260825T054944Z, drop_caches, recreate, re-probe.
+    Exercised and verified in §1.
+
+
+## 8. ADDENDUM — the served contract advertised a STALE window for the whole run
+
+Found while verifying honesty condition h10, and recorded because it falsified h10 before it
+satisfied it.
+
+After the render moved PRIMARY_MAX_MODEL_LEN 1048576 -> 262144, and after the cortex lane was
+recreated and genuinely served --max-model-len=262144 (proven from docker inspect), BOTH
+capability surfaces still reported the OLD contract:
+
+    lobes capabilities   ->  cortex context: 1048576  | ready: True
+    GET /capabilities    ->  cortex context: 1048576  | ready: True
+
+Root cause is mundane; the consequence is not. The gateway container had been running since
+2026-08-20 and holds its environment from ITS OWN start. A .env change reaches a vLLM lane on
+that lane's next recreate, but the gateway keeps advertising its start-time snapshot
+indefinitely — no reload, no drift detection, no warning on either surface.
+
+Recreating model-gear-gateway fixed it immediately:
+
+    GET /capabilities    ->  cortex context: 262144   | ready: True     (h10 SATISFIED)
+
+Why it is worth a transcript entry: this repo's stated ethos is that lobes never advertises a
+capability it cannot serve, and /capabilities is what callers are told to trust INSTEAD of
+pinning raw model ids. For the duration of this spike it advertised a 1M window against a
+262144 lane. A caller trusting it would have sent a 500k-token request to a lane that would
+reject it. Any window/model/feasibility change followed by a lane-only restart reproduces
+this, and a lane-only restart is the normal way to apply a tuning change.
+
+Filed as issue #208.
+
+
+## 9. ADDENDUM — recreating the gateway SILENTLY ARMED inbound auth
+
+Found by running the repo's own live gates
+(`LOBES_SMOKE_BASE_URL=http://localhost:8000 uv run pytest tests/test_live_capabilities.py
+tests/test_smoke_duo.py`), which returned HTTP 401 where the same calls had worked minutes
+before. Recorded because the run itself caused it.
+
+The deployed gateway had been up since 2026-08-20 with NO inbound key. Recreating it — done to
+fix the stale served contract in §8 — brought it up AUTH-GATED.
+
+Root cause: docker-compose.yml wires
+
+    - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}
+
+and compose resolves ${VAR:-} from the SHELL ENVIRONMENT as well as .env. ~/.bashrc:6 exports
+GATEWAY_API_KEY. So the gate arms for any `docker compose up` / `lobes up` issued from an
+interactive login shell, and does NOT arm for the same command from cron, CI, or a service
+manager. Meanwhile .env carries GATEWAY_API_KEY only COMMENTED OUT — the deployment's own
+config file says the gate is off while it is on.
+
+The failure is also asymmetric and therefore easy to miss: /capabilities kept returning 200
+while every /v1/* call returned 401, so a health check passes while every real caller breaks.
+
+RESTORED to the prior posture, deliberately, because quietly changing a box's auth stance is an
+operator decision and the four-day-running deployment had no key:
+
+    env -u GATEWAY_API_KEY -u CULTURE_VLLM_API_KEY \
+      docker compose up -d --force-recreate --no-deps gateway
+
+  verification:
+    GATEWAY_API_KEY=            (empty in the container)
+    unauthenticated POST /v1/chat/completions   -> HTTP 200
+    GET /capabilities -> cortex context 262144  (§8 fix retained)
+
+Note the .bashrc export suggests the operator may INTEND an authenticated box. That choice is
+left open, not made here. Filed as issue #209.
+
+## 10. LIVE GATE RESULTS (repo tests, against this deployment)
+
+  offline suite:                    3182 passed, 15 skipped
+  lint:                             black / isort / flake8 clean; bandit 0 low, 0 medium, 0 high
+  live tests/test_live_capabilities.py:   4 passed, 1 failed
+  live tests/test_smoke_duo.py (text):    passed
+
+  The single live failure is HONEST DRIFT DETECTION, not a defect:
+    test_deployed_gateway_version_matches_cli -- deployed gateway 0.61.2 vs CLI 0.62.0.
+    The gateway image predates this PR's version bump and wants a rebuild
+    (`lobes fleet up --apply` rebuilds it). Recorded rather than silenced.
+
+  The multimodal image/audio live probes remain failing for a PRE-EXISTING peer reason unrelated
+  to this work: `senses` is proxied to the Orin, whose lane answers 503. The audio one is an
+  established xfail (#101).

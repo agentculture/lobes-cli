@@ -257,5 +257,46 @@ Headline, all MEASURED-HERE (dated) 2026-08-24, single-stream batch-1:
   UNVALIDATED on their hosts (Thor sm_110/Orin) until a future boot there
   (plan risk r1; Spark-only rollout boundary c25).
 
+## Speculative decoding on sm_110 (Jetson AGX Thor) — 2026-08-25
+
+**MEASURED-HERE (dated).** Transcript:
+`docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt`.
+
+`docs/evidence/2026-08-20-accept-cortex-local-thor.txt` recorded "MTP MUST BE
+OFF" on the Thor, because this checkpoint's GDN-hybrid decode carries an MTP
+variant with no sm_110 kernel image. That is now **measured to be narrower**:
+it holds only on the **CUDA** GDN decode path.
+
+Setting **`VLLM_GDN_DECODE_KERNEL=triton`** — a supported vLLM env var, not a
+patch — forces the non-fused path and the missing kernel is never launched.
+Measured on the Thor at `max_model_len=262144`, `gpu_mem_util=0.58`,
+`max_num_seqs=2`, single-stream, thinking disabled:
+
+| arm | code | reasoning | prose |
+|---|---:|---:|---:|
+| Triton, no speculation (control) | 12.19 | 12.19 | 12.21 |
+| Triton + **MTP-n2** | **26.79** | **26.73** | **19.46** |
+| Triton + DSpark block-7 | — blocked, see below | | |
+
+The Triton path costs **essentially nothing** on the unspeculated floor
+(12.19–12.21 vs 12.1–12.2 tok/s on CUDA), so those are clean multipliers:
+**+120% on code**, +119% reasoning, +59% prose. MTP draft acceptance ranged
+45.8–93.8%, strongly content-dependent.
+
+Three caveats travel with this, and none is cosmetic:
+
+- **DSpark is blocked, not disproven.** It loads and its KV fits, then warmup
+  dies with a CUDA illegal memory access in the *draft attention* path. The
+  FlashInfer-on-sm_110 hypothesis is untestable because the generate lanes
+  expose no attention-backend knob (**issue #206**).
+- **Greedy output is NOT preserved.** At temperature 0, one of three
+  deterministic probes diverged reproducibly between the speculative and
+  non-speculative arms, with each arm internally stable across three runs. The
+  practical claim "speculation yields the same tokens" is **retracted for this
+  lane** (**issue #207**); distributional losslessness was never measured.
+- **The served window drops to 262144.** MTP's draft head costs ~238k tokens of
+  KV pool; whether MTP-n2 would also have fitted at the 1M YaRN window was not
+  tried.
+
 See `docs/qwen38-rollout-notes.md` for the consumer repoint checklist and
 `docs/model-switch-playbook.md` for the swap/rollback procedure.

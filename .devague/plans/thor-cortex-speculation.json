@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-25T05:38:43Z",
-  "updated": "2026-08-25T05:44:11Z",
+  "updated": "2026-08-25T06:12:37Z",
   "targets": [
     {
       "id": "c1",
@@ -513,6 +513,22 @@
       "id": "r6",
       "text": "retiring the YaRN hf_overrides block at 262144 is deliberately OUT of this plan. The operator's quality rationale for the native ceiling argues for stock rope too, but every DSpark arm ever measured ran with that YaRN block in force, and folding it in would add a second uncontrolled variable to a three-arm comparison. It needs its own transcript at 262144 + stock rope",
       "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "SEQUENCING LANDMINE between t2's render and t3's boot. After the force-render, .env carries the shape's force-written PRIMARY_SPECULATIVE_CONFIG=<DSpark> and PRIMARY_MAX_MODEL_LEN=262144, and the new compose HAS the slot that honours them \u2014 so the very next container recreate boots DSpark on the CUDA GDN path, which per c20 is expected to hit fused_gdn_decode_post_conv_mtp and die on the first decode exactly as d1 did. The window between render and arm-A configuration is therefore a live trap: any restart policy, stray 'lobes up', or reboot in that gap brings the lane up broken. MITIGATION: set PRIMARY_SPECULATIVE_CONFIG= (empty) and VLLM_GDN_DECODE_KERNEL=triton in .env IMMEDIATELY after the render and BEFORE any recreate, and verify from docker inspect before trusting it. This is issue #204's ergonomic gap biting exactly as documented \u2014 the shape force-writes the key and no card profile can win.",
+      "kind": "unknown_blocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "the Thor's HAND_PEER_ORIGIN is a dangling referral \u2014 the Spark declares hand infeasible and 404s role_infeasible, contradicting the 2026-08-20 dual-cortex transcript's 'hand STAYS served on the Spark'. Separately, the Thor's gateway HANGS instead of relaying that 404. Neither is caused by, nor blocks, this spike; both want their own issue",
+      "kind": "follow_up",
       "task_id": null,
       "resolved": false,
       "resolution": ""
