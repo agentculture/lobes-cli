@@ -172,6 +172,15 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
         ("machine-as-brain", "associate"),
+        # orin-associate — the THIRD opt-in core role's own hosting shape
+        # (lightning-on-orin plan t9) — hosts `associate` (Lightning, the
+        # llama.cpp cortex's sm_87 sibling) and drops BOTH heavy defaults
+        # (cortex, senses) to a peer, plus muse and worker (neither hosted
+        # here), mirroring thor-muse's/thor-worker's four-cell shape.
+        ("orin-associate", "cortex"),
+        ("orin-associate", "senses"),
+        ("orin-associate", "muse"),
+        ("orin-associate", "worker"),
         # orin-cortex is orin-lobe with the heavies swapped: it hosts cortex
         # (on the llama.cpp lane) and drops senses to a peer, so it contributes
         # a senses cell where orin-lobe contributes a cortex one.

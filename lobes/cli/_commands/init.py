@@ -13,12 +13,13 @@ gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
-``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|thor-muse|
-thor-worker|orin-small>``
+``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|orin-associate|
+thor-muse|thor-worker|orin-small>``
 (brain-shapes t4, issue #113; ``orin-small`` added by the mesh-brain
 end-state's t2, issue #112; ``thor-muse`` added with the seventh role, muse;
 ``orin-lobe`` added by the Orin variation; ``orin-cortex`` by the
-qwen3-8-gguf-llamacpp plan)
+qwen3-8-gguf-llamacpp plan; ``orin-associate`` by the lightning-on-orin plan's
+t9)
 selects the DEPLOYMENT-SHAPE axis — which roles THIS box hosts at all
 — composed on top of whichever per-machine
 :class:`~lobes.profiles.schema.Profile` detection/``--profile`` resolves (the
@@ -38,10 +39,15 @@ forwarded to a peer via ``AUDIO_URL``). ``orin-cortex`` is the same board's
 opposite answer — it keeps ``cortex`` LOCAL, on the **llama.cpp** lane (the
 ``orin`` card declares a GGUF gear, which is weight-only and decodes on
 Ampere) and drops ``senses``, which cannot co-reside with it in 61.3 GiB.
-``orin-small`` drops BOTH heavy lobes and hosts the opt-in ``minor`` gear
-instead. All three Orin shapes are **declared, UNVALIDATED** data only (no
-physical Jetson AGX Orin has booted any of them; the #108 rule). An unknown
-``--shape`` value is a user error naming the valid (sorted) shapes.
+``orin-associate`` is a THIRD answer on the same board — it hosts the opt-in
+``associate`` lobe (Nemotron 3.5 Lightning, W4A16/FP8-mixed NVFP4, which
+decodes on Ampere for the same weight-only reason the GGUF cortex does) and
+drops BOTH ``cortex`` and ``senses`` to a peer, likewise with no ``stt``/
+``tts``. ``orin-small`` drops BOTH heavy lobes and hosts the opt-in ``minor``
+gear instead. All four Orin mesh-lobe shapes are **declared, UNVALIDATED**
+data only (no physical Jetson AGX Orin has booted any of them; the #108
+rule). An unknown ``--shape`` value is a user error naming the valid
+(sorted) shapes.
 
 A card may also REFUSE the default shape. A card profile can declare
 mutually-exclusive roles (``[[exclusive_roles]]``, see
@@ -961,7 +967,9 @@ def register(sub: argparse._SubParsersAction) -> None:
         "stt/tts — the Parakeet image has no sm_87 kernels, so audio forwards "
         "to a peer); 'orin-cortex' is that board's opposite answer — cortex "
         "LOCAL on the llama.cpp GGUF lane, senses dropped (the two do not fit "
-        "in 61.3 GiB). 'thor-muse' drops BOTH "
+        "in 61.3 GiB); 'orin-associate' is a third answer on the same board — "
+        "the opt-in Lightning 'associate' lobe LOCAL, both cortex and senses "
+        "dropped, no stt/tts. 'thor-muse' drops BOTH "
         "heavy default lobes and hosts the opt-in 31B 'muse' creative lobe "
         "instead; 'thor-worker' drops BOTH and hosts the opt-in 35B-A3B "
         "multimodal 'worker' ground-work lobe instead. 'orin-small' (issue "

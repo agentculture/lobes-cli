@@ -1,0 +1,103 @@
+# The Jetson AGX Orin 64GB ASSOCIATE variant of a mesh-brain deployment: hosts
+# the opt-in `associate` lobe (NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 —
+# the tenth Colleague role) + `hand` + the two pooling gears, and drops BOTH
+# heavy default lobes to peers — no llama.cpp `cortex` (lives on this same
+# board under `orin-cortex`, or on a peer) and no Gemma `senses` (lives on a
+# peer, e.g. via `orin-lobe` on a different Orin, or the Spark/Thor duo).
+#
+# It is a THIRD answer alongside `orin-cortex` and `orin-lobe` to the same
+# exclusive_roles group in builtin/orin.toml ([cortex, senses, associate]):
+# each of the three shapes hosts exactly one member and drops the other two.
+#
+# `associate` is an OPT-IN core role (lobes/profiles/shapes.py's
+# OPT_IN_CORE_ROLES = ("muse", "worker", "associate")): machine-as-brain never
+# hosts it, and — per approved deviation d1 (2026-08-25,
+# .devague/deliveries/lightning-on-orin.json), which corrected t8's original
+# criterion — the CARD stays silent on it (builtin/orin.toml's
+# `[roles.associate]` declares `feasible = false` and keeps the measured
+# numbers as DOCUMENTATION only). THIS shape carries the full declaration
+# (model + budget knobs) in its own overrides, exactly the pattern
+# `thor-muse.toml` and `thor-worker.toml` use for their opt-in lobes. Hosting
+# associate renders its activation env (COMPOSE_PROFILES=associate un-gates
+# the profile-gated vllm-associate service; ASSOCIATE_BASE_URL wires the
+# gateway backend — see shape_render.OPT_IN_CORE_ACTIVATION_ENV).
+#
+# DECLARED, NOT VALIDATED (#108). The budget below is MEASURED live on the
+# physical Jetson AGX Orin, 2026-08-25
+# (docs/evidence/2026-08-25-measure-associate-budget-orin.txt) and the LANE is
+# a confirmed GO (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt:
+# known-answer PASS, structured tool calls PASS, ~78-81 tok/s single-stream
+# with DSpark speculation). But no box has booted this SHAPE, and no
+# acceptance transcript exists for it — nothing here, in any doc, or in
+# `lobes capabilities` output may claim this shape validated until one lands.
+name = "orin-associate"
+summary = "Jetson AGX Orin 64GB associate-lobe (DECLARED, UNVALIDATED) -- Lightning associate + hand + embedder + reranker, no cortex/senses, no audio"
+
+
+# `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY built-in
+# shape, including the mesh-lobe shapes that drop a heavy lobe. That is the
+# point of the role: at ~2.4 GiB it is cheap enough to keep resident on every
+# box, so a caller always has a local generate lane and a local fine-tuning
+# base — and unlike muse/worker/associate there is never a reason to refer it
+# to a peer. Its budget comes from the CARD profile (per-card, see
+# builtin/*.toml), not from a shape override: dropping another lobe does not
+# change what hand needs.
+hosts = ["associate", "hand", "embedder", "reranker"]
+
+[overrides.associate]
+# The full associate declaration lives HERE (not on the card) — see the header
+# comment and approved deviation d1. nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-
+# A3B-NVFP4: a Mamba-2/MoE/attention hybrid, ~3B active of 30B total params,
+# 1,048,576-token native ceiling. Its OWN hf_quant_config.json (fetched
+# 2026-08-25) is quant_algo="MIXED_PRECISION" — W4A16_NVFP4 (weight-only) on
+# every routed/shared expert, FP8 on the mixer in_proj/out_proj, FP8 KV-cache
+# quant — NOT the W4A4 activation quantization that rules out cortex/muse's
+# NVFP4 exports on this sm_87 board. vLLM v0.27.1 accepted
+# quantization=modelopt_mixed here and selected a full Marlin fallback stack
+# (MarlinFP8ScaledMMLinearKernel, MarlinNvFp4LinearKernel, MARLIN NvFp4 MoE)
+# plus native FlashAttention 2 — see
+# docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt.
+model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# gpu_mem_util = 0.63 -- MEASURED on the physical Orin, 2026-08-25, GEARS-FIRST
+# boot (hand/embedder/reranker resident before associate; this shape's own
+# start order). The vendor's own published Jetson figure, 0.70, was REFUSED at
+# boot by 0.05 GiB with the two pooling gears resident:
+#   "Free memory on device cuda:0 (42.89/61.34 GiB) on startup is less than
+#    desired GPU memory utilization (0.7, 42.94 GiB)"
+# 0.63 booted healthy: weights 19.45 GiB, available KV 10.95 GiB, KV pool
+# 1,249,280 tokens, 9.76x concurrency at 128000. See
+# docs/evidence/2026-08-25-measure-associate-budget-orin.txt and
+# builtin/orin.toml's [roles.associate] documentation block (LOCKSTEP: these
+# values must equal each other — they are facts about the same board).
+#
+# HEADROOM, NOT MEASUREMENT: `hand` was not actually resident when 0.63 was
+# measured (no vllm-hand container was scaffolded on that run) — 0.63 was
+# chosen to leave hand's declared 0.06 (~3.68 GiB) as arithmetic headroom. A
+# boot with hand genuinely co-resident is open follow-up work.
+gpu_mem_util = 0.63
+# max_model_len = 128000 -- the vendor recipe's window, served in full and
+# measured at it. NOT the checkpoint's 1,048,576 native ceiling, which nothing
+# here has exercised; trimming further is the memory dial if a future
+# co-resident needs room.
+max_model_len = 128000
+# modelopt -- Lightning's own quant_method; vLLM resolves it to
+# modelopt_mixed and picks the Marlin fallback stack on sm_87 (see above).
+quantization = "modelopt"
+# bfloat16 -- NOT the checkpoint's declared FP8 kv_cache_quant_algo. sm_87 has
+# no FP8 KV path; the vendor recipe concedes this too, and every number above
+# was measured with --kv-cache-dtype bfloat16 in force.
+kv_cache_dtype = "bfloat16"
+
+
+# NO stt/tts -- inherited verbatim from orin-lobe/orin-cortex. This board
+# CANNOT serve the audio overlay: MEASURED live 2026-07-17, the Parakeet STT
+# image is built FROM `scitrera/dgx-spark-vllm`, whose bundled torch carries
+# no sm_87 kernels -- the container crash-looped 8 times with "CUDA error: no
+# kernel image is available for execution on the device". That is a
+# build-artifact fact about the base image, not a budget question, so hosting
+# `stt`/`tts` here would advertise two lanes that cannot start. Audio is
+# forwarded to a peer via AUDIO_URL / the per-lane STT_PEER_ORIGIN /
+# TTS_PEER_ORIGIN of #129, exactly as on orin-lobe and orin-cortex. `hosts`
+# above names no audio role, so `shape_services` renders neither
+# `stt`/`chatterbox`/`realtime` service, and `lobes init --audio` scaffolds
+# the overlay file but this shape starts nothing from it.
