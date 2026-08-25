@@ -1,0 +1,18 @@
+0.00.920.208 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.969.913 W srv  llama_server: -----------------
+0.00.969.921 W srv  llama_server: CORS is set to allow all origins ('*') and no API key is set
+0.00.969.922 W srv  llama_server: this can be a security risk (cross-origin attacks)
+0.00.969.922 W srv  llama_server: more info: https://github.com/ggml-org/llama.cpp/pull/25655
+0.00.969.922 W srv  llama_server: -----------------
+29.44.945.879 I srv    load_model: loading model 'ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:Q4_0'
+29.45.476.977 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)
+29.45.595.368 W srv    load_model: [spec] failed to measure draft model memory: failed to create llama_context from model
+29.46.230.959 E llama_model_load: error loading model: check_tensor_dims: tensor 'blk.5.ssm_in.weight' not found
+29.46.230.974 E llama_model_load_from_file_impl: failed to load model
+29.46.231.024 E common_fit_params: encountered an error while trying to fit params to free device memory: failed to load model
+29.46.857.308 E llama_model_load: error loading model: check_tensor_dims: tensor 'blk.5.ssm_in.weight' not found
+29.46.857.332 E llama_model_load_from_file_impl: failed to load model
+29.46.857.346 E cmn  common_init_: failed to load model '/data/models/huggingface/models--ggml-org--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/snapshots/0cdf8a8a0bae49ae9634dd68778216d75de63305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf'
+29.46.857.358 E srv    load_model: failed to load model, '/data/models/huggingface/models--ggml-org--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/snapshots/0cdf8a8a0bae49ae9634dd68778216d75de63305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf'
+29.46.857.364 I srv    operator(): operator(): cleaning up before exit...
+29.46.858.140 E srv  llama_server: exiting due to model loading error
