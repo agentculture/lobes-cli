@@ -1,0 +1,59 @@
+{
+  "arm": "mtp-n2",
+  "url": "http://127.0.0.1:8001",
+  "model": "cortex",
+  "measured_at": "2026-08-24T17:31:40.494999+00:00",
+  "shapes": {
+    "code": {
+      "shape": "code",
+      "label": "structured/code",
+      "ttft_ms": 161.9,
+      "completion_tokens": 147,
+      "decode_tok_s": 23.67,
+      "wall_s": 6.37,
+      "arm": "mtp-n2",
+      "max_model_len": null,
+      "acceptance": {
+        "accepted_tokens": 46010,
+        "drafted_tokens": 60402,
+        "acceptance_rate": 0.7617,
+        "sample_count": 543,
+        "surface": "docker_logs"
+      }
+    },
+    "reasoning": {
+      "shape": "reasoning",
+      "label": "reasoning trace",
+      "ttft_ms": 159.5,
+      "completion_tokens": 256,
+      "decode_tok_s": 21.76,
+      "wall_s": 11.92,
+      "arm": "mtp-n2",
+      "max_model_len": null,
+      "acceptance": {
+        "accepted_tokens": 46036,
+        "drafted_tokens": 60416,
+        "acceptance_rate": 0.762,
+        "sample_count": 543,
+        "surface": "docker_logs"
+      }
+    },
+    "prose": {
+      "shape": "prose",
+      "label": "free-form prose",
+      "ttft_ms": 146.8,
+      "completion_tokens": 152,
+      "decode_tok_s": 16.4,
+      "wall_s": 9.41,
+      "arm": "mtp-n2",
+      "max_model_len": null,
+      "acceptance": {
+        "accepted_tokens": 46005,
+        "drafted_tokens": 60434,
+        "acceptance_rate": 0.7612,
+        "sample_count": 543,
+        "surface": "docker_logs"
+      }
+    }
+  }
+}

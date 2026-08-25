@@ -1,0 +1,583 @@
+{
+  "slug": "qwen3-8-27b-gguf-on-the-spark",
+  "title": "Qwen3.8-27B GGUF on the Spark",
+  "schema_version": 5,
+  "status": "drafting",
+  "created": "2026-08-24T15:42:07Z",
+  "updated": "2026-08-24T15:58:45Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Qwen3.8-27B Unsloth Dynamic GGUF that runs on the Jetson AGX Orin now has a measured DGX Spark counterpart: the same UD-Q4_K_M file served by llama.cpp on GB10, benchmarked to the five-axis protocol, with an evidence transcript that says plainly what the Spark's GGUF lane costs and what it buys against the NVFP4 cortex sitting on the same silicon.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The benchmark serves unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M \u2014 the SAME file the Orin serves \u2014 on the DGX Spark GB10 under llama.cpp, and measures it to the five axes in docs/measuring-lane-performance.md (prefill overall, prefill-vs-depth, TTFT, decode-vs-depth, decode-vs-generation-length) using scripts/prefill-depth-curve.py, landing an evidence transcript under docs/evidence/.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "The pinned llama.cpp image (ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c10\u2026) is built CUDAARCHS=87;110 \u2014 Orin sm_87 and Thor sm_110 only. The Spark GB10 reports compute capability 12.1 (sm_121a), which that image carries NO kernel image for, so 'adjustments if needed' is not optional: a Spark-capable llama.cpp CUDA build must be selected before any number is taken.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Swapping the image is DATA, not code: the lane already reads LLAMACPP_IMAGE (env.example:547) with the digest as its default, so a Spark-capable build is an .env value. But the image choice on the Orin was made by measurement across four builds \u2014 the replacement must be re-measured on the Spark, never assumed a drop-in.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "The fleet's served cortex contract does not move. The GGUF gear keeps role_hint=candidate, no tier alias resolves to it, and the Spark's PRIMARY_* lane (unsloth/Qwen3.8-27B-NVFP4 at 1M, util 0.58) is unchanged by this work. This is a benchmark, not a re-point.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "Memory forces a choice on this box. The Spark is at ~101 GiB of 121 GiB used with vllm-primary resident (cortex NVFP4, util 0.58 = a 42 GiB KV pool), leaving ~19 GiB \u2014 not enough for a 15.3 GiB weights + KV GGUF lane at any useful window. Either the vLLM cortex is parked for the run (as orin-cortex parks it) or the GGUF window is trimmed via -c, the engine's ONLY memory dial.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The comparison the transcript reports is against baselines that already exist and must be named: the Orin at MAXN (8.46 tok/s decode / 253.84 tok/s pp512, UD-Q4_K_M), the Thor's NVFP4 vLLM cortex (12.1 tok/s), and the Spark's own NVFP4 cortex numbers. A Spark GGUF figure quoted without those is not a benchmark, it is a number.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "decision",
+      "text": "The doc's 'Unsloth Dynamic 2.0' label for UD-Q4_K_M is wrong and this work corrects it: the HF card now says Dynamic v3.0, and the Orin's local file is 16,464,440,224 bytes, matching the card's current UD-Q4_K_M listing (16.5 GB). Byte-size agreement is strong but not proof \u2014 a sha256 against the Hub settles it, and the transcript should record which.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "open_question",
+      "text": "The Spark is the FIRST box where GGUF and NVFP4 can meet on the same silicon \u2014 it serves the NVFP4 cortex today and can host the llama.cpp lane. That makes the cross-format comparison the Orin doc explicitly recorded as impossible newly possible here. Whether this work takes it on (throughput only? perplexity too?) or stays a single-lane benchmark is the biggest scoping decision in the frame.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "Jetson power-mode work does not travel. MAXN / nvpmodel / jetson_clocks are Tegra surfaces the GB10 does not have, so the Orin's clock-pinning procedure is not reproducible here \u2014 but rule 3 still binds: the Spark run states its own conditions (resident lanes, active downloads, driver, image digest) or the numbers are not comparable to anything.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "lobes switch stays out of this. It configures the vLLM lane and, pointed at a GGUF gear, prints an engine notice and writes .env WITHOUT restarting the container. The llama.cpp lane is rendered from repo data (compose template + machine profile + deployment shape), so a Spark GGUF run is a profile/shape/.env question, not a switch question.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "assumption",
+      "text": "The Spark's container GPU access differs from the Orin's. gpu_access = 'runtime' is declared ONLY on orin.toml \u2014 that board's toolkit resolves to legacy csv mode and needs the generated docker-compose.gpu.yml to !reset the deploy.resources stanza. The Spark uses the shipped deploy.resources form, so the llamacpp lane's GPU request should work unmodified here; that is an inference from the profile data, not something booted.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "decision",
+      "text": "vLLM CANNOT serve this GGUF on the fleet's pinned nightly, so 'prefer vLLM' is refused by measurement, not preference. The file's general.architecture is qwen35; the running vllm-primary (0.26.1rc1.dev942+g5a4c8d992) resolves GGUF configs through transformers' GGUF_CONFIG_MAPPING, which carries 25 architectures and NO qwen35 (qwen entries are qwen2, qwen2_moe, qwen3, qwen3_moe). Upstream vllm issues 30023 and 21511 report exactly this as 'GGUF model with architecture qwen35moe is not supported yet'. llama.cpp is therefore the only engine that serves the Dynamic v3 GGUF today.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "The Spark ALREADY runs Unsloth Dynamic v3 of this model: unsloth/Qwen3.8-27B-NVFP4's own card states 'This NVFP4 quant uses Unsloth Dynamic V3.0 (preview) for SOTA quantization performance', and that checkpoint is the deployed PRIMARY_MODEL here. So 'we want the model and dynamic v3' is satisfied by the running cortex; what is genuinely unmeasured is how the Dynamic v3 GGUF Q4_K_M and any W4A16 variant compare AGAINST it on the same silicon.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "decision",
+      "text": "The proposed W4A16 candidate is the wrong model. RedHatAI/Qwen3-8B-quantized.w4a16 is Qwen/Qwen3-8B \u2014 an 8-billion-parameter checkpoint of the PREVIOUS Qwen3 generation, unrelated to Qwen3.8-27B (the '3.8' and the '8B' collide by coincidence). A real W4A16 arm needs a Qwen3.8-27B W4A16: the ones that exist are third-party (Vishva007/Qwen3.8-27B-W4A16-AutoRound-GPTQ, barrydeen/Qwen3.8-27B-AWQ-4bit), NOT Unsloth Dynamic, so a W4A16 arm compares a different quantizer as well as a different format.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "In-fleet, cortex-on-the-Spark means a NEW deployment shape mirroring orin-cortex: hosts cortex on the llamacpp-primary lane, parks vllm-primary via docker-compose.shape.yml, sets PRIMARY_URL=http://llamacpp-primary:8000 and COMPOSE_PROFILES=llamacpp, and omits PRIMARY_GPU_MEM_UTIL (a dead knob on this engine). Unlike orin-cortex it need NOT drop senses on memory grounds, and needs no gpu_access override.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "The run is a success when the transcript states, under named conditions, what the Spark's Dynamic v3 GGUF lane costs on all five axes AND how it compares to the NVFP4 Dynamic v3 cortex on the SAME box \u2014 the first same-silicon GGUF-vs-NVFP4 comparison in this repo \u2014 even if the answer is 'NVFP4 wins on every axis and the GGUF lane has no role here'. A negative result reported honestly closes the question; an unreported one leaves it open forever.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "Stopping vllm-primary is operator-gated, not agent-discretionary: the run announces the stop BEFORE taking the mesh's cortex down, and the box returns to the NVFP4 cortex afterwards. The restore path is a re-render of the previous shape \u2014 byte-for-byte restorable by re-running lobes init with the prior shape.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "assumption",
+      "text": "The operator's hypothesis \u2014 UD-Q4_K_M is the faster Qwen \u2014 is measured TRUE on the Orin and predicted FALSE on the Spark, and the frame should say so before the run rather than after. The deployed NVFP4 cortex here already measures 19.9-24.0 tok/s decode with MTP at n=2 (54-61% acceptance). A llama.cpp Q4_K_M lane has no speculative decoding at all (the engine ignores the checkpoint's nextn tensors), so its decode ceiling is one weight pass per token: 16.45 GB of weights against the GB10's published ~273 GB/s is ~16.6 tok/s at 100% of peak bandwidth \u2014 BELOW the deployed lane's measured floor. On the Orin the GGUF won because Ampere has no FP4 path; on Blackwell it competes against one.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The run is therefore framed as a FALSIFIABLE test of that hypothesis, not a confirmation exercise: the prediction (NVFP4+MTP beats GGUF Q4_K_M on decode on this box) is written down BEFORE the measurement, and the transcript reports whichever way it lands. If the GGUF lane wins, the prediction was wrong and the reasoning above says exactly which step failed \u2014 most likely the assumed bandwidth or MTP's real-world contribution.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "open_question",
+      "text": "If the goal is a faster cortex ON THIS BOX, the GGUF swap is not the only lever and may not be the best one. The deployed lane pays for a 1M YaRN window (util 0.58) that the t8 transcript records as running 2-5 tok/s UNDER the 3.6 baseline; the documented rollback pair is 0.44 / 262144. Whether 'faster Qwen' means 'a different quant' or 'the same quant with a cheaper window and a tuned MTP n' is a fork the frame has not taken.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "decision",
+      "text": "The '40 tok/s' figure is the SAME device and a DIFFERENT STACK \u2014 and it is not GGUF. NVIDIA's DGX Spark forum records Qwen3.8-27B at 34-38 tok/s single-stream batch-1 using RadixArk/Qwen3.8-27B-NVFP4 (W4A4, revision-pinned) on SGLang with flashinfer + CUDA-graphed verification, plus DSpark BLOCK-speculative decoding: a 1.36B drafter (RadixArk/Qwen3.8-27B-DSpark) drafting 7 tokens per pass at 3.3-4.9 accepted tokens per verification step. It is content-dependent: 43-47 tok/s on math/code, 12-18 on free-form prose. So the headline is a best case on structured output, not a flat rate.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "decision",
+      "text": "GGUF on the DGX Spark measures 15-18 tok/s, not 40 \u2014 which lands between the bandwidth arithmetic and the deployed vLLM lane, and BELOW both. ggml-org discussion 27080 measures Qwen3.8-27B GGUF on GB10 at ~15 tok/s plain and ~18.08 with --spec-type draft-mtp, prefill ~488 tok/s, and the reporter explicitly contrasts their 18 against SGLang's 38 on the same hardware. A separate report gives 11.6 plain / ~27 MTP / ~29 DSpark. The operator's hypothesis is therefore refuted by published measurement before this repo spends a run on it.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "The repo's claim that llama.cpp IGNORES this checkpoint's MTP head is now build-dependent and must not be restated flatly. It was measured true on the pinned nvidia-ai-iot build 10373; current llama.cpp exposes --spec-type draft-mtp and a DSpark path, and third parties measure a real (if modest) gain from them on GB10. docs/qwen3.8-27b-gguf-llamacpp.md's 'MTP / speculative decoding: ABSENT' needs a build qualifier.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "Chasing 34-38 tok/s means changing THREE things at once, and the frame should name that rather than let it read as a tuning tweak: a different NVFP4 export (RadixArk, not unsloth -- unsloth's own card states its quant works in vLLM and NOT SGLang because lm_head is FP8), a different serving engine (SGLang, which this fleet has never run; every lane here is vLLM or llama.cpp), and an added 1.36B draft model. Whether vLLM can drive the DSpark drafter through its own speculative-config surface is the cheap question hiding in there, and it is unmeasured.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "decision",
+      "text": "The 40 t/s GGUF report is a DIFFERENT DEVICE and the gap is bandwidth, not quant format. A pair of RTX 5060 Ti 16GB is 448 GB/s per card (GDDR7, 28 Gbps, 128-bit) on consumer Blackwell GB206; with the 16.45 GB of weights split across both cards the decode ceiling is 27 tok/s layer-split (sequential halves) to 54 tok/s tensor/row-split (concurrent halves), so 40 t/s sits squarely inside it. The DGX Spark has ONE 273 GB/s unified LPDDR5x pool: 273/16.45 = 16.6 tok/s ceiling, and GB10's measured GGUF numbers (15-18 t/s) are already AT it. There is no headroom on the Spark for that 40 to appear -- it is 2.7x the whole memory budget.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "That report also has NVFP4 SLOWER than GGUF (20 vs 40), which is the OPPOSITE of what this Spark measures (NVFP4 24 tok/s with MTP vs GGUF 15-18 published). That inversion is a property of a stack, not of a format: on a consumer-Blackwell multi-GPU box the NVFP4 path pays multi-GPU and kernel-maturity costs that a single unified-memory GB10 does not, and W4A4 buys compute headroom that a bandwidth-bound decode cannot spend. A quant-format ranking measured on one topology does not transfer to another -- which is exactly the trap docs/measuring-lane-performance.md rule 3 exists to catch.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether any prebuilt arm64 llama.cpp CUDA image carries sm_121a kernels at all (ggml-org and nvidia-ai-iot tags both need checking), or whether the Spark lane requires a local build with CUDAARCHS=121 \u2014 unknown until an image is pulled and its arch list read.",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Whether llama.cpp's Gated-DeltaNet / Mamba path on Blackwell is launch-latency bound the way it was on sm_87 at low clock, or lands in the bandwidth-bound regime the MAXN correction describes \u2014 the Spark's memory bandwidth and the shape of that curve are both unmeasured here.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether the fleet wants a Spark GGUF lane at all after the numbers land, or whether the measurement is purely informational \u2014 the deployed cortex answer may be unchanged either way.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Whether vLLM can serve RadixArk/Qwen3.8-27B-DSpark (or any 1.4B block drafter) as a speculative draft for the deployed unsloth NVFP4 cortex -- the cheapest possible route to DSpark-class throughput without adopting SGLang. Unmeasured, and the acceptance-rate gain is content-dependent.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "docs/measuring-lane-performance.md + scripts/prefill-depth-curve.py",
+      "finding": "The five-axis protocol and its stdlib OpenAI-streaming harness already exist and are explicitly engine-neutral ('works against any lane \u2014 vLLM, llama.cpp, a peer gateway'); the Spark run reuses them rather than inventing a measurement method.",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md (image row) + nvidia-smi on this Spark",
+      "finding": "Image row records CUDAARCHS=87;110 on CUDA 13 arm64; live nvidia-smi here returns 'NVIDIA GB10, compute_cap 12.1'. sm_121a is absent from the pinned build's arch list.",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml:289 + templates/fleet/env.example:543-552",
+      "finding": "LLAMACPP_IMAGE/LLAMACPP_GGUF/LLAMACPP_MODEL_DIR/LLAMACPP_N_GPU_LAYERS/LLAMACPP_PARALLEL/LLAMACPP_FLASH_ATTN are all env-overridable; the doc records the image as a measured pick with ggml-org as the runner-up, not a default.",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/catalog.py:1012-1069 + ~/.lobes/.env (PRIMARY_*)",
+      "finding": "The catalog entry declares engine=ENGINE_LLAMA_CPP with role_hint candidate and every vLLM-only field deliberately empty; the deployed Spark .env serves the NVFP4 cortex at PRIMARY_MAX_MODEL_LEN=1048576 / PRIMARY_GPU_MEM_UTIL=0.58.",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "free -g + docker ps on this Spark; docs/qwen3.8-27b-gguf-llamacpp.md ('Memory, measured')",
+      "finding": "Live: 101/121 GiB used, model-gear-vllm-primary up 3 days. The doc measures the GGUF lane at ~33 GiB resident at 262144 (weights 15.33 + KV 16.00 at 64 KiB/token) and states '-c is the only memory dial this engine has'.",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md (MAXN correction) + docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt + CLAUDE.md (d1 Thor cortex)",
+      "finding": "MAXN section records 8.46 tok/s decode and 253.84 tok/s pp512 with clock-pinned conditions; the Thor local cortex is recorded at 12.1 tok/s and TTFT ~300 ms.",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF + ls on orin:/home/orin/scratch/gguf",
+      "finding": "HF card advertises Dynamic v3.0 GGUFs and lists UD-Q4_K_M at 16.5 GB; the Orin's four files (Q3_K_XL/Q4_K_M/Q5_K_M/Q6_K) were all downloaded 2026-08-23 and the Q4_K_M size matches the current listing, while docs/qwen3.8-27b-gguf-llamacpp.md calls it 'Unsloth Dynamic 2.0'.",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md ('What was NOT compared: NVFP4')",
+      "finding": "The doc states NVFP4 'was never benchmarked here, and cannot be \u2014 it is W4A4 and needs Blackwell FP4 tensor cores, which is the whole reason this lane exists', and calls a cross-box/cross-engine harness 'a real piece of work' outside issue #194. On the Spark the cross-box half of that objection disappears.",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/measuring-lane-performance.md (rules 2 and 3) + docs/qwen3.8-27b-gguf-llamacpp.md ('Operational requirement')",
+      "finding": "Rule 2 is a Jetson-governor artifact generalised to 'a governed value read at rest does not describe that value under load'; rule 3 (conditions or it is not reproducible) is card-neutral and is what carries to the Spark.",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md ('lobes switch and this gear') + lobes/catalog.py serves_with_vllm",
+      "finding": "serves_with_vllm is the single predicate the engine axis exports; switch and the vLLM template both ask it rather than re-deriving engine == 'vllm'.",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "lobes/profiles/builtin/*.toml (gpu_access) + docker-compose.yml llamacpp-primary deploy stanza",
+      "finding": "grep finds gpu_access only in orin.toml:86; the lane ships the deploy.resources form deliberately so a CDI/devices-mode box is not broken by hardcoding runtime: nvidia.",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "docker exec model-gear-vllm-primary (live probe) + vllm-project/vllm issues 30023, 21511 + the GGUF header arch in docs/qwen3.8-27b-gguf-llamacpp.md",
+      "finding": "Probed the RUNNING container rather than trusting release notes: vllm 0.26.1rc1.dev942, GGUF_CONFIG_MAPPING = [bloom, deci, falcon, gemma2, gemma3, gemma4, general, gpt2, gpt_oss, lfm2, llama, mamba, minimax_m2, mistral, nemotron, phi3, qwen2, qwen2_moe, qwen3, qwen3_moe, stablelm, starcoder2, t5, tokenizer, umt5]. The doc records general.architecture = qwen35. A boot attempt is the two-minute confirmation.",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4 + ~/.lobes/.env PRIMARY_MODEL",
+      "finding": "The NVFP4 card names Dynamic V3.0 (preview) explicitly and warns the quant works in vLLM only (lm_head is FP8, SGLang cannot load it); the deployed .env serves exactly that id as cortex.",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "https://huggingface.co/RedHatAI/Qwen3-8B-quantized.w4a16 + HF search for Qwen3.8-27B W4A16",
+      "finding": "The RedHat card names base model Qwen/Qwen3-8B, 8B params, GPTQ W4A16 group-64, and is explicitly not a 27B variant. Qwen3.8-27B W4A16 artifacts exist from Vishva007 (AutoRound-GPTQ) and barrydeen (AWQ, llm-compressor pack-quantized), both third-party.",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "lobes/profiles/builtin_shapes/orin-cortex.toml + lobes/profiles/shape_render.py (LLAMA_CPP_* constants) + lobes/profiles/render.py:131,185",
+      "finding": "orin-cortex declares hosts = [cortex, hand, embedder, reranker]; shape_render carries LLAMA_CPP_* constants and the render parks the vLLM cortex lane in the inert shape-dropped profile, so the engine swap is shape data, not code.",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md ('What was NOT compared: NVFP4') + docs/measuring-lane-performance.md rule 3",
+      "finding": "The doc states the operator's 'Q4_K_M is close to NVFP4' assessment rests on published benchmarks, was never reproduced locally, and should not be read as having been; the Spark is where that can change.",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "CLAUDE.md (deployment shapes, 'byte-for-byte restorable') + operator decision on q5",
+      "finding": "The shape axis documents restoration by re-running init with the previous shape; the operator granted permission to stop vllm-primary conditional on a heads-up.",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt (t8 benchmark table) + docs/qwen3.8-27b-gguf-llamacpp.md (MTP ABSENT) + GB10 published bandwidth",
+      "finding": "t8 measures short/medium/long decode at 24.0 / 22.3 / 19.9 tok/s and TTFT 0.20-0.35 s with MTP acceptance 54.4-61.1% at n=2; the GGUF doc records MTP as ABSENT ('llama.cpp ignores blk.64.nextn.*; ~0.9 GiB of the file is dead weight'). The 273 GB/s figure is PUBLISHED for GB10, not measured here.",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "docs/measuring-lane-performance.md rule 3 + the repo's own record of two wrong headline figures on the Orin",
+      "finding": "The Orin bring-up produced two misleading headline numbers, both caught only by measuring a curve; the doc's whole purpose is that predictions get stated with their conditions and then tested.",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "~/.lobes/.env PRIMARY_* + docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt + lobes/profiles/builtin_shapes/spark-lobe.toml",
+      "finding": "spark-lobe overrides cortex to gpu_mem_util 0.58 / max_model_len 1048576 with a YaRN hf_overrides; the shape TOML keeps 0.44 / 262144 as the documented rollback value, and t8 states the 1M lane costs 2-5 tok/s against the 3.6 baseline.",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "https://forums.developer.nvidia.com/t/qwen3-8-27b-at-34-38-tok-s-on-dgx-spark-.../380257",
+      "finding": "Post names the checkpoint, the pinned revision, the lmsysorg/sglang:qwen38-27b image, --mem-fraction-static 0.50 for GB10 unified memory, --enable-torch-compile, --torch-compile-max-bs 4, --num-continuous-decode-steps 2, and states the numbers are single-stream batch-1.",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "https://github.com/ggml-org/llama.cpp/discussions/27080 + DGX Spark llama.cpp benchmark reports",
+      "finding": "27080 records UD-Q4_K_XL then mainline Q4_K_M, ~15 t/s plain, ~18.08 t/s with draft-mtp, ~488 t/s prefill, unanswered on whether llama.cpp fully leverages the native MTP head.",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md (feature-parity table) + ggml-org discussion 27080",
+      "finding": "The doc's ABSENT row was derived from the pinned image's flag surface; 27080 shows a --spec-type draft-mtp flag in current builds, so the gap is a property of the pinned build, not of the engine.",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4 (SGLang warning) + lobes/catalog.py speculative_config + CLAUDE.md (engine axis)",
+      "finding": "The unsloth card warns the quant only loads in vLLM; the catalog already carries a speculative_config field and the cortex runs self-hosted MTP at n=2 with 54-61% acceptance, so a draft-model arm is a knob this repo already has a slot for.",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "RTX 5060 Ti 16GB specs (448 GB/s, GDDR7, GB206) + GB10 273 GB/s + the measured GGUF numbers on both boxes",
+      "finding": "Both variants of the 5060 Ti run a 128-bit bus at 28 Gbps = 448 GB/s; two cards give 896 GB/s aggregate when the split is concurrent. The Spark's single unified pool cannot be widened by configuration.",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "the operator's cited 5060-Ti-pair report + docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt + docs/measuring-lane-performance.md rule 3",
+      "finding": "The Spark's own t8 table measures the deployed NVFP4 lane at 19.9-24.0 tok/s; published GB10 GGUF figures are 15-18. The ordering is reversed against the 5060-Ti pair's 40-vs-20.",
+      "seeds": [
+        "c27"
+      ]
+    }
+  ],
+  "lapses": []
+}

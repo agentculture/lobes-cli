@@ -1,0 +1,50 @@
+{
+  "arm": "none",
+  "url": "http://127.0.0.1:8001",
+  "model": "cortex",
+  "measured_at": "2026-08-24T18:17:26.351021+00:00",
+  "shapes": {
+    "code": {
+      "shape": "code",
+      "label": "structured/code",
+      "ttft_ms": 609.8,
+      "completion_tokens": 136,
+      "decode_tok_s": 11.29,
+      "wall_s": 12.66,
+      "arm": "none",
+      "max_model_len": null,
+      "acceptance": {
+        "acceptance_rate": null,
+        "surface": "not_applicable"
+      }
+    },
+    "reasoning": {
+      "shape": "reasoning",
+      "label": "reasoning trace",
+      "ttft_ms": 207.3,
+      "completion_tokens": 256,
+      "decode_tok_s": 11.14,
+      "wall_s": 23.2,
+      "arm": "none",
+      "max_model_len": null,
+      "acceptance": {
+        "acceptance_rate": null,
+        "surface": "not_applicable"
+      }
+    },
+    "prose": {
+      "shape": "prose",
+      "label": "free-form prose",
+      "ttft_ms": 138.6,
+      "completion_tokens": 161,
+      "decode_tok_s": 11.42,
+      "wall_s": 14.23,
+      "arm": "none",
+      "max_model_len": null,
+      "acceptance": {
+        "acceptance_rate": null,
+        "surface": "not_applicable"
+      }
+    }
+  }
+}

@@ -10,6 +10,7 @@ import pytest
 
 from lobes.catalog import (
     ENGINE_LLAMA_CPP,
+    ENGINE_SGLANG,
     ENGINE_VLLM,
     ENGINES,
     SUPPORTED_MODELS,
@@ -916,6 +917,9 @@ def test_qat_w4a16_doc_records_the_honesty_bar() -> None:
 # ---------------------------------------------------------------------------
 
 _GGUF_ID = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+_RADIXARK_TARGET_ID = "RadixArk/Qwen3.8-27B-NVFP4"
+_RADIXARK_DRAFTER_ID = "RadixArk/Qwen3.8-27B-DSpark"
+_RADIXARK_TARGET_REVISION = "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
 
 
 def test_every_entry_declares_a_known_engine() -> None:
@@ -943,11 +947,33 @@ def test_engine_defaults_to_vllm_so_existing_declarations_are_untouched() -> Non
     assert serves_with_vllm(entry)
 
 
-def test_exactly_one_non_vllm_gear_and_it_is_the_gguf_cortex() -> None:
-    # Every OTHER catalog entry must still be a vLLM gear — this is the
-    # catalog-side half of "adding an engine axis moved nothing else".
-    non_vllm = [m.id for m in SUPPORTED_MODELS if not serves_with_vllm(m)]
-    assert non_vllm == [_GGUF_ID], f"unexpected non-vLLM gears: {non_vllm}"
+def test_engines_axis_includes_sglang() -> None:
+    # dspark-speculation-on-the-spark-cortex plan t1: a third engine value
+    # joins the axis. Pin the full set so a future addition/removal is a
+    # deliberate test edit, not a silent drift.
+    assert ENGINES == (ENGINE_VLLM, ENGINE_LLAMA_CPP, ENGINE_SGLANG)
+
+
+def test_serves_with_vllm_unchanged_for_every_current_catalog_entry() -> None:
+    # Adding ENGINE_SGLANG to the axis must not change serves_with_vllm's
+    # answer for any entry that predates it. Pin the exact set of ids that are
+    # NOT vLLM gears as of this task (dspark-speculation-on-the-spark-cortex
+    # plan t2) landing — the GGUF llama.cpp cortex candidate plus the two new
+    # SGLang RadixArk candidates; every other id must still be True.
+    non_vllm_ids = {m.id for m in SUPPORTED_MODELS if not serves_with_vllm(m)}
+    assert non_vllm_ids == {_GGUF_ID, _RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID}
+    vllm_ids = {m.id for m in SUPPORTED_MODELS if serves_with_vllm(m)}
+    assert _GGUF_ID not in vllm_ids
+    assert _RADIXARK_TARGET_ID not in vllm_ids
+    assert _RADIXARK_DRAFTER_ID not in vllm_ids
+    assert len(vllm_ids) == len(SUPPORTED_MODELS) - 3
+
+
+def test_exactly_one_llama_cpp_gear_and_it_is_the_gguf_cortex() -> None:
+    # Every non-SGLang, non-vLLM entry must still be exactly the GGUF gear —
+    # the catalog-side half of "adding an engine axis moved nothing else".
+    llama_cpp = [m.id for m in SUPPORTED_MODELS if m.engine == ENGINE_LLAMA_CPP]
+    assert llama_cpp == [_GGUF_ID], f"unexpected llama.cpp gears: {llama_cpp}"
 
 
 def test_gguf_gear_exists_with_the_fields_the_file_and_the_engine_establish() -> None:
@@ -992,3 +1018,76 @@ def test_engine_is_serialised_for_every_gear() -> None:
     # a consumer must be able to read the engine without a hasattr guard.
     for entry in as_dicts():
         assert entry.get("engine"), f"{entry.get('id')}: as_dicts() missing engine"
+
+
+# ---------------------------------------------------------------------------
+# RadixArk NVFP4 target + DSpark drafter (dspark-speculation-on-the-spark-
+# cortex plan t2) — revision-pinned candidate entries, never booted by this
+# repo (#108).
+# ---------------------------------------------------------------------------
+
+
+def test_hf_revision_defaults_to_empty_so_existing_declarations_are_untouched() -> None:
+    # The field is additive: a gear that predates it must still read "".
+    entry = SupportedModel(
+        id="test-org/no-revision-declared",
+        role_hint="candidate",
+        shape="dense",
+        context="32K native",
+        native_max_model_len=32768,
+        tool_parser="hermes",
+        quantization="modelopt_fp4",
+        status="configured",
+        doc="fake.md",
+    )
+    assert entry.hf_revision == ""
+
+
+def test_radixark_target_exists_with_correct_fields() -> None:
+    gear = next((m for m in SUPPORTED_MODELS if m.id == _RADIXARK_TARGET_ID), None)
+    assert gear is not None, f"{_RADIXARK_TARGET_ID} not found in catalog"
+    assert gear.role_hint == "candidate"
+    assert gear.engine == ENGINE_SGLANG
+    assert not serves_with_vllm(gear)
+    assert gear.native_max_model_len == 262144
+    assert gear.status == "configured"  # never booted by this repo — #108
+    assert gear.hf_revision == _RADIXARK_TARGET_REVISION
+
+
+def test_radixark_drafter_exists_with_correct_fields() -> None:
+    gear = next((m for m in SUPPORTED_MODELS if m.id == _RADIXARK_DRAFTER_ID), None)
+    assert gear is not None, f"{_RADIXARK_DRAFTER_ID} not found in catalog"
+    assert gear.role_hint == "candidate"
+    assert gear.status == "configured"  # never booted by this repo — #108
+    assert gear.native_max_model_len == 262144
+
+
+def test_radixark_entries_pin_a_non_empty_hf_revision() -> None:
+    # Acceptance criterion: an explicit revision pin, never a floating ref.
+    for model_id in (_RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID):
+        gear = next(m for m in SUPPORTED_MODELS if m.id == model_id)
+        assert gear.hf_revision, f"{model_id}: hf_revision must be non-empty"
+        assert gear.hf_revision != "main", f"{model_id}: hf_revision must not float"
+
+
+def test_radixark_entries_do_not_resolve_to_any_tier() -> None:
+    # role_hint="candidate" is not in TIER_ROLE's value set, so no alias can
+    # ever land on either of these two entries.
+    for alias in TIER_ROLE:
+        resolved = resolve_tier(alias)
+        assert resolved.id not in (_RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID)
+
+
+def test_radixark_entries_carry_none_of_the_vllm_only_fields() -> None:
+    for model_id in (_RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID):
+        gear = next(m for m in SUPPORTED_MODELS if m.id == model_id)
+        for field in ("tool_parser", "quantization", "moe_backend", "speculative_config"):
+            assert getattr(gear, field) == "", f"{model_id}: vLLM-only {field} must stay empty"
+        assert gear.hf_overrides == ""
+        assert gear.default_gpu_mem_util == 0.0
+
+
+def test_radixark_entries_use_the_dspark_speculation_doc() -> None:
+    for model_id in (_RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID):
+        gear = next(m for m in SUPPORTED_MODELS if m.id == model_id)
+        assert gear.doc == "dspark-speculation.md"
