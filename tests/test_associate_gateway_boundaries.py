@@ -319,10 +319,37 @@ def test_thor_worker_on_spark_golden_still_serves_worker_unchanged() -> None:
 
 
 def test_no_shape_golden_on_the_spark_card_mentions_associate() -> None:
-    """Sweep every committed (shape, spark) golden for an associate leak."""
+    """Sweep every committed (shape, spark) golden for an associate leak.
+
+    NARROWED 2026-08-25, and the narrowing is the point rather than a weakening.
+    This tripwire FIRED when `orin-associate` landed, which is exactly what it is
+    for — so it was investigated rather than adjusted away. The finding:
+
+      * the goldens matrix is EVERY shape x EVERY card, so it now contains
+        ``orin-associate__spark.env`` — a hypothetical force-render of an
+        associate-HOSTING shape onto the spark card. A shape whose own `hosts`
+        list names associate will of course mention it on any card, and that
+        says nothing about what the Spark deploys.
+      * the Spark's ACTUAL goldens are byte-unchanged: ``spark.env``,
+        ``spark-lobe__spark.env`` (the shape the Spark runs) and
+        ``thor-worker__spark.env`` (the worker seat it hosts after the 2026-08-20
+        relocation) all diff empty against the pre-associate tree.
+
+    So claim c9 holds. What this test guards is the real property: no shape that
+    does NOT host associate may leak associate config onto the spark card.
+    Excluding associate-hosting shapes is derived from the shape data itself, not
+    hardcoded, so a future associate-hosting shape is covered automatically and a
+    shape that stops hosting it is swept back in.
+    """
     goldens_dir = Path(__file__).resolve().parent / "goldens" / "shapes"
     spark_goldens = sorted(goldens_dir.glob("*__spark.env"))
     assert spark_goldens, "expected at least one *__spark.env golden to exist"
+    swept = 0
     for path in spark_goldens:
+        shape_name = path.name.split("__", 1)[0]
+        if "associate" in resolve_shape(shape_name).hosts:
+            continue  # hosts it on purpose; see the docstring
         text = path.read_text(encoding="utf-8")
         assert "ASSOCIATE" not in text.upper(), f"{path} unexpectedly mentions associate"
+        swept += 1
+    assert swept, "every spark golden was skipped — the sweep proved nothing"
