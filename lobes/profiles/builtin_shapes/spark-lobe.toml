@@ -123,8 +123,18 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 #   docs/dspark-speculation.md): at 262144 it beats mtp-n2 on code
 #   (46.20 vs 24.69 tok/s) and reasoning, and LOSES on prose (13.71 vs
 #   16.65 tok/s). That prose regression is a real, named cost of this
-#   default, not an oversight -- a prose-heavy box should override this knob
-#   back to the template default (delete the line) or to "" (spec-decode off).
+#   default, not an oversight -- a prose-heavy box wants the incumbent MTP
+#   head back, or no speculative decoding at all ("").
+#
+#   HOW to do that today, stated honestly: a CARD PROFILE CANNOT WIN HERE. A
+#   shape override composes ON TOP of the card, so this non-None value beats
+#   any speculative_config an operator writes in <deploy-dir>/profiles/
+#   spark.toml, and a re-render force-writes the key back over a hand-edited
+#   .env line. The supported routes are therefore: pick a different shape, or
+#   fork this shape file. Neither is ergonomic -- the missing mechanism (an
+#   operator-authored shape, or card-wins precedence for knob values) is a
+#   real gap, raised by review on PR #202 (Qodo finding 5) and tracked in
+#   issue #204 rather than papered over here.
 #   The revision is PINNED: a drafter is executable weights, and an
 #   unpinned draft repo is a silent config change on the next pull.
 #

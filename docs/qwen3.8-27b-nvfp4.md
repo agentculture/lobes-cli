@@ -60,9 +60,16 @@ runs. The 1M YaRN window below it is the previous declaration, retired.
 
 **The prose cost is real and named:** against the incumbent MTP head at n=2,
 DSpark wins on code (46.20 vs 24.69 tok/s) and reasoning, and **loses on
-prose** (13.71 vs 16.65 tok/s). A prose-heavy deployment should override
-`speculative_config` back to the template default (delete the shape's line) or
-to `""` (spec-decode off entirely).
+prose** (13.71 vs 16.65 tok/s).
+
+A prose-heavy deployment wants the incumbent MTP head back, or spec-decode off
+entirely — but **there is no ergonomic per-box override today.** A shape
+override composes on top of the card profile, so an operator profile's own
+`speculative_config` loses to the shape's, and `lobes init --apply`
+force-writes the rendered key back over a hand-edited `.env` line. The
+supported routes are to select a different shape or to fork the shape file.
+That gap is real and tracked in issue #204 (raised by review on PR #202); it
+is named here rather than papered over.
 
 ### Retired shape: the 1M YaRN window (MEASURED 2026-08-19, no longer declared)
 

@@ -113,6 +113,29 @@ KNOB_NAMES: tuple[str, ...] = (
 # .env must stay ASCII, so widening this would let a profile smuggle a
 # non-ASCII key into the file. Keep the class explicit rather than pairing
 # `\w` with a re.ASCII flag: the constraint belongs where it is read.
+# Roles whose compose lane actually CONSUMES a <PREFIX>_SPECULATIVE_CONFIG
+# slot, and therefore the only roles a profile/shape may declare
+# ``speculative_config`` for.
+#
+# This is not a taste judgement about which lanes "should" speculate -- it is a
+# fact about lobes/templates/fleet/docker-compose.yml. Three lanes expand the
+# variable (vllm-primary, vllm-multimodal, vllm-worker). The rest do not:
+# vllm-muse HARDCODES its `--speculative-config` token as a YAML LIST element
+# (a list cannot host the dash-only ${VAR-default} idiom, whose whole point is
+# to vanish when the value is empty -- an empty list element is an empty argv
+# token, not an omitted flag), and the pooling gears (vllm-embed, vllm-rerank)
+# plus vllm-hand carry no speculative flag at all.
+#
+# Rendering the key for one of those roles would put a variable in `.env` that
+# NOTHING reads -- a silent no-op, and this repo's rule is that a knob which
+# cannot take effect must fail loudly at load rather than pretend it applied
+# (the same rule that makes an unknown knob name a load error, above).
+# Un-gating a role means giving its lane a real slot FIRST, then adding it
+# here; for `muse` that also means converting its command from a list to the
+# shell-lexed string form vllm-primary/vllm-worker use.
+SPECULATIVE_CONFIG_ROLES: frozenset[str] = frozenset({"cortex", "senses", "worker"})
+
+
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # How a card's container runtime is asked for the GPU. The compose templates
@@ -429,6 +452,16 @@ class RoleProfile:
     # in the template, and why None (silent) and "" (off) mean different
     # things here. See lobes/templates/fleet/env.example's
     # PRIMARY_SPECULATIVE_CONFIG / MULTIMODAL_SPECULATIVE_CONFIG blocks.
+    #
+    # LIFECYCLE CAVEAT (true of EVERY knob, not just this one; raised by
+    # review on PR #202, Qodo finding 3). `None` restores the template default
+    # on a FRESH render only. `.env` is merge-only: `lobes init --apply`
+    # force-writes the keys the resolved profile renders and leaves every
+    # other line alone, so REMOVING a declaration does not remove a key an
+    # earlier render already wrote -- the stale line keeps winning. Clearing a
+    # previously-rendered knob on a live box means deleting that line from
+    # `.env` by hand. Tracked as a lifecycle gap in issue #204, not a
+    # property of this field.
     speculative_config: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -469,6 +502,21 @@ class RoleProfile:
                         f"(expected {expected})"
                     ),
                 )
+        if data.get("speculative_config") is not None and role not in SPECULATIVE_CONFIG_ROLES:
+            servable = ", ".join(sorted(SPECULATIVE_CONFIG_ROLES))
+            raise _profile_error(
+                message=(
+                    f"role {role!r}: knob 'speculative_config' has no effect — the "
+                    f"{role!r} lane's compose command does not expand "
+                    f"<PREFIX>_SPECULATIVE_CONFIG"
+                ),
+                remediation=(
+                    f"declare 'speculative_config' only for: {servable}. "
+                    "Serving a different draft on another lane needs that lane's "
+                    "compose command to grow a ${PREFIX_SPECULATIVE_CONFIG-default} "
+                    "slot first (see SPECULATIVE_CONFIG_ROLES)"
+                ),
+            )
         return RoleProfile(**dict(data))
 
 

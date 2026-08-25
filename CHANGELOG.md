@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.1] - 2026-08-25
+
+### Changed
+
+- `speculative_config` is REFUSED at load for a role whose compose lane cannot expand `<PREFIX>_SPECULATIVE_CONFIG` (`schema.SPECULATIVE_CONFIG_ROLES` = cortex / senses / worker). `muse` hardcodes its `--speculative-config` token as a YAML list element, and `hand`/`embedder`/`reranker` carry no speculative flag at all, so declaring the knob there used to render an `.env` key nothing reads — a silent no-op. It now fails loudly with a message naming why, matching the existing rule that an unknown knob is a load error rather than a silently dropped one. Raised by review on PR #202 (Qodo finding 4).
+- docs, CLAUDE.md and `spark-lobe.toml` no longer claim a per-box override for the DSpark default that does not exist. A shape override beats the card profile and a re-render force-writes the rendered key, so the honest routes are "select a different shape" or "fork the shape file" — the missing mechanism is tracked in #204 rather than papered over. Raised by review on PR #202 (Qodo finding 5).
+
+### Fixed
+
+- docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt RETRACTS a false claim: it said an operator re-rendering the live box would drop the now-undeclared `PRIMARY_ALLOW_LONG_MAX_MODEL_LEN`. It will not — `.env` is merge-only, so a key the profile no longer renders is left in place, not removed. The error came from reading a fresh render, where nothing stale can survive. The transcript now also bounds its own argv-equivalence result to fresh renders. Raised by review on PR #202 (Qodo finding 3).
+
 ## [0.61.0] - 2026-08-25
 
 ### Added

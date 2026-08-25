@@ -46,8 +46,10 @@ than the checkpoint's own MTP head — the **d4 adoption, 2026-08-25**
 proved against the live container in
 `docs/evidence/2026-08-25-accept-spark-lobe-dspark-render.txt`). DSpark beats
 MTP-n2 on code (46.20 vs 24.69 tok/s) and reasoning and **loses on prose**
-(13.71 vs 16.65) — a named cost of the default, overridable per box via the
-shape's `speculative_config` knob. Measured KV pool at the adopted pair:
+(13.71 vs 16.65) — a named cost of this default. Note there is **no ergonomic
+per-box override** for it today: a shape override beats the card profile and a
+re-render force-writes the key, so changing it means selecting a different
+shape or forking the shape file (issue #204). Measured KV pool at the adopted pair:
 760,806 tokens = **2.90× concurrency at 262144**.
 
 That shape previously declared a YaRN-extended **1M window**

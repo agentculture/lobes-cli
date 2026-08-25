@@ -85,8 +85,29 @@ $ diff <(live, minus mg-logwrap, sorted) <(rendered, sorted)
   Deliberate. That variable exists only to let vLLM serve PAST the checkpoint's
   declared 262144 ceiling. At exactly 262144 it is inert — it changes no argv
   and no engine behaviour — so leaving it armed on a shape that no longer
-  exceeds any ceiling would misdeclare what the shape does. An operator
-  re-rendering the live box drops an inert variable and nothing else.
+  exceeds any ceiling would misdeclare what the shape does.
+
+  CORRECTION (added after review of PR #202, Qodo finding 3). An earlier
+  version of this section claimed "an operator re-rendering the live box drops
+  an inert variable and nothing else." THAT IS WRONG, and the error came from
+  reading a FRESH render: the scratch directory above had no prior .env, so
+  nothing stale could survive in it.
+
+  `.env` is merge-only. `lobes init --apply` force-writes the keys the
+  resolved profile RENDERS and leaves every other line untouched, so a key the
+  shape no longer declares is not removed — it is simply no longer managed.
+  Re-rendering the deployed box therefore leaves its existing
+  `PRIMARY_ALLOW_LONG_MAX_MODEL_LEN=1` line in place, and the container keeps
+  getting VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 until an operator deletes that line
+  by hand. Behaviour is unchanged either way (the variable is inert at the
+  native ceiling), but the CLAIM was false and is retracted.
+
+  This cuts both ways and is worth stating plainly: the argv equivalence in
+  Section 4 is a property of a FRESH render of this shape. It is evidence that
+  the shape now declares the right thing. It is NOT evidence about what any
+  particular already-scaffolded box will render, because that box's .env can
+  carry managed-then-abandoned keys from earlier generations. Read the
+  container's argv on the box, as always.
 
 ## Section 6 — what this does NOT establish
 
