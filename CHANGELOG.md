@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.2] - 2026-08-25
+
+### Changed
+
+- `tests/test_profile_render.py`'s quoting-layer test splits its composite `assert raw.startswith('"') and raw.endswith('"')` into two statements. The two ends fail for different reasons — a truncated write versus a value quoted on one side only — and a composite assertion reports neither, so the split is about diagnosability, not style.
+
 ## [0.61.1] - 2026-08-25
 
 ### Changed
