@@ -94,9 +94,32 @@
 # the resolved engine config (18:28:23):
 #   speculative_config=SpeculativeConfig(method='dspark',
 #     model='nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark', num_spec_tokens=5)
-# This transcript does not itself contain a failed attempt against the un-infixed name (no
-# 404/RepositoryNotFound lines appear here — grepped, zero hits); the defect is recorded
-# from the vendor recipe text compared against the resolved config actually used.
+# This transcript does not itself contain the failed attempt against the un-infixed name
+# (no 404/RepositoryNotFound lines appear here — grepped, zero hits). That is an EVIDENCE
+# HANDLING FAULT, not an absence of the defect: the verbatim run WAS executed first, its
+# log WAS saved to this same path, and the corrected run then OVERWROTE it. The lines
+# below were captured from that first run's `docker logs` output before it was lost, and
+# are reproduced here rather than silently dropped:
+#
+#   (APIServer pid=1) ERROR 08-25 18:06:48 [repo_utils.py:68] Repository Not Found for
+#     url: https://huggingface.co/api/models/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DSpark/tree/main?recursive=true&expand=false.
+#   (APIServer pid=1)   File ".../vllm/engine/arg_utils.py", line 1829, in create_speculative_config
+#   (APIServer pid=1)     return SpeculativeConfig(**self.speculative_config)
+#   (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig
+#   (APIServer pid=1)   Value error, Invalid repository ID or local directory specified:
+#     'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DSpark'.
+#
+# The `Repository Not Found` error repeated four times (18:06:48 and 18:06:50 twice each,
+# 18:06:52) before the ValidationError terminated the API server. It failed during config
+# validation, ~30 s after start and BEFORE any weight download — which is why the
+# corrected re-run was cheap. The correct id was then verified independently against the
+# HF model-search API, which lists `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark`
+# and no un-infixed sibling.
+#
+# PROCEDURE NOTE for future spikes (frame claim c34's subject): write each run's log to its
+# own uniquely-named file as it runs. Reusing one filename across a failed and a corrected
+# run destroys the failure evidence, and `docker run --rm` destroys it even faster — both
+# happened in this session.
 #
 # ## DSpark acceptance: a decaying range, not a single headline number
 #
@@ -173,55 +196,81 @@ No published PyTorch CUDA builds for release 2.13.0+cu130 support this GPU. Visi
 (EngineCore pid=185) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 (EngineCore pid=185) INFO 08-25 18:55:31 [weight_utils.py:867] Filesystem type for checkpoints: EXT4. Checkpoint size: 20.08 GiB. Available RAM: 36.97 GiB.
 (EngineCore pid=185) INFO 08-25 18:55:31 [weight_utils.py:890] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
-(EngineCore pid=185) Loading safetensors checkpoint shards:   0% Completed | 0/52 [00:00<?, ?it/s]
-(EngineCore pid=185) Loading safetensors checkpoint shards:   2% Completed | 1/52 [00:00<00:19,  2.65it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:   0% Completed | 0/52 [00:00<?, ?it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:   2% Completed | 1/52 [00:00<00:19,  2.65it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:31 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:   4% Completed | 2/52 [00:01<00:29,  1.69it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:   4% Completed | 2/52 [00:01<00:29,  1.69it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:32 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:   8% Completed | 4/52 [00:01<00:20,  2.31it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:   8% Completed | 4/52 [00:01<00:20,  2.31it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:33 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  13% Completed | 7/52 [00:02<00:15,  2.99it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  13% Completed | 7/52 [00:02<00:15,  2.99it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:33 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  17% Completed | 9/52 [00:03<00:15,  2.85it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  17% Completed | 9/52 [00:03<00:15,  2.85it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:34 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  21% Completed | 11/52 [00:04<00:14,  2.88it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  21% Completed | 11/52 [00:04<00:14,  2.88it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:35 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  27% Completed | 14/52 [00:04<00:11,  3.36it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  27% Completed | 14/52 [00:04<00:11,  3.36it/s]
 (EngineCore pid=185) WARNING 08-25 18:55:36 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  31% Completed | 16/52 [00:33<02:33,  4.27s/it]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  31% Completed | 16/52 [00:33<02:33,  4.27s/it]
 (EngineCore pid=185) WARNING 08-25 18:56:04 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  35% Completed | 18/52 [00:33<01:46,  3.13s/it]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  35% Completed | 18/52 [00:33<01:46,  3.13s/it]
 (EngineCore pid=185) WARNING 08-25 18:56:05 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  40% Completed | 21/52 [00:34<01:02,  2.02s/it]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  40% Completed | 21/52 [00:34<01:02,  2.02s/it]
 (EngineCore pid=185) WARNING 08-25 18:56:05 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  44% Completed | 23/52 [00:35<00:46,  1.59s/it]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  44% Completed | 23/52 [00:35<00:46,  1.59s/it]
 (EngineCore pid=185) WARNING 08-25 18:56:06 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  48% Completed | 25/52 [00:35<00:33,  1.23s/it]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  48% Completed | 25/52 [00:35<00:33,  1.23s/it]
 (EngineCore pid=185) WARNING 08-25 18:56:07 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  54% Completed | 28/52 [00:36<00:20,  1.19it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  54% Completed | 28/52 [00:36<00:20,  1.19it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:07 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  58% Completed | 30/52 [00:36<00:14,  1.47it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  58% Completed | 30/52 [00:36<00:14,  1.47it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:08 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  62% Completed | 32/52 [00:37<00:10,  1.82it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  62% Completed | 32/52 [00:37<00:10,  1.82it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:08 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  67% Completed | 35/52 [00:37<00:06,  2.51it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  67% Completed | 35/52 [00:37<00:06,  2.51it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:09 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  71% Completed | 37/52 [00:38<00:05,  2.88it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  71% Completed | 37/52 [00:38<00:05,  2.88it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:09 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  75% Completed | 39/52 [00:38<00:04,  3.25it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  75% Completed | 39/52 [00:38<00:04,  3.25it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:09 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  79% Completed | 41/52 [00:38<00:03,  3.59it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  79% Completed | 41/52 [00:38<00:03,  3.59it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:10 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  85% Completed | 44/52 [00:39<00:01,  4.41it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  85% Completed | 44/52 [00:39<00:01,  4.41it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:10 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  88% Completed | 46/52 [00:39<00:01,  4.54it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  88% Completed | 46/52 [00:39<00:01,  4.54it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:11 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  92% Completed | 48/52 [00:40<00:00,  4.64it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  92% Completed | 48/52 [00:40<00:00,  4.64it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:11 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards:  96% Completed | 50/52 [00:40<00:00,  4.72it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:  96% Completed | 50/52 [00:40<00:00,  4.72it/s]
 (EngineCore pid=185) WARNING 08-25 18:56:11 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
-(EngineCore pid=185) Loading safetensors checkpoint shards: 100% Completed | 52/52 [00:41<00:00,  4.59it/s]
-(EngineCore pid=185) Loading safetensors checkpoint shards: 100% Completed | 52/52 [00:41<00:00,  1.27it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards: 100% Completed | 52/52 [00:41<00:00,  4.59it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards: 100% Completed | 52/52 [00:41<00:00,  1.27it/s]
 (EngineCore pid=185) 
 (EngineCore pid=185) INFO 08-25 18:56:12 [default_loader.py:430] Loading weights took 41.13 seconds
 (EngineCore pid=185) WARNING 08-25 18:56:12 [marlin_utils_fp8.py:112] Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degrade performance for compute-heavy workloads.
@@ -236,8 +285,10 @@ No published PyTorch CUDA builds for release 2.13.0+cu130 support this GPU. Visi
 (EngineCore pid=185) INFO 08-25 18:56:21 [cuda.py:482] Using TRITON_ATTN attention backend out of potential backends: ['TRITON_ATTN'].
 (EngineCore pid=185) INFO 08-25 18:57:54 [weight_utils.py:530] Time spent downloading weights for nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark: 92.055338 seconds
 (EngineCore pid=185) INFO 08-25 18:57:54 [weight_utils.py:867] Filesystem type for checkpoints: EXT4. Checkpoint size: 1.26 GiB. Available RAM: 31.08 GiB.
-(EngineCore pid=185) Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
-(EngineCore pid=185) Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 126.96it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+(EngineCore pid=185) 
+Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 126.96it/s]
 (EngineCore pid=185) 
 (EngineCore pid=185) INFO 08-25 18:57:54 [default_loader.py:430] Loading weights took 0.34 seconds
 (EngineCore pid=185) WARNING 08-25 18:57:54 [modelopt.py:1354] In W4A16_NVFP4 linear, the global weight scale (weight_scale_2) differs across fused parallel layers (e.g. q/k/v_proj). This will likely reduce accuracy. Consider a checkpoint with a shared global scale.
@@ -269,10 +320,131 @@ No published PyTorch CUDA builds for release 2.13.0+cu130 support this GPU. Visi
 (EngineCore pid=185) INFO 08-25 19:00:44 [ssu_dispatch.py:129] Using FlashInfer Mamba SSU algorithm: auto
 (EngineCore pid=185) INFO 08-25 19:00:44 [ssu_dispatch.py:310] Using flashinfer Mamba SSU backend.
 (EngineCore pid=185) INFO 08-25 19:00:44 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
-(EngineCore pid=185) Capturing CUDA graphs (PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]Capturing CUDA graphs (PIECEWISE):   2%|▏         | 1/51 [00:34<28:42, 34.45s/it]Capturing CUDA graphs (PIECEWISE):   4%|▍         | 2/51 [00:34<11:46, 14.42s/it]Capturing CUDA graphs (PIECEWISE):   6%|▌         | 3/51 [00:35<06:24,  8.01s/it]Capturing CUDA graphs (PIECEWISE):   8%|▊         | 4/51 [00:35<03:54,  5.00s/it]Capturing CUDA graphs (PIECEWISE):  10%|▉         | 5/51 [00:35<02:32,  3.32s/it]Capturing CUDA graphs (PIECEWISE):  12%|█▏        | 6/51 [00:36<01:44,  2.32s/it]Capturing CUDA graphs (PIECEWISE):  14%|█▎        | 7/51 [00:36<01:13,  1.68s/it]Capturing CUDA graphs (PIECEWISE):  16%|█▌        | 8/51 [00:37<00:53,  1.25s/it]Capturing CUDA graphs (PIECEWISE):  18%|█▊        | 9/51 [00:37<00:40,  1.04it/s]Capturing CUDA graphs (PIECEWISE):  20%|█▉        | 10/51 [00:37<00:31,  1.30it/s]Capturing CUDA graphs (PIECEWISE):  22%|██▏       | 11/51 [00:38<00:25,  1.58it/s]Capturing CUDA graphs (PIECEWISE):  24%|██▎       | 12/51 [00:38<00:20,  1.86it/s]Capturing CUDA graphs (PIECEWISE):  25%|██▌       | 13/51 [00:38<00:17,  2.15it/s]Capturing CUDA graphs (PIECEWISE):  27%|██▋       | 14/51 [00:38<00:15,  2.37it/s]Capturing CUDA graphs (PIECEWISE):  29%|██▉       | 15/51 [00:39<00:14,  2.56it/s]Capturing CUDA graphs (PIECEWISE):  31%|███▏      | 16/51 [00:39<00:12,  2.72it/s]Capturing CUDA graphs (PIECEWISE):  33%|███▎      | 17/51 [00:39<00:11,  2.88it/s]Capturing CUDA graphs (PIECEWISE):  35%|███▌      | 18/51 [00:40<00:14,  2.35it/s]Capturing CUDA graphs (PIECEWISE):  37%|███▋      | 19/51 [00:40<00:12,  2.62it/s]Capturing CUDA graphs (PIECEWISE):  39%|███▉      | 20/51 [00:41<00:10,  2.85it/s]Capturing CUDA graphs (PIECEWISE):  41%|████      | 21/51 [00:41<00:09,  3.06it/s]Capturing CUDA graphs (PIECEWISE):  43%|████▎     | 22/51 [00:41<00:09,  3.22it/s]Capturing CUDA graphs (PIECEWISE):  45%|████▌     | 23/51 [00:41<00:08,  3.37it/s]Capturing CUDA graphs (PIECEWISE):  47%|████▋     | 24/51 [00:42<00:07,  3.50it/s]Capturing CUDA graphs (PIECEWISE):  49%|████▉     | 25/51 [00:42<00:07,  3.65it/s]Capturing CUDA graphs (PIECEWISE):  51%|█████     | 26/51 [00:42<00:06,  3.77it/s]Capturing CUDA graphs (PIECEWISE):  53%|█████▎    | 27/51 [00:42<00:06,  3.86it/s]Capturing CUDA graphs (PIECEWISE):  55%|█████▍    | 28/51 [00:43<00:05,  3.86it/s]Capturing CUDA graphs (PIECEWISE):  57%|█████▋    | 29/51 [00:43<00:05,  3.93it/s]Capturing CUDA graphs (PIECEWISE):  59%|█████▉    | 30/51 [00:43<00:05,  3.92it/s]Capturing CUDA graphs (PIECEWISE):  61%|██████    | 31/51 [00:43<00:05,  3.95it/s]Capturing CUDA graphs (PIECEWISE):  63%|██████▎   | 32/51 [00:44<00:04,  4.02it/s]Capturing CUDA graphs (PIECEWISE):  65%|██████▍   | 33/51 [00:44<00:04,  4.09it/s]Capturing CUDA graphs (PIECEWISE):  67%|██████▋   | 34/51 [00:44<00:04,  4.13it/s]Capturing CUDA graphs (PIECEWISE):  69%|██████▊   | 35/51 [00:44<00:03,  4.11it/s]Capturing CUDA graphs (PIECEWISE):  71%|███████   | 36/51 [00:45<00:03,  4.11it/s]Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 37/51 [00:45<00:03,  4.09it/s]Capturing CUDA graphs (PIECEWISE):  75%|███████▍  | 38/51 [00:45<00:03,  4.12it/s]Capturing CUDA graphs (PIECEWISE):  76%|███████▋  | 39/51 [00:45<00:02,  4.14it/s]Capturing CUDA graphs (PIECEWISE):  78%|███████▊  | 40/51 [00:46<00:02,  4.15it/s]Capturing CUDA graphs (PIECEWISE):  80%|████████  | 41/51 [00:46<00:02,  4.19it/s]Capturing CUDA graphs (PIECEWISE):  82%|████████▏ | 42/51 [00:46<00:02,  4.22it/s]Capturing CUDA graphs (PIECEWISE):  84%|████████▍ | 43/51 [00:46<00:01,  4.24it/s]Capturing CUDA graphs (PIECEWISE):  86%|████████▋ | 44/51 [00:46<00:01,  4.24it/s]Capturing CUDA graphs (PIECEWISE):  88%|████████▊ | 45/51 [00:47<00:01,  4.21it/s]Capturing CUDA graphs (PIECEWISE):  90%|█████████ | 46/51 [00:47<00:01,  4.23it/s]Capturing CUDA graphs (PIECEWISE):  92%|█████████▏| 47/51 [00:47<00:00,  4.23it/s]Capturing CUDA graphs (PIECEWISE):  94%|█████████▍| 48/51 [00:47<00:00,  4.22it/s]Capturing CUDA graphs (PIECEWISE):  96%|█████████▌| 49/51 [00:48<00:00,  4.20it/s]Capturing CUDA graphs (PIECEWISE):  98%|█████████▊| 50/51 [00:48<00:00,  4.21it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:49<00:00,  1.67it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:49<00:00,  1.02it/s]
-(EngineCore pid=185) Capturing CUDA graphs (FULL):   0%|          | 0/48 [00:00<?, ?it/s]Capturing CUDA graphs (FULL):   2%|▏         | 1/48 [00:00<00:16,  2.89it/s]Capturing CUDA graphs (FULL):   4%|▍         | 2/48 [00:00<00:15,  2.99it/s]Capturing CUDA graphs (FULL):   6%|▋         | 3/48 [00:00<00:14,  3.04it/s]Capturing CUDA graphs (FULL):   8%|▊         | 4/48 [00:01<00:14,  3.08it/s]Capturing CUDA graphs (FULL):  10%|█         | 5/48 [00:01<00:13,  3.15it/s]Capturing CUDA graphs (FULL):  12%|█▎        | 6/48 [00:01<00:13,  3.21it/s]Capturing CUDA graphs (FULL):  15%|█▍        | 7/48 [00:02<00:12,  3.25it/s]Capturing CUDA graphs (FULL):  17%|█▋        | 8/48 [00:02<00:11,  3.36it/s]Capturing CUDA graphs (FULL):  19%|█▉        | 9/48 [00:02<00:11,  3.42it/s]Capturing CUDA graphs (FULL):  21%|██        | 10/48 [00:03<00:10,  3.49it/s]Capturing CUDA graphs (FULL):  23%|██▎       | 11/48 [00:03<00:10,  3.56it/s]Capturing CUDA graphs (FULL):  25%|██▌       | 12/48 [00:03<00:09,  3.63it/s]Capturing CUDA graphs (FULL):  27%|██▋       | 13/48 [00:03<00:09,  3.64it/s]Capturing CUDA graphs (FULL):  29%|██▉       | 14/48 [00:04<00:09,  3.69it/s]Capturing CUDA graphs (FULL):  31%|███▏      | 15/48 [00:04<00:08,  3.74it/s]Capturing CUDA graphs (FULL):  33%|███▎      | 16/48 [00:04<00:08,  3.80it/s]Capturing CUDA graphs (FULL):  35%|███▌      | 17/48 [00:04<00:08,  3.86it/s]Capturing CUDA graphs (FULL):  38%|███▊      | 18/48 [00:05<00:07,  3.93it/s]Capturing CUDA graphs (FULL):  40%|███▉      | 19/48 [00:05<00:07,  3.99it/s]Capturing CUDA graphs (FULL):  42%|████▏     | 20/48 [00:05<00:06,  4.02it/s]Capturing CUDA graphs (FULL):  44%|████▍     | 21/48 [00:05<00:06,  4.09it/s]Capturing CUDA graphs (FULL):  46%|████▌     | 22/48 [00:06<00:06,  4.15it/s]Capturing CUDA graphs (FULL):  48%|████▊     | 23/48 [00:06<00:05,  4.21it/s]Capturing CUDA graphs (FULL):  50%|█████     | 24/48 [00:06<00:05,  4.29it/s]Capturing CUDA graphs (FULL):  52%|█████▏    | 25/48 [00:06<00:05,  4.32it/s]Capturing CUDA graphs (FULL):  54%|█████▍    | 26/48 [00:06<00:05,  4.37it/s]Capturing CUDA graphs (FULL):  56%|█████▋    | 27/48 [00:07<00:04,  4.41it/s]Capturing CUDA graphs (FULL):  58%|█████▊    | 28/48 [00:07<00:04,  4.44it/s]Capturing CUDA graphs (FULL):  60%|██████    | 29/48 [00:07<00:04,  4.45it/s]Capturing CUDA graphs (FULL):  62%|██████▎   | 30/48 [00:07<00:04,  4.45it/s]Capturing CUDA graphs (FULL):  65%|██████▍   | 31/48 [00:08<00:03,  4.47it/s]Capturing CUDA graphs (FULL):  67%|██████▋   | 32/48 [00:08<00:03,  4.50it/s]Capturing CUDA graphs (FULL):  69%|██████▉   | 33/48 [00:08<00:03,  4.50it/s]Capturing CUDA graphs (FULL):  71%|███████   | 34/48 [00:08<00:03,  4.52it/s]Capturing CUDA graphs (FULL):  73%|███████▎  | 35/48 [00:08<00:02,  4.53it/s]Capturing CUDA graphs (FULL):  75%|███████▌  | 36/48 [00:09<00:02,  4.53it/s]Capturing CUDA graphs (FULL):  77%|███████▋  | 37/48 [00:09<00:02,  4.54it/s]Capturing CUDA graphs (FULL):  79%|███████▉  | 38/48 [00:09<00:02,  4.54it/s]Capturing CUDA graphs (FULL):  81%|████████▏ | 39/48 [00:09<00:01,  4.54it/s]Capturing CUDA graphs (FULL):  83%|████████▎ | 40/48 [00:10<00:01,  4.55it/s]Capturing CUDA graphs (FULL):  85%|████████▌ | 41/48 [00:10<00:01,  4.58it/s]Capturing CUDA graphs (FULL):  88%|████████▊ | 42/48 [00:10<00:01,  4.59it/s]Capturing CUDA graphs (FULL):  90%|████████▉ | 43/48 [00:10<00:01,  4.61it/s]Capturing CUDA graphs (FULL):  92%|█████████▏| 44/48 [00:10<00:00,  4.62it/s]Capturing CUDA graphs (FULL):  94%|█████████▍| 45/48 [00:11<00:00,  4.65it/s]Capturing CUDA graphs (FULL):  96%|█████████▌| 46/48 [00:11<00:00,  4.66it/s]Capturing CUDA graphs (FULL):  98%|█████████▊| 47/48 [00:11<00:00,  4.64it/s]Capturing CUDA graphs (FULL): 100%|██████████| 48/48 [00:11<00:00,  4.66it/s]Capturing CUDA graphs (FULL): 100%|██████████| 48/48 [00:11<00:00,  4.07it/s]
+(EngineCore pid=185) 
+Capturing CUDA graphs (PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]
+Capturing CUDA graphs (PIECEWISE):   2%|▏         | 1/51 [00:34<28:42, 34.45s/it]
+Capturing CUDA graphs (PIECEWISE):   4%|▍         | 2/51 [00:34<11:46, 14.42s/it]
+Capturing CUDA graphs (PIECEWISE):   6%|▌         | 3/51 [00:35<06:24,  8.01s/it]
+Capturing CUDA graphs (PIECEWISE):   8%|▊         | 4/51 [00:35<03:54,  5.00s/it]
+Capturing CUDA graphs (PIECEWISE):  10%|▉         | 5/51 [00:35<02:32,  3.32s/it]
+Capturing CUDA graphs (PIECEWISE):  12%|█▏        | 6/51 [00:36<01:44,  2.32s/it]
+Capturing CUDA graphs (PIECEWISE):  14%|█▎        | 7/51 [00:36<01:13,  1.68s/it]
+Capturing CUDA graphs (PIECEWISE):  16%|█▌        | 8/51 [00:37<00:53,  1.25s/it]
+Capturing CUDA graphs (PIECEWISE):  18%|█▊        | 9/51 [00:37<00:40,  1.04it/s]
+Capturing CUDA graphs (PIECEWISE):  20%|█▉        | 10/51 [00:37<00:31,  1.30it/s]
+Capturing CUDA graphs (PIECEWISE):  22%|██▏       | 11/51 [00:38<00:25,  1.58it/s]
+Capturing CUDA graphs (PIECEWISE):  24%|██▎       | 12/51 [00:38<00:20,  1.86it/s]
+Capturing CUDA graphs (PIECEWISE):  25%|██▌       | 13/51 [00:38<00:17,  2.15it/s]
+Capturing CUDA graphs (PIECEWISE):  27%|██▋       | 14/51 [00:38<00:15,  2.37it/s]
+Capturing CUDA graphs (PIECEWISE):  29%|██▉       | 15/51 [00:39<00:14,  2.56it/s]
+Capturing CUDA graphs (PIECEWISE):  31%|███▏      | 16/51 [00:39<00:12,  2.72it/s]
+Capturing CUDA graphs (PIECEWISE):  33%|███▎      | 17/51 [00:39<00:11,  2.88it/s]
+Capturing CUDA graphs (PIECEWISE):  35%|███▌      | 18/51 [00:40<00:14,  2.35it/s]
+Capturing CUDA graphs (PIECEWISE):  37%|███▋      | 19/51 [00:40<00:12,  2.62it/s]
+Capturing CUDA graphs (PIECEWISE):  39%|███▉      | 20/51 [00:41<00:10,  2.85it/s]
+Capturing CUDA graphs (PIECEWISE):  41%|████      | 21/51 [00:41<00:09,  3.06it/s]
+Capturing CUDA graphs (PIECEWISE):  43%|████▎     | 22/51 [00:41<00:09,  3.22it/s]
+Capturing CUDA graphs (PIECEWISE):  45%|████▌     | 23/51 [00:41<00:08,  3.37it/s]
+Capturing CUDA graphs (PIECEWISE):  47%|████▋     | 24/51 [00:42<00:07,  3.50it/s]
+Capturing CUDA graphs (PIECEWISE):  49%|████▉     | 25/51 [00:42<00:07,  3.65it/s]
+Capturing CUDA graphs (PIECEWISE):  51%|█████     | 26/51 [00:42<00:06,  3.77it/s]
+Capturing CUDA graphs (PIECEWISE):  53%|█████▎    | 27/51 [00:42<00:06,  3.86it/s]
+Capturing CUDA graphs (PIECEWISE):  55%|█████▍    | 28/51 [00:43<00:05,  3.86it/s]
+Capturing CUDA graphs (PIECEWISE):  57%|█████▋    | 29/51 [00:43<00:05,  3.93it/s]
+Capturing CUDA graphs (PIECEWISE):  59%|█████▉    | 30/51 [00:43<00:05,  3.92it/s]
+Capturing CUDA graphs (PIECEWISE):  61%|██████    | 31/51 [00:43<00:05,  3.95it/s]
+Capturing CUDA graphs (PIECEWISE):  63%|██████▎   | 32/51 [00:44<00:04,  4.02it/s]
+Capturing CUDA graphs (PIECEWISE):  65%|██████▍   | 33/51 [00:44<00:04,  4.09it/s]
+Capturing CUDA graphs (PIECEWISE):  67%|██████▋   | 34/51 [00:44<00:04,  4.13it/s]
+Capturing CUDA graphs (PIECEWISE):  69%|██████▊   | 35/51 [00:44<00:03,  4.11it/s]
+Capturing CUDA graphs (PIECEWISE):  71%|███████   | 36/51 [00:45<00:03,  4.11it/s]
+Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 37/51 [00:45<00:03,  4.09it/s]
+Capturing CUDA graphs (PIECEWISE):  75%|███████▍  | 38/51 [00:45<00:03,  4.12it/s]
+Capturing CUDA graphs (PIECEWISE):  76%|███████▋  | 39/51 [00:45<00:02,  4.14it/s]
+Capturing CUDA graphs (PIECEWISE):  78%|███████▊  | 40/51 [00:46<00:02,  4.15it/s]
+Capturing CUDA graphs (PIECEWISE):  80%|████████  | 41/51 [00:46<00:02,  4.19it/s]
+Capturing CUDA graphs (PIECEWISE):  82%|████████▏ | 42/51 [00:46<00:02,  4.22it/s]
+Capturing CUDA graphs (PIECEWISE):  84%|████████▍ | 43/51 [00:46<00:01,  4.24it/s]
+Capturing CUDA graphs (PIECEWISE):  86%|████████▋ | 44/51 [00:46<00:01,  4.24it/s]
+Capturing CUDA graphs (PIECEWISE):  88%|████████▊ | 45/51 [00:47<00:01,  4.21it/s]
+Capturing CUDA graphs (PIECEWISE):  90%|█████████ | 46/51 [00:47<00:01,  4.23it/s]
+Capturing CUDA graphs (PIECEWISE):  92%|█████████▏| 47/51 [00:47<00:00,  4.23it/s]
+Capturing CUDA graphs (PIECEWISE):  94%|█████████▍| 48/51 [00:47<00:00,  4.22it/s]
+Capturing CUDA graphs (PIECEWISE):  96%|█████████▌| 49/51 [00:48<00:00,  4.20it/s]
+Capturing CUDA graphs (PIECEWISE):  98%|█████████▊| 50/51 [00:48<00:00,  4.21it/s]
+Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:49<00:00,  1.67it/s]
+Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:49<00:00,  1.02it/s]
+(EngineCore pid=185) 
+Capturing CUDA graphs (FULL):   0%|          | 0/48 [00:00<?, ?it/s]
+Capturing CUDA graphs (FULL):   2%|▏         | 1/48 [00:00<00:16,  2.89it/s]
+Capturing CUDA graphs (FULL):   4%|▍         | 2/48 [00:00<00:15,  2.99it/s]
+Capturing CUDA graphs (FULL):   6%|▋         | 3/48 [00:00<00:14,  3.04it/s]
+Capturing CUDA graphs (FULL):   8%|▊         | 4/48 [00:01<00:14,  3.08it/s]
+Capturing CUDA graphs (FULL):  10%|█         | 5/48 [00:01<00:13,  3.15it/s]
+Capturing CUDA graphs (FULL):  12%|█▎        | 6/48 [00:01<00:13,  3.21it/s]
+Capturing CUDA graphs (FULL):  15%|█▍        | 7/48 [00:02<00:12,  3.25it/s]
+Capturing CUDA graphs (FULL):  17%|█▋        | 8/48 [00:02<00:11,  3.36it/s]
+Capturing CUDA graphs (FULL):  19%|█▉        | 9/48 [00:02<00:11,  3.42it/s]
+Capturing CUDA graphs (FULL):  21%|██        | 10/48 [00:03<00:10,  3.49it/s]
+Capturing CUDA graphs (FULL):  23%|██▎       | 11/48 [00:03<00:10,  3.56it/s]
+Capturing CUDA graphs (FULL):  25%|██▌       | 12/48 [00:03<00:09,  3.63it/s]
+Capturing CUDA graphs (FULL):  27%|██▋       | 13/48 [00:03<00:09,  3.64it/s]
+Capturing CUDA graphs (FULL):  29%|██▉       | 14/48 [00:04<00:09,  3.69it/s]
+Capturing CUDA graphs (FULL):  31%|███▏      | 15/48 [00:04<00:08,  3.74it/s]
+Capturing CUDA graphs (FULL):  33%|███▎      | 16/48 [00:04<00:08,  3.80it/s]
+Capturing CUDA graphs (FULL):  35%|███▌      | 17/48 [00:04<00:08,  3.86it/s]
+Capturing CUDA graphs (FULL):  38%|███▊      | 18/48 [00:05<00:07,  3.93it/s]
+Capturing CUDA graphs (FULL):  40%|███▉      | 19/48 [00:05<00:07,  3.99it/s]
+Capturing CUDA graphs (FULL):  42%|████▏     | 20/48 [00:05<00:06,  4.02it/s]
+Capturing CUDA graphs (FULL):  44%|████▍     | 21/48 [00:05<00:06,  4.09it/s]
+Capturing CUDA graphs (FULL):  46%|████▌     | 22/48 [00:06<00:06,  4.15it/s]
+Capturing CUDA graphs (FULL):  48%|████▊     | 23/48 [00:06<00:05,  4.21it/s]
+Capturing CUDA graphs (FULL):  50%|█████     | 24/48 [00:06<00:05,  4.29it/s]
+Capturing CUDA graphs (FULL):  52%|█████▏    | 25/48 [00:06<00:05,  4.32it/s]
+Capturing CUDA graphs (FULL):  54%|█████▍    | 26/48 [00:06<00:05,  4.37it/s]
+Capturing CUDA graphs (FULL):  56%|█████▋    | 27/48 [00:07<00:04,  4.41it/s]
+Capturing CUDA graphs (FULL):  58%|█████▊    | 28/48 [00:07<00:04,  4.44it/s]
+Capturing CUDA graphs (FULL):  60%|██████    | 29/48 [00:07<00:04,  4.45it/s]
+Capturing CUDA graphs (FULL):  62%|██████▎   | 30/48 [00:07<00:04,  4.45it/s]
+Capturing CUDA graphs (FULL):  65%|██████▍   | 31/48 [00:08<00:03,  4.47it/s]
+Capturing CUDA graphs (FULL):  67%|██████▋   | 32/48 [00:08<00:03,  4.50it/s]
+Capturing CUDA graphs (FULL):  69%|██████▉   | 33/48 [00:08<00:03,  4.50it/s]
+Capturing CUDA graphs (FULL):  71%|███████   | 34/48 [00:08<00:03,  4.52it/s]
+Capturing CUDA graphs (FULL):  73%|███████▎  | 35/48 [00:08<00:02,  4.53it/s]
+Capturing CUDA graphs (FULL):  75%|███████▌  | 36/48 [00:09<00:02,  4.53it/s]
+Capturing CUDA graphs (FULL):  77%|███████▋  | 37/48 [00:09<00:02,  4.54it/s]
+Capturing CUDA graphs (FULL):  79%|███████▉  | 38/48 [00:09<00:02,  4.54it/s]
+Capturing CUDA graphs (FULL):  81%|████████▏ | 39/48 [00:09<00:01,  4.54it/s]
+Capturing CUDA graphs (FULL):  83%|████████▎ | 40/48 [00:10<00:01,  4.55it/s]
+Capturing CUDA graphs (FULL):  85%|████████▌ | 41/48 [00:10<00:01,  4.58it/s]
+Capturing CUDA graphs (FULL):  88%|████████▊ | 42/48 [00:10<00:01,  4.59it/s]
+Capturing CUDA graphs (FULL):  90%|████████▉ | 43/48 [00:10<00:01,  4.61it/s]
+Capturing CUDA graphs (FULL):  92%|█████████▏| 44/48 [00:10<00:00,  4.62it/s]
+Capturing CUDA graphs (FULL):  94%|█████████▍| 45/48 [00:11<00:00,  4.65it/s]
+Capturing CUDA graphs (FULL):  96%|█████████▌| 46/48 [00:11<00:00,  4.66it/s]
+Capturing CUDA graphs (FULL):  98%|█████████▊| 47/48 [00:11<00:00,  4.64it/s]
+Capturing CUDA graphs (FULL): 100%|██████████| 48/48 [00:11<00:00,  4.66it/s]
+Capturing CUDA graphs (FULL): 100%|██████████| 48/48 [00:11<00:00,  4.07it/s]
 (EngineCore pid=185) INFO 08-25 19:01:50 [speculator.py:137] Capturing model for DSpark speculator...
-(EngineCore pid=185) Capturing dspark CUDA graphs (FULL):   0%|          | 0/48 [00:00<?, ?it/s]Capturing dspark CUDA graphs (FULL):   2%|▏         | 1/48 [00:00<00:46,  1.00it/s]Capturing dspark CUDA graphs (FULL):   4%|▍         | 2/48 [00:01<00:41,  1.11it/s]Capturing dspark CUDA graphs (FULL):   8%|▊         | 4/48 [00:01<00:16,  2.67it/s]Capturing dspark CUDA graphs (FULL):  12%|█▎        | 6/48 [00:02<00:09,  4.47it/s]Capturing dspark CUDA graphs (FULL):  17%|█▋        | 8/48 [00:02<00:06,  6.48it/s]Capturing dspark CUDA graphs (FULL):  23%|██▎       | 11/48 [00:02<00:03,  9.51it/s]Capturing dspark CUDA graphs (FULL):  29%|██▉       | 14/48 [00:02<00:02, 12.35it/s]Capturing dspark CUDA graphs (FULL):  35%|███▌      | 17/48 [00:02<00:02, 15.04it/s]Capturing dspark CUDA graphs (FULL):  42%|████▏     | 20/48 [00:02<00:01, 17.59it/s]Capturing dspark CUDA graphs (FULL):  48%|████▊     | 23/48 [00:02<00:01, 19.91it/s]Capturing dspark CUDA graphs (FULL):  54%|█████▍    | 26/48 [00:02<00:00, 22.23it/s]Capturing dspark CUDA graphs (FULL):  60%|██████    | 29/48 [00:02<00:00, 24.12it/s]Capturing dspark CUDA graphs (FULL):  69%|██████▉   | 33/48 [00:03<00:00, 26.50it/s]Capturing dspark CUDA graphs (FULL):  77%|███████▋  | 37/48 [00:03<00:00, 28.22it/s]Capturing dspark CUDA graphs (FULL):  85%|████████▌ | 41/48 [00:03<00:00, 30.28it/s]Capturing dspark CUDA graphs (FULL):  94%|█████████▍| 45/48 [00:03<00:00, 32.26it/s]Capturing dspark CUDA graphs (FULL): 100%|██████████| 48/48 [00:04<00:00, 11.12it/s]
+(EngineCore pid=185) 
+Capturing dspark CUDA graphs (FULL):   0%|          | 0/48 [00:00<?, ?it/s]
+Capturing dspark CUDA graphs (FULL):   2%|▏         | 1/48 [00:00<00:46,  1.00it/s]
+Capturing dspark CUDA graphs (FULL):   4%|▍         | 2/48 [00:01<00:41,  1.11it/s]
+Capturing dspark CUDA graphs (FULL):   8%|▊         | 4/48 [00:01<00:16,  2.67it/s]
+Capturing dspark CUDA graphs (FULL):  12%|█▎        | 6/48 [00:02<00:09,  4.47it/s]
+Capturing dspark CUDA graphs (FULL):  17%|█▋        | 8/48 [00:02<00:06,  6.48it/s]
+Capturing dspark CUDA graphs (FULL):  23%|██▎       | 11/48 [00:02<00:03,  9.51it/s]
+Capturing dspark CUDA graphs (FULL):  29%|██▉       | 14/48 [00:02<00:02, 12.35it/s]
+Capturing dspark CUDA graphs (FULL):  35%|███▌      | 17/48 [00:02<00:02, 15.04it/s]
+Capturing dspark CUDA graphs (FULL):  42%|████▏     | 20/48 [00:02<00:01, 17.59it/s]
+Capturing dspark CUDA graphs (FULL):  48%|████▊     | 23/48 [00:02<00:01, 19.91it/s]
+Capturing dspark CUDA graphs (FULL):  54%|█████▍    | 26/48 [00:02<00:00, 22.23it/s]
+Capturing dspark CUDA graphs (FULL):  60%|██████    | 29/48 [00:02<00:00, 24.12it/s]
+Capturing dspark CUDA graphs (FULL):  69%|██████▉   | 33/48 [00:03<00:00, 26.50it/s]
+Capturing dspark CUDA graphs (FULL):  77%|███████▋  | 37/48 [00:03<00:00, 28.22it/s]
+Capturing dspark CUDA graphs (FULL):  85%|████████▌ | 41/48 [00:03<00:00, 30.28it/s]
+Capturing dspark CUDA graphs (FULL):  94%|█████████▍| 45/48 [00:03<00:00, 32.26it/s]
+Capturing dspark CUDA graphs (FULL): 100%|██████████| 48/48 [00:04<00:00, 11.12it/s]
 (EngineCore pid=185) INFO 08-25 19:01:54 [model_runner.py:791] Graph capturing finished in 67 secs, took 1.71 GiB
 (EngineCore pid=185) INFO 08-25 19:01:54 [gpu_worker.py:789] Free memory on device (55.42/61.34 GiB) on startup. Desired GPU memory utilization is (0.7, 42.94 GiB). Actual usage is 25.12 GiB for consumed memory (weights + non-torch), 2.75 GiB for peak activation, and 1.71 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=14190496052` (13.22 GiB) to fit into requested memory, or `--kv-cache-memory=27594333696` (25.7 GiB) to fully utilize gpu memory. Current kv cache memory in use is 15.07 GiB.
 (EngineCore pid=185) INFO 08-25 19:02:16 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
