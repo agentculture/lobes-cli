@@ -403,7 +403,6 @@ on the full shape; the shape leaves only ~1 GiB free on a ZERO-swap board (see
 issue #216); and no peer has addressed this lane cross-box. See
 `docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
 
-
 **`hand` — the ninth role, the fleet's FINE-TUNING BASE (default-hosted
 everywhere).** Checkpoint: `LiquidAI/LFM2.5-1.2B-Instruct` (a ~1.2B hybrid
 short-conv + GQA `Lfm2ForCausalLM`; 32768 native; bf16 — the catalog's

@@ -33,12 +33,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/test_profile_schema.py` splits a composite `in_proj and out_proj`
   assertion into two, so a failure names which projection is missing.
 
-### Added
-
-### Changed
-
-### Fixed
-
 ## [0.65.0] - 2026-08-26
 
 ### Changed
@@ -75,12 +69,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or not. Never exercised until `orin-associate` became the first shape to drop
   `embedder`/`reranker`. The matrix now derives generate-ness from `TIER_ROLE`,
   and had also never been taught about `associate`.
-
-### Added
-
-### Changed
-
-### Fixed
 
 ## [0.64.0] - 2026-08-26
 
@@ -120,12 +108,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stale `v0.27.1`-on-Thor account in `docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`;
   the Thor wedge is sm_110-specific — the Orin clears the identical Mamba2 SSD
   Triton warmup.
-
-### Added
-
-### Changed
-
-### Fixed
 
 ## [0.63.1] - 2026-08-25
 
