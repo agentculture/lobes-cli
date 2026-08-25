@@ -21,7 +21,7 @@ Contract pinned below:
   ReplicaConfigError` naming the backend.
 * ``self_origin`` comes from ``GATEWAY_SELF_ORIGIN`` only — never derived.
 * Lane fingerprints are read per backend name from
-  ``<PREFIX>_{QUANTIZATION,KV_CACHE_DTYPE,REASONING_PARSER,TOOL_PARSER,
+  ``<PREFIX>_{QUANTIZATION,KV_CACHE_DTYPE,REASONING_PARSER,TOOL_CALL_PARSER,
   SPECULATIVE_CONFIG}``; only SET knobs appear.
 * A no-new-knobs env yields a table equal (==) to today's.
 """
@@ -220,11 +220,11 @@ def test_lane_fingerprints_reads_declared_knobs_only() -> None:
     table, _cfg = build_config(
         _base_env(
             PRIMARY_QUANTIZATION="modelopt",
-            PRIMARY_TOOL_PARSER="qwen3_coder",
+            PRIMARY_TOOL_CALL_PARSER="qwen3_coder",
         )
     )
     assert dict(table.lane_fingerprints) == {
-        "primary": {"QUANTIZATION": "modelopt", "TOOL_PARSER": "qwen3_coder"}
+        "primary": {"QUANTIZATION": "modelopt", "TOOL_CALL_PARSER": "qwen3_coder"}
     }
 
 
@@ -238,7 +238,7 @@ def test_lane_fingerprints_covers_all_five_suffixes() -> None:
         "QUANTIZATION",
         "KV_CACHE_DTYPE",
         "REASONING_PARSER",
-        "TOOL_PARSER",
+        "TOOL_CALL_PARSER",
         "SPECULATIVE_CONFIG",
     )
     env = _base_env(**{f"PRIMARY_{suffix}": "x" for suffix in LANE_FINGERPRINT_SUFFIXES})
@@ -247,10 +247,12 @@ def test_lane_fingerprints_covers_all_five_suffixes() -> None:
 
 
 def test_lane_fingerprints_across_backend_names() -> None:
-    table, _cfg = build_config(_base_env(MULTIMODAL_QUANTIZATION="fp8", HAND_TOOL_PARSER="lfm2"))
+    table, _cfg = build_config(
+        _base_env(MULTIMODAL_QUANTIZATION="fp8", HAND_TOOL_CALL_PARSER="lfm2")
+    )
     assert dict(table.lane_fingerprints) == {
         "multimodal": {"QUANTIZATION": "fp8"},
-        "hand": {"TOOL_PARSER": "lfm2"},
+        "hand": {"TOOL_CALL_PARSER": "lfm2"},
     }
 
 

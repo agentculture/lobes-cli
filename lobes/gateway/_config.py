@@ -491,7 +491,7 @@ def _self_origin(env: Mapping[str, str]) -> str:
 
 # The engine knobs a caller might reasonably expect to be IDENTICAL across
 # every replica in a role's pool (cortex-replica-pool, issue #199, t2) — two
-# "cortex" replicas silently disagreeing on, say, TOOL_PARSER would answer a
+# "cortex" replicas silently disagreeing on, say, TOOL_CALL_PARSER would answer a
 # strict-tools request differently depending on which replica happened to
 # serve it. Read per backend name as ``<PREFIX>_<SUFFIX>`` — the same
 # ``<PREFIX>_<KNOB>`` convention every other per-backend channel in this
@@ -502,7 +502,7 @@ LANE_FINGERPRINT_SUFFIXES: tuple[str, ...] = (
     "QUANTIZATION",
     "KV_CACHE_DTYPE",
     "REASONING_PARSER",
-    "TOOL_PARSER",
+    "TOOL_CALL_PARSER",
     "SPECULATIVE_CONFIG",
 )
 
