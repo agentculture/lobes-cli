@@ -58,14 +58,21 @@ hosts = ["associate", "hand", "embedder", "reranker"]
 # plus native FlashAttention 2 — see
 # docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt.
 model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
-# gpu_mem_util = 0.63 -- MEASURED on the physical Orin, 2026-08-25, GEARS-FIRST
+# gpu_mem_util = 0.56 -- MEASURED on the physical Orin with THIS FULL SHAPE up,
+# 2026-08-26 (docs/evidence/2026-08-26-accept-orin-associate.txt), GEARS-FIRST
 # boot (hand/embedder/reranker resident before associate; this shape's own
 # start order). The vendor's own published Jetson figure, 0.70, was REFUSED at
 # boot by 0.05 GiB with the two pooling gears resident:
 #   "Free memory on device cuda:0 (42.89/61.34 GiB) on startup is less than
 #    desired GPU memory utilization (0.7, 42.94 GiB)"
 # 0.63 booted healthy: weights 19.45 GiB, available KV 10.95 GiB, KV pool
-# 1,249,280 tokens, 9.76x concurrency at 128000. See
+# 1,524,000 tokens, 11.91x concurrency at 128000, weights 17.81 GiB.
+#
+# TWO refusals precede it, both kept: the vendor's 0.70, and 0.63 — which was
+# measured with `hand` NOT resident and then refused once hand joined
+# ("Free memory on device cuda:0 (34.85/61.34 GiB) ... less than desired (0.63,
+# 38.65 GiB)"). `hand` holds 5.84 GiB, not the 3.68 GiB its declared util 0.06
+# implies. The full shape leaves ~1 GiB free on a ZERO-swap board. See
 # docs/evidence/2026-08-25-measure-associate-budget-orin.txt and
 # builtin/orin.toml's [roles.associate] documentation block (LOCKSTEP: these
 # values must equal each other — they are facts about the same board).
@@ -74,7 +81,7 @@ model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 # measured (no vllm-hand container was scaffolded on that run) — 0.63 was
 # chosen to leave hand's declared 0.06 (~3.68 GiB) as arithmetic headroom. A
 # boot with hand genuinely co-resident is open follow-up work.
-gpu_mem_util = 0.63
+gpu_mem_util = 0.56
 # max_model_len = 128000 -- the vendor recipe's window, served in full and
 # measured at it. NOT the checkpoint's 1,048,576 native ceiling, which nothing
 # here has exercised; trimming further is the memory dial if a future

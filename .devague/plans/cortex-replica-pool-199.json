@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-25T16:10:01Z",
-  "updated": "2026-08-25T18:01:17Z",
+  "updated": "2026-08-25T21:02:53Z",
   "targets": [
     {
       "id": "c1",
@@ -650,6 +650,32 @@
         "h21",
         "c30",
         "h22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Live acceptance: boot the orin-associate shape on the physical Orin and produce the #108 transcript",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-08-26-accept-orin-associate.txt exists in the house format: header (box, date, engine, scaffold command and every deployment-side delta), boot facts, probes, verdict, and an explicit 'still open' section",
+        "The shape is rendered by 'lobes init --shape orin-associate --apply' on this card and the deployment is brought up from that render, not hand-assembled",
+        "Correctness probes run and are recorded verbatim: known-answer, structured tool_calls, and gateway capabilities showing associate hosted and ready",
+        "Decode throughput is measured and stated WITH its speculation setting, alongside this board's own 2.61 tok/s llama.cpp cortex baseline and never against the vendor's 89 tok/s aggregate",
+        "A request without GATEWAY_API_KEY is refused and that refusal is recorded, closing c30/c46 with live evidence rather than configuration alone",
+        "Until this transcript lands nothing may call the orin-associate shape validated; if it fails the transcript says NO-GO in its own words and the shape stays DECLARED",
+        "A DEPTH SWEEP at the SAME shape as the incumbent's (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt): prefill depths 0 / 512 / 2048 / 8192 / 32768 with 128 output tokens, reporting TTFT, decode tok/s and total per depth, so the two lanes are directly comparable on this board rather than compared across different harnesses",
+        "Prefill throughput measured and its decay across depth stated, as the incumbent's transcript does (it reported decode ~7% and prefill ~10% decay from 0 to 32768)",
+        "The standard CLI surface is used and its output recorded verbatim -- lobes capabilities, lobes assess --tools, lobes benchmark, lobes measure --role associate -- not ad-hoc curl only, so the run is reproducible by another operator",
+        "A head-to-head table against this board's own incumbent (2.61 tok/s decode, ~64 tok/s prefill, TTFT 1,566 ms at depth 0 / 610,020 ms at 32768) and against the Spark-hosted worker (75.1 tok/s, no speculation), each labelled with its speculation setting and its harness"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c26",
+        "h26"
       ],
       "instruction": ""
     }

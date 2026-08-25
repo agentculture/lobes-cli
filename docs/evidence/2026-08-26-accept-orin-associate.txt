@@ -1,0 +1,268 @@
+# orin-associate acceptance — the Jetson AGX Orin serves `associate` locally
+#
+# Box:    Jetson AGX Orin 64GB Developer Kit (Ampere sm_87, 61.34 GiB unified, ZERO swap)
+# Date:   2026-08-25/26
+# Plan:   lightning-on-orin, task t12 (docs/plans/2026-08-25-lightning-on-orin.md)
+# Scope:  the SHAPE. The LANE was already a GO (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt).
+#
+# VERDICT: **GO, WITH THREE CORRECTIONS THE RUN FORCED.** The shape renders,
+# boots, serves correct output, calls tools, and is refused without a
+# credential. It does NOT run at the budget the card declared, it does NOT
+# run DSpark, and it did NOT run the engine the lane was measured on. All
+# three are recorded below rather than quietly reconciled.
+#
+# Scaffold:
+#   lobes 0.63.1 (from source, branch feat/lightning-on-orin-associate)
+#   LOBES_DIR=~/.lobes lobes init --shape orin-associate --apply --force
+#   backup: ~/.lobes.pre-associate-20260825T211232Z
+#   render: profile orin (auto-detected sm_87, 61.3 GB), shape orin-associate
+#           hosts = [associate, hand, embedder, reranker]; 29 env vars;
+#           docker-compose.shape.yml parks vllm-primary + vllm-multimodal;
+#           docker-compose.gpu.yml written (gpu_access=runtime, csv mode)
+#
+# DEPLOYMENT-SIDE DELTAS — every departure from a clean render, named:
+#
+#   d-A  `lobes fleet up --apply` FAILED. It builds the audio overlay even
+#        though this shape declares no audio: the leftover
+#        docker-compose.audio.yml from an earlier scaffold is still in the
+#        deployment dir and `fleet up` includes it regardless of shape. The
+#        realtime container build then fails (see d-B). Worked around by naming
+#        the file set explicitly:
+#          docker compose -f docker-compose.yml -f docker-compose.shape.yml \
+#                         -f docker-compose.gpu.yml --profile associate up -d
+#        A shape that drops audio should not be blocked from starting by an
+#        audio container it does not host. FILED AS A FINDING, not fixed here.
+#
+#   d-B  Dockerfile.gateway REPLACED with a local-wheel variant. The shipped
+#        one pins `lobes-cli==${MODEL_GEAR_VERSION}` from PyPI (or a TestPyPI
+#        .devN via GATEWAY_PIP_EXTRA_INDEX_URL). 0.63.1 is published NOWHERE —
+#        it exists only on this branch — and the gateway MUST be that build or
+#        it does not know the `associate` role at all (the same failure the
+#        2026-08-20 Spark transcript records for `hand`: an older gateway
+#        answered model=hand with model_not_found). Built with `uv build` and
+#        installed from the local wheel; original kept as Dockerfile.gateway.orig.
+#        A from-source box on an unreleased version has NO supported path to
+#        build its own gateway. FILED AS A FINDING.
+#
+#   d-C  GATEWAY_API_KEY was ABSENT from this deployment's .env and was set for
+#        this run. See "Auth" below — its absence is itself a result.
+#
+#   d-D  ASSOCIATE_GPU_MEM_UTIL lowered 0.63 -> 0.56. Not a preference: 0.63 was
+#        REFUSED at boot. See "The budget correction".
+#
+# ============================================================================
+# 1. THE BUDGET CORRECTION — the card's declared 0.63 is WRONG for this shape
+# ============================================================================
+#
+# t8 measured 0.63 with the two pooling gears resident and `hand` NOT running,
+# reserving hand's declared util 0.06 (= 3.68 GiB) as ARITHMETIC HEADROOM. The
+# t8 profile comment said in terms: "do not describe this budget as 'measured
+# alongside hand'". That caveat was correct and the reserve was wrong.
+#
+#   MEASURED here: `hand` holds 5.84 GiB resident, not 3.68 GiB — 59% more than
+#   its declared utilization fraction implies (util is a budget fraction; the
+#   resident figure includes weights plus overhead).
+#
+#   With the full shape up, vLLM refused 0.63 outright:
+#
+#     ValueError: Free memory on device cuda:0 (34.85/61.34 GiB) on startup is
+#     less than desired GPU memory utilization (0.63, 38.65 GiB).
+#
+#   Recorded as a refusal, exactly as the vendor's 0.70 was in t8. 0.56 booted.
+#
+# THE CARD AND THE SHAPE MUST BOTH BE CORRECTED TO 0.56. Until they are, a
+# bare `lobes init --shape orin-associate --apply` renders a deployment that
+# cannot start.
+#
+# Post-boot residency, full shape (instrument: docker stats):
+#     vllm-associate   34.85 GiB
+#     vllm-hand         5.80 GiB
+#     vllm-rerank       5.34 GiB
+#     vllm-embed        4.83 GiB
+#     gateway           0.02 GiB
+#     prod-worker-1     0.02 GiB   (unrelated host workload, left running)
+#     -------------------------------------
+#     ~50.9 GiB used, ~1 GiB available (instrument: free -g)
+#
+#   ~1 GiB of margin on a board with ZERO SWAP is thin. This is the strongest
+#   argument yet for issue #216 (headless recovers unified memory): it is no
+#   longer about a bigger KV pool, it is about margin.
+#
+# ============================================================================
+# 2. BOOT FACTS (instrument: the engine's own boot log)
+# ============================================================================
+#
+#   Image        vllm/vllm-openai@sha256:7c5a10e9...  <-- SEE THE IMAGE WARNING
+#   Model loading took        17.81 GiB / 43.48 s (weights warm in the HF cache)
+#   Available KV cache memory  9.35 GiB
+#   GPU KV cache size      1,524,000 tokens
+#   Max concurrency @128,000   11.91x   (a KV-pool CEILING, not throughput)
+#   init engine              228.72 s   (compilation 40.19 s)
+#   quantization          modelopt_mixed     kv_cache_dtype  bfloat16
+#   Kernels     MarlinFP8ScaledMMLinearKernel · 'MARLIN' NvFp4 MoE backend
+#               FLASH_ATTN attention backend · flashinfer Mamba SSU backend
+#   "Warming up Mamba2 SSD Triton kernels" appeared ONCE and COMPLETED — the
+#   same line that wedged the Jetson AGX Thor indefinitely on two engine
+#   versions. sm_87 clears it. (Distinct from the FlashInfer SSU backend pick,
+#   which is a separate mechanism on a separate log line.)
+#
+#   IMAGE WARNING — this run did NOT use the engine the lane was measured on.
+#   The lane spike used vllm/vllm-openai:v0.27.1. This deployment's .env pins
+#   VLLM_NIGHTLY_IMAGE to sha256:7c5a10e9..., the PRE-BUMP nightly; the shipped
+#   template default is sha256:8bd082... So THREE different engines are now in
+#   play across this work. The stale pin survived because `lobes init` merges
+#   .env (existing keys untouched) — the exact stale-key trap the orin-associate
+#   shape work flagged. That it booted and served on the older nightly is a
+#   genuine (if accidental) datapoint: Lightning on sm_87 is not v0.27.1-only.
+#
+# ============================================================================
+# 3. DSpark IS NOT WIRED — the headline number is not reproducible here
+# ============================================================================
+#
+#   Boot config reports: speculative_config=None
+#
+#   The associate compose lane has NO speculative-config knob at all
+#   (`grep ASSOCIATE_SPECULATIVE` over the template returns nothing), so the
+#   shipped lane serves PLAIN DECODE. The lane spike's ~78-81 tok/s was measured
+#   WITH DSpark at 5 draft tokens; that configuration cannot currently be
+#   rendered by any shape.
+#
+#   This is a gap in task t7's framing, not an engine limitation: the covering
+#   claim asserted the speculative config was "already expressible" via
+#   WORKER_SPECULATIVE_CONFIG's JSON form — but that is the WORKER prefix and it
+#   does not generalize to a new role. Adding ASSOCIATE_SPECULATIVE_CONFIG,
+#   mirroring the PRIMARY_/MULTIMODAL_ pattern, is outstanding work.
+#
+#   Silver lining: because this run has no drafter, it yields a clean
+#   plain-decode baseline on this board. Against the lane spike's DSpark number
+#   on a different engine, speculation is worth roughly +45% decode
+#   (54.3 -> ~78-81 tok/s). Treat that as indicative, not a controlled A/B:
+#   different engine, different resident set.
+#
+# ============================================================================
+# 4. PROBES
+# ============================================================================
+#
+# Auth (closes frame claims c30/c46 with LIVE evidence, not configuration):
+#   The motivating incident was real. During the lane spike, run verbatim per
+#   NVIDIA's recipe with --network host, TWO tailnet peers reached the
+#   unauthenticated endpoint within seconds, neither initiated by the operator:
+#     INFO: 100.127.105.72:50652 - "GET /v1/models HTTP/1.1" 200 OK
+#     INFO: 100.105.216.63:55196 - "GET /v1/models HTTP/1.1" 200 OK
+#   This box is 100.81.137.121.
+#
+#   Measured now, against the deployed shape:
+#     GET /v1/models  no credential   -> HTTP 401
+#     GET /v1/models  wrong bearer    -> HTTP 401
+#     GET /v1/models  valid bearer    -> HTTP 200
+#     GET /v1/models  over the TAILNET address, no credential -> HTTP 401
+#   The last line is the incident's exact path, now refused.
+#
+#   `lobes doctor` discriminated in BOTH directions on the real deployment:
+#     no key set  -> unhealthy, [FAIL] associate_auth_gate
+#     key set     -> healthy,   [ok]   associate_auth_gate
+#   Note the gate is opt-in at runtime: doctor fails a keyless deployment
+#   loudly, but the gateway itself still serves one. That is a known, recorded
+#   limitation, not an oversight.
+#
+# Capabilities (gateway, GET /capabilities via `lobes capabilities`):
+#     associate  feasible=True  ready=True  loaded=True   Lightning NVFP4
+#     hand       feasible=True  ready=True  loaded=True
+#     embedder   feasible=True  ready=True  loaded=True
+#     reranker   feasible=True  ready=True  loaded=True
+#     cortex/senses/muse/worker  feasible=False   (correctly dropped)
+#   DISCREPANCY: stt/tts report feasible=True although this shape declares no
+#   audio — more stale .env keys preserved by the merge-only writer (see d-A).
+#   The lanes are not ready and not hosted; the advert is wrong. FINDING.
+#
+# Correctness (`lobes assess --tools --model associate`):
+#     17 * 23 = 391                      PASS (finish=stop, 339 tok)
+#     train 14:45 -> 17:10 = 145 min     PASS (finish=stop, 763 tok)
+#     reasoning trace field              present (`reasoning`, len 1356)
+#     tool calling (tool_choice:auto)    PASS
+#
+# ============================================================================
+# 5. THROUGHPUT — depth sweep at the INCUMBENT'S OWN SHAPE
+# ============================================================================
+#
+# Run at the same depths and output length as this board's incumbent
+# (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt) so the two are
+# directly comparable ON THIS BOARD rather than across harnesses.
+#
+# METHOD NOTE, and it changed the answer: the first sweep used repetitive
+# filler text and reported TTFT of 519 ms at depth 32768 — a ~1,175x win over
+# the incumbent. That was an artifact of `--enable-prefix-caching`: the
+# repeated filler was almost entirely cache hits. The sweep below uses UNIQUE
+# random text per request, defeating the cache, and `prompt_tokens` is read
+# back from the server to confirm the depth actually landed. Every number here
+# is from the cache-defeating run. The inflated figures are recorded and
+# discarded, not silently replaced.
+#
+#   associate (vLLM, plain decode, NO speculation), 128 max output tokens:
+#
+#     target | prompt_tok |      TTFT | out |      decode |   total
+#     -------+------------+-----------+-----+-------------+---------
+#          0 |         23 |    129 ms | 117 | 50.28 tok/s |  2.46 s
+#        512 |        542 |    316 ms | 120 | 51.52 tok/s |  2.65 s
+#       2048 |       2035 |  1,179 ms | 119 | 50.98 tok/s |  3.51 s
+#       8192 |       8200 |  3,749 ms | 119 | 50.52 tok/s |  6.10 s
+#      32768 |     32,775 | 16,939 ms | 128 | 52.53 tok/s | 19.38 s
+#
+#   `lobes benchmark --model associate --runs 3` (balanced, 1000 in / 1000 out):
+#     decode 54.3 / 54.3 / 54.3 tok/s (batch=1, greedy, 1000 tok forced)
+#     prefill 852 prompt tokens + 16 gen in 0.69 s
+#
+#   Prefill, measured with cache-defeating unique text:
+#     5,126 prompt tokens in  2.54 s = ~2,018 tok/s
+#    82,057 prompt tokens in 50.91 s = ~1,612 tok/s
+#
+#   INCUMBENT on this same board — Qwen3.8-27B-GGUF UD-Q4_K_M on llama.cpp
+#   (2026-08-23, 128 output tokens, forced):
+#
+#     depth  |      TTFT | decode      |   total
+#     -------+-----------+-------------+----------
+#          0 |  1,566 ms | 2.61 tok/s  |  50.54 s
+#        512 | 12,407 ms | 2.62 tok/s  |  61.24 s
+#       2048 | 41,581 ms | 2.62 tok/s  |  90.50 s
+#       8192 |143,122 ms | 2.58 tok/s  | 192.80 s
+#      32768 |610,020 ms | 2.43 tok/s  | 662.66 s
+#     prefill ~64 tok/s, ~10% decay 8.9K -> 34K
+#
+#   HEAD TO HEAD, same board, same depths, same output length:
+#     decode          52.53 vs 2.43 tok/s at 32768   = ~21.6x
+#     TTFT           16.9 s vs 610.0 s at 32768      = ~36x faster
+#     end-to-end     19.4 s vs 662.7 s at 32768      = ~34x faster
+#     prefill    ~1,612 vs ~64 tok/s                 = ~25x
+#     decode decay    NONE across 0->32768 (50.3 -> 52.5, within noise);
+#                     the incumbent decayed ~7%
+#
+#   THIRD DATAPOINT, and it is NOT same-silicon: the Spark GB10 serves this same
+#   checkpoint as `worker` at 75.1 tok/s (vLLM, NO speculation,
+#   docs/evidence/2026-08-20-accept-worker-hand-spark.txt). So the Orin reaches
+#   ~72% of the Spark's plain-decode rate on materially weaker hardware.
+#
+#   NOT COMPARED, deliberately: NVIDIA's "89 tokens/sec on Jetson AGX Orin".
+#   That is a multi-step agentic-workload aggregate WITH DSpark speculation, not
+#   a single-stream decode figure, and jetson-ai-lab publishes no Orin command
+#   to reproduce it. Three separate defects were found in its published recipes.
+#
+# ============================================================================
+# 6. STILL OPEN (#108)
+# ============================================================================
+#
+#   1. ASSOCIATE_SPECULATIVE_CONFIG does not exist. DSpark cannot be enabled by
+#      any shape, so the lane's own headline number is unreachable as shipped.
+#   2. The card and shape still declare 0.63, which this run REFUSED. Both must
+#      be corrected to 0.56 before the shape is usable from a clean render.
+#   3. ~1 GiB of headroom on a swapless board. See #216 (headless).
+#   4. Engine drift: lane measured on v0.27.1, this shape ran on the pre-bump
+#      nightly 7c5a10e9, the template defaults to 8bd082. None of the three has
+#      been compared against the others on this board.
+#   5. `lobes fleet up` cannot start this shape (d-A); the audio overlay leaks in.
+#   6. A from-source gateway cannot be built without a published wheel (d-B).
+#   7. stt/tts advertise feasible=True on a shape that hosts no audio.
+#   8. `hand` co-boot: embedder failed and restarted TWICE during bring-up, each
+#      time taking its dependents down. Known co-boot ordering effect; it makes
+#      a single-shot `docker compose up` of this shape unreliable.
+#   9. No cross-box probe: nothing has addressed this associate lane from a peer.
+#  10. Marlin NVFP4 correctness on sm_87 still rests on a small probe set.

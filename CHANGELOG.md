@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0] - 2026-08-26
+
+### Added
+
+- **`associate` — the tenth Colleague role, serving NVIDIA Nemotron 3.5
+  Lightning 30B-A3B on the Jetson AGX Orin 64GB (sm_87).** "They do, but not
+  act": worker's responsibilities MINUS `repo_action`, ranked
+  `hand < multimodal < worker < muse < associate < main`, opt-in-hosted, and
+  shedding 429 under pressure like every other full tier. Ships with the
+  `vllm-associate` compose lane (the eight vLLM serve flags NVIDIA's Jetson
+  recipe needs, `ASSOCIATE_IMAGE`, and a default-off
+  `ASSOCIATE_SPECULATIVE_CONFIG` for DSpark), the `orin-associate` deployment
+  shape, and a `lobes doctor` check that fails a hosted-but-uncredentialed lane.
+- **Live acceptance on the physical Orin**
+  (`docs/evidence/2026-08-26-accept-orin-associate.txt`): known-answer and
+  multi-step reasoning PASS, structured tool calls PASS, and a depth sweep at
+  the incumbent's own shape — **52.5 tok/s decode at 32768-token depth with no
+  decay across 0->32768, versus the board's llama.cpp GGUF cortex at 2.43 tok/s
+  (~21.6x), TTFT 16.9 s versus 610.0 s (~36x), prefill ~1,612 versus ~64 tok/s.**
+  Measured WITHOUT speculation; the vendor's "89 tok/s" agentic aggregate is
+  deliberately not used as a comparator.
+
+### Fixed
+
+- **Opt-in core roles were silently un-hostable.** `compose_profile`/`_overlay`
+  always took `feasible` from the card, so a shape hosting an
+  `OPT_IN_CORE_ROLE` whose card abstains rendered a bare `*_FEASIBLE=false` with
+  no model or knobs. Latent for `thor-muse`/`thor-worker` when force-applied to
+  a non-native card; surfaced by `associate`.
+- **The Orin card's W4A4 infeasibility claim is now per-checkpoint.** Lightning's
+  own `hf_quant_config.json` is `W4A16_NVFP4` (weight-only) on the experts plus
+  FP8 on `in_proj`/`out_proj` — not the W4A4 activation quantization that rules
+  out the cortex and muse NVFP4 exports. sm_87 admits `modelopt_mixed` through a
+  full Marlin stack; the W4A4 sentence still stands for the two checkpoints it
+  really describes.
+- Stale `v0.27.1`-on-Thor account in `docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`;
+  the Thor wedge is sm_110-specific — the Orin clears the identical Mamba2 SSD
+  Triton warmup.
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## [0.63.1] - 2026-08-25
 
 ### Added

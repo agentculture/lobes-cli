@@ -86,13 +86,13 @@ def test_declares_the_full_associate_override_matching_the_card_documentation() 
     physical measurement."""
     rp = resolve_shape(_SHAPE).override("associate")
     assert rp.model == _MODEL_ID
-    assert rp.gpu_mem_util == 0.63
+    assert rp.gpu_mem_util == 0.56
     assert rp.max_model_len == 128000
     assert rp.quantization == "modelopt"
     assert rp.kv_cache_dtype == "bfloat16"
 
     card_text = files("lobes.profiles.builtin").joinpath("orin.toml").read_text(encoding="utf-8")
-    assert "gpu_mem_util   0.63" in card_text
+    assert "gpu_mem_util   0.56" in card_text
     assert "max_model_len  128000" in card_text
     assert "feasible = false" in card_text  # d1: the card abstains, docs only
 
@@ -132,7 +132,7 @@ def test_associate_renders_feasible_with_its_full_declaration_despite_the_card_v
     assert "ASSOCIATE_FEASIBLE" not in env  # feasible=True renders no marker at all
     assert env["ASSOCIATE_MODEL"] == _MODEL_ID
     assert env["ASSOCIATE_SERVED_NAME"] == _MODEL_ID
-    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.63"
+    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.56"
     assert env["ASSOCIATE_MAX_MODEL_LEN"] == "128000"
     assert env["ASSOCIATE_QUANTIZATION"] == "modelopt"
     assert env["ASSOCIATE_KV_CACHE_DTYPE"] == "bfloat16"

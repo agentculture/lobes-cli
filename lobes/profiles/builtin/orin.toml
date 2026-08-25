@@ -244,8 +244,8 @@ max_model_len = 262144
 # vLLM accepted quantization=modelopt_mixed and selected a full Marlin fallback
 # stack (FP8, NVFP4 GEMM, NVFP4 MoE) with native FlashAttention 2.
 #
-# gpu_mem_util 0.63 is MEASURED, and the value it replaces is RECORDED rather
-# than quietly dropped:
+# gpu_mem_util 0.56 is MEASURED, and BOTH values it replaces are RECORDED
+# rather than quietly dropped:
 #
 #   * 0.70 — the vendor's own published Jetson figure — was REFUSED at boot with
 #     the two pooling gears resident, by 0.05 GiB:
@@ -253,14 +253,28 @@ max_model_len = 262144
 #        desired GPU memory utilization (0.7, 42.94 GiB)"
 #     It fits this board SOLO and does not fit the deployed shape. That gap is
 #     precisely why a card profile may not copy a vendor number forward.
-#   * 0.63 booted, profiled healthy and served: weights 19.45 GiB, available KV
-#     10.95 GiB, KV pool 1,249,280 tokens, 9.76x concurrency at 128000.
+#   * 0.63 booted with only the pooling gears up (weights 19.45 GiB, KV 10.95 GiB,
+#     pool 1,249,280 tokens, 9.76x) — but was itself REFUSED once `hand` joined
+#     the real shape; see the correction below.
+#   * 0.56 is the value the FULL shape actually runs at.
 #
-# HEADROOM, NOT MEASUREMENT — the one soft edge here: `hand` was NOT resident when
-# 0.63 was measured (no vllm-hand container is scaffolded on this box). 0.63 was
-# chosen to leave hand's declared 0.06 (~3.68 GiB) as ARITHMETIC headroom. A boot
-# with hand actually co-resident is open follow-up work; until it runs, do not
-# describe this budget as "measured alongside hand".
+# 0.63 WAS ALSO REFUSED — corrected to 0.56, MEASURED with the FULL shape up
+# (docs/evidence/2026-08-26-accept-orin-associate.txt). The earlier 0.63 was
+# measured with `hand` NOT resident, reserving its declared util 0.06 (3.68 GiB)
+# as arithmetic headroom. That reserve was wrong: `hand` holds 5.84 GiB resident,
+# 59% more than its utilization fraction implies (util is a budget fraction; the
+# resident figure includes weights plus overhead). With the real shape up:
+#
+#     ValueError: Free memory on device cuda:0 (34.85/61.34 GiB) on startup is
+#     less than desired GPU memory utilization (0.63, 38.65 GiB).
+#
+# 0.56 booted and served: weights 17.81 GiB, available KV 9.35 GiB, KV pool
+# 1,524,000 tokens, 11.91x concurrency at 128000. Both refusals are kept above
+# rather than collapsed into the surviving number.
+#
+# MARGIN IS THIN: the full shape leaves ~1 GiB free on a board with ZERO swap
+# (associate 34.85 + hand 5.80 + rerank 5.34 + embed 4.83 GiB). Issue #216
+# (running headless) is about margin now, not just a bigger KV pool.
 #
 # HEADLESS IS AN OPERATOR OPTION, NOT A CARD DEFAULT (issue #216): this board
 # runs graphical.target, and on Tegra the GUI holds UNIFIED memory — the same
@@ -299,7 +313,7 @@ max_model_len = 262144
 # two must not drift:
 #
 #   model          nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-#   gpu_mem_util   0.63          (0.70 REFUSED — see above)
+#   gpu_mem_util   0.56          (0.70 and 0.63 both REFUSED — see above)
 #   max_model_len  128000        (the vendor window, not the 1M ceiling)
 #   quantization   modelopt      (Lightning's own quant_method; vLLM resolves it
 #                                 to modelopt_mixed and picks Marlin on sm_87)
