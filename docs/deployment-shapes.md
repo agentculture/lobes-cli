@@ -426,6 +426,30 @@ failure modes, pressure semantics) and
 [`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied) for
 how a proxied role shows up in the role contract.
 
+## Replica pools compose ON TOP of a state, they are not a fourth one
+
+Issue #199's cortex replica pool answers a different question than the three
+states above: not "who hosts this role" but "which of the boxes that already
+host it — as **awake**, or reachable via **proxy** — should serve THIS
+request". A pool is a property of an awake or proxied role's dispatch, not a
+new lobe state: `hosted_by` stays a string, never a list, and the awake /
+asleep (referral) / proxy vocabulary above is unchanged. Declaring
+`<PREFIX>_PEER_ORIGINS` (plural — a whole replica set, positionally paired
+with `<PREFIX>_PEER_API_KEYS`) beside the singular `<PREFIX>_PEER_ORIGIN`
+lets a box that HOSTS a role also forward some of that role's requests to an
+equally-compatible peer when it is less loaded — the mirror image of
+proxy-lobes' "I dropped this role, dial my peer for it". `GET /capabilities`
+gains an additive `replicas` list per role (compatible/ready/load per
+candidate) and locally-served pooled answers gain `X-Lobes-Served-By`
+alongside the existing `X-Lobes-Proxied-By` and a new `X-Lobes-Route-Reason`
+on every pooled answer either way. See
+[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)
+for the full mechanism. **Status: DECLARED, not VALIDATED (#108), and
+cortex-only** — the Spark+Thor NVFP4 pair is the one pool with a pending live
+acceptance transcript; the Orin's llama.cpp cortex is exempt, and any other
+pooled role (senses/muse/worker/embedder/reranker/hand/stt/tts) is
+declared/unvalidated data only, exactly like `thor-muse`/`orin-small` above.
+
 ## The co-residency tax and its measured repayment
 
 | box (mesh shape) | heavy lobe | co-resident context (machine-as-brain) | full-native context | repayment | measured `gpu_mem_util` | measured KV pool | measured concurrency |
