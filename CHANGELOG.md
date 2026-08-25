@@ -4,7 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.63.0] - 2026-08-25
+## [0.63.1] - 2026-08-25
+
+### Added
+
+- New opt-in `vllm-associate` fleet lane (lightning-on-orin plan, t7) giving
+  NVIDIA's published Jetson serve recipe for
+  `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` its eight previously
+  unexpressible `vllm serve` flags a real home: `--mamba-backend`,
+  `--mamba-ssm-cache-dtype`, `--enable-mamba-cache-stochastic-rounding`,
+  `--mamba-cache-philox-rounds`, `--mamba-cache-mode`,
+  `--enable-prefix-caching`, `--max-num-batched-tokens` (all env-parameterized
+  knobs), and `--trust-remote-code` (hardcoded, matching every other lane).
+  `ASSOCIATE_IMAGE` overrides the lane's image, proven by `docker compose
+  config`. Gated behind the `associate` Compose profile; deliberately not
+  wired into the Colleague role system yet (no `roles.py` entry, no gateway
+  passthrough) — that lands in a later task.
+
+### Changed
+
+### Fixed
 
 ### Added
 

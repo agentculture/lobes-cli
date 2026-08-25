@@ -108,6 +108,12 @@ GPU_SERVICES: tuple[str, ...] = (
     "vllm-multimodal-coder",
     "vllm-muse",
     "vllm-worker",
+    # The opt-in `vllm-associate` lane (lightning-on-orin plan, t7). It
+    # declares the same SHIPPED `deploy.resources` GPU request as every other
+    # entry here, and the Jetson AGX Orin this lane exists for is a csv-mode
+    # board, so omitting it would leave associate unable to create its
+    # container on the one card that matters.
+    "vllm-associate",
 )
 GPU_SERVICES_AUDIO: tuple[str, ...] = ("chatterbox", "stt")
 
