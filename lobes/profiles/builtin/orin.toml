@@ -102,14 +102,43 @@ reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~3
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
 #
-# The NVFP4 exports this fleet serves for cortex (unsloth/Qwen3.8-27B-NVFP4),
-# muse (nvidia/Gemma-4-31B-IT-NVFP4) and worker
-# (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) all quantize ACTIVATIONS
-# to FP4 (W4A4 on the MLP path). FP4 activations are executed by BLACKWELL FP4
-# tensor cores; sm_87 is Ampere, one generation short. No gpu_mem_util makes
-# that work — it is a feasibility fact, NOT a memory tradeoff
-# (docs/orin-profiles.md "Why no cortex"; the same statement heads
-# lobes/machines/orin.py).
+# TWO of the NVFP4 exports this fleet serves — cortex
+# (unsloth/Qwen3.8-27B-NVFP4) and muse (nvidia/Gemma-4-31B-IT-NVFP4) — quantize
+# ACTIVATIONS to FP4 (W4A4 on the MLP path). FP4 activations are executed by
+# BLACKWELL FP4 tensor cores; sm_87 is Ampere, one generation short. No
+# gpu_mem_util makes that work — it is a feasibility fact, NOT a memory
+# tradeoff (docs/orin-profiles.md "Why no cortex"; the same statement heads
+# lobes/machines/orin.py). That line STANDS, unweakened, for those two.
+#
+# --- the Lightning carve-out: W4A4 is NOT why worker is false here ----------
+#
+# The third NVFP4 lobe — worker
+# (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — used to be named in
+# the sentence above. That was FALSE for this checkpoint, and the checkpoint's
+# OWN hf_quant_config.json (fetched 2026-08-25) is what disproves it:
+#   * quant_algo = "MIXED_PRECISION" — not a uniform-NVFP4 export at all;
+#   * every routed AND shared expert up_proj/down_proj is "W4A16_NVFP4",
+#     group_size 16 — WEIGHT-only FP4 weights, 16-bit activations;
+#   * the mixer in_proj/out_proj are "FP8";
+#   * kv_cache_quant_algo is "FP8".
+# W4A16 is structurally the SAME exception this board already runs for `senses`
+# (int4 W4A16, weight-only, dequantized through Marlin into 16-bit arithmetic).
+# There is no FP4 activation path here to be one generation short of.
+#
+# CONFIRMED LIVE 2026-08-25 on this physical board
+# (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt): vLLM v0.27.1
+# accepted quantization=modelopt_mixed on sm_87 and selected a full Marlin
+# fallback stack — MarlinFP8ScaledMMLinearKernel, MarlinNvFp4LinearKernel and
+# the 'MARLIN' NvFp4 MoE backend — plus native FlashAttention 2, serving
+# correct output at ~78-81 tok/s. The FP8 halves of the config ARE a real
+# sm_87 barrier: the FP8 KV cache was worked around with
+# --kv-cache-dtype bfloat16, and the FP8 in_proj/out_proj went through the
+# Marlin FP8 kernel rather than native FP8 tensor cores.
+#
+# `worker` nevertheless stays feasible = false below, UNCHANGED — this block
+# corrects the stated REASON only. Hosting Lightning on this board is a
+# separate decision with its own budget knobs and shape (plan
+# lightning-on-orin, tasks t6/t8/t9), not a side effect of a comment fix.
 #
 # That line is about the CHECKPOINT FORMAT, not about the ROLE — which is what
 # the `cortex` block below now turns on. Two other things on this board already
@@ -121,8 +150,9 @@ reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~3
 # A GGUF Q4_K_M is the third: weight-only, dequantized per block into 16-bit
 # arithmetic, with no FP4 activation path anywhere in it.
 #
-# `muse` and `worker` stay feasible=false because no non-NVFP4 gear is
-# catalogued for them on this board — not because the roles are impossible.
+# `muse` stays feasible=false for the W4A4 reason above, and `worker` stays
+# feasible=false because no gear is DECLARED for it here yet — neither because
+# the roles are impossible.
 # feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model, no
 # knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served; a
 # box on this profile reaches them by honest referral / proxy instead.
