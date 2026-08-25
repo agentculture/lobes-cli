@@ -95,10 +95,21 @@ gpu_access = "runtime"
 # arithmetic, quoted back verbatim so the operator can check it. Both named
 # shapes are proven to exist and to actually resolve the group by
 # tests/test_init_coresidency.py, so this cannot drift into a lie.
+# ONE group, three members, not three pairwise clashes: `overcommitted_groups`
+# reads a group as "more than one member actually RUNNING is over-hosting; one
+# member, or none, is fine" — exactly this board's constraint, at most one heavy
+# generate lobe. `associate` joined it 2026-08-25 (plan `lightning-on-orin`, t8).
+#
+# Provenance per member:
+#   cortex / senses  MEASURED 2026-08-23 (below, unchanged).
+#   associate        MEASURED 2026-08-25 — util 0.63 at 128000 holds ~37.7 GiB
+#                    resident (instrument: docker stats), with vLLM's own startup
+#                    check seeing 42.89/61.34 GiB free. Fits beside NEITHER of the
+#                    other two. docs/evidence/2026-08-25-measure-associate-budget-orin.txt
 [[exclusive_roles]]
-roles = ["cortex", "senses"]
-shapes = ["orin-cortex", "orin-lobe"]
-reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB, against 61.3 GiB of unified memory with ZERO swap"
+roles = ["cortex", "senses", "associate"]
+shapes = ["orin-cortex", "orin-lobe", "orin-associate"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB; MEASURED 2026-08-25: associate (Lightning NVFP4 at util 0.63, 128000) holds ~37.7 GiB resident (docker stats) with vLLM's startup check seeing 42.89/61.34 GiB free — against 61.34 GiB of unified memory with ZERO swap"
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
 #
@@ -209,6 +220,60 @@ reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~3
 feasible = true
 model = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
 max_model_len = 262144
+
+[roles.associate]
+# *** MEASURED LIVE on this box, 2026-08-25 (plan `lightning-on-orin`, task t8):
+# *** docs/evidence/2026-08-25-measure-associate-budget-orin.txt. The LANE is a GO
+# *** here — docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt: known-answer
+# *** PASS, structured tool calls PASS, ~78-81 tok/s single-stream WITH DSpark
+# *** speculation (~30x this board's 2.61 tok/s llama.cpp cortex).
+# *** NOTHING here is VALIDATED as a SHAPE: no box has booted `orin-associate` and
+# *** no acceptance transcript exists for it (#108).
+#
+# WHY sm_87 CAN SERVE AN NVFP4 CHECKPOINT AT ALL — see the Lightning carve-out
+# above. This checkpoint's own hf_quant_config.json is W4A16_NVFP4 (WEIGHT-only)
+# on the experts plus FP8 on in_proj/out_proj, NOT the W4A4 activation
+# quantization that rules out the cortex and muse NVFP4 exports on this card.
+# vLLM accepted quantization=modelopt_mixed and selected a full Marlin fallback
+# stack (FP8, NVFP4 GEMM, NVFP4 MoE) with native FlashAttention 2.
+#
+# gpu_mem_util 0.63 is MEASURED, and the value it replaces is RECORDED rather
+# than quietly dropped:
+#
+#   * 0.70 — the vendor's own published Jetson figure — was REFUSED at boot with
+#     the two pooling gears resident, by 0.05 GiB:
+#       "Free memory on device cuda:0 (42.89/61.34 GiB) on startup is less than
+#        desired GPU memory utilization (0.7, 42.94 GiB)"
+#     It fits this board SOLO and does not fit the deployed shape. That gap is
+#     precisely why a card profile may not copy a vendor number forward.
+#   * 0.63 booted, profiled healthy and served: weights 19.45 GiB, available KV
+#     10.95 GiB, KV pool 1,249,280 tokens, 9.76x concurrency at 128000.
+#
+# HEADROOM, NOT MEASUREMENT — the one soft edge here: `hand` was NOT resident when
+# 0.63 was measured (no vllm-hand container is scaffolded on this box). 0.63 was
+# chosen to leave hand's declared 0.06 (~3.68 GiB) as ARITHMETIC headroom. A boot
+# with hand actually co-resident is open follow-up work; until it runs, do not
+# describe this budget as "measured alongside hand".
+#
+# BOOT ORDER MATTERS, as everywhere on this card: gpu_memory_utilization is a
+# fraction of the ENTIRE device and KV is the only elastic term, so a gears-first
+# boot and an associate-first boot do not yield the same pool. These numbers are
+# from a GEARS-FIRST boot, which is what the shape does.
+#
+# max_model_len 128000 is the vendor recipe's window, served in full and measured
+# at it — NOT the checkpoint's 1,048,576 native ceiling, which nothing here has
+# exercised. Trimming it is the memory dial if a future co-resident needs room.
+feasible = true
+model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+gpu_mem_util = 0.63
+max_model_len = 128000
+# modelopt: Lightning's OWN quant_method (MIXED_PRECISION via nvidia-modelopt).
+# vLLM resolves it to modelopt_mixed and picks Marlin kernels on sm_87.
+quantization = "modelopt"
+# bfloat16, NOT the checkpoint's declared FP8 kv_cache_quant_algo: sm_87 has no
+# FP8 KV path. The vendor's own recipe concedes this with --kv-cache-dtype
+# bfloat16, and every number above was measured with it in force.
+kv_cache_dtype = "bfloat16"
 
 [roles.muse]
 feasible = false
