@@ -264,6 +264,30 @@ def _declared(declared: Mapping[str, str], key: str) -> str:
     return value or UNKNOWN
 
 
+_OWNED_BY_RUNTIME: Mapping[str, str] = {
+    "vllm": "vllm",
+    "llamacpp": "llamacpp",
+    "llama.cpp": "llamacpp",
+}
+
+
+def _runtime_from(entry: Mapping[str, object], declared: Mapping[str, str]) -> str:
+    """The lane's runtime: declared ``<PREFIX>_RUNTIME`` if set, else LIVE from
+    ``/v1/models``' ``owned_by`` (vLLM reports ``"vllm"``), else ``unknown``.
+
+    No lane declares a runtime knob today, and without this fallback every
+    replica would carry ``runtime: unknown`` and never pool (the unknown-rule
+    disqualifies it) — while the engine already says who it is on the wire.
+    Only the two engines lobes serves are mapped; anything else stays unknown
+    rather than being guessed (issue #199, t2/t6 reconcile).
+    """
+    value = _declared(declared, "runtime")
+    if value != UNKNOWN:
+        return value
+    owned = str(entry.get("owned_by") or "").strip().lower()
+    return _OWNED_BY_RUNTIME.get(owned, UNKNOWN)
+
+
 def _known(value: object) -> bool:
     return value is not None and value != UNKNOWN and value != ""
 
@@ -454,7 +478,7 @@ class ReplicaCache:
         return Fingerprint(
             served_id=str(entry.get("id") or UNKNOWN),
             max_model_len=_as_int(entry.get("max_model_len")),
-            runtime=_declared(lane.declared, "runtime"),
+            runtime=_runtime_from(entry, lane.declared),
             quantization=_declared(lane.declared, "quantization"),
             kv_cache_dtype=_declared(lane.declared, "kv_cache_dtype"),
             reasoning_parser=_declared(lane.declared, "reasoning_parser"),

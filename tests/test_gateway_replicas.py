@@ -714,3 +714,14 @@ def test_compare_fingerprints_missing_local_is_incompatible() -> None:
     ok2, reason2 = R.compare_fingerprints(peer, None)
     assert ok2 is False
     assert reason2
+
+
+def test_local_runtime_falls_back_to_owned_by_when_undeclared():
+    """No lane declares ``runtime`` today; the engine's own ``owned_by`` is live truth."""
+    from lobes.gateway._replicas import _runtime_from
+
+    assert _runtime_from({"id": "m", "owned_by": "vllm"}, {}) == "vllm"
+    assert _runtime_from({"id": "m", "owned_by": "llama.cpp"}, {}) == "llamacpp"
+    assert _runtime_from({"id": "m", "owned_by": "someone"}, {}) == "unknown"
+    assert _runtime_from({"id": "m"}, {}) == "unknown"
+    assert _runtime_from({"id": "m", "owned_by": "vllm"}, {"runtime": "llamacpp"}) == "llamacpp"
