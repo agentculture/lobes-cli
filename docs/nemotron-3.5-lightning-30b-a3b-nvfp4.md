@@ -111,18 +111,26 @@ path on sm_110 on this digest, each with a different signature (Qwen3.6-35B
 GDN MTP decode: "no kernel image is available"; LFM2.5 conv-hybrid: CUDA
 unspecified launch failure; Lightning Mamba-2 SSD: infinite Triton-warmup
 wedge) — dense-transformer serving on the same digest/box is unaffected.
-This is scoped to the **fleet's pinned `8bd082` 0.26.1 nightly**, not to the
-Thor hardware itself: NVIDIA's Lightning model card pins vLLM `0.27.1` and
-validates on DGX Spark/GB200/H100, and Jetson AI Lab separately publishes an
-official Thor recipe for Lightning on the **release** image
-`vllm/vllm-openai:v0.27.1`
-(<https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/#run-on-jetson>).
-A future move to a `>=0.27.1`-based fleet image may reopen this — two
-follow-up spikes are recorded but not yet run: (1) Lightning on the Thor via
-`v0.27.1`, and (2) whether `v0.27.1` also restores the sm_110 GDN MTP decode
-kernel, which would let the Thor-local `cortex` (deviation d1) re-enable
-MTP. The d1 topology (Thor=cortex, Spark=worker+hand) stands regardless of
-either follow-up's outcome.
+This is **sm_110-SPECIFIC**, not hardware-inherent: the wedge is an isolated
+sm_110 Mamba-2 issue across multiple vLLM versions. The **fleet's pinned
+`8bd082` 0.26.1 nightly** reproduced it first; a follow-up spike tested
+the upstream `v0.27.1` release image on the Thor and reproduced the identical
+wedge (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`, catalog
+entry comment). However, NVIDIA's Lightning model card pins vLLM `0.27.1` and
+validates on DGX Spark/GB200/H100, and **a 2026-08-25 physical Jetson AGX
+Orin (sm_87) spike cleared the identical vLLM v0.27.1 with this checkpoint
+at ~78–81 tok/s single-stream WITH DSpark speculation** — the warmup line
+`[mamba_mixer2.py:596] Warming up Mamba2 SSD Triton kernels...` appears at
+18:58:24 and proceeds normally, allocating KV cache 94 seconds later
+(see `docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`). So the wedge is
+inherent to sm_110's Mamba-2 SSD kernel interaction, not to vLLM or the
+checkpoint. Note: `--mamba-backend flashinfer` was used on the Orin, but the
+warmup line itself is unrelated to that flag (which governs SSU, logged
+separately as "Using flashinfer Mamba SSU backend"). The d1 topology
+(Thor=cortex, Spark=worker+hand) stands regardless. The Orin result is a
+spike measurement, not a deployed lane — no lobes shape hosts this
+checkpoint on sm_87 yet (issue #107, broader tuned-small-model work,
+future).
 
 ## Live numbers — Spark GB10 (deviation d1, 2026-08-20)
 
