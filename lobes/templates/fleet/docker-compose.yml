@@ -1475,14 +1475,15 @@ services:
   # --- Opt-in associate generate backend (Nemotron 3.5 Lightning, NVFP4 MoE) -
   # lightning-on-orin plan, t7. This lane exists to give EIGHT vLLM serve
   # flags from NVIDIA's published Jetson recipe a real home in this repo —
-  # nothing more. It DELIBERATELY does NOT wire a Colleague role: no entry in
-  # lobes/roles.py, no TIER_ROLE placement in lobes/catalog.py, no gateway
-  # ASSOCIATE_BASE_URL/ASSOCIATE_FEASIBLE/peer-proxy environment (that whole
-  # surface is t6/t10's job). The ASSOCIATE_ prefix here is INERT: setting
-  # COMPOSE_PROFILES=associate starts this container and nothing in the
-  # gateway or CLI knows it exists yet. Gated behind the "associate" Compose
+  # nothing more. When t7 first landed it, this lane wired no Colleague role
+  # at all — that surface arrived later: t6 registered `associate` as the
+  # TENTH role (lobes/roles.py, catalog tier, the gateway's
+  # ASSOCIATE_BASE_URL/ASSOCIATE_FEASIBLE/peer-proxy environment below) and
+  # t10 put it behind the gateway's authenticated front (see the exposure
+  # note at `expose:` further down). Gated behind the "associate" Compose
   # profile, exactly like vllm-muse/vllm-worker, so a plain `docker compose up`
-  # never starts it.
+  # never starts it; the gateway backend is wired only when an
+  # associate-hosting shape renders ASSOCIATE_BASE_URL.
   #
   # Checkpoint: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — the SAME
   # checkpoint family the `worker` role serves on the Spark (see vllm-worker
@@ -1579,7 +1580,24 @@ services:
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     # No host port — reachable only as http://vllm-associate:8000 on the
-    # compose net (and only that, until a later task wires a gateway backend).
+    # compose net, i.e. only through the gateway, which carries the opt-in
+    # GATEWAY_API_KEY bearer gate (lightning-on-orin plan t10).
+    #
+    # THE ONE NAMED DEPARTURE FROM NVIDIA'S PUBLISHED JETSON RECIPE (frame
+    # boundary c29 — a departure must be named as a correction, never
+    # smuggled): the recipe's `--network host` is NOT inherited. Running it
+    # verbatim during the 2026-08-25 spike put an uncredentialed 30B generate
+    # endpoint on this box's tailnet, and within seconds two distinct tailnet
+    # peers queried it unprompted (100.127.105.72 and 100.105.216.63 — see
+    # docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt and the writeup
+    # in docs/evidence/2026-08-26-associate-gateway-auth-front.txt).
+    #
+    # The `--host=0.0.0.0` below is KEPT, and is safe ONLY because of that:
+    # inside this bridge network namespace it means "this container's own
+    # interfaces", which is what lets the gateway dial the lane — it is not
+    # the box's tailnet address. The two are a PAIR; changing either alone
+    # re-opens the hole or breaks the gateway's dial, and
+    # tests/test_associate_exposure.py pins them together.
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]

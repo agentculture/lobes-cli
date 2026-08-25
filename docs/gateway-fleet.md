@@ -512,6 +512,26 @@ The gate runs *before* the request body is read off the socket, before model
 resolution, and before any upstream connection, so a rejected request costs
 the fleet zero parsing and zero sockets.
 
+**Hosting `associate` makes the key non-optional — enforced by `lobes
+doctor`.** The bearer gate above is opt-in fleet-wide, but the `associate`
+lane is the one role whose exposure has already gone wrong in practice. On
+2026-08-25 the Lightning spike ran NVIDIA's published Jetson recipe verbatim
+— `--network host`, no key — and within *seconds* two distinct tailnet peers
+queried the uncredentialed endpoint unprompted, `100.127.105.72` and
+`100.105.216.63`, neither initiated by the operator
+(`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`; the full writeup is
+`docs/evidence/2026-08-26-associate-gateway-auth-front.txt`). The shipped
+lane corrects that in the one named way: `vllm-associate` does **not**
+inherit host networking and publishes **no host port** — like every other
+model lane it is `expose`-only, so the gateway is its sole front door. The
+remaining way to leave it open is to run the gateway itself with no key, so
+`lobes doctor` emits an **error**-severity `associate_auth_gate` finding on
+any deployment whose `.env` wires `ASSOCIATE_BASE_URL` (i.e. hosts the lane)
+while setting neither `GATEWAY_API_KEY` nor `CULTURE_VLLM_API_KEY`. It is
+scoped to a locally *hosted* associate: a box that refers or proxies the role
+to a peer, and every deployment that predates the role, emit no finding at
+all.
+
 **Tunnel guidance is now defense-in-depth, not the only option.** Before this,
 keeping the gateway port off the public internet — Cloudflare Access, an IP
 allowlist — was the *only* protection available for a `lobes tunnel`-exposed
