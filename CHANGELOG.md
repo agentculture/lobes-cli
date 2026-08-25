@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.62.1] - 2026-08-25
+
+### Added
+
+- Spec + plan for issue #199 — the cortex replica pool: one logical cortex
+  served by N compatible replicas (Spark + Thor NVFP4 vLLM; the Orin's
+  llama.cpp cortex exempt), every gateway a front, availability-aware
+  selection from a cached peer `/status` snapshot, `X-Lobes-Affinity` as a
+  preference, honest `X-Lobes-Served-By` / `X-Lobes-Proxied-By` /
+  `X-Lobes-Route-Reason` markers, per-role comma-separated
+  `<PREFIX>_PEER_ORIGINS` / `_PEER_API_KEYS`, and an operator-typed
+  `GATEWAY_SELF_ORIGIN` (`docs/specs/2026-08-25-cortex-replica-pool-199.md`,
+  `docs/plans/2026-08-25-cortex-replica-pool-199.md`). Scoped, thought,
+  challenged and planned with devague; no code change in this PR.
+
 ## [0.62.0] - 2026-08-25
 
 ### Added
