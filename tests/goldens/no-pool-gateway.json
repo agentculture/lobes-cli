@@ -1,6 +1,35 @@
 {
   "capabilities": {
     "body": {
+      "associate": {
+        "context": 1048576,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": false,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "security_decision",
+          "code_authoring",
+          "repo_action"
+        ],
+        "loaded": false,
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "mtp": false,
+        "path": "/v1/chat/completions",
+        "quant": "modelopt",
+        "ready": false,
+        "responsibilities": [
+          "execution",
+          "ground_work",
+          "bulk_transform",
+          "drafting",
+          "repo_inspection",
+          "run_authorized_commands",
+          "tool_use"
+        ],
+        "role": "associate",
+        "runtime": "vllm",
+        "tools": true
+      },
       "cortex": {
         "context": 262144,
         "endpoint": "http://gateway.test:8000",

@@ -5,7 +5,9 @@
 > *now* — see
 > [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 >
-> **Status: SERVING on the DGX Spark GB10, deviation d1 (2026-08-20).** This
+> **Status: SERVING on TWO boxes — the DGX Spark GB10 as `worker`
+> (deviation d1, 2026-08-20) and the Jetson AGX Orin 64GB as `associate`
+> (2026-08-26, the first Ampere host). NO-GO on the Jetson AGX Thor.** This
 > checkpoint is now the deployed `worker` — but not on the box the original
 > plan intended. The covering plan
 > (`docs/plans/2026-08-20-nemotron-lightning-worker.md`) targeted the Jetson
@@ -30,8 +32,9 @@ Colleague role). Replaces `unsloth/Qwen3.6-35B-A3B-NVFP4` in this seat
 kept `candidate` (cite-don't-delete), not deleted. See
 [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) for its own history
 and its 61.2 tok/s incumbent baseline, captured just before the flip.
-**Hosted on:** the **DGX Spark GB10** (`spark-f8a9`), not the Thor the plan
-originally targeted — see deviation d1, above. **Text-only** — the
+**Hosted on:** the **DGX Spark GB10** (`spark-f8a9`) as `worker`, and the
+**Jetson AGX Orin 64GB** as `associate` since 2026-08-26 — see "Live numbers —
+Jetson AGX Orin" below. Not the Thor the plan originally targeted — see deviation d1, above. **Text-only** — the
 worker role LOSES `image_understanding`/`video_understanding` on this swap
 (the outgoing Qwen worker was multimodal; this checkpoint carries no
 `vision_config` at all — see "What it is" below).
@@ -111,18 +114,26 @@ path on sm_110 on this digest, each with a different signature (Qwen3.6-35B
 GDN MTP decode: "no kernel image is available"; LFM2.5 conv-hybrid: CUDA
 unspecified launch failure; Lightning Mamba-2 SSD: infinite Triton-warmup
 wedge) — dense-transformer serving on the same digest/box is unaffected.
-This is scoped to the **fleet's pinned `8bd082` 0.26.1 nightly**, not to the
-Thor hardware itself: NVIDIA's Lightning model card pins vLLM `0.27.1` and
-validates on DGX Spark/GB200/H100, and Jetson AI Lab separately publishes an
-official Thor recipe for Lightning on the **release** image
-`vllm/vllm-openai:v0.27.1`
-(<https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/#run-on-jetson>).
-A future move to a `>=0.27.1`-based fleet image may reopen this — two
-follow-up spikes are recorded but not yet run: (1) Lightning on the Thor via
-`v0.27.1`, and (2) whether `v0.27.1` also restores the sm_110 GDN MTP decode
-kernel, which would let the Thor-local `cortex` (deviation d1) re-enable
-MTP. The d1 topology (Thor=cortex, Spark=worker+hand) stands regardless of
-either follow-up's outcome.
+This is **sm_110-SPECIFIC**, not hardware-inherent: the wedge is an isolated
+sm_110 Mamba-2 issue across multiple vLLM versions. The **fleet's pinned
+`8bd082` 0.26.1 nightly** reproduced it first; a follow-up spike tested
+the upstream `v0.27.1` release image on the Thor and reproduced the identical
+wedge (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`, catalog
+entry comment). However, NVIDIA's Lightning model card pins vLLM `0.27.1` and
+validates on DGX Spark/GB200/H100, and **a 2026-08-25 physical Jetson AGX
+Orin (sm_87) spike cleared the identical vLLM v0.27.1 with this checkpoint
+at ~78–81 tok/s single-stream WITH DSpark speculation** — the warmup line
+`[mamba_mixer2.py:596] Warming up Mamba2 SSD Triton kernels...` appears at
+18:58:24 and proceeds normally, allocating KV cache 94 seconds later
+(see `docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`). So the wedge is
+inherent to sm_110's Mamba-2 SSD kernel interaction, not to vLLM or the
+checkpoint. Note: `--mamba-backend flashinfer` was used on the Orin, but the
+warmup line itself is unrelated to that flag (which governs SSU, logged
+separately as "Using flashinfer Mamba SSU backend"). The d1 topology
+(Thor=cortex, Spark=worker+hand) stands regardless. The Orin result is a
+spike measurement, not a deployed lane — no lobes shape hosts this
+checkpoint on sm_87 yet (issue #107, broader tuned-small-model work,
+future).
 
 ## Live numbers — Spark GB10 (deviation d1, 2026-08-20)
 
@@ -158,6 +169,120 @@ is **+23% decode and ~7× faster short-turn latency** — but this is an
 honest DEPLOYED-topology comparison (different box, different engine,
 proxy hop included, no speculative decoding on either side today), not a
 same-silicon A/B.
+
+## Live numbers — Jetson AGX Orin 64GB as `associate` (2026-08-26)
+
+The **second** box to serve this checkpoint, and the first on **Ampere**. Role:
+`associate` — the tenth Colleague role, "they do, but not act" (worker's
+responsibilities minus `repo_action`). Shape: `orin-associate`
+(associate + hand + embedder + reranker; no cortex, no senses, no audio).
+Evidence: `docs/evidence/2026-08-26-accept-orin-associate.txt`; budget
+derivation in `docs/evidence/2026-08-25-measure-associate-budget-orin.txt`;
+lane spike in `docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`.
+
+**Why sm_87 can serve this NVFP4 checkpoint at all.** Its `hf_quant_config.json`
+is `W4A16_NVFP4` — **weight-only**, 16-bit activations — on the experts, plus
+FP8 on `in_proj`/`out_proj`. That is *not* the W4A4 activation quantization that
+rules out the Qwen3.8-27B and Gemma-4-31B NVFP4 exports on Ampere. vLLM accepts
+`quantization=modelopt_mixed` and selects a full **Marlin** fallback stack (FP8,
+NVFP4 GEMM, NVFP4 MoE) with native FlashAttention 2. The Orin also **clears**
+the `Warming up Mamba2 SSD Triton kernels` step that wedged the Thor
+indefinitely on two engine versions — so that no-go is sm_110-specific.
+
+### Configuration
+
+| | |
+|---|---|
+| Board | Jetson AGX Orin 64GB, Ampere sm_87, 61.34 GiB unified, **ZERO swap** |
+| `ASSOCIATE_GPU_MEM_UTIL` | **0.56** — the vendor's 0.70 and an earlier 0.63 were both REFUSED at boot |
+| `ASSOCIATE_MAX_MODEL_LEN` | 128,000 (native ceiling 1,048,576 — unexercised) |
+| `ASSOCIATE_QUANTIZATION` | `modelopt` → resolved to `modelopt_mixed` |
+| `ASSOCIATE_KV_CACHE_DTYPE` | `bfloat16` — sm_87 has no FP8 KV path, so the checkpoint's declared FP8 `kv_cache_quant_algo` is overridden |
+| Speculation | **OFF**. `ASSOCIATE_SPECULATIVE_CONFIG` exists but is default-off and UNMEASURED on the shape |
+| Engine | `vllm/vllm-openai@sha256:7c5a10e9…` (the pre-bump nightly this box still pinned — not the `v0.27.1` the lane spike used) |
+
+| Boot fact | Value |
+|---|---|
+| Model loading | 17.81 GiB / 43.5 s (weights warm in cache) |
+| Available KV | 9.35 GiB |
+| GPU KV cache size | **1,524,000 tokens** |
+| Max concurrency @ 128,000 | **11.91×** |
+| init engine | 228.7 s (compilation 40.2 s) |
+
+Full shape resident: associate 34.85 + hand 5.80 + rerank 5.34 + embed 4.83 GiB
+= **~50.9 GiB used, ~1 GiB free** on a zero-swap board. See issue #216.
+
+### Probes
+
+| Probe | Result |
+|---|---|
+| `17 * 23 = 391` | PASS (finish=stop) |
+| train 14:45 → 17:10 = 145 min | PASS (finish=stop) |
+| reasoning trace | present (`reasoning`, len 1356) |
+| tool calling (`tool_choice:auto`) | PASS |
+| unauthenticated `GET /v1/models` | **401** — including over the tailnet address |
+| valid bearer | 200 |
+
+### Throughput — depth sweep at the incumbent's own shape
+
+128 max output tokens, cache-defeating unique prompts with `prompt_tokens` read
+back from the server. (A first sweep using repetitive filler reported ~1,175×
+at depth 32,768; that was a `--enable-prefix-caching` artifact and was
+discarded.)
+
+| Depth | `associate` TTFT | `associate` decode | incumbent TTFT | incumbent decode | TTFT gain |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 129 ms | 50.28 tok/s | 1,566 ms | 2.61 tok/s | 12× |
+| 512 | 316 ms | 51.52 tok/s | 12,407 ms | 2.62 tok/s | 39× |
+| 2,048 | 1,179 ms | 50.98 tok/s | 41,581 ms | 2.62 tok/s | 35× |
+| 8,192 | 3,749 ms | 50.52 tok/s | 143,122 ms | 2.58 tok/s | 38× |
+| 32,768 | **16,939 ms** | **52.53 tok/s** | **610,020 ms** | **2.43 tok/s** | **36×** |
+| decay 0→32k | — | **none** | — | ~7% | — |
+
+Incumbent = `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` on llama.cpp, same board
+(`docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt`).
+
+| Metric | `associate` | incumbent | Ratio |
+|---|---:|---:|---:|
+| Decode @ 32,768 | 52.53 tok/s | 2.43 tok/s | **21.6×** |
+| End-to-end @ 32,768 | 19.4 s | 662.7 s | **34×** |
+| Prefill | ~1,612 tok/s | ~64 tok/s | **25×** |
+| `lobes benchmark` (×3) | 54.3 tok/s | — | — |
+
+### Cross-box — NOT a same-harness comparison
+
+| Host | Role | Engine | Speculation | Decode |
+|---|---|---|---|---:|
+| Orin sm_87 | `associate` | vLLM | off | 52.5–54.3 tok/s |
+| Spark GB10 | `worker` | vLLM | off | 75.1 tok/s |
+| Orin sm_87 | `cortex` | llama.cpp | n/a | 2.61 tok/s |
+| Orin (lane spike) | — | vLLM v0.27.1 | DSpark ×5 | ~78–81 tok/s |
+
+The Orin reaches **~72%** of the Spark's plain-decode rate on materially weaker
+silicon. Different engine builds and resident sets, so the DSpark row is
+indicative only.
+
+**Deliberately absent: NVIDIA's "89 tokens/sec on Jetson AGX Orin."** It is a
+multi-step agentic-workload aggregate WITH speculation, not a single-stream
+decode figure, and jetson-ai-lab publishes no Orin command to reproduce it.
+**Three separate defects** were found in that page's published recipes when run
+verbatim: a llama.cpp `-hf` tag naming a quantization that does not exist in the
+repo; a GGUF that will not load in NVIDIA's own Jetson-Orin image (missing Mamba
+SSM tensor `blk.5.ssm_in.weight`, llama.cpp b10373 — a build-version gap, NOT an
+sm_87 limit); and a vLLM `--speculative_config.model` whose repo id omits its
+`-NVFP4` infix. Treat those recipes as unverified drafts.
+
+### Still open on the Orin
+
+1. DSpark is wired but **default-off and unmeasured** on the full shape; the
+   drafter costs KV and the shape leaves ~1 GiB free.
+2. Engine drift — `v0.27.1`, `7c5a10e9` and the template's `8bd082` are all in
+   play; none compared against the others on this board.
+3. `lobes fleet up` cannot start this shape (it builds the audio overlay a
+   no-audio shape does not host).
+4. No cross-box probe has addressed this lane from a peer.
+5. Marlin NVFP4 correctness on sm_87 rests on a small probe set — vLLM
+   `#34694`/`#49070` report garbled output on this fallback on non-Blackwell parts.
 
 ## Status and gating
 

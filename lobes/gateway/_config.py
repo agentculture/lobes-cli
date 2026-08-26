@@ -58,6 +58,15 @@ _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
 # WORKER_BASE_URL is set — and, like muse above, it is INFEASIBLE by default
 # when unwired (see OPT_IN_BACKENDS).
 _DEFAULT_WORKER = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+# The opt-in associate gear (lightning-on-orin plan, t6) — the TENTH Colleague
+# role's backend. Deliberately the SAME checkpoint the `worker` seat holds:
+# associate is worker MINUS repo_action, a different AUTHORITY over the same
+# gear, not a different model. Hosted only by an associate-hosting deployment
+# shape (never machine-as-brain), so its backend is wired only when
+# ASSOCIATE_BASE_URL is set — and, like muse/worker, it is INFEASIBLE by
+# default when unwired (see OPT_IN_BACKENDS). The compose lane's own default
+# (docker-compose.yml's vllm-associate) is this same id.
+_DEFAULT_ASSOCIATE = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 # The `hand` gear (LiquidAI LFM2.5-1.2B-Instruct) — the NINTH Colleague role's
 # backend and the fleet's designated fine-tuning base. Unlike muse/worker this
 # one is DEFAULT-HOSTED on every card (~2.4 GiB bf16 is cheap enough to always
@@ -87,6 +96,9 @@ FEASIBLE_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse — see OPT_IN_BACKENDS below.
     "worker": "WORKER_FEASIBLE",
+    # The opt-in associate role (lightning-on-orin plan, t6) rides the same
+    # channel as muse/worker — see OPT_IN_BACKENDS below.
+    "associate": "ASSOCIATE_FEASIBLE",
     # The `hand` role (hand-lobe plan, t4) rides the same channel, but is NOT
     # in OPT_IN_BACKENDS: it is default-hosted, so an ABSENT HAND_FEASIBLE
     # means feasible. That is the deliberate sleeping-lobe posture for a wheel
@@ -123,7 +135,7 @@ _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 # ``MUSE_FEASIBLE``/``WORKER_FEASIBLE`` always wins over this default. worker
 # joined muse on this channel via the thor-worker-lobe plan (t3) — the second
 # opt-in-core role, same honesty contract.
-OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker"})
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -201,6 +213,7 @@ PEER_ORIGIN_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_ORIGIN",
+    "associate": "ASSOCIATE_PEER_ORIGIN",
     # hand joined these channels 2026-08-20 (deviation d1) — a recorded
     # REVERSAL of the never-proxied decision; see NEVER_PROXIED_BACKENDS.
     "hand": "HAND_PEER_ORIGIN",
@@ -245,6 +258,7 @@ PEER_PROXY_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_PROXY",
+    "associate": "ASSOCIATE_PEER_PROXY",
     "hand": "HAND_PEER_PROXY",  # d1 reversal — see NEVER_PROXIED_BACKENDS
     "embed": "EMBED_PEER_PROXY",
     "rerank": "RERANK_PEER_PROXY",
@@ -273,6 +287,7 @@ PEER_API_KEY_ENV: dict[str, str] = {
     # The opt-in worker role (thor-worker-lobe plan, t3) rides the same
     # channel as muse.
     "worker": "WORKER_PEER_API_KEY",
+    "associate": "ASSOCIATE_PEER_API_KEY",
     "hand": "HAND_PEER_API_KEY",  # d1 reversal — see NEVER_PROXIED_BACKENDS
     "embed": "EMBED_PEER_API_KEY",
     "rerank": "RERANK_PEER_API_KEY",
@@ -317,6 +332,7 @@ PEER_ORIGINS_ENV: dict[str, str] = {
     "multimodal": "MULTIMODAL_PEER_ORIGINS",
     "muse": "MUSE_PEER_ORIGINS",
     "worker": "WORKER_PEER_ORIGINS",
+    "associate": "ASSOCIATE_PEER_ORIGINS",
     "hand": "HAND_PEER_ORIGINS",
     "embed": "EMBED_PEER_ORIGINS",
     "rerank": "RERANK_PEER_ORIGINS",
@@ -333,6 +349,7 @@ PEER_API_KEYS_ENV: dict[str, str] = {
     "multimodal": "MULTIMODAL_PEER_API_KEYS",
     "muse": "MUSE_PEER_API_KEYS",
     "worker": "WORKER_PEER_API_KEYS",
+    "associate": "ASSOCIATE_PEER_API_KEYS",
     "hand": "HAND_PEER_API_KEYS",
     "embed": "EMBED_PEER_API_KEYS",
     "rerank": "RERANK_PEER_API_KEYS",
@@ -510,7 +527,7 @@ LANE_FINGERPRINT_SUFFIXES: tuple[str, ...] = (
 def _lane_fingerprints(env: Mapping[str, str]) -> dict[str, dict[str, str]]:
     """Declared per-backend engine knobs, keyed by backend name then suffix.
 
-    Iterates the same nine backend names :data:`FEASIBLE_ENV` knows about
+    Iterates the same ten backend names :data:`FEASIBLE_ENV` knows about
     (``<PREFIX> = name.upper()``) and, for each of
     :data:`LANE_FINGERPRINT_SUFFIXES`, reads ``<PREFIX>_<SUFFIX>`` verbatim
     (stripped) when non-blank. Only SET knobs appear — a backend with none of
@@ -1019,6 +1036,24 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             name_key="WORKER_SERVED_NAME",
             default_url="http://vllm-worker:8000",
             default_name=_DEFAULT_WORKER,
+        ),
+        # The opt-in associate generate backend (Nemotron 3.5 Lightning — the
+        # TENTH Colleague role, the doer that does NOT act; lightning-on-orin
+        # plan t6). Wired only when ASSOCIATE_BASE_URL is present — i.e. when
+        # an associate-hosting deployment shape rendered its activation env
+        # (COMPOSE_PROFILES=associate + ASSOCIATE_BASE_URL, see
+        # lobes.profiles.shape_render). Absent by default, so the routing
+        # table is unchanged on every pre-associate deployment; the unwired
+        # backend is also INFEASIBLE by default (OPT_IN_BACKENDS above) so
+        # `model=associate` 404s role_infeasible instead of falling back
+        # upward to cortex.
+        _optional_backend(
+            env,
+            name="associate",
+            url_key="ASSOCIATE_BASE_URL",
+            name_key="ASSOCIATE_SERVED_NAME",
+            default_url="http://vllm-associate:8000",
+            default_name=_DEFAULT_ASSOCIATE,
         ),
         # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
         # role_hint="candidate" since the "support both" demotion — see

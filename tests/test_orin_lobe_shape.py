@@ -158,7 +158,10 @@ def test_orin_lobe_toml_declares_itself_unvalidated() -> None:
 
 def test_the_orin_card_declares_the_iowait_threshold_the_policy_reads() -> None:
     host_env = dict(resolve_profile("orin").host_env)
-    assert host_env == {_IOWAIT_KEY: "100"}
+    # The card gained the associate lane's engine pin + DSpark default
+    # 2026-08-26 (a matched pair; see orin.toml), so assert the iowait
+    # declaration specifically rather than the whole table.
+    assert host_env[_IOWAIT_KEY] == "100"
 
 
 def test_the_declared_key_is_the_one_the_pressure_policy_actually_reads(monkeypatch) -> None:

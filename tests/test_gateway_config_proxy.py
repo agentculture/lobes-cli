@@ -101,6 +101,7 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_PROXY",
         "muse": "MUSE_PEER_PROXY",
         "worker": "WORKER_PEER_PROXY",
+        "associate": "ASSOCIATE_PEER_PROXY",
         "hand": "HAND_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
@@ -128,6 +129,7 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_API_KEY",
         "muse": "MUSE_PEER_API_KEY",
         "worker": "WORKER_PEER_API_KEY",
+        "associate": "ASSOCIATE_PEER_API_KEY",
         "hand": "HAND_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
@@ -424,7 +426,7 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         # `model=muse` / `model=worker` 404 role_infeasible instead of
         # silently upward-falling-back to the primary. Every pre-muse (and
         # pre-worker) behaviour is otherwise unchanged.
-        infeasible=frozenset({"muse", "worker"}),
+        infeasible=frozenset({"muse", "worker", "associate"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding

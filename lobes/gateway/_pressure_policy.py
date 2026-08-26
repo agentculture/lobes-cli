@@ -114,6 +114,11 @@ _TIER_ROLE: dict[str, str] = {
     "senses": "multimodal",
     "worker": "worker",
     "muse": "muse",
+    # `associate` (lightning-on-orin plan, t6) — the tenth role, its own
+    # backend, the highest non-cortex rung. A FULL tier: it sheds under
+    # pressure exactly like cortex/senses/worker/muse. It is NOT a servable
+    # floor — `hand` remains the only one (see _FLOOR_TIER below).
+    "associate": "associate",
     "cortex": "primary",
 }
 
@@ -125,6 +130,7 @@ _ROLE_TO_TIER: dict[str, str] = {
     "multimodal": "multimodal",
     "worker": "worker",
     "muse": "muse",
+    "associate": "associate",
 }
 
 #: The SERVABLE FLOOR tier — the one tier never shed, whatever the pressure.

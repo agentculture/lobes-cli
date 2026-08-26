@@ -161,11 +161,29 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # role prefixes — the config half of the replica pool (t4/t5 add the
     # data-plane use of these). `gateway` is again the ONLY service that
     # moved; every vLLM lane's own command/volumes are untouched.
-    "gateway": "824ca3213357d6d73aaed60da855eb643783d555002114ce85a3ca93a384a717",
+    #
+    # Recomputed 2026-08-25 for the lightning-on-orin plan (t6, the tenth
+    # role): `gateway` gained the ASSOCIATE_ prefix on every channel the other
+    # nine role prefixes already carry — BASE_URL/SERVED_NAME (wiring),
+    # MAX_MODEL_LEN (served-context overlay), FEASIBLE, the four peer channels
+    # (singular + plural) and the declared lane fingerprint. `gateway` is again
+    # the ONLY pre-existing service that moved; `vllm-associate` (t7) is
+    # untouched.
+    "gateway": "c1eb74e4fdd31e9a48a40e47c932969ffd2e713ca17e3f7038c5e1f7b2590502",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
     "llamacpp-primary": "56507a02c50560eb2ab2d620b33121c605fd2b0f3b6092f17451889cac7c2004",
+    # NEW (lightning-on-orin plan, t7): the opt-in `vllm-associate` lane, gated
+    # behind the `associate` profile so no existing deployment starts it. It
+    # gives NVIDIA's published Jetson serve recipe's eight previously-
+    # unexpressible flags a real home (five Mamba-cache flags,
+    # --enable-prefix-caching, --max-num-batched-tokens, --trust-remote-code).
+    # t6 then made `associate` the TENTH Colleague role and wired the gateway
+    # to it; this LANE's own command/volumes were not touched by that, which is
+    # exactly what this unchanged hash proves. See
+    # tests/test_associate_compose.py.
+    "vllm-associate": "d266895d3a4848bd0562f66df42e8d8037335efc37375e55889f10ddaa669c6b",
     "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
     "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
     "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",

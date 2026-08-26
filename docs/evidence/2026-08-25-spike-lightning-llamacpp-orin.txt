@@ -1,0 +1,95 @@
+# t3 spike — Lightning does NOT load on the llama.cpp lane: NO-GO
+#
+# Plan: devague plan `lightning-on-orin`, task t3 (finalises this transcript as
+# citable evidence). Box: Jetson AGX Orin 64GB (sm_87). Date: 2026-08-25.
+# Engine: ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin — NVIDIA-AI-IOT's
+# own current Jetson-Orin build, already pulled locally (23.2 GB). llama.cpp
+# build 38406d597 (10373), aarch64.
+#
+# Contrast: the vLLM lane on this same board, same day, was a GO at ~78-81
+# tok/s (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt). This NO-GO
+# is specific to the llama.cpp lane, not to the board or the checkpoint.
+
+## Verdict: NO-GO
+
+The engine and image start fine — this is a MODEL-LOAD failure, not an image
+or boot failure. Two separate defects were found in one vendor recipe:
+
+1. **Run 1 (VERBATIM, as published)** requested the vendor's own recipe
+   verbatim: `-hf ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:Q4_K_M`.
+   It failed immediately with `common_download_get_hf_plan: no GGUF files
+   found in repository` — there is no `Q4_K_M` quant in that HF repo.
+   llama-server enumerated what actually exists: `BF16`, `Q4_0`, `Q8_0`, and
+   `mtp-`-prefixed variants of each. Verified independently against the HF
+   API: no `Q4_K_M` file exists in `ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`.
+
+2. **Run 2 (CORRECTED to Q4_0)** — the log captured below — substituted the
+   only 4-bit quantization the repo actually has, `Q4_0`. The 17.6 GiB GGUF
+   downloaded IN FULL (line 7), then failed at load with:
+
+       check_tensor_dims: tensor 'blk.5.ssm_in.weight' not found
+
+   `blk.5.ssm_in.weight` is a Mamba SSM layer — this llama.cpp build's GGUF
+   loader does not recognize this checkpoint's Mamba-layer tensor naming, so
+   the model never reaches a servable state.
+
+**Q4_K_M -> Q4_0 substitution basis, and why it doesn't rescue a comparison:**
+`Q4_0` is the only 4-bit quantization present in the repo, so it is the only
+substitute that keeps this a same-lane-class (4-bit) attempt. But it is NOT
+the quantization the vendor claims to have benchmarked (`Q4_K_M`) — so even
+if Run 2 had loaded successfully, no throughput or quality number produced
+by it could have been compared to the vendor's published figures. The
+substitution lets us test "does this checkpoint load on this engine at all
+in 4-bit," nothing more.
+
+**DFlash draft — failed SEPARATELY and EARLIER, same run:** before the main
+model's tensor-naming failure, the DFlash speculative-decoding draft failed
+on its own error (line 8): `dflash requires ctx_other to be set`, cascading
+to `[spec] failed to measure draft model memory: failed to create
+llama_context from model` (line 9). This is independent of the ssm_in.weight
+failure below it. The draft repo itself is not missing —
+`apolo13x/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DFlash-GGUF` exists (one
+file, `dflash-...-NVFP4.gguf`, ~1.1 GB) — the failure is in how this
+llama.cpp build wires DFlash's context, not a missing artifact.
+
+## Attribution: BUILD-VERSION GAP, not sm_87 / Ampere
+
+This failure is attributed to a gap in this llama.cpp build's GGUF loader
+(unrecognized Mamba SSM tensor naming for this checkpoint), NOT to sm_87 /
+Ampere compute-capability incapability. Nothing in this transcript exercises
+or fails on a compute-capability check — the failure is entirely in tensor
+loading before any kernel dispatch.
+
+**Untaken probe:** a newer llama.cpp is untried on this checkpoint. The
+generic `ghcr.io/ggml-org/llama.cpp:server-cuda` image is already present on
+this box and would distinguish a build-version gap from a hardware
+limitation — pulling and re-running against it was NOT done as part of this
+spike and remains an open probe. (`docs/qwen3.8-27b-gguf-llamacpp.md`
+separately records a newer `ghcr.io/ggml-org/llama.cpp` build, 10573, having
+been benchmarked on a different checkpoint/board pairing — that prior
+benchmark does not stand in for running it against THIS checkpoint here.)
+
+Two of the three vendor-recipe defects found across this project's spikes
+came from this one recipe (the Q4_K_M-does-not-exist claim, and the
+ssm_in.weight tensor-naming gap).
+
+## Raw log (verbatim, Run 2 — the Q4_0 load attempt)
+
+0.00.920.208 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.969.913 W srv  llama_server: -----------------
+0.00.969.921 W srv  llama_server: CORS is set to allow all origins ('*') and no API key is set
+0.00.969.922 W srv  llama_server: this can be a security risk (cross-origin attacks)
+0.00.969.922 W srv  llama_server: more info: https://github.com/ggml-org/llama.cpp/pull/25655
+0.00.969.922 W srv  llama_server: -----------------
+29.44.945.879 I srv    load_model: loading model 'ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:Q4_0'
+29.45.476.977 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)
+29.45.595.368 W srv    load_model: [spec] failed to measure draft model memory: failed to create llama_context from model
+29.46.230.959 E llama_model_load: error loading model: check_tensor_dims: tensor 'blk.5.ssm_in.weight' not found
+29.46.230.974 E llama_model_load_from_file_impl: failed to load model
+29.46.231.024 E common_fit_params: encountered an error while trying to fit params to free device memory: failed to load model
+29.46.857.308 E llama_model_load: error loading model: check_tensor_dims: tensor 'blk.5.ssm_in.weight' not found
+29.46.857.332 E llama_model_load_from_file_impl: failed to load model
+29.46.857.346 E cmn  common_init_: failed to load model '/data/models/huggingface/models--ggml-org--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/snapshots/0cdf8a8a0bae49ae9634dd68778216d75de63305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf'
+29.46.857.358 E srv    load_model: failed to load model, '/data/models/huggingface/models--ggml-org--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/snapshots/0cdf8a8a0bae49ae9634dd68778216d75de63305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf'
+29.46.857.364 I srv    operator(): operator(): cleaning up before exit...
+29.46.858.140 E srv  llama_server: exiting due to model loading error

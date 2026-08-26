@@ -4,6 +4,132 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.1] - 2026-08-26
+
+### Fixed
+
+- **`base.toml`'s vetoes were being bypassed for every opt-in core role**
+  (Qodo review, PR #217). The overlay introduced for hosted opt-in roles set
+  `feasible=True` unconditionally, so `--shape thor-muse` on an unrecognised
+  card would render a full 31B budget the conservative fallback exists to
+  prevent — and the same for `worker` and `associate`. Root cause was deviation
+  `d1`, which had the Orin card declare `[roles.associate] feasible = false`;
+  the card is now **silent** on associate, exactly as every card already is for
+  `muse`/`worker`, so the plain overlay composes correctly and the special case
+  is gone. `thor-worker` on `base`/`orin` renders `WORKER_FEASIBLE=false` again
+  rather than a stale Qwen-era budget.
+- `ASSOCIATE_TOOL_CALL_PARSER` reached only the gateway passthrough, not the
+  lane. Since the gateway consumes it for the capabilities `tool_parser` field
+  and the replica-pool fingerprint, setting it made `lobes capabilities`
+  advertise a parser the lane was not running. It now reaches
+  `--tool-call-parser` too (default `qwen3_coder` unchanged).
+- markdownlint: three asterisk bullets added to `docs/colleague-stack.md`
+  became the file's first list and flipped MD004's expected style, breaking 18
+  pre-existing dash bullets. Converted to match the file's own convention
+  rather than rewriting untouched lines.
+
+### Changed
+
+- `tests/test_profile_schema.py` splits a composite `in_proj and out_proj`
+  assertion into two, so a failure names which projection is missing.
+
+## [0.65.0] - 2026-08-26
+
+### Changed
+
+- **`orin-associate` is now a SOLO shape** (operator decision, deviation `d2`):
+  hosts `associate` alone at `gpu_mem_util = 0.80`, dropping `hand`, `embedder`
+  and `reranker`. It is the **first built-in shape to drop `hand`** — the
+  pressure-policy servable floor every other shape hosts — so a box on this
+  shape has **no floor**: under swap/iowait pressure it sheds 429 with nothing
+  to degrade to, leaning entirely on this card's
+  `LOBES_IOWAIT_DEGRADED_THRESHOLD=100` override. Accepted deliberately.
+
+### Added
+
+- **DSpark speculative decoding, MEASURED** on the Orin
+  (`docs/evidence/2026-08-26-accept-orin-associate.txt`). Controlled A/B —
+  identical engine, image, util and resident set, speculation the only
+  variable: **96.8 / 121.1 / 90.6 / 93.9 / 59.1 tok/s** with DSpark versus
+  54.8 / 54.7 / 54.6 / 54.0 / 52.1 plain across depths 0 / 512 / 2048 / 8192 /
+  32768 — a **1.77–2.21× gain** at shallow-to-moderate depth. Draft acceptance
+  35–64%; the drafter costs ~37% of the KV pool (3,806,000 → 2,395,428 tokens).
+  Requires vLLM **v0.27.1**: the fleet nightly rejects `dspark` and refuses to
+  boot, so `ASSOCIATE_IMAGE` and `ASSOCIATE_SPECULATIVE_CONFIG` are a matched
+  pair.
+- `docs/orin-associate-deployment.md` — a copy-pasteable deployment reference:
+  the plain `docker run`, the compose service verbatim, the budget table for
+  every co-residency measured, and the five things that will bite you.
+
+### Fixed
+
+- `tests/test_shape_contract_matrix.py` built chat-completions cells for
+  **pooling and audio** roles, expecting `role_infeasible` where
+  `model_not_found` is correct — such a role is not a chat model whether hosted
+  or not. Never exercised until `orin-associate` became the first shape to drop
+  `embedder`/`reranker`. The matrix now derives generate-ness from `TIER_ROLE`,
+  and had also never been taught about `associate`.
+
+## [0.64.0] - 2026-08-26
+
+### Added
+
+- **`associate` — the tenth Colleague role, serving NVIDIA Nemotron 3.5
+  Lightning 30B-A3B on the Jetson AGX Orin 64GB (sm_87).** "They do, but not
+  act": worker's responsibilities MINUS `repo_action`, ranked
+  `hand < multimodal < worker < muse < associate < main`, opt-in-hosted, and
+  shedding 429 under pressure like every other full tier. Ships with the
+  `vllm-associate` compose lane (the eight vLLM serve flags NVIDIA's Jetson
+  recipe needs, `ASSOCIATE_IMAGE`, and a default-off
+  `ASSOCIATE_SPECULATIVE_CONFIG` for DSpark), the `orin-associate` deployment
+  shape, and a `lobes doctor` check that fails a hosted-but-uncredentialed lane.
+- **Live acceptance on the physical Orin**
+  (`docs/evidence/2026-08-26-accept-orin-associate.txt`): known-answer and
+  multi-step reasoning PASS, structured tool calls PASS, and a depth sweep at
+  the incumbent's own shape — **52.5 tok/s decode at 32768-token depth with no
+  decay across 0->32768, versus the board's llama.cpp GGUF cortex at 2.43 tok/s
+  (~21.6x), TTFT 16.9 s versus 610.0 s (~36x), prefill ~1,612 versus ~64 tok/s.**
+  Measured WITHOUT speculation; the vendor's "89 tok/s" agentic aggregate is
+  deliberately not used as a comparator.
+
+### Fixed
+
+- **Opt-in core roles were silently un-hostable.** `compose_profile`/`_overlay`
+  always took `feasible` from the card, so a shape hosting an
+  `OPT_IN_CORE_ROLE` whose card abstains rendered a bare `*_FEASIBLE=false` with
+  no model or knobs. Latent for `thor-muse`/`thor-worker` when force-applied to
+  a non-native card; surfaced by `associate`.
+- **The Orin card's W4A4 infeasibility claim is now per-checkpoint.** Lightning's
+  own `hf_quant_config.json` is `W4A16_NVFP4` (weight-only) on the experts plus
+  FP8 on `in_proj`/`out_proj` — not the W4A4 activation quantization that rules
+  out the cortex and muse NVFP4 exports. sm_87 admits `modelopt_mixed` through a
+  full Marlin stack; the W4A4 sentence still stands for the two checkpoints it
+  really describes.
+- Stale `v0.27.1`-on-Thor account in `docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`;
+  the Thor wedge is sm_110-specific — the Orin clears the identical Mamba2 SSD
+  Triton warmup.
+
+## [0.63.1] - 2026-08-25
+
+### Added
+
+- New opt-in `vllm-associate` fleet lane (lightning-on-orin plan, t7) giving
+  NVIDIA's published Jetson serve recipe for
+  `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` its eight previously
+  unexpressible `vllm serve` flags a real home: `--mamba-backend`,
+  `--mamba-ssm-cache-dtype`, `--enable-mamba-cache-stochastic-rounding`,
+  `--mamba-cache-philox-rounds`, `--mamba-cache-mode`,
+  `--enable-prefix-caching`, `--max-num-batched-tokens` (all env-parameterized
+  knobs), and `--trust-remote-code` (hardcoded, matching every other lane).
+  `ASSOCIATE_IMAGE` overrides the lane's image, proven by `docker compose
+  config`. Gated behind the `associate` Compose profile; deliberately not
+  wired into the Colleague role system yet (no `roles.py` entry, no gateway
+  passthrough) — that lands in a later task.
+
+### Fixed
+
+- The Orin card's W4A4 infeasibility claim is now PER-CHECKPOINT (plan `lightning-on-orin`, t4). `lobes/machines/orin.py` and `lobes/profiles/builtin/orin.toml` used to blame one reason -- "NVFP4 quantizes ACTIVATIONS to FP4, sm_87 is Ampere" -- for all three NVFP4 generate lobes, naming `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` among them. That is false for Lightning: its own `hf_quant_config.json` (fetched 2026-08-25) declares `quant_algo` `MIXED_PRECISION`, with every routed and shared expert `up_proj`/`down_proj` at `W4A16_NVFP4` (`group_size` 16, WEIGHT-only, 16-bit activations), the mixer `in_proj`/`out_proj` at `FP8`, and `kv_cache_quant_algo` `FP8` -- structurally the same weight-only exception the board already runs for the int4 W4A16 `senses` gear. Both files now carry a named Lightning carve-out citing that config and the live sm_87 run (`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`: vLLM v0.27.1 accepted `quantization=modelopt_mixed`, selected a full Marlin fallback stack plus FlashAttention 2, and served correct output at ~78-81 tok/s with `--kv-cache-dtype bfloat16` working around the real FP8 KV barrier). The W4A4 sentence itself is untouched and still names `unsloth/Qwen3.8-27B-NVFP4` and `nvidia/Gemma-4-31B-IT-NVFP4`, which it still describes; two new tests in `tests/test_profile_schema.py` pin both halves. No role feasibility changed -- `worker` stays `feasible = false` on this card
+
 ## [0.63.0] - 2026-08-25
 
 ### Added

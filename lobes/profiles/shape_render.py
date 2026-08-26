@@ -53,8 +53,16 @@ renders the #110-conventional ``<PREFIX>_FEASIBLE=false`` marker and nothing
 else — no ``<PREFIX>_MODEL``, no knobs — exactly like a card that finds the
 role infeasible (see :func:`lobes.profiles.render.profile_env`'s
 ``feasible=False`` convention). Its compose service is likewise absent from
-:func:`shape_services`. A role the CARD marks infeasible is dropped the same
-way even if the shape would host it — feasibility stays the card's call.
+:func:`shape_services`. For a DEFAULT role, the CARD marks infeasible and the
+shape has no say — hosting a role the board genuinely cannot serve would be
+half-honest. For an OPT_IN_CORE_ROLE (``muse``/``worker``/``associate``) the
+relationship inverts: the card's own ``feasible=False`` for one of these means
+"not on by default" (or, on ``base.toml``'s conservative fallback, "no
+declared budget"), not "cannot serve" — so a shape that HOSTS one and supplies
+its own full override (model + budget knobs) is itself the feasibility call
+(the card must be SILENT on it, or explicitly veto it as ``base.toml`` does);
+a shape that does NOT host one passes the
+card's own declaration through unchanged, feasible=False included.
 """
 
 from __future__ import annotations
@@ -78,6 +86,7 @@ ROLE_SERVICE: dict[str, str] = {
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
     "worker": "vllm-worker",
+    "associate": "vllm-associate",
     # `hand` is DEFAULT-ON in the fleet template (no compose profile gate), so
     # unlike `minor`/`muse`/`worker` it needs no OPT_IN_*_ACTIVATION_ENV entry —
     # hosting it is simply naming its service.
@@ -140,10 +149,20 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "worker": {
         "WORKER_BASE_URL": "http://vllm-worker:8000",
     },
+    # `associate` mirrors `muse`/`worker` exactly: the vllm-associate service
+    # is parked behind the "associate" Docker Compose profile in the base
+    # fleet template (lightning-on-orin plan t7), and its gateway backend is
+    # wired only when ASSOCIATE_BASE_URL is non-empty. Its model + budget
+    # knobs render through profile_env from an associate-hosting shape's own
+    # overrides, so the activation env carries ONLY the base-URL wiring.
+    "associate": {
+        "ASSOCIATE_BASE_URL": "http://vllm-associate:8000",
+    },
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
     "worker": "worker",
+    "associate": "associate",
 }
 
 
@@ -232,7 +251,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     * a DEFAULT core role the shape DROPS -> ``RoleProfile(feasible=False)``
       -- the box does not serve it, so it renders the #110 flagged-off marker
       (``<PREFIX>_FEASIBLE=false``) and no model/knobs;
-    * an OPT-IN core role (:data:`OPT_IN_CORE_ROLES` -- ``muse``) the shape
+    * an OPT-IN core role (:data:`OPT_IN_CORE_ROLES` -- ``muse``/``worker``/``associate``) the shape
       does NOT host -> the card's own declaration passes through VERBATIM
       (usually: undeclared -> renders nothing). No flagged-off marker is
       forced: the gateway already treats an UNWIRED opt-in backend as
@@ -258,6 +277,13 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
         if shape.hosts_role(role):
+            # Opt-in core roles take the SAME overlay as the default ones: a
+            # card that is SILENT on the role leaves RoleProfile's feasible=True
+            # default in place, so the shape's override lands; a card that
+            # EXPLICITLY vetoes it (base.toml, the conservative fallback) keeps
+            # that veto, which is the whole point of the fallback. An earlier
+            # unconditional-feasible overlay here bypassed base's vetoes for
+            # muse, worker and associate alike.
             roles[role] = _overlay(profile.role(role), shape.override(role))
         elif role in OPT_IN_CORE_ROLES:
             # Pass the card's opt-in-role declaration through unchanged (a

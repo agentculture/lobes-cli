@@ -54,6 +54,16 @@ feasible = false
 [roles.worker]
 feasible = false
 
+# The opt-in Nemotron 3.5 Lightning `associate` lobe (the doer that does NOT
+# act — lightning-on-orin plan t6) is vetoed on an unrecognised card for the
+# same reason as muse and worker: ~17.9 GiB of NVFP4 weights plus a KV pool on
+# unknown hardware risks an OOM crash-loop, and this profile's whole premise is
+# that a first boot on an unknown card must not OOM. An associate-hosting shape
+# rendered against THIS card stays associate-less; write a custom card profile
+# to override.
+[roles.associate]
+feasible = false
+
 [roles.hand]
 # The `hand` lobe (LiquidAI LFM2.5-1.2B-Instruct) — the fleet's fine-tuning
 # base, default-hosted on every card. ~2.4 GiB of bf16 weights, text-only, no
