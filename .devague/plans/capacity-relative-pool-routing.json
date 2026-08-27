@@ -1,0 +1,510 @@
+{
+  "slug": "capacity-relative-pool-routing",
+  "title": "capacity-relative pool routing",
+  "frame_slug": "capacity-relative-pool-routing",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-27T14:00:50Z",
+  "updated": "2026-08-27T14:20:39Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The cortex replica pool routes by capacity-relative load: every box publishes its own max active requests, and a request goes to whichever replica is least full \u2014 not to whichever box a host-level iowait reading happens to like.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "with no capacity published and no *_PEER_ORIGINS declared, every response stays byte-identical to the pre-pool contract - the #199 no-config-no-change guarantee is not weakened",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the selection arithmetic already computes capacity-relative utilization \u2014 _selection.py's estimated_wait is (running + waiting) / weight \u2014 so this work populates weight with a real per-device capacity rather than changing the ranking policy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "populating weight changes only the ranking INPUT: select_replica stays a pure function of its arguments, and tests/test_gateway_selection.py passes unchanged for any fixed weight",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "weight is a designed-in hook that no env knob populates: it defaults to 1.0 in _replicas.py (fields at 214/241/258) and is hardcoded 1.0 in roles.py:1152,1167, so every replica currently ranks as if it had identical capacity of one slot",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "a peer that publishes no capacity (older lobes, or a non-lobes replica) falls back to the current weight=1.0 and is still routable - an unpublished capacity never makes a replica unselectable",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "a peer's pool candidacy must stop depending on its host-level pressure verdict: _replicas.py:342 _busy_from_status derives busy from the peer's pressure.shed / mode=='busy', which is what excluded a fully idle Spark (GPU running=0) from the pool for a 60% iowait reading",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "a peer under genuine pressure with a FULL engine is still deprioritised - decoupling candidacy from the pressure verdict must not make an actually-saturated box look attractive",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "the pressure sampler is NOT the defect and must not be 'fixed': lobes/runtime/_pressure.py computes iowait as a correct 150ms delta of /proc/stat, verified live on the Spark at ~60% across five samples \u2014 the number is accurate, it is the routing INFERENCE from it that is wrong",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "lobes/runtime/_pressure.py is unchanged by this work, and tests/test_pressure.py passes untouched",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "shedding under genuine pressure stays: tests/test_gateway_pool_pressure.py encodes 20+ behaviours (busy-with-selectable-peer forwards, both-boxes-busy yields exactly one forward and one 429, hand is the servable floor, marked arrivals never re-forward) that must survive unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "every test in tests/test_gateway_pool_pressure.py either passes unchanged or is accompanied by an explicit, recorded renegotiation of the behaviour it asserted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "host-level signals stay poisonable by design and that is the argument for c5, not a bug to chase upstream: the Spark's 60% iowait traces to a single idle ghostty terminal cgroup (app-com.mitchellh.ghostty.service, 96.66% PSI io-full) whose io.stat is EMPTY - zero block I/O ever charged - and which sits in user.slice, entirely outside the docker/vLLM cgroups",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the fix is verified by the Spark rejoining the pool while its host iowait is still reading high - not by the iowait reading itself going away",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "audience",
+      "text": "fleet operators running lobes on more than one box, and the agents addressing model=cortex through any box's gateway",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the change is invisible to a single-box deployment: an operator running machine-as-brain with no peers sees no new required configuration",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "a request addressed to a pooled role lands on whichever replica is least full relative to its own measured capacity; an idle box is never evicted from the pool by a host-level reading unrelated to serving",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "'least full relative to its own capacity' is observable after the fact - X-Lobes-Route-Reason and the /capabilities replica rows expose the capacity and utilisation the decision used",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "before_state",
+      "text": "every replica ranks as if it had a capacity of exactly one slot (weight hardcoded 1.0), and a peer's pool candidacy is gated on its host iowait/swap verdict - so an idle Spark with running=0 was excluded from the pool for a 60% iowait reading produced by a sleeping desktop terminal",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the before_state is reproducible on demand: with weight at 1.0 and a peer reporting pressure-busy, an idle peer is provably excluded from selection",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "with both boxes idle, concurrent requests to one gateway distribute across replicas in proportion to measured capacity instead of queueing on one box; and a box whose host iowait is high but whose engine is idle continues to receive pooled work",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the two success signals are measured on the Spark+Thor cortex pair with the ghostty iowait artifact still present, and both numbers land in an acceptance transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "an 8-way concurrent flood of model=cortex against one gateway, both boxes idle, reaches at least 1.7x the 11.0 tok/s single-owner aggregate baseline recorded in docs/evidence/2026-08-25-baseline-cortex-single-owner.txt (i.e. >=18.7 tok/s), and the Spark stays a selectable pool candidate while its host iowait still reads above the 50% threshold",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the 1.7x target is a floor derived from an already-measured result (19.1 tok/s on the same pair), not an aspirational number invented for this spec",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "capacity must be clamped or sanity-bounded on receipt: q1 makes capacity peer-CONTROLLED input, and _selection.py ranks by active/weight, so a peer publishing an inflated capacity ranks as near-zero wait at every load level and silently vacuums the whole pool - a black hole with no error anywhere",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "a peer publishing an absurd capacity cannot capture more than a bounded share of traffic, and the clamp is observable rather than silent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "the pool needs local in-flight accounting at dispatch, not just the probed snapshot: _replicas.py sources load solely from the 5s /status refresh (_DEFAULT_REFRESH_INTERVAL=5.0) with no counter incremented when a request is actually dispatched, so a burst of concurrent arrivals all read one stale snapshot and stampede the same replica",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "N concurrent arrivals against two idle replicas distribute across both, not all to one, without waiting for a probe refresh",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "an uncalibrated peer must not be silently starved: h3's weight=1.0 fallback keeps it routable but estimated_wait=active/weight ranks it 8x worse than a calibrated weight-8 peer at the same single active request (1.0 vs 0.125), so mixed-version fleets systematically drain toward whichever boxes happen to be calibrated",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "a fleet where exactly one box is calibrated does not drain toward it: an uncalibrated peer still receives work proportional to an honest default, not to the 1.0 sentinel",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "a calibrated capacity is only valid for the (box, checkpoint, context window, speculative config) it was measured on; lobes switch or a shape re-render invalidates it, and the existing live-probed fingerprint (served_id + quantization + max_model_len + runtime, _replicas.py:177) is the natural key to invalidate against",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "a capacity measured under a different fingerprint is not used: after lobes switch, routing falls back to the safe default until recalibrated",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "X-Lobes-Route-Reason is an explicitly CLOSED vocabulary (server.py:728-731: local-idle | peer-less-loaded | local-busy-forwarded | affinity | sole-ready | none); capacity-relative routing either reuses peer-less-loaded with changed meaning or extends the set - both are contract changes that must be stated, not slipped in",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "the Route-Reason vocabulary change is stated explicitly in the PR and docs/gateway-fleet.md, and a caller parsing the old closed set is told what changed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "capacity-relative routing carries its own kill switch: a knob that pins weight to 1.0 fleet-wide, leaving the pool armed but the capacity signal inert (q4)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "with the kill switch engaged the pool still routes and still forwards - only the capacity input reverts to 1.0, reproducing today's ranking exactly",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Capacity + kill-switch env knobs in lobes/gateway/_config.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a box's own declared capacity parses from env into config; absent, it resolves to the neutral default and no error is raised",
+        "the kill-switch knob, when truthy, forces the resolved capacity to the 1.0 sentinel for every replica local and peer alike",
+        "a single-box deployment with no peers and no capacity keys parses exactly as it does today - no new required key",
+        "tests/test_gateway_config_replicas.py covers set / unset / kill-switch-engaged"
+      ],
+      "deps": [],
+      "covers": [
+        "c25",
+        "h18",
+        "c14",
+        "h8"
+      ],
+      "instruction": "touch only lobes/gateway/_config.py and tests/test_gateway_config_replicas.py; follow the existing PEER_ORIGINS_ENV nine-prefix pattern rather than inventing a new shape"
+    },
+    {
+      "id": "t2",
+      "summary": "Calibration knee measurement in lobes/assess.py: throughput plateau + TTFT guard",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "given a ramp of (concurrency, aggregate_tok_s, ttft) samples the knee is the highest level whose throughput still rises meaningfully AND whose TTFT is under the declared bound",
+        "a ramp that never plateaus returns the top level tried, and is reported as un-plateaued rather than silently treated as the knee",
+        "a ramp where TTFT crosses the bound before any plateau returns the last level under the bound",
+        "the knee function is pure over a sample list - no HTTP, no clock - and is unit-tested without a live engine"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "keep the knee function pure over a list of samples - no HTTP, no clock - so it unit-tests without a live engine, mirroring how lobes/gateway/_selection.py is pure over a replica snapshot"
+    },
+    {
+      "id": "t3",
+      "summary": "Capacity-relative selectability + reason vocabulary in lobes/gateway/_selection.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "_is_selectable no longer excludes a candidate for a pressure-derived busy flag alone; a candidate is unselectable when its active count reaches its capacity",
+        "a peer under pressure whose engine is genuinely full still ranks last - decoupling does not make a saturated box attractive",
+        "an uncalibrated peer uses a neutral fallback, not the 1.0 sentinel: with one calibrated weight-8 peer and one uncalibrated peer each at one active request, the uncalibrated peer is not ranked 8x worse",
+        "select_replica stays a pure function - same inputs, same output - and existing tests/test_gateway_selection.py cases pass unchanged for any fixed weight",
+        "a regression test captures the before_state: an idle peer carrying a pressure-busy flag is unselectable under the OLD gate and selectable under the new one",
+        "the reason vocabulary change is explicit - either a new constant or a documented redefinition of peer-less-loaded - and the closed set in the module docstring is updated to match"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c5",
+        "h4",
+        "c16",
+        "h10",
+        "c22",
+        "h15",
+        "c24",
+        "h17"
+      ],
+      "instruction": "do not change estimated_wait()'s arithmetic - it already computes capacity-relative utilisation; change only selectability, the fallback constant, and the reason vocabulary"
+    },
+    {
+      "id": "t4",
+      "summary": "Capacity ingest, clamp, fingerprint-keying and in-flight counter in lobes/gateway/_replicas.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a peer's published capacity is read on the existing /status probe and populates ReplicaState.weight; the local seed populates from this box's own declared capacity",
+        "a received capacity is clamped to a configured maximum on ingest, and the clamp is recorded in the replica row's reason field rather than applied silently",
+        "a peer publishing no capacity falls back to the neutral default and stays routable - an unpublished capacity never makes a replica unselectable",
+        "a stored capacity is discarded when the live fingerprint (served_id + quantization + max_model_len + runtime) no longer matches the one it was measured under",
+        "the module exposes an in-flight counter that callers increment at dispatch and decrement at completion, and estimated_wait consumes probed load PLUS local in-flight",
+        "tests/test_gateway_replicas.py covers ingest, clamp, missing-capacity fallback, and fingerprint mismatch discard"
+      ],
+      "deps": [
+        "t1",
+        "t3"
+      ],
+      "covers": [
+        "c3",
+        "h3",
+        "c19",
+        "h13",
+        "c23",
+        "h16"
+      ],
+      "instruction": "the fattest task and alone in its wave: land ingest+clamp first, then fingerprint-keying, then the in-flight counter, so a partial merge is still coherent"
+    },
+    {
+      "id": "t5",
+      "summary": "Publish own capacity in /status and wire dispatch in-flight accounting in lobes/gateway/server.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "fleet_status_payload carries this box's declared capacity for each pooled role, so a peer learns it from the probe it already makes",
+        "the in-flight counter is incremented before a replica is dispatched to and decremented on completion, including on the error and retry paths",
+        "N concurrent arrivals against two idle replicas distribute across both rather than all landing on one, without waiting for a probe refresh",
+        "the capacity and utilisation used by a routing decision are observable after the fact, not only inferable from gateway logs"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c20",
+        "h14",
+        "c15",
+        "h9"
+      ],
+      "instruction": "increment before dispatch and decrement in a finally-equivalent path so an error or retry cannot leak a counter; a leaked in-flight count makes a healthy box look permanently full"
+    },
+    {
+      "id": "t6",
+      "summary": "Surface resolved capacity in the /capabilities replica row in lobes/roles.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the hardcoded 1.0 at roles.py:1152 and :1167 is replaced by the resolved capacity, keeping the neutral default as the fallback",
+        "the replica row carries the capacity used alongside the existing weight field so a capacity-driven choice is explainable from /capabilities alone",
+        "the offline (not-probed) replica view still reports honest values rather than guessing a capacity",
+        "tests/test_roles_replicas.py and tests/test_cli_capabilities_replicas.py cover the populated and fallback cases"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [],
+      "instruction": "keep the offline replica view honest - a not-probed row reports no capacity rather than guessing one, matching how it already reports None for every live field"
+    },
+    {
+      "id": "t7",
+      "summary": "Regression guards: untouched sampler, pool-pressure suite, and no-config byte-identity",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "git shows lobes/runtime/_pressure.py unchanged by this work and tests/test_pressure.py passes untouched",
+        "every test in tests/test_gateway_pool_pressure.py passes unchanged, or the PR carries an explicit note naming which behaviour was renegotiated and why",
+        "with no capacity published and no *_PEER_ORIGINS declared, responses are byte-identical to the pre-pool contract, headers included",
+        "hand remains the servable floor under pressure and is never forwarded"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c6",
+        "h5",
+        "c7",
+        "h6",
+        "h1"
+      ],
+      "instruction": "run the pool-pressure suite before and after; treat any required test change as a contract renegotiation to be named in the PR, not a test to quietly update"
+    },
+    {
+      "id": "t8",
+      "summary": "Document the capacity knobs and the calibrate verb in templates and docs",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/templates/fleet/env.example documents the capacity and kill-switch knobs, and states plainly that capacity is NOT the --max-num-seqs OOM cap",
+        "docs/gateway-fleet.md's replica-pool section describes capacity-relative routing, the self-published discovery path, and the clamp",
+        "the X-Lobes-Route-Reason vocabulary change is stated where the closed set is currently documented, so a caller parsing the old set is told what changed",
+        "uv run afi cli doctor . --strict passes"
+      ],
+      "deps": [
+        "t1",
+        "t5",
+        "t6"
+      ],
+      "covers": [],
+      "instruction": "state plainly in env.example that capacity is NOT the --max-num-seqs OOM cap - conflating the two is the specific confusion this spec exists to prevent"
+    },
+    {
+      "id": "t9",
+      "summary": "lobes calibrate verb wrapping the knee measurement",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the verb ramps concurrency against a named role and reports the measured knee, the samples behind it, and whether the ramp plateaued",
+        "it is read-only by default and follows the repo's dry-run/--apply convention if it writes the measured capacity to .env",
+        "it refuses to write a capacity when the ramp never plateaued, rather than recording the top level tried as if it were a knee",
+        "no calibration logic runs inside the gateway request path - the verb lives in lobes/cli/_commands/ and the gateway only consumes a number"
+      ],
+      "deps": [
+        "t2",
+        "t1"
+      ],
+      "covers": [],
+      "instruction": "follow the repo's dry-run-by-default convention: reporting is read-only, writing a measured capacity to .env requires --apply"
+    },
+    {
+      "id": "t10",
+      "summary": "Live acceptance on the Spark+Thor cortex pair with the iowait artifact still present",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the Spark rejoins the pool as a selectable candidate while its host iowait still reads above the 50 percent threshold - the artifact is the fixture and is NOT cleared first",
+        "an 8-way concurrent flood of model=cortex against one gateway with both boxes idle reaches at least 18.7 tok/s aggregate, versus the recorded 11.0 tok/s single-owner baseline on the same flood shape",
+        "concurrent requests visibly distribute across both replicas rather than queueing on one, evidenced by the per-answer Served-By and Route-Reason markers",
+        "an acceptance transcript lands under docs/evidence/ recording both numbers, the capacity each box published, and the calibration runs behind them",
+        "scope is stated honestly: validated for cortex on the Spark+Thor NVFP4 pair only, every other pooled role declared-but-unvalidated",
+        "the single-owner baseline is re-measured on the same 8-way flood shape before the comparison is drawn - the recorded 11.0 tok/s is not trusted as authoritative, since it was captured under what looks like the same iowait artifact"
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c1",
+        "c10",
+        "h7",
+        "c17",
+        "h11",
+        "c18",
+        "h12"
+      ],
+      "instruction": "run against the live Spark+Thor pair with the ghostty iowait artifact still elevated - it is the fixture, not a problem to clear first; state validated scope as cortex-on-this-pair only"
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the 2026-08-25 acceptance evidence may be contaminated - its 'organic iowait pressure' premise is probably this same artifact, so the 11.0 tok/s baseline that t10's 1.7x target leans on should be re-verified before it is treated as authoritative",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "whether capacity is a single scalar at all: a box may have different effective capacity for short agentic turns than for long-context requests, which one calibrated number cannot express (frame park v2)",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "calibration cost and cadence are unspecified - a ramp per box per checkpoint is not free, and nothing yet says who re-runs it after a lobes switch",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

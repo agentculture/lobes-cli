@@ -33,6 +33,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   toward whichever boxes happen to be calibrated); fingerprint-keyed capacity
   invalidation across `lobes switch`; and the `X-Lobes-Route-Reason` closed
   vocabulary as a stated contract change.
+- **Plan: capacity-relative pool routing** —
+  `docs/plans/2026-08-27-capacity-relative-pool-routing.md`, seeded from the
+  converged frame and covering **36/36** spec targets across ten tasks in five
+  dependency waves, each wave file-disjoint so parallel execution matches
+  serial: config knobs + kill switch, the pure knee-measurement function,
+  selection policy + reason vocabulary, capacity ingest/clamp/fingerprint-keying
+  /in-flight counter, `/status` publication + dispatch accounting, the
+  `/capabilities` row, regression guards, docs, the `calibrate` verb, and live
+  acceptance on the Spark+Thor pair. Three non-blocking risks recorded, incl.
+  that the `11.0 tok/s` single-owner baseline is re-measured before t10's
+  throughput target leans on it.
 
 ### Changed
 
