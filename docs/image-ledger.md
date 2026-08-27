@@ -49,13 +49,13 @@ against.** This ledger describes the digest the fleet runs.
 | digest | `sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695` |
 | engine | vLLM `0.26.1rc1.dev942+g5a4c8d992` |
 | arch | arm64; exercised on `sm_121` (Spark) and `sm_110` (Thor) |
-| serves | `cortex` (Qwen3.8-27B-NVFP4), `embedder`, `reranker`, `embed-deep`, `hand` (LFM2.5-1.2B), `worker` (Nemotron Lightning), `associate` (Nemotron Lightning) |
+| serves | seven services: `vllm-primary` (`cortex`, Qwen3.8-27B-NVFP4), `vllm-embed`, `vllm-embed-deep`, `vllm-rerank`, `vllm-hand` (LFM2.5-1.2B), `vllm-worker` (Nemotron Lightning), `vllm-associate` (Nemotron Lightning) |
 | recipe | upstream pull, no local build |
 | knob | `VLLM_NIGHTLY_IMAGE` (per-lane overrides: `HAND_IMAGE`, `WORKER_IMAGE`, `ASSOCIATE_IMAGE`) |
 | dated | 2026-08-19 |
 | evidence | `docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt`; sm_110 in `docs/evidence/2026-08-20-spike-nightly-sm110-thor.txt` |
 
-**One digest, six services, three boxes.** Changing it is a fleet event, not a
+**One digest, seven services, three boxes.** Changing it is a fleet event, not a
 lane change. It reaches any box that re-renders from this template.
 
 ### `ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c10…` — the llama.cpp lane

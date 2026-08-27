@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-27T06:09:17Z",
-  "updated": "2026-08-27T06:54:40Z",
+  "updated": "2026-08-27T07:11:05Z",
   "claims": [
     {
       "id": "c1",
@@ -137,7 +137,7 @@
       "kind": "decision",
       "text": "the vLLM image upgrade (0.23.1rc1.dev672 -> 0.29.0+) is scoped as a SHARED fleet benefit, not a cost carried by this test alone: it re-opens a measurement of the existing Qwen3.8-27B NVFP4 cortex on newer code, which may itself gain speed. The upgrade therefore gets its own before/after measurement of the incumbent cortex, so the fleet keeps the gain even if Flash-Next fails.",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -168,12 +168,12 @@
       "kind": "after_state",
       "text": "two things exist that do not today: (1) a docs/evidence transcript for the fleet's vLLM image moved from 0.23.1rc1.dev672 to 0.29.0+, with the incumbent Qwen3.8-27B NVFP4 cortex benchmarked before and after on this Thor; and (2) a verdict transcript for Qwen3.8-Flash-Next GGUF served through vllm-gguf-plugin on that image -- GO or NO-GO, with decode, prefill and TTFT measured at depth",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h10",
           "text": "both transcripts land under docs/evidence/, and each is reproducible from its own contents -- digests, build recipes, .env values and probe commands present verbatim",
-          "status": "confirmed",
+          "status": "rejected",
           "instruction": ""
         }
       ],
@@ -463,12 +463,12 @@
       "kind": "requirement",
       "text": "the shared digest drives SIX lanes, not four: vllm-primary, vllm-embed, vllm-rerank, vllm-hand, vllm-worker and vllm-associate all interpolate VLLM_NIGHTLY_IMAGE (grepped from the template this pass). c9 undercounted. worker and associate are the Nemotron Lightning lanes -- served on the SPARK and the ORIN from this same template -- so the upgrade's reach extends past this Thor to any box that re-renders from the new template.",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h24",
           "text": "the transcript names all six lanes and the three boxes the shared digest reaches, so no reader infers this was a one-box change",
-          "status": "confirmed",
+          "status": "rejected",
           "instruction": ""
         }
       ],
@@ -606,6 +606,75 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "after_state",
+      "text": "two things exist that do not today: (1) a docs/evidence transcript for the fleet's vLLM image moved from its CURRENT shared pin -- sha256:8bd082c2, vLLM 0.26.1rc1.dev942+g5a4c8d992 -- to a main/nightly digest, with the incumbent Qwen3.8-27B NVFP4 cortex benchmarked before and after on this Thor; and (2) a verdict transcript for Qwen3.8-Flash-Next GGUF served through vllm-gguf-plugin on that image -- GO or NO-GO, with decode, prefill and TTFT measured at depth",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "the transcript records which engine build EACH pooled box ran during the window, so a mixed-version pool is visible in the evidence rather than invisible",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Either upgrade Thor and Spark together, or unset PRIMARY_PEER_ORIGINS on the Thor for the window.",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "decision",
+      "text": "the vLLM image move (0.26.1rc1.dev942+g5a4c8d992 -> a main/nightly digest; there is no 0.29 release to name) is scoped as a SHARED fleet benefit, not a cost carried by this test alone: it re-opens a measurement of the existing Qwen3.8-27B NVFP4 cortex on newer code, which may itself gain speed. The upgrade therefore gets its own before/after measurement of the incumbent cortex, so the fleet keeps the gain even if Flash-Next fails.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "PARTIAL UPGRADES ARE THE POOL HAZARD, and the frame previously recorded the opposite as reassurance. Because _replicas.py's runtime field is engine-grained (vllm|llamacpp|UNKNOWN), a Thor on a nightly digest and a Spark on 0.26.1rc1.dev942 remain POOL-COMPATIBLE and will serve each other's cortex requests despite running different engine builds. That is a latent behavioural-mismatch hazard, not a safety property. Until the fingerprint carries an engine VERSION, the mitigation is procedural: upgrade every pooled box together, or drop the peer from *_PEER_ORIGINS for the duration of a staggered upgrade.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "the before-state version in the transcript is the one read from the running container, and matches docs/image-ledger.md's row for the shipped digest",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Upgrade Thor and Spark together, or unset PRIMARY_PEER_ORIGINS on the Thor for the duration; record each pooled box's engine build in the transcript.",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "the shared digest drives SEVEN lanes across THREE boxes, not four and not six: vllm-primary, vllm-embed, vllm-embed-deep, vllm-rerank, vllm-hand, vllm-worker and vllm-associate all interpolate VLLM_NIGHTLY_IMAGE (grepped from the template; vllm-embed-deep was omitted from an earlier count of this same list). worker and associate are the Nemotron Lightning lanes -- served on the SPARK and the ORIN from this same template -- so the upgrade's reach extends past this Thor to any box that re-renders.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "the transcript names all seven lanes and the three boxes the shared digest reaches, with embed-deep listed explicitly rather than folded into embed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "grep -c VLLM_NIGHTLY_IMAGE on the template and name every matching service in the transcript; do not summarise the count from memory.",
       "revisions": []
     }
   ],
@@ -750,7 +819,7 @@
     {
       "id": "s15",
       "surface": "challenge pass / adjacent-systems lens: grep VLLM_NIGHTLY_IMAGE in lobes/templates/fleet/docker-compose.yml",
-      "finding": "six services, three boxes; the audience claim named four lanes and one box, so the frame understated who inherits this change",
+      "finding": "SEVEN services, three boxes -- vllm-primary, vllm-embed, vllm-embed-deep, vllm-rerank, vllm-hand, vllm-worker, vllm-associate. Counted twice and got it wrong both times (four, then six, each dropping embed-deep), which is itself the argument for the ledger listing services rather than stating a number.",
       "seeds": []
     },
     {
@@ -787,6 +856,12 @@
       "id": "s21",
       "surface": "challenge pass / lenses examined with no finding",
       "finding": "SECURITY: images come from vllm/vllm-openai and a vendor plugin repo, same trust posture as the existing pinned digests, and the lane publishes no host port -- no new exposure. DATA LOSS: no schema, no user data, GGUF read-only. CONCURRENCY: single-stream test, -np/-max-num-seqs at 1. These three were examined and are clean; that is a record of what was looked at, not a claim that nothing remains.",
+      "seeds": []
+    },
+    {
+      "id": "s22",
+      "surface": "qodo PR#218 review comment 1 (runtime version omitted from fingerprint) vs lobes/gateway/_replicas.py",
+      "finding": "the reviewer is right about the hazard and the frame framed it backwards -- engine-grained runtime was recorded as 'safe on that axis' when it in fact permits pooling behaviourally different builds. Changing the fingerprint is a behaviour change to the #199 validated replica-pool contract and needs its own spec; the spec-side fix is to name the hazard and give the procedural mitigation.",
       "seeds": []
     }
   ],

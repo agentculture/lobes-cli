@@ -9,7 +9,8 @@
 
 ## Before → After
 
-- After: two things exist that do not today: (1) a docs/evidence transcript for the fleet's vLLM image moved from 0.23.1rc1.dev672 to 0.29.0+, with the incumbent Qwen3.8-27B NVFP4 cortex benchmarked before and after on this Thor; and (2) a verdict transcript for Qwen3.8-Flash-Next GGUF served through vllm-gguf-plugin on that image -- GO or NO-GO, with decode, prefill and TTFT measured at depth
+- After: two things exist that do not today: (1) a docs/evidence transcript for the fleet's vLLM image moved from its CURRENT shared pin -- sha256:8bd082c2, vLLM 0.26.1rc1.dev942+g5a4c8d992 -- to a main/nightly digest, with the incumbent Qwen3.8-27B NVFP4 cortex benchmarked before and after on this Thor; and (2) a verdict transcript for Qwen3.8-Flash-Next GGUF served through vllm-gguf-plugin on that image -- GO or NO-GO, with decode, prefill and TTFT measured at depth
+  - instruction: Either upgrade Thor and Spark together, or unset `PRIMARY_PEER_ORIGINS` on the Thor for the window.
 
 ## Why it matters
 
@@ -45,8 +46,6 @@
   - honesty: the timeout is written down before the first boot attempt, not chosen after one hangs
 - vLLM 0.29.0 DOES NOT EXIST. The latest tagged release is v0.28.0, published 2026-08-26 (gh api vllm-project/vllm releases, checked this pass); 0.27.1 was 2026-08-11. recipes.vllm.ai's 'vLLM 0.29.0+' therefore names main/nightly, not a release the fleet can pin to a version. Stage 1 is a NIGHTLY migration, not a release upgrade -- which is precisely why the image ledger (c18) is load-bearing rather than nice-to-have.
   - honesty: the digest the fleet actually runs is recorded, and the vLLM version it reports is read from inside the running container -- a nightly tag is never treated as a version
-- the shared digest drives SIX lanes, not four: vllm-primary, vllm-embed, vllm-rerank, vllm-hand, vllm-worker and vllm-associate all interpolate `VLLM_NIGHTLY_IMAGE` (grepped from the template this pass). c9 undercounted. worker and associate are the Nemotron Lightning lanes -- served on the SPARK and the ORIN from this same template -- so the upgrade's reach extends past this Thor to any box that re-renders from the new template.
-  - honesty: the transcript names all six lanes and the three boxes the shared digest reaches, so no reader infers this was a one-box change
 - stage 1 must be reversible by an .env OVERRIDE, never by editing the template's default digest: `VLLM_NIGHTLY_IMAGE` has the old digest as its template default, so setting the new one in the deployment .env makes rollback a one-line unset. Changing the default in lobes/templates/fleet/docker-compose.yml would turn rollback into a repo revert and would push the untested image at every other box that re-renders.
   - honesty: rollback is demonstrated once, not assumed: unset the .env override, bring the fleet up, confirm the old digest is running
 - the replica pool CAN break silently on stage 1, but not for the reason you would guess. lobes/gateway/`_replicas.py`'s disqualifying fingerprint fields are `served_id`, quantization, `max_model_len` and runtime -- and runtime is engine-grained ('vllm' | 'llamacpp' | UNKNOWN), so a vLLM VERSION change does NOT disqualify a pair. What DOES is `max_model_len`: if the new nightly's memory behaviour forces the Thor's cortex below 262144 while the Spark stays at its window, the two silently stop pooling and every request serves local -- no error, just the pre-pool behaviour back.
@@ -61,6 +60,12 @@
 - CORRECTED: the fleet is on vLLM 0.26.1rc1.dev942+g5a4c8d992, NOT 0.23.1. docs/vllm-nightly-migration.md:424 records the before/after table -- sha256:7c5a10e9 was 0.23.1rc1.dev672 and is SUPERSEDED; the shipped shared pin sha256:8bd082c2 is 0.26.1rc1.dev942, flipped by the qwen3.8-cortex-upgrade plan t5. The earlier 0.23 figure came from docs/lfm2.5-1.2b-hand.md, which cites the OLD digest. The real gap is 0.26.1 -> main/nightly, materially smaller than the frame claimed.
   - instruction: Read the version from inside the running container before planning any upgrade; do not trust a per-model doc's version note, which may cite a superseded digest.
   - honesty: the fleet's actual running vLLM version is read from the container, and docs/lfm2.5-1.2b-hand.md's stale 0.23.1 reference is corrected or dated
+- PARTIAL UPGRADES ARE THE POOL HAZARD, and the frame previously recorded the opposite as reassurance. Because `_replicas.py`'s runtime field is engine-grained (vllm|llamacpp|UNKNOWN), a Thor on a nightly digest and a Spark on 0.26.1rc1.dev942 remain POOL-COMPATIBLE and will serve each other's cortex requests despite running different engine builds. That is a latent behavioural-mismatch hazard, not a safety property. Until the fingerprint carries an engine VERSION, the mitigation is procedural: upgrade every pooled box together, or drop the peer from \*`_PEER_ORIGINS` for the duration of a staggered upgrade.
+  - instruction: Upgrade Thor and Spark together, or unset `PRIMARY_PEER_ORIGINS` on the Thor for the duration; record each pooled box's engine build in the transcript.
+  - honesty: the before-state version in the transcript is the one read from the running container, and matches docs/image-ledger.md's row for the shipped digest
+- the shared digest drives SEVEN lanes across THREE boxes, not four and not six: vllm-primary, vllm-embed, vllm-embed-deep, vllm-rerank, vllm-hand, vllm-worker and vllm-associate all interpolate `VLLM_NIGHTLY_IMAGE` (grepped from the template; vllm-embed-deep was omitted from an earlier count of this same list). worker and associate are the Nemotron Lightning lanes -- served on the SPARK and the ORIN from this same template -- so the upgrade's reach extends past this Thor to any box that re-renders.
+  - instruction: grep -c `VLLM_NIGHTLY_IMAGE` on the template and name every matching service in the transcript; do not summarise the count from memory.
+  - honesty: the transcript names all seven lanes and the three boxes the shared digest reaches, with embed-deep listed explicitly rather than folded into embed
 
 ## Honesty conditions
 
@@ -68,11 +73,11 @@
 - the three native-format sizes are re-checked against their model cards before stage 2 starts, so 'nothing native fits' is current rather than a snapshot -- a new sub-122 GiB quant would change the whole approach
 - the final transcript states plainly whether the vLLM path beat, matched, or lost to the llama.cpp expectation -- including the case where the research was right and this path fails
 - the transcript names every lane the shared image touched, so a reader can tell which results are fleet-wide and which are Flash-Next-only
-- both transcripts land under docs/evidence/, and each is reproducible from its own contents -- digests, build recipes, .env values and probe commands present verbatim
 - the llama.cpp prefill comparison is cited to its transcript and stated as a different-board measurement, not presented as a Thor figure
 - stage 1 is committed and its evidence landed before stage 2 begins -- provable from commit order, so a stage-2 NO-GO cannot retroactively strand it
 - both axes are reported with their comparators and their limits (different engine, different quantization, different board for the llama.cpp prefill figure) so each is a bar rather than a like-for-like A/B
 - the incumbent cortex baseline is captured BEFORE the image swap -- per docs/model-switch-playbook.md that number cannot be recovered afterwards
+- the transcript records which engine build EACH pooled box ran during the window, so a mixed-version pool is visible in the evidence rather than invisible
 
 ## Success signals
 
@@ -114,7 +119,7 @@
 - `s6` — `docs/evidence/2026-08-26-accept-orin-associate.txt prefill comparison + docs/qwen3.8-27b-gguf-llamacpp.md MAXN figures`: the repo already measures the llama.cpp prefill penalty at ~25x on one board and ~36x on TTFT; my earlier scope pass weighed only decode and therefore understated the case FOR vLLM
   - seeds: `c7`
 - `s7` — `one VLLM_NIGHTLY_IMAGE digest shared by four generate lanes`: because the digest is fleet-wide, upgrading it is unavoidably a fleet event -- which is exactly why it should carry a cortex before/after benchmark rather than being treated as incidental to this lane
-  - seeds: `c8`
+  - seeds: `c8` (rejected)
 - `s8` — `lobes/templates/fleet/docker-compose.yml image pins (vllm/vllm-openai digest x4 + nvcr.io/nvidia/vllm:26.04-py3)`: the fleet already needs a special ARM64/Blackwell image for one lane, which is evidence that arch coverage is the binding constraint on this platform, not vLLM's version number alone
   - seeds: `c14`
 - `s9` — `docs/machine-profiles.md Thor divergences + lobes/machines/_traits.py SM_110`: the divergences live in a chip-strategy registry, not the profile TOML, so an upgrade that fixes one requires a code change to drop it -- and an upgrade that BREAKS one would surface as a silent pooling or CUDA-graph failure, not a boot error
@@ -127,21 +132,22 @@
   - seeds: `c18`
 - `s13` — `challenge pass / unstated-assumptions lens: gh api vllm-project/vllm releases vs recipes.vllm.ai's stated floor`: the frame said 'upgrade to 0.29.0+' as though it were a release; no such release exists, so the target is a moving nightly and every claim about 'the upgraded image' must name a digest, never a version
 - `s14` — `challenge pass / hardware lens: Docker Hub vllm/vllm-openai tag arch list vs the cu128/sm_110 SASS precedent (#145)`: arch availability and kernel coverage are two different questions; the frame conflated them, and the repo has a recorded case (chatterbox) of an image that installed fine and had no `sm_110` kernels
-- `s15` — `challenge pass / adjacent-systems lens: grep VLLM_NIGHTLY_IMAGE in lobes/templates/fleet/docker-compose.yml`: six services, three boxes; the audience claim named four lanes and one box, so the frame understated who inherits this change
+- `s15` — `challenge pass / adjacent-systems lens: grep VLLM_NIGHTLY_IMAGE in lobes/templates/fleet/docker-compose.yml`: SEVEN services, three boxes -- vllm-primary, vllm-embed, vllm-embed-deep, vllm-rerank, vllm-hand, vllm-worker, vllm-associate. Counted twice and got it wrong both times (four, then six, each dropping embed-deep), which is itself the argument for the ledger listing services rather than stating a number.
 - `s16` — `challenge pass / reversibility lens: the <digest> default form`: the template already encodes the safe rollback path; the frame never said which of the two ways to apply the upgrade, and only one of them is reversible in one line
 - `s17` — `challenge pass / adjacent-systems lens: lobes/gateway/_replicas.py fingerprint fields (L102-111, L177-180, L285-290)`: runtime is engine-grained so the version upgrade is SAFE on that axis -- a clean result worth recording -- while `max_model_len` is the field that actually carries silent-unpooling risk, which the frame never considered
 - `s18` — `challenge pass / failure-modes lens: vLLM GGUF load path vs llama.cpp mmap, against 122 GiB`: the frame carried the llama.cpp-era assumption that file size approximates footprint; on vLLM that assumption does not hold and it inverts the quant ladder's logic -- the biggest rung may be the one that cannot load
 - `s19` — `challenge pass / operations lens: 10 sha256 pins in the template + 18 in docs, no index, vs c18's ledger`: the ledger's value depends entirely on staying current; this repo already proves scattered pins drift, and it already has a goldens-test convention that can enforce the ledger the same way
 - `s20` — `challenge pass / migration lens: docs/vllm-nightly-migration.md`: the fleet has migrated its nightly once already and left a verification-only doc but no ledger -- direct evidence for why c18 is worth building now, and a ready template for stage 1's before-state
 - `s21` — `challenge pass / lenses examined with no finding`: SECURITY: images come from vllm/vllm-openai and a vendor plugin repo, same trust posture as the existing pinned digests, and the lane publishes no host port -- no new exposure. DATA LOSS: no schema, no user data, GGUF read-only. CONCURRENCY: single-stream test, -np/-max-num-seqs at 1. These three were examined and are clean; that is a record of what was looked at, not a claim that nothing remains.
+- `s22` — `qodo PR#218 review comment 1 (runtime version omitted from fingerprint) vs lobes/gateway/_replicas.py`: the reviewer is right about the hazard and the frame framed it backwards -- engine-grained runtime was recorded as 'safe on that axis' when it in fact permits pooling behaviourally different builds. Changing the fingerprint is a behaviour change to the #199 validated replica-pool contract and needs its own spec; the spec-side fix is to name the hazard and give the procedural mitigation.
 
 ## Decisions
 
-- the vLLM image upgrade (0.23.1rc1.dev672 -> 0.29.0+) is scoped as a SHARED fleet benefit, not a cost carried by this test alone: it re-opens a measurement of the existing Qwen3.8-27B NVFP4 cortex on newer code, which may itself gain speed. The upgrade therefore gets its own before/after measurement of the incumbent cortex, so the fleet keeps the gain even if Flash-Next fails.
 - carried over unchanged from the llama.cpp frame: Thor-only; all production models come down for the stage-2 window; the lane runs from a SEPARATE deployment dir (~/.lobes-vllm-next, --compose-dir) so ~/.lobes/.env is never opened; MAXN is verified and pasted beside every measurement; disk is reclaimed rung by rung; and the quant choice is DEFERRED to measured speed and quality rather than fixed in advance.
 - stage 1 follows an existing in-repo precedent rather than inventing a shape: docs/vllm-nightly-migration.md is a 'before-state verification + baselines to beat' doc from the previous nightly migration, citing exact file:line pins and making no mutation. Stage 1's before-state doc is its sibling, and the image ledger (c18) is the durable index that migration should have left behind.
 - the deliverable is TWO documents, not one: docs/image-ledger.md stays fleet-wide and about the IMAGES (digests, versions, arch validation), while docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md carries this checkpoint's what / why / why-not and is named after the model so it sits beside docs/qwen3.8-27b-gguf-llamacpp.md. Some overlap between them is accepted deliberately; each cross-links the other.
 - experiment docs live in docs/experiments/, not flat in docs/. An experiment is a checkpoint, engine or runtime seriously considered and not (or not yet) put into service; the folder's README defines what belongs there and what goes to docs/<model>.md, docs/evidence/, docs/specs/ or docs/image-ledger.md instead. The Flash-Next evaluation is its first entry: docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md. Scoped deliberately narrow -- a docs/models/ reorg would change lobes/catalog.py's doc= contract (filename-only, resolved as docs / model.doc and asserted by tests/`test_catalog.py`::`test_every_doc_file_exists`), regenerate the switch-plan goldens, and sweep 456 docs/\*.md references; that is its own PR, not this one.
+- the vLLM image move (0.26.1rc1.dev942+g5a4c8d992 -> a main/nightly digest; there is no 0.29 release to name) is scoped as a SHARED fleet benefit, not a cost carried by this test alone: it re-opens a measurement of the existing Qwen3.8-27B NVFP4 cortex on newer code, which may itself gain speed. The upgrade therefore gets its own before/after measurement of the incumbent cortex, so the fleet keeps the gain even if Flash-Next fails.
 
 ## Open parks
 

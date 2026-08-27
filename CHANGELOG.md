@@ -54,6 +54,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   qwen3.8-cortex-upgrade (`docs/vllm-nightly-migration.md:424`). The ledger
   records the live value and flags both stale references; the per-model docs
   are left untouched in this docs-only change.
+- **The shared nightly digest drives SEVEN services, not four or six**
+  (Qodo review, PR #218). `vllm-embed-deep` was dropped from two successive
+  counts of the same list. The ledger now enumerates the services rather than
+  stating a number: `vllm-primary`, `vllm-embed`, `vllm-embed-deep`,
+  `vllm-rerank`, `vllm-hand`, `vllm-worker`, `vllm-associate`.
 
 ## [0.65.1] - 2026-08-26
 

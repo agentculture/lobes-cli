@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-27T05:28:06Z",
-  "updated": "2026-08-27T06:02:15Z",
+  "updated": "2026-08-27T07:10:28Z",
   "claims": [
     {
       "id": "c1",
@@ -773,12 +773,12 @@
       "kind": "requirement",
       "text": "the lane is the EXISTING opt-in COMPOSE_PROFILES=llamacpp service (llamacpp-primary) from lobes/templates/fleet/docker-compose.yml -- no new compose lane is needed -- but it is driven from a SEPARATE deployment dir (~/.lobes-llamacpp, --compose-dir), where LLAMACPP_MODEL_DIR / LLAMACPP_GGUF / LLAMACPP_IMAGE / LLAMACPP_N_GPU_LAYERS / LLAMACPP_PARALLEL / LLAMACPP_FLASH_ATTN and COMPOSE_PROFILES are set. The production ~/.lobes/.env is never opened.",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [
         {
           "id": "h23",
           "text": "the lane boots this checkpoint with only .env VALUE changes in the separate dir -- if lobes/templates/fleet/docker-compose.yml itself needs an edit, this claim is false and the frame must record why",
-          "status": "confirmed",
+          "status": "rejected",
           "instruction": ""
         }
       ],
@@ -818,11 +818,36 @@
           "text": "the 25 tok/s bar is stated with its comparator (12.1 tok/s, the vLLM NVFP4 cortex on THIS box) and its limits (different engine and quantization, so it is an is-it-worth-carrying bar, not a like-for-like A/B)",
           "status": "confirmed",
           "instruction": ""
+        },
+        {
+          "id": "h34",
+          "text": "before any probe, the rendered .env shows PRIMARY_URL pointing at llamacpp-primary and PRIMARY_SERVED_NAME matching the GGUF gear, and docker ps confirms vllm-primary is not running -- a passing probe against a gateway still pointed at vLLM would invalidate the whole experiment",
+          "status": "rejected",
+          "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
       "instruction": "Report decode tok/s from llama-server's own timings beside the 12.1 tok/s incumbent figure and the 8.46 tok/s 27B-dense-GGUF figure, so the bar is legible against both.",
+      "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "COMPOSE_PROFILES=llamacpp ALONE IS NOT ENOUGH -- it un-gates the service but does not route to it. The gateway defaults to PRIMARY_URL=${PRIMARY_URL:-http://vllm-primary:8000} (fleet/docker-compose.yml:1715), so a deployment that merely sets LLAMACPP_* + COMPOSE_PROFILES would start vllm-primary AND probe it, silently testing the incumbent Qwen3.8-27B NVFP4 instead of Flash-Next. Routing is derived from the composed cortex model being a llama.cpp CATALOG GEAR (shape_render.py:189, LLAMA_CPP_ACTIVATION_ENV maps cortex -> llamacpp-primary and renders PRIMARY_URL + PRIMARY_SERVED_NAME). The separate deployment must therefore be rendered from a profile/shape whose cortex gear is the llama.cpp entry -- not hand-set env keys -- and vllm-primary must be absent from it, not merely unused.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "before any probe, the rendered .env shows PRIMARY_URL pointing at llamacpp-primary and PRIMARY_SERVED_NAME matching the GGUF gear, and docker ps confirms vllm-primary is not running -- a passing probe against a gateway still pointed at vLLM would invalidate the whole experiment",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Render the separate deployment with 'lobes init --shape <llamacpp-cortex shape> --apply'; confirm PRIMARY_URL=http://llamacpp-primary:8000 in the rendered .env and that docker ps shows NO vllm-primary container before probing.",
       "revisions": []
     }
   ],
@@ -1117,6 +1142,12 @@
       "id": "s36",
       "surface": "challenge pass / lenses examined with no finding",
       "finding": "concurrency: the lane is -np 1 single-slot and the test is single-stream, so no interleaving hazard was found. Migration: no schema, no state, no data conversion -- a candidate catalog entry migrates nothing. Data loss: the GGUF is mounted READ-ONLY and no user data is touched. These three lenses were examined and are clean; that is a record of what was looked at, not a claim that nothing remains.",
+      "seeds": []
+    },
+    {
+      "id": "s37",
+      "surface": "qodo PR#218 review comment 2 vs docker-compose.yml:1715 (PRIMARY_URL default) and shape_render.py:189 (LLAMA_CPP_ACTIVATION_ENV)",
+      "finding": "verified: PRIMARY_URL defaults to http://vllm-primary:8000 and the llama.cpp routing is derived from the catalog gear via a shape, not from COMPOSE_PROFILES. The earlier claim c45 was wrong and would have produced a probe against the wrong model -- a false GO.",
       "seeds": []
     }
   ],
