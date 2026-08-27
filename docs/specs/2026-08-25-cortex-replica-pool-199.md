@@ -3,6 +3,8 @@
 > lobes serves one logical cortex from every box that hosts a compatible replica (Spark, Thor, Orin at 256K); each gateway routes model=cortex to the most available compatible replica and every answer says which replica served it — so when one box is overloaded, new requests land on a free one without callers changing anything
 > instruction: Verify on the live Spark+Thor pair: send N concurrent model=cortex requests to one gateway and read the serving-replica marker on each; confirm both origins appear, then repeat with the local replica saturated and with the peer stopped.
 
+**Correction (post-implementation, 2026-08-27).** The announcement above is the verbatim `/scope` statement (frame claim `c1`, `origin: user`) and is kept unedited as the record of what was announced. Its parenthetical **overstates the pool's membership**: the converged frame's own fingerprint claim, and the pool as shipped in 0.63.0, admit **Spark + Thor only**. The Jetson AGX Orin's llama.cpp `Qwen3.8-27B-UD-Q4_K_M` cortex is **exempt** — it serves under the id `cortex` rather than `unsloth/Qwen3.8-27B-NVFP4`, at a different quantization and runtime, so the live-probed fingerprint marks it `compatible: false` and it never enters the candidate set. It stays a separately-addressed candidate; a llama.cpp replica would need its own `/status` field mapping before it could ever be pooled. See `docs/gateway-fleet.md` ("Replica pools") and `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`, whose validated scope is the Spark+Thor NVFP4 pair.
+
 ## Audience
 
 - Colleague parent agents and their concurrent subagents that address model=cortex through whichever lobes gateway is local to them (Spark or Thor), plus the operator who declares the replica set per box in .env
