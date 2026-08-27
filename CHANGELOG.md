@@ -16,7 +16,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/*.md`, and 5 `Dockerfile.*` templates, with no index tying them
   together. Failed and superseded recipes keep their rows; a row with no
   evidence link is marked UNVALIDATED (#108).
-- **`docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md` — what Qwen3.8-Flash-Next
+- **`docs/experiments/` — a home for checkpoints and engines we evaluated and
+  did not put into service.** Its `README.md` defines the contract: an
+  experiment doc answers what it is, why we wanted it, and why it is not
+  running, and it cites `docs/<model>.md` / `docs/evidence/` / `docs/specs/` /
+  `docs/image-ledger.md` rather than replacing them. #108 applies here more
+  sharply than elsewhere, because these files describe things that were never
+  served. Deliberately narrow: a `docs/models/` reorg would change
+  `lobes/catalog.py`'s `doc=` contract and sweep 456 references, and is its own
+  change.
+- **`docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md` — what Qwen3.8-Flash-Next
   is, why each engine was considered, and why neither happened yet.** Names the
   checkpoint the way the sibling per-model docs do, so it sits next to
   `docs/qwen3.8-27b-gguf-llamacpp.md` and is findable by model name. Records

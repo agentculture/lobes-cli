@@ -21,7 +21,7 @@ against.** This ledger describes the digest the fleet runs.
 
 > **Looking for why a particular model is or is not served?** This file is
 > about the *images*. The per-checkpoint reasoning lives in its own doc — e.g.
-> `docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md` for the 125B Flash-Next
+> `docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md` for the 125B Flash-Next
 > llama.cpp-vs-vLLM evaluation.
 
 ## Rules
@@ -127,7 +127,7 @@ nightly, so two vLLM versions run side by side today.
 Two images are **specified but never built**: the fleet nightly move, and a
 `vllm-gguf-plugin` image for Qwen3.8-Flash-Next. Their rows live here because
 they are images; **the reasoning — what was tried, why each engine, why not —
-is in `docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md`.**
+is in `docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md`.**
 
 | | stage 1 — fleet nightly move | stage 2 — Flash-Next via `vllm-gguf-plugin` |
 |---|---|---|
