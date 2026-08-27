@@ -75,7 +75,6 @@ from lobes.gateway._selection import (
     REASON_AFFINITY,
     REASON_LOCAL_BUSY_FORWARDED,
     REASON_LOCAL_IDLE,
-    REASON_NONE,
     REASON_PEER_LESS_LOADED,
     REASON_SOLE_READY,
 )
@@ -1171,6 +1170,10 @@ _POOL_QUANTIZATION = "compressed-tensors"
 
 _POOL_NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 _POOL_HIGH_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 90.0}
+# Deviation d1: the two host signals split — swap is verifiable thrash and
+# still sheds; iowait alone no longer refuses POOLED work.
+_POOL_SWAP_ONLY_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 0.0}
+_POOL_IOWAIT_ONLY_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 90.0}
 
 _READY_TIMEOUT_SECONDS = 10.0
 
@@ -1510,18 +1513,64 @@ def test_a_peers_refusal_is_relayed_after_exactly_one_forward(pool) -> None:
     assert not any(r.method == "POST" for r in pool.backends[0].log)
 
 
-def test_both_boxes_busy_sheds_locally_and_never_forwards(pool) -> None:
-    # The other half: once the snapshot KNOWS the peer is shedding, the pool
-    # has nothing selectable, so the caller gets this box's own 429 — with the
-    # honest `none` route reason — and no socket leaves the box.
+def test_both_boxes_busy_forwards_once_and_the_peer_serves(pool) -> None:
+    # RENEGOTIATED under deviation d1 — was
+    # `test_both_boxes_busy_sheds_locally_and_never_forwards`, which asserted
+    # a local 429 with the `none` route reason and zero outbound sockets.
+    #
+    # Two things changed and they compose. t3 stopped `_is_selectable` keying
+    # pool candidacy on a PEER's host pressure verdict, so the peer is a
+    # candidate again — both engines here are genuinely idle. And d1 stopped
+    # the RECEIVER shedding a pooled arrival on a host-level verdict alone, so
+    # the forward is served rather than bounced back as a second 429.
+    #
+    # The one-forward rule is untouched: EXACTLY one outbound POST, and the
+    # peer never forwards it onward.
     spark, thor = pool[0], pool[1]
     thor.pressure.set_busy()
     pool.refresh()  # the snapshot now carries the peer's own busy verdict
     spark.pressure.set_busy()
-    err = _expect_error(429, spark.base, _CHAT_PATH, method="POST", body=_chat_body("cortex"))
-    assert err.headers.get(S.ROUTE_REASON_HEADER) == REASON_NONE
+    with _pool_chat(spark) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.PROXIED_BY_HEADER) == thor.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+    assert len(_posts(thor)) == 1
+    assert not any(r.method == "POST" for r in pool.backends[0].log)
+
+
+def test_a_pooled_arrival_is_served_under_iowait_only_pressure(pool) -> None:
+    # d1's receiving side, end to end over real sockets: the box's ONLY
+    # complaint is a host iowait reading (swap at zero) and its engine is
+    # idle, so the request it was forwarded is served here — no 429, no
+    # second hop. This is the c17 success signal in miniature.
+    spark, thor = pool[0], pool[1]
+    thor.pressure.value = dict(_POOL_IOWAIT_ONLY_PRESSURE)
+    before = len(pool.backends[0].log)
+    with _pool_chat(thor, headers={S.PROXIED_HEADER: "primary"}) as resp:
+        assert resp.status == 200
+        assert resp.headers.get(S.SERVED_BY_HEADER) == thor.base
+        assert resp.headers.get(S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+    assert any(r.method == "POST" for r in pool.backends[1].log)
+    assert len(pool.backends[0].log) == before
+    assert _posts(spark) == []
+
+
+def test_a_pooled_arrival_is_still_shed_under_swap_thrash(pool) -> None:
+    # The line, over real sockets: same arrival, swap over the threshold and
+    # iowait at zero. A genuinely paging box refuses, and still never
+    # re-forwards.
+    spark, thor = pool[0], pool[1]
+    thor.pressure.value = dict(_POOL_SWAP_ONLY_PRESSURE)
+    err = _expect_error(
+        429,
+        thor.base,
+        _CHAT_PATH,
+        method="POST",
+        body=_chat_body("cortex"),
+        headers={S.PROXIED_HEADER: "primary"},
+    )
     assert err.headers.get("X-Lobes-Tier-Reason") == "busy"
-    assert _posts(thor) == []
+    assert _posts(spark) == []
 
 
 # --- (4) single hop ---------------------------------------------------------
