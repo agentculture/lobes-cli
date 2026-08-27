@@ -19,6 +19,11 @@ caught it.
 **A per-model doc's version note describes the digest that doc was written
 against.** This ledger describes the digest the fleet runs.
 
+> **Looking for why a particular model is or is not served?** This file is
+> about the *images*. The per-checkpoint reasoning lives in its own doc — e.g.
+> `docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md` for the 125B Flash-Next
+> llama.cpp-vs-vLLM evaluation.
+
 ## Rules
 
 1. **Digests, never tags.** A floating tag is recorded as a floating tag and
@@ -119,40 +124,22 @@ nightly, so two vLLM versions run side by side today.
 
 ## Deferred — recipes specified but not built
 
-Both rows come from `docs/specs/2026-08-27-flash-next-on-vllm.md`, whose
-execution was **deferred 2026-08-27, not abandoned**. They are recorded here so
-resuming needs no re-derivation.
+Two images are **specified but never built**: the fleet nightly move, and a
+`vllm-gguf-plugin` image for Qwen3.8-Flash-Next. Their rows live here because
+they are images; **the reasoning — what was tried, why each engine, why not —
+is in `docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md`.**
 
-### Stage 1 — the fleet nightly move
+| | stage 1 — fleet nightly move | stage 2 — Flash-Next via `vllm-gguf-plugin` |
+|---|---|---|
+| target | vLLM main/nightly, arm64, `sm_110` | stage-1 image + plugin built from source |
+| pin | **no version exists to pin** — latest release is `v0.28.0` (2026-08-26); `recipes.vllm.ai`'s "0.29.0+" names main. Digest only. | image by digest; plugin by **commit sha**, never a branch |
+| blocker | `cu129` `sm_110` SASS **unverified** — arm64 nightlies exist, but arch availability is not kernel coverage (cf. #145). Gate with `cuobjdump --list-elf`. | plugin lists neither `qwen4exp` nor the `UD-*` quants; multi-shard undocumented |
+| method | apply as an **`.env` override**, never a template-default edit — override rolls back in one line; a default edit is a repo revert *and* pushes an untested image at every re-rendering box | separate deployment dir, no host port |
+| must re-test | the Thor's four validated `sm_110` divergences (cortex `kv_cache_dtype=auto` #109; embed/rerank `TRITON_ATTN` #105; rerank `enforce_eager`) — validated against `0.23`, not automatically true on a newer nightly | — |
+| watch | replica-pool `max_model_len`: `_replicas.py`'s `runtime` field is engine-grained, so a version change cannot unpool a pair — but a window trim on the Thor while the Spark holds 262144 **silently** stops pooling, with no error | load-time **peak**, not steady state — see the model doc |
+| baseline | benchmark the incumbent cortex **before** the swap — 12.1 tok/s on this Thor (`docs/evidence/2026-08-20-accept-cortex-local-thor.txt`); per `docs/model-switch-playbook.md` that number is unrecoverable afterwards | — |
 
-| | |
-|---|---|
-| target | vLLM main/nightly, arm64, `sm_110` |
-| blocker | **vLLM 0.29.0 does not exist.** Latest release is `v0.28.0` (2026-08-26); `recipes.vllm.ai`'s "0.29.0+" names main. There is no version to pin — only a digest. |
-| unknown | `cu129` `sm_110` SASS coverage is **unverified**. `nightly-aarch64` and `cu129-nightly-aarch64` exist and are arm64; that is arch availability, not kernel coverage. Gate with `cuobjdump --list-elf` before booting. |
-| method | apply as a **`.env` override**, never by editing the template default — override rolls back in one line; a template edit is a repo revert *and* pushes an untested image at every re-rendering box |
-| must re-test | the Thor's four validated `sm_110` divergences (cortex `kv_cache_dtype=auto` #109; embed/rerank `TRITON_ATTN` #105; rerank `enforce_eager`) — validated against `0.23`, not automatically true on a newer nightly |
-| watch | replica-pool `max_model_len`. `_replicas.py`'s `runtime` field is engine-grained (`vllm`/`llamacpp`), so a version change cannot unpool a pair — but a window trim on the Thor while the Spark holds 262144 **silently** stops pooling, with no error. |
-| baseline | benchmark the incumbent cortex **before** the swap — 12.1 tok/s on this Thor (`docs/evidence/2026-08-20-accept-cortex-local-thor.txt`). Per `docs/model-switch-playbook.md` that number is unrecoverable afterwards. |
-
-### Stage 2 — Qwen3.8-Flash-Next GGUF via `vllm-gguf-plugin`
-
-| | |
-|---|---|
-| target | stage-1 image + `vllm-gguf-plugin` built from source (`uv pip install -e . --no-build-isolation`, CUDA toolkit required), pinned by digest, plugin recorded by **commit sha** not branch |
-| model | `unsloth/Qwen3.8-Flash-Next-GGUF` — 125B MoE + 51B n-gram, 6B active |
-| unknown | the plugin's tested quants are `Q6_K / Q8_0 / IQ4_XS / Q4_K_M / Q4_0` — **neither `UD-IQ1_M` nor `UD-Q3_K_XL` is on the list**; its architecture list stops at Qwen 2.5/3 with no `qwen4exp`; multi-shard GGUF is undocumented; and the `repo:quant` addressing form is unverified for vLLM |
-| footprint | **file size ≠ footprint on vLLM.** llama.cpp mmaps; vLLM loads and dequantizes, plus runtime buffers and CUDA graphs. Against 122 GiB the *load-time peak* decides the outcome, and `UD-IQ1_M` (74.5 GB) may be the only rung that loads. |
-| no-op here | `VLLM_PLE_CPU_OFFLOAD=1` frees nothing on unified memory — host RAM and GPU RAM are one pool on Thor and Spark |
-| abort | a wall-clock timeout per boot attempt, written down first. Precedent: `docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt` — an indefinite `sm_110` hang on a hybrid state-space decode path, and Flash-Next is 3-of-4 layers Gated DeltaNet. |
-| bar | ≥ 25 tok/s decode at MAXN **and** prefill/TTFT in vLLM's territory, not llama.cpp's (~64 tok/s prefill, 610 s TTFT at 32768 — `docs/evidence/2026-08-26-accept-orin-associate.txt`) |
-
-**Why not native:** nothing fits. BF16 335.28 GiB, official `Qwen/…-FP8`
-172.78 GiB, `RadixArk/…-NVFP4` 135 GB (routed experts only, published for
-SGLang) — all above this box's 122 GiB. The ~35 GB PLE table is the floor.
-GGUF is currently the only format that fits.
-
----
+Status **2026-08-27: deferred, not abandoned.** Neither image was built.
 
 ## Keeping this current
 

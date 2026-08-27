@@ -24,6 +24,11 @@ axis (`lobes/catalog.py`'s `engine` field, plan task t3) against a real
 checkpoint, not to re-point any role: `role_hint` is `candidate`, so no tier
 alias resolves to it and the fleet's `cortex` primary is unchanged.
 
+> **See also:** `docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md` — the 125B
+> Qwen3.8-Flash-Next GGUF, evaluated for both llama.cpp and vLLM on the Thor
+> and **not served** (deferred 2026-08-27). Every llama.cpp figure it cites is
+> measured here, on this 27B gear.
+
 ## The checkpoint
 
 Measured off the downloaded file, 2026-08-23, on the Jetson AGX Orin 64 GB this

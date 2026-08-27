@@ -16,6 +16,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/*.md`, and 5 `Dockerfile.*` templates, with no index tying them
   together. Failed and superseded recipes keep their rows; a row with no
   evidence link is marked UNVALIDATED (#108).
+- **`docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md` — what Qwen3.8-Flash-Next
+  is, why each engine was considered, and why neither happened yet.** Names the
+  checkpoint the way the sibling per-model docs do, so it sits next to
+  `docs/qwen3.8-27b-gguf-llamacpp.md` and is findable by model name. Records
+  that **nothing native fits** a 122 GiB board (BF16 335.28 GiB, official FP8
+  172.78 GiB, RadixArk NVFP4 135 GB — the ~35 GB PLE table is the floor), the
+  ~25x prefill / ~36x TTFT penalty that argued against llama.cpp, and the four
+  stacked unknowns that stalled vLLM. **Status: NOT SERVED**, deferred
+  2026-08-27 (#108 — no box has booted it, no transcript exists).
 - **`docs/specs/2026-08-27-qwen3-8-flash-next-gguf-candidate.md`** — the
   converged, challenged spec for serving Qwen3.8-Flash-Next (125B MoE, 6B
   active) from an Unsloth Dynamic GGUF through the llama.cpp lane on the Thor.

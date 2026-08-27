@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-27T06:09:17Z",
-  "updated": "2026-08-27T06:34:11Z",
+  "updated": "2026-08-27T06:43:27Z",
   "claims": [
     {
       "id": "c1",
@@ -582,6 +582,18 @@
       "hard_questions": [],
       "links": [],
       "instruction": "Read the version from inside the running container before planning any upgrade; do not trust a per-model doc's version note, which may cite a superseded digest.",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "decision",
+      "text": "the deliverable is TWO documents, not one: docs/image-ledger.md stays fleet-wide and about the IMAGES (digests, versions, arch validation), while docs/qwen3.8-flash-next-gguf-llamacpp-vllm.md carries this checkpoint's what / why / why-not and is named after the model so it sits beside docs/qwen3.8-27b-gguf-llamacpp.md. Some overlap between them is accepted deliberately; each cross-links the other.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
       "revisions": []
     }
   ],
