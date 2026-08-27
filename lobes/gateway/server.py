@@ -71,7 +71,7 @@ from urllib.parse import urlsplit
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
-from lobes.gateway._config import ServerConfig
+from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._realtime import (
@@ -84,7 +84,13 @@ from lobes.gateway._realtime import (
     status_of,
     upgrade_request_bytes,
 )
-from lobes.gateway._replicas import LocalLane, PeerReplica, ReplicaCache, ReplicaState
+from lobes.gateway._replicas import (
+    PEER_CAPACITY_KEY,
+    LocalLane,
+    PeerReplica,
+    ReplicaCache,
+    ReplicaState,
+)
 from lobes.gateway._routing import (
     Backend,
     RoutingTable,
@@ -103,6 +109,8 @@ from lobes.gateway._selection import (
     Selection,
     is_calibrated,
     select_replica,
+    selection_capacity,
+    selection_wait,
 )
 from lobes.gateway._tier_request import (
     PressureCache,
@@ -557,6 +565,31 @@ class GatewayResponse:
     # if one ever became relayable — could never be mistaken for "this replica
     # never answered" and re-issued against another box.
     peer_unavailable: bool = False
+    # Work that must run when this answer has been fully DELIVERED, not when
+    # it was built (capacity-relative pool routing, t5). Exactly one thing
+    # uses it today: releasing the replica-pool in-flight counter for an
+    # answer whose completion escapes the dispatch block — a relayed
+    # ``upstream`` is a one-shot byte tunnel drained by the handler long after
+    # `_pool_attempt` returned. A dispatch whose outcome DOES fit in that
+    # block (a pre-dispatch failure, a gateway-generated body) is released
+    # there and never reaches this field. ``None`` on every non-pooled
+    # response, so :meth:`release` is a no-op for the whole pre-pool surface.
+    on_complete: "Callable[[], None] | None" = None
+
+    def release(self) -> None:
+        """Run and forget :attr:`on_complete`. Idempotent by construction.
+
+        Called from the handler's ``finally`` after the relay, so a caller
+        that disconnects mid-stream releases the counter exactly as a clean
+        completion does. Clearing the attribute FIRST means a double call (a
+        handler ``finally`` plus a defensive call elsewhere) cannot
+        double-release; the underlying ``end_dispatch`` is idempotent too, so
+        this is the second of three independent guards against a leaked
+        counter.
+        """
+        hook, self.on_complete = self.on_complete, None
+        if hook is not None:
+            hook()
 
 
 # Retry-After (seconds) on the 503 a transiently-down owner yields. The owner is
@@ -746,6 +779,24 @@ AFFINITY_HEADER = "X-Lobes-Affinity"
 #   so the common single-attempt answer keeps exactly the t7 header set and a
 #   trace that sees the header knows a pre-dispatch failure was survived.
 ROUTE_ATTEMPTS_HEADER = "X-Lobes-Route-Attempts"
+# * ``X-Lobes-Route-Load`` — the capacity and utilisation the placement
+#   ACTUALLY used (capacity-relative pool routing, t5). Once ranking divides
+#   active requests by a per-device capacity, "why did this land here?" stops
+#   being answerable from the reason alone: ``peer-less-loaded`` says a peer
+#   was less loaded *relative to its own capacity* and nothing says what that
+#   capacity was. This is a NEW header rather than a new reason value on
+#   purpose — :mod:`lobes.gateway._selection`'s reason vocabulary is closed
+#   and t3 already redefined ``peer-less-loaded`` once; widening it again
+#   would break a caller parsing the documented set. Format is a
+#   semicolon-separated field list, stable and cheap to parse:
+#
+#       X-Lobes-Route-Load: active=1; capacity=8; utilisation=0.125; calibrated=true
+#
+#   ``capacity`` is the capacity RANKING used — for an uncalibrated replica
+#   that is the neutral substitute, not the ``1.0`` sentinel read as one slot,
+#   which is exactly what ``calibrated=false`` says out loud. Like every other
+#   pool marker it rides ONLY on a pooled answer (h1).
+ROUTE_LOAD_HEADER = "X-Lobes-Route-Load"
 
 # The snapshot seam: role/backend name → that role's replicas as of the last
 # background probe, local first. Injected into :func:`handle_post` exactly as
@@ -754,6 +805,27 @@ ROUTE_ATTEMPTS_HEADER = "X-Lobes-Route-Attempts"
 # outright. :meth:`lobes.gateway._replicas.ReplicaCache.current` satisfies it —
 # binding one is t8's job.
 ReplicaSnapshot = Callable[[str], "tuple[ReplicaState, ...]"]
+
+# The in-flight seam (capacity-relative pool routing, t5): given the backend
+# name and the ORIGIN a request is about to be dispatched to, count that
+# dispatch and hand back the callable that releases it. Injected exactly as
+# ``replica_snapshot`` is, so the whole accounting path unit-tests with no
+# cache, no clock and no sockets; ``None`` (every pre-t5 call site) means the
+# pool dispatches without counting, which is precisely the pre-t5 behaviour.
+#
+# Why a returned release rather than a symmetric ``end(origin)``: the counter
+# is token-based (:meth:`lobes.gateway._replicas.ReplicaCache.end_dispatch`),
+# so a closure over the token makes it structurally impossible for one
+# request's release to decrement another's dispatch to the same origin.
+DispatchCounter = Callable[[str, str], "Callable[[], None]"]
+
+# The release for a call site that has no counter wired. Named rather than a
+# lambda so a stack trace through it is readable.
+
+
+def _no_release() -> None:
+    """Release nothing — the unpooled/uncounted dispatch's completion hook."""
+
 
 # The literal ``X-Lobes-Served-By`` value for a box whose operator declared no
 # GATEWAY_SELF_ORIGIN: honest ("I served it") without inventing a hostname.
@@ -1178,13 +1250,16 @@ def _relay_to_target(
     )
 
 
-_PEER_POOL_MARKERS = frozenset({SERVED_BY_HEADER.lower(), ROUTE_REASON_HEADER.lower()})
+_PEER_POOL_MARKERS = frozenset(
+    {SERVED_BY_HEADER.lower(), ROUTE_REASON_HEADER.lower(), ROUTE_LOAD_HEADER.lower()}
+)
 
 
 def _strip_peer_pool_markers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Drop the PEER's own placement markers from a relayed answer.
 
-    A pooled peer stamps ``X-Lobes-Served-By`` / ``X-Lobes-Route-Reason`` on
+    A pooled peer stamps ``X-Lobes-Served-By`` / ``X-Lobes-Route-Reason`` /
+    ``X-Lobes-Route-Load`` on
     every answer it serves locally; relayed verbatim they would ride back next
     to THIS box's markers and a caller would see two ``X-Lobes-Route-Reason``
     values on one response (seen live 2026-08-25, #199 t11). The forwarder's
@@ -1429,7 +1504,7 @@ def _pool_selection(
     replica_snapshot: ReplicaSnapshot | None,
     local_busy: bool,
     exclude: Collection[str] = (),
-) -> Selection | None:
+) -> "_Placement | None":
     """Run the selection policy for one pooled backend, or ``None``.
 
     ``None`` means **this request is not pooled at all** — no snapshot provider
@@ -1457,16 +1532,61 @@ def _pool_selection(
         # local pressure too (t8): a marked arrival that this box cannot serve
         # gets this box's OWN 429, which is the receiver applying its own
         # policy (#85) — never a second forward.
-        return Selection(None, True, REASON_SOLE_READY)
+        return _Placement(Selection(None, True, REASON_SOLE_READY), ())
     affinity = (_request_header(req_headers, AFFINITY_HEADER) or "").strip()
     candidates = replica_snapshot(backend_name)
     if exclude:
         candidates = tuple(c for c in candidates if c.origin not in exclude)
-    return select_replica(
+    return _Placement(
+        select_replica(
+            candidates,
+            affinity=affinity or None,
+            local_busy=local_busy,
+        ),
         candidates,
-        affinity=affinity or None,
-        local_busy=local_busy,
     )
+
+
+@dataclass(frozen=True)
+class _Placement:
+    """A :class:`Selection` plus the candidate set it was made over (t5).
+
+    The candidates travel with the verdict because the CAPACITY a placement
+    used is a property of the whole set, not of the chosen replica alone: an
+    uncalibrated replica ranks at the neutral capacity
+    :func:`~lobes.gateway._selection.selection_capacity` derives from its
+    peers. Recomputing it from a second snapshot read would report numbers
+    that no decision was ever made on — the snapshot folds in-flight
+    dispatches and moves under concurrency — so the set is carried, not
+    re-fetched.
+    """
+
+    selection: Selection
+    candidates: "tuple[ReplicaState, ...]"
+
+
+def _route_load_header(placement: "_Placement") -> list[tuple[str, str]]:
+    """``X-Lobes-Route-Load`` for the chosen replica, or nothing (t5, c24/h17).
+
+    Emitted only when the placement actually chose a replica that is in the
+    candidate set — a ``sole-ready`` marked arrival ranked nothing, and
+    reporting a utilisation for a decision that was never made would be a
+    fabricated trace.
+    """
+    origin = placement.selection.origin
+    chosen = next((c for c in placement.candidates if c.origin == origin), None)
+    if chosen is None:
+        return []
+    capacity = selection_capacity(chosen, placement.candidates)
+    active = chosen.running + chosen.waiting
+    return [
+        (
+            ROUTE_LOAD_HEADER,
+            f"active={active:d}; capacity={capacity:g}; "
+            f"utilisation={selection_wait(chosen, placement.candidates):g}; "
+            f"calibrated={'true' if is_calibrated(chosen) else 'false'}",
+        )
+    ]
 
 
 def _stamp_pool_headers(table: RoutingTable, reason: str) -> list[tuple[str, str]]:
@@ -1572,6 +1692,7 @@ def _pool_dispatch(
     replica_snapshot: ReplicaSnapshot | None,
     local_busy: bool,
     dial_local: LocalDial | None,
+    counter: DispatchCounter | None = None,
 ) -> GatewayResponse | _PoolFallthrough | None:
     """Place and dispatch one pooled request, retrying pre-dispatch failures.
 
@@ -1588,7 +1709,7 @@ def _pool_dispatch(
     excluded: set[str] = set()
     dispatched = 0
     while True:
-        selection = _pool_selection(
+        placement = _pool_selection(
             table,
             backend_name,
             req_headers,
@@ -1596,8 +1717,9 @@ def _pool_dispatch(
             local_busy=local_busy,
             exclude=excluded,
         )
-        if selection is None:
+        if placement is None:
             return None
+        selection = placement.selection
         if selection.origin is None:
             break
         if selection.local and dial_local is None:
@@ -1616,10 +1738,11 @@ def _pool_dispatch(
             open_upstream,
             backend_name=backend_name,
             served=served,
-            selection=selection,
+            placement=placement,
             tier_headers=tier_headers,
             dispatched=dispatched,
             dial_local=dial_local,
+            counter=counter,
         )
         if response is not None:
             return response
@@ -1640,10 +1763,11 @@ def _pool_attempt(
     *,
     backend_name: str,
     served: str,
-    selection: Selection,
+    placement: "_Placement",
     tier_headers: list[tuple[str, str]],
     dispatched: int,
     dial_local: LocalDial | None,
+    counter: DispatchCounter | None = None,
 ) -> tuple[GatewayResponse | None, list[str]]:
     """One dispatch to one selected replica.
 
@@ -1653,23 +1777,86 @@ def _pool_attempt(
     failed PRE-DISPATCH and the next selectable replica may be tried.
     Extracted from :func:`_pool_dispatch` purely to keep that loop legible
     (Sonar S3776).
+
+    **This is the ONLY place a replica-pool dispatch is counted** (t5). The
+    counter is taken BEFORE the dial and released on every way out of this
+    function, with exactly one exception: an answer that still has an
+    ``upstream`` to relay is not finished yet, so its release rides on the
+    response (:meth:`GatewayResponse.release`) and the handler fires it after
+    the relay. Both leaky shapes are closed here rather than at the call
+    site: a PRE-DISPATCH failure releases before returning, so the retry that
+    follows cannot leave the refusing replica counted, and a
+    gateway-generated body (the owner-down 503, a relayed error with no
+    upstream) releases immediately because nothing further will touch it.
     """
+    selection = placement.selection
     origin = selection.origin or ""
-    markers = _pool_marker_headers(table, selection, dispatched)
+    markers = _pool_marker_headers(table, placement, dispatched)
+    release = (counter or _uncounted)(backend_name, origin)
+    answer: GatewayResponse | None = None
+    try:
+        answer, failures = _dial_selected(
+            table,
+            cfg,
+            path,
+            req_headers,
+            body,
+            open_upstream,
+            backend_name=backend_name,
+            served=served,
+            selection=selection,
+            markers=markers,
+            tier_headers=tier_headers,
+            dial_local=dial_local,
+        )
+        if answer is None:
+            return None, [f"{origin}: {failure}" for failure in failures]
+        return _hand_off_release(answer, release), []
+    finally:
+        # Whatever path was taken, a dispatch whose completion did NOT escape
+        # this block is released right here: a pre-dispatch failure (so the
+        # retry below cannot leave the refusing replica counted), an
+        # exception, and any answer already complete in memory.
+        # `_hand_off_release` moves the release onto the response ONLY for an
+        # answer with an ``upstream`` still to relay, and clears it from this
+        # frame when it does — and `end_dispatch` is idempotent regardless, so
+        # a double release is a no-op rather than a negative count.
+        if answer is None or answer.on_complete is not release:
+            release()
+
+
+def _dial_selected(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    backend_name: str,
+    served: str,
+    selection: Selection,
+    markers: list[tuple[str, str]],
+    tier_headers: list[tuple[str, str]],
+    dial_local: LocalDial | None,
+) -> tuple[GatewayResponse | None, list[str]]:
+    """Dial the one replica ``selection`` chose — local owner or peer forward.
+
+    Split out of :func:`_pool_attempt` so that function is a pure
+    count/dial/release sandwich with a single ``finally``: the leak guard is
+    then readable in one screen instead of straddling two branches.
+    """
     if selection.local:
         if dial_local is None:  # pragma: no cover - guarded by _pool_dispatch
             return None, []
-        response, failures = dial_local(markers + tier_headers)
-        if response is not None:
-            return response, []
-        return None, [f"{origin}: {failure}" for failure in failures]
+        return dial_local(markers + tier_headers)
     forwarded = _proxy_to_peer(
         cfg,
         _ForwardTarget(
             name=backend_name,
-            origin=origin,
+            origin=selection.origin or "",
             served_name=served,
-            api_key=_replica_api_key(table, backend_name, origin),
+            api_key=_replica_api_key(table, backend_name, selection.origin or ""),
         ),
         path,
         req_headers,
@@ -1679,16 +1866,35 @@ def _pool_attempt(
     )
     if not forwarded.peer_unavailable:
         return forwarded, []
-    return None, [f"{origin}: {failure}" for failure in forwarded.attempts]
+    return None, forwarded.attempts
+
+
+def _hand_off_release(response: GatewayResponse, release: "Callable[[], None]") -> GatewayResponse:
+    """Move ``release`` onto ``response`` iff its completion escapes the
+    dispatch block — i.e. it still has an ``upstream`` for the handler to
+    relay. A buffered/gateway-generated answer is already complete, so it
+    keeps ``on_complete=None`` and :func:`_pool_attempt`'s ``finally``
+    releases it there instead."""
+    if response.upstream is not None:
+        response.on_complete = release
+    return response
+
+
+def _uncounted(_backend_name: str, _origin: str) -> "Callable[[], None]":
+    """The no-counter :data:`DispatchCounter`: counts nothing, releases nothing."""
+    return _no_release
 
 
 def _pool_marker_headers(
-    table: RoutingTable, selection: Selection, dispatched: int
+    table: RoutingTable, placement: "_Placement", dispatched: int
 ) -> list[tuple[str, str]]:
-    """The pool markers for one attempt: served-by (local only) + reason + attempts."""
+    """The pool markers for one attempt: served-by (local only) + reason +
+    the capacity/utilisation the placement used (t5) + attempts."""
+    selection = placement.selection
+    load = _route_load_header(placement)
     if selection.local:
-        return _stamp_pool_headers(table, selection.reason) + _attempts_header(dispatched)
-    return [(ROUTE_REASON_HEADER, selection.reason)] + _attempts_header(dispatched)
+        return _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
+    return [(ROUTE_REASON_HEADER, selection.reason)] + load + _attempts_header(dispatched)
 
 
 def _pooled_busy_dispatch(
@@ -1703,6 +1909,7 @@ def _pooled_busy_dispatch(
     replica_snapshot: ReplicaSnapshot | None,
     busy_response: GatewayResponse,
     local_busy: bool,
+    counter: DispatchCounter | None = None,
 ) -> GatewayResponse | None:
     """Under local pressure, forward a POOLED request instead of shedding it (c7/h6).
 
@@ -1745,6 +1952,7 @@ def _pooled_busy_dispatch(
         replica_snapshot=replica_snapshot,
         local_busy=True,
         dial_local=None,
+        counter=counter,
     )
     if outcome is None:
         return None
@@ -1982,6 +2190,7 @@ def _resolve_served_or_early(
     pressure: dict[str, float] | None,
     override: bool,
     replica_snapshot: ReplicaSnapshot | None,
+    dispatch_counter: DispatchCounter | None = None,
 ) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]], bool]:
     """Resolve ``requested`` to its served backend name, or a short-circuit.
 
@@ -2023,6 +2232,7 @@ def _resolve_served_or_early(
                 replica_snapshot=replica_snapshot,
                 busy_response=early,
                 local_busy=local_busy,
+                counter=dispatch_counter,
             )
             return (forwarded if forwarded is not None else early), None, tier_headers, local_busy
         return None, served, tier_headers, local_busy
@@ -2055,6 +2265,7 @@ def handle_post(
     override: bool = False,
     peer_specs: Mapping[str, PeerSpec] | None = None,
     replica_snapshot: ReplicaSnapshot | None = None,
+    dispatch_counter: DispatchCounter | None = None,
 ) -> GatewayResponse:
     """Resolve the model to its ONE owning backend and try it exactly once.
 
@@ -2183,6 +2394,7 @@ def handle_post(
         pressure=pressure,
         override=override,
         replica_snapshot=replica_snapshot,
+        dispatch_counter=dispatch_counter,
     )
     if early is not None:
         return early
@@ -2232,6 +2444,7 @@ def handle_post(
         replica_snapshot=replica_snapshot,
         local_busy=local_busy,
         dial_local=dial_local,
+        counter=dispatch_counter,
     )
     if isinstance(outcome, GatewayResponse):
         return outcome
@@ -2445,6 +2658,16 @@ def fleet_status_payload(
     the ``reason`` and the raw swap/iowait numbers — so operators can see *why*
     callers are being told to wait (#85). Omitted entirely when *pressure* is
     ``None`` (no cache wired), keeping the payload back-compatible.
+
+    Capacity (capacity-relative pool routing, t5): each HOSTED backend row
+    additionally carries this box's own declared max-active-requests capacity
+    under :data:`lobes.gateway._replicas.PEER_CAPACITY_KEY`. That is the whole
+    discovery path a peer needs — ``ReplicaCache`` already probes ``/status``
+    every refresh, so no new endpoint and no new probe exist for a peer to
+    dial. The key is strictly ADDITIVE: a box that declares no capacity
+    publishes none, an older lobes ignores what it does not know, and
+    ``_replicas.py`` reads an absent capacity as uncalibrated rather than as
+    zero. See :func:`_published_capacity` for what is deliberately withheld.
     """
     members = list(table.backends)
     if members:
@@ -2468,15 +2691,15 @@ def fleet_status_payload(
             busy_partial = True
         running += int(metrics.get("running", 0) or 0)
         waiting += int(metrics.get("waiting", 0) or 0)
-        backends.append(
-            {
-                "name": b.name,
-                "task": b.task,
-                "served_name": b.served_name,
-                "health": st.get("health", "unreachable"),
-                "metrics": st.get("metrics"),
-            }
-        )
+        row = {
+            "name": b.name,
+            "task": b.task,
+            "served_name": b.served_name,
+            "health": st.get("health", "unreachable"),
+            "metrics": st.get("metrics"),
+        }
+        row.update(_published_capacity(table, cfg, b.name))
+        backends.append(row)
     busy: dict = {"running": running, "waiting": waiting}
     if busy_partial:  # added only when true → an all-vLLM fleet's payload is unchanged
         busy["partial"] = True
@@ -2503,6 +2726,32 @@ def fleet_status_payload(
             "iowait_percent": pressure.get("iowait_percent", 0.0),
         }
     return payload
+
+
+def _published_capacity(table: RoutingTable, cfg: ServerConfig, name: str) -> dict[str, float]:
+    """This box's declared capacity for backend *name*, as a ``/status`` fragment.
+
+    An empty dict — i.e. no key at all — in three cases, each deliberate:
+
+    * **nothing declared.** ``<PREFIX>_MAX_ACTIVE`` is unset, so there is no
+      measured number to publish. Fabricating one (``1.0``, say) would arrive
+      at a peer as a CALIBRATED one-slot capacity and starve this box; an
+      absent key arrives as "uncalibrated", which is the truth.
+    * **this box does not host the role.** A lane declared infeasible has no
+      local replica at all, so advertising room on it would invite a peer to
+      forward work nothing here can serve.
+    * **a never-proxied backend.** :data:`~lobes.gateway._config.NEVER_PROXIED_BACKENDS`
+      names the roles that are absent from every cross-box channel by
+      decision rather than by accident; capacity is one more such channel, so
+      it consults the same constant instead of re-deriving the rule. (It is
+      empty today — the 2026-08-20 ``d1`` reversal made ``hand`` proxyable —
+      so this arm is a guard for the next role that opts out, not a live
+      exclusion.)
+    """
+    if name in table.infeasible or name in NEVER_PROXIED_BACKENDS:
+        return {}
+    declared = cfg.local_capacities.get(name)
+    return {PEER_CAPACITY_KEY: float(declared)} if declared is not None else {}
 
 
 # --- role capabilities (the #81 role→endpoint contract) --------------------
@@ -2785,6 +3034,12 @@ class _Handler(BaseHTTPRequestHandler):
     # needs it keyed by backend name. None/empty → /capabilities carries no
     # `replicas`/`fingerprint` key at all, exactly as before the pool (h1).
     replica_caches: Mapping[str, ReplicaCache] | None = None
+    # The replica-pool in-flight seam (t5, capacity-relative pool routing):
+    # counts a dispatch the moment one is placed, so a burst arriving inside
+    # one 5 s probe interval does not all read the same idle snapshot. Bound
+    # from `replica_caches` by :func:`dispatch_counter`; None → nothing is
+    # counted, exactly as the pre-t5 pool behaved.
+    dispatch_counter: DispatchCounter | None = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -3098,17 +3353,28 @@ class _Handler(BaseHTTPRequestHandler):
                 override=override,
                 peer_specs=self.peer_specs,
                 replica_snapshot=self.replica_snapshot,
+                dispatch_counter=self.dispatch_counter,
             )
-        if resp.upstream is None:
-            self._send_simple(resp.status, resp.headers, resp.body or b"")
-            return
+        # The pool's in-flight release (t5) fires HERE, not where the answer
+        # was built: a relayed upstream is a one-shot byte tunnel this loop
+        # drains long after `_pool_attempt` returned, so the replica is still
+        # genuinely busy until the last chunk lands. The outer `finally` makes
+        # a mid-relay client disconnect release exactly as a clean completion
+        # does — a leaked counter would make this box look permanently full
+        # with no way back.
         try:
-            if resp.streaming:
-                self._relay_streaming(resp)
-            else:
-                self._relay_buffered(resp)
+            if resp.upstream is None:
+                self._send_simple(resp.status, resp.headers, resp.body or b"")
+                return
+            try:
+                if resp.streaming:
+                    self._relay_streaming(resp)
+                else:
+                    self._relay_buffered(resp)
+            finally:
+                resp.upstream.close()
         finally:
-            resp.upstream.close()
+            resp.release()
 
     # --- relay helpers ---
     def _read_body(self) -> bytes:
@@ -3209,6 +3475,8 @@ def build_replica_caches(
     *,
     urlopen=None,
     start: bool = True,
+    capacities: Mapping[str, float] | None = None,
+    capacity_kill_switch: bool = False,
 ) -> dict[str, ReplicaCache]:
     """One refreshed :class:`ReplicaCache` per participating backend, or ``{}``.
 
@@ -3221,6 +3489,17 @@ def build_replica_caches(
 
     ``urlopen`` is the injected probe seam (the same one
     :class:`ReplicaCache` takes), so this is testable with no sockets.
+
+    ``capacities`` is ``ServerConfig.local_capacities`` — this box's own
+    ``<PREFIX>_MAX_ACTIVE`` per backend name (t1) — and is the documented
+    carrier for the LOCAL replica's capacity: it reaches ranking as
+    :attr:`LocalLane.weight` and needs no new constructor argument of its
+    own. A name with no declared capacity keeps the ``UNCALIBRATED_WEIGHT``
+    sentinel, which means "nothing published", never "one slot".
+    ``capacity_kill_switch`` (``GATEWAY_CAPACITY_KILL_SWITCH``) is handed to
+    each cache so a PROBED peer capacity is pinned back to the sentinel too —
+    ``_local_capacities`` has already applied it to this box's own numbers,
+    so between them the switch holds "local and peer alike", end to end.
     """
     if not table.replica_origins:
         return {}
@@ -3243,12 +3522,14 @@ def build_replica_caches(
                 base_url=backend.base_url,
                 served_name=backend.served_name,
                 declared=declared_lane_config(declared),
+                **_local_weight(capacities, backend.name),
             ),
             peers=tuple(
                 PeerReplica(origin=origin, api_key=keys[i] if i < len(keys) else "")
                 for i, origin in enumerate(origins)
             ),
             backend_name=backend.name,
+            capacity_kill_switch=capacity_kill_switch,
             urlopen=urlopen,
             start=False,
         )
@@ -3275,6 +3556,45 @@ def replica_snapshot_provider(
         return cache.current() if cache is not None else ()
 
     return snapshot
+
+
+def _local_weight(capacities: Mapping[str, float] | None, name: str) -> dict[str, float]:
+    """``{"weight": <declared capacity>}`` for *name*, or ``{}`` (t5).
+
+    An empty dict rather than an explicit sentinel so :class:`LocalLane`'s own
+    default is what an undeclared lane gets — one definition of "nothing
+    published", not two that can drift.
+    """
+    declared = (capacities or {}).get(name)
+    return {"weight": float(declared)} if declared is not None else {}
+
+
+def dispatch_counter(
+    caches: Mapping[str, ReplicaCache] | None,
+) -> DispatchCounter | None:
+    """The in-flight seam bound to the live caches, or ``None`` (t5).
+
+    ``None`` for an empty/absent cache map — a deployment with no
+    ``*_PEER_ORIGINS`` counts nothing, opens no lock and behaves exactly as
+    the pre-pool release does (h1).
+
+    A backend the map does not know yields a no-op release rather than an
+    error: dispatch correctness must never depend on the counter being
+    present, since the counter is an OPTIMISATION (it makes a burst
+    self-correct between probes) and a hard failure here would take down the
+    request path it exists to smooth.
+    """
+    if not caches:
+        return None
+
+    def begin(backend_name: str, origin: str) -> "Callable[[], None]":
+        cache = caches.get(backend_name)
+        if cache is None:
+            return _no_release
+        token = cache.begin_dispatch(origin)
+        return lambda: cache.end_dispatch(token)
+
+    return begin
 
 
 def replica_role_snapshot(
@@ -3304,6 +3624,7 @@ def _make_handler(
     peer_specs: Mapping[str, PeerSpec] | None = None,
     replica_snapshot: ReplicaSnapshot | None = None,
     replica_caches: Mapping[str, ReplicaCache] | None = None,
+    counter: DispatchCounter | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
@@ -3325,6 +3646,9 @@ def _make_handler(
                 None if replica_snapshot is None else staticmethod(replica_snapshot)
             ),
             "replica_caches": replica_caches,
+            # `staticmethod` for the same descriptor-protocol reason as
+            # `replica_snapshot` above: it is a plain function too.
+            "dispatch_counter": (None if counter is None else staticmethod(counter)),
         },
     )
     return bound
@@ -3372,7 +3696,11 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # refresh-then-start discipline the readiness cache above uses, and for
     # the same reason. Empty dict (no *_PEER_ORIGINS declared anywhere) → no
     # threads, a None snapshot provider, and a byte-identical gateway (h1).
-    replica_caches = build_replica_caches(table)
+    replica_caches = build_replica_caches(
+        table,
+        capacities=cfg.local_capacities,
+        capacity_kill_switch=cfg.capacity_kill_switch,
+    )
     httpd = ThreadingHTTPServer(
         (cfg.host, cfg.port),
         _make_handler(
@@ -3383,6 +3711,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
             peer_specs,
             replica_snapshot_provider(replica_caches),
             replica_caches,
+            dispatch_counter(replica_caches),
         ),
     )
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
