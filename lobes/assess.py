@@ -17,6 +17,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import contextvars
+import dataclasses
 import json
 import math
 import statistics
@@ -1285,6 +1286,211 @@ def auto_ramp_concurrency(
                 break  # plateau detected — no need to go higher
 
     return _find_knee(rows, threshold=threshold)
+
+
+# ---------------------------------------------------------------------------
+# Capacity calibration knee (capacity-relative pool routing, t2 —
+# docs/specs/2026-08-27-capacity-relative-pool-routing.md).
+# ---------------------------------------------------------------------------
+#
+# Why this exists, and why it is a SEPARATE function from `_find_knee` above:
+# `_find_knee`/`auto_ramp_concurrency` locate the peak-throughput concurrency
+# for a per-model benchmark doc — they know nothing about latency. The
+# replica pool (#199) needs a different number: each box's "max active
+# requests" CAPACITY, published so `_replicas.py`/`_selection.py` (owned by
+# sibling tasks t3/t4 of this same plan) can rank replicas by
+# active/capacity instead of a hardcoded weight of 1.0. The spec is explicit
+# that this capacity is a MEASURED THROUGHPUT KNEE — deliberately NOT
+# vLLM's `--max-num-seqs` OOM-safety cap (a number chosen to avoid running
+# out of memory, not to describe useful throughput) and NOT vLLM's
+# KV-cache-derived concurrency ceiling (a number describing how many
+# sequences physically fit, not how many are worth admitting). Conflating
+# either of those with capacity was named as a defect to avoid in the spec's
+# scope-exploration pass (s3/c4).
+#
+# THE RULE: the knee is the highest concurrency level at which aggregate
+# throughput still rises MEANINGFULLY per added slot AND TTFT stays under a
+# declared bound. Two independent guards, both required:
+#
+#   1. Throughput plateau — climbing concurrency stops paying off once each
+#      added slot buys less than `min_relative_gain` additional aggregate
+#      tok/s (relative to the previous level). Past that point more
+#      concurrency just queues work rather than truly parallelizing it.
+#   2. TTFT bound — a level can be throughput-optimal and still be useless
+#      to route work to if time-to-first-token there is unacceptable to a
+#      caller. The TTFT guard exists SPECIFICALLY to prevent picking a
+#      throughput-optimal-but-unusable answer; it is checked at every level,
+#      independent of whether a plateau has been seen yet, so a bound
+#      violation can stop the ramp before any plateau shows up at all.
+#
+# This module deliberately does NOT drive the ramp itself: `calibration_knee`
+# is a PURE function over an already-collected list of samples — no HTTP, no
+# `time.monotonic()`, no engine. It mirrors `lobes/gateway/_selection.py`'s
+# discipline of keeping the decision function pure and unit-testable without
+# a live backend; the network/measurement driver that PRODUCES the samples is
+# explicitly out of scope for this task (the spec's own non-goals: "no
+# calibration logic lands inside the gateway's request path... calibration is
+# a separate read-only CLI verb" — the ramp driver itself is a later task,
+# t9's `lobes calibrate` verb).
+#
+# Deliberately NOT done here: no retry/backoff, no percentile TTFT handling
+# (the caller decides what "the" TTFT of a level means — p50, p95, max — and
+# hands this function one number per level), no persistence, no knowledge of
+# fingerprints or which box a sample came from. Those are gateway/CLI
+# concerns layered on top by other tasks in this plan.
+
+# Default minimum relative throughput gain a level must deliver over the
+# previous one to count as "still rising meaningfully". Matches
+# `auto_ramp_concurrency`'s default `threshold` (10%) for consistency across
+# the two knee-detection paths in this module, but is independently
+# overridable — the two knees answer different questions and an operator may
+# reasonably want a stricter bar for a capacity number that drives routing
+# than for a benchmark doc's headline throughput figure.
+_DEFAULT_MIN_RELATIVE_GAIN = 0.1
+
+# `CalibrationKnee.stopped_by` is a closed, named vocabulary — every reason
+# the ramp could have stopped is spelled out here rather than left as a bare
+# string literal scattered through the function body.
+_STOPPED_BY_EMPTY = "empty"
+_STOPPED_BY_PLATEAU = "plateau"
+_STOPPED_BY_TTFT_BOUND = "ttft_bound"
+_STOPPED_BY_TOP_OF_RAMP = "top_of_ramp"
+
+
+@dataclasses.dataclass(frozen=True)
+class CalibrationKnee:
+    """Result of :func:`calibration_knee` — the chosen capacity and why.
+
+    Attributes:
+        concurrency: The chosen concurrency level. ``0`` means "no admissible
+            level" — every sample's TTFT was already over the bound,
+            including the lowest concurrency tried (see `stopped_by`).
+        plateaued: True only when a genuine throughput plateau was observed
+            (`stopped_by == "plateau"`). False for every other outcome,
+            INCLUDING "the ramp reached its top level and was still rising"
+            — that is a top-of-ramp result, not a plateau, and callers must
+            not treat the two as equivalent (acceptance criterion 2: a
+            never-plateaued ramp must be reported as such, not silently
+            treated as a real knee).
+        stopped_by: One of ``"empty"``, ``"plateau"``, ``"ttft_bound"``, or
+            ``"top_of_ramp"`` — which criterion produced this result.
+        samples: The accepted prefix of samples (sorted ascending by
+            concurrency) that led to this result — the plateau/violating
+            step itself is excluded, mirroring `_find_knee`'s `rows`
+            convention.
+    """
+
+    concurrency: int
+    plateaued: bool
+    stopped_by: str
+    samples: tuple[tuple[int, float, float], ...]
+
+
+def calibration_knee(
+    samples,
+    *,
+    ttft_bound_s: float,
+    min_relative_gain: float = _DEFAULT_MIN_RELATIVE_GAIN,
+) -> CalibrationKnee:
+    """Pure capacity-knee detector: throughput plateau + TTFT guard, no I/O.
+
+    Args:
+        samples: An iterable of ``(concurrency, aggregate_tok_s, ttft_s)``
+            tuples, one per ramp level. Order does not matter — samples are
+            sorted ascending by concurrency before evaluation, so an
+            out-of-order or duplicate-level input still produces a
+            deterministic result. `ttft_s` is whatever single number the
+            caller has already reduced a level's latencies to (e.g. p50 or
+            p95) — this function has no opinion on that reduction.
+        ttft_bound_s: The declared TTFT bound, in seconds. A level is
+            ADMISSIBLE only while its TTFT is ``<= ttft_bound_s`` — exactly
+            at the bound is allowed, only strictly over it trips the guard.
+            There is deliberately no default: this bound is a
+            deployment-specific, operator-declared value (mirrors the
+            spec's "declared bound" language), never a number this function
+            should silently assume.
+        min_relative_gain: Minimum relative throughput gain, computed as
+            ``(curr - prev) / prev`` against the previous ACCEPTED level,
+            required to treat a level as "still rising meaningfully".
+            Defaults to `_DEFAULT_MIN_RELATIVE_GAIN` (10%). A gain exactly
+            equal to this threshold counts as still rising (strict ``<``
+            triggers the plateau, matching `_find_knee`'s convention) —
+            a throughput DIP is treated identically to an insufficient
+            rise (both fail the "rises meaningfully" test); this function
+            does not attempt to distinguish real regression from measurement
+            noise, since a pure function over three-tuples has no way to
+            tell them apart.
+
+    Returns:
+        A :class:`CalibrationKnee`. See its docstring for field meanings.
+
+    Edge cases:
+        * Empty `samples` -> ``concurrency=0``, ``plateaued=False``,
+          ``stopped_by="empty"``.
+        * A single sample cannot demonstrate a plateau (there is nothing to
+          compare it against) — if it is under the bound it is reported as
+          `"top_of_ramp"`, not a plateau.
+        * If even the lowest concurrency tried violates the TTFT bound,
+          there is no admissible level at all: ``concurrency=0``,
+          ``stopped_by="ttft_bound"``, ``samples=()``.
+    """
+    ordered = sorted(samples, key=lambda s: s[0])
+    if not ordered:
+        return CalibrationKnee(
+            concurrency=0, plateaued=False, stopped_by=_STOPPED_BY_EMPTY, samples=()
+        )
+
+    first = ordered[0]
+    if first[2] > ttft_bound_s:
+        # Even the lowest concurrency tried is already unusable — nothing is
+        # admissible, so there is no "last level under the bound" to fall
+        # back to.
+        return CalibrationKnee(
+            concurrency=0, plateaued=False, stopped_by=_STOPPED_BY_TTFT_BOUND, samples=()
+        )
+
+    accepted: list[tuple[int, float, float]] = [first]
+    for sample in ordered[1:]:
+        _concurrency, tok_s, ttft_s = sample
+        if ttft_s > ttft_bound_s:
+            # TTFT crossed the bound before we ever saw a plateau: fall back
+            # to the last level that was still under the bound.
+            return CalibrationKnee(
+                concurrency=accepted[-1][0],
+                plateaued=False,
+                stopped_by=_STOPPED_BY_TTFT_BOUND,
+                samples=tuple(accepted),
+            )
+
+        prev_tok_s = accepted[-1][1]
+        if prev_tok_s == 0:
+            # Degenerate zero-throughput baseline: nothing to divide by, and
+            # nothing meaningful to compare against — skip the gain check
+            # for this step rather than raising.
+            accepted.append(sample)
+            continue
+
+        gain = (tok_s - prev_tok_s) / prev_tok_s
+        if gain < min_relative_gain:
+            return CalibrationKnee(
+                concurrency=accepted[-1][0],
+                plateaued=True,
+                stopped_by=_STOPPED_BY_PLATEAU,
+                samples=tuple(accepted),
+            )
+        accepted.append(sample)
+
+    # Every level either rose meaningfully or was the unconditionally-
+    # accepted first sample, and none crossed the TTFT bound: the ramp never
+    # plateaued. Report the top level tried, explicitly un-plateaued — a
+    # caller (t9's `lobes calibrate`) must be able to tell this apart from a
+    # real knee and refuse to persist it as a measured capacity.
+    return CalibrationKnee(
+        concurrency=accepted[-1][0],
+        plateaued=False,
+        stopped_by=_STOPPED_BY_TOP_OF_RAMP,
+        samples=tuple(accepted),
+    )
 
 
 def render_benchmark(result: dict) -> str:
