@@ -24,7 +24,7 @@ import dataclasses
 import json
 
 from lobes.gateway._config import build_config
-from lobes.gateway._replicas import Fingerprint, ReplicaState
+from lobes.gateway._replicas import UNCALIBRATED_WEIGHT, Fingerprint, ReplicaState
 from lobes.gateway._routing import Backend, RoutingTable
 from lobes.roles import ROLES, annotate_peer_referrals, annotate_replicas, build_role_registry
 
@@ -169,6 +169,26 @@ def test_two_declared_replicas_offline_view() -> None:
     assert fp["runtime"] == "unknown"
 
 
+def test_offline_view_reports_no_capacity_and_uncalibrated_weight() -> None:
+    """t6: an offline (not-probed) row must not GUESS a capacity — it reports
+    ``capacity: None`` (honest, like every other live field on this row) and
+    ``weight`` as the UNCALIBRATED_WEIGHT sentinel, never a measured-looking
+    number the row has no evidence for.
+    """
+    table = _table(
+        replica_origins={"primary": (_THOR_ORIGIN,)},
+        self_origin=_SPARK_ORIGIN,
+    )
+    payload = _base_payload(table)
+    annotate_replicas(payload, table)
+
+    rows = payload["cortex"]["replicas"]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["capacity"] is None
+        assert row["weight"] == UNCALIBRATED_WEIGHT
+
+
 def test_offline_view_self_origin_defaults_to_local() -> None:
     table = _table(replica_origins={"primary": (_THOR_ORIGIN,)})
     payload = _base_payload(table)
@@ -242,6 +262,56 @@ def test_live_snapshot_renders_verbatim() -> None:
 
     # fingerprint at the top level comes from the LOCAL replica's live probe
     assert payload["cortex"]["fingerprint"] == dataclasses.asdict(local_fp)
+
+
+def test_live_snapshot_row_carries_capacity_alongside_weight() -> None:
+    """t6: a clamped peer is exactly the diagnostic case — the row must
+    expose BOTH the raw claimed capacity and the resolved (post-clamp)
+    weight the ranking arithmetic actually used, distinctly.
+    """
+    table = _table(replica_origins={"primary": (_THOR_ORIGIN,)})
+    local_fp = _fingerprint()
+    snapshot = {
+        "cortex": (
+            _state(
+                origin=_SPARK_ORIGIN, local=True, fingerprint=local_fp, weight=2.0, capacity=2.0
+            ),
+            _state(
+                origin=_THOR_ORIGIN,
+                local=False,
+                fingerprint=_fingerprint(),
+                weight=32.0,  # clamped
+                capacity=999.0,  # raw claim, pre-clamp
+                reason="capacity clamped: 999 -> 32",
+            ),
+        )
+    }
+    payload = _base_payload(table)
+    annotate_replicas(payload, table, snapshot=snapshot)
+
+    rows = payload["cortex"]["replicas"]
+    assert rows[0]["weight"] == 2.0
+    assert rows[0]["capacity"] == 2.0
+    assert rows[1]["weight"] == 32.0
+    assert rows[1]["capacity"] == 999.0
+    assert "clamped" in rows[1]["reason"]
+
+
+def test_live_snapshot_row_capacity_none_when_not_published() -> None:
+    table = _table(replica_origins={"primary": (_THOR_ORIGIN,)})
+    snapshot = {
+        "cortex": (
+            _state(origin=_SPARK_ORIGIN, local=True, fingerprint=_fingerprint()),
+            _state(origin=_THOR_ORIGIN, local=False, fingerprint=_fingerprint()),
+        )
+    }
+    payload = _base_payload(table)
+    annotate_replicas(payload, table, snapshot=snapshot)
+
+    rows = payload["cortex"]["replicas"]
+    for row in rows:
+        assert row["capacity"] is None
+        assert row["weight"] == UNCALIBRATED_WEIGHT
 
 
 def test_live_snapshot_incompatible_peer_reports_reason() -> None:
