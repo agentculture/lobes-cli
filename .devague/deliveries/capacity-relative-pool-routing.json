@@ -1,0 +1,27 @@
+{
+  "plan_slug": "capacity-relative-pool-routing",
+  "schema_version": 1,
+  "created": "2026-08-27T14:37:25Z",
+  "updated": "2026-08-27T14:37:25Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "keep t3's candidacy decoupling and ADD receiving-side work: a box must not shed a pooled arrival on a host-level pressure verdict alone. Also accept t3's two renegotiated pool-pressure tests (test_busy_peer_that_is_itself_busy_is_not_forwarded_to, test_both_boxes_busy_sheds_locally_and_never_forwards) as deliberate contract changes under h6.",
+      "task_ref": "t3",
+      "reason": "implementing c5 revealed the fix is one-sided: the receiver still sheds a marked arrival under its own pressure (test_a_marked_arrival_under_local_pressure_gets_the_local_429 still passes) and a peer 4xx is relayed never retried, so a forward to a pressure-busy peer returns the same 429 after a wasted round trip. The deployed Spark scenario - false iowait, idle GPU - would still refuse forwarded work, so success signals c15/c17/c18 are unreachable by candidacy decoupling alone. The /challenge pass swept seven lenses but none followed the request end-to-end to ask whether a newly-selectable peer would actually serve it.",
+      "affects": [
+        "c5",
+        "c7",
+        "h6",
+        "c15",
+        "c17",
+        "c18",
+        "t7",
+        "t10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

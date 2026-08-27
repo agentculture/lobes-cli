@@ -47,6 +47,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The pool no longer treats a host-level pressure verdict as a serving
+  verdict — on either side of a forward.** Sending side (`_selection.py`): a
+  peer's `busy` flag no longer gates pool candidacy at all; a candidate is
+  unselectable when its active count reaches its own capacity. A local shed
+  verdict still excludes the local replica only. `weight == 1.0` is now the
+  *uncalibrated sentinel* rather than a measured one-slot capacity, and an
+  uncalibrated replica ranks at the median of the calibrated capacities in its
+  candidate set — without this, an uncalibrated peer ranked 8x worse than a
+  calibrated weight-8 peer at one active request and mixed-version fleets
+  drained toward whichever boxes happened to be calibrated. Receiving side
+  (`_pressure_policy.py`, `server.py`, deviation `d1`): a **pooled** arrival is
+  no longer shed on iowait alone. A box still sheds on `swap > 75%` (it is
+  paging the very memory holding weights and KV) and on engine saturation
+  (`active >= published capacity` — deliberately the same fact selection gates
+  candidacy on, so a box can never select itself and refuse itself on
+  contradictory evidence). The carve-out is pooled-only: for a single-owner
+  role a 429 is honest backpressure, but for a pooled role it is a lie whenever
+  a replica has room. `decide()` defaults `pooled=False`, so every pre-`d1`
+  call site and every single-box deployment decides byte-identically (`h1`).
+  `mode` still reports the host honestly to `/status` and peer probes; only the
+  shed band narrowed.
+- **`X-Lobes-Route-Reason` vocabulary: membership unchanged, `peer-less-loaded`
+  redefined.** It now means "less loaded *relative to its own capacity*", so a
+  peer with **more** active requests can legitimately win it, and it is now also
+  emitted when the local replica is excluded for being full — a state that
+  previously could only arise from a pressure verdict and reported
+  `local-busy-forwarded`.
+- **Narrows issue #215 without widening it.** In the iowait-only band — exactly
+  where the live Spark sits — `model=cortex` and the raw served id now both
+  serve locally instead of diverging. In the swap / full-engine band the
+  alias-only gate is unchanged, still #215's to fix.
+
 ### Fixed
 
 - **Diagnosed why the cortex replica pool has been running single-box.** The
