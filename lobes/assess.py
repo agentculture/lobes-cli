@@ -1206,13 +1206,35 @@ def run_concurrent(
     }
 
 
+def _relative_gain(prev: float, curr: float) -> float | None:
+    """``(curr - prev) / prev``, or ``None`` for a degenerate zero baseline.
+
+    The one-line plateau-detection arithmetic shared by :func:`_find_knee` and
+    :func:`calibration_knee` (capacity-relative-pool-routing, t2/t9) — both
+    walk a series of throughput measurements and stop once the relative gain
+    between consecutive accepted steps falls below a threshold. The two
+    functions answer genuinely different questions (peak-throughput
+    concurrency for a benchmark doc vs. a THROUGHPUT-PLATEAU-AND-TTFT-BOUND
+    capacity knee for replica-pool routing) over different sample shapes
+    (dict rows keyed by ``"requests_per_s"`` vs. bare ``(concurrency,
+    aggregate_tok_s, ttft_s)`` tuples) and with different edge-case/return
+    contracts, so their surrounding walks are NOT merged into one function —
+    only this shared formula is. ``None`` (rather than raising or returning
+    ``0.0``) signals "nothing meaningful to compare" so a caller can choose to
+    skip the check for that step instead of misreading a zero-baseline
+    division as a real 0% gain.
+    """
+    if prev == 0:
+        return None
+    return (curr - prev) / prev
+
+
 def _find_knee(rows: list[dict], *, threshold: float = 0.1) -> dict:
     """Pure throughput-plateau detector; no network calls.
 
     Walk *rows* (each a dict with ``"concurrency"`` and ``"requests_per_s"``).
-    Stop when the relative gain between consecutive steps falls below *threshold*::
-
-        gain = (rps[i] - rps[i-1]) / rps[i-1]
+    Stop when the relative gain between consecutive steps falls below *threshold*
+    (see :func:`_relative_gain`).
 
     The *knee* is the concurrency of the last step **before** the gain dropped
     (the peak-throughput concurrency).  ``rows`` in the result contains all rows
@@ -1231,11 +1253,9 @@ def _find_knee(rows: list[dict], *, threshold: float = 0.1) -> dict:
         return {"knee": rows[0]["concurrency"], "rows": list(rows)}
 
     for i in range(1, len(rows)):
-        prev_rps = rows[i - 1]["requests_per_s"]
-        curr_rps = rows[i]["requests_per_s"]
-        if prev_rps == 0:
+        gain = _relative_gain(rows[i - 1]["requests_per_s"], rows[i]["requests_per_s"])
+        if gain is None:
             continue  # guard against degenerate data
-        gain = (curr_rps - prev_rps) / prev_rps
         if gain < threshold:
             return {"knee": rows[i - 1]["concurrency"], "rows": rows[:i]}
 
@@ -1462,15 +1482,14 @@ def calibration_knee(
                 samples=tuple(accepted),
             )
 
-        prev_tok_s = accepted[-1][1]
-        if prev_tok_s == 0:
+        gain = _relative_gain(accepted[-1][1], tok_s)
+        if gain is None:
             # Degenerate zero-throughput baseline: nothing to divide by, and
             # nothing meaningful to compare against — skip the gain check
             # for this step rather than raising.
             accepted.append(sample)
             continue
 
-        gain = (tok_s - prev_tok_s) / prev_tok_s
         if gain < min_relative_gain:
             return CalibrationKnee(
                 concurrency=accepted[-1][0],
