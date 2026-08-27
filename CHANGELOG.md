@@ -98,6 +98,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serve locally instead of diverging. In the swap / full-engine band the
   alias-only gate is unchanged, still #215's to fix.
 
+- **`X-Lobes-Route-Load`** — a new response header on pooled answers only,
+  reporting the numbers a routing decision was actually made on:
+  `active=1; capacity=8; utilisation=0.125; calibrated=true`. `calibrated=false`
+  says out loud that the `1.0` sentinel is a neutral substitute rather than a
+  measured one-slot capacity. The `X-Lobes-Route-Reason` vocabulary was
+  deliberately NOT widened again to carry this. A peer's copy is stripped from a
+  relayed answer, and the header is absent entirely from a no-peer deployment
+  (`h1`).
+- **Capacity is published on `/status`** at `backends[].capacity`, so a peer
+  learns it from the probe it already makes. The key is withheld — rather than
+  fabricated as `1.0` — when nothing is declared, when the role is infeasible
+  here, or when the backend is never-proxied: an absent key reads as
+  *uncalibrated* at the peer, whereas a fabricated `1.0` would read as a
+  calibrated one-slot capacity and starve this box.
 - **`lobes calibrate <role>`** — measures a box's serving capacity by ramping
   concurrency and locating the throughput knee, then reports the level, the
   samples behind it, and *whether the ramp plateaued*. Read-only by default;
