@@ -138,10 +138,14 @@ def test_aggregate_audio_ready_200_only_when_both_ready() -> None:
 
 def test_aggregate_audio_ready_503_names_the_not_ready_side() -> None:
     code, body = aggregate_audio_ready(False, True)
-    assert code == 503 and body["status"] == "not_ready" and body["not_ready"] == ["tts"]
+    assert code == 503
+    assert body["status"] == "not_ready"
+    assert body["not_ready"] == ["tts"]
 
     code, body = aggregate_audio_ready(True, False)
-    assert code == 503 and body["not_ready"] == ["stt"]
+    assert code == 503
+    assert body["not_ready"] == ["stt"]
 
     code, body = aggregate_audio_ready(False, False)
-    assert code == 503 and body["not_ready"] == ["tts", "stt"]
+    assert code == 503
+    assert body["not_ready"] == ["tts", "stt"]

@@ -447,7 +447,8 @@ def test_explicit_gateway_aliases_coexist_with_tier_aliases() -> None:
     assert resolve_model(table, "hard") == _DEFAULT_PRIMARY
     assert resolve_model(table, "main") == _DEFAULT_PRIMARY
     # A non-tier custom alias is left untouched (no synonym expansion).
-    assert "fast" in table.aliases and table.aliases["fast"] == _DEFAULT_HAND
+    assert "fast" in table.aliases
+    assert table.aliases["fast"] == _DEFAULT_HAND
 
 
 def test_legacy_keyed_override_expands_to_canonical_synonym() -> None:

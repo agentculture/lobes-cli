@@ -61,7 +61,8 @@ def test_is_audio_path() -> None:
 def test_404_when_no_audio_backend_configured() -> None:
     _, cfg = _cfg()  # AUDIO_URL unset → text-only fleet
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", None)
-    assert resp.status == 404 and resp.upstream is None
+    assert resp.status == 404
+    assert resp.upstream is None
     assert "not configured" in json.loads(resp.body)["error"]["message"]
 
 
@@ -82,12 +83,15 @@ def test_forwards_body_verbatim_without_model_rewrite() -> None:
         opener,
     )
     name, url, path, fwd_body = calls[0]
-    assert name == "audio" and url == "http://realtime:8080"
+    assert name == "audio"
+    assert url == "http://realtime:8080"
     assert path == "/v1/audio/transcriptions"
     assert fwd_body == multipart  # verbatim — never JSON-parsed or model-rewritten
     # Streamed (chunked), not buffered: a large audio body must not be read whole
     # into the gateway's memory.
-    assert resp.status == 200 and resp.streaming is True and resp.upstream is not None
+    assert resp.status == 200
+    assert resp.streaming is True
+    assert resp.upstream is not None
 
 
 def test_no_failover_relays_single_backend_status() -> None:
@@ -98,7 +102,8 @@ def test_no_failover_relays_single_backend_status() -> None:
         return _FakeUpstream(400, b'{"error":1}', [("Content-Type", "application/json")])
 
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener)
-    assert resp.status == 400 and resp.upstream is not None
+    assert resp.status == 400
+    assert resp.upstream is not None
 
 
 def test_502_when_audio_backend_unreachable() -> None:
@@ -108,7 +113,8 @@ def test_502_when_audio_backend_unreachable() -> None:
         raise S.UpstreamError("refused")
 
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener)
-    assert resp.status == 502 and resp.upstream is None
+    assert resp.status == 502
+    assert resp.upstream is None
     assert json.loads(resp.body)["error"]["attempts"] == ["refused"]
 
 
@@ -126,7 +132,8 @@ def test_503_when_audio_backend_warming_not_ready() -> None:
         return _FakeUpstream(200)
 
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=False)
-    assert resp.status == 503 and resp.upstream is None
+    assert resp.status == 503
+    assert resp.upstream is None
     assert not called, "a warming backend must not be dialed"
     assert dict(resp.headers).get("Retry-After") == "5"
     assert "warming" in json.loads(resp.body)["error"]["message"]
@@ -140,7 +147,8 @@ def test_forwards_when_audio_ready_true() -> None:
         return _FakeUpstream(200)
 
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=True)
-    assert resp.status == 200 and resp.upstream is not None
+    assert resp.status == 200
+    assert resp.upstream is not None
 
 
 def test_audio_ready_none_forwards_as_before() -> None:
@@ -152,7 +160,8 @@ def test_audio_ready_none_forwards_as_before() -> None:
         raise S.UpstreamError("refused")
 
     resp = S.handle_audio_post(cfg, "/v1/audio/speech", [], b"{}", opener, audio_ready=None)
-    assert resp.status == 502 and resp.upstream is None
+    assert resp.status == 502
+    assert resp.upstream is None
 
 
 # --- #89: probe_audio_ready tri-state (200 / non-200 / unreachable) --------

@@ -136,7 +136,8 @@ def test_no_audio_env_is_byte_identical_default() -> None:
     # Every pre-#129 deployment: no STT_/TTS_ knob anywhere → both lanes stay
     # feasible (the sleeping-lobe contract), no peer channel, no spec.
     table, _cfg, specs = _build({"PRIMARY_SERVED_NAME": "m"})
-    assert "stt" not in table.infeasible and "tts" not in table.infeasible
+    assert "stt" not in table.infeasible
+    assert "tts" not in table.infeasible
     assert specs == {}
 
 
@@ -333,4 +334,5 @@ def test_v1_models_never_lists_audio_sidecar_ids() -> None:
     }
     payload = list_models_payload(table, {"tts": True}, peer_served)
     ids = {m["id"] for m in payload["data"]}
-    assert _TTS_MODEL not in ids and _STT_MODEL not in ids
+    assert _TTS_MODEL not in ids
+    assert _STT_MODEL not in ids

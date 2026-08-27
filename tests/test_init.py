@@ -515,7 +515,8 @@ def test_init_audio_incompatible_with_single(capsys) -> None:
     )  # nosec B108 - never written (errors first)
     assert rc == 1  # EXIT_USER_ERROR
     err = capsys.readouterr().err
-    assert "--audio" in err and "--single" in err
+    assert "--audio" in err
+    assert "--single" in err
 
 
 def test_init_fleet_audio_apply_writes_overlay_and_appends_env(tmp_path) -> None:
@@ -547,7 +548,8 @@ def test_init_fleet_audio_dry_run_json_lists_overlay(tmp_path, capsys) -> None:
     rc = main(["init", "--fleet", "--audio", str(target), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["fleet"] is True and payload["audio"] is True
+    assert payload["fleet"] is True
+    assert payload["audio"] is True
     names = {f["name"] for f in payload["files"]}
     # The dry-run JSON must list EVERY audio overlay file (derive from the source
     # map so a dropped/added template can't silently slip past this assertion).

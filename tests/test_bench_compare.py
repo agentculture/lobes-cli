@@ -87,7 +87,7 @@ class _LLMHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-@pytest.fixture()
+@pytest.fixture
 def llm_server():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _LLMHandler)
     port = server.server_address[1]

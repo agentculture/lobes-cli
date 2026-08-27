@@ -545,8 +545,12 @@ def test_fleet_compose_multimodal_forces_triton_attention() -> None:
     attention (global_head_dim 512 ≠ head_dim 256) needs it (#71)."""
     block = _service_block(_fleet_compose_text(), "vllm-multimodal")
     assert (
-        "VLLM_ATTENTION_BACKEND" in block and "TRITON_ATTN" in block
-    ), "vllm-multimodal must set VLLM_ATTENTION_BACKEND=TRITON_ATTN for Gemma4 non-square attention"
+        "VLLM_ATTENTION_BACKEND" in block
+    ), "vllm-multimodal must set VLLM_ATTENTION_BACKEND for Gemma4 non-square attention"
+    assert "TRITON_ATTN" in block, (
+        "vllm-multimodal must set VLLM_ATTENTION_BACKEND=TRITON_ATTN for Gemma4 "
+        "non-square attention"
+    )
 
 
 def test_fleet_compose_middle_is_behind_profile() -> None:

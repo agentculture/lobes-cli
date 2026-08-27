@@ -226,11 +226,13 @@ def test_the_full_turn_walks_listening_transcribing_responding_speaking_listenin
 
     assert floor.on_reply_text("general kenobi") is True
     assert floor.state is FloorState.SPEAKING
-    assert floor.synthesizing is True and floor.delivering is False
+    assert floor.synthesizing is True
+    assert floor.delivering is False
 
     assert floor.on_audio_ready(pcm(CHUNK * 3)) is True
     assert floor.state is FloorState.SPEAKING
-    assert floor.synthesizing is False and floor.delivering is True
+    assert floor.synthesizing is False
+    assert floor.delivering is True
 
     assert [floor.deliver_next() for _ in range(3)] == [True, True, True]
     assert floor.deliver_next() is False  # nothing left to send
@@ -240,7 +242,8 @@ def test_the_full_turn_walks_listening_transcribing_responding_speaking_listenin
     assert [type(e) for e in rec.events] == [ResponseStarted, ReplyText, ResponseDone]
     done = rec.of_type(ResponseDone)[0]
     assert (done.audio_ms, done.audio_bytes, done.chunks) == (CHUNK_MS * 3, CHUNK * 3, 3)
-    assert rec.cancelled_generate == 0 and rec.cancelled_tts == 0
+    assert rec.cancelled_generate == 0
+    assert rec.cancelled_tts == 0
 
 
 def test_the_last_chunk_is_the_short_remainder_and_chunking_is_sample_aligned() -> None:
@@ -398,7 +401,8 @@ def test_speech_onset_while_listening_is_not_an_interruption() -> None:
     assert floor.on_speech_started() is False
     assert floor.state is FloorState.LISTENING
     assert rec.events == []
-    assert rec.cancelled_generate == 0 and rec.cancelled_tts == 0
+    assert rec.cancelled_generate == 0
+    assert rec.cancelled_tts == 0
 
 
 def test_repeated_onsets_emit_exactly_one_interruption_event() -> None:
@@ -410,7 +414,8 @@ def test_repeated_onsets_emit_exactly_one_interruption_event() -> None:
         assert floor.on_speech_started() is False  # already the user's floor
 
     assert len(rec.of_type(ResponseInterrupted)) == 1
-    assert rec.cancelled_generate == 1 and rec.cancelled_tts == 1
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
 
 
 # --- interrupt mid-delivery: the undelivered remainder --------------------
@@ -503,7 +508,8 @@ def test_an_onset_inside_the_barge_in_window_is_not_honoured(position: str) -> N
     assert floor.on_speech_started() is False
     assert floor.state is not FloorState.LISTENING  # the machine kept the floor
     assert rec.of_type(ResponseInterrupted) == []
-    assert rec.cancelled_generate == 0 and rec.cancelled_tts == 0
+    assert rec.cancelled_generate == 0
+    assert rec.cancelled_tts == 0
 
 
 def test_the_window_is_measured_from_the_moment_the_floor_was_taken() -> None:
@@ -567,7 +573,8 @@ def test_each_stage_returns_the_floor_to_listening_on_expiry(
     assert failed.reason is reason
     assert str(bound) in failed.message  # the bound it actually exceeded
     # A wedged backend must not keep running behind a floor that moved on.
-    assert rec.cancelled_generate == 1 and rec.cancelled_tts == 1
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
 
 
 @pytest.mark.parametrize("position,knob,stage,reason", TIMEOUT_CASES)
@@ -615,7 +622,8 @@ def test_a_named_backend_failure_returns_the_floor_like_a_timeout(
     failed = rec.of_type(ResponseFailed)[0]
     assert failed.reason is reason
     assert failed.message == "backend said no"
-    assert rec.cancelled_generate == 1 and rec.cancelled_tts == 1
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
 
 
 def test_a_failure_carrying_a_stale_turn_id_is_ignored() -> None:
@@ -711,7 +719,8 @@ def test_close_is_safe_from_every_state(position: str) -> None:
     if position != "listening":
         # Whatever was in flight is cancelled — a torn-down session must not
         # leave a generate or a synthesis running.
-        assert rec.cancelled_generate == 1 and rec.cancelled_tts == 1
+        assert rec.cancelled_generate == 1
+        assert rec.cancelled_tts == 1
     assert rec.of_type(ResponseInterrupted) == []  # the session layer owns close events
 
 
@@ -720,7 +729,8 @@ def test_close_is_idempotent_and_later_inputs_are_inert() -> None:
     drive_to(floor, clock, "delivering")
     floor.close()
     floor.close()  # a watchdog tick racing teardown must not double-cancel
-    assert rec.cancelled_generate == 1 and rec.cancelled_tts == 1
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
 
     before = len(rec.events)
     assert floor.on_speech_started() is False
@@ -771,8 +781,10 @@ def test_estimate_spoken_prefix_cuts_proportionally_on_a_word_boundary() -> None
     assert estimate_spoken_prefix(text, 1_000, 1_000) == text
     assert estimate_spoken_prefix(text, 2_000, 1_000) == text  # never past the end
     half = estimate_spoken_prefix(text, 500, 1_000)
-    assert text.startswith(half) and 0 < len(half) < len(text)
-    assert not half.endswith(" ") and " " in half  # cut at a word boundary
+    assert text.startswith(half)
+    assert 0 < len(half) < len(text)
+    assert not half.endswith(" ")
+    assert " " in half
 
 
 def test_estimate_spoken_prefix_handles_a_zero_length_reply() -> None:

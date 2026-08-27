@@ -21,7 +21,8 @@ def test_id_generators_carry_their_prefix_and_are_unique() -> None:
     }
     for prefix, gen in cases.items():
         a, b = gen(), gen()
-        assert a.startswith(prefix) and b.startswith(prefix)
+        assert a.startswith(prefix)
+        assert b.startswith(prefix)
         assert a != b  # uuid4-backed → distinct per call
         # 24 hex chars after the prefix
         assert len(a) == len(prefix) + 24
@@ -30,7 +31,8 @@ def test_id_generators_carry_their_prefix_and_are_unique() -> None:
 def test_timestamp_ms_is_monotonic_non_negative_int() -> None:
     t1 = P.timestamp_ms()
     t2 = P.timestamp_ms()
-    assert isinstance(t1, int) and t1 >= 0
+    assert isinstance(t1, int)
+    assert t1 >= 0
     assert t2 >= t1  # time.monotonic never goes backwards
 
 
@@ -43,13 +45,15 @@ def test_audio_constants_match_the_backends() -> None:
     assert P.STT_SAMPLE_RATE == 16000  # Parakeet input
     assert P.VAD_SAMPLE_RATE == 16000
     assert P.BYTES_PER_SAMPLE == 2
-    assert P.VAD_CHUNK_SAMPLES == 512 and P.VAD_CHUNK_MS == 32
+    assert P.VAD_CHUNK_SAMPLES == 512
+    assert P.VAD_CHUNK_MS == 32
 
 
 def test_enums_expose_the_expected_members() -> None:
     assert P.AudioFormat.PCM16.value == "pcm16"
     assert P.TurnDetectionType.SERVER_VAD.value == "server_vad"
-    assert P.AECMode.NONE.value == "none" and P.AECMode.AEC.value == "aec"
+    assert P.AECMode.NONE.value == "none"
+    assert P.AECMode.AEC.value == "aec"
 
 
 # --- Chatterbox voice resolution ------------------------------------------
