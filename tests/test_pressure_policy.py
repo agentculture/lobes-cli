@@ -411,7 +411,17 @@ class TestReturnShape:
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_required_keys_present(self, tier: str):
         r = decide(swap_used_percent=20.0, iowait_percent=10.0, requested_tier=tier)
-        assert set(r) == {"mode", "shed", "reason", "servable_tier", "requested_tier"}
+        # `shed_signal` is ADDITIVE (deviation d1): it names which signal
+        # justified a shed, so the line between "genuine exhaustion" and "a
+        # host-level reading" is auditable from the decision itself.
+        assert set(r) == {
+            "mode",
+            "shed",
+            "reason",
+            "servable_tier",
+            "requested_tier",
+            "shed_signal",
+        }
 
     @pytest.mark.parametrize("tier", _ALL_TIERS)
     def test_mode_values_valid(self, tier: str):
@@ -540,3 +550,92 @@ class TestEnvFloatNonFinite:
         """Key not in env → default returned (existing behaviour, not broken)."""
         monkeypatch.delenv("LOBES_TEST_THRESHOLD", raising=False)
         assert _env_float("LOBES_TEST_THRESHOLD", 99.0) == 99.0
+
+
+# ---------------------------------------------------------------------------
+# 10. Deviation d1 — the pooled carve-out and the engine-state gate
+# ---------------------------------------------------------------------------
+
+
+class TestPooledCarveOut:
+    """A POOLED request is not shed on a host-level verdict alone.
+
+    The split, and why it lands where it does:
+
+    * ``swap`` over threshold is first-party evidence the box is PAGING —
+      weights and KV live in the memory being paged — so it still sheds
+      whether the role is pooled or not.
+    * the ENGINE at capacity is the direct serving signal, and sheds too.
+    * ``iowait`` over threshold is a whole-host CPU-time statistic charged for
+      any process's block wait, including cgroups entirely outside docker. It
+      still reports ``mode: busy`` (an honest observation about the host) but
+      it no longer sheds a POOLED request on its own.
+
+    Unpooled behaviour is untouched: with ``pooled=False`` (the default, and
+    every pre-d1 call site) every row below decides exactly as it did before.
+    """
+
+    def test_iowait_alone_does_not_shed_a_pooled_request(self):
+        r = decide(0.0, 90.0, "main", pooled=True)
+        assert r["shed"] is False
+        assert r["shed_signal"] == ""
+        assert r["servable_tier"] == "main"
+        # The host observation is still published honestly.
+        assert r["mode"] == "busy"
+        assert r["reason"] == "default"
+
+    def test_iowait_alone_still_sheds_an_unpooled_request(self):
+        r = decide(0.0, 90.0, "main")
+        assert r["shed"] is True
+        assert r["shed_signal"] == "iowait"
+        assert r["servable_tier"] == "hand"
+
+    def test_swap_thrash_sheds_a_pooled_request(self):
+        r = decide(90.0, 0.0, "main", pooled=True)
+        assert r["shed"] is True
+        assert r["shed_signal"] == "swap"
+        assert r["reason"] == "pressure"
+
+    def test_a_full_engine_sheds_a_pooled_request(self):
+        r = decide(0.0, 90.0, "main", pooled=True, engine_active=4, engine_capacity=4)
+        assert r["shed"] is True
+        assert r["shed_signal"] == "engine"
+
+    def test_an_engine_with_headroom_does_not_shed(self):
+        r = decide(0.0, 90.0, "main", pooled=True, engine_active=3, engine_capacity=4)
+        assert r["shed"] is False
+
+    def test_an_unpublished_capacity_never_saturates(self):
+        # h3: "no capacity published" must never read as "capacity of zero".
+        r = decide(0.0, 90.0, "main", pooled=True, engine_active=99, engine_capacity=None)
+        assert r["shed"] is False
+
+    def test_a_non_positive_capacity_is_not_a_capacity(self):
+        for capacity in (0.0, -4.0):
+            r = decide(0.0, 90.0, "main", pooled=True, engine_active=1, engine_capacity=capacity)
+            assert r["shed"] is False
+
+    def test_a_non_finite_capacity_is_not_a_capacity(self):
+        r = decide(0.0, 90.0, "main", pooled=True, engine_active=1, engine_capacity=float("nan"))
+        assert r["shed"] is False
+
+    def test_swap_outranks_the_engine_signal_in_reporting(self):
+        r = decide(90.0, 90.0, "main", pooled=True, engine_active=4, engine_capacity=4)
+        assert r["shed_signal"] == "swap"
+
+    def test_the_floor_is_never_shed_by_any_signal(self):
+        for kwargs in (
+            {"pooled": True},
+            {"pooled": False},
+            {"pooled": True, "engine_active": 8, "engine_capacity": 4},
+        ):
+            r = decide(90.0, 90.0, "hand", **kwargs)
+            assert r["shed"] is False
+            assert r["shed_signal"] == ""
+
+    def test_no_pressure_at_all_is_unchanged_by_the_new_arguments(self):
+        plain = decide(0.0, 0.0, "main")
+        pooled = decide(0.0, 0.0, "main", pooled=True, engine_active=0, engine_capacity=4)
+        assert plain == pooled
+        assert plain["mode"] == "warm"
+        assert plain["shed"] is False

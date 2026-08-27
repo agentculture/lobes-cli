@@ -20,8 +20,9 @@ Return keys from :func:`decide`:
     mode: "warm" | "busy"          — box-level pressure state
     shed: bool                       — True → shed this request (429)
     reason: "pressure" | "default"  — "pressure" when shed, else "default"
-    servable_tier: str               — "minor" under pressure, else normalized tier
+    servable_tier: str               — the floor when shedding, else normalized tier
     requested_tier: str              — normalize_tier(requested_tier)
+    shed_signal: str                 — "swap" | "engine" | "iowait" | "" (d1)
 
 Tier vocabulary (main / minor / multimodal / worker / muse)
 -------------------------------------------------------------
@@ -44,21 +45,70 @@ Back-compat input tiers (``cheap`` / ``normal`` / ``hard``) are still accepted
 and normalize to the new vocabulary on output (``cheap``→``minor``,
 ``normal``→``multimodal``, ``hard``→``main``).
 
-Decision rules (#68/#69)
--------------------------
+Decision rules (#68/#69, amended by deviation ``d1`` of
+docs/plans/2026-08-27-capacity-relative-pool-routing.md)
+-------------------------------------------------------
 Comparisons are **strictly greater than** (``>``); a value *exactly equal* to a
-threshold does NOT trigger the busy band.  Two pressure signals gate the policy:
+threshold does NOT trigger the busy band.
 
-+----------------------------------------+------+-------------------+
-| Condition                              | mode | shed (non-minor)  |
-+========================================+======+===================+
-| swap > 75 %  OR  iowait > 50 %         | busy | True (429)        |
-+----------------------------------------+------+-------------------+
-| otherwise                              | warm | False             |
-+----------------------------------------+------+-------------------+
+``mode`` is UNCHANGED — it is this box's honest report of what the host looks
+like, and it is what ``/status``, ``lobes status --pressure`` and every peer
+probe read:
 
-Under ``warm`` the full tier is granted as requested.  Under ``busy`` every
-non-minor request is shed (429); ``minor`` is the floor and is always served.
++----------------------------------------+------+
+| Condition                              | mode |
++========================================+======+
+| swap > 75 %  OR  iowait > 50 %         | busy |
++----------------------------------------+------+
+| otherwise                              | warm |
++----------------------------------------+------+
+
+``shed`` is where ``d1`` moved the line.  Reporting a busy HOST and refusing to
+SERVE are different claims, and only some signals support the second one:
+
++--------------------------------+---------------------+---------------------+
+| Signal                         | unpooled role       | pooled role         |
++================================+=====================+=====================+
+| swap > 75 %                    | shed (``"swap"``)   | shed (``"swap"``)   |
++--------------------------------+---------------------+---------------------+
+| engine_active >= capacity      | shed (``"engine"``) | shed (``"engine"``) |
++--------------------------------+---------------------+---------------------+
+| iowait > 50 % (alone)          | shed (``"iowait"``) | **served**          |
++--------------------------------+---------------------+---------------------+
+
+Where that line sits, and why:
+
+* **swap** is first-party evidence the box is PAGING.  A serving box holds its
+  weights and KV cache in the memory being paged, so a thrashing box serves at
+  a fraction of its rate and taking on more work cannot rescue it.  Verifiable
+  exhaustion — it still sheds, pooled or not.
+* **the engine at capacity** is the DIRECT signal: the serving lane itself is
+  full.  It is the same ``active >= capacity`` fact
+  :func:`lobes.gateway._selection.is_full` gates pool candidacy on, so a box
+  cannot select itself and refuse itself on contradictory evidence.  An
+  UNPUBLISHED capacity (``None``, non-positive, non-finite) is never read as a
+  capacity of zero — an uncalibrated box is never "full".
+* **iowait** is a whole-host CPU-time statistic charged for *any* process's
+  block wait.  Measured live 2026-08-27: a DGX Spark reading ~60 % iowait
+  across five samples while its engine reported ``running=0``, traced to one
+  sleeping desktop terminal in ``user.slice`` — outside the docker/vLLM
+  cgroups entirely, with an EMPTY ``io.stat``.  The *sampler* is correct
+  (:mod:`lobes.runtime._pressure` is deliberately untouched by ``d1``); the
+  ROUTING INFERENCE from it was wrong.  It is not evidence about serving
+  capacity, so on its own it no longer refuses POOLED work.
+
+The carve-out is **pooled-only**, deliberately.  For a single-owner role a 429
+is honest backpressure — there genuinely is nowhere else for the request to go
+— and every deployment with no ``*_PEER_ORIGINS`` declared therefore decides
+exactly as it did before ``d1``.  For a pooled role the same 429 is a lie
+whenever a replica has room, and the round trip that produced it (box A
+forwards, box B refuses on its own iowait reading, the 429 relays back) cost
+the caller a hop to arrive at the same refusal.
+
+Under ``warm`` the full tier is granted as requested.  When a request IS shed,
+``shed_signal`` names which of the three signals justified it, so the line is
+auditable from the decision rather than re-derived from thresholds; ``minor``
+(the ``hand`` floor) is never shed by any of them.
 
 Retained-but-advisory thresholds
 ---------------------------------
@@ -198,8 +248,57 @@ BUSY_RETRY_AFTER_SECONDS: int = 5
 
 
 # ---------------------------------------------------------------------------
+# Shed signals (deviation d1) — WHICH fact justified refusing to serve
+# ---------------------------------------------------------------------------
+#
+# Named rather than spelled inline so the "genuine exhaustion" line is one
+# vocabulary a reader (or a trace, once t5 surfaces it) can check against the
+# table in the module docstring.
+
+#: The box is paging — verifiable resource exhaustion. Sheds any non-floor tier.
+SHED_SIGNAL_SWAP = "swap"
+
+#: The serving lane itself is at its calibrated capacity. The direct signal.
+SHED_SIGNAL_ENGINE = "engine"
+
+#: Host iowait alone. Sheds an UNPOOLED request only; see the module docstring.
+SHED_SIGNAL_IOWAIT = "iowait"
+
+#: Nothing justified a shed.
+SHED_SIGNAL_NONE = ""
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
+
+
+def _engine_saturated(
+    engine_active: float | None,
+    engine_capacity: float | None,
+) -> bool:
+    """True when the serving lane has REACHED its own published capacity.
+
+    Mirrors :func:`lobes.gateway._selection.is_full` so the gate that keeps a
+    replica out of the pool and the gate that makes a box refuse a request
+    cannot disagree. Anything that is not a usable positive finite capacity —
+    ``None``, zero, negative, ``nan``/``inf``, an unparseable value — means "no
+    capacity published for this box" and is NEVER read as a capacity of zero:
+    an uncalibrated box must not start refusing work the moment it has one
+    request in flight (h3).
+    """
+    if engine_active is None or engine_capacity is None:
+        return False
+    try:
+        active = float(engine_active)
+        capacity = float(engine_capacity)
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(active) and math.isfinite(capacity)):
+        return False
+    if capacity <= 0:
+        return False
+    return active >= capacity
 
 
 def normalize_tier(tier: str) -> str:
@@ -231,6 +330,10 @@ def decide(
     swap_used_percent: float,
     iowait_percent: float,
     requested_tier: str,
+    *,
+    pooled: bool = False,
+    engine_active: float | None = None,
+    engine_capacity: float | None = None,
 ) -> dict:
     """Map system pressure + a requested tier to a busy/shed routing decision.
 
@@ -245,10 +348,23 @@ def decide(
         The capability tier the caller asked for.  One of the new-vocabulary
         tiers (``"main"`` / ``"minor"`` / ``"multimodal"`` / ``"muse"``) or a
         back-compat alias (``"cheap"`` / ``"normal"`` / ``"hard"``).
+    pooled:
+        ``True`` when this role has replicas on other boxes AND a live snapshot
+        of them (deviation ``d1``).  A pooled request is not shed on host
+        ``iowait`` alone — see the module docstring's table.  Defaults to
+        ``False``, which is every pre-``d1`` call site and every single-box
+        deployment, and decides exactly as before.
+    engine_active:
+        This box's current active request count for the role
+        (``running + waiting``), or ``None`` when unknown.
+    engine_capacity:
+        This box's published capacity for the role (its calibrated max active
+        requests), or ``None`` when nothing has been published.  ``None`` /
+        non-positive / non-finite all mean "uncalibrated" and never saturate.
 
     Returns
     -------
-    dict with five keys (tiers are always emitted in the new vocabulary):
+    dict with six keys (tiers are always emitted in the new vocabulary):
 
     ``mode``
         ``"warm"`` under normal operation; ``"busy"`` when
@@ -265,6 +381,10 @@ def decide(
         normalized requested tier.
     ``requested_tier``
         The normalized tier name for the input *requested_tier*.
+    ``shed_signal``
+        Which fact justified the shed: ``"swap"`` (paging), ``"engine"`` (the
+        serving lane is at capacity), ``"iowait"`` (host iowait, unpooled roles
+        only), or ``""`` when nothing was shed.  Additive in ``d1``.
 
     Raises
     ------
@@ -279,17 +399,36 @@ def decide(
     """
     normalized = normalize_tier(requested_tier)  # validates + maps to new vocab
 
-    under_pressure = (
-        swap_used_percent > SWAP_DEGRADED_THRESHOLD or iowait_percent > IOWAIT_DEGRADED_THRESHOLD
-    )
+    swap_thrash = swap_used_percent > SWAP_DEGRADED_THRESHOLD
+    iowait_high = iowait_percent > IOWAIT_DEGRADED_THRESHOLD
+
+    # `mode` is UNCHANGED by d1: it reports the HOST, and both signals are
+    # honest observations of it. Only the shed band below narrowed.
+    under_pressure = swap_thrash or iowait_high
     mode = "busy" if under_pressure else "warm"
+
+    # The shed band, most-authoritative signal first (the order is also the
+    # reporting priority, so a paging box says "swap" even when its engine is
+    # full too — the more fundamental fact is the one worth naming).
+    if swap_thrash:
+        signal = SHED_SIGNAL_SWAP
+    elif _engine_saturated(engine_active, engine_capacity):
+        signal = SHED_SIGNAL_ENGINE
+    elif iowait_high and not pooled:
+        # d1: host iowait alone refuses only where a 429 is honest — a role
+        # with nowhere else to go. See the module docstring.
+        signal = SHED_SIGNAL_IOWAIT
+    else:
+        signal = SHED_SIGNAL_NONE
+
+    exhausted = signal != SHED_SIGNAL_NONE
 
     # `hand` is the floor: never shed even under pressure. A `minor`/`cheap`
     # request normalizes to `hand` above, so the back-compat spellings keep the
     # floor's protection unchanged.
-    shed = under_pressure and normalized != _FLOOR_TIER
+    shed = exhausted and normalized != _FLOOR_TIER
     reason = "pressure" if shed else "default"
-    servable_tier = _FLOOR_TIER if under_pressure else normalized
+    servable_tier = _FLOOR_TIER if exhausted else normalized
 
     return {
         "mode": mode,
@@ -297,4 +436,5 @@ def decide(
         "reason": reason,
         "servable_tier": servable_tier,
         "requested_tier": normalized,
+        "shed_signal": signal if shed else SHED_SIGNAL_NONE,
     }
