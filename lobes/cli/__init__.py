@@ -77,6 +77,7 @@ def _detect_prog() -> str:
 def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import assess as _assess_cmd
     from lobes.cli._commands import benchmark as _benchmark_cmd
+    from lobes.cli._commands import calibrate as _calibrate_cmd
     from lobes.cli._commands import capabilities as _capabilities_cmd
     from lobes.cli._commands import cli as _cli_group
     from lobes.cli._commands import doctor as _doctor_cmd
@@ -118,6 +119,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _status_cmd.register(sub)
     _assess_cmd.register(sub)
     _benchmark_cmd.register(sub)
+    # Replica-pool capacity calibration (issue #199, t9): a read-only ramp by
+    # default; --apply writes the measured knee to .env as <PREFIX>_MAX_ACTIVE.
+    _calibrate_cmd.register(sub)
     _init_cmd.register(sub)
     _fleet_cmd.register(sub)
     # Role-based serving (#81, t7): `lobes up <role>` toggles ONE Colleague role's
