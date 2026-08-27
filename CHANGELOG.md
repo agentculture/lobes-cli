@@ -4,6 +4,62 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0] - 2026-08-27
+
+### Added
+
+- **`docs/image-ledger.md` — one index for every container image the fleet
+  pins.** Digest, engine + version, the machine and arch it was validated on,
+  the model(s) it serves, its build recipe, and the evidence transcript that
+  validated it. Provenance was previously scattered across 10 image pins in
+  `lobes/templates/fleet/docker-compose.yml`, 18 further digest mentions in
+  `docs/*.md`, and 5 `Dockerfile.*` templates, with no index tying them
+  together. Failed and superseded recipes keep their rows; a row with no
+  evidence link is marked UNVALIDATED (#108).
+- **`docs/experiments/` — a home for checkpoints and engines we evaluated and
+  did not put into service.** Its `README.md` defines the contract: an
+  experiment doc answers what it is, why we wanted it, and why it is not
+  running, and it cites `docs/<model>.md` / `docs/evidence/` / `docs/specs/` /
+  `docs/image-ledger.md` rather than replacing them. #108 applies here more
+  sharply than elsewhere, because these files describe things that were never
+  served. Deliberately narrow: a `docs/models/` reorg would change
+  `lobes/catalog.py`'s `doc=` contract and sweep 456 references, and is its own
+  change.
+- **`docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md` — what Qwen3.8-Flash-Next
+  is, why each engine was considered, and why neither happened yet.** Names the
+  checkpoint the way the sibling per-model docs do, so it sits next to
+  `docs/qwen3.8-27b-gguf-llamacpp.md` and is findable by model name. Records
+  that **nothing native fits** a 122 GiB board (BF16 335.28 GiB, official FP8
+  172.78 GiB, RadixArk NVFP4 135 GB — the ~35 GB PLE table is the floor), the
+  ~25x prefill / ~36x TTFT penalty that argued against llama.cpp, and the four
+  stacked unknowns that stalled vLLM. **Status: NOT SERVED**, deferred
+  2026-08-27 (#108 — no box has booted it, no transcript exists).
+- **`docs/specs/2026-08-27-qwen3-8-flash-next-gguf-candidate.md`** — the
+  converged, challenged spec for serving Qwen3.8-Flash-Next (125B MoE, 6B
+  active) from an Unsloth Dynamic GGUF through the llama.cpp lane on the Thor.
+- **`docs/specs/2026-08-27-flash-next-on-vllm.md`** — the converged, challenged
+  spec for the vLLM route: a fleet nightly move with a cortex before/after
+  benchmark, then the same GGUF through `vllm-gguf-plugin`. **Execution is
+  deferred, not abandoned** — the ledger's "Deferred" section records both
+  recipes and every blocker found, so resuming needs no re-derivation.
+
+### Changed
+
+### Fixed
+
+- **Recorded the fleet's actual vLLM version.** `docs/lfm2.5-1.2b-hand.md` and
+  `docs/qwen3-reranker-0.6b.md` describe the shared pin as `0.23.1rc1.dev672`,
+  which is the **superseded** digest `sha256:7c5a10e9…`. The shipped pin
+  `sha256:8bd082c2…` has been `0.26.1rc1.dev942+g5a4c8d992` since the
+  qwen3.8-cortex-upgrade (`docs/vllm-nightly-migration.md:424`). The ledger
+  records the live value and flags both stale references; the per-model docs
+  are left untouched in this docs-only change.
+- **The shared nightly digest drives SEVEN services, not four or six**
+  (Qodo review, PR #218). `vllm-embed-deep` was dropped from two successive
+  counts of the same list. The ledger now enumerates the services rather than
+  stating a number: `vllm-primary`, `vllm-embed`, `vllm-embed-deep`,
+  `vllm-rerank`, `vllm-hand`, `vllm-worker`, `vllm-associate`.
+
 ## [0.65.1] - 2026-08-26
 
 ### Fixed

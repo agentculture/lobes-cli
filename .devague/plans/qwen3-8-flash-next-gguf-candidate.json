@@ -1,0 +1,377 @@
+{
+  "slug": "qwen3-8-flash-next-gguf-candidate",
+  "title": "qwen3.8-flash-next gguf candidate",
+  "frame_slug": "qwen3-8-flash-next-gguf-candidate",
+  "schema_version": 4,
+  "status": "drafting",
+  "created": "2026-08-27T06:02:30Z",
+  "updated": "2026-08-27T06:02:30Z",
+  "targets": [
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the gear lands as a THIRD engine=ENGINE_LLAMA_CPP entry in lobes/catalog.py with role_hint='candidate' and status='configured' \u2014 never role_hint='primary', which is single-occupancy and pinned by tests/test_catalog.py::test_qwen38_is_the_only_primary_gear",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "tests/goldens/switch-plans.txt regenerates with exactly one added block and no other diff, and test_catalog.py's doc-exists + serves_with_vllm assertions pass unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "the lane must accept a MULTI-SHARD GGUF: UD-Q3_K_XL ships as Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-0000N.gguf, whereas the compose lane's '-m /models/${LLAMACPP_GGUF}' default assumes ONE file (Qwen3.8-27B-UD-Q4_K_M.gguf, 15.33 GiB)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "llama-server loads all shards when -m points at part 00001 inside the read-only /models mount -- verified in the boot log's tensor count, not assumed from llama.cpp docs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "UD-Q3_K_XL needs ~90 GB resident (Unsloth: 90 GB file, 90 GB RAM, 96 GB recommended). Only a 128 GB unified box qualifies: this Thor reports 122 GiB total with 85 GiB already used by the running vLLM cortex and 37 GiB available, so the fleet's heavy lobes MUST come down before the GGUF loads -- this is not a co-residency test.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "free/tegrastats confirms >= 90 GiB actually reclaimed after the down, before any download is committed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "the Jetson AGX Orin 64 GB is OUT: 90 GB does not fit in 61.3 GiB of unified memory with zero swap, and even UD-IQ1_S (72.5 GB) exceeds the board. The candidate hosts are the 128 GB boxes only -- this Thor (sm_110) or the DGX Spark GB10 (sm_121).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the Orin exclusion is arithmetic from its own measured 61.3 GiB / zero-swap figure in orin-cortex.toml, not a guess -- and no orin profile, shape or golden is touched by this work",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "the vendor comparison -- '125B MoE outperforms Claude-Opus-4.6 (Max)' -- is marketing, not evidence, and may not appear as a claim in any doc, catalog comment, or lobes capabilities output. Under #108 nothing is VALIDATED without a docs/evidence/ transcript from a physical box, and this repo's own precedent (NVIDIA's '89 tok/s on Jetson AGX Orin', where three defects were found in the published recipes) is that vendor aggregates are deliberately NOT used as comparators.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "a grep of the final diff for 'Opus', 'outperform' and 'beats' returns nothing outside a quoted provenance note",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "the test succeeds if a docs/evidence/ transcript records, from a physical box: the exact PR commit sha and build recipe, the resident footprint and largest working -c, a passing known-answer probe, the reasoning-trace response shape (reasoning_content vs leaked-into-content), tool-calling pass/fail, and single-stream decode + prefill tok/s WITH the power mode stated.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "the transcript is reproducible from its own contents: the sha, build flags, .env values and probe commands are all present verbatim, so a second operator could re-run it without asking questions",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "the reclaim is GPU-side, and only 'free'/tegrastats sees it: docker stats reports the three model-gear vLLM containers at ~16 GiB combined RSS while 'free -g' reports 85 GiB used -- the difference is the unified-memory GPU allocation (PRIMARY_GPU_MEM_UTIL=0.58 of 122.8 GiB ~= 71 GiB) which never appears in a container cgroup on Tegra. Verify the ~90 GiB is actually free with free/tegrastats after the down, never with docker stats.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the post-down free/tegrastats reading is pasted into the transcript, so the reclaim is evidenced rather than asserted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "the DGX Spark is out of scope: this is a Thor-only test (operator decision, q1). The Spark keeps serving cortex throughout, so the mesh retains a cortex while this box is down -- but the cortex REPLICA POOL is degraded to single-owner for the window, and that degradation is accepted, not solved here.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "the Spark answers a cortex request throughout the window, checked at least once while this box is down",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "audience",
+      "text": "the lobes operator running the fleet on the Jetson AGX Thor, and the mesh callers who would later address this gear by explicit model id (never by tier alias, since it lands as a candidate)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "no tier alias (main/hard/cortex/normal/minor/cheap) resolves to this gear -- proven by tests/test_catalog_tiers.py, not by inspection",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "after_state",
+      "text": "docs/evidence/ carries a Thor transcript for Qwen3.8-Flash-Next on llama.cpp: the pinned Unsloth sha and build recipe, the quant rung(s) actually booted, resident footprint, largest working -c, known-answer + reasoning-shape + tool-call probe results, and decode/prefill tok/s with the power mode stated -- and lobes/catalog.py carries a matching engine=llama.cpp candidate gear whose status reflects exactly that transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "every number in the transcript is read off the running server or the host, and the transcript states the power mode; no figure is copied from Unsloth's page or from the 27B gear's doc",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "why_it_matters",
+      "text": "a 125B MoE with 6B active is the first checkpoint whose ARCHITECTURE, not its quantization, argues that a 128 GB unified-memory board can serve a frontier-class model at usable speed. The fleet's only llama.cpp evidence today is a 27B DENSE gear that FAILED its own >=5 tok/s gate at 30W. Measuring the sparse case is what tells this mesh whether the llama.cpp lane is a fallback or a real second engine.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the comparison drawn is against this repo's OWN measured 27B dense llama.cpp baseline (2.61 tok/s MODE_30W / 8.46 tok/s MAXN), not against any vendor aggregate",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the correctness gate is a KNOWN-ANSWER + long-context-retrieval + reasoning-shape + tool-call probe against the live server, matching what the Orin GGUF spike ran (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt). The QSA sparse-attention (c88c9166) and PLE n-gram (ad4fa3fa) paths are the branch's most recently landed, so the probe set must exercise them specifically -- a clean boot is not evidence they compute correctly.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the probe set exercises the QSA and PLE paths specifically -- a long-context retrieval prompt, not only a short known-answer -- since those two landed last on the branch",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "the blast radius is LARGER than c20 records: probing the live mesh, the DGX Spark declares 'embedder feasible=false, proxied=true, hosted_by=http://thor.tail0be7e0.ts.net:8000' -- the Spark proxies its EMBEDDINGS to this Thor. Taking this box down removes the Spark's embedder lane too, not just this box's cortex. The window must either be announced as embed-affecting mesh-wide, or the Spark must re-declare a local embedder first.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "the Spark's embedder dependency is confirmed against its live /capabilities immediately before the window opens -- not assumed from this pass's reading -- and whoever depends on it is told, or the Spark declares a local embedder first",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "the Jetson AGX Orin's 'worker -> hosted_by http://thor...:8000' referral is STALE and PRE-EXISTING: this Thor runs gateway + vllm-primary + vllm-embed + vllm-rerank only, and per deviation d1 worker moved to the Spark. Fixing that referral is explicitly NOT this test's job -- recorded so the window is not blamed for a break that already exists.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "the orin worker referral is left exactly as found; the transcript records its pre-window state so the window cannot be blamed for it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "the mmap policy must be DECIDED and stated, because every footprint and throughput number depends on it. llama.cpp mmaps the GGUF by default, so 'resident footprint' is a page-cache figure that can sit far below the file size while the model still 'works' -- slowly. Either run --no-mmap for a true residency measurement, or record that the figure is page-cache-dependent. c7/c16's '90 GiB free' check means nothing if the engine is happy to run at 40.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "the transcript states the mmap policy in force for every measurement, and reports resident footprint in terms that policy makes meaningful",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "a failed correctness probe at UD-IQ1_S does NOT cleanly implicate the branch: a 1-bit dynamic quant can damage output on its own, so failure at that rung confounds 'PR is wrong' with 'quant is too aggressive'. h7 ('a failed probe at IQ1_S ends the ladder with a NO-GO') therefore needs a disambiguation step -- on failure, climb ONE rung to UD-Q2_K_XL before writing the NO-GO, and record both results.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "if the ladder stops at a low rung, the transcript says whether that rung was ADOPTED on its merits or merely the last one tested",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "an ABORT CRITERION is required before the window opens, because this box has a RECORDED wedge on exactly this class of decode path: docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt records Nemotron Lightning's Mamba-2 SSD decode hanging INDEFINITELY on sm_110 ('Warming up Mamba2 SSD Triton kernels'), which is what moved worker to the Spark. Qwen3.8-Flash-Next is 3-of-4 layers Gated DeltaNet -- the same linear-attention/state-space family. Define a wall-clock timeout per boot attempt and a written wedge verdict, so this cannot silently consume the window.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "the abort criterion is written down BEFORE the first boot attempt, not chosen after one hangs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "the fleet-down window must be the LAST step, not the first: the from-source build of unslothai/llama.cpp@6c5afc86 on this Jetson and the 72.5 GB shard download both run with the fleet UP, and the box only goes down once a runnable image and a complete local GGUF exist. Otherwise a multi-hour build/download happens inside a window during which the Spark has no embedder.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "the production fleet is still serving at the moment the build finishes and the last shard lands -- provable from timestamps in the transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "disk must be reclaimed rung by rung: / has 284 GiB free and the three rungs total ~241 GiB (72.5 + 78.9 + 90), which would leave ~43 GiB on the root filesystem the 50 GiB HF cache, the docker graph and the llama.cpp build all share. Delete each rung's shards before downloading the next, and check df between rungs.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "a df -h reading is captured between rungs, so no rung starts on a filesystem that cannot hold it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "power mode must be PINNED and recorded, not merely stated: this Thor currently reports 'NV Power Mode: MAXN' (nvpmodel -q, checked during this pass). Verify MAXN immediately before each measurement and paste the nvpmodel output into the transcript -- the 27B GGUF doc carries a whole superseded-numbers section because a run was measured at MODE_30W and the mode was not captured alongside the figures.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "nvpmodel -q output is pasted beside each rung's numbers, not stated once at the top of the transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "announcement",
+      "text": "lobes can serve Qwen3.8-Flash-Next (125B MoE, 6B active) from an Unsloth Dynamic GGUF through the llama.cpp lane on the Jetson AGX Thor -- with the adopted quantization chosen from measured speed AND output quality across the rungs, not fixed in advance",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "the gear serves a real completion through a lobes gateway on this Thor -- not just llama-server answering on its own port -- so 'lobes can serve it' is literally true rather than 'llama.cpp can run it'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "every rung booted records the SAME measurement set so the rungs are comparable: resident footprint (with the mmap policy stated), largest working -c, single-stream decode and prefill tok/s at MAXN, and the full correctness probe set (known-answer, long-context retrieval exercising QSA+PLE, reasoning shape, structured tool call). A rung with no comparable measurement set does not count as tested.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "the transcript presents the rungs as a comparison table, so the adopted-quant decision is legible from the data rather than asserted in prose",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "on an IQ1_S CORRECTNESS failure, climb exactly ONE rung to UD-Q2_K_XL to disambiguate a branch bug from quantization damage, and record both results; never climb further to chase a pass. A WEDGE (the sm_110 hang precedent, c35) or a throughput miss against the c39 bar ends the ladder immediately -- climbing rungs cannot fix slow.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "the transcript states which of the three outcomes occurred -- branch bug, quantization damage, or pass -- and why the evidence supports that reading rather than the other two",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "the lane is the EXISTING opt-in COMPOSE_PROFILES=llamacpp service (llamacpp-primary) from lobes/templates/fleet/docker-compose.yml -- no new compose lane is needed -- but it is driven from a SEPARATE deployment dir (~/.lobes-llamacpp, --compose-dir), where LLAMACPP_MODEL_DIR / LLAMACPP_GGUF / LLAMACPP_IMAGE / LLAMACPP_N_GPU_LAYERS / LLAMACPP_PARALLEL / LLAMACPP_FLASH_ATTN and COMPOSE_PROFILES are set. The production ~/.lobes/.env is never opened.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "the lane boots this checkpoint with only .env VALUE changes in the separate dir -- if lobes/templates/fleet/docker-compose.yml itself needs an edit, this claim is false and the frame must record why",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "the test window is a clean down/up of the PRODUCTION fleet only ('lobes stop --apply'), with ~/.lobes/.env never opened -- the llama.cpp lane lives in its own deployment dir (c45), so the restore is a plain bring-up with nothing to strip. Per the in-repo Thor boot gotcha, drop_caches BEFORE recreating any heavy lobe on the way back: MemAvailable lies on this board.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "after the restore, 'lobes status' reports the same lanes healthy as before the window, PRIMARY_MAX_MODEL_LEN is still 262144, and the diff of ~/.lobes/.env is empty",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "success_signal",
+      "text": "single-stream decode >= 25 tok/s at MAXN. The comparator is this box's OWN deployed cortex: the vLLM NVFP4 Qwen3.8-27B on this Thor measures 12.1 tok/s (docs/evidence/2026-08-20-accept-cortex-local-thor.txt), so the bar is roughly 2x the incumbent. Below it the operator's judgement is that Qwen3.8-27B NVFP4 is simply the better fit -- a 125B GGUF that merely matches the 27B buys nothing and costs ~75 GB of RAM. A pass at or above 25 tok/s, with the correctness probes green, makes the gear worth carrying.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "the 25 tok/s bar is stated with its comparator (12.1 tok/s, the vLLM NVFP4 cortex on THIS box) and its limits (different engine and quantization, so it is an is-it-worth-carrying bar, not a like-for-like A/B)",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [],
+  "risks": []
+}
