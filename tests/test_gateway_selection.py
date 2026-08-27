@@ -3,6 +3,20 @@
 Task t5 of docs/plans/2026-08-25-cortex-replica-pool-199.md. Uses a local
 frozen dataclass satisfying `ReplicaLike` rather than importing the sibling
 task's `_replicas.py` module (which may not exist on this branch).
+
+Task t3 of docs/plans/2026-08-27-capacity-relative-pool-routing.md rewrote the
+selectability gate to be capacity-relative. Three cases below changed with it,
+each because it encoded an assumption the capacity work deliberately retires:
+
+* `test_no_selectable_candidates_returns_none` used a pressure-`busy` peer to
+  produce an empty selectable set; a pressure verdict no longer excludes an
+  idle replica, so the case now uses a genuinely FULL peer.
+* `test_affinity_preferred_busy_falls_back_to_availability` became
+  `..._full_...` for the same reason.
+* `test_higher_weight_peer_beats_lower_weight_local` pitted the uncalibrated
+  sentinel weight 1.0 against a calibrated 2.0, i.e. it read the sentinel as a
+  measured capacity of one slot -- exactly what c22/h15 forbids. It now pits
+  two CALIBRATED capacities against each other, preserving the intent.
 """
 
 from dataclasses import dataclass
@@ -15,8 +29,10 @@ from lobes.gateway._selection import (
     REASON_PEER_LESS_LOADED,
     REASON_SOLE_READY,
     Selection,
+    _is_selectable,
     estimated_wait,
     select_replica,
+    selection_wait,
 )
 
 
@@ -79,8 +95,10 @@ class TestBasicAvailability:
         assert result == Selection("peer", False, REASON_LOCAL_BUSY_FORWARDED)
 
     def test_no_selectable_candidates_returns_none(self):
+        # A not-ready local and a peer whose engine is genuinely full
+        # (calibrated capacity 2, two active) -> nothing to select.
         result = select_replica(
-            [local(ready=False), peer(busy=True)],
+            [local(ready=False), peer(weight=2.0, running=2)],
         )
         assert result == Selection(None, False, REASON_NONE)
 
@@ -143,11 +161,13 @@ class TestWeighting:
         assert estimated_wait(r) > 1e6
 
     def test_higher_weight_peer_beats_lower_weight_local(self):
-        # peer: (3+0)/2.0 = 1.5 ; local: (2+0)/1.0 = 2.0 -> peer wins
+        # Both CALIBRATED (neither is the 1.0 sentinel), and both have
+        # headroom, so the ranking is a straight utilisation comparison:
+        # peer: (4+0)/8.0 = 0.5 ; local: (3+0)/4.0 = 0.75 -> peer wins.
         result = select_replica(
             [
-                local(running=2, waiting=0, weight=1.0),
-                peer(running=3, waiting=0, weight=2.0),
+                local(running=3, waiting=0, weight=4.0),
+                peer(running=4, waiting=0, weight=8.0),
             ]
         )
         assert result == Selection("peer", False, REASON_PEER_LESS_LOADED)
@@ -173,12 +193,12 @@ class TestAffinity:
                 break
         assert chosen_key is not None, "expected some key to prefer a non-baseline replica"
 
-    def test_affinity_preferred_busy_falls_back_to_availability(self):
+    def test_affinity_preferred_full_falls_back_to_availability(self):
         # Force a specific preferred origin among two selectable peers
         # (deliberately no local candidate, to keep the hash comparison
         # confined to the two peers under test) by brute-forcing a key
-        # that prefers "peer-busy", then re-run with that replica marked
-        # busy/not selectable and confirm the reason is no longer affinity.
+        # that prefers "peer-busy", then re-run with that replica FULL
+        # (not selectable) and confirm the reason is no longer affinity.
         selectable_pair = [peer(origin="peer-busy"), peer(origin="peer-idle")]
         preferred_key = None
         for i in range(200):
@@ -190,7 +210,10 @@ class TestAffinity:
         assert preferred_key is not None
 
         with_busy = select_replica(
-            [peer(origin="peer-busy", busy=True), peer(origin="peer-idle")],
+            [
+                peer(origin="peer-busy", weight=2.0, running=2, busy=True),
+                peer(origin="peer-idle"),
+            ],
             affinity=preferred_key,
             affinity_margin=1e9,
         )
@@ -286,3 +309,179 @@ class TestDeterminism:
             for _ in range(100)
         }
         assert len(results) == 1
+
+
+def _old_is_selectable(replica, *, local_busy: bool = False) -> bool:
+    """The PRE-t3 selectability gate, kept verbatim as a regression witness.
+
+    This is the gate that excluded a fully idle DGX Spark (running=0,
+    waiting=0) from the pool because a sleeping desktop terminal pushed the
+    host's iowait reading over the pressure threshold. It is reproduced here
+    (not imported) so the before-state stays provable after the real gate
+    changed.
+    """
+
+    if not (replica.compatible and replica.ready and not replica.busy):
+        return False
+    if local_busy and replica.local:
+        return False
+    return True
+
+
+class TestPressureDecoupling:
+    """c5/h4: pool candidacy no longer keys on a peer's host-level verdict."""
+
+    def test_before_state_idle_peer_with_pressure_busy_flag_was_unselectable(self):
+        # The regression witness: identical replica, both gates, opposite
+        # answers. Idle engine, pressure-derived busy flag set.
+        idle_but_flagged = peer(origin="spark", running=0, waiting=0, busy=True)
+
+        assert _old_is_selectable(idle_but_flagged) is False
+        assert _is_selectable(idle_but_flagged, local_busy=False) is True
+
+    def test_idle_peer_with_pressure_busy_flag_is_selected(self):
+        result = select_replica(
+            [local(running=3, waiting=2), peer(running=0, waiting=0, busy=True)]
+        )
+        assert result == Selection("peer", False, REASON_PEER_LESS_LOADED)
+
+    def test_pressure_busy_peer_with_a_full_engine_is_still_excluded(self):
+        # h4: decoupling must not make a saturated box look attractive.
+        saturated = peer(origin="peer-full", weight=4.0, running=4, busy=True)
+        assert _is_selectable(saturated, local_busy=False) is False
+
+        result = select_replica([local(weight=4.0, running=3), saturated])
+        assert result == Selection("local", True, REASON_SOLE_READY)
+
+    def test_a_saturated_peer_never_outranks_a_replica_with_headroom(self):
+        # Not-quite-full peer (7/8) still ranks behind a lightly loaded local.
+        result = select_replica(
+            [
+                local(weight=8.0, running=1),
+                peer(origin="peer-hot", weight=8.0, running=7),
+            ]
+        )
+        assert result.origin == "local"
+
+    def test_every_replica_full_yields_none(self):
+        result = select_replica(
+            [local(weight=2.0, running=2), peer(weight=4.0, running=4, waiting=1)]
+        )
+        assert result == Selection(None, False, REASON_NONE)
+
+
+class TestCapacityGate:
+    """c2/h2: unselectable when active reaches capacity, not before."""
+
+    def test_active_below_capacity_is_selectable(self):
+        assert _is_selectable(peer(weight=4.0, running=3), local_busy=False) is True
+
+    def test_active_equal_to_capacity_is_not_selectable(self):
+        assert _is_selectable(peer(weight=4.0, running=4), local_busy=False) is False
+
+    def test_waiting_counts_toward_capacity(self):
+        assert _is_selectable(peer(weight=4.0, running=2, waiting=2), local_busy=False) is False
+
+    def test_a_full_local_forwards_to_a_peer_with_headroom(self):
+        result = select_replica([local(weight=2.0, running=2), peer(weight=2.0, running=1)])
+        assert result == Selection("peer", False, REASON_PEER_LESS_LOADED)
+
+    def test_an_uncalibrated_replica_is_never_full(self):
+        # h3: an unpublished capacity never makes a replica unselectable.
+        assert _is_selectable(peer(running=99, waiting=99), local_busy=False) is True
+
+    def test_a_nonsensical_weight_is_treated_as_uncalibrated_not_as_full(self):
+        assert _is_selectable(peer(weight=0.0, running=1), local_busy=False) is True
+        assert _is_selectable(peer(weight=-3.0, running=1), local_busy=False) is True
+
+
+class TestUncalibratedNeutralFallback:
+    """c22/h15: the 1.0 sentinel is not read as a measured one-slot capacity."""
+
+    def test_uncalibrated_peer_is_not_ranked_eight_times_worse(self):
+        calibrated = peer(origin="peer-cal", weight=8.0, running=1)
+        uncalibrated = peer(origin="peer-unc", running=1)
+        candidates = [calibrated, uncalibrated]
+
+        assert selection_wait(uncalibrated, candidates) == selection_wait(calibrated, candidates)
+        # And concretely: not 1.0-vs-0.125.
+        assert selection_wait(uncalibrated, candidates) == 0.125
+
+    def test_a_mixed_fleet_does_not_drain_toward_the_calibrated_box(self):
+        # One calibrated weight-8 peer, one uncalibrated peer, both at one
+        # active request: locality/origin tie-breaks decide, not capacity.
+        result = select_replica(
+            [
+                peer(origin="a-uncalibrated", running=1),
+                peer(origin="b-calibrated", weight=8.0, running=1),
+            ]
+        )
+        assert result.origin == "a-uncalibrated"
+
+    def test_neutral_fallback_is_the_median_of_the_calibrated_capacities(self):
+        candidates = [
+            peer(origin="p1", weight=2.0),
+            peer(origin="p2", weight=4.0),
+            peer(origin="p3", weight=12.0),
+            peer(origin="unc", running=4),
+        ]
+        # median of (2, 4, 12) is 4 -> 4 active / 4 capacity = 1.0
+        assert selection_wait(candidates[-1], candidates) == 1.0
+
+    def test_with_nothing_calibrated_the_fallback_reproduces_todays_ranking(self):
+        # Criterion 4: for a uniform (fixed) weight the policy is unchanged.
+        candidates = [local(running=2, waiting=1), peer(running=1)]
+        assert selection_wait(candidates[0], candidates) == estimated_wait(candidates[0])
+        assert selection_wait(candidates[1], candidates) == estimated_wait(candidates[1])
+        assert select_replica(candidates) == Selection("peer", False, REASON_PEER_LESS_LOADED)
+
+
+class TestLocalBusyIsUnchanged:
+    """local_busy is this box's OWN shed verdict, not a peer's host reading."""
+
+    def test_local_busy_still_forwards_rather_than_shedding(self):
+        result = select_replica([local(), peer()], local_busy=True)
+        assert result == Selection("peer", False, REASON_LOCAL_BUSY_FORWARDED)
+
+    def test_local_busy_with_a_pressure_flagged_but_idle_peer_forwards(self):
+        result = select_replica([local(), peer(busy=True)], local_busy=True)
+        assert result == Selection("peer", False, REASON_LOCAL_BUSY_FORWARDED)
+
+    def test_local_busy_with_no_other_replica_still_sheds(self):
+        assert select_replica([local()], local_busy=True) == Selection(None, False, REASON_NONE)
+
+    def test_local_busy_with_only_a_full_peer_still_sheds(self):
+        result = select_replica([local(), peer(weight=2.0, running=2)], local_busy=True)
+        assert result == Selection(None, False, REASON_NONE)
+
+
+class TestLocalShedVerdictIsFirstParty:
+    """The local box's own pressure flag still excludes it; a peer's does not."""
+
+    def test_local_own_busy_flag_still_excludes_the_local_replica(self):
+        assert _is_selectable(local(busy=True), local_busy=False) is False
+
+    def test_local_own_busy_flag_forwards_to_an_idle_peer(self):
+        result = select_replica([local(busy=True), peer()])
+        assert result == Selection("peer", False, REASON_SOLE_READY)
+
+    def test_a_peers_busy_flag_does_not_exclude_it(self):
+        assert _is_selectable(peer(busy=True), local_busy=False) is True
+
+
+class TestPurityWithCapacity:
+    def test_capacity_aware_selection_is_still_deterministic(self):
+        candidates = [
+            local(running=2, waiting=1, weight=8.0),
+            peer(origin="peer-a", running=1, weight=4.0),
+            peer(origin="peer-b", running=0),
+        ]
+        results = {
+            select_replica(candidates, affinity="cap-key", affinity_margin=0.5) for _ in range(100)
+        }
+        assert len(results) == 1
+
+    def test_estimated_wait_keeps_its_single_argument_arithmetic(self):
+        r = peer(running=3, waiting=1, weight=2.0)
+        assert estimated_wait(r) == 2.0
+        assert estimated_wait(r, 4.0) == 1.0
