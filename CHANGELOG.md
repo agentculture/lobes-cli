@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.2] - 2026-08-27
+
+### Fixed
+
+- **The #199 spec and plan records no longer read as if the Jetson AGX Orin
+  were a pool member.** Both exported devague documents
+  (`docs/specs/2026-08-25-cortex-replica-pool-199.md`,
+  `docs/plans/2026-08-25-cortex-replica-pool-199.md`) open with the verbatim
+  `/scope` announcement (frame claim `c1`, `origin: user`), whose parenthetical
+  names "Spark, Thor, Orin at 256K" as compatible replicas. The converged
+  frame's own live-probed-fingerprint claim, the 0.63.0 implementation, and the
+  acceptance transcript all admit **Spark + Thor only** — the Orin's llama.cpp
+  `Qwen3.8-27B-UD-Q4_K_M` cortex serves under the id `cortex` at a different
+  quantization and runtime, so it is marked `compatible: false` and never enters
+  the candidate set. The announcement is kept unedited (it is the record of what
+  was announced); a **correction note** now sits directly beneath it in both
+  documents, naming the exemption and citing `docs/gateway-fleet.md` and
+  `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`. No
+  behaviour changes; `CLAUDE.md`, `docs/gateway-fleet.md` and the 0.62.1
+  changelog entry already stated the exemption correctly.
+
+### Changed
+
+- **PR #212 (the #199 spec + plan) reconciled with the implementation that
+  shipped ahead of it.** Both exported documents, the frame JSON and the
+  `docs/evidence/` transcripts landed in `main` via PR #213 (0.63.0), which was
+  stacked on this branch; `main` has since advanced to 0.66.1. Merging `main`
+  back in resolves every conflict to `main`'s side — the plan JSON keeps its
+  delivery-time task `t12` and follow-up risks `r5`/`r6`, `.devague/current*`
+  keep `main`'s pointers, and the eidetic store keeps the post-validation
+  record — so this branch adds only the correction note above.
+
 ## [0.66.1] - 2026-08-27
 
 ### Changed
