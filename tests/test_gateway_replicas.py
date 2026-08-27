@@ -839,3 +839,123 @@ def test_resolve_capacity_is_pure_over_its_inputs() -> None:
     weight, note = R.resolve_capacity(99.0, capacity_max=8.0)
     assert (weight, "clamped" in note) == (8.0, True)
     assert R.resolve_capacity(8.0, kill_switch=True) == (R.UNCALIBRATED_WEIGHT, "")
+
+
+# --- capacity is keyed to a fingerprint (t4 stage 2) -----------------------
+#
+# A calibrated capacity is only valid for the (box, checkpoint, window,
+# speculative config) it was MEASURED on. `lobes switch` is a down+up with a
+# model swap and a shape re-render force-writes keys, so a stored capacity
+# outlives its conditions unless it is keyed to the live fingerprint the
+# module already probes. It is: the capacity is pinned to the fingerprint it
+# arrived under and DISCARDED when that fingerprint stops matching, falling
+# back to the safe default until a new number is published (spec c23/h16).
+
+
+def _switched_routes(**kw) -> dict:
+    """The same fleet after a `lobes switch`: a different served id, everywhere."""
+    other = "unsloth/Qwen3.6-27B-NVFP4"
+    routes = _default_routes(**kw)
+    status = dict(kw.get("status") or {})
+    status["served_name"] = other
+    routes[LOCAL_URL + "/v1/models"] = (200, _models_body(served=other))
+    routes[PEER + "/status"] = (200, _status_body(**status))
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(served_id=other)))
+    return routes
+
+
+def test_a_capacity_is_pinned_to_the_fingerprint_it_arrived_under() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}), local=_lane(weight=6.0))
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[PEER].capacity_fingerprint == states[PEER].fingerprint
+    assert states[LOCAL_URL].capacity_fingerprint == states[LOCAL_URL].fingerprint
+
+
+def test_a_local_capacity_is_discarded_when_the_local_checkpoint_changes() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes, local=_lane(weight=6.0))
+    cache.refresh()
+    assert _by_origin(cache.current())[LOCAL_URL].weight == 6.0
+    # `lobes switch`: the lane now serves a different checkpoint.
+    routes[LOCAL_URL + "/v1/models"] = (200, _models_body(served="unsloth/Qwen3.6-27B-NVFP4"))
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == R.UNCALIBRATED_WEIGHT
+    assert "capacity discarded" in local.reason
+    assert "served_id" in local.reason
+
+
+def test_a_peer_capacity_is_discarded_when_the_peers_fingerprint_changes() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == 8.0
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.UNCALIBRATED_WEIGHT
+    assert "capacity discarded" in peer.reason
+    assert S.is_calibrated(peer) is False
+
+
+def test_a_republished_stale_capacity_stays_discarded() -> None:
+    """The same number under a new fingerprint must not resurrect next pass."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    for _ in range(3):
+        cache.refresh()
+        assert _by_origin(cache.current())[PEER].weight == R.UNCALIBRATED_WEIGHT
+
+
+def test_a_recalibrated_capacity_repins_to_the_new_fingerprint() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == R.UNCALIBRATED_WEIGHT
+    # The operator recalibrates on the new checkpoint and the peer publishes it.
+    routes[PEER + "/status"] = (200, _status_body(capacity=12))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 12.0
+    assert "capacity discarded" not in peer.reason
+    assert peer.capacity_fingerprint == peer.fingerprint
+
+
+def test_an_unprobed_fingerprint_never_forces_a_discard() -> None:
+    """Silence is not evidence of a change: an unreachable peer keeps its capacity."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/status"] = OSError("connection refused")
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 8.0
+    assert peer.ready is False  # unreachable, so it is not a pool candidate anyway
+
+
+def test_an_informational_fingerprint_change_never_discards_a_capacity() -> None:
+    """Only the four disqualifying fields key a capacity — the drafter/parsers
+    differ across the Spark+Thor pair by operator policy (spec c32)."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(speculative_config="mtp")))
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == 8.0
+
+
+def test_both_sides_switching_together_discards_both_capacities() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes, local=_lane(weight=6.0))
+    cache.refresh()
+    switched = _switched_routes(status={"capacity": 8})
+    routes.update(switched)
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[LOCAL_URL].weight == R.UNCALIBRATED_WEIGHT
+    assert states[PEER].weight == R.UNCALIBRATED_WEIGHT

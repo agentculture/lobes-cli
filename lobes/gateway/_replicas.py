@@ -282,6 +282,13 @@ class ReplicaState:
     # none was published. Kept beside `weight` so an operator can see both the
     # number the peer claimed and the number this box actually used.
     capacity: float | None = None
+    # The fingerprint `capacity` was PINNED to: the live fingerprint under
+    # which that number first arrived. A capacity is only valid for the
+    # checkpoint/window/runtime it was measured on, so when the live
+    # fingerprint stops matching this pin the capacity is discarded (`weight`
+    # reverts to the sentinel) until a NEW number is published. `None` = no
+    # capacity pinned. See :func:`_fingerprint_changed`.
+    capacity_fingerprint: "Fingerprint | None" = None
 
     def evolve(self, **changes: object) -> "ReplicaState":
         """Typed wrapper over :func:`dataclasses.replace`.
@@ -494,6 +501,35 @@ def compare_fingerprints(local: Fingerprint | None, peer: Fingerprint | None) ->
     return (not reasons), "; ".join(reasons)
 
 
+def _fingerprint_changed(pin: Fingerprint | None, live: Fingerprint | None) -> str:
+    """Has the fingerprint a capacity was measured under DEFINITELY changed?
+
+    Returns ``""`` for "no evidence of a change" and otherwise a reason naming
+    every changed field. Only :data:`DISQUALIFYING_FIELDS` are consulted —
+    the informational fields (parsers, ``kv_cache_dtype``, drafter) differ
+    across the Spark+Thor pair by explicit operator policy (spec c32) and must
+    not throw a measured capacity away.
+
+    Deliberately CONSERVATIVE where :func:`compare_fingerprints` is strict: an
+    absent or ``unknown`` value on either side is NOT a change. The two
+    functions answer different questions — "may these two replicas pool
+    together?" (where silence must never pass) versus "did this one replica's
+    serving identity change under a number we already hold?" (where silence is
+    not evidence of a switch, and inventing one would throw away a good
+    capacity every time a probe came back thin).
+    """
+    if pin is None or live is None:
+        return ""
+    changed = [
+        f"{name}: {getattr(pin, name)} != {getattr(live, name)}"
+        for name in DISQUALIFYING_FIELDS
+        if _known(getattr(pin, name))
+        and _known(getattr(live, name))
+        and getattr(pin, name) != getattr(live, name)
+    ]
+    return "; ".join(changed)
+
+
 def _classify(exc: BaseException) -> str:
     """Map a probe exception to a :class:`ReplicaState` ``health`` value."""
     if isinstance(exc, TimeoutError):  # socket.timeout is TimeoutError since 3.10
@@ -625,6 +661,51 @@ class ReplicaCache:
             kill_switch=self._capacity_kill_switch,
         )
 
+    def _keyed_capacity(
+        self,
+        previous: ReplicaState,
+        raw: object,
+        live: Fingerprint | None,
+    ) -> tuple[float, float | None, Fingerprint | None, str]:
+        """Ingest *raw* against the live fingerprint → ``(weight, capacity,
+        pin, note)``.
+
+        The pin travels with the NUMBER, not with the probe: as long as the
+        replica keeps publishing the same capacity, the fingerprint it first
+        arrived under is kept and re-validated every pass. A DEFINITE change in
+        that fingerprint discards the capacity — and the pin is RETAINED
+        alongside the discarded number so the very next pass, which sees the
+        same stale number republished, discards it again. (Dropping the pin on
+        discard would make the next pass read the stale number as brand new and
+        re-pin it to the new fingerprint — the capacity would resurrect itself
+        one refresh later, which is the exact failure this keying exists to
+        prevent.)
+
+        A capacity whose VALUE changes is a new measurement by definition, so
+        it re-pins to whatever fingerprint is live now: after a `lobes switch`,
+        routing falls back to the safe default until the operator recalibrates
+        (spec h16).
+        """
+        capacity = _as_capacity(raw)
+        if capacity is None:
+            # Nothing usable published — resolve (for the "refused value" note)
+            # and hold no pin.
+            resolved, note = self._resolve(raw)
+            return resolved, None, None, note
+        republished = previous.capacity == capacity and previous.capacity_fingerprint is not None
+        pin = previous.capacity_fingerprint if republished else live
+        if republished:
+            changed = _fingerprint_changed(pin, live)
+            if changed:
+                return (
+                    UNCALIBRATED_WEIGHT,
+                    capacity,
+                    pin,
+                    f"capacity discarded: measured under a different fingerprint ({changed})",
+                )
+        resolved, note = self._resolve(raw)
+        return resolved, capacity, pin, note
+
     def current(self) -> tuple[ReplicaState, ...]:
         """The latest snapshot: local replica first, then peers in declared order.
 
@@ -728,7 +809,7 @@ class ReplicaCache:
             return previous.evolve(ready=False, health="error", fingerprint=None)
         running, waiting = self._local_load(lane)
         raw = _declared_capacity(lane.weight)
-        resolved, note = self._resolve(raw)
+        resolved, capacity, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=True,
             busy=False,  # local pressure is the caller's own signal, not a probe
@@ -740,7 +821,8 @@ class ReplicaCache:
             reason=note,
             last_seen=self._now(),
             weight=resolved,
-            capacity=raw,
+            capacity=capacity,
+            capacity_fingerprint=pin,
         )
 
     def _peer_backend_entry(
@@ -842,7 +924,7 @@ class ReplicaCache:
         raw = entry.get(PEER_CAPACITY_KEY)
         if raw is None:
             raw = _declared_capacity(peer.weight)
-        resolved, note = self._resolve(raw)
+        resolved, capacity, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=backend_health == "ok",
             busy=busy,
@@ -854,7 +936,8 @@ class ReplicaCache:
             reason=_with_note(reason, note),
             last_seen=last_seen,
             weight=resolved,
-            capacity=_as_capacity(raw),
+            capacity=capacity,
+            capacity_fingerprint=pin,
         )
 
     # --- refresh passes ----------------------------------------------------
