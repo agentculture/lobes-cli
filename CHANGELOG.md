@@ -68,6 +68,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   call site and every single-box deployment decides byte-identically (`h1`).
   `mode` still reports the host honestly to `/status` and peer probes; only the
   shed band narrowed.
+- **`weight` now carries a real, self-published capacity.** A peer publishes its
+  own on the `/status` body already probed (`backends[].capacity`); local and
+  peer values pass through one ingest gate. An inflated value is **clamped**
+  (`CAPACITY_CLAMP_MAX = 64.0`, above every concurrency figure this fleet has
+  measured) and the clamp is recorded in the replica row's `reason` rather than
+  applied silently — unclamped, a peer publishing 10,000 would score near-zero
+  wait at every load level and vacuum the pool. A capacity is **pinned to the
+  fingerprint it was measured under** and discarded when that changes, with two
+  deliberate asymmetries: an unknown/absent fingerprint is never read as
+  evidence of change, and the pin travels with the number rather than the probe,
+  so a republished stale value cannot resurrect itself one refresh later.
+- **Local in-flight accounting closes the stale-snapshot herd.** Load was
+  probe-sourced only, on a 5 s refresh, so concurrent arrivals stampeded one
+  snapshot — a hazard accurate capacity makes *worse*, since today's uniform
+  weights make ties resolve to local. Dispatches are now folded into `waiting`
+  so the snapshot self-corrects between probes, guarded three ways because a
+  leaked counter cannot self-heal: a context manager that releases on any exit,
+  an idempotent release that tolerates double-free, and a 900 s expiry so even a
+  leak decays instead of pinning a healthy box at "full" forever.
 - **`X-Lobes-Route-Reason` vocabulary: membership unchanged, `peer-less-loaded`
   redefined.** It now means "less loaded *relative to its own capacity*", so a
   peer with **more** active requests can legitimately win it, and it is now also
@@ -78,6 +97,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   where the live Spark sits — `model=cortex` and the raw served id now both
   serve locally instead of diverging. In the swap / full-engine band the
   alias-only gate is unchanged, still #215's to fix.
+
+- **`lobes calibrate <role>`** — measures a box's serving capacity by ramping
+  concurrency and locating the throughput knee, then reports the level, the
+  samples behind it, and *whether the ramp plateaued*. Read-only by default;
+  `--apply` writes `<PREFIX>_MAX_ACTIVE` to `.env`. It **refuses to write** when
+  the ramp never plateaued (recording the top level tried would be a guess, not
+  a knee) or when the level resolves to zero (which would make a role
+  permanently unselectable). Stops early once the knee is settled. The measured
+  number is scoped to one `(box, checkpoint, context window, speculative
+  config)` and goes stale after a `lobes switch` — the help text says so.
 
 ### Fixed
 
