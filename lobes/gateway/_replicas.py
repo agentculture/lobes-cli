@@ -42,6 +42,23 @@ What it deliberately does NOT do
   the local lane), exactly as :class:`lobes.gateway._readiness.ReadinessCache`
   does. (Spec c5/h5.)
 
+Capacity (capacity-relative pool routing)
+-----------------------------------------
+Beyond load and fingerprint this module now supplies a third fact: each
+replica's CAPACITY — its measured max active requests — carried on
+``ReplicaState.weight``, which `_selection.py` divides load by to rank
+replicas by UTILISATION rather than by raw queue depth. A peer publishes its
+own (spec q1) on the ``/status`` body already probed here; the local lane's
+comes from this box's declared ``<PREFIX>_MAX_ACTIVE``. Every capacity —
+local or peer, published or declared — passes through the one
+:func:`resolve_capacity` gate, which CLAMPS it and records the clamp in
+``reason``: capacity is peer-controlled input that the ranking arithmetic
+divides by, so an unbounded value would rank as near-zero wait at every load
+level and vacuum the whole pool. A capacity is also KEYED to the fingerprint
+it was measured under and discarded when that fingerprint changes, since a
+number measured against one checkpoint at one window says nothing about the
+next one.
+
 Consuming t2's config
 ---------------------
 The routing-table fields this cache is fed from (``replica_origins``,
@@ -67,6 +84,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from .. import _metrics
+from ._selection import UNCALIBRATED_WEIGHT
 
 # The sentinel for "this field was never declared and cannot be probed". A
 # string (not ``None``) so it survives JSON rendering into ``/capabilities``
@@ -114,6 +132,48 @@ DECLARED_KEYS: tuple[str, ...] = (
     "tool_parser",
     "speculative_config",
 )
+
+# --- capacity (capacity-relative pool routing) ------------------------------
+#
+# ``weight`` on every dataclass below is the replica's CAPACITY: its measured
+# max active requests, the throughput knee `lobes/assess.py`'s
+# ``calibration_knee`` produces — deliberately NOT vLLM's ``--max-num-seqs``
+# OOM-safety cap. :data:`~lobes.gateway._selection.UNCALIBRATED_WEIGHT` (1.0)
+# is the "nothing published" SENTINEL, not a measured one-slot capacity; it is
+# imported rather than re-typed here so the producer (this module) and the
+# consumer (`_selection.py`) can never drift apart on its value.
+#
+# A peer publishes its own capacity on the ``/status`` body this module
+# already probes (spec q1), under this key on the role's backend entry:
+#
+#     {"backends": [{"name": "primary", ..., "capacity": 8}]}
+#
+# ``lobes/gateway/server.py``'s ``fleet_status_payload`` is what writes it
+# (task t5); an older lobes, or a non-lobes replica, publishes nothing and
+# falls back to the sentinel — an unpublished capacity NEVER makes a replica
+# unselectable (spec h3).
+PEER_CAPACITY_KEY = "capacity"
+
+# The ceiling any ingested capacity is CLAMPED to, local and peer alike.
+#
+# Why a clamp at all: capacity arrives as peer-CONTROLLED input (nothing
+# validates what a declared peer answers — spec c19/s11, and note the Thor
+# currently serves /status with no inbound gate at all), and
+# ``_selection.estimated_wait`` DIVIDES by it. A peer publishing 10000 would
+# score a near-zero wait at every load level and silently vacuum the entire
+# pool — a black hole with no error anywhere. So a received capacity is
+# bounded on ingest, and the clamp is RECORDED in the replica row's ``reason``
+# rather than applied silently (spec h13).
+#
+# Why 64: it sits above every concurrency figure this fleet has ever
+# MEASURED — the worker lane's 54.33x KV-derived concurrency at 65K is the
+# largest number in docs/evidence/, and the cortex pair's measured knees are
+# single digits — so the clamp cannot clip an honest calibration, while an
+# absurd published value still captures at most a bounded share of traffic.
+# It is a constructor argument (``capacity_max``), not a hard constant, so a
+# deployment whose hardware genuinely outgrows it can raise it without a code
+# change.
+CAPACITY_CLAMP_MAX: float = 64.0
 
 # ``(url, timeout, api_key | None) -> (status, body)``. The ONLY thing in this
 # module that opens a socket; injected so every test runs offline. Same shape
@@ -194,10 +254,13 @@ class ReplicaState:
     busy`` — but the *policy* that says so lives in
     :mod:`lobes.gateway._selection` (t5), not here.
 
-    ``compatible``/``reason`` are the honesty pair: ``reason`` is empty exactly
-    when ``compatible`` is true, and otherwise names every differing field, so
-    ``/capabilities`` and the CLI can show an operator WHY a declared replica
-    is not pooling instead of leaving it silently absent.
+    ``compatible``/``reason`` are the honesty pair: ``reason`` names every
+    differing field, so ``/capabilities`` and the CLI can show an operator WHY
+    a declared replica is not pooling instead of leaving it silently absent.
+    ``reason`` ALSO carries capacity notes (a clamp, a refused value, a
+    capacity discarded on a fingerprint change) — see :func:`_with_note` for
+    why that field and not a new one — so it is no longer empty exactly when
+    ``compatible`` is true.
     """
 
     origin: str
@@ -211,7 +274,14 @@ class ReplicaState:
     compatible: bool
     reason: str
     last_seen: float  # monotonic timestamp of the last SUCCESSFUL probe (0.0 = never)
-    weight: float = 1.0  # declared decode weight for the selection policy
+    # The RESOLVED capacity `_selection.py` ranks by: the ingested value after
+    # the clamp and the kill switch, or `UNCALIBRATED_WEIGHT` when nothing was
+    # published (or the published value was refused/discarded).
+    weight: float = UNCALIBRATED_WEIGHT
+    # The RAW capacity as published by that replica, pre-clamp — `None` when
+    # none was published. Kept beside `weight` so an operator can see both the
+    # number the peer claimed and the number this box actually used.
+    capacity: float | None = None
 
     def evolve(self, **changes: object) -> "ReplicaState":
         """Typed wrapper over :func:`dataclasses.replace`.
@@ -238,7 +308,11 @@ class LocalLane:
     base_url: str
     served_name: str
     declared: Mapping[str, str] = field(default_factory=dict)
-    weight: float = 1.0
+    # THIS box's own declared capacity for the role — the operator-typed
+    # ``<PREFIX>_MAX_ACTIVE`` that reaches the gateway as
+    # ``ServerConfig.local_capacities`` (task t5 wires the call site).
+    # `UNCALIBRATED_WEIGHT` means "undeclared", never "one slot".
+    weight: float = UNCALIBRATED_WEIGHT
 
 
 @dataclass(frozen=True)
@@ -255,7 +329,10 @@ class PeerReplica:
 
     origin: str
     api_key: str = field(default="", repr=False)
-    weight: float = 1.0
+    # An operator-declared FALLBACK capacity for this peer, used only when the
+    # peer publishes none of its own on ``/status`` (q1 makes the peer the
+    # authority on its own capacity). `UNCALIBRATED_WEIGHT` = undeclared.
+    weight: float = UNCALIBRATED_WEIGHT
 
 
 # --- pure helpers ----------------------------------------------------------
@@ -268,6 +345,93 @@ def _as_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def resolve_capacity(
+    raw: object,
+    *,
+    capacity_max: float = CAPACITY_CLAMP_MAX,
+    kill_switch: bool = False,
+) -> tuple[float, str]:
+    """Turn a raw published/declared capacity into ``(weight, note)``. PURE.
+
+    The single ingest gate every capacity passes through, local and peer
+    alike — so the clamp and the kill switch cannot apply to one side and not
+    the other. ``note`` is empty when nothing worth telling the operator
+    happened, and otherwise names exactly what this box did to the number; the
+    caller folds it into :attr:`ReplicaState.reason`, which is what makes the
+    clamp OBSERVABLE rather than silent (spec h13).
+
+    Four outcomes:
+
+    * kill switch engaged → the sentinel, silently. Pinning capacity fleet-wide
+      is a deliberate operator action (``GATEWAY_CAPACITY_KILL_SWITCH``), not
+      an anomaly to report per replica.
+    * ``None`` (nothing published) → the sentinel, silently. An unpublished
+      capacity is the normal state of an older lobes or a non-lobes replica
+      and must never look like an error (spec h3).
+    * present but not a positive finite number → the sentinel, WITH a note. A
+      misdeclaration is not a capacity, and swallowing it silently would leave
+      an operator staring at a knob that does nothing.
+    * above *capacity_max* → clamped, WITH a note naming both numbers.
+    """
+    if kill_switch:
+        return UNCALIBRATED_WEIGHT, ""
+    if raw is None:
+        return UNCALIBRATED_WEIGHT, ""
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        value = float("nan")
+    # NaN fails every comparison, so this one check refuses NaN, inf, zero and
+    # negatives together.
+    if not (value > 0.0) or value == float("inf"):
+        return UNCALIBRATED_WEIGHT, f"capacity ignored: {raw!r} is not a positive number"
+    if value > capacity_max:
+        return capacity_max, f"capacity clamped: {value:g} -> {capacity_max:g}"
+    return value, ""
+
+
+def _as_capacity(raw: object) -> float | None:
+    """The raw published capacity as a float, or ``None`` when it is absent or
+    not a positive finite number (the values :func:`resolve_capacity` refuses).
+
+    Stored on :attr:`ReplicaState.capacity` PRE-clamp, so an operator can see
+    what the peer claimed next to what this box used — and so the fingerprint
+    keying below can tell "the same measurement again" from "a new one".
+    """
+    if raw is None:
+        return None
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not (value > 0.0) or value == float("inf"):
+        return None
+    return value
+
+
+def _declared_capacity(weight: float) -> float | None:
+    """An operator-declared capacity, or ``None`` when it is the sentinel.
+
+    `UNCALIBRATED_WEIGHT` on a :class:`LocalLane` / :class:`PeerReplica` means
+    "no capacity declared" — reading it back as a measured one-slot capacity is
+    exactly the mistake `_selection.py`'s neutral fallback exists to prevent.
+    """
+    return None if weight == UNCALIBRATED_WEIGHT else weight
+
+
+def _with_note(reason: str, note: str) -> str:
+    """Fold a capacity *note* into a compatibility *reason*, ``"; "``-joined.
+
+    NOTE the deliberate renegotiation of :class:`ReplicaState`'s original
+    invariant ("``reason`` is empty exactly when ``compatible`` is true"): a
+    COMPATIBLE replica may now carry a capacity note. The spec requires the
+    clamp to be recorded in the replica row's reason field, and a second field
+    that only sometimes carries a message would just be a reason field with a
+    different name.
+    """
+    return "; ".join(part for part in (reason, note) if part)
 
 
 def _declared(declared: Mapping[str, str], key: str) -> str:
@@ -382,6 +546,8 @@ class ReplicaCache:
         probe_timeout: float = _LOCAL_PROBE_TIMEOUT,
         peer_probe_timeout: float = _PEER_PROBE_TIMEOUT,
         backend_name: str | None = None,
+        capacity_max: float = CAPACITY_CLAMP_MAX,
+        capacity_kill_switch: bool = False,
         urlopen: Opener | None = None,
         monotonic: Clock | None = None,
         start: bool = True,
@@ -397,6 +563,10 @@ class ReplicaCache:
         # role — but a peer may equally publish the role name. Both are
         # matched; the served id is the primary key and this the fallback.
         self._backend_name = backend_name or role
+        # Capacity ingest policy, applied identically to the local lane and to
+        # every peer (see :func:`resolve_capacity`).
+        self._capacity_max = capacity_max
+        self._capacity_kill_switch = capacity_kill_switch
         self._urlopen: Opener = urlopen or _default_opener
         self._now: Clock = monotonic or _monotonic
         self._lock = threading.Lock()
@@ -418,8 +588,18 @@ class ReplicaCache:
 
     # --- seeding / reading -------------------------------------------------
 
-    @staticmethod
-    def _seed(origin: str, local: bool, weight: float) -> ReplicaState:
+    def _seed(self, origin: str, local: bool, weight: float) -> ReplicaState:
+        """The honest pre-probe state for one replica.
+
+        *weight* is the OPERATOR-DECLARED capacity carried by the
+        :class:`LocalLane` / :class:`PeerReplica` — this box's own
+        ``<PREFIX>_MAX_ACTIVE`` for the local lane. It goes through the same
+        :func:`resolve_capacity` gate a probed peer capacity does, so the
+        clamp and the kill switch hold from the very first snapshot, before
+        any probe has run.
+        """
+        raw = _declared_capacity(weight)
+        resolved, note = self._resolve(raw)
         return ReplicaState(
             origin=origin,
             local=local,
@@ -430,9 +610,19 @@ class ReplicaCache:
             waiting=0,
             fingerprint=None,
             compatible=local,  # the local replica is trivially compatible with itself
-            reason="",
+            reason=note,
             last_seen=0.0,
-            weight=weight,
+            weight=resolved,
+            capacity=raw,
+        )
+
+    def _resolve(self, raw: object) -> tuple[float, str]:
+        """This cache's ingest gate — :func:`resolve_capacity` bound to its
+        configured clamp and kill switch."""
+        return resolve_capacity(
+            raw,
+            capacity_max=self._capacity_max,
+            kill_switch=self._capacity_kill_switch,
         )
 
     def current(self) -> tuple[ReplicaState, ...]:
@@ -537,6 +727,8 @@ class ReplicaCache:
         if fingerprint is None:
             return previous.evolve(ready=False, health="error", fingerprint=None)
         running, waiting = self._local_load(lane)
+        raw = _declared_capacity(lane.weight)
+        resolved, note = self._resolve(raw)
         return previous.evolve(
             ready=True,
             busy=False,  # local pressure is the caller's own signal, not a probe
@@ -545,8 +737,10 @@ class ReplicaCache:
             waiting=waiting,
             fingerprint=fingerprint,
             compatible=True,
-            reason="",
+            reason=note,
             last_seen=self._now(),
+            weight=resolved,
+            capacity=raw,
         )
 
     def _peer_backend_entry(
@@ -643,6 +837,12 @@ class ReplicaCache:
         )
         fingerprint = self._peer_fingerprint(caps_payload) if caps_payload is not None else None
         compatible, reason = compare_fingerprints(local_fp, fingerprint)
+        # The peer is the authority on its OWN capacity (q1): a value it
+        # publishes wins over the operator's fallback declaration for it.
+        raw = entry.get(PEER_CAPACITY_KEY)
+        if raw is None:
+            raw = _declared_capacity(peer.weight)
+        resolved, note = self._resolve(raw)
         return previous.evolve(
             ready=backend_health == "ok",
             busy=busy,
@@ -651,8 +851,10 @@ class ReplicaCache:
             waiting=int(metrics.get("waiting", 0) or 0),
             fingerprint=fingerprint,
             compatible=compatible,
-            reason=reason,
+            reason=_with_note(reason, note),
             last_seen=last_seen,
+            weight=resolved,
+            capacity=_as_capacity(raw),
         )
 
     # --- refresh passes ----------------------------------------------------

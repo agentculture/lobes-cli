@@ -32,6 +32,7 @@ import time
 import pytest
 
 from lobes.gateway import _replicas as R
+from lobes.gateway import _selection as S
 
 # --- fixtures / builders ---------------------------------------------------
 
@@ -82,20 +83,22 @@ def _status_body(
     waiting: int = 0,
     name: str = "primary",
     served_name: str = SERVED,
+    capacity: object = None,
 ) -> bytes:
+    backend: dict = {
+        "name": name,
+        "task": "generate",
+        "served_name": served_name,
+        "health": health,
+        "metrics": {"running": running, "waiting": waiting},
+    }
+    if capacity is not None:
+        backend["capacity"] = capacity
     payload = {
         "object": "lobes.fleet_status",
         "default_model": served_name,
         "busy": {"running": running, "waiting": waiting},
-        "backends": [
-            {
-                "name": name,
-                "task": "generate",
-                "served_name": served_name,
-                "health": health,
-                "metrics": {"running": running, "waiting": waiting},
-            }
-        ],
+        "backends": [backend],
         "endpoints": [],
         "pressure": {
             "mode": "busy" if busy else "warm",
@@ -186,6 +189,11 @@ def _cache(routes: dict, *, peers=None, local=None, **kw) -> R.ReplicaCache:
 
 def _by_origin(states) -> dict:
     return {s.origin: s for s in states}
+
+
+def _refreshed(cache: R.ReplicaCache) -> R.ReplicaCache:
+    cache.refresh()
+    return cache
 
 
 # --- local lane fingerprint ------------------------------------------------
@@ -727,3 +735,107 @@ def test_local_runtime_falls_back_to_owned_by_when_undeclared():
     assert _runtime_from({"id": "m", "owned_by": "someone"}, {}) == "unknown"
     assert _runtime_from({"id": "m"}, {}) == "unknown"
     assert _runtime_from({"id": "m", "owned_by": "vllm"}, {"runtime": "llamacpp"}) == "llamacpp"
+
+
+# --- capacity ingest + clamp (capacity-relative pool routing, t4 stage 1) ---
+#
+# `weight` stopped being a hardcoded 1.0 placeholder: it now carries the
+# replica's measured max-active-requests CAPACITY, ingested from the peer's
+# own `/status` (q1: peer self-published) or, for the local seed, from this
+# box's declared `<PREFIX>_MAX_ACTIVE`. Because that number is peer-CONTROLLED
+# and `_selection.estimated_wait` DIVIDES by it, an inflated value would rank
+# as near-zero wait at every load level and vacuum the whole pool — so ingest
+# clamps, and says so in `reason`.
+
+
+def test_a_peer_published_capacity_populates_weight() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 8.0
+    assert peer.capacity == 8.0
+    assert peer.compatible is True
+
+
+def test_the_local_seed_populates_from_this_boxs_own_declared_capacity() -> None:
+    cache = _cache(_default_routes(), local=_lane(weight=6.0))
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == 6.0  # seeded, before any probe
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == 6.0
+    assert local.capacity == 6.0
+
+
+def test_a_peer_publishing_no_capacity_falls_back_and_stays_routable() -> None:
+    """h3: an unpublished capacity must never make a replica unselectable."""
+    cache = _cache(_default_routes())
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.UNCALIBRATED_WEIGHT
+    assert peer.capacity is None
+    assert peer.ready is True and peer.compatible is True
+    assert S.is_calibrated(peer) is False
+    assert S.is_full(peer) is False
+
+
+def test_an_inflated_peer_capacity_is_clamped_and_the_clamp_is_in_the_reason() -> None:
+    cache = _cache(_default_routes(status={"capacity": 10_000}))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.CAPACITY_CLAMP_MAX
+    assert "clamped" in peer.reason
+    assert "10000" in peer.reason
+    # Still poolable — a clamp bounds a peer's share, it does not evict it.
+    assert peer.compatible is True and peer.ready is True
+
+
+def test_a_clamped_capacity_is_observable_rather_than_silent() -> None:
+    quiet = _by_origin(_refreshed(_cache(_default_routes(status={"capacity": 4}))).current())[PEER]
+    assert quiet.reason == ""
+
+
+def test_the_local_declared_capacity_is_clamped_too() -> None:
+    cache = _cache(_default_routes(), local=_lane(weight=10_000.0))
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == R.CAPACITY_CLAMP_MAX
+    assert "clamped" in local.reason
+
+
+def test_a_non_positive_or_unparseable_capacity_is_ignored_with_a_reason() -> None:
+    for published in (0, -4, "lots", float("nan")):
+        cache = _cache(_default_routes(status={"capacity": published}))
+        cache.refresh()
+        peer = _by_origin(cache.current())[PEER]
+        assert peer.weight == R.UNCALIBRATED_WEIGHT, published
+        assert "capacity ignored" in peer.reason, published
+
+
+def test_the_kill_switch_pins_every_capacity_local_and_peer_alike() -> None:
+    cache = _cache(
+        _default_routes(status={"capacity": 8}),
+        local=_lane(weight=6.0),
+        capacity_kill_switch=True,
+    )
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[PEER].weight == R.UNCALIBRATED_WEIGHT
+    assert states[LOCAL_URL].weight == R.UNCALIBRATED_WEIGHT
+    assert "clamped" not in states[PEER].reason
+
+
+def test_the_clamp_maximum_is_configurable_per_cache() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}), capacity_max=4.0)
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 4.0
+    assert "clamped" in peer.reason
+
+
+def test_resolve_capacity_is_pure_over_its_inputs() -> None:
+    assert R.resolve_capacity(8.0) == (8.0, "")
+    assert R.resolve_capacity(None) == (R.UNCALIBRATED_WEIGHT, "")
+    weight, note = R.resolve_capacity(99.0, capacity_max=8.0)
+    assert (weight, "clamped" in note) == (8.0, True)
+    assert R.resolve_capacity(8.0, kill_switch=True) == (R.UNCALIBRATED_WEIGHT, "")
