@@ -42,6 +42,22 @@ What it deliberately does NOT do
   the local lane), exactly as :class:`lobes.gateway._readiness.ReadinessCache`
   does. (Spec c5/h5.)
 
+Local in-flight accounting
+--------------------------
+Probed load is up to one refresh interval (5 s) stale, and nothing used to be
+counted when a request was actually DISPATCHED — so a burst of concurrent
+arrivals all read one snapshot and stampeded the same replica. An accurate
+capacity makes that worse, not better (today's uniform weight of 1.0 at least
+made ties resolve to local, keeping bursts put). So this module now counts
+this box's own outstanding dispatches — :meth:`ReplicaCache.dispatch` /
+:meth:`~ReplicaCache.begin_dispatch` / :meth:`~ReplicaCache.end_dispatch`,
+driven by ``server.py`` — and folds them into the ``waiting`` that
+:func:`~lobes.gateway._selection.estimated_wait` divides by, so the snapshot
+self-corrects between refreshes. A dispatch older than that replica's last
+successful probe is NOT counted (the probe already sees it), and any dispatch that
+outlives :data:`INFLIGHT_MAX_AGE` is dropped, so a leaked counter can never
+make a healthy box look permanently full.
+
 Capacity (capacity-relative pool routing)
 -----------------------------------------
 Beyond load and fingerprint this module now supplies a third fact: each
@@ -75,9 +91,11 @@ Stdlib only — this gateway is deliberately dependency-free.
 from __future__ import annotations
 
 import http.client
+import itertools
 import json
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from time import monotonic as _monotonic
 from typing import Callable
@@ -102,6 +120,18 @@ _DEFAULT_REFRESH_INTERVAL: float = 5.0
 # but hold them in separate constants-in-spirit (two constructor arguments), so
 # a deployment can bound a slow cross-box link without shortening the local
 # one — the ``_READINESS_PROBE_TIMEOUT`` / ``_PEER_PROBE_TIMEOUT`` split.
+# How long an OUTSTANDING dispatch keeps counting before it is presumed
+# leaked and dropped from the in-flight tally. A leaked counter is the one
+# serious failure mode of dispatch accounting: it can only ever grow, it makes
+# a perfectly healthy box look more loaded than it is, and — once the tally
+# reaches the box's capacity — permanently FULL, with no path back. The
+# context-manager API makes a leak hard to write in the first place; this
+# expiry makes even a leaked one self-heal. Generous on purpose: it must sit
+# well beyond the longest legitimate generation (a 256K-context reasoning turn
+# on the Thor's 12.1 tok/s cortex is minutes, not seconds), because expiring a
+# LIVE request would under-count load and re-create the stampede.
+INFLIGHT_MAX_AGE: float = 900.0
+
 _LOCAL_PROBE_TIMEOUT: float = 3.0
 _PEER_PROBE_TIMEOUT: float = 3.0
 
@@ -282,6 +312,11 @@ class ReplicaState:
     # none was published. Kept beside `weight` so an operator can see both the
     # number the peer claimed and the number this box actually used.
     capacity: float | None = None
+    # This box's OWN outstanding dispatches to this replica that the last probe
+    # has not seen yet (see :meth:`ReplicaCache.in_flight`). Already folded
+    # into `waiting` by :meth:`ReplicaCache.current`, and reported separately
+    # so a consumer can recover the purely probed number by subtracting it.
+    in_flight: int = 0
     # The fingerprint `capacity` was PINNED to: the live fingerprint under
     # which that number first arrived. A capacity is only valid for the
     # checkpoint/window/runtime it was measured on, so when the live
@@ -606,6 +641,11 @@ class ReplicaCache:
         self._urlopen: Opener = urlopen or _default_opener
         self._now: Clock = monotonic or _monotonic
         self._lock = threading.Lock()
+        # Dispatch bookkeeping gets its OWN lock: a dispatch must never wait on
+        # a probe pass writing the snapshot, and vice versa.
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[int, tuple[str, float]] = {}
+        self._inflight_tokens = itertools.count(1)
         self._stop = threading.Event()
         self._peer_stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -712,13 +752,118 @@ class ReplicaCache:
         A pure read under the lock — never probes, never blocks. Every
         :class:`ReplicaState` is frozen, so the returned tuple is safe to hand
         straight to the selection policy on the request path.
+
+        Each state's ``waiting`` has this box's OWN outstanding dispatches to
+        that replica folded in, with the folded amount reported separately as
+        ``in_flight`` (so the purely probed number is recoverable by
+        subtraction). That fold is what makes a burst self-correct: probed load
+        alone is up to one refresh interval stale, so N concurrent arrivals
+        would all read one idle snapshot and stampede a single replica —
+        exactly the herd that an accurate capacity makes WORSE, since a
+        genuinely least-full peer attracts the whole burst instead of ties
+        resolving to local.
         """
+        states = self._raw_states()
+        if not self._inflight:  # the overwhelmingly common case: nothing to fold
+            return tuple(states)
+        now = self._now()
+        folded: list[ReplicaState] = []
+        for state in states:
+            extra = self._count_inflight(state.origin, state.last_seen, now)
+            folded.append(
+                state.evolve(in_flight=extra, waiting=state.waiting + extra) if extra else state
+            )
+        return tuple(folded)
+
+    # --- local in-flight accounting ---------------------------------------
+    #
+    # The API `server.py` (t5) drives. THREE entry points, in order of
+    # preference:
+    #
+    #   with cache.dispatch(origin):      # leak-proof: releases on any exit
+    #       ...
+    #
+    #   token = cache.begin_dispatch(origin)   # for a streamed response whose
+    #   ...                                    # completion is not lexically
+    #   cache.end_dispatch(token)              # scoped
+    #
+    # `end_dispatch` is idempotent and accepts ``None``/an unknown token, so a
+    # double release (a retry path plus a finally, say) is a no-op rather than
+    # a negative count, and every entry expires after
+    # :data:`INFLIGHT_MAX_AGE` regardless — three independent guards against
+    # the one failure mode that cannot self-heal, a leaked counter making a
+    # healthy box look permanently full.
+
+    def begin_dispatch(self, origin: str) -> int:
+        """Record one outstanding dispatch to *origin*; returns its token."""
+        now = self._now()
+        token = next(self._inflight_tokens)
+        with self._inflight_lock:
+            # Opportunistic prune — bounded work on a path that already has the
+            # lock, so a leak never accumulates unboundedly either.
+            for stale in [
+                tok for tok, (_o, start) in self._inflight.items() if now - start > INFLIGHT_MAX_AGE
+            ]:
+                self._inflight.pop(stale, None)
+            self._inflight[token] = (origin, now)
+        return token
+
+    def end_dispatch(self, token: int | None) -> None:
+        """Release the dispatch *token*. Idempotent; ``None`` is a no-op."""
+        if token is None:
+            return
+        with self._inflight_lock:
+            self._inflight.pop(token, None)
+
+    @contextmanager
+    def dispatch(self, origin: str) -> Iterator[int]:
+        """Count one dispatch to *origin* for the duration of the block.
+
+        The preferred call shape: the release is in a ``finally``, so an
+        exception, an early ``return`` or a cancelled upstream cannot leak the
+        counter.
+        """
+        token = self.begin_dispatch(origin)
+        try:
+            yield token
+        finally:
+            self.end_dispatch(token)
+
+    def in_flight(self, origin: str, *, since: float | None = None) -> int:
+        """Outstanding dispatches to *origin* the last probe has not seen.
+
+        A dispatch that started BEFORE *since* (default: that replica's own
+        ``last_seen``, the monotonic stamp of the last successful probe) is
+        already reflected in the probed ``running``/``waiting`` and is not
+        counted again — otherwise every in-flight request would be counted
+        twice for its whole life and systematically inflate this box's view of
+        its own load.
+        """
+        if since is None:
+            since = next(
+                (s.last_seen for s in self._raw_states() if s.origin == origin),
+                0.0,
+            )
+        return self._count_inflight(origin, since, self._now())
+
+    def _raw_states(self) -> tuple[ReplicaState, ...]:
+        """The snapshot exactly as probed — no in-flight fold. The lock is held
+        only for the dict reads; every state is frozen."""
         with self._lock:
             states: list[ReplicaState] = []
             if self._local_state is not None:
                 states.append(self._local_state)
             states.extend(self._peer_states[peer.origin] for peer in self._peers)
             return tuple(states)
+
+    def _count_inflight(self, origin: str, since: float, now: float) -> int:
+        with self._inflight_lock:
+            entries = list(self._inflight.values())
+        return sum(
+            1
+            for entry_origin, start in entries
+            if entry_origin == origin and start >= since and now - start <= INFLIGHT_MAX_AGE
+        )
 
     def refresh(self) -> None:
         """Probe the local lane AND every peer once, synchronously.

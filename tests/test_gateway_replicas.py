@@ -959,3 +959,146 @@ def test_both_sides_switching_together_discards_both_capacities() -> None:
     states = _by_origin(cache.current())
     assert states[LOCAL_URL].weight == R.UNCALIBRATED_WEIGHT
     assert states[PEER].weight == R.UNCALIBRATED_WEIGHT
+
+
+# --- local in-flight accounting (t4 stage 3) -------------------------------
+#
+# Load is otherwise probe-sourced ONLY, on a 5s refresh, with nothing counted
+# at dispatch — so a burst of concurrent arrivals all read one stale snapshot
+# and stampede the same replica. Accurate capacity makes that WORSE (a
+# genuinely least-full peer attracts the whole burst), so the snapshot has to
+# self-correct between refreshes: this box counts its own outstanding
+# dispatches and folds them into the `waiting` the selection policy divides by.
+
+
+class _Clock:
+    """A monotonic clock a test can advance by hand."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_no_dispatches_means_no_in_flight_anywhere() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    for state in cache.current():
+        assert state.in_flight == 0
+    assert cache.in_flight(PEER) == 0
+    assert cache.in_flight("http://nowhere:8000") == 0
+
+
+def test_the_dispatch_context_manager_counts_while_open_and_releases_on_exit() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    with cache.dispatch(PEER):
+        assert cache.in_flight(PEER) == 1
+        assert _by_origin(cache.current())[PEER].in_flight == 1
+    assert cache.in_flight(PEER) == 0
+    assert _by_origin(cache.current())[PEER].in_flight == 0
+
+
+def test_the_dispatch_context_manager_releases_on_an_exception() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    with pytest.raises(RuntimeError):
+        with cache.dispatch(PEER):
+            raise RuntimeError("upstream blew up mid-stream")
+    assert cache.in_flight(PEER) == 0
+
+
+def test_end_dispatch_is_idempotent_and_tolerates_none() -> None:
+    cache = _cache(_default_routes())
+    token = cache.begin_dispatch(PEER)
+    cache.end_dispatch(token)
+    cache.end_dispatch(token)  # a double release must never go negative
+    cache.end_dispatch(None)
+    cache.end_dispatch(-1)
+    assert cache.in_flight(PEER) == 0
+
+
+def test_in_flight_is_folded_into_waiting_so_estimated_wait_self_corrects() -> None:
+    cache = _cache(_default_routes(local_load={"running": 1, "waiting": 0}))
+    cache.refresh()
+    before = _by_origin(cache.current())[LOCAL_URL]
+    with cache.dispatch(LOCAL_URL):
+        during = _by_origin(cache.current())[LOCAL_URL]
+        assert during.waiting == before.waiting + 1
+        assert during.in_flight == 1
+        assert S.estimated_wait(during) > S.estimated_wait(before)
+
+
+def test_a_dispatch_older_than_the_last_probe_is_not_counted_twice() -> None:
+    """Once a probe has SEEN the request, the probed number is authoritative."""
+    clock = _Clock()
+    cache = _cache(_default_routes(), monotonic=clock)
+    cache.refresh()
+    token = cache.begin_dispatch(LOCAL_URL)
+    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 1
+    clock.t += 1.0
+    cache.refresh()  # the probe now reports the request itself
+    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 0
+    cache.end_dispatch(token)
+
+
+def test_a_leaked_dispatch_expires_and_never_makes_a_box_look_full_forever() -> None:
+    """The leak guard: a counter that is never released must still decay."""
+    clock = _Clock()
+    cache = _cache(_default_routes(), monotonic=clock)
+    cache.refresh()
+    cache.begin_dispatch(LOCAL_URL)  # deliberately never released
+    assert cache.in_flight(LOCAL_URL) == 1
+    clock.t += R.INFLIGHT_MAX_AGE + 1.0
+    assert cache.in_flight(LOCAL_URL) == 0
+    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 0
+
+
+def test_concurrent_arrivals_spread_across_two_idle_replicas() -> None:
+    """N arrivals against two idle replicas do not all land on one, WITHOUT
+    waiting for a probe refresh (the spec's own honesty condition)."""
+    cache = _cache(_default_routes())
+    cache.refresh()
+    picked: list[str] = []
+    held = []
+    for _ in range(4):
+        choice = S.select_replica(cache.current())
+        assert choice.origin is not None
+        picked.append(choice.origin)
+        held.append(cache.begin_dispatch(choice.origin))
+    assert set(picked) == {LOCAL_URL, PEER}
+    assert picked.count(LOCAL_URL) == 2 and picked.count(PEER) == 2
+    for token in held:
+        cache.end_dispatch(token)
+    assert all(state.in_flight == 0 for state in cache.current())
+
+
+def test_in_flight_counting_opens_no_socket() -> None:
+    def _forbidden(url, _timeout, _key):  # pragma: no cover - must never run
+        raise AssertionError(f"current() opened a socket: {url}")
+
+    cache = _cache(_default_routes())
+    cache.refresh()
+    with cache.dispatch(PEER):
+        cache._urlopen = _forbidden  # noqa: SLF001 - structural assertion
+        assert _by_origin(cache.current())[PEER].in_flight == 1
+
+
+def test_dispatch_counts_are_thread_safe() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    barrier = threading.Barrier(8)
+
+    def worker() -> None:
+        barrier.wait()
+        for _ in range(50):
+            with cache.dispatch(PEER):
+                pass
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert cache.in_flight(PEER) == 0
