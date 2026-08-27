@@ -64,7 +64,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain tuning` (purpose + machine profiles)
 - `lobes explain fleet`
 - `lobes explain gateway`
-- `lobes explain roles` (the nine-role Colleague contract:
+- `lobes explain roles` (the ten-role Colleague contract:
   cortex/senses/muse/embedder/reranker/stt/tts)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
@@ -398,6 +398,32 @@ answer carries `X-Lobes-Proxied-By: <peer origin>`; a single-hop guard
 refuses (`508 proxy_loop`) a request that would re-proxy. Default off,
 byte-identical. See `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`
 and `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`.
+
+## Replica pools (opt-in, VALIDATED live for cortex on Spark+Thor — issue #199)
+
+Beside proxy-lobes' one-peer-per-dropped-role, a role this box ALSO HOSTS
+can pool with N compatible peer replicas: declare `<PREFIX>_PEER_ORIGINS`
+(comma-separated, plural) with positionally-paired `<PREFIX>_PEER_API_KEYS`
+(an empty slot is legal — "this peer has no inbound gate"; a shorter/longer
+key list is a startup config error) and an operator-typed
+`GATEWAY_SELF_ORIGIN`. A background `ReplicaCache` thread live-probes each
+peer's `GET /status` (load) and `GET /capabilities` (fingerprint); two
+replicas are compatible only when served id, quantization, max context and
+runtime all agree (`kv_cache_dtype`/parsers/speculative config are
+informational, never disqualifying). A pooled request is served by whichever
+compatible, ready, non-busy replica is least loaded — local wins ties, an
+`X-Lobes-Affinity` header stickies within a margin — and carries
+`X-Lobes-Served-By` (local) or `X-Lobes-Proxied-By` (forwarded) plus
+`X-Lobes-Route-Reason` on every answer. Under local pressure a pooled request
+forwards to a selectable peer instead of shedding 429; only "no replica
+anywhere is selectable" still sheds. A pool composes on top of the awake/
+proxy states above, not a fourth one; with no `*_PEER_ORIGINS` declared,
+every response stays byte-identical. **Validated live only for `cortex` on
+the Spark+Thor NVFP4 pair** (`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`
+is the pre-pool baseline; the pooled acceptance transcript is pending) — the
+Orin's llama.cpp cortex is exempt, and any other pooled role is
+declared/unvalidated. See
+`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
 """
 
 _TUNNEL = """\
@@ -814,7 +840,7 @@ _SHAPES = """\
 
 A **deployment shape** is the axis orthogonal to the machine profile: not
 "how is each role tuned on this card?" (that's the profile, `lobes explain
-profiles`) but "which of the nine Colleague roles does this box host at
+profiles`) but "which of the ten Colleague roles does this box host at
 all?" A shape composes as pure data over the resolved card profile at
 render time — `shape × card` — never a per-shape code fork.
 
@@ -937,6 +963,23 @@ into actually following its own referral — see `lobes explain gateway`'s
 "Proxy-lobes" section for the second, separate `<PREFIX>_PEER_PROXY` opt-in.
 See `docs/deployment-shapes.md`.
 
+## Replica pools compose on top of a state, not a fourth one (issue #199)
+
+A pool answers a different question than the shape axis above: not "which
+role does this box host" but "which of the boxes that already host an
+equivalent replica of a hosted role should serve THIS request". Declaring
+the plural `<PREFIX>_PEER_ORIGINS` beside the singular `<PREFIX>_PEER_ORIGIN`
+lets a box that HOSTS a role (awake) also forward some of its requests to an
+equally-compatible peer when that peer is less loaded — `hosted_by` stays a
+string, never a list, and the awake/asleep/proxy vocabulary is unchanged.
+**VALIDATED live 2026-08-25 for cortex only (#108)**: the Spark+Thor
+NVFP4 `cortex` pair has its acceptance transcript
+(`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the Orin's
+llama.cpp cortex is exempt, and any other pooled role is
+declared/unvalidated data only, exactly like `orin-small`/`thor-muse` above.
+See `lobes explain gateway`'s "Replica pools" section and
+`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
+
 ## The mesh-brain end-state (issue #112)
 
 One heavy lobe per box, cheap gears co-reside, the brain stays whole across
@@ -958,7 +1001,7 @@ its own follow-up.
   co-residency tax numbers, the mesh-brain end-state decisions, the
   acceptance script, the dev lane)
 - `lobes explain profiles` — the per-machine tuning axis this composes with
-- `lobes explain roles` — the nine-role Colleague contract
+- `lobes explain roles` — the ten-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
 - `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
@@ -1196,6 +1239,19 @@ Every POST plus `GET /v1/models` and `/v1/models/supported` requires
 `CULTURE_VLLM_API_KEY`) is set; `/health`, `/capabilities`, `/status` stay
 keyless. Unset = today's no-auth behaviour. See `lobes explain gateway`.
 
+## Replica-pool markers (opt-in, cortex-validated only — issue #199)
+
+A pooled role's answer carries `X-Lobes-Served-By` (local: this box's own
+`GATEWAY_SELF_ORIGIN`, or `local`) or `X-Lobes-Proxied-By` (forwarded: the
+peer origin), plus `X-Lobes-Route-Reason` on EVERY pooled answer
+(`local-idle` / `peer-less-loaded` / `local-busy-forwarded` / `affinity` /
+`sole-ready` / `none`) and `X-Lobes-Route-Attempts` when a pre-dispatch
+retry happened. A caller may send `X-Lobes-Affinity: <key>` to prefer a
+sticky replica. `GET /capabilities` gains an additive `replicas` list +
+`fingerprint` per role. No pool declared = none of this appears. See
+`lobes explain gateway` and
+`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
+
 See `lobes explain gateway` (routing), `lobes explain embeddings|rerank|score`
 (per-endpoint shapes), `lobes explain realtime` (audio), `lobes explain roles`
 (the nine-role Colleague contract), and `docs/openai-api.md` for the full
@@ -1293,6 +1349,20 @@ declared, and a further `proxied: true` when this box also opted in to
 forwarding that role's requests there (proxy-lobes, opt-in — `lobes explain
 gateway`). A proxied role's `ready` reflects a live probe of the PEER, not a
 local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
+
+A role a box HOSTS can additionally be pooled with N peer replicas (issue
+#199, opt-in, VALIDATED live for `cortex` on Spark+Thor, declared-only elsewhere): declaring
+`<PREFIX>_PEER_ORIGINS` (plural) adds an ADDITIVE `replicas` list (per
+candidate: origin, local, ready, busy, running, waiting, compatible, reason,
+fingerprint) and a `fingerprint` object to that role's entry — every existing
+key (`feasible`, `hosted_by`, `proxied`, `ready`, `loaded`) keeps its
+documented meaning; no `*_PEER_ORIGINS` declared means no `replicas` key at
+all. `lobes capabilities --replicas` / `lobes endpoint <role> --replicas`
+render each candidate plus a "would choose: `<origin>` (`<reason>`)" line
+from the same selection function the gateway uses; `lobes route` (the
+task→tier classifier) is unrelated and untouched. See `lobes explain
+gateway`'s "Replica pools" section and `docs/colleague-stack.md`'s
+capabilities schema.
 
 ## Serving and measuring
 

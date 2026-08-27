@@ -111,6 +111,58 @@ class RoutingTable:
     # output). Defaults to empty so every existing construction is
     # unaffected.
     peer_api_keys: Mapping[str, str] = field(default_factory=dict, repr=False)
+    # Backend NAME -> the OPERATOR-DECLARED origins of every REPLICA hosting
+    # that backend's role (cortex-replica-pool, issue #199, t2). Sibling of
+    # ``peer_origins`` above, not a replacement for it: the singular channel
+    # names ONE peer for a role this box DROPPED (mesh-brain referral/proxy,
+    # issue #112); this plural channel names MULTIPLE origins for a role
+    # this box (or the mesh) runs as an interchangeable REPLICA POOL.
+    # Populated by :func:`lobes.gateway._config.build_config` from
+    # ``<PREFIX>_PEER_ORIGINS`` (:data:`lobes.gateway._config.
+    # PEER_ORIGINS_ENV`) — comma-separated, each entry stripped and
+    # trailing-slash-trimmed exactly like the singular channel. Per the #92
+    # lesson every origin here is OPERATOR-TYPED, never derived from
+    # hostnames/interfaces/service discovery. This task (t2) only PARSES the
+    # field — no replica-selection logic (round-robin, health-aware pick, …)
+    # consumes it yet; that lands in a later cortex-replica-pool task.
+    # Defaults to empty so every existing table construction is unaffected.
+    replica_origins: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Backend NAME -> the OUTBOUND API key PER REPLICA, positional against
+    # ``replica_origins`` for the same backend name (index *i* is replica
+    # *i*'s credential). Populated from ``<PREFIX>_PEER_API_KEYS``
+    # (:data:`lobes.gateway._config.PEER_API_KEYS_ENV`) by
+    # :func:`~lobes.gateway._config._replica_api_keys`, which enforces the
+    # list is the SAME LENGTH as its origins list — an empty slot is legal
+    # (it means "no key for this replica"), but a length MISMATCH raises
+    # :class:`~lobes.gateway._config.ReplicaConfigError` at config-build
+    # time rather than silently shifting one replica's key onto another's
+    # origin. ``repr=False`` because the values are SECRETS: they must never
+    # appear in repr/str of this table. Defaults to empty.
+    replica_api_keys: Mapping[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    # This box's own OPERATOR-DECLARED origin (cortex-replica-pool, issue
+    # #199, t2), from ``GATEWAY_SELF_ORIGIN`` (stripped, trailing slash
+    # trimmed). Per the #92 lesson this is NEVER derived from the local
+    # box's own view of its network (hostname, bound interface, container
+    # name) — an operator types it, exactly like a peer's origin. Default
+    # ``""`` (undeclared). A later cortex-replica-pool task uses this to
+    # recognise (and refuse) a replica pool that names this box as one of
+    # its own peers — this task only carries the value.
+    self_origin: str = ""
+    # Backend NAME -> {knob suffix -> DECLARED value} for the small set of
+    # engine knobs a caller might reasonably expect to be IDENTICAL across
+    # every replica in a role's pool (cortex-replica-pool, issue #199, t2)
+    # — two "cortex" replicas silently disagreeing on, say, TOOL_PARSER
+    # would answer a strict-tools request differently depending on which
+    # replica happened to serve it. Read from ``<PREFIX>_<SUFFIX>`` for each
+    # suffix in :data:`lobes.gateway._config.LANE_FINGERPRINT_SUFFIXES`
+    # (QUANTIZATION / KV_CACHE_DTYPE / REASONING_PARSER / TOOL_PARSER /
+    # SPECULATIVE_CONFIG) by :func:`lobes.gateway._config._lane_fingerprints`
+    # — the same ``<PREFIX>_<KNOB>`` convention every other per-backend
+    # channel in this module uses. Only SET knobs appear (blank/absent
+    # omitted); a backend that declared none of the five has no entry at
+    # all. This task only PARSES the field — no cross-replica consistency
+    # check runs yet. Defaults to empty.
+    lane_fingerprints: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
 
 # The per-endpoint audio ROLE map (issue #129): /v1/audio/speech is the tts

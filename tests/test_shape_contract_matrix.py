@@ -89,6 +89,7 @@ _MODEL_ID: dict[str, str] = {
     "senses": "coolthor/gemma-4-12B-it-NVFP4A16",
     "muse": "nvidia/Gemma-4-31B-IT-NVFP4",
     "worker": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+    "associate": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
     "hand": "LiquidAI/LFM2.5-1.2B-Instruct",
     "embedder": "Qwen/Qwen3-Embedding-0.6B",
     "reranker": "Qwen/Qwen3-Reranker-0.6B",
@@ -103,6 +104,7 @@ _WIRE_ENV: dict[str, tuple[str, str]] = {
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
     "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
     "worker": ("WORKER_BASE_URL", "WORKER_SERVED_NAME"),
+    "associate": ("ASSOCIATE_BASE_URL", "ASSOCIATE_SERVED_NAME"),
     "hand": ("HAND_BASE_URL", "HAND_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
@@ -133,10 +135,28 @@ def _aliases(role: str) -> tuple[str, ...]:
 # The matrix itself: every (built-in shape, dropped core role) cell, derived
 # from the shipped shape data. A future built-in shape's drops land here with
 # zero edits to this module.
+# Only roles that are actually addressable on /v1/chat/completions belong in
+# this matrix. The end-to-end cell POSTs `model=<role>` there and expects the
+# honest `role_infeasible`; for a POOLING or AUDIO role that is the wrong
+# expectation, because such a role is not a chat model at all and
+# `model_not_found` is the correct answer whether it is hosted or not.
+#
+# This mattered from 2026-08-26: `orin-associate` is the FIRST built-in shape
+# to drop `embedder`/`reranker`, so the blanket expectation had never been
+# exercised on a non-generate role before. Derived from TIER_ROLE rather than
+# hardcoded, so a future generate role joins the matrix with no edit here.
+_GENERATE_BACKENDS = frozenset(TIER_ROLE.values())
+
+
+def _is_generate_role(role: str) -> bool:
+    return ROLE_BACKEND.get(role, role) in _GENERATE_BACKENDS
+
+
 CELLS: tuple[tuple[str, str], ...] = tuple(
     (shape_name, role)
     for shape_name in builtin_shape_names()
     for role in _dropped_core_roles(resolve_shape(shape_name))
+    if _is_generate_role(role)
 )
 
 # Cells whose dropped role has generate-lane aliases (all of today's cells —
@@ -158,7 +178,10 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     (all but thor-muse) contributes a muse cell too. `worker` — the second
     opt-in core role (thor-worker-lobe plan) — joined `muse` in
     OPT_IN_CORE_ROLES with NO hosting shape built yet, so EVERY shape
-    (including thor-muse) contributes a worker cell too. If this fails
+    (including thor-muse) contributes a worker cell too. `associate` — the
+    THIRD opt-in core role (lightning-on-orin plan t6) — is in the same
+    position: no built-in shape hosts it yet (that is t9), so EVERY shape
+    contributes an associate cell. If this fails
     because a NEW built-in shape landed: the parametrized cell tests below
     already cover it — just extend this documented set to match its declared
     drops.
@@ -166,12 +189,29 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     assert set(CELLS) == {
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
+        ("machine-as-brain", "associate"),
+        # orin-associate — the THIRD opt-in core role's own hosting shape
+        # (lightning-on-orin plan t9) — hosts `associate` (Lightning, the
+        # llama.cpp cortex's sm_87 sibling) and drops BOTH heavy defaults
+        # (cortex, senses) to a peer, plus muse and worker (neither hosted
+        # here), mirroring thor-muse's/thor-worker's four-cell shape.
+        ("orin-associate", "cortex"),
+        ("orin-associate", "senses"),
+        ("orin-associate", "muse"),
+        ("orin-associate", "worker"),
+        # orin-associate is the SOLO shape (operator decision 2026-08-26): it
+        # hosts `associate` alone, so it is the first built-in shape to drop
+        # `hand` -- until now hosted by every shape as the pressure-policy
+        # servable floor. A box on this shape has NO floor: under swap/iowait
+        # pressure it sheds 429 with nothing to degrade to.
+        ("orin-associate", "hand"),
         # orin-cortex is orin-lobe with the heavies swapped: it hosts cortex
         # (on the llama.cpp lane) and drops senses to a peer, so it contributes
         # a senses cell where orin-lobe contributes a cortex one.
         ("orin-cortex", "senses"),
         ("orin-cortex", "muse"),
         ("orin-cortex", "worker"),
+        ("orin-cortex", "associate"),
         # orin-lobe is thor-lobe's sm_87 sibling: it hosts senses and drops
         # cortex (which the orin CARD also declares infeasible — NVFP4 W4A4
         # needs Blackwell), so it contributes the same three cells thor-lobe
@@ -179,28 +219,38 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-lobe", "cortex"),
         ("orin-lobe", "muse"),
         ("orin-lobe", "worker"),
+        ("orin-lobe", "associate"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),
         ("orin-small", "worker"),
+        ("orin-small", "associate"),
         ("spark-lobe", "senses"),
         ("spark-lobe", "muse"),
         ("spark-lobe", "worker"),
+        ("spark-lobe", "associate"),
         ("thor-lobe", "cortex"),
         ("thor-lobe", "muse"),
         ("thor-lobe", "worker"),
+        ("thor-lobe", "associate"),
         ("thor-muse", "cortex"),
         ("thor-muse", "senses"),
         ("thor-muse", "worker"),
+        ("thor-muse", "associate"),
         # thor-worker hosts the opt-in `worker` lobe and drops BOTH heavy
         # defaults AND muse (the mesh moved off muse to worker) — three cells.
         ("thor-worker", "cortex"),
         ("thor-worker", "senses"),
         ("thor-worker", "muse"),
+        ("thor-worker", "associate"),
     }
     # machine-as-brain contributes ONLY the opt-in-core cells (muse, worker)
     # — never a default-role drop (its default path is golden-pinned instead).
-    assert all(role in ("muse", "worker") for shape, role in CELLS if shape == "machine-as-brain")
+    assert all(
+        role in ("muse", "worker", "associate")
+        for shape, role in CELLS
+        if shape == "machine-as-brain"
+    )
 
 
 def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
@@ -424,6 +474,10 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
         expected += [("muse", "muse")]
     if shape.hosts_role("worker"):
         expected += [("worker", "worker")]
+    if shape.hosts_role("associate"):
+        # The tenth role (lightning-on-orin, t6): its role name IS its
+        # backend/tier name, like muse and worker.
+        expected += [("associate", "associate")]
     if shape.hosts_role("hand"):
         # All three spellings land on the `hand` backend: `hand` is the role
         # name, `minor`/`cheap` are the back-compat tier names it inherited when

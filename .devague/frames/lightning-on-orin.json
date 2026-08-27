@@ -1,0 +1,1085 @@
+{
+  "slug": "lightning-on-orin",
+  "title": "Lightning on Orin",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-25T16:11:13Z",
+  "updated": "2026-08-25T19:27:48Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves NVIDIA Nemotron 3.5 Lightning 30B-A3B on the Jetson AGX Orin 64GB",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "The announcement is only true once a lane actually serves through the gateway on this board -- the 2026-08-25 spike proves the engine, not the deployment.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run both published recipes verbatim on the physical Orin (c21) before touching any lobes surface; only then wire the winning lane as 'associate'.",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The stated REASON the Orin declares worker=infeasible is factually wrong for this checkpoint. lobes/machines/orin.py:10-20 and lobes/profiles/builtin/orin.toml:103-128 both assert the NVFP4 lobes 'quantize ACTIVATIONS to FP4 (W4A4 on the MLP path)', naming nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 explicitly. Its own hf_quant_config.json (fetched 2026-08-25) says otherwise: quant_algo MIXED_PRECISION = W4A16_NVFP4 (group_size 16) on every routed/shared expert up_proj+down_proj, FP8 on mixer in_proj/out_proj, kv_cache_quant_algo FP8. W4A16 is WEIGHT-ONLY -- structurally the same exception the board already runs for senses (int4 W4A16). Both files need the per-checkpoint correction.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The correction is per-CHECKPOINT, not per-board: the W4A4 sentence stays true for the Qwen3.8-27B and Gemma-31B NVFP4 gears and must not be deleted wholesale -- only Lightning is carved out, citing its own hf_quant_config.json.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Engine image is a NEW axis, not a knob. lobes/templates/fleet/docker-compose.yml:52-53 pins every vLLM lane to the Docker Hub official nightly vllm/vllm-openai@sha256:8bd082... -- a digest this fleet validated only on Blackwell-class Jetsons. An sm_87 Orin needs an aarch64 build carrying sm_87 kernels (jetson-containers / dusty-nv lineage), which no lane in the template can express today; the same class of gap that made gpu_access='runtime' a card declaration.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Adding worker to this board is a THREE-way budget problem the card cannot currently express. builtin/orin.toml:98-101 declares exactly one exclusive_roles group (cortex+senses, MEASURED: 33 GiB + 27.6 GiB against 61.3 GiB with ZERO swap). Lightning's weights measured 17.85 GiB on the Spark (docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:138), so a hosted worker collides with whichever heavy lobe the shape kept -- and lobes init's co-residency guard only refuses what the table declares.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "The [[exclusive_roles]] group is only honest if its 'reason' string quotes MEASURED arithmetic from this board, the way the existing cortex/senses group does -- so it cannot be written until a live boot reports associate's real resident footprint.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "The nearest-hardware precedent is a DOUBLE no-go, and it is the dominant risk. lobes/catalog.py:975-985 records Lightning wedging indefinitely at 'Warming up Mamba2 SSD Triton kernels' on the Jetson AGX Thor on BOTH the fleet 8bd082 nightly AND the upstream v0.27.1 release image (idle-CPU hang, not slow JIT) -- docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. Whether sm_87's older, more-trodden Triton path clears a wedge sm_110 could not is UNKNOWN and is the first thing any spike must answer.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does the Orin actually clear the Mamba2 warmup that wedged the Thor twice? This is the single go/no-go for the vLLM lane and c17 argues the flag set is the difference.",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "ANSWERED BY MEASUREMENT: the Orin clears it. The boot log carries the identical 'Warming up Mamba2 SSD Triton kernels...' line at 18:58:24 and proceeds to KV allocation two minutes later, then serves. See c44 -- and note this also disproves the missing-flag explanation c17 offered."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "The vendor's Orin support claim is real but not reproducible from the page. jetson-ai-lab.com/models/nemotron3-5-lightning lists 'Jetson AGX Orin 64GB' as supported, states NVFP4 + vLLM + DSpark at five speculative tokens as the fastest tested configuration, and cites '89 tokens/sec on Jetson AGX Orin across multi-step agentic workloads' -- but its own serve-command generator returns 'No command for this module and engine in model data', so NO Orin command line, image tag, window or utilization is actually published there. Treat 89 tok/s as a vendor claim, not a target: it is an agentic-workload aggregate WITH speculation, not comparable to the repo's own 75.1 tok/s single-stream no-MTP Spark measurement.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "A stale in-repo doc must be corrected as part of this work. docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:114-125 still records the v0.27.1-on-Thor spike as 'recorded but not yet run' and cites the jetson-ai-lab Orin recipe as a possible reopener; lobes/catalog.py:975-985 says v0.27.1 was in fact tried and also wedged. The doc is behind the catalog on the exact question this idea turns on.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "The doc correction lands even if both spikes fail: the stale v0.27.1-on-Thor sentence is wrong today regardless of what the Orin does.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "Refuting the W4A4 premise (c2) does NOT establish feasibility, and this frame must not let one become the other. Two independent sm_87 barriers survive it: vLLM's modelopt MIXED_PRECISION path is reported sm_89-and-above, falling back to Marlin W4A16 dequant on non-Blackwell (vllm-project/vllm#47749, #34694, #38776 -- with correctness bugs open on that very fallback), and kv_cache_quant_algo FP8 has no sm_87 hardware path, so the lane would need kv_cache_dtype=auto and a bigger KV bill than the Spark's fp8_e4m3 3.56M-token pool implies.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "Nothing about the mesh's existing worker seat changes. The Spark GB10 hosts worker today (deviation d1, docs/evidence/2026-08-20-accept-worker-hand-spark.txt) and this box reaches it by proxy -- WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true are live in ~/.lobes/.env. A local Orin worker is an ADDITION to that topology, and the proxy path stays the fallback if the local lane never validates.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "The Spark-hosted worker keeps serving unchanged throughout; nothing in this work edits the Spark's render or its .env.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "The gateway, role and proxy machinery is untouched. worker is already a first-class role with a full opt-in mechanism (lobes/profiles/shapes.py OPT_IN_CORE_ROLES, WORKER_FEASIBLE/PEER_ORIGIN/PEER_PROXY/PEER_API_KEY, the thor-worker shape, the 429 pressure policy). Deployment shapes are card-agnostic data -- d1 proved it by rendering thor-worker on the Spark -- so this is a card-profile and image question, not new gateway code.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "No gateway, proxy or role-mechanism source file is modified -- the change surface is card profile, shape, catalog and templates only.",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h36",
+          "text": "No gateway BEHAVIOUR is changed: routing, selection, replica-pool and proxy LOGIC are untouched. Only the additive registration that #199 (0.63.0) made generic across role prefixes is extended to a tenth \u2014 associate gains its <PREFIX>_* vocabulary in _config.py/_replicas.py/_routing.py/_selection.py exactly as the existing nine have it, and no existing role's behaviour changes. Amended 2026-08-25 by operator decision after #199 merged; the pre-#199 wording forbade wiring that the merge made mandatory.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "non_goal",
+      "text": "No audio, no vision, no new role. This board cannot host stt/tts at all (builtin_shapes/orin-cortex.toml:45-54: the Parakeet image is built FROM scitrera/dgx-spark-vllm, which carries no sm_87 kernels -- 8 crash-loops, MEASURED 2026-07-17); Lightning is TEXT-ONLY (no vision_config), so it restores nothing that senses provides; and colleague-stack.md's own warning that adding a role is effectively irreversible applies -- worker already exists and is the seat this checkpoint occupies.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "non_goal",
+      "text": "No audio and no vision -- the surviving halves of the rejected c11. This board cannot host stt/tts at all (orin-cortex.toml:45-54: the Parakeet image is built FROM scitrera/dgx-spark-vllm and carries no sm_87 kernels -- 8 crash-loops, MEASURED 2026-07-17), and Lightning is TEXT-ONLY (no vision_config), so it restores nothing senses provides.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "A TENTH role, 'associate', is now in scope (operator decision, q1): worker minus repo_action -- it executes, drafts, inspects and calls tools, and hands the result back rather than enacting it. Per colleague-stack.md:267-283 every role name becomes a public address across GET /capabilities, a model= alias, a lobes up target, a <PREFIX>_* env vocabulary, six per-role tables, every card profile, every deployment shape and 28 golden .env files.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "Every surface colleague-stack.md:267-283 enumerates is actually updated -- GET /capabilities, the model= alias, lobes up, the <PREFIX>_* env vocabulary, six per-role tables, every card profile, every shape, and 28 golden .env files -- or 'associate' is half-served, which #92 forbids.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "The operator's SECOND reason is the one a responsibilities token cannot serve, and is therefore the load-bearing justification. colleague-stack.md:277-283 says a behaviour difference on an existing lane should be a responsibilities token, and 'associate = worker minus repo_action' is exactly that shape -- hand already models the same asymmetry inside an existing role. What a token cannot give is a SEPARATE PUBLIC ADDRESS, which is what keeping the worker seat free for a future worker/cortex switch actually requires.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "The image is ALREADY expressible; the SERVE FLAGS are not. Corrects the rejected c3: docker-compose.yml:1326 renders the worker lane as ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082...}}, so a per-role image override is an existing env key -- and the vLLM recipe's vllm/vllm-openai:v0.27.1 is the SAME official Docker Hub repo the fleet already pins, just a release tag instead of a nightly digest. The real gap is that the lane's serve args are one shell-lexed STRING with no extra-args passthrough anywhere in lobes/, and RoleProfile carries only nine knobs plus hf_overrides/allow_long_max_model_len/speculative_config.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "WORKER_IMAGE (or its associate-prefixed equivalent) actually reaches the container image at render time, verified by docker compose config, not merely present in env.example.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Eight flags in the published vLLM recipe have NO home in this repo. Expressible today: --kv-cache-dtype bfloat16 (RoleProfile.kv_cache_dtype), --max-model-len, --gpu-memory-utilization, the parsers, and the speculative config (WORKER_SPECULATIVE_CONFIG's JSON form is equivalent to the recipe's dotted --speculative_config.* spelling). NOT expressible: --mamba-backend flashinfer, --mamba-ssm-cache-dtype float16, --enable-mamba-cache-stochastic-rounding, --mamba-cache-philox-rounds 5, --mamba-cache-mode align, --enable-prefix-caching, --max-num-batched-tokens 16384, --trust-remote-code.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "Each of the eight flags is either given a real home that reaches a real flag, or deliberately dropped with a recorded reason -- a knob declared but not wired is exactly the dead declaration #92 exists to prevent.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "assumption",
+      "text": "The Thor no-go is now WEAK evidence against the Orin, and c5 overstated it. The Thor spike wedged at 'Warming up Mamba2 SSD Triton kernels' -- and the published recipe passes --mamba-backend flashinfer, which steers the Mamba-2 mixer OFF the Triton SSD path entirely, plus four more mamba-cache flags the spike never passed. So the most likely reading of the Thor failure is a MISSING FLAG, not a hardware limit. That reframes the risk and also reopens the Thor as a follow-up, which is NOT this frame's to chase.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "BOTH lanes are funded, each run with its published recipe VERBATIM before any lobes-side abstraction. vLLM: vllm/vllm-openai:v0.27.1 with DSpark speculation (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DSpark, 5 tokens), --max-model-len 128000, util 0.7, kv-cache-dtype bfloat16, the five mamba flags. llama.cpp: ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin serving ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:Q4_K_M with a DFlash draft (-hfd apolo13x/...-DFlash-GGUF, --spec-type draft-dflash), -ngl all -ngld all -fa on. Supersedes q2's earlier vLLM-first-only resolution.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "Both recipes are run VERBATIM first -- no lobes-side substitution of image, window, utilization or flags -- so a failure is attributable to the engine and not to this repo's rendering.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "A GGUF export of Lightning DOES exist, refuting an earlier scope finding. The jetson-ai-lab page fetch reported no GGUF documented; the operator-supplied llama.cpp recipe names ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:Q4_K_M plus a separate DFlash draft repo. The board already owns the repo's only llama.cpp lane (llamacpp-primary, ENGINE_LLAMA_CPP), but that lane is wired to the PRIMARY_/cortex prefix and pinned to a different image by digest -- serving associate on llama.cpp needs its own lane or a prefix generalisation.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Serving associate on llama.cpp does not silently reuse the PRIMARY_/cortex lane -- the two must be separately addressable, or the board loses its cortex the moment associate starts.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The published utilization makes associate exclusive with every heavy lobe on this board, sharpening c4 from 'may not fit' to 'certainly does not fit alongside either'. The recipe's --gpu-memory-utilization 0.7 is ~42.9 GiB of the board's 61.3 GiB, before the DSpark drafter's own weights and a bfloat16 KV cache that costs roughly double the Spark's fp8_e4m3 pool. Neither cortex (~33 GiB) nor senses (~27.6 GiB) can co-reside with that, so builtin/orin.toml's [[exclusive_roles]] table needs associate added to the group -- and lobes init's co-residency guard only refuses what that table declares.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "util 0.7 is the VENDOR's number on an unspecified Orin configuration; the value this repo declares must be the one measured on this board, and if 0.7 is refused at boot the refused value is recorded rather than quietly lowered.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "Run the vendor recipes with docker run FIRST, outside lobes entirely. Both recipes are plain docker run invocations with --runtime nvidia (which matches this board's own gpu_access='runtime' csv-mode declaration, builtin/orin.toml:86). Proving the checkpoint serves on sm_87 is an engine question, and answering it inside the scaffold would confound an engine failure with a rendering bug -- the same ordering docs/model-switch-playbook.md already insists on. No .env, profile, shape or catalog change is touched until a lane actually serves.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "The docker run probes touch no .env, profile, shape or catalog file; the deployment dir is byte-identical before and after a failed spike.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "audience",
+      "text": "The lobes fleet operator running the Jetson AGX Orin 64GB, and every Colleague-mesh caller that addresses a generate lane by role name rather than raw model id.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "Callers address the lane by role name, never by raw model id -- the 2026-07-31 audit found no consumer doing so, and associate must not become the tenth exception.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "before_state",
+      "text": "The Orin's only local generate lobe above hand is a llama.cpp GGUF cortex measured at 2.61 tok/s -- below its own >=5 tok/s gate, still DECLARED/UNVALIDATED -- and everything faster is a proxy hop to the Spark or Thor. The board declares worker infeasible on a stated reason (W4A4 activations) that is false for this checkpoint.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "The 2.61 tok/s baseline and its >=5 tok/s gate are quoted from the board's own spike transcript, not re-derived.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "after_state",
+      "text": "The Orin serves Nemotron 3.5 Lightning locally as 'associate' -- a lobe that does ground work and hands the result back rather than enacting it -- at a measured, published throughput, with the worker seat left free for a future worker/cortex switch.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "'Serves locally' means through the gateway's authenticated front (c30/c46), not an open port -- an unauthenticated lane does not satisfy this after_state.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "why_it_matters",
+      "text": "It converts the mesh's slowest box into one that carries its own ground work instead of proxying it, and it corrects a card-profile claim that is provably wrong about a checkpoint the fleet already serves elsewhere.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "The W4A4 correction is scoped to Lightning alone and leaves the Qwen3.8-27B and Gemma-31B NVFP4 statements intact.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "success_signal",
+      "text": "Both recipes are run verbatim on the physical Orin and each yields a transcript under docs/evidence/ that says GO or NO-GO in its own words: a served /health, a known-answer probe, a structured tool_calls probe, and a single-stream decode figure stated next to the Spark's 75.1 tok/s and this board's 2.61 tok/s -- never next to the vendor's 89 tok/s agentic aggregate.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "Every published number names its instrument and its speculation setting, and no figure is compared to the vendor's 89 tok/s agentic aggregate.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The published llama.cpp recipe DOES NOT RUN AS WRITTEN -- MEASURED on this Orin, 2026-08-25. Run verbatim, llama-server exits immediately: 'common_download_get_hf_plan: no GGUF files found in repository ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF' and lists what actually exists -- BF16, Q4_0, Q8_0, and mtp-prefixed variants of each. There is no Q4_K_M in that repo (confirmed independently against the HF API). The recipe's -hfd draft repo apolo13x/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DFlash-GGUF DOES exist: one file, dflash-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.gguf, ~1.1 GB. Minimal correction is Q4_K_M -> Q4_0.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The corrected quantization is chosen on a stated basis, not silently: Q4_0 is the only 4-bit option in the repo, and it is NOT equivalent to the Q4_K_M the vendor claimed to benchmark -- so any throughput or quality number measured here cannot be compared to the vendor's 89 tok/s even setting aside the agentic-aggregate problem.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "assumption",
+      "text": "Vendor recipes are UNRELIABLE as published and must be verified against the artifact registries before being treated as evidence of support. One of the two recipes named a quantization that does not exist; the jetson-ai-lab page's own serve-command generator separately failed to emit any Orin command at all. This raises the weight on c6 (the 89 tok/s claim is vendor prose, unreproducible from the page) and means a 'supported platform' listing on that site is not by itself evidence the configuration was ever run.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "risk: If the vendor's published Orin recipe was never executed, the '89 tokens/sec on Jetson AGX Orin' figure may derive from a different quantization, a different draft model, or from the Thor run -- none of which this frame can distinguish.",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "A corrected recipe is no longer the vendor's recipe, and evidence must say which was run. c18/c21 fund running both VERBATIM; where verbatim fails, the failure is recorded as the primary finding and any corrected re-run is labelled as corrected, with the correction named. Otherwise a passing transcript would silently claim the published configuration works when it does not.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "The evidence file states, in its own words, which run was verbatim and which was corrected, and names each correction.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "SECURITY: both published recipes stand up an UNAUTHENTICATED 30B endpoint on this box's tailnet. Each binds --host 0.0.0.0 (llama.cpp) or --network host (both), and llama-server's own startup banner warns verbatim: 'CORS is set to allow all origins and no API key is set / this can be a security risk'. PROBED 2026-08-25: this box holds tailnet address 100.81.137.121, so for the whole life of a spike every tailnet peer can reach port 8080 (or 8000) with no credential. The repo's own gateway exists partly to avoid this -- it has an opt-in GATEWAY_API_KEY bearer gate and #127's rule that peer credentials are always a copy of the peer's own inbound key. The frame carried no claim about this before this pass.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Spike endpoints bind loopback (127.0.0.1) or are otherwise unreachable from the tailnet, OR the exposure is time-boxed and explicitly accepted in the transcript -- never left implicit.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "assumption",
+      "text": "The frame never stated WHY this could be fast on Ampere, and the stated reason is the wrong one. Every speed hope in the frame is attached to NVFP4/DSpark -- precisely the parts sm_87 does not accelerate. The load-bearing reason is architectural: Lightning is 30B total with only ~3B ACTIVE per token, so it should decode far faster than the dense 27B this board measured at 2.61 tok/s, on sparsity rather than quantization. If that is the real mechanism, the llama.cpp Q4_0 lane could succeed even though it discards the vendor's whole NVFP4+DSpark story.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "contradiction with c6?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "ANSWERED BY MEASUREMENT: ~78-81 tok/s single-stream on sm_87, roughly 30x this board's dense-27B llama.cpp cortex. Both proposed mechanisms contribute -- MoE sparsity (~3B active of 30B) AND DSpark speculation, which logged 3.06-5.42 mean acceptance length (c45). The frame should not attribute the speed to quantization, which is the Marlin fallback path and the slowest part of the stack."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "MEASUREMENT VALIDITY: the fit arithmetic in this frame rests on numbers that may not mean what they appear to. PROBED 2026-08-25: nvidia-smi reports memory.used [N/A] on this Tegra board, so there is no GPU-memory query -- only tegrastats (RAM 17978/62817MB) and unified-memory 'free'. The board's own profile claims the llama.cpp cortex holds ~33 GiB resident; docker stats reported 27.63 GiB for that same container this session. Any budget claim (c20's util 0.7 ~= 42.9 GiB, c4's exclusive_roles arithmetic) must name which instrument produced it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Every memory figure recorded in the resulting evidence names its instrument (tegrastats / free / docker stats / the engine's own boot log) -- and the engine's own KV/weights accounting is preferred over any host-side reading.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "OPERATIONAL/RECOVERY: this box is mid-spike with its cortex stopped and nothing in the frame owns restoring it. llamacpp-cortex was stopped this session to free 27.6 GiB and the operator has since authorised dropping the remaining lanes as needed. Nothing records what the board's steady state WAS, so a session that ends mid-spike leaves the Orin without a local cortex, embedder or reranker and no note saying they should come back.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "The pre-spike container set is captured BEFORE the first stop and restored (or explicitly declared abandoned) at the end, so board state is never left to the transcript reader to reconstruct.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "OBSERVABILITY: --rm destroys the evidence, and it already did. The first verbatim llama.cpp run exited on the bad Q4_K_M tag and docker's --rm removed the container before its logs could be captured; only a tail taken by luck mid-run preserved the error. Evidence runs must redirect logs to a file under docs/evidence/ as they happen, not rely on a container surviving long enough to be queried.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Each spike writes its own transcript file as it runs; no finding depends on a container that has already exited.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "assumption",
+      "text": "Nobody in the frame argued the other side: that this box should keep proxying instead. It already reaches worker over the mesh (WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true, live in ~/.lobes/.env), and the proxy answer is correct, credentialed and costs this board zero memory. The case for local hosting rests entirely on latency and on not depending on a peer -- neither of which the frame has yet stated as a requirement, and both of which a measured no-go on both lanes would settle in the proxy's favour.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "CONCURRENCY: the vLLM lane's boot is order-sensitive and this spike sequence walks straight into it. docker-compose.yml's own section 5 note records that the nightly's memory profiler ASSERTS free GPU memory stays constant while it profiles, and that concurrent teardown of another container on a shared board trips 'Error in memory profiling' -- prefer one-at-a-time with a settle gap. Stopping the llama.cpp spike and immediately starting the vLLM one at util 0.7 against ~43 GiB of headroom is exactly that hazard.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The vLLM spike starts only after the previous container is fully gone and free memory has settled, and a memory-profiling error is reported as a procedure fault rather than recorded as a checkpoint no-go.",
+          "status": "proposed",
+          "instruction": ""
+        },
+        {
+          "id": "h28",
+          "text": "A memory-profiling failure is reported as a procedure fault and re-run after a settle gap, never recorded as a checkpoint no-go.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "decision",
+      "text": "associate is a full-tier, shedding role ranked between hand and main/cortex (operator decisions, q5+q6). Under pressure it 429s like worker/muse/cortex/senses; hand stays the sole servable floor. Its exact slot among multimodal/worker/muse is unresolved -- see v7.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "llama.cpp lane: NO-GO on this Orin, MEASURED 2026-08-25 (docs/evidence/2026-08-25-spike-lightning-llamacpp-orin.txt). With the quantization corrected to Q4_0 the 17.6 GiB GGUF downloaded in full and then FAILED TO LOAD: 'check_tensor_dims: tensor blk.5.ssm_in.weight not found' -> 'llama_model_load_from_file_impl: failed to load model' -> 'exiting due to model loading error'. blk.5 is a Mamba SSM layer, so the image's llama.cpp cannot find the state-space tensors this GGUF declares. The DFlash draft failed separately and earlier: 'dflash requires ctx_other to be set' -> '[spec] failed to measure draft model memory'. The image is ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin at llama.cpp version 10373 (38406d597), aarch64 -- NVIDIA's own current Jetson-Orin build.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The failure is attributed correctly: an SSM tensor-name mismatch between this GGUF and llama.cpp b10373 is a BUILD-VERSION gap, not evidence that sm_87 cannot serve the architecture -- a newer llama.cpp has not been tried and would distinguish the two.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "assumption",
+      "text": "BOTH halves of the published llama.cpp recipe are now disproven on the platform the page lists as supported: the quantization tag does not exist, and with that corrected the model does not load in NVIDIA's own Jetson-Orin image. This strengthens c28 considerably -- the Orin listing on jetson-ai-lab is very unlikely to have been executed as published, and the '89 tokens/sec on Jetson AGX Orin' figure should not be treated as a reproducible target by this frame.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "The published vLLM recipe ALSO does not run as written -- the THIRD defect, MEASURED 2026-08-25 (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt). It names the DSpark drafter as nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-DSpark, which does not exist: vLLM's config validation raised 'Repository Not Found' four times, then a pydantic ValidationError for SpeculativeConfig -- 'Invalid repository ID or local directory specified' -- and the API server exited before downloading a single weight. The real repo is nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark (verified via the HF model-search API); the recipe simply omits the -NVFP4 infix its own --model argument carries. Minimal correction is that infix.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "The corrected DSpark id is the one vLLM actually loaded, verified in the boot log's resolved SpeculativeConfig rather than assumed from the HF search.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "decision",
+      "text": "The vendor's Jetson recipes are treated as UNVERIFIED DRAFTS, not as evidence of a validated deployment. THREE independent defects across two recipes on the platform the page lists as supported: a llama.cpp -hf tag naming a quantization that does not exist in the repo; a llama.cpp model that fails to load in NVIDIA's own current Jetson-Orin image on a missing Mamba SSM tensor; and a vLLM --speculative_config.model naming a Hugging Face repo that does not exist. Each failed at the FIRST thing that would have been caught by running it once. Supersedes the working assumption behind c6 that a 'supported platform' listing implies an executed configuration.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "This claim is about the RECIPES as published, not about the hardware: none of the three defects is an sm_87 finding, and the frame must not let recipe unreliability harden into a conclusion that the Orin cannot serve this model.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "sm_87 ADMITS the modelopt_mixed NVFP4 path -- OBSERVED LIVE on this Orin, 2026-08-25, disproving the sm_89+ half of c8. vLLM v0.27.1 accepted quantization=modelopt_mixed and selected a full Marlin fallback stack on Ampere: 'Selected MarlinFP8ScaledMMLinearKernel for ModelOptFp8LinearMethod', 'Using MarlinNvFp4LinearKernel for NVFP4 GEMM', and \"Using 'MARLIN' NvFp4 MoE backend out of potential backends: [FLASHINFER_TRTLLM, FLASHINFER_CUTEDSL, FLASHINFER_CUTEDSL_BATCHED, FLASHINFER_CUTLASS, VLLM_CUTLASS, MARLIN, HUMMING, EMULATION]\". Attention also resolved natively: 'Using FLASH_ATTN attention backend' / 'FlashAttention version 2'. The engine reached model loading; kernel selection is not yet a working forward pass.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "Kernel SELECTION is not kernel CORRECTNESS: vllm-project/vllm#34694 and #49070 report the Marlin NVFP4 fallback producing garbled output and illegal memory accesses on non-Blackwell parts, so a known-answer probe is mandatory before any GO -- a lane that serves fluent nonsense would pass a health check.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q4",
+          "text": "risk: The boot also warned 'No published PyTorch CUDA builds for release 2.13.0+cu130 support this GPU', so some torch-side paths may lack sm_87 kernels even though vLLM's own Marlin kernels resolved.",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "vLLM lane: GO on the Jetson AGX Orin 64GB, MEASURED 2026-08-25 (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt), one correction from the published recipe (the DSpark -NVFP4 infix, c40). Engine vllm/vllm-openai:v0.27.1, quantization=modelopt_mixed on sm_87 via Marlin. Model loading 19.45 GiB; available KV 15.07 GiB; GPU KV cache 1,720,320 tokens; max concurrency at 128,000 tokens/request 13.44x; torch.compile 42.59 s; CUDA graph capture 67 s / 1.71 GiB; init engine 261.28 s. PROBES: known-answer PASS ('Paris', finish=stop); structured tool call PASS (finish_reason=tool_calls, correct name+args, nothing leaked into content) through nemotron_v3 + qwen3_coder. DECODE 900 tokens in 11.15 s and 11.52 s across two runs = ~78-81 tok/s single-stream WITH DSpark speculation.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "The ~80 tok/s is measured WITH DSpark speculation at 5 draft tokens and is therefore not comparable to the Spark's 75.1 tok/s no-speculation figure; the honest framings are 'faster than the Spark worker despite far weaker silicon, with speculation doing the work' and '~30x this board's own 2.61 tok/s llama.cpp cortex'.",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h21",
+          "text": "The util 0.7 budget was measured with EVERY other lane on this board stopped (cortex, senses, embedder, reranker, gateway). It is a solo-boot number and says nothing about co-residency -- c4/c20's exclusive_roles arithmetic still needs its own measurement.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "The Orin CLEARS the Mamba2 warmup that wedged the Thor twice -- and c17's explanation was WRONG. The boot log carries the identical line, 'mamba_mixer2.py:596 Warming up Mamba2 SSD Triton kernels...', at 18:58:24 and proceeds normally to KV allocation two minutes later. So --mamba-backend flashinfer did NOT skip the Triton warmup (it governs the SSU backend, logged separately as 'Using flashinfer Mamba SSU backend'); the Orin simply completes a warmup sm_110 hangs on. The Thor no-go is therefore a REAL sm_110/Triton defect, not the missing-flag hypothesis c17 proposed -- which weakens the v4 follow-up's premise.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "The claim distinguishes the Triton SSD WARMUP (which the Orin completes) from the FlashInfer SSU BACKEND (which --mamba-backend selects) -- they are separate log lines and separate mechanisms.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "DSpark speculation WORKS on sm_87 and is load-bearing for the throughput number. vLLM logged SpecDecoding metrics throughout: mean acceptance length 5.42 / 4.88 / 3.45 / 3.06 across the runs, per-position acceptance decaying 0.76/0.50/0.37/0.24/0.19 at steady state, average draft acceptance 88.3% on short turns settling to ~41.3% on long generation. This resolves park v2 from unmeasured to measured.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "Acceptance figures are reported as a decaying range with their per-position rates, not as a single headline number -- steady-state 41.3% is the honest one for long generation.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "SECURITY, now REALISED not hypothetical: within seconds of the API server starting, two DISTINCT tailnet peers hit the unauthenticated endpoint -- the transcript records 'INFO: 100.127.105.72:50652 - GET /v1/models HTTP/1.1 200 OK' and 'INFO: 100.105.216.63:55196 - GET /v1/models HTTP/1.1 200 OK', neither of which this session initiated. c30 predicted the exposure; the boot log proves mesh peers actually discovered and queried it. Any adopted lane must sit behind the gateway's GATEWAY_API_KEY rather than binding an open port on the tailnet.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "The two tailnet client IPs are quoted from the transcript and were not initiated by this session; the adopted lane binds behind GATEWAY_API_KEY or does not ship.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether vLLM's Marlin W4A16 fallback for modelopt MIXED_PRECISION actually admits sm_87 at all, or stops at sm_89 -- decidable only by reading the served build's own quantization/modelopt path or booting it",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "DOWNGRADED from blocker to the spike's first question. NVIDIA publishes an Orin recipe for this exact NVFP4 checkpoint, so the vendor asserts sm_87 is admitted; that is a claim to test, not a reason to stop speccing. c21 makes the verbatim docker run the first move, which answers it in one boot -- and the recipe's own --kv-cache-dtype bfloat16 already concedes and works around the FP8-KV half of the barrier.",
+      "resolution_claim_id": "c21"
+    },
+    {
+      "id": "v2",
+      "text": "DSpark speculative decoding for Lightning (the NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark variant, five draft tokens, which jetson-ai-lab names as its fastest tested configuration). The repo's catalog entry carries an empty speculative_config by design and no fleet box has measured Lightning speculation anywhere. Not decidable before the base lane boots.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether an aarch64 sm_87 vLLM image exists that is BOTH new enough for nemotron_h and buildable/pinnable to this repo's digest discipline -- the fleet's own Gemma lane already diverged from 'one engine, fleet-wide', so a second divergence has precedent but no measurement",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "RESOLVED by the two published recipes. Both lanes have an official, Orin-capable image: vllm/vllm-openai:v0.27.1 (the same Docker Hub repo the fleet already pins, a release tag instead of a nightly digest) and ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin (an NVIDIA-AI-IOT build named for this exact board). Neither needs a bespoke jetson-containers build, and WORKER_IMAGE already exists as the override slot.",
+      "resolution_claim_id": "c18"
+    },
+    {
+      "id": "v4",
+      "text": "Whether the Thor no-go was in fact a missing --mamba-backend flashinfer rather than an sm_110 limit -- if so, re-running the Thor spike with the full mamba flag set could restore Lightning there too. Explicitly NOT this frame's work (c17).",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Whether a 30B-A3B at Q4_0 on sm_87 clears the >=5 tok/s bar the board's own GGUF cortex plan set -- unknowable until the download finishes; c31 argues MoE sparsity makes it plausible where the dense 27B failed at 2.61 tok/s",
+      "kind": "unknown_blocking",
+      "claim_id": "c31",
+      "resolved": true,
+      "resolution": "RESOLVED, and far above the bar: the board's own GGUF-cortex plan set >=5 tok/s and this lane measured ~78-81 tok/s single-stream -- roughly 30x the 2.61 tok/s the dense 27B llama.cpp cortex managed. c31's MoE-sparsity explanation is supported, though speculation contributes too (c45).",
+      "resolution_claim_id": "c43"
+    },
+    {
+      "id": "v6",
+      "text": "Whether adding a tenth role forces regeneration of the 28 golden .env files and how much of tests/ (test_roles.py, test_catalog_tiers.py, test_init_coresidency.py) moves with it -- examined only as a citation from colleague-stack.md, never opened this pass",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v7",
+      "text": "Where associate sits relative to multimodal, worker and muse in the capability ordering. The operator fixed only hand < associate < main. The natural default is associate == worker's rank, since associate serves the SAME checkpoint the worker seat holds on the Spark -- but that collides with the whole reason for a separate name, so it needs an explicit decision before catalog.py's TIER_ROLE map and the back-compat aliases can be written.",
+      "kind": "unknown_blocking",
+      "claim_id": "c37",
+      "resolved": true,
+      "resolution": "hand < multimodal < worker < muse < associate < main/cortex. associate takes the HIGHEST non-cortex rung, reflecting the measurement: ~78-81 tok/s single-stream with working structured tool calls on sm_87, faster than the Spark-hosted worker on far weaker silicon. This also fits the operator's stated reason for the separate name -- associate is positioned to absorb a future worker/cortex switch without disturbing the rungs below it.",
+      "resolution_claim_id": "c37"
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/machines/orin.py + lobes/profiles/builtin/orin.toml",
+      "finding": "Both name Lightning as an NVFP4 lobe that 'quantizes ACTIVATIONS to FP4 (W4A4)' and set worker feasible=false on that basis; the checkpoint's own hf_quant_config.json says W4A16_NVFP4 (weight-only) on the experts plus FP8 on in_proj/out_proj -- the stated reason does not hold for this checkpoint",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4/hf_quant_config.json (fetched 2026-08-25)",
+      "finding": "quant_algo MIXED_PRECISION; every routed and shared expert up_proj/down_proj is W4A16_NVFP4 group_size 16; mixer in_proj/out_proj are FP8; kv_cache_quant_algo FP8 -- the FP8 halves are the surviving sm_87 barriers, not the FP4 half",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml:52-53 (vllm-primary image pin)",
+      "finding": "every vLLM lane pins the Docker Hub official nightly vllm/vllm-openai@sha256:8bd082..., validated on Blackwell-class Jetsons only; there is no lane or knob for an aarch64 sm_87 image",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/catalog.py:896-1000 (the Lightning SupportedModel entry)",
+      "finding": "records the Thor NO-GO on BOTH the fleet nightly and upstream v0.27.1 -- an indefinite 'Warming up Mamba2 SSD Triton kernels' wedge; the entry is otherwise complete (quantization=modelopt, tool_parser=qwen3_coder, moe_backend='' auto, empty speculative_config), so no catalog work is implied by hosting it elsewhere",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:114-125",
+      "finding": "still says the v0.27.1-on-Thor spike is 'recorded but not yet run' and cites the jetson-ai-lab Orin recipe as a reopener, which the catalog entry now contradicts -- doc/code drift on exactly the question this idea turns on",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "www.jetson-ai-lab.com/models/nemotron3-5-lightning (fetched 2026-08-25)",
+      "finding": "lists Jetson AGX Orin 64GB as supported, NVFP4, vLLM + llama.cpp containers, DSpark at five speculative tokens as fastest tested, '89 tokens/sec on Jetson AGX Orin across multi-step agentic workloads' -- but its serve-command generator emits 'No command for this module and engine in model data', so no Orin command, image tag or budget is actually published",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "builtin/orin.toml:98-101 ([[exclusive_roles]]) + builtin_shapes/orin-cortex.toml:19-43",
+      "finding": "the board declares exactly one exclusive pair (cortex 33 GiB + senses 27.6 GiB against 61.3 GiB, ZERO swap, MEASURED 2026-08-23); a third heavy lobe at Lightning's measured 17.85 GiB of weights is outside what that table can express",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:127-160 (Spark acceptance numbers)",
+      "finding": "the fleet's own measured baseline for this checkpoint: 17.85 GiB weights, fp8_e4m3 KV, 3,560,789-token pool at util 0.30 / 65536 window, 75.1 tok/s single-stream with NO speculation -- the honest comparison point for any Orin number, and the source of the 17.85 GiB figure",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "lobes/profiles/shapes.py OPT_IN_CORE_ROLES + builtin_shapes/thor-worker.toml + ~/.lobes/.env",
+      "finding": "worker's whole opt-in mechanism already exists and shapes are card-agnostic data (d1 rendered thor-worker on the Spark); this box already proxies worker to a peer today (WORKER_PEER_ORIGIN + WORKER_PEER_PROXY=true), so no gateway or role code is implied",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "builtin_shapes/orin-cortex.toml:45-54 (why no stt/tts) + roles.py worker responsibilities",
+      "finding": "the Parakeet image carries no sm_87 kernels (8 crash-loops, MEASURED 2026-07-17) so audio stays off-board, and Lightning is text-only with worker forbidden final_decision/security_decision/code_authoring -- neither vision nor audio nor a new role is in reach here",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "builtin/orin.toml:129-181 ([roles.cortex], the llama.cpp GGUF lane)",
+      "finding": "the board's current local cortex is Qwen3.8-27B GGUF UD-Q4_K_M on llama.cpp at 262144, MEASURED 2.61 tok/s -- a 'functional GO / throughput FAIL-AS-SPECIFIED' verdict below its own >=5 tok/s gate, and still DECLARED/UNVALIDATED; this is the pain a fast local lobe would answer, and the reason the seat question is genuinely open",
+      "seeds": [
+        "c1"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "docs/colleague-stack.md:267-283 (Adding a role is effectively irreversible)",
+      "finding": "the repo's own bar for a tenth role: every name becomes a public address in six per-role tables, every card profile, every shape and 28 golden .env files, and removing one later breaks every caller with no honest half-serve available (#92); it explicitly routes behaviour differences to a responsibilities token instead",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "docs/colleague-stack.md hand section (repo_action asymmetry)",
+      "finding": "hand already ships the exact asymmetry associate wants -- repo_action forbidden in v1 even though worker has it -- handled INSIDE an existing role because granting a responsibility later is contract-compatible while revoking one is a break; precedent that 'do but do not act' does not by itself require a new role",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "jetson-ai-lab vLLM+DSpark configuration (q2 decision)",
+      "finding": "vLLM is the lane the Orin claim is actually about and the only one offering DSpark speculation; llama.cpp is recorded as the unfunded fallback rather than a parallel spike",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin, run verbatim on the physical Orin 2026-08-25",
+      "finding": "the NVIDIA-AI-IOT Jetson-Orin image was ALREADY pulled on this box (23.2 GB) and starts fine; llama-server rejects the recipe's own -hf tag Q4_K_M as nonexistent and enumerates BF16/Q4_0/Q8_0 plus mtp- variants -- an image-and-engine GO, a recipe FAIL",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "huggingface.co/api/models/ggml-org/...-GGUF and .../apolo13x/...-DFlash-GGUF (fetched 2026-08-25)",
+      "finding": "base repo ships BF16/Q4_0/Q8_0 and an in-repo mtp- draft for each -- no Q4_K_M; the separate DFlash draft repo exists with a single ~1.1 GB dflash-...NVFP4.gguf, so --spec-type draft-dflash has a real artifact behind it and an MTP alternative exists in-repo",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / security lens: both published serve recipes + tailscale ip -4 + llama-server startup banner",
+      "finding": "both recipes publish an unauthenticated, CORS-open generate endpoint on a host with a live tailnet address; the engine itself warns about it and the frame had no claim covering it",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / operations + observability lenses: live docker state on this box, docker --rm semantics",
+      "finding": "the board's steady state is unrecorded and its cortex is currently down; --rm already destroyed one failed run's logs -- two gaps the frame had no claims for",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / adjacent-systems lens: lobes/gateway/_pressure_policy.py + catalog.py TIER_ROLE + builtin/orin.toml host_env",
+      "finding": "a tenth role touches the pressure policy and the public capability ordering, neither of which the frame addressed; the board's iowait=100 override makes the shed/floor choice specifically consequential here",
+      "seeds": [
+        "c35"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / migration + reversibility lenses: NOT OPENED",
+      "finding": "the 28 golden .env files, tests/test_roles.py, test_catalog_tiers.py and test_init_coresidency.py were cited from colleague-stack.md but never read this pass -- the blast radius of adding a tenth role is asserted, not measured, and remains the largest unexamined surface in this frame",
+      "seeds": []
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass follow-through / llama.cpp lane: ghcr.io/nvidia-ai-iot/llama_cpp:latest-jetson-orin b10373 + the 17.6 GiB Q4_0 GGUF",
+      "finding": "downloaded fully and failed at load on a missing Mamba SSM tensor (blk.5.ssm_in.weight); DFlash draft init failed independently -- lane NO-GO, cause is a build-version gap not an sm_87 limit",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass follow-through / vLLM lane: vllm/vllm-openai:v0.27.1 verbatim + HF model-search API",
+      "finding": "config validation rejected the recipe's DSpark repo id before any download; correct id carries an -NVFP4 infix -- third recipe defect, and the first to be caught in under a minute",
+      "seeds": [
+        "c40"
+      ]
+    }
+  ],
+  "lapses": []
+}

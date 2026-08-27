@@ -695,7 +695,7 @@ def test_hand_is_the_only_gear_carrying_the_hand_role_hint() -> None:
     assert hand_hinted == [_HAND_ID], f"role_hint='hand' models: {hand_hinted}"
 
 
-def test_tier_aliases_capability_order_is_hand_multimodal_worker_muse_primary() -> None:
+def test_tier_aliases_capability_order_is_hand_multimodal_worker_muse_associate_primary() -> None:
     """Assert the ORDER, not just the mapping.
 
     ``tier_aliases`` derives ascending capability order from each role's *last*
@@ -708,7 +708,7 @@ def test_tier_aliases_capability_order_is_hand_multimodal_worker_muse_primary() 
     for index, role in enumerate(TIER_ROLE.values()):
         last_pos[role] = index
     ascending = sorted(last_pos, key=lambda role: last_pos[role])
-    assert ascending == ["hand", "multimodal", "worker", "muse", "primary"]
+    assert ascending == ["hand", "multimodal", "worker", "muse", "associate", "primary"]
 
 
 # ---------------------------------------------------------------------------

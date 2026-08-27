@@ -100,6 +100,7 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "associate",
         "hand",
         "embedder",
         "reranker",
@@ -115,7 +116,9 @@ def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     # worker, the 35B-A3B fast ground-work doer, likewise too heavy to
     # co-reside with the default duo and hosted only by an explicit
     # worker-hosting shape).
-    assert OPT_IN_CORE_ROLES == ("muse", "worker")
+    # `associate` (lightning-on-orin plan, t6) joined muse/worker on exactly
+    # the same terms: an opt-in core role no card hosts by default.
+    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate")
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
@@ -144,6 +147,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "senses",
         "muse",
         "worker",
+        "associate",
         "hand",
         "embedder",
         "reranker",
@@ -270,6 +274,7 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "orin-small",
         "orin-lobe",
         "orin-cortex",
+        "orin-associate",
     }
 
 

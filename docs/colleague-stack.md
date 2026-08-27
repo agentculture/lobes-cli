@@ -1,6 +1,6 @@
-# The Colleague stack: nine roles, one contract
+# The Colleague stack: ten roles, one contract
 
-> The nine first-class, Colleague-facing roles lobes exposes over the fleet —
+> The ten first-class, Colleague-facing roles lobes exposes over the fleet —
 > `cortex` / `senses` / `muse` / `worker` / `hand` / `embedder` / `reranker` /
 > `stt` / `tts` — how a caller discovers them, drives them, measures them, and
 > the before→after context migration that shipped alongside this contract
@@ -41,7 +41,7 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The nine roles
+## The ten roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
@@ -49,6 +49,7 @@ below.
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
 | `muse` | `muse` (generate, **opt-in hosting, currently DORMANT/unhosted**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
 | `worker` | `worker` (generate, **opt-in hosting, Lightning on the DGX Spark since d1**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, repo inspection, running authorized commands — **and repo actions**, under `cortex`'s direction. TEXT-ONLY, non-coding (see the d1 callout above). Never the final decision or a security call. |
+| `associate` | `associate` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | The same fast ground-work as `worker` — execution, bulk transforms, drafting, repo **inspection**, running authorized commands — but it hands the result BACK instead of enacting it: `repo_action` is **forbidden**. "They do, but not act." |
 | `hand` | `hand` (generate, **default-hosted everywhere**) | `POST /v1/chat/completions` | The fine-tuning base and trained specialist — domain mastery via LoRA adapters. Also the `minor`/`cheap` tier and the pressure-policy **servable floor**. Never decides, acts on the repo, or makes a security call. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
@@ -62,7 +63,9 @@ Since `worker` joined as the eighth role, two lobes may act on the repo:
 `security_decision` — it executes ground work under `cortex`'s direction, it
 never decides on its own authority). Every other role — `senses`, `muse`,
 `embedder`, `reranker`, `stt`, `tts` — still carries no acting authority at
-all. See "Responsibilities and forbidden responsibilities" below for the
+all — including `associate`, the tenth role, which is `worker` with
+`repo_action` moved from the allowed column to the forbidden one. See
+"Responsibilities and forbidden responsibilities" below for the
 full division of labour.
 
 > **`senses` is vision-only intake — audio is not currently served (issue
@@ -137,6 +140,7 @@ whether a role did its job well; that judgment is Colleague's (see
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
 | `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
 | `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use`, `repo_action` | `final_decision`, `security_decision`, `code_authoring` — worker acts under cortex's direction, never on its own authority, and does not author code |
+| `associate` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use` | `final_decision`, `security_decision`, `code_authoring`, `repo_action` — worker's forbidden list PLUS `repo_action`: associate produces the work, cortex or worker enacts it |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
@@ -191,6 +195,58 @@ choosing to merge, deploy, or otherwise make the final call is not — that
 authority stays `cortex`'s alone. `senses` has no `tool_use` at all: it is
 intake/perception, even though its Gemma lane *can* serve tool calls (see `tools`,
 below — a capability of the lane, not a licence for the role).
+
+### `associate` — the tenth role, the doer that does not act
+
+`associate` serves the **same checkpoint the `worker` seat holds**
+(`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`) under a **different
+authority**: every doer token worker carries for producing a result, minus
+`repo_action`. One gear, two public addresses.
+
+Why a role and not a responsibilities token on `worker`? Because a token
+cannot give a **separate public address**, and that is exactly what the
+operator wanted: the `worker` seat is being kept free for a possible future
+worker/cortex switch, and a caller that wants "do the ground work but change
+nothing" needs a name it can address that will not move when that switch
+happens. (The behaviour difference alone would indeed have been a token — see
+the irreversibility box below, and the `hand` precedent above, which handles
+the identical `repo_action` asymmetry inside an existing role.)
+
+Its responsibilities list is deliberately **shorter than worker's**, on the
+same `hand` precedent: adding a responsibility later is contract-compatible,
+removing one is a break, so the conservative list ships first. worker's
+agent-work tokens (`action_selection`, `retrieval_synthesis`,
+`summarization`, `log_digestion`, `structured_extraction`) are not claimed
+here — not because associate could not serve them, but because nothing
+measured says it should own them in the division of labour.
+
+Three facts follow from it being an **opt-in core role**
+(`OPT_IN_CORE_ROLES`, alongside `muse` and `worker`):
+
+- `machine-as-brain` NEVER hosts it, `base.toml` vetoes it on an unrecognised
+  card, and only an explicit associate-hosting shape serves it;
+- an **unwired** associate is INFEASIBLE by default (`OPT_IN_BACKENDS`), so
+  `model=associate` 404s `role_infeasible` — referable and proxyable through
+  the `ASSOCIATE_PEER_*` channels, never a silent fallback to cortex;
+- under pressure it **sheds** (HTTP 429 + `Retry-After`) exactly like
+  cortex/senses/worker/muse. It is **not** a servable floor — `hand` remains
+  the only one.
+
+A fourth fact is specific to this role: **hosting it requires an inbound
+gateway key.** The `vllm-associate` container publishes no host port (the
+gateway is the only way in), and the checkpoint's published Jetson recipe —
+run verbatim during the 2026-08-25 spike — put an uncredentialed 30B generate
+lane on the operator's tailnet that two distinct peers queried unprompted
+within seconds. The shipped lane does not inherit that recipe's host
+networking, and `lobes doctor` fails (error severity, `associate_auth_gate`)
+any deployment that wires `ASSOCIATE_BASE_URL` while setting neither
+`GATEWAY_API_KEY` nor `CULTURE_VLLM_API_KEY`. See
+`docs/evidence/2026-08-26-associate-gateway-auth-front.txt` and
+[`docs/gateway-fleet.md`](gateway-fleet.md)'s auth section.
+
+In the capability ladder it takes the **highest non-cortex rung**:
+`hand` < `multimodal` < `worker` < `muse` < `associate` < `main`/`cortex`.
+Its role name IS its backend/tier name, like `muse` and `worker`.
 
 ### `hand` — the ninth role, the trained specialist
 
@@ -276,7 +332,16 @@ first and `agentculture/lobes-cli#180` tracks granting it once adapters exist.
 >
 > `hand` was worth that cost because it is a *kind* of lobe the fleet did not
 > have: cheap enough to be everywhere, and the only one meant to be taught. A
-> tenth role should have to clear the same bar. If what you want is a different
+> tenth role should have to clear the same bar.
+>
+> **The tenth, `associate`, landed 2026-08-25** (lightning-on-orin plan, t6),
+> and it did NOT clear that bar on behaviour alone — by this box's own rule,
+> "worker minus `repo_action`" is a responsibilities-token shape, which is how
+> `hand` handles the identical asymmetry. What justified it is the one thing a
+> token cannot provide: a **separate public address**, so the `worker` seat
+> stays free for a possible future worker/cortex switch. That is an operator
+> decision about naming, recorded here as such rather than dressed up as a
+> capability argument. An eleventh should expect the same scrutiny. If what you want is a different
 > checkpoint, that is a catalog change; if it is a different budget, that is a
 > profile or shape change; if it is a different behaviour on an existing lane,
 > that is a responsibilities token. Reach for a new role only when none of
@@ -312,7 +377,7 @@ base URL. Everything else — which model backs a role, whether it's loaded,
 what context it's served at — comes from the contract itself.
 
 ```bash
-lobes capabilities              # human-readable table, all nine roles
+lobes capabilities              # human-readable table, all ten roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # the same contract, over HTTP
@@ -349,7 +414,22 @@ by role name, each value carrying exactly these fields:
     "loaded": bool,                       # is this role's backend wired in THIS deployment? (LOCAL wiring only — see below)
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
     "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
-    "proxied": bool                       # OPTIONAL — present (and true) only when this box also forwards to that peer
+    "proxied": bool,                      # OPTIONAL — present (and true) only when this box also forwards to that peer
+    "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a *_PEER_ORIGINS pool is declared
+      {
+        "origin": str,                    # "local" for this box's own replica, else the peer origin
+        "local": bool,
+        "ready": bool,
+        "busy": bool,
+        "running": int,
+        "waiting": int,
+        "compatible": bool,               # served id + quantization + max context + runtime all agree
+        "reason": str,                    # e.g. "" when compatible, else which field differs
+        "fingerprint": {...} | None,
+      },
+      ...
+    ],
+    "fingerprint": {...} | None           # OPTIONAL, ADDITIVE (issue #199) — this box's OWN live-probed lane fingerprint
   },
   ...
 }
@@ -360,7 +440,22 @@ by role name, each value carrying exactly these fields:
 `proxied` are **optional keys**, added only for a role this box does not
 host, and only when the operator declared a peer for it — see
 [A third role state: proxied](#a-third-role-state-proxied) below for the full
-three-state contract.
+three-state contract. `replicas` and `fingerprint` are a SEPARATE, purely
+**additive** extension (issue #199, the cortex replica pool): every existing
+key here — `feasible`, `hosted_by`, `proxied`, `ready`, `loaded` — keeps its
+documented type and single-owner meaning even on a pooled role; a payload
+built with no `*_PEER_ORIGINS` declared anywhere has no `replicas` key at all
+and is byte-identical to the pre-pool contract. The pool composes on top of
+the awake/proxied states above, not a fourth state, and its full mechanism —
+selection policy, marker headers (`X-Lobes-Served-By` alongside the existing
+`X-Lobes-Proxied-By`, plus `X-Lobes-Route-Reason` on every pooled answer),
+the `<PREFIX>_PEER_ORIGINS`/`_PEER_API_KEYS` config family, and the
+failure/rollback table — lives in
+[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only).
+**Status: VALIDATED live 2026-08-25 (#108) — cortex only**, on the Spark+Thor
+NVFP4 pair (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the CLI view is `lobes capabilities --replicas` / `lobes endpoint
+<role> --replicas`, which also prints a "would choose: `<origin>`
+(`<reason>`)" line.
 
 **`tools`** answers "can I put an OpenAI `tools` array on a request to this
 role?" — `true` for the four generate lobes (`cortex`/`senses`/`muse`/`worker`), `false`
@@ -384,7 +479,7 @@ RESPONSIBILITY of the role. `senses` has `tools: true` and no `tool_use`: its
 Gemma lane can serve tool calls, but the division of labour doesn't ask it to.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
-it directly (issue #87). All nine roles (`cortex`/`senses`/`muse`/`worker`/`hand`/
+it directly (issue #87). All ten roles (`cortex`/`senses`/`muse`/`worker`/`associate`/`hand`/
 `embedder`/`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
 `model` field / the OpenAI `path`, not distinct per-role URLs; the internal
 upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
@@ -430,7 +525,7 @@ Example (`cortex`, fully wired, default fleet):
 An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
-client can always render all nine roles. (An unwired `muse` or `worker`
+client can always render all ten roles. (An unwired `muse` or `worker`
 additionally defaults to `feasible: false` — the opt-in-hosting honesty rule
 above.)
 
@@ -572,8 +667,8 @@ claim (lobes measures serving performance; whether an *answer* was good is
 Colleague's call):
 
 ```bash
-lobes measure              # all nine roles, table
-lobes measure --json       # all nine roles, JSON
+lobes measure              # all ten roles, table
+lobes measure --json       # all ten roles, JSON
 lobes measure --role cortex --json
 ```
 
@@ -709,7 +804,7 @@ and live-validation history behind this rebalance.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
-  deployment-shape axis: which of these nine roles a given box hosts at all,
+  deployment-shape axis: which of these ten roles a given box hosts at all,
   the cross-box honest-referral surface for a role it doesn't, and the
   opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
   key contract, a worked example).

@@ -1,6 +1,6 @@
 """Per-role RUNTIME measurement — issue #81, task t8.
 
-Probes each of the nine first-class roles (:data:`lobes.roles.ROLES`) on its own
+Probes each of the ten first-class roles (:data:`lobes.roles.ROLES`) on its own
 live endpoint and reports **runtime/serving** metrics, organised BY ROLE and
 grouped by the metric family its ``runtime`` implies:
 
@@ -109,7 +109,7 @@ AUDIO_METRIC_KEYS: frozenset[str] = frozenset(
 
 ALLOWED_METRIC_KEYS: frozenset[str] = LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS
 
-_LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "hand")
+_LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "associate", "hand")
 _EMBED_RERANK_ROLES: tuple[str, ...] = ("embedder", "reranker")
 _AUDIO_ROLES: tuple[str, ...] = ("stt", "tts")
 
@@ -118,6 +118,9 @@ _FAMILY_BY_ROLE: dict[str, str] = {
     "senses": "llm",
     "muse": "llm",
     "worker": "llm",
+    # `associate` (the tenth role) rides the llm family for the same reason
+    # worker does — it is a chat/completions generate lane.
+    "associate": "llm",
     # `hand` rides the llm family: it is a chat/completions generate lane
     # like the other four, adapters or not.
     "hand": "llm",
@@ -398,6 +401,7 @@ _MEASURE_FN = {
     "senses": _measure_llm_role,
     "muse": _measure_llm_role,
     "worker": _measure_llm_role,
+    "associate": _measure_llm_role,
     "hand": _measure_llm_role,
     "embedder": _measure_embed_rerank_role,
     "reranker": _measure_embed_rerank_role,
@@ -436,7 +440,7 @@ def measure_registry(
     roles: tuple[str, ...] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, dict]:
-    """Measure every requested role (default: all six, :data:`lobes.roles.ROLES`).
+    """Measure every requested role (default: all ten, :data:`lobes.roles.ROLES`).
 
     Never raises — each role's measurement degrades independently (a dead
     ``senses`` backend doesn't stop ``cortex`` from being measured).

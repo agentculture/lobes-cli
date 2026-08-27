@@ -141,6 +141,107 @@ class TestAudioUrlDefaultsEmpty:
         assert env["AUDIO_URL"].startswith("${AUDIO_URL:-")
 
 
+_ROLE_PREFIXES = (
+    "PRIMARY",
+    "MULTIMODAL",
+    "MUSE",
+    "WORKER",
+    "HAND",
+    "EMBED",
+    "RERANK",
+    "STT",
+    "TTS",
+)
+
+_FINGERPRINT_SUFFIXES = (
+    "QUANTIZATION",
+    "KV_CACHE_DTYPE",
+    "REASONING_PARSER",
+    "TOOL_CALL_PARSER",
+    "SPECULATIVE_CONFIG",
+)
+
+
+class TestReplicaPoolPassthrough:
+    """Issue #199, t3: the plural peer family, GATEWAY_SELF_ORIGIN, and the
+    declared lane fingerprint must all reach the gateway container as plain
+    ``${VAR:-}`` passthroughs — a key with no compose line silently never
+    reaches the gateway (the 2026-07-17 MUSE_* incident)."""
+
+    def test_plural_peer_family_present_and_empty_default(self) -> None:
+        env = _gateway_env_map()
+        for prefix in _ROLE_PREFIXES:
+            for suffix in ("PEER_ORIGINS", "PEER_API_KEYS"):
+                key = f"{prefix}_{suffix}"
+                assert key in env, f"{key} missing from gateway environment"
+                assert env[key] == f"${{{key}:-}}", f"{key} must default to empty"
+
+    def test_gateway_self_origin_present_and_empty_default(self) -> None:
+        env = _gateway_env_map()
+        assert "GATEWAY_SELF_ORIGIN" in env
+        assert env["GATEWAY_SELF_ORIGIN"] == "${GATEWAY_SELF_ORIGIN:-}"
+
+    def test_declared_lane_fingerprint_present_for_every_prefix(self) -> None:
+        env = _gateway_env_map()
+        for prefix in _ROLE_PREFIXES:
+            for suffix in _FINGERPRINT_SUFFIXES:
+                key = f"{prefix}_{suffix}"
+                assert key in env, f"{key} missing from gateway environment"
+                assert env[key].startswith(
+                    f"${{{key}"
+                ), f"{key} must remain operator-overridable via ${{{key}...}}"
+
+
+_ENV_EXAMPLE = _TEMPLATES / "fleet" / "env.example"
+
+
+class TestEnvExampleDocumentsTheReplicaPool:
+    """``env.example`` must document the plural peer family next to the
+    singular block, with the empty-slot rule and the per-box note — and
+    never with a real fleet hostname (only neutral ``peer-*.example``
+    placeholders)."""
+
+    def test_plural_block_documented_near_singular_block(self) -> None:
+        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
+        singular_idx = text.index("PRIMARY_PEER_ORIGIN=")
+        plural_idx = text.index("PRIMARY_PEER_ORIGINS=")
+        self_origin_idx = text.index("GATEWAY_SELF_ORIGIN=")
+        assert singular_idx < plural_idx < self_origin_idx
+
+    def test_empty_slot_rule_documented(self) -> None:
+        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
+        section = text[text.index("Replica pool") : text.index("GATEWAY_SELF_ORIGIN=")]
+        assert "empty" in section.lower()
+        assert "startup" in section.lower()
+        assert "error" in section.lower()
+
+    def test_per_box_differs_note_documented(self) -> None:
+        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
+        section = text[text.index("Replica pool") : text.index("GATEWAY_SELF_ORIGIN=")]
+        assert "differs per box" in section.lower()
+        assert "never list your own" in section.lower() or "never itself" in section.lower()
+
+    def test_no_real_fleet_hostname_in_the_new_replica_pool_section(self) -> None:
+        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
+        section = text[text.index("Replica pool") : text.index("Follow the referral: proxy-lobes")]
+        forbidden = ("spark", "thor", "orin", "tail0be7e0")
+        lowered = section.lower()
+        for token in forbidden:
+            assert token not in lowered, f"{token!r} must not appear in the replica pool section"
+
+
+class TestComposeTemplateReplicaPoolSectionHasNoRealHostname:
+    def test_no_real_fleet_hostname_in_the_new_compose_lines(self) -> None:
+        text = _FLEET_COMPOSE.read_text(encoding="utf-8")
+        section = text[
+            text.index("Replica-pool plural peer family") : text.index("Declared lane fingerprint")
+        ]
+        forbidden = ("spark", "thor", "orin", "tail0be7e0")
+        lowered = section.lower()
+        for token in forbidden:
+            assert token not in lowered, f"{token!r} must not appear in the replica pool block"
+
+
 class TestPortsMappingDistinguishesPublishedFromInternal:
     """The published host port (VLLM_PORT) differs from the gateway's internal
     container port (GATEWAY_PORT=8000). This distinction is what makes a

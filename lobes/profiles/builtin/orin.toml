@@ -95,21 +95,68 @@ gpu_access = "runtime"
 # arithmetic, quoted back verbatim so the operator can check it. Both named
 # shapes are proven to exist and to actually resolve the group by
 # tests/test_init_coresidency.py, so this cannot drift into a lie.
+# ONE group, three members, not three pairwise clashes: `overcommitted_groups`
+# reads a group as "more than one member actually RUNNING is over-hosting; one
+# member, or none, is fine" — exactly this board's constraint, at most one heavy
+# generate lobe. `associate` joined it 2026-08-25 (plan `lightning-on-orin`, t8).
+#
+# Provenance per member:
+#   cortex / senses  MEASURED 2026-08-23 (below, unchanged).
+# `shapes` names only shapes that EXIST — the guard in
+# tests/test_init_coresidency.py asserts each one resolves the group, so a name
+# added before its shape file would be a lie. `orin-associate` joined this list
+# in the task that creates it (plan `lightning-on-orin`, t9); it resolves the
+# group by hosting associate and dropping both cortex and senses, exactly like
+# `orin-cortex` and `orin-lobe` resolve it by hosting one of the other two.
+#
+#   associate        MEASURED 2026-08-25 — util 0.63 at 128000 holds ~37.7 GiB
+#                    resident (instrument: docker stats), with vLLM's own startup
+#                    check seeing 42.89/61.34 GiB free. Fits beside NEITHER of the
+#                    other two. docs/evidence/2026-08-25-measure-associate-budget-orin.txt
 [[exclusive_roles]]
-roles = ["cortex", "senses"]
-shapes = ["orin-cortex", "orin-lobe"]
-reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB, against 61.3 GiB of unified memory with ZERO swap"
+roles = ["cortex", "senses", "associate"]
+shapes = ["orin-cortex", "orin-lobe", "orin-associate"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB; MEASURED 2026-08-25: associate (Lightning NVFP4 at util 0.63, 128000) holds ~37.7 GiB resident (docker stats) with vLLM's startup check seeing 42.89/61.34 GiB free — against 61.34 GiB of unified memory with ZERO swap"
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
 #
-# The NVFP4 exports this fleet serves for cortex (unsloth/Qwen3.8-27B-NVFP4),
-# muse (nvidia/Gemma-4-31B-IT-NVFP4) and worker
-# (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) all quantize ACTIVATIONS
-# to FP4 (W4A4 on the MLP path). FP4 activations are executed by BLACKWELL FP4
-# tensor cores; sm_87 is Ampere, one generation short. No gpu_mem_util makes
-# that work — it is a feasibility fact, NOT a memory tradeoff
-# (docs/orin-profiles.md "Why no cortex"; the same statement heads
-# lobes/machines/orin.py).
+# TWO of the NVFP4 exports this fleet serves — cortex
+# (unsloth/Qwen3.8-27B-NVFP4) and muse (nvidia/Gemma-4-31B-IT-NVFP4) — quantize
+# ACTIVATIONS to FP4 (W4A4 on the MLP path). FP4 activations are executed by
+# BLACKWELL FP4 tensor cores; sm_87 is Ampere, one generation short. No
+# gpu_mem_util makes that work — it is a feasibility fact, NOT a memory
+# tradeoff (docs/orin-profiles.md "Why no cortex"; the same statement heads
+# lobes/machines/orin.py). That line STANDS, unweakened, for those two.
+#
+# --- the Lightning carve-out: W4A4 is NOT why worker is false here ----------
+#
+# The third NVFP4 lobe — worker
+# (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — used to be named in
+# the sentence above. That was FALSE for this checkpoint, and the checkpoint's
+# OWN hf_quant_config.json (fetched 2026-08-25) is what disproves it:
+#   * quant_algo = "MIXED_PRECISION" — not a uniform-NVFP4 export at all;
+#   * every routed AND shared expert up_proj/down_proj is "W4A16_NVFP4",
+#     group_size 16 — WEIGHT-only FP4 weights, 16-bit activations;
+#   * the mixer in_proj/out_proj are "FP8";
+#   * kv_cache_quant_algo is "FP8".
+# W4A16 is structurally the SAME exception this board already runs for `senses`
+# (int4 W4A16, weight-only, dequantized through Marlin into 16-bit arithmetic).
+# There is no FP4 activation path here to be one generation short of.
+#
+# CONFIRMED LIVE 2026-08-25 on this physical board
+# (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt): vLLM v0.27.1
+# accepted quantization=modelopt_mixed on sm_87 and selected a full Marlin
+# fallback stack — MarlinFP8ScaledMMLinearKernel, MarlinNvFp4LinearKernel and
+# the 'MARLIN' NvFp4 MoE backend — plus native FlashAttention 2, serving
+# correct output at ~78-81 tok/s. The FP8 halves of the config ARE a real
+# sm_87 barrier: the FP8 KV cache was worked around with
+# --kv-cache-dtype bfloat16, and the FP8 in_proj/out_proj went through the
+# Marlin FP8 kernel rather than native FP8 tensor cores.
+#
+# `worker` nevertheless stays feasible = false below, UNCHANGED — this block
+# corrects the stated REASON only. Hosting Lightning on this board is a
+# separate decision with its own budget knobs and shape (plan
+# lightning-on-orin, tasks t6/t8/t9), not a side effect of a comment fix.
 #
 # That line is about the CHECKPOINT FORMAT, not about the ROLE — which is what
 # the `cortex` block below now turns on. Two other things on this board already
@@ -121,8 +168,9 @@ reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~3
 # A GGUF Q4_K_M is the third: weight-only, dequantized per block into 16-bit
 # arithmetic, with no FP4 activation path anywhere in it.
 #
-# `muse` and `worker` stay feasible=false because no non-NVFP4 gear is
-# catalogued for them on this board — not because the roles are impossible.
+# `muse` stays feasible=false for the W4A4 reason above, and `worker` stays
+# feasible=false because no gear is DECLARED for it here yet — neither because
+# the roles are impossible.
 # feasible=false renders <PREFIX>_FEASIBLE=false and nothing else — no model, no
 # knobs (lobes/profiles/render.py) — so a dropped lobe is never half-served; a
 # box on this profile reaches them by honest referral / proxy instead.
@@ -179,6 +227,113 @@ reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~3
 feasible = true
 model = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
 max_model_len = 262144
+
+# --- associate: DOCUMENTATION ONLY, no table (see the note at the end) ------
+# *** MEASURED LIVE on this box, 2026-08-25 (plan `lightning-on-orin`, task t8):
+# *** docs/evidence/2026-08-25-measure-associate-budget-orin.txt. The LANE is a GO
+# *** here — docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt: known-answer
+# *** PASS, structured tool calls PASS, ~78-81 tok/s single-stream WITH DSpark
+# *** speculation (~30x this board's 2.61 tok/s llama.cpp cortex).
+# *** NOTHING here is VALIDATED as a SHAPE: no box has booted `orin-associate` and
+# *** no acceptance transcript exists for it (#108).
+#
+# WHY sm_87 CAN SERVE AN NVFP4 CHECKPOINT AT ALL — see the Lightning carve-out
+# above. This checkpoint's own hf_quant_config.json is W4A16_NVFP4 (WEIGHT-only)
+# on the experts plus FP8 on in_proj/out_proj, NOT the W4A4 activation
+# quantization that rules out the cortex and muse NVFP4 exports on this card.
+# vLLM accepted quantization=modelopt_mixed and selected a full Marlin fallback
+# stack (FP8, NVFP4 GEMM, NVFP4 MoE) with native FlashAttention 2.
+#
+# gpu_mem_util 0.56 is MEASURED, and BOTH values it replaces are RECORDED
+# rather than quietly dropped:
+#
+#   * 0.70 — the vendor's own published Jetson figure — was REFUSED at boot with
+#     the two pooling gears resident, by 0.05 GiB:
+#       "Free memory on device cuda:0 (42.89/61.34 GiB) on startup is less than
+#        desired GPU memory utilization (0.7, 42.94 GiB)"
+#     It fits this board SOLO and does not fit the deployed shape. That gap is
+#     precisely why a card profile may not copy a vendor number forward.
+#   * 0.63 booted with only the pooling gears up (weights 19.45 GiB, KV 10.95 GiB,
+#     pool 1,249,280 tokens, 9.76x) — but was itself REFUSED once `hand` joined
+#     the real shape; see the correction below.
+#   * 0.56 is the value the FULL shape actually runs at.
+#
+# 0.63 WAS ALSO REFUSED — corrected to 0.56, MEASURED with the FULL shape up
+# (docs/evidence/2026-08-26-accept-orin-associate.txt). The earlier 0.63 was
+# measured with `hand` NOT resident, reserving its declared util 0.06 (3.68 GiB)
+# as arithmetic headroom. That reserve was wrong: `hand` holds 5.84 GiB resident,
+# 59% more than its utilization fraction implies (util is a budget fraction; the
+# resident figure includes weights plus overhead). With the real shape up:
+#
+#     ValueError: Free memory on device cuda:0 (34.85/61.34 GiB) on startup is
+#     less than desired GPU memory utilization (0.63, 38.65 GiB).
+#
+# 0.56 booted and served: weights 17.81 GiB, available KV 9.35 GiB, KV pool
+# 1,524,000 tokens, 11.91x concurrency at 128000. Both refusals are kept above
+# rather than collapsed into the surviving number.
+#
+# MARGIN IS THIN: the full shape leaves ~1 GiB free on a board with ZERO swap
+# (associate 34.85 + hand 5.80 + rerank 5.34 + embed 4.83 GiB). Issue #216
+# (running headless) is about margin now, not just a bigger KV pool.
+#
+# HEADLESS IS AN OPERATOR OPTION, NOT A CARD DEFAULT (issue #216): this board
+# runs graphical.target, and on Tegra the GUI holds UNIFIED memory — the same
+# pool this fraction is taken from (gnome-shell + Xorg + mutter + gdm ~0.35 GiB
+# RSS, and RSS undercounts the framebuffer/carveout). Recovering it would very
+# likely clear the 0.05 GiB that refused 0.70 above, and 0.70 measured solo is
+# worth +38% KV (15.07 GiB / 1,720,320 tokens / 13.44x). It is deliberately NOT
+# taken here: this file ships to EVERY Orin, lobes cannot detect whether a host
+# runs a desktop, and a headless-measured util would be declared for GUI boards
+# too and refused at boot on them — exactly as 0.70 was refused here. An operator
+# running multi-user.target can raise this in their own
+# <deploy-dir>/profiles/orin.toml and re-measure; #216 tracks measuring the real
+# delta.
+#
+# BOOT ORDER MATTERS, as everywhere on this card: gpu_memory_utilization is a
+# fraction of the ENTIRE device and KV is the only elastic term, so a gears-first
+# boot and an associate-first boot do not yield the same pool. These numbers are
+# from a GEARS-FIRST boot, which is what the shape does.
+#
+# max_model_len 128000 is the vendor recipe's window, served in full and measured
+# at it — NOT the checkpoint's 1,048,576 native ceiling, which nothing here has
+# exercised. Trimming it is the memory dial if a future co-resident needs room.
+# WHERE THE KNOBS LIVE, and why NOT here (approved deviation d1, 2026-08-25):
+# `associate` is an OPT-IN core role (lobes/profiles/shapes.py's
+# OPT_IN_CORE_ROLES), so it follows muse's and worker's rule exactly — the CARD
+# declares feasible = false and the HOSTING SHAPE carries the full declaration
+# (model + budget knobs) in its own overrides. Declaring it here instead made
+# `orin-lobe`, a shape that DROPS associate, render associate's full model and
+# budget — "card passthrough broken", which is the half-served lobe #92 forbids —
+# and made machine-as-brain over-host this board, the exact failure the
+# exclusive_roles group above exists to prevent.
+#
+# So the MEASURED VALUES BELOW ARE DOCUMENTATION, not a declaration. They are
+# recorded on the card because they are facts about THIS BOARD, measured here;
+# the live knobs that render are in builtin_shapes/orin-associate.toml, and the
+# two must not drift:
+#
+#   model          nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+#   gpu_mem_util   0.56          (0.70 and 0.63 both REFUSED — see above)
+#   max_model_len  128000        (the vendor window, not the 1M ceiling)
+#   quantization   modelopt      (Lightning's own quant_method; vLLM resolves it
+#                                 to modelopt_mixed and picks Marlin on sm_87)
+#   kv_cache_dtype bfloat16      (NOT the checkpoint's declared FP8
+#                                 kv_cache_quant_algo — sm_87 has no FP8 KV path;
+#                                 the vendor recipe concedes this too, and every
+#                                 number above was measured with it in force)
+#
+# THIS BLOCK DECLARES NOTHING — it is comment-only, and that is the fix for a
+# regression it caused. Declaring `feasible = false` here (the first shape of
+# deviation d1) forced shape_render to override feasibility unconditionally for
+# hosted opt-in roles, which then BYPASSED base.toml's vetoes for muse, worker
+# AND associate — so `--shape thor-muse` on an unrecognised card would render a
+# full 31B budget the conservative fallback exists to prevent. Staying SILENT
+# is what muse and worker already do on every card (see CLAUDE.md: "the card
+# profiles silent on it"), and it composes correctly without a special case:
+#   * a card that is silent  -> RoleProfile's default feasible=True, so a
+#     hosting shape's override lands and a non-hosting shape renders nothing
+#     (the gateway's OPT_IN_BACKENDS then defaults it infeasible);
+#   * base.toml's EXPLICIT veto -> survives, because nothing overrides it.
 
 [roles.muse]
 feasible = false
@@ -363,5 +518,53 @@ max_model_len = 8192
 # A repo-level fix — PSI-based or disk-I/O-corroborated pressure sampling that
 # does not trust nr_iowait on Tegra — would retire this line. Until then it is
 # the honest declaration, not a workaround hidden in a shell history.
+# --- the associate lane's engine pin and DSpark: OPERATOR-TYPED, not here ---
+#
+# MEASURED 2026-08-26. These two keys are NOT declared here, and the reason is
+# the honesty rule: `host_env` renders on EVERY shape, so declaring them would
+# leak ASSOCIATE_* onto shapes that DROP associate — the half-served lobe #92
+# forbids, and exactly what tests/test_shape_goldens.py's
+# test_every_dropped_core_role_renders_only_the_feasible_marker catches. The
+# Shape dataclass has no env mechanism (name/summary/hosts/overrides only), so
+# these are OPERATOR-TYPED in the deployment's own .env — the same posture as
+# peer origins (#92: always operator-typed, never derived). They are a MATCHED
+# PAIR — arming one without the other does not degrade, it refuses to boot:
+#
+#   The fleet-wide nightly (either digest) does NOT KNOW the `dspark`
+#   speculative method. Armed against it, vLLM raises a pydantic
+#   ValidationError at startup listing the methods it does support
+#   ('...nemotron_h_mtp', 'mtp', 'gemma4_mtp', 'dflash', 'ngram_gpu') — `dspark`
+#   is absent. v0.27.1 accepts it. So ASSOCIATE_IMAGE pins v0.27.1 BECAUSE
+#   ASSOCIATE_SPECULATIVE_CONFIG names dspark; neither line stands alone.
+#
+# This is the SECOND lane to diverge from "one engine, fleet-wide" (the Gemma
+# senses/muse lane was the first) — and the first to diverge by NECESSITY
+# rather than by operator choice.
+#
+# WHY DSpark IS ON BY DEFAULT HERE, measured solo at util 0.80 on this board
+# (docs/evidence/2026-08-26-accept-orin-associate.txt), identical engine and
+# resident set with speculation the only variable:
+#
+#     depth        DSpark      plain     gain
+#         0     96.82 t/s   54.75 t/s   1.77x
+#       512    121.12 t/s   54.70 t/s   2.21x
+#      2048     90.58 t/s   54.57 t/s   1.66x
+#      8192     93.86 t/s   54.00 t/s   1.74x
+#     32768     59.05 t/s   52.13 t/s   1.13x
+#
+# The gain decays with depth because per-position draft acceptance decays
+# (0.93/0.81/0.67/0.49/0.28 at best, 0.75/0.45/0.30/0.17/0.11 at worst; mean
+# acceptance length 2.77-4.18 of 5). The drafter is NOT free: it costs KV,
+# taking the pool from 3,806,000 tokens (29.73x at 128000) down to 2,395,428
+# (18.71x). On a board serving one lobe that trade is worth it; on a shared
+# board it may not be.
+#
+# NOTE the drafter repo's -NVFP4 infix. NVIDIA's own published Jetson recipe
+# omits it and names a repo that does not exist.
+#
+# The two lines to put in .env on a box hosting associate:
+#   ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1
+#   ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
 [host_env]
 LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+

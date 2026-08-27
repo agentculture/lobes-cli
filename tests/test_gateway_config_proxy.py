@@ -35,7 +35,9 @@ from lobes.gateway._config import (
     FEASIBLE_ENV,
     NEVER_PROXIED_BACKENDS,
     PEER_API_KEY_ENV,
+    PEER_API_KEYS_ENV,
     PEER_ORIGIN_ENV,
+    PEER_ORIGINS_ENV,
     PEER_PROXY_ENV,
     ServerConfig,
     build_config,
@@ -99,12 +101,25 @@ def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_PROXY",
         "muse": "MUSE_PEER_PROXY",
         "worker": "WORKER_PEER_PROXY",
+        "associate": "ASSOCIATE_PEER_PROXY",
         "hand": "HAND_PEER_PROXY",
         "embed": "EMBED_PEER_PROXY",
         "rerank": "RERANK_PEER_PROXY",
         "stt": "STT_PEER_PROXY",
         "tts": "TTS_PEER_PROXY",
     }
+
+
+def test_replica_peer_env_families_mirror_feasible_env_prefixes() -> None:
+    # cortex-replica-pool (issue #199, t2) — the PLURAL peer family
+    # (PEER_ORIGINS_ENV / PEER_API_KEYS_ENV) covers exactly the same nine
+    # backend names as FEASIBLE_ENV, unlike the singular channels above
+    # which exclude NEVER_PROXIED_BACKENDS. A role can run as a replica pool
+    # regardless of whether it also carries a proxy-lobes escape hatch, so
+    # this invariant is asserted separately rather than folded into the
+    # scalar-channel one.
+    assert set(PEER_ORIGINS_ENV) == set(FEASIBLE_ENV)
+    assert set(PEER_API_KEYS_ENV) == set(FEASIBLE_ENV)
 
 
 def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
@@ -114,6 +129,7 @@ def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
         "multimodal": "MULTIMODAL_PEER_API_KEY",
         "muse": "MUSE_PEER_API_KEY",
         "worker": "WORKER_PEER_API_KEY",
+        "associate": "ASSOCIATE_PEER_API_KEY",
         "hand": "HAND_PEER_API_KEY",
         "embed": "EMBED_PEER_API_KEY",
         "rerank": "RERANK_PEER_API_KEY",
@@ -410,7 +426,7 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         # `model=muse` / `model=worker` 404 role_infeasible instead of
         # silently upward-falling-back to the primary. Every pre-muse (and
         # pre-worker) behaviour is otherwise unchanged.
-        infeasible=frozenset({"muse", "worker"}),
+        infeasible=frozenset({"muse", "worker", "associate"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding

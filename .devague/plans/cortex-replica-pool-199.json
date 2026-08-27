@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-25T16:10:01Z",
-  "updated": "2026-08-25T16:19:37Z",
+  "updated": "2026-08-25T21:02:53Z",
   "targets": [
     {
       "id": "c1",
@@ -652,6 +652,32 @@
         "h22"
       ],
       "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Live acceptance: boot the orin-associate shape on the physical Orin and produce the #108 transcript",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-08-26-accept-orin-associate.txt exists in the house format: header (box, date, engine, scaffold command and every deployment-side delta), boot facts, probes, verdict, and an explicit 'still open' section",
+        "The shape is rendered by 'lobes init --shape orin-associate --apply' on this card and the deployment is brought up from that render, not hand-assembled",
+        "Correctness probes run and are recorded verbatim: known-answer, structured tool_calls, and gateway capabilities showing associate hosted and ready",
+        "Decode throughput is measured and stated WITH its speculation setting, alongside this board's own 2.61 tok/s llama.cpp cortex baseline and never against the vendor's 89 tok/s aggregate",
+        "A request without GATEWAY_API_KEY is refused and that refusal is recorded, closing c30/c46 with live evidence rather than configuration alone",
+        "Until this transcript lands nothing may call the orin-associate shape validated; if it fails the transcript says NO-GO in its own words and the shape stays DECLARED",
+        "A DEPTH SWEEP at the SAME shape as the incumbent's (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt): prefill depths 0 / 512 / 2048 / 8192 / 32768 with 128 output tokens, reporting TTFT, decode tok/s and total per depth, so the two lanes are directly comparable on this board rather than compared across different harnesses",
+        "Prefill throughput measured and its decay across depth stated, as the incumbent's transcript does (it reported decode ~7% and prefill ~10% decay from 0 to 32768)",
+        "The standard CLI surface is used and its output recorded verbatim -- lobes capabilities, lobes assess --tools, lobes benchmark, lobes measure --role associate -- not ad-hoc curl only, so the run is reproducible by another operator",
+        "A head-to-head table against this board's own incumbent (2.61 tok/s decode, ~64 tok/s prefill, TTFT 1,566 ms at depth 0 / 610,020 ms at 32768) and against the Spark-hosted worker (75.1 tok/s, no speculation), each labelled with its speculation setting and its harness"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c26",
+        "h26"
+      ],
+      "instruction": ""
     }
   ],
   "risks": [
@@ -684,6 +710,22 @@
       "text": "Declared per-replica weight: t4 takes a declared decode weight per origin (default 1.0) because no measurement of pool behaviour exists; t10 records the measured spread so a later PR can calibrate or replace it with a latency EMA",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Spec gap surfaced by t9: a forwarded pooled request arrives at the peer with model rewritten to the raw served id, which is not a tier alias, so the RECEIVING box's pressure gate never sheds it \u2014 'both boxes busy -> one forward + relayed 429' cannot occur at the tier gate; instead the forwarder's snapshot carries the peer's busy from /status and selects nothing (local 429, reason none). Only a peer ENGINE 429 relays. Decide whether the receiver should apply pressure to marked raw-id arrivals (follow-up on #199).",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Live finding (t11, 2026-08-25): pressure->forward applies to TIER-ALIAS requests only (the pre-existing #85 gate), so a RAW-ID request to a box under pressure is served/queued locally while the same request by alias forwards \u2014 raw id and alias diverge under pressure, against h23's 'placed identically'. Under load-only conditions they are identical. Follow-up: run the pooled busy dispatch for raw-id requests too, or document the divergence as the contract.",
+      "kind": "follow_up",
+      "task_id": "t11",
       "resolved": false,
       "resolution": ""
     }

@@ -1,0 +1,133 @@
+# The associate lane's AUTHENTICATED front — lightning-on-orin plan, t10.
+#
+# Date: 2026-08-26.  Scope: the SHIPPED lane's exposure surface (compose
+# render + gateway inbound gate + deployment check).  Board: none — see
+# "What this document is NOT" at the bottom.  This is a design/verification
+# record, NOT a live acceptance transcript, and nothing here may be cited as
+# evidence that the orin-associate SHAPE has booted (#108: it has not).
+#
+# ===========================================================================
+# 1. THE MOTIVATING INCIDENT — observed, not hypothesised
+# ===========================================================================
+#
+# Frame claim c30 predicted it: NVIDIA's published Jetson serve recipes stand
+# up an UNAUTHENTICATED endpoint on this box's tailnet.  Each binds
+# `--host 0.0.0.0` (llama.cpp) or `--network host` (both), and llama-server's
+# own startup banner says so verbatim:
+#
+#     CORS is set to allow all origins ('*') and no API key is set
+#     this can be a security risk
+#
+# Frame claim c46 records that the exposure was REALISED.  The vLLM spike ran
+# the recipe verbatim (boundary c18 funded exactly that, for the SPIKE only).
+# The API server announced its bind at 19:02:28:
+#
+#     (APIServer pid=1) INFO 08-25 19:02:28 [api_server.py:682] Starting vLLM
+#     server on http://0.0.0.0:8000
+#
+# and within seconds TWO DISTINCT tailnet peers queried it — NEITHER of them
+# initiated by the operator's session.  Quoted verbatim from
+# docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt (lines 494-495 of
+# that file at the time of writing; the pair recurs ~40 more times through
+# the rest of the transcript):
+#
+#     (APIServer pid=1) INFO:     100.127.105.72:50652 - "GET /v1/models HTTP/1.1" 200 OK
+#     (APIServer pid=1) INFO:     100.105.216.63:55196 - "GET /v1/models HTTP/1.1" 200 OK
+#
+# This board holds tailnet address 100.81.137.121 (probed 2026-08-25, frame
+# claim c30), so for the whole life of the spike a 30B generate lane was
+# reachable, uncredentialed, by every peer in the mesh.
+#
+# Attribution, stated honestly because it sharpens the point rather than
+# softening it: both addresses are KNOWN fleet peers, not strangers —
+# 100.127.105.72 is the DGX Spark (it is this box's own AUDIO_URL host, see
+# docs/orin-profiles.md) and 100.105.216.63 is the Jetson AGX Thor gateway
+# (see docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt).  Nothing
+# here claims a hostile party.  What it claims is the thing that matters:
+# discovery of an open generate port on this tailnet is AUTOMATIC and takes
+# SECONDS, so "it was only up for a spike" is not a mitigation.  Under
+# honesty condition h12 the spike's exposure is therefore recorded here as
+# time-boxed and explicitly accepted, never left implicit.
+#
+# ===========================================================================
+# 2. THE NAMED DEPARTURE FROM THE VENDOR RECIPE (frame boundary c29)
+# ===========================================================================
+#
+# Boundary c29 requires that any departure from the published recipe be NAMED
+# as a correction rather than smuggled in.  There is exactly one, and it is
+# the direct cause of the exposure above:
+#
+#   CORRECTED — `--network host` is NOT inherited.  The vendor recipe runs the
+#   container in the host network namespace, which is what put port 8000 on
+#   100.81.137.121.  The shipped `vllm-associate` service uses the fleet's
+#   ordinary bridge network and declares NO `network_mode`, and — like every
+#   other model lane in lobes/templates/fleet/docker-compose.yml — publishes
+#   NO host port at all.  It carries only `expose: 8000`, i.e. reachable at
+#   http://vllm-associate:8000 on the compose network and nowhere else.
+#
+#   KEPT — `--host=0.0.0.0` on the vllm serve command line.  This is NOT an
+#   oversight and NOT a residue of copying the recipe.  Inside a bridge
+#   network namespace, 0.0.0.0 means "this container's own interfaces", which
+#   is what the gateway needs in order to dial the lane over the compose
+#   network; binding 127.0.0.1 there would make the lane unreachable even to
+#   the gateway.  The two facts are a PAIR — the bind is only safe because the
+#   namespace is not the host's — and tests/test_associate_exposure.py pins
+#   them together so neither half can be changed alone.
+#
+# Every other flag in the lane is the recipe's own value (the eight flags t7
+# gave a home; see tests/test_associate_compose.py).
+#
+# ===========================================================================
+# 3. THE FRONT DOOR — what a tailnet peer can actually reach
+# ===========================================================================
+#
+# One published port exists in the whole fleet template: the gateway's.  Every
+# model lane (vllm-primary / -multimodal / -muse / -worker / -associate /
+# -hand / -embed / -rerank) is `expose`-only.  So a tailnet peer's ONLY path
+# to the associate lane is `POST /v1/chat/completions` with `model=associate`
+# at this box's gateway.
+#
+# That path carries the opt-in inbound bearer gate (issues #115/#127):
+# GATEWAY_API_KEY, falling back to CULTURE_VLLM_API_KEY.  With it set, an
+# unauthenticated / wrong-key / malformed-header request is refused 401 with
+# an OpenAI-shaped `invalid_api_key` body and `WWW-Authenticate: Bearer`,
+# BEFORE any body parse, model resolution, readiness probe or upstream
+# connection — the associate lane is never dialed.  Verified by test with a
+# counting upstream that must record ZERO dials
+# (tests/test_associate_exposure.py::TestUnauthenticatedPeerIsRefused).  The
+# incident's exact probe, `GET /v1/models`, is refused the same way.
+#
+# Honesty condition h32 — "the adopted lane binds behind GATEWAY_API_KEY or
+# does not ship" — has a deployment half the gateway cannot enforce on its
+# own: the bearer gate is OPT-IN, so a box could host associate with no key
+# set and be exactly as open as the spike was, minus the published port.
+# `lobes doctor` now emits an ERROR-severity `associate_auth_gate` finding on
+# any deployment whose .env wires ASSOCIATE_BASE_URL (i.e. hosts the lane)
+# while setting neither GATEWAY_API_KEY nor CULTURE_VLLM_API_KEY.  It is
+# scoped to a LOCALLY HOSTED associate: a box that refers or proxies the role
+# to a peer, and every pre-associate deployment, emits no finding at all.
+#
+# Peer credentials follow #127 unchanged: a peer key is always a COPY of that
+# peer's own inbound GATEWAY_API_KEY (key material is O(machines), not
+# O(pairs)), and a caller's own Authorization is stripped before any forward
+# and never reaches a peer.  t10 added no new credential channel.
+#
+# ===========================================================================
+# 4. WHAT THIS DOCUMENT IS **NOT**
+# ===========================================================================
+#
+# - NOT a live acceptance transcript.  No box booted the orin-associate shape
+#   for this task; every claim in section 3 is proven by offline test against
+#   the packaged template and the gateway's own handler, not by a request
+#   crossing a real tailnet.  A live probe from a peer box — with and without
+#   the key — remains open work (#108).
+# - NOT evidence about the vllm-associate lane's runtime behaviour.  The GO
+#   for the checkpoint itself is the 2026-08-25 spike transcript; the budget
+#   is docs/evidence/2026-08-25-measure-associate-budget-orin.txt.
+# - NOT a claim that the tailnet is hostile, or that the two peers above did
+#   anything wrong.  See the attribution note in section 1.
+# - NOT a change to gateway routing, selection, replica-pool or proxy logic
+#   (honesty condition h36).  The gate used here is the SAME inbound bearer
+#   check every other role already sits behind; t10 added no gateway
+#   behaviour, only a compose-exposure guarantee, a deployment check, and
+#   these tests.

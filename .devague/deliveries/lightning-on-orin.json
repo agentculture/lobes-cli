@@ -1,0 +1,30 @@
+{
+  "plan_slug": "lightning-on-orin",
+  "schema_version": 1,
+  "created": "2026-08-25T20:22:52Z",
+  "updated": "2026-08-25T22:37:53Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t8's measured budget knobs move from the Orin CARD profile to the orin-associate SHAPE overrides; the card declares [roles.associate] feasible = false and keeps the measured numbers as documentation",
+      "task_ref": "t8",
+      "reason": "t8 acceptance criterion 1 ('builtin/orin.toml declares associate feasible with model, gpu_mem_util and max_model_len') contradicts the OPT_IN_CORE_ROLES architecture that t6 correctly placed associate into. For muse and worker the card profiles declare feasible=false and the HOSTING SHAPE carries the full model+budget declaration in its overrides (thor-muse.toml states this in its header; orin.toml already does it for both). Declaring associate on the card made orin-lobe -- a shape that DROPS associate -- render its full model and knobs, which test_every_dropped_core_role_renders_only_the_feasible_marker rejects as 'card passthrough broken', and made machine-as-brain over-host the board, which is precisely what the exclusive_roles guard exists to prevent. The criterion was authored during /spec-to-plan without checking the opt-in pattern; the MEASUREMENT itself (util 0.63, 128000, KV 10.95 GiB / 1,249,280 tokens / 9.76x, and the recorded refusal of the vendor's 0.70) is unaffected and simply lands in the shape. Shipped behaviour is identical.",
+      "affects": [
+        "t9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "orin-associate becomes a SOLO shape: hosts=[associate] only, dropping hand, embedder and reranker; util 0.56 -> 0.80; ASSOCIATE_IMAGE pinned to v0.27.1 and DSpark armed via operator-typed .env",
+      "task_ref": "t9",
+      "reason": "Operator decision 2026-08-25/26: the Orin becomes a single-lobe box serving associate as fast as possible. Accepted consequences: (1) hand is the pressure-policy SERVABLE FLOOR hosted by every other built-in shape, so this box has NO floor -- under pressure it sheds 429 with nothing to degrade to, leaning entirely on this card's LOBES_IOWAIT_DEGRADED_THRESHOLD=100 override since Tegra fakes ~59% iowait; (2) no local embeddings or rerank; (3) DSpark requires vLLM v0.27.1 (the fleet nightly refuses method 'dspark' outright), the first lane to diverge from 'one engine, fleet-wide' by NECESSITY. Measured payoff: 1.77-2.21x decode (96.8/121.1 vs 54.8/54.7 tok/s), KV pool 2,395,428 at util 0.80.",
+      "affects": [],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    }
+  ]
+}

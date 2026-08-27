@@ -163,6 +163,47 @@ def test_explain_roles(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
     assert "docs/colleague-stack.md" in out
 
 
+def test_explain_gateway_replica_pool(capsys: pytest.CaptureFixture[str]) -> None:
+    # issue #199 t10: the replica-pool section must render under `explain
+    # gateway` and name the honest markers plus its declared/unvalidated
+    # (cortex-only) status.
+    rc = main(["explain", "gateway"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Replica pools" in out
+    assert "X-Lobes-Served-By" in out
+    assert "X-Lobes-Route-Reason" in out
+    assert "cortex" in out
+    assert "VALIDATED" in out
+    assert "unvalidated" in out.lower()
+
+
+def test_explain_shapes_replica_pool(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "shapes"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Replica pools" in out
+    assert "not a fourth" in out.lower()
+
+
+def test_explain_api_replica_headers(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "api"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "X-Lobes-Served-By" in out
+    assert "X-Lobes-Route-Reason" in out
+    assert "X-Lobes-Affinity" in out
+
+
+@pytest.mark.parametrize("alias", ["roles", "colleague", "colleague-stack", "capabilities"])
+def test_explain_roles_replicas(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", alias])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "replicas" in out
+    assert "--replicas" in out
+
+
 def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain", "switch", "--json"])
     assert rc == 0

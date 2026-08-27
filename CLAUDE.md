@@ -185,9 +185,9 @@ that exclusion that turned out to be **wrong** (the `supports_required_and_named
 flag, which cortex's own parser shares; and an EngineCore-crash risk that did
 not reproduce).
 
-### Colleague roles: cortex / senses / muse / worker / embedder / reranker / stt / tts
+### Colleague roles: cortex / senses / muse / worker / associate / hand / embedder / reranker / stt / tts
 
-Beyond `cortex`, the **fleet** exposes NINE first-class, Colleague-facing
+Beyond `cortex`, the **fleet** exposes TEN first-class, Colleague-facing
 **roles** (issue #81; `worker` joined as the eighth — thor-worker-lobe plan —
 and `hand` as the ninth — hand-lobe plan) — the primary contract callers
 should address, not raw model ids: `cortex`
@@ -254,7 +254,7 @@ is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
 `docs/qwen3-reranker-0.6b.md`, `docs/gemma-4-12b-nvfp4.md`,
 `docs/gemma-4-31b-nvfp4.md`, `docs/qwen3.6-35b-a3b-nvfp4.md`,
 `docs/lfm2.5-1.2b-hand.md`,
-`docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the nine-role
+`docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the ten-role
 contract).
 
 **`muse` — the seventh role, currently DORMANT/unhosted mesh-wide.**
@@ -356,6 +356,52 @@ proxy-chain probe, run from the Thor's own gateway).
 > modality, different host box, opposite proxy direction. See
 > `docs/qwen3.6-35b-a3b-nvfp4.md` for that checkpoint's full history and its
 > own GDN-MTP kernel gap on the fleet's newer nightly.
+
+**`associate` — the TENTH role (opt-in hosting), the Jetson AGX Orin's local
+generate lobe.** Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
+— the SAME Lightning checkpoint the Spark serves as `worker`. The metaphor is
+"they do, but not act": associate's responsibilities are worker's MINUS
+`repo_action` — execution, ground_work, bulk_transform, drafting,
+repo_inspection, run_authorized_commands, `tool_use` (forbidden:
+`final_decision`, `security_decision`, `code_authoring`, `repo_action`). It
+exists as a SEPARATE public address rather than a responsibilities token on
+`worker` for one operator reason: the mesh may switch `worker` and `cortex`
+later, and that seat has to stay free. Capability order: `hand` < `multimodal`
+< `worker` < `muse` < **`associate`** < `main`/`cortex` — the highest non-cortex
+rung. Third opt-in core role (`OPT_IN_CORE_ROLES`), so machine-as-brain never
+hosts it and an unwired associate 404s `role_infeasible`; under pressure it
+sheds 429 like cortex/senses/worker/muse, and `hand` remains the only servable
+floor.
+
+**Why sm_87 can serve an NVFP4 checkpoint at all:** Lightning's own
+`hf_quant_config.json` is `W4A16_NVFP4` (WEIGHT-only, 16-bit activations) on the
+experts plus FP8 on `in_proj`/`out_proj` — NOT the W4A4 activation quantization
+that rules out the cortex and muse NVFP4 exports on Ampere. vLLM accepts
+`quantization=modelopt_mixed` there and selects a full Marlin fallback stack
+(FP8, NVFP4 GEMM, NVFP4 MoE) with native FlashAttention 2. The Orin also CLEARS
+the "Warming up Mamba2 SSD Triton kernels" step that wedged the Jetson AGX Thor
+indefinitely on two engine versions — that no-go is sm_110-specific.
+
+**MEASURED live, 2026-08-26** (`docs/evidence/2026-08-26-accept-orin-associate.txt`,
+the `orin-associate` shape: associate + hand + embedder + reranker, no cortex, no
+senses, no audio): `ASSOCIATE_GPU_MEM_UTIL=0.56` at `max_model_len=128000` —
+weights 17.81 GiB, KV 9.35 GiB, pool 1,524,000 tokens, 11.91x concurrency. Both
+higher hypotheses are recorded as REFUSED rather than dropped: the vendor's 0.70,
+and 0.63 (which fit the gears but not `hand`, whose 5.84 GiB resident is 59% more
+than its declared util implies). Probes: known-answer PASS, multi-step reasoning
+PASS, structured tool calls PASS, and unauthenticated requests — including over
+the tailnet address — refused 401. Throughput, at the same depths as this board's
+own llama.cpp GGUF cortex and WITHOUT speculation: **52.5 tok/s decode at 32768
+depth with NO decay across 0->32768, vs 2.43 tok/s (~21.6x); TTFT 16.9 s vs
+610.0 s (~36x); prefill ~1,612 vs ~64 tok/s.** NVIDIA's "89 tok/s on Jetson AGX
+Orin" is deliberately NOT used as a comparator: it is an agentic-workload
+aggregate with speculation, and three separate defects were found in that page's
+published recipes (a nonexistent llama.cpp quantization tag, a GGUF that will not
+load in NVIDIA's own Jetson-Orin image, and a vLLM DSpark repo id missing its
+`-NVFP4` infix). **Still open:** DSpark is wired but default-off and UNMEASURED
+on the full shape; the shape leaves only ~1 GiB free on a ZERO-swap board (see
+issue #216); and no peer has addressed this lane cross-box. See
+`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
 
 **`hand` — the ninth role, the fleet's FINE-TUNING BASE (default-hosted
 everywhere).** Checkpoint: `LiquidAI/LFM2.5-1.2B-Instruct` (a ~1.2B hybrid
@@ -664,6 +710,52 @@ it", not "you cannot use it here"); `proxied: true` + `hosted_by` + `ready` are
 the fields that say it is usable, and `loaded` is a *wiring* fact, not a
 running one. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
 and `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`.
+
+**The cortex replica pool (issue #199) — landed and VALIDATED live
+2026-08-25 on the Spark+Thor NVFP4 pair, cortex-only.** Where proxy-lobes forwards a *dropped* role to its one peer,
+a replica pool lets a box that already HOSTS a role forward *some* of that
+role's requests to an equally-compatible peer replica when the peer is less
+loaded — the mirror case, and a property of the awake/proxy states, not a
+fourth one. Declaring the plural `<PREFIX>_PEER_ORIGINS` (positionally
+paired with `<PREFIX>_PEER_API_KEYS`, an empty key slot legal) beside the
+existing singular `<PREFIX>_PEER_ORIGIN`, plus an operator-typed
+`GATEWAY_SELF_ORIGIN`, arms a background `ReplicaCache` that live-probes
+each peer's `GET /status` (load) and `GET /capabilities` (fingerprint) and
+picks the least-loaded compatible, ready, non-busy replica — local wins
+ties, an `X-Lobes-Affinity` header stickies within a margin, and every
+pooled answer carries `X-Lobes-Served-By` (local) or `X-Lobes-Proxied-By`
+(forwarded) plus `X-Lobes-Route-Reason` on both. Under local pressure a
+pooled request forwards to a selectable peer instead of shedding 429; only
+"no replica anywhere is selectable" still sheds, and at most one forward
+happens per request. Compatibility is a live-probed fingerprint (served id +
+quantization + max context + runtime), never the catalog — `kv_cache_dtype`/
+parsers/speculative config are informational only. With no
+`*_PEER_ORIGINS` declared, every response stays byte-identical to the
+pre-pool contract. **Status: VALIDATED live (#108)** — `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`:
+three concurrent requests to the Spark front, with the Spark under organic
+iowait pressure, were all served by the Thor at **19.1 tok/s aggregate vs
+the 11.0 tok/s single-owner baseline (+74%)** with
+`X-Lobes-Route-Reason: local-busy-forwarded`; with the Thor's gateway
+stopped the Spark kept serving alias and raw id (`sole-ready`); a marked
+arrival at the Thor never re-forwarded. Two divergences are recorded, not
+hidden: a **raw-id request under local PRESSURE is not forwarded** (the
+pressure gate is tier-alias-only, #85 → issue #215; under load alone raw id
+and alias place identically), and affinity yields whenever the preferred
+replica's box flips busy. The drafter difference (DSpark vs MTP) is NOT
+visible in the fingerprint yet because neither box declares
+`PRIMARY_SPECULATIVE_CONFIG` in `.env` (#214). The pre-pool baseline is captured
+(`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`: an 8-way
+flood of raw-id requests to one gateway queued at 11.0 tok/s aggregate —
+the same as a single request — while the peer idled at `running=0`, and
+organic iowait pressure shed three concurrent `model=cortex` alias
+requests 429 without consulting it), Validated scope is `cortex` on the Spark+Thor
+NVFP4 pair only — the Orin's llama.cpp cortex is exempt (a separate
+candidate), and any other pooled role (senses/muse/worker/embedder/
+reranker/hand/stt/tts) is declared/unvalidated data only, even though the
+plural peer family is generic across all nine role prefixes. See
+`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`,
+`docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
+schema: additive `replicas`/`fingerprint` fields).
 
 ## Deployment model
 

@@ -1,0 +1,51 @@
+Jetson AGX Orin 64GB — board state across the 2026-08-25 Lightning spikes
+=========================================================================
+
+PRE-SPIKE INVENTORY (captured from `docker ps`, before the first stop):
+
+  model-gear-gateway        Up 2 days (healthy)     ~42.67 MiB
+  llamacpp-cortex           Up 2 days               ~27.63 GiB
+  prod-worker-1             Up 2 days               ~20.45 MiB
+  model-gear-vllm-rerank    Up 2 days (healthy)     ~5.355 GiB
+  model-gear-vllm-embed     Up 2 days (healthy)     ~5.041 GiB
+
+  Instrument: `docker stats --no-stream`. NOTE (frame claim c32/h13): on this
+  Tegra board `nvidia-smi` reports memory.used [N/A] — there is no GPU-memory
+  query. Host-side readings are unified-memory figures; the profile's own
+  ~33 GiB figure for llamacpp-cortex disagrees with the 27.63 GiB above.
+  Prefer an engine's own boot-log accounting over any host-side reading.
+
+STOPS PERFORMED, and why:
+
+  llamacpp-cortex        stopped — a 30B Q4 needs ~18 GiB; only ~8 GiB was free.
+                         Required for EITHER lane, not just vLLM.
+  model-gear-vllm-embed  stopped — headroom for util 0.7 (~42.9 GiB).
+  model-gear-vllm-rerank stopped — same.
+  model-gear-gateway     stopped — the vLLM recipe uses --network host and
+                         binds :8000, which the gateway held.
+  prod-worker-1          LEFT RUNNING throughout (unrelated workload, ~20 MiB).
+
+POST-SPIKE STATE — DELIBERATELY NOT RESTORED (operator decision, 2026-08-25):
+
+  The four lanes above remain STOPPED by explicit operator instruction. The
+  board is being repurposed: `associate` (Nemotron 3.5 Lightning, vLLM lane,
+  GO per docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt) becomes this
+  box's generate lobe, so restoring the llama.cpp GGUF cortex — measured at
+  2.61 tok/s against associate's ~78-81 tok/s — would be restoring the lane
+  this work replaces.
+
+  This is an ABANDONMENT, not an oversight. It satisfies the second acceptance
+  criterion of plan task t1 ("...OR the transcript explicitly declares them
+  abandoned and why"), and it resolves plan risk r1: with no restore, task t8's
+  budget measurement needs no second outage.
+
+  Consequence to state plainly: until the associate lane ships, this box serves
+  NO local generate role, NO embedder and NO reranker, and its gateway is down.
+  Mesh peers addressing this box will fail rather than be served. Restore at any
+  time with:
+
+    docker start llamacpp-cortex model-gear-vllm-embed model-gear-vllm-rerank model-gear-gateway
+
+SPIKE CONTAINERS: both removed. `nemotron35-vllm` (vLLM) and
+`lightning-llamacpp-spike` (llama.cpp) no longer exist; port 8000 is closed and
+the unauthenticated tailnet exposure recorded in c30/c46 has ended.

@@ -65,6 +65,7 @@ ROLE_SERVICE: dict[str, str] = {
     "senses": "vllm-multimodal",
     "muse": "vllm-muse",
     "worker": "vllm-worker",
+    "associate": "vllm-associate",
     "hand": "vllm-hand",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
