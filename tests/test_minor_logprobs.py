@@ -195,10 +195,12 @@ def test_chat_completion_returns_top_logprobs_in_response() -> None:
         )
         t.join(timeout=5)
         content_logprobs = result["choices"][0]["logprobs"]["content"]
-        assert isinstance(content_logprobs, list) and len(content_logprobs) > 0
+        assert isinstance(content_logprobs, list)
+        assert len(content_logprobs) > 0
         # The answer-position token "42" must appear in top_logprobs.
         first_token_top = content_logprobs[0]["top_logprobs"]
-        assert isinstance(first_token_top, list) and len(first_token_top) > 0
+        assert isinstance(first_token_top, list)
+        assert len(first_token_top) > 0
         tokens_in_top = [t_entry["token"] for t_entry in first_token_top]
         assert "42" in tokens_in_top, f"'42' not found in top_logprobs tokens: {tokens_in_top}"
     finally:
@@ -257,10 +259,10 @@ def test_completions_echo_returns_token_logprobs() -> None:
         logprobs = result["choices"][0]["logprobs"]
         token_logprobs = logprobs["token_logprobs"]
         tokens = logprobs["tokens"]
-        assert (
-            isinstance(token_logprobs, list) and len(token_logprobs) > 0
-        ), f"token_logprobs empty: {token_logprobs}"
-        assert isinstance(tokens, list) and len(tokens) > 0, f"tokens empty: {tokens}"
+        assert isinstance(token_logprobs, list), f"token_logprobs not a list: {token_logprobs}"
+        assert len(token_logprobs) > 0, f"token_logprobs empty: {token_logprobs}"
+        assert isinstance(tokens, list), f"tokens not a list: {tokens}"
+        assert len(tokens) > 0, f"tokens empty: {tokens}"
         # Verify the canned values pass through faithfully.
         assert token_logprobs == [-0.3, -0.7]
         assert tokens == ["Ping", " pong"]

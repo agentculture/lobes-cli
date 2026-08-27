@@ -169,9 +169,12 @@ def test_supported_models_payload_annotates_loaded_and_default() -> None:
     assert payload["object"] == "lobes.supported_models"
     assert payload["default_model"] == "P"
     by_id = {e["id"]: e for e in payload["data"]}
-    assert by_id["P"]["loaded"] is True and by_id["P"]["default"] is True
-    assert by_id["F"]["loaded"] is True and by_id["F"]["default"] is False
-    assert by_id["X"]["loaded"] is False and by_id["X"]["default"] is False
+    assert by_id["P"]["loaded"] is True
+    assert by_id["P"]["default"] is True
+    assert by_id["F"]["loaded"] is True
+    assert by_id["F"]["default"] is False
+    assert by_id["X"]["loaded"] is False
+    assert by_id["X"]["default"] is False
     assert by_id["F"]["shape"] == "MoE"  # original catalog fields preserved
     assert "loaded" not in catalog[0]  # the input catalog is not mutated
 

@@ -426,7 +426,8 @@ def test_at_ms_is_absent_rather_than_wrong_when_the_caller_has_none() -> None:
     bridge.on_speech_stopped()
     started, stopped = bridge.drain()
     assert started["at_ms"] is None
-    assert stopped["at_ms"] is None and stopped["reason"] is None
+    assert stopped["at_ms"] is None
+    assert stopped["reason"] is None
 
 
 def test_the_segmenters_at_ms_is_never_fed_into_the_floors_clock() -> None:
@@ -446,7 +447,8 @@ def test_the_segmenters_at_ms_is_never_fed_into_the_floors_clock() -> None:
     ]
     assert calls, "the bridge must drive floor.on_speech_started"
     for call in calls:
-        assert not call.args and not call.keywords, "floor.on_speech_started takes no timestamp"
+        assert not call.args, "floor.on_speech_started takes no positional timestamp"
+        assert not call.keywords, "floor.on_speech_started takes no keyword timestamp"
 
 
 # ---------------------------------------------------------------------------
@@ -1288,7 +1290,8 @@ def test_app_py_uses_the_wire_codecs_chunk_size_not_a_literal() -> None:
     node, src = _function("_build_bridge")
     segment = ast.get_source_segment(src, node) or ""
     assert "DEFAULT_DELTA_CHUNK_BYTES" in segment
-    assert "4800" not in src and "1920" not in src
+    assert "4800" not in src
+    assert "1920" not in src
 
 
 def test_app_py_no_longer_builds_error_events_itself() -> None:

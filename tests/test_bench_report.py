@@ -85,18 +85,20 @@ def test_render_report_complete_data():
     ), "Output should contain delta column header"
 
     # Verify metric rows
-    assert "decode" in output.lower() and "tok" in output.lower(), "Should contain decode_tok_s row"
+    assert "decode" in output.lower(), "Should contain decode_tok_s row"
+    assert "tok" in output.lower(), "Should contain decode_tok_s row"
     assert "prefill" in output.lower(), "Should contain prefill_ttft_ms row"
-    assert "peak" in output.lower() and "req" in output.lower(), "Should contain peak_req_s row"
+    assert "peak" in output.lower(), "Should contain peak_req_s row"
+    assert "req" in output.lower(), "Should contain peak_req_s row"
     assert "latency" in output.lower(), "Should contain p50/p95 latency rows"
     assert (
         "ms_per_token" in output.lower() or "ms per token" in output.lower()
     ), "Should contain ms_per_token row"
 
     # Verify cat soft-score row
-    assert (
-        "cat" in output.lower() and "soft" in output.lower() and "score" in output.lower()
-    ), "Should contain 'cat soft-score' row"
+    assert "cat" in output.lower(), "Should contain 'cat soft-score' row"
+    assert "soft" in output.lower(), "Should contain 'cat soft-score' row"
+    assert "score" in output.lower(), "Should contain 'cat soft-score' row"
 
     # Verify expected delta values (minor - primary)
     # decode_tok_s: 45.2 - 50.1 = -4.9
@@ -175,7 +177,8 @@ def test_render_side_by_side_single_column_no_delta():
     """A single column (e.g. 'cortex-only') renders with no Δ column."""
     columns = {"cortex": {"ttft_ms": 12.3, "decode_tps": 18.7}}
     out = render_side_by_side(columns)
-    assert "|" in out and "---" in out
+    assert "|" in out
+    assert "---" in out
     assert "cortex" in out
     assert "Δ" not in out
     assert "12.3" in out
@@ -206,7 +209,9 @@ def test_render_side_by_side_three_columns_omits_delta():
     out = render_side_by_side(columns)
     assert "Δ" not in out
     header = out.splitlines()[0]
-    assert "a" in header and "b" in header and "c" in header
+    assert "a" in header
+    assert "b" in header
+    assert "c" in header
 
 
 def test_render_side_by_side_missing_metric_renders_na():

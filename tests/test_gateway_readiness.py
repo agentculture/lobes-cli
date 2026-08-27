@@ -259,7 +259,8 @@ def test_refresh_thread_is_a_daemon() -> None:
     try:
         assert cache.is_alive()
         # A daemon thread never blocks interpreter shutdown.
-        assert cache._thread is not None and cache._thread.daemon is True
+        assert cache._thread is not None
+        assert cache._thread.daemon is True
     finally:
         cache.stop()
 
@@ -338,7 +339,8 @@ def test_stop_incomplete_join_then_start_never_creates_second_live_thread() -> N
     try:
         assert probe_entered.wait(2.0), "background thread never began probing"
         first_thread = cache._thread
-        assert first_thread is not None and first_thread.is_alive()
+        assert first_thread is not None
+        assert first_thread.is_alive()
 
         # stop()'s join is bounded well below how long the probe will block
         # (release_probe is not set yet), so stop() must return promptly

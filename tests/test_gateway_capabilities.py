@@ -418,9 +418,12 @@ def test_capabilities_payload_threads_backend_ready() -> None:
     payload = S.capabilities_payload(
         table, cfg, env=env, gateway_url=_GATEWAY_URL, backend_ready=backend_ready
     )
-    assert payload["cortex"]["loaded"] is True and payload["cortex"]["ready"] is True
-    assert payload["senses"]["loaded"] is True and payload["senses"]["ready"] is False
-    assert payload["embedder"]["loaded"] is True and payload["embedder"]["ready"] is False
+    assert payload["cortex"]["loaded"] is True
+    assert payload["cortex"]["ready"] is True
+    assert payload["senses"]["loaded"] is True
+    assert payload["senses"]["ready"] is False
+    assert payload["embedder"]["loaded"] is True
+    assert payload["embedder"]["ready"] is False
     assert payload["reranker"]["ready"] is True
 
 
@@ -437,10 +440,12 @@ def test_capabilities_payload_backend_ready_none_value_is_not_ready() -> None:
     payload = S.capabilities_payload(
         table, cfg, env=env, gateway_url=_GATEWAY_URL, backend_ready=backend_ready
     )
-    assert payload["cortex"]["loaded"] is True and payload["cortex"]["ready"] is False  # None
+    assert payload["cortex"]["loaded"] is True
+    assert payload["cortex"]["ready"] is False
     assert payload["senses"]["ready"] is True  # present True
     assert payload["embedder"]["ready"] is False  # present False
-    assert payload["reranker"]["loaded"] is True and payload["reranker"]["ready"] is False  # None
+    assert payload["reranker"]["loaded"] is True
+    assert payload["reranker"]["ready"] is False
 
 
 def test_capabilities_payload_backend_ready_none_falls_back_to_loaded() -> None:

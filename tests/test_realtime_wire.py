@@ -344,15 +344,18 @@ def test_decide_inbound_message_result_fields_match_kind() -> None:
     # audio/error are mutually exclusive and each populated only for its
     # matching kind — a caller must be able to trust `decision.kind` alone.
     audio_decision = decide_inbound_message(_append_message(b"\x01\x02"))
-    assert audio_decision.audio is not None and audio_decision.error is None
+    assert audio_decision.audio is not None
+    assert audio_decision.error is None
 
     ignored_decision = decide_inbound_message(
         {"type": "websocket.receive", "text": json.dumps({"type": "response.create"})}
     )
-    assert ignored_decision.audio is None and ignored_decision.error is None
+    assert ignored_decision.audio is None
+    assert ignored_decision.error is None
 
     error_decision = decide_inbound_message({"type": "websocket.receive", "text": "{{{"})
-    assert error_decision.audio is None and error_decision.error is not None
+    assert error_decision.audio is None
+    assert error_decision.error is not None
 
 
 def test_decide_inbound_message_sequence_reassembles_audio_byte_exact_transcription_only() -> None:
