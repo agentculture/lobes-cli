@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 
 from lobes.cli import main
+from lobes.gateway._replicas import UNCALIBRATED_WEIGHT
 from lobes.roles import ROLES
 from lobes.runtime import _compose, _env
 
@@ -79,6 +80,24 @@ def test_capabilities_json_includes_replicas_and_fingerprint_when_declared(
         if role == "cortex":
             continue
         assert "replicas" not in payload[role]
+
+
+def test_capabilities_json_replica_rows_report_no_capacity_offline(tmp_path, capsys) -> None:
+    """t6: the offline (not-probed) view must not guess a capacity — every
+    row reports ``capacity: None`` and the UNCALIBRATED_WEIGHT sentinel for
+    ``weight``, matching how it already reports ``None`` for every other
+    live field it cannot honestly know.
+    """
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_PEER_ORIGINS", "http://thor.local:8000")
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    rows = payload["cortex"]["replicas"]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["capacity"] is None
+        assert row["weight"] == UNCALIBRATED_WEIGHT
 
 
 def test_capabilities_table_replicas_flag_renders_candidate_rows_and_would_choose(
