@@ -1,0 +1,194 @@
+# qwen3.8-flash-next gguf candidate
+
+> lobes can serve Qwen3.8-Flash-Next (125B MoE, 6B active) from an Unsloth Dynamic GGUF through the llama.cpp lane on the Jetson AGX Thor -- with the adopted quantization chosen from measured speed AND output quality across the rungs, not fixed in advance
+> instruction: Build unslothai/llama.cpp@6c5afc86 for `sm_110`, verify SASS with cuobjdump --list-elf, scaffold a separate deployment dir, place the shards in `LLAMACPP_MODEL_DIR`, boot with a trimmed -c, and probe through that deployment's gateway origin -- never the container port.
+
+## Audience
+
+- the lobes operator running the fleet on the Jetson AGX Thor, and the mesh callers who would later address this gear by explicit model id (never by tier alias, since it lands as a candidate)
+  - instruction: Run 'uv run pytest tests/`test_catalog_tiers.py` -v' and confirm no tier alias resolves to the new gear id.
+
+## Before → After
+
+- After: docs/evidence/ carries a Thor transcript for Qwen3.8-Flash-Next on llama.cpp: the pinned Unsloth sha and build recipe, the quant rung(s) actually booted, resident footprint, largest working -c, known-answer + reasoning-shape + tool-call probe results, and decode/prefill tok/s with the power mode stated -- and lobes/catalog.py carries a matching engine=llama.cpp candidate gear whose status reflects exactly that transcript
+  - instruction: Write docs/evidence/<date>-spike-qwen38-flash-next-llamacpp-thor.txt, then update lobes/catalog.py's status field to match what it actually shows.
+
+## Why it matters
+
+- a 125B MoE with 6B active is the first checkpoint whose ARCHITECTURE, not its quantization, argues that a 128 GB unified-memory board can serve a frontier-class model at usable speed. The fleet's only llama.cpp evidence today is a 27B DENSE gear that FAILED its own >=5 tok/s gate at 30W. Measuring the sparse case is what tells this mesh whether the llama.cpp lane is a fallback or a real second engine.
+  - instruction: State the 27B dense baseline (2.61 `MODE_30W` / 8.46 MAXN) beside the measured Flash-Next figure in the transcript's conclusion.
+
+## Requirements
+
+- the gear lands as a THIRD engine=`ENGINE_LLAMA_CPP` entry in lobes/catalog.py with `role_hint`='candidate' and status='configured' — never `role_hint`='primary', which is single-occupancy and pinned by tests/`test_catalog.py`::`test_qwen38_is_the_only_primary_gear`
+  - instruction: Add the entry, run 'uv run python tests/goldens/regen.py' and inspect the diff before committing.
+  - honesty: tests/goldens/switch-plans.txt regenerates with exactly one added block and no other diff, and `test_catalog.py`'s doc-exists + `serves_with_vllm` assertions pass unchanged
+- the lane must accept a MULTI-SHARD GGUF: UD-`Q3_K_XL` ships as Qwen3.8-Flash-Next-UD-`Q3_K_XL`-00001-of-0000N.gguf, whereas the compose lane's '-m /models/${`LLAMACPP_GGUF`}' default assumes ONE file (Qwen3.8-27B-UD-`Q4_K_M`.gguf, 15.33 GiB)
+  - instruction: Check the boot log reports the full parameter count, not one shard's worth.
+  - honesty: llama-server loads all shards when -m points at part 00001 inside the read-only /models mount -- verified in the boot log's tensor count, not assumed from llama.cpp docs
+- UD-`Q3_K_XL` needs ~90 GB resident (Unsloth: 90 GB file, 90 GB RAM, 96 GB recommended). Only a 128 GB unified box qualifies: this Thor reports 122 GiB total with 85 GiB already used by the running vLLM cortex and 37 GiB available, so the fleet's heavy lobes MUST come down before the GGUF loads -- this is not a co-residency test.
+  - instruction: Run 'lobes stop --apply' then 'free -g'; do not begin the download until >= 90 GiB shows available.
+  - honesty: free/tegrastats confirms >= 90 GiB actually reclaimed after the down, before any download is committed
+- the reclaim is GPU-side, and only 'free'/tegrastats sees it: docker stats reports the three model-gear vLLM containers at ~16 GiB combined RSS while 'free -g' reports 85 GiB used -- the difference is the unified-memory GPU allocation (`PRIMARY_GPU_MEM_UTIL`=0.58 of 122.8 GiB ~= 71 GiB) which never appears in a container cgroup on Tegra. Verify the ~90 GiB is actually free with free/tegrastats after the down, never with docker stats.
+  - instruction: Capture 'free -g' and a tegrastats line into the transcript immediately after the fleet down.
+  - honesty: the post-down free/tegrastats reading is pasted into the transcript, so the reclaim is evidenced rather than asserted
+- the correctness gate is a KNOWN-ANSWER + long-context-retrieval + reasoning-shape + tool-call probe against the live server, matching what the Orin GGUF spike ran (docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt). The QSA sparse-attention (c88c9166) and PLE n-gram (ad4fa3fa) paths are the branch's most recently landed, so the probe set must exercise them specifically -- a clean boot is not evidence they compute correctly.
+  - instruction: Probe: known-answer; a long-context retrieval needle (exercises QSA + PLE); a thinking-mode prompt to observe `reasoning_content` vs leaked content; a structured tool call.
+  - honesty: the probe set exercises the QSA and PLE paths specifically -- a long-context retrieval prompt, not only a short known-answer -- since those two landed last on the branch
+- the blast radius is LARGER than c20 records: probing the live mesh, the DGX Spark declares 'embedder feasible=false, proxied=true, `hosted_by`=<http://thor.tail0be7e0.ts.net:8000>' -- the Spark proxies its EMBEDDINGS to this Thor. Taking this box down removes the Spark's embedder lane too, not just this box's cortex. The window must either be announced as embed-affecting mesh-wide, or the Spark must re-declare a local embedder first.
+  - instruction: curl the Spark's /capabilities before the window; if embedder still shows `hosted_by`=thor, announce the window as embed-affecting or have the Spark declare a local embedder first.
+  - honesty: the Spark's embedder dependency is confirmed against its live /capabilities immediately before the window opens -- not assumed from this pass's reading -- and whoever depends on it is told, or the Spark declares a local embedder first
+- the mmap policy must be DECIDED and stated, because every footprint and throughput number depends on it. llama.cpp mmaps the GGUF by default, so 'resident footprint' is a page-cache figure that can sit far below the file size while the model still 'works' -- slowly. Either run --no-mmap for a true residency measurement, or record that the figure is page-cache-dependent. c7/c16's '90 GiB free' check means nothing if the engine is happy to run at 40.
+  - instruction: Decide --no-mmap on or off before the first boot; state it in the transcript header and keep it constant across all rungs.
+  - honesty: the transcript states the mmap policy in force for every measurement, and reports resident footprint in terms that policy makes meaningful
+- a failed correctness probe at UD-`IQ1_S` does NOT cleanly implicate the branch: a 1-bit dynamic quant can damage output on its own, so failure at that rung confounds 'PR is wrong' with 'quant is too aggressive'. h7 ('a failed probe at `IQ1_S` ends the ladder with a NO-GO') therefore needs a disambiguation step -- on failure, climb ONE rung to UD-`Q2_K_XL` before writing the NO-GO, and record both results.
+  - instruction: State in the transcript's conclusion whether the stopping rung was adopted on merit or was simply the last one tested.
+  - honesty: if the ladder stops at a low rung, the transcript says whether that rung was ADOPTED on its merits or merely the last one tested
+- an ABORT CRITERION is required before the window opens, because this box has a RECORDED wedge on exactly this class of decode path: docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt records Nemotron Lightning's Mamba-2 SSD decode hanging INDEFINITELY on `sm_110` ('Warming up Mamba2 SSD Triton kernels'), which is what moved worker to the Spark. Qwen3.8-Flash-Next is 3-of-4 layers Gated DeltaNet -- the same linear-attention/state-space family. Define a wall-clock timeout per boot attempt and a written wedge verdict, so this cannot silently consume the window.
+  - instruction: Write the per-boot wall-clock timeout into the transcript BEFORE the first boot; on expiry, kill the container and record a wedge verdict citing the 2026-08-20 Lightning NO-GO.
+  - honesty: the abort criterion is written down BEFORE the first boot attempt, not chosen after one hangs
+- the fleet-down window must be the LAST step, not the first: the from-source build of unslothai/llama.cpp@6c5afc86 on this Jetson and the 72.5 GB shard download both run with the fleet UP, and the box only goes down once a runnable image and a complete local GGUF exist. Otherwise a multi-hour build/download happens inside a window during which the Spark has no embedder.
+  - instruction: Order of work: build image -> verify `sm_110` SASS -> scaffold ~/.lobes-llamacpp -> download rung shards -> ONLY THEN 'lobes stop --apply'. Record timestamps for each.
+  - honesty: the production fleet is still serving at the moment the build finishes and the last shard lands -- provable from timestamps in the transcript
+- disk must be reclaimed rung by rung: / has 284 GiB free and the three rungs total ~241 GiB (72.5 + 78.9 + 90), which would leave ~43 GiB on the root filesystem the 50 GiB HF cache, the docker graph and the llama.cpp build all share. Delete each rung's shards before downloading the next, and check df between rungs.
+  - instruction: df -h / before each rung; delete the previous rung's shards from `LLAMACPP_MODEL_DIR` before downloading the next.
+  - honesty: a df -h reading is captured between rungs, so no rung starts on a filesystem that cannot hold it
+- power mode must be PINNED and recorded, not merely stated: this Thor currently reports 'NV Power Mode: MAXN' (nvpmodel -q, checked during this pass). Verify MAXN immediately before each measurement and paste the nvpmodel output into the transcript -- the 27B GGUF doc carries a whole superseded-numbers section because a run was measured at `MODE_30W` and the mode was not captured alongside the figures.
+  - instruction: Run 'nvpmodel -q' immediately before each measurement and paste its output into the transcript beside the numbers.
+  - honesty: nvpmodel -q output is pasted beside each rung's numbers, not stated once at the top of the transcript
+- every rung booted records the SAME measurement set so the rungs are comparable: resident footprint (with the mmap policy stated), largest working -c, single-stream decode and prefill tok/s at MAXN, and the full correctness probe set (known-answer, long-context retrieval exercising QSA+PLE, reasoning shape, structured tool call). A rung with no comparable measurement set does not count as tested.
+  - instruction: Use one probe script across all rungs so the numbers are commensurable; paste it into the transcript once.
+  - honesty: the transcript presents the rungs as a comparison table, so the adopted-quant decision is legible from the data rather than asserted in prose
+- on an `IQ1_S` CORRECTNESS failure, climb exactly ONE rung to UD-`Q2_K_XL` to disambiguate a branch bug from quantization damage, and record both results; never climb further to chase a pass. A WEDGE (the `sm_110` hang precedent, c35) or a throughput miss against the c39 bar ends the ladder immediately -- climbing rungs cannot fix slow.
+  - instruction: On an `IQ1_S` correctness failure: download UD-`Q2_K_XL`, re-run the identical probe set, record both. Stop there regardless of outcome.
+  - honesty: the transcript states which of the three outcomes occurred -- branch bug, quantization damage, or pass -- and why the evidence supports that reading rather than the other two
+- the lane is the EXISTING opt-in `COMPOSE_PROFILES`=llamacpp service (llamacpp-primary) from lobes/templates/fleet/docker-compose.yml -- no new compose lane is needed -- but it is driven from a SEPARATE deployment dir (~/.lobes-llamacpp, --compose-dir), where `LLAMACPP_MODEL_DIR` / `LLAMACPP_GGUF` / `LLAMACPP_IMAGE` / `LLAMACPP_N_GPU_LAYERS` / `LLAMACPP_PARALLEL` / `LLAMACPP_FLASH_ATTN` and `COMPOSE_PROFILES` are set. The production ~/.lobes/.env is never opened.
+  - instruction: lobes init ~/.lobes-llamacpp --apply, then set the `LLAMACPP_`\* keys there; every later verb takes --compose-dir ~/.lobes-llamacpp.
+  - honesty: the lane boots this checkpoint with only .env VALUE changes in the separate dir -- if lobes/templates/fleet/docker-compose.yml itself needs an edit, this claim is false and the frame must record why
+- the test window is a clean down/up of the PRODUCTION fleet only ('lobes stop --apply'), with ~/.lobes/.env never opened -- the llama.cpp lane lives in its own deployment dir (c45), so the restore is a plain bring-up with nothing to strip. Per the in-repo Thor boot gotcha, `drop_caches` BEFORE recreating any heavy lobe on the way back: MemAvailable lies on this board.
+  - instruction: Copy ~/.lobes/.env before the window and diff it after; it must be empty. Then 'lobes serve --apply' and confirm `PRIMARY_MAX_MODEL_LEN` is still 262144.
+  - honesty: after the restore, 'lobes status' reports the same lanes healthy as before the window, `PRIMARY_MAX_MODEL_LEN` is still 262144, and the diff of ~/.lobes/.env is empty
+
+## Honesty conditions
+
+- the Orin exclusion is arithmetic from its own measured 61.3 GiB / zero-swap figure in orin-cortex.toml, not a guess -- and no orin profile, shape or golden is touched by this work
+- the measured decode figure is taken with the whole file demonstrably resident (or with --no-mmap), so it measures the architecture rather than the page cache
+- a grep of the final diff for 'Opus', 'outperform' and 'beats' returns nothing outside a quoted provenance note
+- the transcript is reproducible from its own contents: the sha, build flags, .env values and probe commands are all present verbatim, so a second operator could re-run it without asking questions
+- the Spark answers a cortex request throughout the window, checked at least once while this box is down
+- no tier alias (main/hard/cortex/normal/minor/cheap) resolves to this gear -- proven by tests/`test_catalog_tiers.py`, not by inspection
+- every number in the transcript is read off the running server or the host, and the transcript states the power mode; no figure is copied from Unsloth's page or from the 27B gear's doc
+- the comparison drawn is against this repo's OWN measured 27B dense llama.cpp baseline (2.61 tok/s `MODE_30W` / 8.46 tok/s MAXN), not against any vendor aggregate
+- the orin worker referral is left exactly as found; the transcript records its pre-window state so the window cannot be blamed for it
+- the gear serves a real completion through a lobes gateway on this Thor -- not just llama-server answering on its own port -- so 'lobes can serve it' is literally true rather than 'llama.cpp can run it'
+- the 25 tok/s bar is stated with its comparator (12.1 tok/s, the vLLM NVFP4 cortex on THIS box) and its limits (different engine and quantization, so it is an is-it-worth-carrying bar, not a like-for-like A/B)
+
+## Success signals
+
+- the test succeeds if a docs/evidence/ transcript records, from a physical box: the exact PR commit sha and build recipe, the resident footprint and largest working -c, a passing known-answer probe, the reasoning-trace response shape (`reasoning_content` vs leaked-into-content), tool-calling pass/fail, and single-stream decode + prefill tok/s WITH the power mode stated.
+  - instruction: Write the transcript as the 27B Orin spike is written; reread it cold before landing it.
+- single-stream decode >= 25 tok/s at MAXN. The comparator is this box's OWN deployed cortex: the vLLM NVFP4 Qwen3.8-27B on this Thor measures 12.1 tok/s (docs/evidence/2026-08-20-accept-cortex-local-thor.txt), so the bar is roughly 2x the incumbent. Below it the operator's judgement is that Qwen3.8-27B NVFP4 is simply the better fit -- a 125B GGUF that merely matches the 27B buys nothing and costs ~75 GB of RAM. A pass at or above 25 tok/s, with the correctness probes green, makes the gear worth carrying.
+  - instruction: Report decode tok/s from llama-server's own timings beside the 12.1 tok/s incumbent figure and the 8.46 tok/s 27B-dense-GGUF figure, so the bar is legible against both.
+
+## Scope / boundaries
+
+- the Jetson AGX Orin 64 GB is OUT: 90 GB does not fit in 61.3 GiB of unified memory with zero swap, and even UD-`IQ1_S` (72.5 GB) exceeds the board. The candidate hosts are the 128 GB boxes only -- this Thor (`sm_110`) or the DGX Spark GB10 (`sm_121`).
+  - instruction: Confirm tests/goldens/orin.env and the orin shape goldens are unchanged in the diff.
+- the vendor comparison -- '125B MoE outperforms Claude-Opus-4.6 (Max)' -- is marketing, not evidence, and may not appear as a claim in any doc, catalog comment, or lobes capabilities output. Under #108 nothing is VALIDATED without a docs/evidence/ transcript from a physical box, and this repo's own precedent (NVIDIA's '89 tok/s on Jetson AGX Orin', where three defects were found in the published recipes) is that vendor aggregates are deliberately NOT used as comparators.
+  - instruction: Grep the diff before opening the PR.
+- the DGX Spark is out of scope: this is a Thor-only test (operator decision, q1). The Spark keeps serving cortex throughout, so the mesh retains a cortex while this box is down -- but the cortex REPLICA POOL is degraded to single-owner for the window, and that degradation is accepted, not solved here.
+  - instruction: Probe the Spark's gateway directly mid-window and paste the result into the transcript.
+- the Jetson AGX Orin's 'worker -> `hosted_by` <http://thor...:8000>' referral is STALE and PRE-EXISTING: this Thor runs gateway + vllm-primary + vllm-embed + vllm-rerank only, and per deviation d1 worker moved to the Spark. Fixing that referral is explicitly NOT this test's job -- recorded so the window is not blamed for a break that already exists.
+  - instruction: Record orin's /capabilities worker entry verbatim in the transcript's pre-window section; change nothing. File a separate issue.
+
+## Non-goals
+
+- this does NOT re-point the cortex role, any capability tier alias (main/hard/cortex), or any deployment shape. It lands as `role_hint`='candidate' exactly like the 27B GGUF gear, so no tier resolves to it and every existing deployment renders byte-identically.
+- vision is a deliberate v1 SCOPE DECISION, not an engine limitation. The branch DOES carry image work (eb95d125 image-placeholder hashing, d4a943f9 image token read), so text-only here is a choice to keep one unmeasured axis (throughput) in the test rather than two. The gear's shape string must say so in those terms, and must not claim llama.cpp cannot see.
+
+## Assumptions
+
+- 6B active parameters per token (512 experts, 10 routed + 1 shared) is what makes the CPU/unified-memory claim plausible: decode reads ~6B of weights per token, not 125B. The Orin's 27B DENSE GGUF managed only 2.61 tok/s at `MODE_30W` / 8.46 tok/s at MAXN, so active-param count -- not file size -- is the throughput predictor to test.
+  - instruction: Compare measured decode tok/s against docs/qwen3.8-27b-gguf-llamacpp.md's MAXN figure (8.46 tok/s), stating the Thor power mode used for both.
+- context must be TRIMMED hard at first boot. The GGUF declares 262144 native (1M via YaRN), but with ~90 GB of weights resident on a 122 GiB box the KV budget is what is left over -- the Orin lane's own -c 262144 default costs 16 GiB of KV for a 27B, and the compose lane SPLITS -c across -np slots. Start small and climb, exactly as the 27B spike did.
+  - instruction: Boot at a small -c (e.g. 8192) with -np 1, confirm resident footprint via free/tegrastats, then climb until llama-server refuses; record the largest working value.
+- the CUDA arch axis, not the 'Blackwell' family name, decides whether a from-source build runs here: this Thor is `sm_110` and the Spark is `sm_121`. A PR build must be compiled with the right arch (or CPU-only), and 'no GPU VRAM required' does not mean the -`DGGML_CUDA`=ON build in Unsloth's instructions will produce `sm_110` SASS.
+  - instruction: After building, run 'cuobjdump --list-elf' on the llama.cpp CUDA objects and confirm `sm_110` SASS is present before booting.
+- the pinned lane image cannot serve this checkpoint: qwen4exp arch support lives on unslothai/llama.cpp branch qwen4exp/qwen3.8-flash-next (HEAD 6c5afc86, the head of ggml-org/llama.cpp#27742, still open upstream), which postdates `LLAMACPP_IMAGE`'s pinned ghcr.io/nvidia-ai-iot/`llama_cpp` digest. A from-source build of that sha is required, and the sha -- not the branch name -- is what gets pinned in-tree.
+- the '6B active' throughput argument (c9) holds ONLY under full residency. MoE routing selects 10 of 512 experts PER TOKEN, and Unsloth's own note says the PLE/N-gram layers are kept at 4-bit minimum precisely because of their RANDOM ACCESS patterns -- so the working set across a few tokens approaches the whole file, not 6B. Under partial residency this degrades to page-fault thrash, and the counter-evidence nobody in the frame argued is that a 125B sparse model can be SLOWER than the 27B dense baseline on the same box.
+- the fork is the vendor's own, verified during this pass rather than assumed: unslothai/llama.cpp declares parent ggml-org/llama.cpp, and the branch's author is danielhanchen (Unsloth). The build still runs unreviewed third-party code as a container on a box holding the mesh's tailnet credentials, so the sha is pinned, the build is reproducible from the transcript, and the container keeps the existing lane's no-published-port posture.
+
+## Scope exploration
+
+- `s1` — `lobes/catalog.py (engine axis + the UD-Q4_K_M GGUF gear at L1028)`: the non-vLLM engine axis ALREADY exists (`ENGINE_VLLM`/`ENGINE_LLAMA_CPP`/`ENGINE_SGLANG`, `serves_with_vllm` predicate) and one llama.cpp gear is already declared, so this is a second entry on a proven axis, not new machinery; that entry's own comment records `role_hint`='primary' is single-occupancy
+  - seeds: `c2`
+- `s2` — `lobes/templates/fleet/docker-compose.yml L251-395 + env.example L593-632`: a complete opt-in llama.cpp lane exists: no host-published port, gateway reaches it as <http://llamacpp-primary:8000>, GGUF mounted read-only from `LLAMACPP_MODEL_DIR`, llama.cpp flags only, and the lane deliberately does NOT download the GGUF (operator places the file)
+  - seeds: `c3` (rejected)
+- `s3` — `compose arg '-m /models/${LLAMACPP_GGUF}'`: the existing lane passes exactly one -m path; llama.cpp loads shards by pointing -m at part 00001 and finding siblings, so this is likely a value change not a template change — but it is UNVERIFIED against the mounted read-only /models dir and must be proven in the spike, not assumed
+  - seeds: `c4`
+- `s4` — `ggml-org/llama.cpp PR #27742 (gh pr view: OPEN, isDraft=false, mergedAt=null)`: the arch is unmerged upstream; the lane's `LLAMACPP_IMAGE` digest predates it. A new pinned image (built from the PR) is required, and pinning a PR HEAD is weaker provenance than a merged tag — the exact commit sha must be recorded, per the lane's own no-floating-tag rule
+  - seeds: `c5` (rejected)
+- `s5` — `PR #27742 description (decode graph coverage)`: QSA indexer + PLE n-gram embedding unimplemented at the time of reading; the 51B n-gram table is a headline part of this checkpoint (Qwen's own announcement: '125B parameters + 51B N-gram'), so a correctness probe -- not just a boot -- is the gate
+- `s6` — `s5 seeds`: PR #27742's own unfinished-paths note is what forces a correctness probe rather than a boot check -- the boot proving nothing about the two paths (QSA indexer, PLE n-gram) that carry this checkpoint's 51B n-gram table
+  - seeds: `c6` (rejected)
+- `s7` — `live host: free -g, /proc/swaps, df -h on thor`: 122 GiB total / 85 used / 37 available with the vLLM 1M-window cortex up; 59 GiB swap file present (unlike the Orin's ZERO swap); 284 GiB free on /, enough for the 90 GB download beside the existing 50 GiB HF cache
+  - seeds: `c7`
+- `s8` — `lobes/profiles/builtin_shapes/orin-cortex.toml (co-residency arithmetic)`: that shape's own comment measures the board at 61.3 GiB unified with ZERO swap and shows a 33 GiB llama.cpp cortex already forcing senses off the box -- so a 90 GB GGUF is arithmetically impossible there, and the orin-cortex/orin-associate shapes are untouched by this work
+  - seeds: `c8`
+- `s9` — `docs/qwen3.8-27b-gguf-llamacpp.md (measured + MAXN-corrected numbers)`: the only in-repo llama.cpp throughput evidence is a 27B DENSE gear: 2.61 tok/s decode under `MODE_30W`, 8.46 tok/s at MAXN, 253.84 tok/s prefill -- and the covering plan's >=5 tok/s gate FAILED at 30W. Any Flash-Next throughput expectation must be measured, and the power mode recorded, or it repeats that exact mistake.
+  - seeds: `c9`
+- `s10` — `CLAUDE.md #108 rule + the orin-associate NVIDIA-comparator precedent`: the repo has an explicit, repeatedly-applied rule that unmeasured vendor claims stay out of docs, and a recorded case of rejecting a vendor throughput number after finding three defects in the same page's recipes
+  - seeds: `c10`
+- `s11` — `tests/goldens/{switch-plans.txt, thor.env, spark.env, orin.env, shapes/} + test_switch_plan_goldens.py / test_shape_goldens.py / test_profile_goldens.py`: the goldens contract is what proves 'byte-identical for every existing gear'; a candidate catalog entry regenerates switch-plans.txt only, while touching a profile or shape would churn the env/shape goldens -- so keeping this catalog-only is what keeps the blast radius small
+  - seeds: `c11`
+- `s12` — `catalog shape string of the 27B GGUF gear + PR #27742 scope`: the existing llama.cpp gear explicitly narrows its shape to 'text-only on llama.cpp' even though its NVFP4 sibling has a ViT -- the same narrowing applies here, and the PR implements no vision path
+  - seeds: `c12` (rejected)
+- `s13` — `compose lane flags -c / -np and env.example LLAMACPP_PARALLEL comment`: the lane defaults to -c 262144 and -np 1 with an explicit note that llama.cpp splits the window across slots; that default is safe for a 15 GiB model and is NOT safe to inherit for a 90 GB one
+  - seeds: `c13`
+- `s14` — `in-repo memory 'CUDA wheel arch is not a family' + docs/evidence chatterbox sm_110 case (#145)`: a prior build sank on exactly this: cu128 ships no `sm_110` SASS and no PTX; the recorded remedy is to dump SASS with cuobjdump --list-elf before trusting any pin. Same check applies to a llama.cpp PR build here.
+  - seeds: `c14`
+- `s15` — `docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt structure (via the covering plan t1 acceptance)`: the 27B spike's acceptance criteria are a ready-made template for this one, including its best feature: 'a NO-GO is a valid recorded outcome that ends the plan with a written verdict'
+  - seeds: `c15`
+- `s16` — `download cost against 284 GiB free on / and the 50 GiB existing HF cache`: 90 GB is affordable on disk but is a one-way cost against a shrinking 284 GiB; a smaller rung proves the PR's correctness for ~18 GiB less
+- `s17` — `live: docker stats --no-stream vs free -g on thor`: docker stats under-reports by ~69 GiB on this box; the co-resident non-lobes 'prod-\*' compose stack totals ~0.33 GiB and does NOT need to come down for the 90 GB budget
+  - seeds: `c16`
+- `s18` — `~/.lobes/.env (live deployment, LOBES_PROFILE=thor, no shape)`: `PRIMARY_MODEL`=unsloth/Qwen3.8-27B-NVFP4 at `max_model_len`=262144, `gpu_mem_util`=0.58, YaRN override present; running lanes are gateway + vllm-primary + vllm-embed + vllm-rerank only (no senses, no hand). CLAUDE.md's '1,048,576-token (1M) YaRN window' describes the 2026-08-20 acceptance run, NOT what this box currently serves.
+  - seeds: `c17`
+- `s19` — `in-repo memory 'Thor lobes deployment' boot gotchas`: recorded: `drop_caches` before any heavy-lobe recreate, and `depends_on` can orphan the dependent in 'created' -- both apply to the restore leg, not the test leg
+  - seeds: `c18` (rejected)
+- `s20` — `Unsloth quant table + q2 resolution`: `IQ1_S` is 17.5 GB cheaper than `Q3_K_XL` to download and ~18 GiB cheaper resident, so it fits the 122 GiB box with far more headroom for KV while still exercising every unfinished PR path (QSA indexer, PLE n-gram)
+  - seeds: `c19` (rejected)
+- `s21` — `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt (the pool's validated scope)`: the pool is validated for cortex on the Spark+Thor NVFP4 pair only; dropping the Thor leg reverts the Spark to the 'sole-ready' path that transcript already exercised with the Thor gateway stopped -- so this is a rehearsed degradation, not an unknown one
+  - seeds: `c20`
+- `s22` — `unslothai/llama.cpp commit log on qwen4exp/qwen3.8-flash-next (gh api, 35 commits read)`: PR #27742's head branch IS 'their llama.cpp branch': head repo unslothai/llama.cpp, branch qwen4exp/qwen3.8-flash-next, author danielhanchen, HEAD 6c5afc86ae84448ae4d744e357017e2c490ad9c3. The QSA and PLE paths the PR description calls unfinished have both landed; the description is stale, so the earlier blocking risk was overstated. The fork also carries build-numbered pin branches (qwen4exp-27742-b10632, pin-qwen4exp-27742, repin-27742-nextn) indicating an actively repinned upstream base.
+- `s23` — `unslothai branch image commits vs the repo's text-only llama.cpp precedent`: PR #27742 is NOT text-only as I first recorded: it wires image placeholder hashing and image token reads. Whether this GGUF repo ships a usable mmproj is unchecked, so text-only remains the safe v1 narrowing but is now a DECISION to make, not a fact to inherit.
+- `s24` — `challenge pass / adjacent-systems lens: GET /capabilities on spark:8001 and orin:8000`: TWO peers name this Thor as `hosted_by` -- spark's embedder (proxied=true) and orin's worker (proxied=true). c20 recorded only the cortex replica pool, so the frame understated the dependency set.
+- `s25` — `challenge pass / adjacent-systems lens: orin /capabilities worker entry vs docker ps on thor`: orin proxies worker to a box that does not host it; a pre-existing mesh defect surfaced by this pass, out of scope here, worth its own issue
+- `s26` — `challenge pass / reversibility lens: c3 vs c18/h16`: the two confirmed claims are mutually exclusive as written; a separate deployment dir is the cleaner fix because it also isolates `COMPOSE_PROFILES` from the restore path
+- `s27` — `challenge pass / unstated-assumptions lens: llama.cpp mmap default vs c7/c16 footprint claims`: the frame measures free memory before the load and resident footprint after, but never fixes the mmap policy that determines what either number means
+- `s28` — `challenge pass / counter-evidence lens: MoE per-token expert routing + Unsloth's PLE random-access note vs c9`: c9's active-param reasoning was recorded without its residency precondition; the pass supplies the counter-argument the frame never made
+- `s29` — `challenge pass / failure-modes lens: c19 ladder logic + h7`: the ladder's NO-GO rule assumes the cheapest rung is a clean test of the engine; it is not -- `IQ1_S` is simultaneously the least trustworthy rung for correctness
+- `s30` — `challenge pass / failure-modes lens: docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt vs Flash-Next's GDN layers`: the fleet's single most relevant `sm_110` precedent is an indefinite hang on a hybrid state-space decode path, and the frame never cited it; GDN is the same family, so a hang is a LIKELY outcome to plan for, not a tail risk
+- `s31` — `challenge pass / operations lens: c30 blast radius x build and download duration`: the frame ordered the work by dependency but never by window cost; with the Spark's embedder riding on this box, minimising the down-time is a requirement rather than a nicety
+- `s32` — `challenge pass / operations lens: df -h / vs the c19 quant ladder`: the ladder is affordable one rung at a time and NOT affordable cumulatively; the frame recorded the 90 GB rung as fitting but never summed the ladder
+- `s33` — `challenge pass / observability lens: nvpmodel -q on thor + the MAXN-correction section of docs/qwen3.8-27b-gguf-llamacpp.md`: MAXN confirmed live now; the repo's own precedent is that stating the mode after the fact is not enough -- it must be captured beside the numbers
+- `s34` — `challenge pass / success-criteria lens: converge's measurable-target warning + the 27B MAXN figure`: the frame's only `success_signal` (c15) described what to RECORD, never what counts as a pass; the 27B MAXN rate is the one in-repo number that makes a non-arbitrary bar
+- `s35` — `challenge pass / security lens: gh api repos/unslothai/llama.cpp (parent, author) + the lane's exposure model`: provenance checks out and the existing lane already publishes no host port, so the residual risk is 'unreviewed upstream code', which pinning bounds but does not remove
+- `s36` — `challenge pass / lenses examined with no finding`: concurrency: the lane is -np 1 single-slot and the test is single-stream, so no interleaving hazard was found. Migration: no schema, no state, no data conversion -- a candidate catalog entry migrates nothing. Data loss: the GGUF is mounted READ-ONLY and no user data is touched. These three lenses were examined and are clean; that is a record of what was looked at, not a claim that nothing remains.
+
+## Decisions
+
+- the deployed Thor cortex is `PRIMARY_MAX_MODEL_LEN`=262144 (256K), not the 1M the repo prose describes, with the YaRN `hf_overrides` block still declared (factor 4.0 over original 262144) and therefore inert at exactly native -- the same kept-but-inert pattern spark-lobe records. The restore target after the test window is this exact .env, byte-for-byte.
+- build from Unsloth's own branch, pinned by commit sha: unslothai/llama.cpp, branch qwen4exp/qwen3.8-flash-next, HEAD 6c5afc86ae84448ae4d744e357017e2c490ad9c3 -- the head of ggml-org/llama.cpp#27742. Pin the sha in-tree, never the branch name; the fork's own repin-\* branches show the base moves.
+- Thor-only. All lobes models come down for the test window; the DGX Spark keeps serving cortex, and the replica pool runs single-owner meanwhile.
+- the quant choice is DEFERRED to the data. The ladder is exploratory: UD-`IQ1_S` (72.5 GB) -> UD-`Q2_K_XL` (78.9 GB) -> UD-`Q3_K_XL` (90 GB), climbing only while there is a reason to. A LOW rung that benchmarks well on both speed and output quality may be the one adopted -- UD-`Q3_K_XL` is the ladder's ceiling, not its destination.
+
+## Open parks
+
+- [unknown_nonblocking] whether the GGUF's declared 262144 window is reachable at all on this box once ~90 GiB of weights are resident -- the KV budget for a 125B hybrid GDN/QSA model at depth is unknown and the frame only says 'trim and climb'
+- [unknown_nonblocking] quality at UD-`IQ1_S` / UD-`Q2_K_XL` is unmeasured and this pass proposes no quality gate beyond the correctness probes -- a rung can pass known-answer and tool-calling while being materially worse than the 27B NVFP4 cortex at real work
+- [follow_up] whether unsloth/Qwen3.8-Flash-Next-GGUF ships a usable mmproj, and what a vision probe would cost on this lane -- unchecked, deferred out of v1 by operator decision
+
+## Resolved vagueness
+
+- [unknown_blocking] PR #27742 is INCOMPLETE by its own description: it implements the hyper-connection residual stream, gated-delta-net layers, the MoE block with gated shared expert, and dense full attention -- but the QSA indexer and the PLE n-gram embedding are NOT wired up and land in later commits. Unknown whether a build of today's HEAD produces CORRECT output for a checkpoint whose 51B n-gram table and sparse-attention path are exactly those two unfinished pieces. — resolved: RESOLVED BY EVIDENCE, not by vendor assurance. The PR \*description\* is stale relative to its branch: both named-unfinished paths have landed on unslothai/llama.cpp:qwen4exp/qwen3.8-flash-next -- c88c9166 'llama: QSA sparse attention for qwen4exp' and ad4fa3fa 'llama: qwen4exp PLE n-gram hash embedding', plus follow-ups (c89e67b0/ddf0980e PLE conv state across ubatches, d22d2be2 per-context PLE history + serialisation, cfbdc0a5 indexer KV save/restore, 0ac4b180 quantized KV cache in the QSA path, bea3b12d non-unified KV in QSA). The correctness probe (c6) still stands as the gate -- landed is not the same as correct -- but the blocking unknown is gone.

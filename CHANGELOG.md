@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0] - 2026-08-27
+
+### Added
+
+- **`docs/image-ledger.md` — one index for every container image the fleet
+  pins.** Digest, engine + version, the machine and arch it was validated on,
+  the model(s) it serves, its build recipe, and the evidence transcript that
+  validated it. Provenance was previously scattered across 10 image pins in
+  `lobes/templates/fleet/docker-compose.yml`, 18 further digest mentions in
+  `docs/*.md`, and 5 `Dockerfile.*` templates, with no index tying them
+  together. Failed and superseded recipes keep their rows; a row with no
+  evidence link is marked UNVALIDATED (#108).
+- **`docs/specs/2026-08-27-qwen3-8-flash-next-gguf-candidate.md`** — the
+  converged, challenged spec for serving Qwen3.8-Flash-Next (125B MoE, 6B
+  active) from an Unsloth Dynamic GGUF through the llama.cpp lane on the Thor.
+- **`docs/specs/2026-08-27-flash-next-on-vllm.md`** — the converged, challenged
+  spec for the vLLM route: a fleet nightly move with a cortex before/after
+  benchmark, then the same GGUF through `vllm-gguf-plugin`. **Execution is
+  deferred, not abandoned** — the ledger's "Deferred" section records both
+  recipes and every blocker found, so resuming needs no re-derivation.
+
+### Changed
+
+### Fixed
+
+- **Recorded the fleet's actual vLLM version.** `docs/lfm2.5-1.2b-hand.md` and
+  `docs/qwen3-reranker-0.6b.md` describe the shared pin as `0.23.1rc1.dev672`,
+  which is the **superseded** digest `sha256:7c5a10e9…`. The shipped pin
+  `sha256:8bd082c2…` has been `0.26.1rc1.dev942+g5a4c8d992` since the
+  qwen3.8-cortex-upgrade (`docs/vllm-nightly-migration.md:424`). The ledger
+  records the live value and flags both stale references; the per-model docs
+  are left untouched in this docs-only change.
+
 ## [0.65.1] - 2026-08-26
 
 ### Fixed
