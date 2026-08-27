@@ -4,6 +4,54 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0] - 2026-08-27
+
+### Added
+
+- **Spec: capacity-relative pool routing** — `docs/specs/2026-08-27-capacity-relative-pool-routing.md`,
+  a converged devague frame (`/scope` → `/think` → `/challenge`) for routing the
+  cortex replica pool by each box's own measured capacity instead of a
+  host-level pressure verdict. Redeems the `#199` parked `weight` calibration
+  hook: `_selection.py` already computes `estimated_wait = (running + waiting) /
+  weight`, which IS capacity-relative utilisation, but `weight` is populated by
+  nothing beyond the hardcoded `1.0` at `roles.py:1152,1167`. Decisions
+  recorded: capacity is **peer self-published** via `/status` (O(machines)
+  config, no per-pair drift); capacity is a **measured throughput knee** —
+  neither the `--max-num-seqs` OOM cap nor vLLM's KV-derived ceiling; a box
+  under genuine pressure **forwards to a spare-capacity peer** rather than
+  shedding 429; and the feature carries its own kill switch pinning `weight` to
+  1.0 fleet-wide.
+- **Six findings from the rigorous `/challenge` pass**, all spec-side: capacity
+  clamping (self-published capacity is peer-CONTROLLED input, and an inflated
+  value ranks as near-zero wait at every load level — a silent traffic black
+  hole); local in-flight accounting at dispatch (load is probe-sourced only, on
+  a 5 s refresh, so concurrent arrivals stampede one stale snapshot — a herd
+  that accurate capacity makes *worse*, since today's uniform `weight=1.0` ties
+  resolve to local); a neutral rather than pessimistic uncalibrated-peer
+  fallback (the `1.0` sentinel ranks an uncalibrated peer 8× worse than a
+  calibrated weight-8 peer at one active request, draining mixed-version fleets
+  toward whichever boxes happen to be calibrated); fingerprint-keyed capacity
+  invalidation across `lobes switch`; and the `X-Lobes-Route-Reason` closed
+  vocabulary as a stated contract change.
+
+### Changed
+
+### Fixed
+
+- **Diagnosed why the cortex replica pool has been running single-box.** The
+  DGX Spark sits permanently in `mode: busy, shed: true` from a ~60 % iowait
+  reading, which removes it from the pool entirely (`_is_selectable()` drops any
+  busy candidate), so the Thor never forwards. Live measurement shows the box is
+  not under I/O pressure at all: 0 sectors read and static `pswpin`/`pswpout`
+  over 5 s, zero `D`-state tasks, load average 0.72 on 20 cores. PSI localises
+  the pressure to `user.slice/.../app-com.mitchellh.ghostty.service` at 96.66 %
+  io-full — one sleeping desktop terminal, up 6d21h, whose `io.stat` is **empty**
+  (zero block I/O ever charged), entirely outside the docker/vLLM cgroups. The
+  sampler itself is correct (`lobes/runtime/_pressure.py` takes a proper 150 ms
+  `/proc/stat` delta) and is explicitly out of scope: the defect is treating
+  host iowait as a proxy for serving capacity. Recorded as boundary claims
+  `c6`/`c10` on the frame; no code changes in this release.
+
 ## [0.66.2] - 2026-08-27
 
 ### Fixed
