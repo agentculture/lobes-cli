@@ -2,7 +2,7 @@
   "plan_slug": "capacity-relative-pool-routing",
   "schema_version": 1,
   "created": "2026-08-27T14:37:25Z",
-  "updated": "2026-08-28T13:09:46Z",
+  "updated": "2026-08-28T13:57:43Z",
   "deviations": [
     {
       "id": "d1",
@@ -68,6 +68,22 @@
       "origin": "llm",
       "status": "approved",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d5",
+      "what": "engine saturation must drive SELECTION only, not SHEDDING: remove the engine signal from the shed decision in _pressure_policy.py while keeping active>=capacity in _selection._is_selectable, so a saturated fleet falls through to local queueing (the pre-pool behaviour) instead of refusing the request 429. (Amends the receiving-side work recorded in d1.)",
+      "task_ref": "t3",
+      "reason": "t10 measured it live on the Spark+Thor pair: an 8-way flood through the pool served 4 and shed 4 with HTTP 429 (aggregate 62.27 tok/s over the survivors), where the same flood bypassing the pool served 8/8 with zero errors (42.77 tok/s). Forwarding itself works -- 2 requests carried X-Lobes-Proxied-By: spark with reasons local-busy-forwarded and peer-less-loaded, proving the d1 two-sided decoupling against a Spark still flagged busy at 68 percent iowait -- but d1's receiving-side work made active>=capacity a shed signal, which routes a saturated request to the busy path (429) instead of _PoolFallthrough's local dial. Capacity was specified as a routing preference, not admission control; converting a burst that used to queue into refusals is an availability regression no claim in the frame asks for.",
+      "affects": [
+        "c5",
+        "c15",
+        "c17",
+        "c18",
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
     }
   ]
 }

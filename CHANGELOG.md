@@ -124,6 +124,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Engine saturation drives selection, not shedding (`d5`, found by live
+  acceptance).** `d1`'s receiving-side work made `active >= capacity` a shed
+  signal, which routed a saturated request down the busy path (429) instead of
+  `_PoolFallthrough`'s local dial — so a burst the fleet previously queued was
+  refused. Measured live on the Spark+Thor pair at `PRIMARY_MAX_ACTIVE=2` each:
+  an 8-way flood through the pool served **4/8 with four HTTP 429s**, where the
+  same flood bypassing the pool served **8/8 with zero errors**. Capacity was
+  specified as a routing preference, not admission control. The gateway no
+  longer passes engine state to `decide()`; `_is_selectable` still excludes a
+  full replica, so routing still prefers headroom while a saturated fleet falls
+  through to local queueing. `decide()`'s own contract is unchanged (its
+  `engine_*` parameters remain, now unsupplied) because the `h1` byte-identity
+  golden pins that pure-function surface.
 - **The capacity knobs never reached the gateway container — the feature was
   inert in every real deployment.** `lobes/templates/fleet/docker-compose.yml`
   enumerates each env var the gateway receives (there is no `env_file`), and
