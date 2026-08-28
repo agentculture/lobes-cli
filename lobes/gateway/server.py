@@ -1307,42 +1307,39 @@ def _feasibility_response(table: RoutingTable, requested: str | None) -> Gateway
 _WARM_SAMPLE: dict[str, float] = {}
 
 
-def _pooled_engine_state(
+def _role_is_pooled(
     table: RoutingTable,
     requested: str | None,
     replica_snapshot: ReplicaSnapshot | None,
-) -> tuple[bool, int | None, float | None]:
-    """``(pooled, local_active, local_capacity)`` for a tier-alias request.
+) -> bool:
+    """Is this tier-alias request POOLED — declared peers AND a live snapshot?
 
-    The three inputs deviation ``d1`` needs to decide whether a host-level
-    pressure verdict may refuse this request:
+    The one input deviation ``d1`` needs to decide whether a host-level
+    pressure verdict may refuse this request. Both halves matter: a
+    declared-but-unsnapshotted role (every pre-pool call shape) is not pooled,
+    because nothing here can know whether any replica has room.
 
-    * ``pooled`` — this role has declared peer replicas AND a live snapshot of
-      them. Both halves matter: a declared-but-unsnapshotted role (every
-      pre-pool call shape) is not pooled, because nothing here can know whether
-      any replica has room.
-    * ``local_active`` / ``local_capacity`` — the LOCAL replica's own load and
-      published capacity, read from the same snapshot selection ranks by, so
-      the box cannot refuse itself on evidence that contradicts the pool's.
-      An UNCALIBRATED weight yields ``None`` capacity (the ``1.0`` sentinel is
-      "nothing published", never a one-slot capacity — h3).
+    Deviation ``d5`` narrowed this helper. It used to return the local
+    replica's load and published capacity too, and :func:`_resolve_tier` fed
+    them to :func:`decide` as ``engine_active`` / ``engine_capacity`` — which
+    made engine SATURATION a shed signal. That is admission control, not the
+    routing preference c5/h4 specified, and t10 measured the cost live: an
+    8-way flood at capacity 2 per box served 4/8 through the pool against 8/8
+    with the pool bypassed. Saturation now drives SELECTION only
+    (:func:`lobes.gateway._selection.is_full`), so a fleet with no headroom
+    queues on the local owner instead of refusing. The engine plumbing is gone
+    rather than left inert.
 
     Reading the snapshot is a dict lookup; no socket is opened here.
     """
     if replica_snapshot is None:
-        return False, None, None
+        return False
     # The served name the tier WOULD resolve to, computed through the same pure
     # function with the override flag set so it resolves regardless of the
     # verdict still being decided. Mirrors `_pooled_busy_dispatch`.
     served = resolve_tier_request(requested, _WARM_SAMPLE, True, table)["served_name"]
     ordered = order_backends(table, served) if served else []
-    if not ordered or not table.replica_origins.get(ordered[0].name):
-        return False, None, None
-    local = next((c for c in replica_snapshot(ordered[0].name) if c.local), None)
-    if local is None:
-        return True, None, None
-    capacity = local.weight if is_calibrated(local) else None
-    return True, local.running + local.waiting, capacity
+    return bool(ordered) and bool(table.replica_origins.get(ordered[0].name))
 
 
 def _resolve_tier(
@@ -1371,14 +1368,26 @@ def _resolve_tier(
     gates whether we select it — but the RECEIVING side still shed, so the
     chain was "box A forwards → box B refuses on its own iowait reading → the
     429 relays back": a wasted round trip and the same refusal. So the shed
-    verdict is now taken HERE, from :func:`decide` with the pooled flag and
-    this box's own engine state, rather than left to
-    :func:`resolve_tier_request`'s host-only view:
+    verdict is taken HERE, from :func:`decide` with the pooled flag, rather
+    than left to :func:`resolve_tier_request`'s host-only view:
 
     * a POOLED role is not shed on host ``iowait`` alone;
-    * ``swap`` (paging) and a FULL local engine still shed, pooled or not;
+    * ``swap`` (paging) still sheds, pooled or not;
     * an UNPOOLED role decides exactly as it did before ``d1`` — h1's
       byte-identity for a no-peers deployment is untouched.
+
+    Deviation ``d5`` removed the third bullet ``d1`` originally had here — "a
+    FULL local engine still sheds". Engine saturation is a ROUTING
+    PREFERENCE, not admission control: :func:`lobes.gateway._selection.is_full`
+    keeps a full replica out of the pool so a replica WITH room wins, and when
+    no replica anywhere has room the request is dialled locally and queues in
+    the engine's own waiting queue. Feeding it to :func:`decide` instead
+    routed the third concurrent arrival down the busy path, which 429s when no
+    peer is selectable; t10 measured 4/8 served through the pool against 8/8
+    with the pool bypassed. ``decide``'s ``engine_active`` / ``engine_capacity``
+    parameters and their ``shed_signal="engine"`` verdict are untouched as a
+    pure-function contract — this call site simply no longer supplies them, so
+    the signal is unreachable from the request path.
 
     The ``shed_signal`` naming which fact justified a shed is available from
     the same verdict for t5 to surface on a trace.
@@ -1387,16 +1396,11 @@ def _resolve_tier(
     if early is not None:
         return early, None, [], False
 
-    pooled, engine_active, engine_capacity = _pooled_engine_state(
-        table, requested, replica_snapshot
-    )
     verdict = decide(
         pressure.get("swap_used_percent", 0.0),
         pressure.get("iowait_percent", 0.0),
         requested,
-        pooled=pooled,
-        engine_active=engine_active,
-        engine_capacity=engine_capacity,
+        pooled=_role_is_pooled(table, requested, replica_snapshot),
     )
     # `X-Lobes-Override` outranks every load condition (never the feasibility
     # gate above); an overridden request is not shed, exactly as before.

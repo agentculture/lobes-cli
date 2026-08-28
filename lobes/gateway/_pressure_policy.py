@@ -72,6 +72,8 @@ SERVE are different claims, and only some signals support the second one:
 | swap > 75 %                    | shed (``"swap"``)   | shed (``"swap"``)   |
 +--------------------------------+---------------------+---------------------+
 | engine_active >= capacity      | shed (``"engine"``) | shed (``"engine"``) |
+| (NOT SUPPLIED by the gateway   |                     |                     |
+| since ``d5`` — see below)      |                     |                     |
 +--------------------------------+---------------------+---------------------+
 | iowait > 50 % (alone)          | shed (``"iowait"``) | **served**          |
 +--------------------------------+---------------------+---------------------+
@@ -88,6 +90,25 @@ Where that line sits, and why:
   cannot select itself and refuse itself on contradictory evidence.  An
   UNPUBLISHED capacity (``None``, non-positive, non-finite) is never read as a
   capacity of zero — an uncalibrated box is never "full".
+
+  **Deviation ``d5`` unwired this signal from the gateway's request path.**
+  The row above is still the honest verdict of this pure function when a
+  caller supplies ``engine_active``/``engine_capacity``, and it is still
+  tested as such — but :func:`lobes.gateway.server._resolve_tier` no longer
+  supplies them, so no HTTP request reaches ``shed_signal="engine"``.  Why:
+  capacity was specified as a routing PREFERENCE (spec c5/h4 — gate pool
+  *candidacy* on utilisation), not as admission control.  Making saturation
+  shed converted a burst that used to queue in vLLM's own waiting queue into
+  refusals: t10 measured an 8-way concurrent ``model=cortex`` flood on the
+  Spark+Thor pair at ``PRIMARY_MAX_ACTIVE=2`` per box serving **4 of 8**
+  through the pool (four 429s) against **8 of 8** with the pool bypassed.
+  Saturation now shapes *where* a request goes (``is_full`` keeps a full
+  replica out of the pool, so a replica with room wins) and, when nothing
+  anywhere has room, the local owner is dialled and the engine queues it.
+  The parameters and this signal are KEPT rather than deleted so the function's
+  contract stays stable for callers and tests that exercise it directly; the
+  fix is at the call site, which is the only place the shed verdict becomes an
+  HTTP 429.
 * **iowait** is a whole-host CPU-time statistic charged for *any* process's
   block wait.  Measured live 2026-08-27: a DGX Spark reading ~60 % iowait
   across five samples while its engine reported ``running=0``, traced to one
@@ -361,6 +382,11 @@ def decide(
         This box's published capacity for the role (its calibrated max active
         requests), or ``None`` when nothing has been published.  ``None`` /
         non-positive / non-finite all mean "uncalibrated" and never saturate.
+
+        Both engine parameters default to ``None`` and, since deviation
+        ``d5``, the gateway's request path leaves them at that default — the
+        saturation verdict below is reachable only by a caller that opts into
+        supplying them.  See the module docstring for why.
 
     Returns
     -------
