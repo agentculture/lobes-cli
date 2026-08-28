@@ -169,7 +169,18 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (singular + plural) and the declared lane fingerprint. `gateway` is again
     # the ONLY pre-existing service that moved; `vllm-associate` (t7) is
     # untouched.
-    "gateway": "c1eb74e4fdd31e9a48a40e47c932969ffd2e713ca17e3f7038c5e1f7b2590502",
+    #
+    # Recomputed 2026-08-28 for the capacity-relative-pool-routing plan
+    # (issue #199, t12): `gateway` gained the ten `<PREFIX>_MAX_ACTIVE`
+    # declared-capacity knobs plus `GATEWAY_CAPACITY_KILL_SWITCH` — all
+    # parsed by lobes/gateway/_config.py since t1 but absent from this
+    # passthrough, so the capacity signal never reached the container in
+    # any real deployment — and, found by the same guard,
+    # `GATEWAY_FORCE_STRICT_TOOLS` and `FALLBACK_URL`/`FALLBACK_SERVED_NAME`,
+    # which were inert for the same reason. `gateway` is again the ONLY
+    # service that moved; no vLLM lane was touched. The new guard against
+    # this whole class of gap is tests/test_gateway_env_passthrough_guard.py.
+    "gateway": "e54d72e114cf4026f3ba1a516943864c53cacb90f4035af0df8b050797c173d3",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
