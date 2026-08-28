@@ -31,6 +31,8 @@ from lobes.gateway._selection import (
     Selection,
     _is_selectable,
     estimated_wait,
+    is_calibrated,
+    is_full,
     select_replica,
     selection_wait,
 )
@@ -46,36 +48,43 @@ class FakeReplica:
     running: int
     waiting: int
     weight: float = 1.0
+    # Whether `weight` is a capacity actually IN FORCE for this replica. The
+    # producer (`_replicas.ReplicaState`) sets it at ingest; it exists because
+    # a measured capacity of exactly one slot is legal and must not be read
+    # back as "nothing published" (F2).
+    calibrated: bool = False
+
+
+def _fake(origin, is_local, kw):
+    """Build a `FakeReplica`, defaulting `calibrated` from `weight`.
+
+    Every pre-F2 case in this file expressed "calibrated" by passing a weight
+    other than 1.0 and "uncalibrated" by leaving the 1.0 default, so that is
+    the default derivation here — the intent of those cases is preserved
+    verbatim. A case that needs the two decoupled (a MEASURED one-slot
+    capacity, or a declared-then-discarded one) passes `calibrated` itself.
+    """
+    defaults = dict(
+        origin=origin,
+        local=is_local,
+        ready=True,
+        busy=False,
+        compatible=True,
+        running=0,
+        waiting=0,
+        weight=1.0,
+    )
+    defaults.update(kw)
+    defaults.setdefault("calibrated", defaults["weight"] != 1.0)
+    return FakeReplica(**defaults)
 
 
 def local(origin="local", **kw):
-    defaults = dict(
-        origin=origin,
-        local=True,
-        ready=True,
-        busy=False,
-        compatible=True,
-        running=0,
-        waiting=0,
-        weight=1.0,
-    )
-    defaults.update(kw)
-    return FakeReplica(**defaults)
+    return _fake(origin, True, kw)
 
 
 def peer(origin="peer", **kw):
-    defaults = dict(
-        origin=origin,
-        local=False,
-        ready=True,
-        busy=False,
-        compatible=True,
-        running=0,
-        waiting=0,
-        weight=1.0,
-    )
-    defaults.update(kw)
-    return FakeReplica(**defaults)
+    return _fake(origin, False, kw)
 
 
 class TestBasicAvailability:
@@ -485,3 +494,65 @@ class TestPurityWithCapacity:
         r = peer(running=3, waiting=1, weight=2.0)
         assert estimated_wait(r) == 2.0
         assert estimated_wait(r, 4.0) == 1.0
+
+
+class TestAMeasuredOneSlotCapacity:
+    """F2 (Qodo, PR #221): `lobes calibrate` can validly measure and persist a
+    knee of 1 — a box whose engine admits exactly one request at a time has
+    precisely that capacity. Reading every weight of 1.0 back as the
+    "uncalibrated" sentinel made such a replica never full and ranked it as
+    uncalibrated, so its measured capacity did not affect routing at all.
+
+    The sentinel VALUE is unchanged; what changed is that "was a capacity
+    published?" is now carried explicitly (`calibrated`) instead of being
+    inferred from a magic number.
+    """
+
+    def test_a_measured_one_slot_capacity_is_calibrated(self):
+        assert is_calibrated(peer(weight=1.0, calibrated=True)) is True
+
+    def test_an_unpublished_capacity_is_still_uncalibrated_at_the_same_weight(self):
+        assert is_calibrated(peer(weight=1.0)) is False
+
+    def test_a_measured_one_slot_replica_is_FULL_at_one_active_request(self):
+        full = peer(weight=1.0, calibrated=True, running=1)
+        assert is_full(full) is True
+        assert _is_selectable(full, local_busy=False) is False
+
+    def test_an_uncalibrated_replica_at_weight_one_is_never_full(self):
+        # h3 is untouched: an unpublished capacity must never make a replica
+        # unselectable, however loaded it is.
+        loaded = peer(weight=1.0, running=99, waiting=99)
+        assert is_full(loaded) is False
+        assert _is_selectable(loaded, local_busy=False) is True
+
+    def test_a_full_one_slot_local_forwards_instead_of_winning_the_tie(self):
+        # The routing consequence. Local declares a MEASURED capacity of 1 and
+        # is holding its one request; the peer has 4 slots and one request.
+        # Before F2 the local replica was read as uncalibrated, ranked at the
+        # neutral capacity (4), tied with the peer at 0.25 and won on
+        # locality — dispatching a second request to a one-slot box.
+        result = select_replica(
+            [
+                local(weight=1.0, calibrated=True, running=1),
+                peer(weight=4.0, running=1),
+            ]
+        )
+        assert result == Selection("peer", False, REASON_PEER_LESS_LOADED)
+
+    def test_a_measured_one_slot_capacity_counts_toward_the_neutral_median(self):
+        candidates = [
+            peer(origin="p1", weight=1.0, calibrated=True),
+            peer(origin="p2", weight=9.0),
+            peer(origin="unc", running=5),
+        ]
+        # median of the calibrated capacities (1, 9) is 5.0 -> 5 active / 5.
+        assert selection_wait(candidates[-1], candidates) == 1.0
+
+    def test_a_declared_capacity_discarded_on_a_fingerprint_change_is_uncalibrated(self):
+        # `_replicas.py` reverts `weight` to the sentinel AND clears
+        # `calibrated` when a pinned capacity no longer matches the live
+        # fingerprint; the two must agree, or the replica would be full at one.
+        stale = peer(weight=1.0, calibrated=False, running=3)
+        assert is_calibrated(stale) is False
+        assert is_full(stale) is False

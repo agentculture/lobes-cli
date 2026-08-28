@@ -175,7 +175,15 @@ def _state(
     waiting: int = 0,
     compatible: bool = True,
     weight: float = 1.0,
+    calibrated: bool | None = None,
 ) -> ReplicaState:
+    """A snapshot row, injected directly.
+
+    Pre-F2 cases in this file expressed "calibrated" by passing a weight other
+    than 1.0 and "uncalibrated" by leaving the 1.0 default, so `calibrated`
+    defaults to that same derivation and every such case keeps its intent. A
+    case needing the two decoupled (a MEASURED one-slot capacity) passes it.
+    """
     return ReplicaState(
         origin=origin,
         local=local,
@@ -189,6 +197,7 @@ def _state(
         reason="",
         last_seen=1.0,
         weight=weight,
+        calibrated=(weight != 1.0) if calibrated is None else calibrated,
     )
 
 

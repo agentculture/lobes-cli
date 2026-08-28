@@ -51,12 +51,29 @@ capacity makes that worse, not better (today's uniform weight of 1.0 at least
 made ties resolve to local, keeping bursts put). So this module now counts
 this box's own outstanding dispatches — :meth:`ReplicaCache.dispatch` /
 :meth:`~ReplicaCache.begin_dispatch` / :meth:`~ReplicaCache.end_dispatch`,
-driven by ``server.py`` — and folds them into the ``waiting`` that
-:func:`~lobes.gateway._selection.estimated_wait` divides by, so the snapshot
-self-corrects between refreshes. A dispatch older than that replica's last
-successful probe is NOT counted (the probe already sees it), and any dispatch that
-outlives :data:`INFLIGHT_MAX_AGE` is dropped, so a leaked counter can never
-make a healthy box look permanently full.
+driven by ``server.py`` — and RECONCILES them against the probed number
+(:meth:`~ReplicaCache._reconcile`), so the snapshot self-corrects between
+refreshes in BOTH directions. Any dispatch that outlives
+:data:`INFLIGHT_MAX_AGE` is dropped, so a leaked counter can never make a
+healthy box look permanently full.
+
+Reconciliation, not addition: a probe and a local token can each see the same
+request, and simply adding them double-counts while simply preferring the
+probe undercounts. Both errors were observed. The rule is at
+:meth:`~ReplicaCache._reconcile`; the two failures it exists to close are:
+
+* **stale-LOW** — a dispatch is registered BEFORE the dial, so a probe that
+  completes in the window between the token and the request reaching the
+  engine samples neither, and discarding the token because it predates
+  ``last_seen`` loses the request from both sides at once. That is the burst
+  undercount this accounting exists to prevent, recreated by its own
+  de-duplication.
+* **stale-HIGH** — measured live in the t10 acceptance AMENDMENT: a probe
+  reported the peer at ``run=2`` from a burst that had ALREADY completed. At
+  capacity 2 that read as full, the peer became unselectable, and one run in
+  five forwarded nothing and fell back to single-box (50.82 tok/s against
+  98.6). Our OWN completions are first-hand evidence that probed load is
+  stale, so they are reconciled against it too.
 
 Capacity (capacity-relative pool routing)
 -----------------------------------------
@@ -94,6 +111,7 @@ import http.client
 import itertools
 import json
 import threading
+from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -131,6 +149,20 @@ _DEFAULT_REFRESH_INTERVAL: float = 5.0
 # on the Thor's 12.1 tok/s cortex is minutes, not seconds), because expiring a
 # LIVE request would under-count load and re-create the stampede.
 INFLIGHT_MAX_AGE: float = 900.0
+
+# How long a COMPLETED dispatch stays on the reconciliation ledger. A
+# completion is evidence against a probe only until a probe newer than it
+# lands, so this only has to outlast the probe interval by a healthy margin;
+# past that the entry can say nothing a fresh probe has not already said.
+# Kept small deliberately — unlike the in-flight tally this ledger grows with
+# THROUGHPUT, not with concurrency.
+COMPLETION_RETENTION: float = 60.0
+
+# Hard cap on ledger entries, so a burst far larger than any measured fleet
+# concurrency still cannot grow it without bound between prunes. Oldest
+# entries fall off first, which is also the right order to lose them in: the
+# oldest are the ones a newer probe has already superseded.
+_COMPLETION_LEDGER_MAX: int = 1024
 
 _LOCAL_PROBE_TIMEOUT: float = 3.0
 _PEER_PROBE_TIMEOUT: float = 3.0
@@ -310,8 +342,20 @@ class ReplicaState:
     weight: float = UNCALIBRATED_WEIGHT
     # The RAW capacity as published by that replica, pre-clamp — `None` when
     # none was published. Kept beside `weight` so an operator can see both the
-    # number the peer claimed and the number this box actually used.
+    # number the peer claimed and the number this box actually used. NOTE it
+    # is deliberately RETAINED when a pinned capacity is discarded on a
+    # fingerprint change (that is what lets the next pass recognise the same
+    # stale number and discard it again), so it is NOT the "is a capacity in
+    # force?" signal — `calibrated`, below, is.
     capacity: float | None = None
+    # Whether `weight` is a capacity actually IN FORCE — the signal
+    # `_selection.is_calibrated` reads. False for: nothing published, a
+    # refused (non-positive/non-finite) value, a capacity discarded on a
+    # fingerprint change, and the fleet-wide kill switch. True for a published
+    # capacity of exactly ONE SLOT, which is a legal measurement (a box whose
+    # engine admits one request at a time) and must not be confused with the
+    # `UNCALIBRATED_WEIGHT` fallback that happens to share its value.
+    calibrated: bool = False
     # This box's OWN outstanding dispatches to this replica that the last probe
     # has not seen yet (see :meth:`ReplicaCache.in_flight`). Already folded
     # into `waiting` by :meth:`ReplicaCache.current`, and reported separately
@@ -353,8 +397,11 @@ class LocalLane:
     # THIS box's own declared capacity for the role — the operator-typed
     # ``<PREFIX>_MAX_ACTIVE`` that reaches the gateway as
     # ``ServerConfig.local_capacities`` (task t5 wires the call site).
-    # `UNCALIBRATED_WEIGHT` means "undeclared", never "one slot".
-    weight: float = UNCALIBRATED_WEIGHT
+    # ``None`` means UNDECLARED. It is `None` and not a sentinel number
+    # precisely because ``<PREFIX>_MAX_ACTIVE=1`` is a legal declaration (an
+    # engine that admits one request at a time), so no numeric value is free
+    # to stand for "nothing here".
+    weight: float | None = None
 
 
 @dataclass(frozen=True)
@@ -373,8 +420,9 @@ class PeerReplica:
     api_key: str = field(default="", repr=False)
     # An operator-declared FALLBACK capacity for this peer, used only when the
     # peer publishes none of its own on ``/status`` (q1 makes the peer the
-    # authority on its own capacity). `UNCALIBRATED_WEIGHT` = undeclared.
-    weight: float = UNCALIBRATED_WEIGHT
+    # authority on its own capacity). ``None`` = undeclared — see
+    # :class:`LocalLane`'s ``weight`` for why not a sentinel number.
+    weight: float | None = None
 
 
 # --- pure helpers ----------------------------------------------------------
@@ -453,14 +501,41 @@ def _as_capacity(raw: object) -> float | None:
     return value
 
 
-def _declared_capacity(weight: float) -> float | None:
-    """An operator-declared capacity, or ``None`` when it is the sentinel.
+def capacity_is_in_force(raw: object, *, kill_switch: bool = False) -> bool:
+    """Whether *raw* becomes a capacity this box will actually RANK by. PURE.
 
-    `UNCALIBRATED_WEIGHT` on a :class:`LocalLane` / :class:`PeerReplica` means
-    "no capacity declared" — reading it back as a measured one-slot capacity is
-    exactly the mistake `_selection.py`'s neutral fallback exists to prevent.
+    The companion predicate to :func:`resolve_capacity`, and deliberately a
+    separate answer from the weight it returns: `resolve_capacity` falls back
+    to :data:`UNCALIBRATED_WEIGHT` for "nothing published", for a refused
+    value and for the kill switch, and a legitimately published capacity of
+    one slot resolves to that same number. Comparing the weight against the
+    fallback therefore cannot tell the two apart — this can.
+
+    Refuses exactly what :func:`resolve_capacity` refuses, by reusing
+    :func:`_as_capacity` (the single definition of "a usable capacity"), so
+    the two can never drift. A CLAMPED capacity is still in force: the clamp
+    bounds the number, it does not reject it.
     """
-    return None if weight == UNCALIBRATED_WEIGHT else weight
+    return not kill_switch and _as_capacity(raw) is not None
+
+
+def _with_active(state: ReplicaState, active: int) -> ReplicaState:
+    """*state* with its active count restated as *active*, recording the
+    signed adjustment on ``in_flight``.
+
+    ``running`` is the more literal of the two probed numbers, so it is kept
+    intact wherever the new total still covers it and ``waiting`` absorbs the
+    rest; a total BELOW the probed ``running`` (the stale-HIGH correction, where
+    this box knows requests the probe counted have since finished) trims
+    ``running`` down, since leaving it alone would leave the very load the
+    correction just cancelled sitting in the field selection sums.
+    """
+    running = min(state.running, active)
+    return state.evolve(
+        in_flight=active - (state.running + state.waiting),
+        running=running,
+        waiting=active - running,
+    )
 
 
 def _with_note(reason: str, note: str) -> str:
@@ -645,6 +720,10 @@ class ReplicaCache:
         # a probe pass writing the snapshot, and vice versa.
         self._inflight_lock = threading.Lock()
         self._inflight: dict[int, tuple[str, float]] = {}
+        # (origin, start, end) for recently COMPLETED dispatches — the
+        # evidence half of :meth:`_reconcile`'s stale-HIGH correction. Bounded
+        # by both age (:data:`COMPLETION_RETENTION`) and length.
+        self._completed: deque[tuple[str, float, float]] = deque(maxlen=_COMPLETION_LEDGER_MAX)
         self._inflight_tokens = itertools.count(1)
         self._stop = threading.Event()
         self._peer_stop = threading.Event()
@@ -664,7 +743,7 @@ class ReplicaCache:
 
     # --- seeding / reading -------------------------------------------------
 
-    def _seed(self, origin: str, local: bool, weight: float) -> ReplicaState:
+    def _seed(self, origin: str, local: bool, weight: float | None) -> ReplicaState:
         """The honest pre-probe state for one replica.
 
         *weight* is the OPERATOR-DECLARED capacity carried by the
@@ -674,8 +753,7 @@ class ReplicaCache:
         clamp and the kill switch hold from the very first snapshot, before
         any probe has run.
         """
-        raw = _declared_capacity(weight)
-        resolved, note = self._resolve(raw)
+        resolved, note = self._resolve(weight)
         return ReplicaState(
             origin=origin,
             local=local,
@@ -689,7 +767,8 @@ class ReplicaCache:
             reason=note,
             last_seen=0.0,
             weight=resolved,
-            capacity=raw,
+            capacity=weight,
+            calibrated=self._in_force(weight),
         )
 
     def _resolve(self, raw: object) -> tuple[float, str]:
@@ -701,14 +780,18 @@ class ReplicaCache:
             kill_switch=self._capacity_kill_switch,
         )
 
+    def _in_force(self, raw: object) -> bool:
+        """:func:`capacity_is_in_force` bound to this cache's kill switch."""
+        return capacity_is_in_force(raw, kill_switch=self._capacity_kill_switch)
+
     def _keyed_capacity(
         self,
         previous: ReplicaState,
         raw: object,
         live: Fingerprint | None,
-    ) -> tuple[float, float | None, Fingerprint | None, str]:
+    ) -> tuple[float, float | None, bool, Fingerprint | None, str]:
         """Ingest *raw* against the live fingerprint → ``(weight, capacity,
-        pin, note)``.
+        calibrated, pin, note)``.
 
         The pin travels with the NUMBER, not with the probe: as long as the
         replica keeps publishing the same capacity, the fingerprint it first
@@ -731,7 +814,7 @@ class ReplicaCache:
             # Nothing usable published — resolve (for the "refused value" note)
             # and hold no pin.
             resolved, note = self._resolve(raw)
-            return resolved, None, None, note
+            return resolved, None, False, None, note
         republished = previous.capacity == capacity and previous.capacity_fingerprint is not None
         pin = previous.capacity_fingerprint if republished else live
         if republished:
@@ -740,11 +823,12 @@ class ReplicaCache:
                 return (
                     UNCALIBRATED_WEIGHT,
                     capacity,
+                    False,
                     pin,
                     f"capacity discarded: measured under a different fingerprint ({changed})",
                 )
         resolved, note = self._resolve(raw)
-        return resolved, capacity, pin, note
+        return resolved, capacity, self._in_force(raw), pin, note
 
     def current(self) -> tuple[ReplicaState, ...]:
         """The latest snapshot: local replica first, then peers in declared order.
@@ -753,26 +837,25 @@ class ReplicaCache:
         :class:`ReplicaState` is frozen, so the returned tuple is safe to hand
         straight to the selection policy on the request path.
 
-        Each state's ``waiting`` has this box's OWN outstanding dispatches to
-        that replica folded in, with the folded amount reported separately as
-        ``in_flight`` (so the purely probed number is recoverable by
-        subtraction). That fold is what makes a burst self-correct: probed load
-        alone is up to one refresh interval stale, so N concurrent arrivals
-        would all read one idle snapshot and stampede a single replica —
-        exactly the herd that an accurate capacity makes WORSE, since a
-        genuinely least-full peer attracts the whole burst instead of ties
-        resolving to local.
+        Each state's load is this box's own dispatch bookkeeping RECONCILED
+        against the probed number (:meth:`_reconcile`), with the signed
+        adjustment reported separately as ``in_flight`` (so the purely probed
+        number is recoverable by subtraction). That reconciliation is what
+        makes a burst self-correct: probed load alone is up to one refresh
+        interval stale, so N concurrent arrivals would all read one idle
+        snapshot and stampede a single replica — exactly the herd that an
+        accurate capacity makes WORSE, since a genuinely least-full peer
+        attracts the whole burst instead of ties resolving to local.
         """
         states = self._raw_states()
-        if not self._inflight:  # the overwhelmingly common case: nothing to fold
-            return tuple(states)
+        if not self._inflight and not self._completed:
+            return tuple(states)  # the common case: nothing to reconcile
         now = self._now()
         folded: list[ReplicaState] = []
         for state in states:
-            extra = self._count_inflight(state.origin, state.last_seen, now)
-            folded.append(
-                state.evolve(in_flight=extra, waiting=state.waiting + extra) if extra else state
-            )
+            probed = state.running + state.waiting
+            adjusted = self._reconcile(state.origin, probed, state.last_seen, now)
+            folded.append(state if adjusted == probed else _with_active(state, adjusted))
         return tuple(folded)
 
     # --- local in-flight accounting ---------------------------------------
@@ -809,11 +892,33 @@ class ReplicaCache:
         return token
 
     def end_dispatch(self, token: int | None) -> None:
-        """Release the dispatch *token*. Idempotent; ``None`` is a no-op."""
+        """Release the dispatch *token*, and remember that it FINISHED.
+
+        Idempotent; ``None`` (and an unknown token) is a no-op, and only a
+        token that was actually outstanding lands on the completion ledger —
+        so a double release can neither go negative nor record the same
+        completion twice.
+        """
         if token is None:
             return
+        now = self._now()
         with self._inflight_lock:
-            self._inflight.pop(token, None)
+            entry = self._inflight.pop(token, None)
+            if entry is None:
+                return
+            origin, start = entry
+            self._completed.append((origin, start, now))
+            self._prune_completed(now)
+
+    def _prune_completed(self, now: float) -> None:
+        """Drop ledger entries older than :data:`COMPLETION_RETENTION`.
+
+        Called with ``_inflight_lock`` held. The deque is append-ordered by
+        completion time, so this is a bounded walk from the left.
+        """
+        cutoff = now - COMPLETION_RETENTION
+        while self._completed and self._completed[0][2] < cutoff:
+            self._completed.popleft()
 
     @contextmanager
     def dispatch(self, origin: str) -> Iterator[int]:
@@ -830,21 +935,80 @@ class ReplicaCache:
             self.end_dispatch(token)
 
     def in_flight(self, origin: str, *, since: float | None = None) -> int:
-        """Outstanding dispatches to *origin* the last probe has not seen.
+        """The SIGNED adjustment this box's own bookkeeping makes to *origin*'s
+        probed load — what :meth:`current` folds in. See :meth:`_reconcile`.
 
-        A dispatch that started BEFORE *since* (default: that replica's own
-        ``last_seen``, the monotonic stamp of the last successful probe) is
-        already reflected in the probed ``running``/``waiting`` and is not
-        counted again — otherwise every in-flight request would be counted
-        twice for its whole life and systematically inflate this box's view of
-        its own load.
+        Positive when the probe has not seen work this box knows is out there,
+        NEGATIVE when the probe is still reporting work this box knows has
+        finished, and zero when the two agree (the steady state). *since*
+        overrides the probe stamp reconciled against; by default it is that
+        replica's own ``last_seen``.
         """
-        if since is None:
-            since = next(
-                (s.last_seen for s in self._raw_states() if s.origin == origin),
-                0.0,
+        probed = 0
+        for state in self._raw_states():
+            if state.origin == origin:
+                probed = state.running + state.waiting
+                if since is None:
+                    since = state.last_seen
+                break
+        return self._reconcile(origin, probed, since or 0.0, self._now()) - probed
+
+    def _reconcile(self, origin: str, probed: int, since: float, now: float) -> int:
+        """*origin*'s active count: the probe corrected by our own dispatches.
+
+        ``since`` is the probe's own stamp. A dispatch is registered before the
+        dial and released after the answer, so relative to that stamp each of
+        this box's dispatches to *origin* falls into exactly one bucket:
+
+        * **new** — started at/after the stamp. The probe cannot have seen it;
+          it is added outright. (This is the whole of the pre-F6 behaviour.)
+        * **outstanding-old** — started before the stamp and still running. The
+          probe MAY have seen it, but only if the request had actually reached
+          the engine when the sample was taken — the F6 race is precisely that
+          it had not. The probe's own count bounds how many of these it can
+          account for, so anything beyond ``probed`` is work the probe missed
+          and is added.
+        * **finished-old** — started before the stamp and finished after it.
+          The probe may have counted it, and it is demonstrably gone now, so it
+          is subtracted (bounded by ``probed``: we can only cancel load the
+          probe actually reported).
+
+        Both corrections are bounded by ``probed`` and therefore self-limiting:
+        this box never claims a peer is running work it never reported, and
+        never cancels more than it reported. Third-party load (another box
+        dispatching to the same peer) is included in ``probed`` and can make
+        the subtraction conservative for at most one refresh interval, after
+        which a fresh probe is authoritative again.
+        """
+        with self._inflight_lock:
+            outstanding = [
+                start
+                for entry_origin, start in self._inflight.values()
+                if entry_origin == origin and now - start <= INFLIGHT_MAX_AGE
+            ]
+            finished_old = sum(
+                1
+                for entry_origin, start, end in self._completed
+                if entry_origin == origin and start < since <= end
             )
-        return self._count_inflight(origin, since, self._now())
+        new = sum(1 for start in outstanding if start >= since)
+        outstanding_old = len(outstanding) - new
+        remaining = probed - min(probed, finished_old)
+        return max(remaining, outstanding_old) + new
+
+    def _count_inflight(self, origin: str, since: float, now: float) -> int:
+        """Outstanding dispatches to *origin* started at/after *since*.
+
+        The raw tally, with no probe reconciliation — :meth:`_reconcile` is
+        what the snapshot uses.
+        """
+        with self._inflight_lock:
+            entries = list(self._inflight.values())
+        return sum(
+            1
+            for entry_origin, start in entries
+            if entry_origin == origin and start >= since and now - start <= INFLIGHT_MAX_AGE
+        )
 
     def _raw_states(self) -> tuple[ReplicaState, ...]:
         """The snapshot exactly as probed — no in-flight fold. The lock is held
@@ -855,15 +1019,6 @@ class ReplicaCache:
                 states.append(self._local_state)
             states.extend(self._peer_states[peer.origin] for peer in self._peers)
             return tuple(states)
-
-    def _count_inflight(self, origin: str, since: float, now: float) -> int:
-        with self._inflight_lock:
-            entries = list(self._inflight.values())
-        return sum(
-            1
-            for entry_origin, start in entries
-            if entry_origin == origin and start >= since and now - start <= INFLIGHT_MAX_AGE
-        )
 
     def refresh(self) -> None:
         """Probe the local lane AND every peer once, synchronously.
@@ -953,8 +1108,8 @@ class ReplicaCache:
         if fingerprint is None:
             return previous.evolve(ready=False, health="error", fingerprint=None)
         running, waiting = self._local_load(lane)
-        raw = _declared_capacity(lane.weight)
-        resolved, capacity, pin, note = self._keyed_capacity(previous, raw, fingerprint)
+        raw = lane.weight
+        resolved, capacity, calibrated, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=True,
             busy=False,  # local pressure is the caller's own signal, not a probe
@@ -967,6 +1122,7 @@ class ReplicaCache:
             last_seen=self._now(),
             weight=resolved,
             capacity=capacity,
+            calibrated=calibrated,
             capacity_fingerprint=pin,
         )
 
@@ -1068,8 +1224,8 @@ class ReplicaCache:
         # publishes wins over the operator's fallback declaration for it.
         raw = entry.get(PEER_CAPACITY_KEY)
         if raw is None:
-            raw = _declared_capacity(peer.weight)
-        resolved, capacity, pin, note = self._keyed_capacity(previous, raw, fingerprint)
+            raw = peer.weight
+        resolved, capacity, calibrated, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=backend_health == "ok",
             busy=busy,
@@ -1082,6 +1238,7 @@ class ReplicaCache:
             last_seen=last_seen,
             weight=resolved,
             capacity=capacity,
+            calibrated=calibrated,
             capacity_fingerprint=pin,
         )
 

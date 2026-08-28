@@ -1136,6 +1136,13 @@ def _replica_row_from_state(state: ReplicaState) -> dict[str, object]:
         # `weight` so a clamped peer (the diagnostic case: the two differ)
         # is explainable from /capabilities alone, per the spec's h1/c24.
         "capacity": state.capacity,
+        # `calibrated` (additive) says whether `weight` is a capacity actually
+        # IN FORCE. It is not derivable from the two numbers above: a MEASURED
+        # one-slot capacity and an unpublished one both show `weight: 1.0`,
+        # and a capacity discarded on a fingerprint change keeps its claimed
+        # `capacity` while reverting `weight`. This is the field that tells
+        # them apart, and the one `_selection.is_calibrated` reads.
+        "calibrated": state.calibrated,
     }
 
 
@@ -1145,8 +1152,9 @@ def _offline_replica_rows(
     """The declared-only replica view: no probe ran, so every live field is
     honestly `None` rather than guessed — see :func:`annotate_replicas`.
 
-    ``weight``/``capacity`` follow the same honesty rule (t6): no probe ran,
-    so no capacity was ingested — ``weight`` reports the
+    ``weight``/``capacity``/``calibrated`` follow the same honesty rule (t6):
+    no probe ran, so no capacity was ingested — ``calibrated`` is ``False``,
+    ``weight`` reports the
     :data:`~lobes.gateway._replicas.UNCALIBRATED_WEIGHT` sentinel (the
     resolved-capacity fallback :func:`~lobes.gateway._selection.select_replica`
     itself treats as "nothing published", never a measured one-slot capacity)
@@ -1167,6 +1175,7 @@ def _offline_replica_rows(
             "fingerprint": local_fingerprint,
             "weight": UNCALIBRATED_WEIGHT,
             "capacity": None,
+            "calibrated": False,
         }
     ]
     for origin in table.replica_origins.get(backend, ()):
@@ -1183,6 +1192,7 @@ def _offline_replica_rows(
                 "fingerprint": None,
                 "weight": UNCALIBRATED_WEIGHT,
                 "capacity": None,
+                "calibrated": False,
             }
         )
     return rows

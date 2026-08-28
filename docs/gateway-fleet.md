@@ -787,14 +787,19 @@ peer — **self-published on the peer's own `/status`** at
 `backends[].capacity`, picked up by the probe `ReplicaCache` already runs
 every refresh interval, so declaring a pool stays O(machines) in config,
 never O(pairs). An **absent** `capacity` key means *uncalibrated* —
-deliberately distinct from a *declared* `1.0`, which would read as a real
-one-slot capacity. An uncalibrated replica is never full (an unpublished
-capacity must never make a replica unselectable) and ranks, for ranking
-purposes only, at the median of the calibrated capacities present in the
-same candidate set — not at the `1.0` sentinel, which would otherwise
+deliberately distinct from a *declared* `1.0`, which is a real one-slot
+capacity (an engine that admits one request at a time) and is honoured as
+one. Because those two states share a `weight` of `1.0`, "was a capacity
+published?" is carried by its own `calibrated` field on the replica row and
+is never inferred from the weight's value. An uncalibrated replica is never
+full (an unpublished capacity must never make a replica unselectable) and
+ranks, for ranking purposes only, at the median of the calibrated capacities
+present in the same candidate set — not at `1.0`, which would otherwise
 systematically drain a mixed-version fleet toward whichever boxes happen to
 be calibrated (an uncalibrated peer at one active request would rank 8x
-worse than a calibrated weight-8 peer at the same load, read literally).
+worse than a calibrated weight-8 peer at the same load, read literally). A
+*calibrated* one-slot replica, by contrast, is genuinely full at one active
+request and drops out of selection until it finishes.
 
 Because capacity is peer-CONTROLLED input that the ranking arithmetic
 DIVIDES by, an ingested capacity is **clamped** to a configured ceiling
@@ -818,10 +823,34 @@ stayed put; once ranking is genuinely capacity-relative, a burst would
 otherwise pile onto whichever replica the last probe saw as least-full,
 before the next probe corrects it. So each box also counts its OWN
 outstanding dispatches at the moment they are made — incremented before
-dial, released on completion including the error/retry paths — and folds
-that **local in-flight** count into the same `waiting` the ranking
-arithmetic reads, so the 5s snapshot self-corrects between probes rather
-than only after one.
+dial, released on completion including the error/retry paths — and
+**reconciles** that local bookkeeping against the probed number, so the 5s
+snapshot self-corrects between probes rather than only after one.
+
+Reconciliation rather than addition, because a probe and a local token can
+each see the same request and both naive rules are wrong in a measured way.
+A dispatch is registered *before* the dial, so a probe completing in the
+window before the request reaches the engine sees neither it nor (if the
+token were discarded as "older than the probe") the local count —
+recreating the very burst undercount the counter exists to prevent. In the
+other direction, a probe can keep reporting load from a burst that has
+already finished: the t10 acceptance run measured a peer read at `run=2`
+from a completed burst, which at capacity 2 read as *full*, made the peer
+unselectable, and dropped one run in five back to single-box throughput
+(50.82 tok/s against 98.6). So each of this box's dispatches is bucketed
+against the probe's own timestamp: one started after it is added outright;
+one started before it and still running is added only insofar as the probed
+count cannot account for it; and one started before it and *finished* after
+it is subtracted, because our own completion is first-hand evidence the
+probed number is stale. Both corrections are bounded by the probed count, so
+this box never invents load a replica never reported and never cancels more
+than it did — and a fresh probe is authoritative again within one interval.
+
+A box also counts local work it did **not** place: a single-hop arrival
+forwarded by a peer makes no placement (it is served here or refused, never
+re-selected), but it occupies this engine exactly like a locally-placed
+request, so it is counted too. The in-flight tally is a record of what the
+engine is executing, not of what the router decided.
 
 Every choice still carries a reason from the closed vocabulary: `local-idle`
 | `peer-less-loaded` | `local-busy-forwarded` | `affinity` | `sole-ready` |

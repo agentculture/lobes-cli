@@ -426,8 +426,9 @@ by role name, each value carrying exactly these fields:
         "compatible": bool,               # served id + quantization + max context + runtime all agree
         "reason": str,                    # which field differs, and/or a capacity note (clamp, discard) — see below
         "fingerprint": {...} | None,
-        "weight": float,                  # RESOLVED capacity `_selection.py` ranks by (post clamp, post kill switch); 1.0 = uncalibrated sentinel
+        "weight": float,                  # RESOLVED capacity `_selection.py` ranks by (post clamp, post kill switch); 1.0 is the fallback VALUE, not the "uncalibrated" signal
         "capacity": float | None,         # RAW capacity as CLAIMED by the replica, pre-clamp; None when none was published/probed
+        "calibrated": bool,               # whether `weight` is a capacity actually IN FORCE — the signal, since weight 1.0 is ambiguous
       },
       ...
     ],
@@ -459,8 +460,8 @@ NVFP4 pair (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`
 <role> --replicas`, which also prints a "would choose: `<origin>`
 (`<reason>`)" line.
 
-**`weight` vs `capacity` (capacity-relative-pool-routing, 2026-08-27,
-additive on top of the replica row above).** `weight` is the number
+**`weight` vs `capacity` vs `calibrated` (capacity-relative-pool-routing,
+2026-08-27, additive on top of the replica row above).** `weight` is the number
 `_selection.py` actually ranks by — the RESOLVED capacity, after this box's
 ingest clamp and after `GATEWAY_CAPACITY_KILL_SWITCH` if it is engaged.
 `capacity` is the RAW number that replica claimed on its own `/status`,
@@ -468,11 +469,23 @@ pre-clamp, and is `None` when it never published one. The two are kept
 separate rather than collapsed into one field because a **clamped** peer is
 exactly the case where they diverge — a replica claiming `capacity: 128` but
 ranked at `weight: 64.0` is visibly explained by the clamp, versus a replica
-that never published anything at all (`capacity: null`, `weight: 1.0`, the
-uncalibrated sentinel). An offline/not-probed row reports `capacity: null`
-and `weight` at the sentinel, matching the honesty rule every other live
-field in this row already follows — a row that was never probed does not
-guess a number it never received.
+that never published anything at all (`capacity: null`, `weight: 1.0`,
+`calibrated: false`). An offline/not-probed row reports `capacity: null`,
+`weight` at the fallback and `calibrated: false`, matching the honesty rule
+every other live field in this row already follows — a row that was never
+probed does not guess a number it never received.
+
+`calibrated` is the third field because neither of the first two answers
+"is this weight a real capacity?" on its own. `lobes calibrate` can validly
+measure and persist a knee of **1** (a box whose engine admits one request
+at a time has exactly that capacity), so `weight: 1.0` is ambiguous between
+a measurement and the fallback; and a capacity DISCARDED because the live
+fingerprint no longer matches the one it was measured under deliberately
+keeps its claimed `capacity` (that is what lets the next probe recognise the
+same stale number and discard it again) while reverting `weight`. `calibrated`
+is set at ingest by the one place that knows all of it, and is what decides
+whether a replica can be FULL: a calibrated one-slot replica is full at one
+active request, an uncalibrated one is never full at any load (h3).
 
 **`tools`** answers "can I put an OpenAI `tools` array on a request to this
 role?" — `true` for the four generate lobes (`cortex`/`senses`/`muse`/`worker`), `false`
