@@ -32,10 +32,13 @@ import pytest
 
 from lobes.catalog import TIER_ROLE
 from lobes.gateway._config import (
+    CAPACITY_KILL_SWITCH_ENV,
     FEASIBLE_ENV,
     LANE_FINGERPRINT_SUFFIXES,
+    MAX_ACTIVE_ENV,
     PEER_API_KEYS_ENV,
     PEER_ORIGINS_ENV,
+    CapacityConfigError,
     ReplicaConfigError,
     ServerConfig,
     build_config,
@@ -297,3 +300,96 @@ def test_new_routing_fields_default_inert_on_direct_construction() -> None:
     assert dict(table.replica_api_keys) == {}
     assert table.self_origin == ""
     assert dict(table.lane_fingerprints) == {}
+
+
+# ============================================================================
+# Capacity + kill-switch env knobs (issue #199 capacity-relative-pool-routing,
+# t1). This box's own declared "max active requests" capacity, per backend
+# name, plus a single global kill switch that pins every resolved capacity
+# back to the 1.0 sentinel. NO ranking/selection behaviour lands here — see
+# lobes/gateway/_selection.py (t3) and lobes/gateway/_replicas.py (t4) for
+# what consumes these values.
+# ============================================================================
+
+
+def test_max_active_env_mirrors_feasible_env_prefixes() -> None:
+    assert set(MAX_ACTIVE_ENV) == set(FEASIBLE_ENV)
+    assert MAX_ACTIVE_ENV == {
+        "primary": "PRIMARY_MAX_ACTIVE",
+        "multimodal": "MULTIMODAL_MAX_ACTIVE",
+        "muse": "MUSE_MAX_ACTIVE",
+        "worker": "WORKER_MAX_ACTIVE",
+        "associate": "ASSOCIATE_MAX_ACTIVE",
+        "hand": "HAND_MAX_ACTIVE",
+        "embed": "EMBED_MAX_ACTIVE",
+        "rerank": "RERANK_MAX_ACTIVE",
+        "stt": "STT_MAX_ACTIVE",
+        "tts": "TTS_MAX_ACTIVE",
+    }
+
+
+def test_capacity_kill_switch_env_is_a_single_global_knob() -> None:
+    assert CAPACITY_KILL_SWITCH_ENV == "GATEWAY_CAPACITY_KILL_SWITCH"
+
+
+def test_no_capacity_knobs_yields_empty_capacities_and_switch_off() -> None:
+    _table, cfg = build_config(_base_env())
+    assert dict(cfg.local_capacities) == {}
+    assert cfg.capacity_kill_switch is False
+
+
+def test_declared_capacity_parses_into_config() -> None:
+    _table, cfg = build_config(_base_env(PRIMARY_MAX_ACTIVE="8"))
+    assert cfg.local_capacities["primary"] == 8.0
+
+
+def test_declared_capacity_across_backend_names() -> None:
+    _table, cfg = build_config(_base_env(PRIMARY_MAX_ACTIVE="8", HAND_MAX_ACTIVE="4"))
+    assert dict(cfg.local_capacities) == {"primary": 8.0, "hand": 4.0}
+
+
+def test_blank_capacity_is_treated_as_unset() -> None:
+    _table, cfg = build_config(_base_env(PRIMARY_MAX_ACTIVE="  "))
+    assert dict(cfg.local_capacities) == {}
+
+
+def test_malformed_capacity_raises_loudly() -> None:
+    env = _base_env(PRIMARY_MAX_ACTIVE="not-a-number")
+    with pytest.raises(CapacityConfigError):
+        build_config(env)
+
+
+def test_kill_switch_forces_sentinel_for_every_role_name_ignoring_declared() -> None:
+    _table, cfg = build_config(
+        _base_env(
+            GATEWAY_CAPACITY_KILL_SWITCH="true",
+            PRIMARY_MAX_ACTIVE="8",
+            HAND_MAX_ACTIVE="4",
+        )
+    )
+    assert cfg.capacity_kill_switch is True
+    assert dict(cfg.local_capacities) == {name: 1.0 for name in MAX_ACTIVE_ENV}
+
+
+def test_kill_switch_engaged_with_no_declared_capacities_still_sentinels_all() -> None:
+    _table, cfg = build_config(_base_env(GATEWAY_CAPACITY_KILL_SWITCH="1"))
+    assert cfg.capacity_kill_switch is True
+    assert dict(cfg.local_capacities) == {name: 1.0 for name in MAX_ACTIVE_ENV}
+
+
+def test_kill_switch_falsy_token_leaves_switch_off() -> None:
+    _table, cfg = build_config(
+        _base_env(GATEWAY_CAPACITY_KILL_SWITCH="false", PRIMARY_MAX_ACTIVE="8")
+    )
+    assert cfg.capacity_kill_switch is False
+    assert dict(cfg.local_capacities) == {"primary": 8.0}
+
+
+def test_single_box_no_peers_no_capacity_keys_parses_unchanged() -> None:
+    # The single-box, no-*_PEER_ORIGINS, no-capacity-keys deployment must
+    # keep parsing exactly as it did before this task — no new required key.
+    env = _base_env()
+    table, cfg = build_config(env)
+    assert dict(table.replica_origins) == {}
+    assert dict(cfg.local_capacities) == {}
+    assert cfg.capacity_kill_switch is False

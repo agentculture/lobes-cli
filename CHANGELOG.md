@@ -4,6 +4,275 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.1] - 2026-08-28
+
+### Fixed
+
+- **Qodo review round on #221 — seven findings, all real.** Two were latent bugs
+  in `lobes/assess.py`'s `run_concurrent` fan-out, so they affected every caller,
+  not just the new verb: aggregate throughput was computed as
+  `concurrency x reciprocal of the mean per-request rate` rather than **total
+  completion tokens over batch wall time** (the two diverge ~90% when completion
+  lengths differ, which would have made `calibration_knee` persist the wrong
+  capacity); and gateway auth was installed in a `ContextVar` that
+  `ThreadPoolExecutor` **does not propagate to worker threads** — the module's
+  own comment claimed the opposite — so a ramp against an authenticated gateway
+  would have 401'd on every request. Each submitted task now runs under its own
+  `copy_context()` snapshot, since re-running one `Context` concurrently raises
+  `RuntimeError: cyclic call`.
+- **The `1.0` capacity sentinel collided with a genuine measured capacity of 1.**
+  A box with `max_num_seqs=1` publishes a real knee of 1, which `is_calibrated`
+  read as "nothing published" — so it was never considered full and its measured
+  capacity never affected routing. Replaced the magic number with an explicit
+  `ReplicaState.calibrated` flag set at the single ingest point, and made the
+  operator-declared `weight` fields `float | None` so `PRIMARY_MAX_ACTIVE=1` is
+  no longer read as undeclared.
+- **Work executing locally is now counted even when no routing decision was
+  made.** A proxied arrival, and `d5`'s nothing-selectable queue-locally path,
+  both dialled the local backend without touching the dispatch counter — so a
+  receiver undercounted its own load and kept selecting an already-loaded local
+  replica. The counter now records what the engine is *executing*, not what the
+  router *decided*.
+- **Probe/in-flight reconciliation now corrects in both directions.** A dispatch
+  registered just before a probe sampled the engine was counted by neither
+  (stale-low, the burst undercount this accounting exists to prevent); and load
+  from a burst that had already completed was still read as current (stale-high
+  — measured live, it suppressed forwarding entirely in one run of five, 50.82
+  vs 98.6 tok/s). Each dispatch is now bucketed against the probe's own stamp
+  and corrections are bounded by the probed count, so a box never invents load a
+  peer never reported nor cancels more than it dispatched.
+- **`lobes calibrate` argument and output hygiene.** Non-finite and non-positive
+  values are rejected before any network call (`--ttft-bound-s nan` silently
+  disabled the TTFT guard entirely, and worse, fell through to a real ramp
+  against a nonexistent server), and a refused `--apply` no longer writes a
+  success-shaped payload to stdout before failing — matching how `up` and `init`
+  already handle a refused write.
+
+- **SonarCloud on #221's new code: seven smells cleared, three refused.** Cleared
+  a `dict.fromkeys` simplification, three multi-throw `pytest.raises` blocks
+  (each narrowed to the single call under test, then sanity-checked by
+  temporarily breaking the pinned behaviour), and three composite assertions.
+  **Refused** three `S1940` "use the opposite operator" findings and marked them
+  ACCEPTED with rationale: `not (value > 0.0)` and `value <= 0.0` are NOT
+  equivalent under IEEE-754, since every comparison against NaN is False. The
+  negated form is a deliberate single check refusing NaN, zero and negatives
+  together — the rewrite would let a NaN capacity reach division and ranking,
+  which is the same defect class flagged on this PR's CLI arguments.
+- **`sonarclaude` gained `--pull-request/--pr`.** The vendored script could only
+  query project-wide, so PR-scoped new-code findings were invisible through it
+  and a project-wide query returned "0 issues in this PR's files" while the PR
+  view showed ten. Needs upstreaming to steward.
+
+### Notes
+
+- One finding was **pushed back**, not fixed: Qodo flagged `_resolve_tier` for
+  omitting engine state from the pressure decision, citing "return 429 when no
+  replica is selectable". That requirement is exactly what deviation `d5`
+  reversed — live acceptance measured it shedding 4 of 8 requests the fleet
+  previously queued. `_is_selectable` still excludes a full replica, so routing
+  still prefers headroom; only the *shed* verdict changed. See
+  `docs/evidence/2026-08-28-accept-capacity-relative-pool-thor-spark.txt`.
+
+## [0.67.0] - 2026-08-27
+
+### Added
+
+- **Spec: capacity-relative pool routing** — `docs/specs/2026-08-27-capacity-relative-pool-routing.md`,
+  a converged devague frame (`/scope` → `/think` → `/challenge`) for routing the
+  cortex replica pool by each box's own measured capacity instead of a
+  host-level pressure verdict. Redeems the `#199` parked `weight` calibration
+  hook: `_selection.py` already computes `estimated_wait = (running + waiting) /
+  weight`, which IS capacity-relative utilisation, but `weight` is populated by
+  nothing beyond the hardcoded `1.0` at `roles.py:1152,1167`. Decisions
+  recorded: capacity is **peer self-published** via `/status` (O(machines)
+  config, no per-pair drift); capacity is a **measured throughput knee** —
+  neither the `--max-num-seqs` OOM cap nor vLLM's KV-derived ceiling; a box
+  under genuine pressure **forwards to a spare-capacity peer** rather than
+  shedding 429; and the feature carries its own kill switch pinning `weight` to
+  1.0 fleet-wide.
+- **Six findings from the rigorous `/challenge` pass**, all spec-side: capacity
+  clamping (self-published capacity is peer-CONTROLLED input, and an inflated
+  value ranks as near-zero wait at every load level — a silent traffic black
+  hole); local in-flight accounting at dispatch (load is probe-sourced only, on
+  a 5 s refresh, so concurrent arrivals stampede one stale snapshot — a herd
+  that accurate capacity makes *worse*, since today's uniform `weight=1.0` ties
+  resolve to local); a neutral rather than pessimistic uncalibrated-peer
+  fallback (the `1.0` sentinel ranks an uncalibrated peer 8× worse than a
+  calibrated weight-8 peer at one active request, draining mixed-version fleets
+  toward whichever boxes happen to be calibrated); fingerprint-keyed capacity
+  invalidation across `lobes switch`; and the `X-Lobes-Route-Reason` closed
+  vocabulary as a stated contract change.
+- **Plan: capacity-relative pool routing** —
+  `docs/plans/2026-08-27-capacity-relative-pool-routing.md`, seeded from the
+  converged frame and covering **36/36** spec targets across ten tasks in five
+  dependency waves, each wave file-disjoint so parallel execution matches
+  serial: config knobs + kill switch, the pure knee-measurement function,
+  selection policy + reason vocabulary, capacity ingest/clamp/fingerprint-keying
+  /in-flight counter, `/status` publication + dispatch accounting, the
+  `/capabilities` row, regression guards, docs, the `calibrate` verb, and live
+  acceptance on the Spark+Thor pair. Three non-blocking risks recorded, incl.
+  that the `11.0 tok/s` single-owner baseline is re-measured before t10's
+  throughput target leans on it.
+
+### Changed
+
+- **The pool no longer treats a host-level pressure verdict as a serving
+  verdict — on either side of a forward.** Sending side (`_selection.py`): a
+  peer's `busy` flag no longer gates pool candidacy at all; a candidate is
+  unselectable when its active count reaches its own capacity. A local shed
+  verdict still excludes the local replica only. `weight == 1.0` is now the
+  *uncalibrated sentinel* rather than a measured one-slot capacity, and an
+  uncalibrated replica ranks at the median of the calibrated capacities in its
+  candidate set — without this, an uncalibrated peer ranked 8x worse than a
+  calibrated weight-8 peer at one active request and mixed-version fleets
+  drained toward whichever boxes happened to be calibrated. Receiving side
+  (`_pressure_policy.py`, `server.py`, deviation `d1`): a **pooled** arrival is
+  no longer shed on iowait alone. A box still sheds on `swap > 75%` (it is
+  paging the very memory holding weights and KV) and on engine saturation
+  (`active >= published capacity` — deliberately the same fact selection gates
+  candidacy on, so a box can never select itself and refuse itself on
+  contradictory evidence). The carve-out is pooled-only: for a single-owner
+  role a 429 is honest backpressure, but for a pooled role it is a lie whenever
+  a replica has room. `decide()` defaults `pooled=False`, so every pre-`d1`
+  call site and every single-box deployment decides byte-identically (`h1`).
+  `mode` still reports the host honestly to `/status` and peer probes; only the
+  shed band narrowed.
+- **`weight` now carries a real, self-published capacity.** A peer publishes its
+  own on the `/status` body already probed (`backends[].capacity`); local and
+  peer values pass through one ingest gate. An inflated value is **clamped**
+  (`CAPACITY_CLAMP_MAX = 64.0`, above every concurrency figure this fleet has
+  measured) and the clamp is recorded in the replica row's `reason` rather than
+  applied silently — unclamped, a peer publishing 10,000 would score near-zero
+  wait at every load level and vacuum the pool. A capacity is **pinned to the
+  fingerprint it was measured under** and discarded when that changes, with two
+  deliberate asymmetries: an unknown/absent fingerprint is never read as
+  evidence of change, and the pin travels with the number rather than the probe,
+  so a republished stale value cannot resurrect itself one refresh later.
+- **Local in-flight accounting closes the stale-snapshot herd.** Load was
+  probe-sourced only, on a 5 s refresh, so concurrent arrivals stampeded one
+  snapshot — a hazard accurate capacity makes *worse*, since today's uniform
+  weights make ties resolve to local. Dispatches are now folded into `waiting`
+  so the snapshot self-corrects between probes, guarded three ways because a
+  leaked counter cannot self-heal: a context manager that releases on any exit,
+  an idempotent release that tolerates double-free, and a 900 s expiry so even a
+  leak decays instead of pinning a healthy box at "full" forever.
+- **`X-Lobes-Route-Reason` vocabulary: membership unchanged, `peer-less-loaded`
+  redefined.** It now means "less loaded *relative to its own capacity*", so a
+  peer with **more** active requests can legitimately win it, and it is now also
+  emitted when the local replica is excluded for being full — a state that
+  previously could only arise from a pressure verdict and reported
+  `local-busy-forwarded`.
+- **Narrows issue #215 without widening it.** In the iowait-only band — exactly
+  where the live Spark sits — `model=cortex` and the raw served id now both
+  serve locally instead of diverging. In the swap / full-engine band the
+  alias-only gate is unchanged, still #215's to fix.
+
+- **`X-Lobes-Route-Load`** — a new response header on pooled answers only,
+  reporting the numbers a routing decision was actually made on:
+  `active=1; capacity=8; utilisation=0.125; calibrated=true`. `calibrated=false`
+  says out loud that the `1.0` sentinel is a neutral substitute rather than a
+  measured one-slot capacity. The `X-Lobes-Route-Reason` vocabulary was
+  deliberately NOT widened again to carry this. A peer's copy is stripped from a
+  relayed answer, and the header is absent entirely from a no-peer deployment
+  (`h1`).
+- **Capacity is published on `/status`** at `backends[].capacity`, so a peer
+  learns it from the probe it already makes. The key is withheld — rather than
+  fabricated as `1.0` — when nothing is declared, when the role is infeasible
+  here, or when the backend is never-proxied: an absent key reads as
+  *uncalibrated* at the peer, whereas a fabricated `1.0` would read as a
+  calibrated one-slot capacity and starve this box.
+- **`lobes calibrate <role>`** — measures a box's serving capacity by ramping
+  concurrency and locating the throughput knee, then reports the level, the
+  samples behind it, and *whether the ramp plateaued*. Read-only by default;
+  `--apply` writes `<PREFIX>_MAX_ACTIVE` to `.env`. It **refuses to write** when
+  the ramp never plateaued (recording the top level tried would be a guess, not
+  a knee) or when the level resolves to zero (which would make a role
+  permanently unselectable). Stops early once the knee is settled. The measured
+  number is scoped to one `(box, checkpoint, context window, speculative
+  config)` and goes stale after a `lobes switch` — the help text says so.
+
+### Fixed
+
+- **VALIDATED live on the Spark+Thor cortex pair, 2026-08-28**
+  (`docs/evidence/2026-08-28-accept-capacity-relative-pool-thor-spark.txt`).
+  With the Spark still declaring `mode: busy, shed: true` at ~62-72% iowait and
+  its engine idle, it rejoins the pool as a `ready` candidate and is genuinely
+  dispatched to — two of eight requests per run carry
+  `X-Lobes-Proxied-By: <spark>` with `peer-less-loaded`, reproducible across
+  three runs. An 8-way flood improves from a re-measured single-owner median of
+  **51.66 tok/s to 66.92 tok/s (+29.5%)** with identical work (888 completion
+  tokens) and zero errors on either side. Recorded honestly: the peer takes only
+  25% of the burst (the overflow falls through to local queueing, so the gain is
+  a floor); `c18`'s **ratio** target of 1.7x is NOT met on its own terms (1.295x
+  against the honest baseline — the 1.7x was calibrated against a baseline
+  captured under this same artifact, per risk `r1`); `lobes calibrate` was not
+  exercised on hardware; and capacity is an even 2:2 split ceilinged by
+  `max_num_seqs`, so the capacity-*proportional* arm of the design remains
+  untested. **Amended the same day** after operator review: the 8-way figure was
+  the wrong shape — beyond fleet capacity the overflow queues locally and
+  dilutes the result, and the aggregate cannot separate "work was distributed"
+  from "work landed on the faster box" (the Spark is ~2.7x faster per stream:
+  49.24 vs 18.18 tok/s). Measured at fleet capacity (4 concurrent = 2 slots + 2
+  slots) the pool delivers **50.71 -> ~98.6 tok/s, +94%**. That is **97% of the
+  even-split ceiling** of 101.4 tok/s — 138.5 is unreachable with an even split
+  because the faster box finishes its half early and idles, which is the
+  intrinsic cost of the operator's decision (risk `r6`) that capacity encodes
+  each machine's PARALLELISM capacity rather than its throughput. One further
+  defect is recorded and NOT fixed: one run in five forwarded nothing because
+  the 5 s probe still reported the peer at `run=2` from a completed burst, which
+  at `capacity=2` reads as full — local in-flight accounting corrects herding
+  within a burst but not probe data that is stale-high between bursts.
+
+- **Engine saturation drives selection, not shedding (`d5`, found by live
+  acceptance).** `d1`'s receiving-side work made `active >= capacity` a shed
+  signal, which routed a saturated request down the busy path (429) instead of
+  `_PoolFallthrough`'s local dial — so a burst the fleet previously queued was
+  refused. Measured live on the Spark+Thor pair at `PRIMARY_MAX_ACTIVE=2` each:
+  an 8-way flood through the pool served **4/8 with four HTTP 429s**, where the
+  same flood bypassing the pool served **8/8 with zero errors**. Capacity was
+  specified as a routing preference, not admission control. The gateway no
+  longer passes engine state to `decide()`; `_is_selectable` still excludes a
+  full replica, so routing still prefers headroom while a saturated fleet falls
+  through to local queueing. `decide()`'s own contract is unchanged (its
+  `engine_*` parameters remain, now unsupplied) because the `h1` byte-identity
+  golden pins that pure-function surface.
+- **The capacity knobs never reached the gateway container — the feature was
+  inert in every real deployment.** `lobes/templates/fleet/docker-compose.yml`
+  enumerates each env var the gateway receives (there is no `env_file`), and
+  none of the ten `<PREFIX>_MAX_ACTIVE` knobs nor
+  `GATEWAY_CAPACITY_KILL_SWITCH` were listed, so an operator's `.env` value
+  could never arrive. Every test passed because tests construct config
+  in-process, bypassing compose — this class of gap was structurally invisible
+  to the suite. A new guard test now derives the required env set from
+  `lobes/gateway/_config.py` itself (its `*_ENV` constants, the runtime
+  feasible×fingerprint cross-product, and an AST scan for literals passed to the
+  module's own env readers), so a future knob added without a compose line fails
+  automatically.
+- **Three unrelated knobs were already inert and are now plumbed**, surfaced by
+  that same guard: **`GATEWAY_FORCE_STRICT_TOOLS`** — documented to operators in
+  `env.example` and consumed by `server.py`, but never passed through, so
+  setting it did nothing — and **`FALLBACK_URL` / `FALLBACK_SERVED_NAME`**,
+  which `env.example` presented as `.env` keys while the compose comment told
+  operators to edit the template instead. Defaults are unchanged and empty, so
+  the default fleet renders identically. `GATEWAY_HOST` is deliberately NOT
+  passed through (inside the container `0.0.0.0` is the only correct bind; an
+  override could make the gateway unreachable while looking healthy) and that
+  exemption is recorded in a structure the guard itself validates.
+
+- **Diagnosed why the cortex replica pool has been running single-box.** The
+  DGX Spark sits permanently in `mode: busy, shed: true` from a ~60 % iowait
+  reading, which removes it from the pool entirely (`_is_selectable()` drops any
+  busy candidate), so the Thor never forwards. Live measurement shows the box is
+  not under I/O pressure at all: 0 sectors read and static `pswpin`/`pswpout`
+  over 5 s, zero `D`-state tasks, load average 0.72 on 20 cores. PSI localises
+  the pressure to `user.slice/.../app-com.mitchellh.ghostty.service` at 96.66 %
+  io-full — one sleeping desktop terminal, up 6d21h, whose `io.stat` is **empty**
+  (zero block I/O ever charged), entirely outside the docker/vLLM cgroups. The
+  sampler itself is correct (`lobes/runtime/_pressure.py` takes a proper 150 ms
+  `/proc/stat` delta) and is explicitly out of scope: the defect is treating
+  host iowait as a proxy for serving capacity. Recorded as boundary claims
+  `c6`/`c10` on the frame; no code changes in this release.
+
 ## [0.66.2] - 2026-08-27
 
 ### Fixed

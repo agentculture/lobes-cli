@@ -32,6 +32,7 @@ import time
 import pytest
 
 from lobes.gateway import _replicas as R
+from lobes.gateway import _selection as S
 
 # --- fixtures / builders ---------------------------------------------------
 
@@ -82,20 +83,22 @@ def _status_body(
     waiting: int = 0,
     name: str = "primary",
     served_name: str = SERVED,
+    capacity: object = None,
 ) -> bytes:
+    backend: dict = {
+        "name": name,
+        "task": "generate",
+        "served_name": served_name,
+        "health": health,
+        "metrics": {"running": running, "waiting": waiting},
+    }
+    if capacity is not None:
+        backend["capacity"] = capacity
     payload = {
         "object": "lobes.fleet_status",
         "default_model": served_name,
         "busy": {"running": running, "waiting": waiting},
-        "backends": [
-            {
-                "name": name,
-                "task": "generate",
-                "served_name": served_name,
-                "health": health,
-                "metrics": {"running": running, "waiting": waiting},
-            }
-        ],
+        "backends": [backend],
         "endpoints": [],
         "pressure": {
             "mode": "busy" if busy else "warm",
@@ -186,6 +189,11 @@ def _cache(routes: dict, *, peers=None, local=None, **kw) -> R.ReplicaCache:
 
 def _by_origin(states) -> dict:
     return {s.origin: s for s in states}
+
+
+def _refreshed(cache: R.ReplicaCache) -> R.ReplicaCache:
+    cache.refresh()
+    return cache
 
 
 # --- local lane fingerprint ------------------------------------------------
@@ -411,7 +419,14 @@ def test_peer_malformed_status_body_is_error() -> None:
     assert peer.health == "error"
 
 
-def test_peer_reporting_busy_is_never_selectable() -> None:
+def test_peer_reporting_busy_is_flagged_busy_in_the_snapshot() -> None:
+    # RENAMED for accuracy (deviation d1) — was
+    # `test_peer_reporting_busy_is_never_selectable`. The body only ever
+    # asserted the FLAG, never selectability, and since t3 the claim in the
+    # old name is false: a peer's host-level busy verdict no longer removes it
+    # from the pool (see tests/test_gateway_selection.py::TestPressureDecoupling).
+    # The flag itself is still ingested and still published, so the assertion
+    # stands as written — only the name was wrong.
     cache = _cache(_default_routes(status={"busy": True}))
     cache.refresh()
     peer = _by_origin(cache.current())[PEER]
@@ -727,3 +742,452 @@ def test_local_runtime_falls_back_to_owned_by_when_undeclared():
     assert _runtime_from({"id": "m", "owned_by": "someone"}, {}) == "unknown"
     assert _runtime_from({"id": "m"}, {}) == "unknown"
     assert _runtime_from({"id": "m", "owned_by": "vllm"}, {"runtime": "llamacpp"}) == "llamacpp"
+
+
+# --- capacity ingest + clamp (capacity-relative pool routing, t4 stage 1) ---
+#
+# `weight` stopped being a hardcoded 1.0 placeholder: it now carries the
+# replica's measured max-active-requests CAPACITY, ingested from the peer's
+# own `/status` (q1: peer self-published) or, for the local seed, from this
+# box's declared `<PREFIX>_MAX_ACTIVE`. Because that number is peer-CONTROLLED
+# and `_selection.estimated_wait` DIVIDES by it, an inflated value would rank
+# as near-zero wait at every load level and vacuum the whole pool — so ingest
+# clamps, and says so in `reason`.
+
+
+def test_a_peer_published_capacity_populates_weight() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 8.0
+    assert peer.capacity == 8.0
+    assert peer.compatible is True
+
+
+def test_the_local_seed_populates_from_this_boxs_own_declared_capacity() -> None:
+    cache = _cache(_default_routes(), local=_lane(weight=6.0))
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == 6.0  # seeded, before any probe
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == 6.0
+    assert local.capacity == 6.0
+
+
+def test_a_peer_publishing_no_capacity_falls_back_and_stays_routable() -> None:
+    """h3: an unpublished capacity must never make a replica unselectable."""
+    cache = _cache(_default_routes())
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.UNCALIBRATED_WEIGHT
+    assert peer.capacity is None
+    assert peer.ready is True
+    assert peer.compatible is True
+    assert S.is_calibrated(peer) is False
+    assert S.is_full(peer) is False
+
+
+def test_an_inflated_peer_capacity_is_clamped_and_the_clamp_is_in_the_reason() -> None:
+    cache = _cache(_default_routes(status={"capacity": 10_000}))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.CAPACITY_CLAMP_MAX
+    assert "clamped" in peer.reason
+    assert "10000" in peer.reason
+    # Still poolable — a clamp bounds a peer's share, it does not evict it.
+    assert peer.compatible is True
+    assert peer.ready is True
+
+
+def test_a_clamped_capacity_is_observable_rather_than_silent() -> None:
+    quiet = _by_origin(_refreshed(_cache(_default_routes(status={"capacity": 4}))).current())[PEER]
+    assert quiet.reason == ""
+
+
+def test_the_local_declared_capacity_is_clamped_too() -> None:
+    cache = _cache(_default_routes(), local=_lane(weight=10_000.0))
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == R.CAPACITY_CLAMP_MAX
+    assert "clamped" in local.reason
+
+
+def test_a_non_positive_or_unparseable_capacity_is_ignored_with_a_reason() -> None:
+    for published in (0, -4, "lots", float("nan")):
+        cache = _cache(_default_routes(status={"capacity": published}))
+        cache.refresh()
+        peer = _by_origin(cache.current())[PEER]
+        assert peer.weight == R.UNCALIBRATED_WEIGHT, published
+        assert "capacity ignored" in peer.reason, published
+
+
+def test_the_kill_switch_pins_every_capacity_local_and_peer_alike() -> None:
+    cache = _cache(
+        _default_routes(status={"capacity": 8}),
+        local=_lane(weight=6.0),
+        capacity_kill_switch=True,
+    )
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[PEER].weight == R.UNCALIBRATED_WEIGHT
+    assert states[LOCAL_URL].weight == R.UNCALIBRATED_WEIGHT
+    assert "clamped" not in states[PEER].reason
+
+
+def test_the_clamp_maximum_is_configurable_per_cache() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}), capacity_max=4.0)
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 4.0
+    assert "clamped" in peer.reason
+
+
+def test_resolve_capacity_is_pure_over_its_inputs() -> None:
+    assert R.resolve_capacity(8.0) == (8.0, "")
+    assert R.resolve_capacity(None) == (R.UNCALIBRATED_WEIGHT, "")
+    weight, note = R.resolve_capacity(99.0, capacity_max=8.0)
+    assert (weight, "clamped" in note) == (8.0, True)
+    assert R.resolve_capacity(8.0, kill_switch=True) == (R.UNCALIBRATED_WEIGHT, "")
+
+
+# --- capacity is keyed to a fingerprint (t4 stage 2) -----------------------
+#
+# A calibrated capacity is only valid for the (box, checkpoint, window,
+# speculative config) it was MEASURED on. `lobes switch` is a down+up with a
+# model swap and a shape re-render force-writes keys, so a stored capacity
+# outlives its conditions unless it is keyed to the live fingerprint the
+# module already probes. It is: the capacity is pinned to the fingerprint it
+# arrived under and DISCARDED when that fingerprint stops matching, falling
+# back to the safe default until a new number is published (spec c23/h16).
+
+
+def _switched_routes(**kw) -> dict:
+    """The same fleet after a `lobes switch`: a different served id, everywhere."""
+    other = "unsloth/Qwen3.6-27B-NVFP4"
+    routes = _default_routes(**kw)
+    status = dict(kw.get("status") or {})
+    status["served_name"] = other
+    routes[LOCAL_URL + "/v1/models"] = (200, _models_body(served=other))
+    routes[PEER + "/status"] = (200, _status_body(**status))
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(served_id=other)))
+    return routes
+
+
+def test_a_capacity_is_pinned_to_the_fingerprint_it_arrived_under() -> None:
+    cache = _cache(_default_routes(status={"capacity": 8}), local=_lane(weight=6.0))
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[PEER].capacity_fingerprint == states[PEER].fingerprint
+    assert states[LOCAL_URL].capacity_fingerprint == states[LOCAL_URL].fingerprint
+
+
+def test_a_local_capacity_is_discarded_when_the_local_checkpoint_changes() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes, local=_lane(weight=6.0))
+    cache.refresh()
+    assert _by_origin(cache.current())[LOCAL_URL].weight == 6.0
+    # `lobes switch`: the lane now serves a different checkpoint.
+    routes[LOCAL_URL + "/v1/models"] = (200, _models_body(served="unsloth/Qwen3.6-27B-NVFP4"))
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.weight == R.UNCALIBRATED_WEIGHT
+    assert "capacity discarded" in local.reason
+    assert "served_id" in local.reason
+
+
+def test_a_peer_capacity_is_discarded_when_the_peers_fingerprint_changes() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == 8.0
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == R.UNCALIBRATED_WEIGHT
+    assert "capacity discarded" in peer.reason
+    assert S.is_calibrated(peer) is False
+
+
+def test_a_republished_stale_capacity_stays_discarded() -> None:
+    """The same number under a new fingerprint must not resurrect next pass."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    for _ in range(3):
+        cache.refresh()
+        assert _by_origin(cache.current())[PEER].weight == R.UNCALIBRATED_WEIGHT
+
+
+def test_a_recalibrated_capacity_repins_to_the_new_fingerprint() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(max_model_len=131072)))
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == R.UNCALIBRATED_WEIGHT
+    # The operator recalibrates on the new checkpoint and the peer publishes it.
+    routes[PEER + "/status"] = (200, _status_body(capacity=12))
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 12.0
+    assert "capacity discarded" not in peer.reason
+    assert peer.capacity_fingerprint == peer.fingerprint
+
+
+def test_an_unprobed_fingerprint_never_forces_a_discard() -> None:
+    """Silence is not evidence of a change: an unreachable peer keeps its capacity."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/status"] = OSError("connection refused")
+    cache.refresh()
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.weight == 8.0
+    assert peer.ready is False  # unreachable, so it is not a pool candidate anyway
+
+
+def test_an_informational_fingerprint_change_never_discards_a_capacity() -> None:
+    """Only the four disqualifying fields key a capacity — the drafter/parsers
+    differ across the Spark+Thor pair by operator policy (spec c32)."""
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes)
+    cache.refresh()
+    routes[PEER + "/capabilities"] = (200, _caps_body(_fingerprint(speculative_config="mtp")))
+    cache.refresh()
+    assert _by_origin(cache.current())[PEER].weight == 8.0
+
+
+def test_both_sides_switching_together_discards_both_capacities() -> None:
+    routes = _default_routes(status={"capacity": 8})
+    cache = _cache(routes, local=_lane(weight=6.0))
+    cache.refresh()
+    switched = _switched_routes(status={"capacity": 8})
+    routes.update(switched)
+    cache.refresh()
+    states = _by_origin(cache.current())
+    assert states[LOCAL_URL].weight == R.UNCALIBRATED_WEIGHT
+    assert states[PEER].weight == R.UNCALIBRATED_WEIGHT
+
+
+# --- local in-flight accounting (t4 stage 3) -------------------------------
+#
+# Load is otherwise probe-sourced ONLY, on a 5s refresh, with nothing counted
+# at dispatch — so a burst of concurrent arrivals all read one stale snapshot
+# and stampede the same replica. Accurate capacity makes that WORSE (a
+# genuinely least-full peer attracts the whole burst), so the snapshot has to
+# self-correct between refreshes: this box counts its own outstanding
+# dispatches and folds them into the `waiting` the selection policy divides by.
+
+
+class _Clock:
+    """A monotonic clock a test can advance by hand."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_no_dispatches_means_no_in_flight_anywhere() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    for state in cache.current():
+        assert state.in_flight == 0
+    assert cache.in_flight(PEER) == 0
+    assert cache.in_flight("http://nowhere:8000") == 0
+
+
+def test_the_dispatch_context_manager_counts_while_open_and_releases_on_exit() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    with cache.dispatch(PEER):
+        assert cache.in_flight(PEER) == 1
+        assert _by_origin(cache.current())[PEER].in_flight == 1
+    assert cache.in_flight(PEER) == 0
+    assert _by_origin(cache.current())[PEER].in_flight == 0
+
+
+def test_the_dispatch_context_manager_releases_on_an_exception() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+
+    def _dispatch_and_raise() -> None:
+        with cache.dispatch(PEER):
+            raise RuntimeError("upstream blew up mid-stream")
+
+    with pytest.raises(RuntimeError):
+        _dispatch_and_raise()
+    assert cache.in_flight(PEER) == 0
+
+
+def test_end_dispatch_is_idempotent_and_tolerates_none() -> None:
+    cache = _cache(_default_routes())
+    token = cache.begin_dispatch(PEER)
+    cache.end_dispatch(token)
+    cache.end_dispatch(token)  # a double release must never go negative
+    cache.end_dispatch(None)
+    cache.end_dispatch(-1)
+    assert cache.in_flight(PEER) == 0
+
+
+def test_in_flight_is_folded_into_waiting_so_estimated_wait_self_corrects() -> None:
+    cache = _cache(_default_routes(local_load={"running": 1, "waiting": 0}))
+    cache.refresh()
+    before = _by_origin(cache.current())[LOCAL_URL]
+    with cache.dispatch(LOCAL_URL):
+        during = _by_origin(cache.current())[LOCAL_URL]
+        assert during.waiting == before.waiting + 1
+        assert during.in_flight == 1
+        assert S.estimated_wait(during) > S.estimated_wait(before)
+
+
+def test_a_dispatch_older_than_the_last_probe_is_not_counted_twice() -> None:
+    """Once a probe has SEEN the request, the probed number is authoritative.
+
+    The probe is MADE to see it here (the metrics body flips to running=1
+    before the second refresh). It used to be asserted on the strength of the
+    timestamp alone, with the probe still reporting an idle engine — which is
+    exactly the undercount F6 names, and is now pinned by
+    ``test_a_dispatch_the_probe_raced_past_is_still_counted`` below.
+    """
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+    token = cache.begin_dispatch(LOCAL_URL)
+    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 1
+    routes[LOCAL_URL + "/metrics"] = (200, _metrics_body(running=1))
+    clock.t += 1.0
+    cache.refresh()  # the probe now reports the request itself
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.in_flight == 0
+    assert local.running + local.waiting == 1
+    cache.end_dispatch(token)
+
+
+def test_a_dispatch_the_probe_raced_past_is_still_counted() -> None:
+    """F6 (Qodo, PR #221): a dispatch is registered BEFORE the dial, so a probe
+    that completes in the window between the token and the request reaching the
+    engine samples neither. Discarding the token because its start predates
+    ``last_seen`` then loses the request from both sides at once — the burst
+    undercount this accounting exists to prevent.
+    """
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+    token = cache.begin_dispatch(LOCAL_URL)  # registered, not yet on the engine
+    clock.t += 0.05
+    cache.refresh()  # probe samples an engine that has not seen it yet: 0
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.running + local.waiting == 1, "the raced dispatch vanished"
+    assert local.in_flight == 1
+    cache.end_dispatch(token)
+
+
+def test_a_probe_that_saw_only_some_of_a_burst_counts_the_rest() -> None:
+    """The partial-race case: three outstanding, the probe caught one."""
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+    tokens = [cache.begin_dispatch(LOCAL_URL) for _ in range(3)]
+    routes[LOCAL_URL + "/metrics"] = (200, _metrics_body(running=1))
+    clock.t += 0.05
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.running + local.waiting == 3
+    for token in tokens:
+        cache.end_dispatch(token)
+
+
+def test_probe_load_from_a_burst_that_has_already_finished_is_not_read_as_full() -> None:
+    """The mirror defect, measured live in the t10 acceptance AMENDMENT: a
+    probe reported the peer at ``run=2`` from a burst that had ALREADY
+    completed. At capacity 2 that reads as full, the peer becomes unselectable
+    and the whole next burst queues locally (one run in five: 50.82 tok/s
+    against 98.6). Our own completions are the evidence that probed load is
+    stale, and they are now reconciled against it.
+    """
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+
+    tokens = [cache.begin_dispatch(PEER) for _ in range(2)]
+    clock.t += 1.0
+    routes[PEER + "/status"] = (200, _status_body(running=2, capacity=2))
+    cache.refresh()  # the probe sees the burst: genuinely 2 active
+    assert _by_origin(cache.current())[PEER].running == 2
+
+    clock.t += 1.0
+    for token in tokens:
+        cache.end_dispatch(token)  # both finish BEFORE the next probe
+
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.running + peer.waiting == 0, "stale probe load survived our completions"
+    assert S.is_full(peer) is False
+
+
+def test_a_leaked_dispatch_expires_and_never_makes_a_box_look_full_forever() -> None:
+    """The leak guard: a counter that is never released must still decay."""
+    clock = _Clock()
+    cache = _cache(_default_routes(), monotonic=clock)
+    cache.refresh()
+    cache.begin_dispatch(LOCAL_URL)  # deliberately never released
+    assert cache.in_flight(LOCAL_URL) == 1
+    clock.t += R.INFLIGHT_MAX_AGE + 1.0
+    assert cache.in_flight(LOCAL_URL) == 0
+    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 0
+
+
+def test_concurrent_arrivals_spread_across_two_idle_replicas() -> None:
+    """N arrivals against two idle replicas do not all land on one, WITHOUT
+    waiting for a probe refresh (the spec's own honesty condition)."""
+    cache = _cache(_default_routes())
+    cache.refresh()
+    picked: list[str] = []
+    held = []
+    for _ in range(4):
+        choice = S.select_replica(cache.current())
+        assert choice.origin is not None
+        picked.append(choice.origin)
+        held.append(cache.begin_dispatch(choice.origin))
+    assert set(picked) == {LOCAL_URL, PEER}
+    assert picked.count(LOCAL_URL) == 2
+    assert picked.count(PEER) == 2
+    for token in held:
+        cache.end_dispatch(token)
+    assert all(state.in_flight == 0 for state in cache.current())
+
+
+def test_in_flight_counting_opens_no_socket() -> None:
+    def _forbidden(url, _timeout, _key):  # pragma: no cover - must never run
+        raise AssertionError(f"current() opened a socket: {url}")
+
+    cache = _cache(_default_routes())
+    cache.refresh()
+    with cache.dispatch(PEER):
+        cache._urlopen = _forbidden  # noqa: SLF001 - structural assertion
+        assert _by_origin(cache.current())[PEER].in_flight == 1
+
+
+def test_dispatch_counts_are_thread_safe() -> None:
+    cache = _cache(_default_routes())
+    cache.refresh()
+    barrier = threading.Barrier(8)
+
+    def worker() -> None:
+        barrier.wait()
+        for _ in range(50):
+            with cache.dispatch(PEER):
+                pass
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert cache.in_flight(PEER) == 0

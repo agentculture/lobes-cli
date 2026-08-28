@@ -42,6 +42,56 @@ What it deliberately does NOT do
   the local lane), exactly as :class:`lobes.gateway._readiness.ReadinessCache`
   does. (Spec c5/h5.)
 
+Local in-flight accounting
+--------------------------
+Probed load is up to one refresh interval (5 s) stale, and nothing used to be
+counted when a request was actually DISPATCHED — so a burst of concurrent
+arrivals all read one snapshot and stampeded the same replica. An accurate
+capacity makes that worse, not better (today's uniform weight of 1.0 at least
+made ties resolve to local, keeping bursts put). So this module now counts
+this box's own outstanding dispatches — :meth:`ReplicaCache.dispatch` /
+:meth:`~ReplicaCache.begin_dispatch` / :meth:`~ReplicaCache.end_dispatch`,
+driven by ``server.py`` — and RECONCILES them against the probed number
+(:meth:`~ReplicaCache._reconcile`), so the snapshot self-corrects between
+refreshes in BOTH directions. Any dispatch that outlives
+:data:`INFLIGHT_MAX_AGE` is dropped, so a leaked counter can never make a
+healthy box look permanently full.
+
+Reconciliation, not addition: a probe and a local token can each see the same
+request, and simply adding them double-counts while simply preferring the
+probe undercounts. Both errors were observed. The rule is at
+:meth:`~ReplicaCache._reconcile`; the two failures it exists to close are:
+
+* **stale-LOW** — a dispatch is registered BEFORE the dial, so a probe that
+  completes in the window between the token and the request reaching the
+  engine samples neither, and discarding the token because it predates
+  ``last_seen`` loses the request from both sides at once. That is the burst
+  undercount this accounting exists to prevent, recreated by its own
+  de-duplication.
+* **stale-HIGH** — measured live in the t10 acceptance AMENDMENT: a probe
+  reported the peer at ``run=2`` from a burst that had ALREADY completed. At
+  capacity 2 that read as full, the peer became unselectable, and one run in
+  five forwarded nothing and fell back to single-box (50.82 tok/s against
+  98.6). Our OWN completions are first-hand evidence that probed load is
+  stale, so they are reconciled against it too.
+
+Capacity (capacity-relative pool routing)
+-----------------------------------------
+Beyond load and fingerprint this module now supplies a third fact: each
+replica's CAPACITY — its measured max active requests — carried on
+``ReplicaState.weight``, which `_selection.py` divides load by to rank
+replicas by UTILISATION rather than by raw queue depth. A peer publishes its
+own (spec q1) on the ``/status`` body already probed here; the local lane's
+comes from this box's declared ``<PREFIX>_MAX_ACTIVE``. Every capacity —
+local or peer, published or declared — passes through the one
+:func:`resolve_capacity` gate, which CLAMPS it and records the clamp in
+``reason``: capacity is peer-controlled input that the ranking arithmetic
+divides by, so an unbounded value would rank as near-zero wait at every load
+level and vacuum the whole pool. A capacity is also KEYED to the fingerprint
+it was measured under and discarded when that fingerprint changes, since a
+number measured against one checkpoint at one window says nothing about the
+next one.
+
 Consuming t2's config
 ---------------------
 The routing-table fields this cache is fed from (``replica_origins``,
@@ -58,15 +108,19 @@ Stdlib only — this gateway is deliberately dependency-free.
 from __future__ import annotations
 
 import http.client
+import itertools
 import json
 import threading
-from collections.abc import Mapping, Sequence
+from collections import deque
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from time import monotonic as _monotonic
 from typing import Callable
 from urllib.parse import urlsplit
 
 from .. import _metrics
+from ._selection import UNCALIBRATED_WEIGHT
 
 # The sentinel for "this field was never declared and cannot be probed". A
 # string (not ``None``) so it survives JSON rendering into ``/capabilities``
@@ -84,6 +138,32 @@ _DEFAULT_REFRESH_INTERVAL: float = 5.0
 # but hold them in separate constants-in-spirit (two constructor arguments), so
 # a deployment can bound a slow cross-box link without shortening the local
 # one — the ``_READINESS_PROBE_TIMEOUT`` / ``_PEER_PROBE_TIMEOUT`` split.
+# How long an OUTSTANDING dispatch keeps counting before it is presumed
+# leaked and dropped from the in-flight tally. A leaked counter is the one
+# serious failure mode of dispatch accounting: it can only ever grow, it makes
+# a perfectly healthy box look more loaded than it is, and — once the tally
+# reaches the box's capacity — permanently FULL, with no path back. The
+# context-manager API makes a leak hard to write in the first place; this
+# expiry makes even a leaked one self-heal. Generous on purpose: it must sit
+# well beyond the longest legitimate generation (a 256K-context reasoning turn
+# on the Thor's 12.1 tok/s cortex is minutes, not seconds), because expiring a
+# LIVE request would under-count load and re-create the stampede.
+INFLIGHT_MAX_AGE: float = 900.0
+
+# How long a COMPLETED dispatch stays on the reconciliation ledger. A
+# completion is evidence against a probe only until a probe newer than it
+# lands, so this only has to outlast the probe interval by a healthy margin;
+# past that the entry can say nothing a fresh probe has not already said.
+# Kept small deliberately — unlike the in-flight tally this ledger grows with
+# THROUGHPUT, not with concurrency.
+COMPLETION_RETENTION: float = 60.0
+
+# Hard cap on ledger entries, so a burst far larger than any measured fleet
+# concurrency still cannot grow it without bound between prunes. Oldest
+# entries fall off first, which is also the right order to lose them in: the
+# oldest are the ones a newer probe has already superseded.
+_COMPLETION_LEDGER_MAX: int = 1024
+
 _LOCAL_PROBE_TIMEOUT: float = 3.0
 _PEER_PROBE_TIMEOUT: float = 3.0
 
@@ -114,6 +194,48 @@ DECLARED_KEYS: tuple[str, ...] = (
     "tool_parser",
     "speculative_config",
 )
+
+# --- capacity (capacity-relative pool routing) ------------------------------
+#
+# ``weight`` on every dataclass below is the replica's CAPACITY: its measured
+# max active requests, the throughput knee `lobes/assess.py`'s
+# ``calibration_knee`` produces — deliberately NOT vLLM's ``--max-num-seqs``
+# OOM-safety cap. :data:`~lobes.gateway._selection.UNCALIBRATED_WEIGHT` (1.0)
+# is the "nothing published" SENTINEL, not a measured one-slot capacity; it is
+# imported rather than re-typed here so the producer (this module) and the
+# consumer (`_selection.py`) can never drift apart on its value.
+#
+# A peer publishes its own capacity on the ``/status`` body this module
+# already probes (spec q1), under this key on the role's backend entry:
+#
+#     {"backends": [{"name": "primary", ..., "capacity": 8}]}
+#
+# ``lobes/gateway/server.py``'s ``fleet_status_payload`` is what writes it
+# (task t5); an older lobes, or a non-lobes replica, publishes nothing and
+# falls back to the sentinel — an unpublished capacity NEVER makes a replica
+# unselectable (spec h3).
+PEER_CAPACITY_KEY = "capacity"
+
+# The ceiling any ingested capacity is CLAMPED to, local and peer alike.
+#
+# Why a clamp at all: capacity arrives as peer-CONTROLLED input (nothing
+# validates what a declared peer answers — spec c19/s11, and note the Thor
+# currently serves /status with no inbound gate at all), and
+# ``_selection.estimated_wait`` DIVIDES by it. A peer publishing 10000 would
+# score a near-zero wait at every load level and silently vacuum the entire
+# pool — a black hole with no error anywhere. So a received capacity is
+# bounded on ingest, and the clamp is RECORDED in the replica row's ``reason``
+# rather than applied silently (spec h13).
+#
+# Why 64: it sits above every concurrency figure this fleet has ever
+# MEASURED — the worker lane's 54.33x KV-derived concurrency at 65K is the
+# largest number in docs/evidence/, and the cortex pair's measured knees are
+# single digits — so the clamp cannot clip an honest calibration, while an
+# absurd published value still captures at most a bounded share of traffic.
+# It is a constructor argument (``capacity_max``), not a hard constant, so a
+# deployment whose hardware genuinely outgrows it can raise it without a code
+# change.
+CAPACITY_CLAMP_MAX: float = 64.0
 
 # ``(url, timeout, api_key | None) -> (status, body)``. The ONLY thing in this
 # module that opens a socket; injected so every test runs offline. Same shape
@@ -194,10 +316,13 @@ class ReplicaState:
     busy`` — but the *policy* that says so lives in
     :mod:`lobes.gateway._selection` (t5), not here.
 
-    ``compatible``/``reason`` are the honesty pair: ``reason`` is empty exactly
-    when ``compatible`` is true, and otherwise names every differing field, so
-    ``/capabilities`` and the CLI can show an operator WHY a declared replica
-    is not pooling instead of leaving it silently absent.
+    ``compatible``/``reason`` are the honesty pair: ``reason`` names every
+    differing field, so ``/capabilities`` and the CLI can show an operator WHY
+    a declared replica is not pooling instead of leaving it silently absent.
+    ``reason`` ALSO carries capacity notes (a clamp, a refused value, a
+    capacity discarded on a fingerprint change) — see :func:`_with_note` for
+    why that field and not a new one — so it is no longer empty exactly when
+    ``compatible`` is true.
     """
 
     origin: str
@@ -211,7 +336,38 @@ class ReplicaState:
     compatible: bool
     reason: str
     last_seen: float  # monotonic timestamp of the last SUCCESSFUL probe (0.0 = never)
-    weight: float = 1.0  # declared decode weight for the selection policy
+    # The RESOLVED capacity `_selection.py` ranks by: the ingested value after
+    # the clamp and the kill switch, or `UNCALIBRATED_WEIGHT` when nothing was
+    # published (or the published value was refused/discarded).
+    weight: float = UNCALIBRATED_WEIGHT
+    # The RAW capacity as published by that replica, pre-clamp — `None` when
+    # none was published. Kept beside `weight` so an operator can see both the
+    # number the peer claimed and the number this box actually used. NOTE it
+    # is deliberately RETAINED when a pinned capacity is discarded on a
+    # fingerprint change (that is what lets the next pass recognise the same
+    # stale number and discard it again), so it is NOT the "is a capacity in
+    # force?" signal — `calibrated`, below, is.
+    capacity: float | None = None
+    # Whether `weight` is a capacity actually IN FORCE — the signal
+    # `_selection.is_calibrated` reads. False for: nothing published, a
+    # refused (non-positive/non-finite) value, a capacity discarded on a
+    # fingerprint change, and the fleet-wide kill switch. True for a published
+    # capacity of exactly ONE SLOT, which is a legal measurement (a box whose
+    # engine admits one request at a time) and must not be confused with the
+    # `UNCALIBRATED_WEIGHT` fallback that happens to share its value.
+    calibrated: bool = False
+    # This box's OWN outstanding dispatches to this replica that the last probe
+    # has not seen yet (see :meth:`ReplicaCache.in_flight`). Already folded
+    # into `waiting` by :meth:`ReplicaCache.current`, and reported separately
+    # so a consumer can recover the purely probed number by subtracting it.
+    in_flight: int = 0
+    # The fingerprint `capacity` was PINNED to: the live fingerprint under
+    # which that number first arrived. A capacity is only valid for the
+    # checkpoint/window/runtime it was measured on, so when the live
+    # fingerprint stops matching this pin the capacity is discarded (`weight`
+    # reverts to the sentinel) until a NEW number is published. `None` = no
+    # capacity pinned. See :func:`_fingerprint_changed`.
+    capacity_fingerprint: "Fingerprint | None" = None
 
     def evolve(self, **changes: object) -> "ReplicaState":
         """Typed wrapper over :func:`dataclasses.replace`.
@@ -238,7 +394,14 @@ class LocalLane:
     base_url: str
     served_name: str
     declared: Mapping[str, str] = field(default_factory=dict)
-    weight: float = 1.0
+    # THIS box's own declared capacity for the role — the operator-typed
+    # ``<PREFIX>_MAX_ACTIVE`` that reaches the gateway as
+    # ``ServerConfig.local_capacities`` (task t5 wires the call site).
+    # ``None`` means UNDECLARED. It is `None` and not a sentinel number
+    # precisely because ``<PREFIX>_MAX_ACTIVE=1`` is a legal declaration (an
+    # engine that admits one request at a time), so no numeric value is free
+    # to stand for "nothing here".
+    weight: float | None = None
 
 
 @dataclass(frozen=True)
@@ -255,7 +418,11 @@ class PeerReplica:
 
     origin: str
     api_key: str = field(default="", repr=False)
-    weight: float = 1.0
+    # An operator-declared FALLBACK capacity for this peer, used only when the
+    # peer publishes none of its own on ``/status`` (q1 makes the peer the
+    # authority on its own capacity). ``None`` = undeclared — see
+    # :class:`LocalLane`'s ``weight`` for why not a sentinel number.
+    weight: float | None = None
 
 
 # --- pure helpers ----------------------------------------------------------
@@ -268,6 +435,120 @@ def _as_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def resolve_capacity(
+    raw: object,
+    *,
+    capacity_max: float = CAPACITY_CLAMP_MAX,
+    kill_switch: bool = False,
+) -> tuple[float, str]:
+    """Turn a raw published/declared capacity into ``(weight, note)``. PURE.
+
+    The single ingest gate every capacity passes through, local and peer
+    alike — so the clamp and the kill switch cannot apply to one side and not
+    the other. ``note`` is empty when nothing worth telling the operator
+    happened, and otherwise names exactly what this box did to the number; the
+    caller folds it into :attr:`ReplicaState.reason`, which is what makes the
+    clamp OBSERVABLE rather than silent (spec h13).
+
+    Four outcomes:
+
+    * kill switch engaged → the sentinel, silently. Pinning capacity fleet-wide
+      is a deliberate operator action (``GATEWAY_CAPACITY_KILL_SWITCH``), not
+      an anomaly to report per replica.
+    * ``None`` (nothing published) → the sentinel, silently. An unpublished
+      capacity is the normal state of an older lobes or a non-lobes replica
+      and must never look like an error (spec h3).
+    * present but not a positive finite number → the sentinel, WITH a note. A
+      misdeclaration is not a capacity, and swallowing it silently would leave
+      an operator staring at a knob that does nothing.
+    * above *capacity_max* → clamped, WITH a note naming both numbers.
+    """
+    if kill_switch:
+        return UNCALIBRATED_WEIGHT, ""
+    if raw is None:
+        return UNCALIBRATED_WEIGHT, ""
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        value = float("nan")
+    # NaN fails every comparison, so this one check refuses NaN, inf, zero and
+    # negatives together.
+    if not (value > 0.0) or value == float("inf"):
+        return UNCALIBRATED_WEIGHT, f"capacity ignored: {raw!r} is not a positive number"
+    if value > capacity_max:
+        return capacity_max, f"capacity clamped: {value:g} -> {capacity_max:g}"
+    return value, ""
+
+
+def _as_capacity(raw: object) -> float | None:
+    """The raw published capacity as a float, or ``None`` when it is absent or
+    not a positive finite number (the values :func:`resolve_capacity` refuses).
+
+    Stored on :attr:`ReplicaState.capacity` PRE-clamp, so an operator can see
+    what the peer claimed next to what this box used — and so the fingerprint
+    keying below can tell "the same measurement again" from "a new one".
+    """
+    if raw is None:
+        return None
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not (value > 0.0) or value == float("inf"):
+        return None
+    return value
+
+
+def capacity_is_in_force(raw: object, *, kill_switch: bool = False) -> bool:
+    """Whether *raw* becomes a capacity this box will actually RANK by. PURE.
+
+    The companion predicate to :func:`resolve_capacity`, and deliberately a
+    separate answer from the weight it returns: `resolve_capacity` falls back
+    to :data:`UNCALIBRATED_WEIGHT` for "nothing published", for a refused
+    value and for the kill switch, and a legitimately published capacity of
+    one slot resolves to that same number. Comparing the weight against the
+    fallback therefore cannot tell the two apart — this can.
+
+    Refuses exactly what :func:`resolve_capacity` refuses, by reusing
+    :func:`_as_capacity` (the single definition of "a usable capacity"), so
+    the two can never drift. A CLAMPED capacity is still in force: the clamp
+    bounds the number, it does not reject it.
+    """
+    return not kill_switch and _as_capacity(raw) is not None
+
+
+def _with_active(state: ReplicaState, active: int) -> ReplicaState:
+    """*state* with its active count restated as *active*, recording the
+    signed adjustment on ``in_flight``.
+
+    ``running`` is the more literal of the two probed numbers, so it is kept
+    intact wherever the new total still covers it and ``waiting`` absorbs the
+    rest; a total BELOW the probed ``running`` (the stale-HIGH correction, where
+    this box knows requests the probe counted have since finished) trims
+    ``running`` down, since leaving it alone would leave the very load the
+    correction just cancelled sitting in the field selection sums.
+    """
+    running = min(state.running, active)
+    return state.evolve(
+        in_flight=active - (state.running + state.waiting),
+        running=running,
+        waiting=active - running,
+    )
+
+
+def _with_note(reason: str, note: str) -> str:
+    """Fold a capacity *note* into a compatibility *reason*, ``"; "``-joined.
+
+    NOTE the deliberate renegotiation of :class:`ReplicaState`'s original
+    invariant ("``reason`` is empty exactly when ``compatible`` is true"): a
+    COMPATIBLE replica may now carry a capacity note. The spec requires the
+    clamp to be recorded in the replica row's reason field, and a second field
+    that only sometimes carries a message would just be a reason field with a
+    different name.
+    """
+    return "; ".join(part for part in (reason, note) if part)
 
 
 def _declared(declared: Mapping[str, str], key: str) -> str:
@@ -330,6 +611,35 @@ def compare_fingerprints(local: Fingerprint | None, peer: Fingerprint | None) ->
     return (not reasons), "; ".join(reasons)
 
 
+def _fingerprint_changed(pin: Fingerprint | None, live: Fingerprint | None) -> str:
+    """Has the fingerprint a capacity was measured under DEFINITELY changed?
+
+    Returns ``""`` for "no evidence of a change" and otherwise a reason naming
+    every changed field. Only :data:`DISQUALIFYING_FIELDS` are consulted —
+    the informational fields (parsers, ``kv_cache_dtype``, drafter) differ
+    across the Spark+Thor pair by explicit operator policy (spec c32) and must
+    not throw a measured capacity away.
+
+    Deliberately CONSERVATIVE where :func:`compare_fingerprints` is strict: an
+    absent or ``unknown`` value on either side is NOT a change. The two
+    functions answer different questions — "may these two replicas pool
+    together?" (where silence must never pass) versus "did this one replica's
+    serving identity change under a number we already hold?" (where silence is
+    not evidence of a switch, and inventing one would throw away a good
+    capacity every time a probe came back thin).
+    """
+    if pin is None or live is None:
+        return ""
+    changed = [
+        f"{name}: {getattr(pin, name)} != {getattr(live, name)}"
+        for name in DISQUALIFYING_FIELDS
+        if _known(getattr(pin, name))
+        and _known(getattr(live, name))
+        and getattr(pin, name) != getattr(live, name)
+    ]
+    return "; ".join(changed)
+
+
 def _classify(exc: BaseException) -> str:
     """Map a probe exception to a :class:`ReplicaState` ``health`` value."""
     if isinstance(exc, TimeoutError):  # socket.timeout is TimeoutError since 3.10
@@ -382,6 +692,8 @@ class ReplicaCache:
         probe_timeout: float = _LOCAL_PROBE_TIMEOUT,
         peer_probe_timeout: float = _PEER_PROBE_TIMEOUT,
         backend_name: str | None = None,
+        capacity_max: float = CAPACITY_CLAMP_MAX,
+        capacity_kill_switch: bool = False,
         urlopen: Opener | None = None,
         monotonic: Clock | None = None,
         start: bool = True,
@@ -397,9 +709,22 @@ class ReplicaCache:
         # role — but a peer may equally publish the role name. Both are
         # matched; the served id is the primary key and this the fallback.
         self._backend_name = backend_name or role
+        # Capacity ingest policy, applied identically to the local lane and to
+        # every peer (see :func:`resolve_capacity`).
+        self._capacity_max = capacity_max
+        self._capacity_kill_switch = capacity_kill_switch
         self._urlopen: Opener = urlopen or _default_opener
         self._now: Clock = monotonic or _monotonic
         self._lock = threading.Lock()
+        # Dispatch bookkeeping gets its OWN lock: a dispatch must never wait on
+        # a probe pass writing the snapshot, and vice versa.
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[int, tuple[str, float]] = {}
+        # (origin, start, end) for recently COMPLETED dispatches — the
+        # evidence half of :meth:`_reconcile`'s stale-HIGH correction. Bounded
+        # by both age (:data:`COMPLETION_RETENTION`) and length.
+        self._completed: deque[tuple[str, float, float]] = deque(maxlen=_COMPLETION_LEDGER_MAX)
+        self._inflight_tokens = itertools.count(1)
         self._stop = threading.Event()
         self._peer_stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -418,8 +743,17 @@ class ReplicaCache:
 
     # --- seeding / reading -------------------------------------------------
 
-    @staticmethod
-    def _seed(origin: str, local: bool, weight: float) -> ReplicaState:
+    def _seed(self, origin: str, local: bool, weight: float | None) -> ReplicaState:
+        """The honest pre-probe state for one replica.
+
+        *weight* is the OPERATOR-DECLARED capacity carried by the
+        :class:`LocalLane` / :class:`PeerReplica` — this box's own
+        ``<PREFIX>_MAX_ACTIVE`` for the local lane. It goes through the same
+        :func:`resolve_capacity` gate a probed peer capacity does, so the
+        clamp and the kill switch hold from the very first snapshot, before
+        any probe has run.
+        """
+        resolved, note = self._resolve(weight)
         return ReplicaState(
             origin=origin,
             local=local,
@@ -430,10 +764,71 @@ class ReplicaCache:
             waiting=0,
             fingerprint=None,
             compatible=local,  # the local replica is trivially compatible with itself
-            reason="",
+            reason=note,
             last_seen=0.0,
-            weight=weight,
+            weight=resolved,
+            capacity=weight,
+            calibrated=self._in_force(weight),
         )
+
+    def _resolve(self, raw: object) -> tuple[float, str]:
+        """This cache's ingest gate — :func:`resolve_capacity` bound to its
+        configured clamp and kill switch."""
+        return resolve_capacity(
+            raw,
+            capacity_max=self._capacity_max,
+            kill_switch=self._capacity_kill_switch,
+        )
+
+    def _in_force(self, raw: object) -> bool:
+        """:func:`capacity_is_in_force` bound to this cache's kill switch."""
+        return capacity_is_in_force(raw, kill_switch=self._capacity_kill_switch)
+
+    def _keyed_capacity(
+        self,
+        previous: ReplicaState,
+        raw: object,
+        live: Fingerprint | None,
+    ) -> tuple[float, float | None, bool, Fingerprint | None, str]:
+        """Ingest *raw* against the live fingerprint → ``(weight, capacity,
+        calibrated, pin, note)``.
+
+        The pin travels with the NUMBER, not with the probe: as long as the
+        replica keeps publishing the same capacity, the fingerprint it first
+        arrived under is kept and re-validated every pass. A DEFINITE change in
+        that fingerprint discards the capacity — and the pin is RETAINED
+        alongside the discarded number so the very next pass, which sees the
+        same stale number republished, discards it again. (Dropping the pin on
+        discard would make the next pass read the stale number as brand new and
+        re-pin it to the new fingerprint — the capacity would resurrect itself
+        one refresh later, which is the exact failure this keying exists to
+        prevent.)
+
+        A capacity whose VALUE changes is a new measurement by definition, so
+        it re-pins to whatever fingerprint is live now: after a `lobes switch`,
+        routing falls back to the safe default until the operator recalibrates
+        (spec h16).
+        """
+        capacity = _as_capacity(raw)
+        if capacity is None:
+            # Nothing usable published — resolve (for the "refused value" note)
+            # and hold no pin.
+            resolved, note = self._resolve(raw)
+            return resolved, None, False, None, note
+        republished = previous.capacity == capacity and previous.capacity_fingerprint is not None
+        pin = previous.capacity_fingerprint if republished else live
+        if republished:
+            changed = _fingerprint_changed(pin, live)
+            if changed:
+                return (
+                    UNCALIBRATED_WEIGHT,
+                    capacity,
+                    False,
+                    pin,
+                    f"capacity discarded: measured under a different fingerprint ({changed})",
+                )
+        resolved, note = self._resolve(raw)
+        return resolved, capacity, self._in_force(raw), pin, note
 
     def current(self) -> tuple[ReplicaState, ...]:
         """The latest snapshot: local replica first, then peers in declared order.
@@ -441,7 +836,183 @@ class ReplicaCache:
         A pure read under the lock — never probes, never blocks. Every
         :class:`ReplicaState` is frozen, so the returned tuple is safe to hand
         straight to the selection policy on the request path.
+
+        Each state's load is this box's own dispatch bookkeeping RECONCILED
+        against the probed number (:meth:`_reconcile`), with the signed
+        adjustment reported separately as ``in_flight`` (so the purely probed
+        number is recoverable by subtraction). That reconciliation is what
+        makes a burst self-correct: probed load alone is up to one refresh
+        interval stale, so N concurrent arrivals would all read one idle
+        snapshot and stampede a single replica — exactly the herd that an
+        accurate capacity makes WORSE, since a genuinely least-full peer
+        attracts the whole burst instead of ties resolving to local.
         """
+        states = self._raw_states()
+        if not self._inflight and not self._completed:
+            return tuple(states)  # the common case: nothing to reconcile
+        now = self._now()
+        folded: list[ReplicaState] = []
+        for state in states:
+            probed = state.running + state.waiting
+            adjusted = self._reconcile(state.origin, probed, state.last_seen, now)
+            folded.append(state if adjusted == probed else _with_active(state, adjusted))
+        return tuple(folded)
+
+    # --- local in-flight accounting ---------------------------------------
+    #
+    # The API `server.py` (t5) drives. THREE entry points, in order of
+    # preference:
+    #
+    #   with cache.dispatch(origin):      # leak-proof: releases on any exit
+    #       ...
+    #
+    #   token = cache.begin_dispatch(origin)   # for a streamed response whose
+    #   ...                                    # completion is not lexically
+    #   cache.end_dispatch(token)              # scoped
+    #
+    # `end_dispatch` is idempotent and accepts ``None``/an unknown token, so a
+    # double release (a retry path plus a finally, say) is a no-op rather than
+    # a negative count, and every entry expires after
+    # :data:`INFLIGHT_MAX_AGE` regardless — three independent guards against
+    # the one failure mode that cannot self-heal, a leaked counter making a
+    # healthy box look permanently full.
+
+    def begin_dispatch(self, origin: str) -> int:
+        """Record one outstanding dispatch to *origin*; returns its token."""
+        now = self._now()
+        token = next(self._inflight_tokens)
+        with self._inflight_lock:
+            # Opportunistic prune — bounded work on a path that already has the
+            # lock, so a leak never accumulates unboundedly either.
+            for stale in [
+                tok for tok, (_o, start) in self._inflight.items() if now - start > INFLIGHT_MAX_AGE
+            ]:
+                self._inflight.pop(stale, None)
+            self._inflight[token] = (origin, now)
+        return token
+
+    def end_dispatch(self, token: int | None) -> None:
+        """Release the dispatch *token*, and remember that it FINISHED.
+
+        Idempotent; ``None`` (and an unknown token) is a no-op, and only a
+        token that was actually outstanding lands on the completion ledger —
+        so a double release can neither go negative nor record the same
+        completion twice.
+        """
+        if token is None:
+            return
+        now = self._now()
+        with self._inflight_lock:
+            entry = self._inflight.pop(token, None)
+            if entry is None:
+                return
+            origin, start = entry
+            self._completed.append((origin, start, now))
+            self._prune_completed(now)
+
+    def _prune_completed(self, now: float) -> None:
+        """Drop ledger entries older than :data:`COMPLETION_RETENTION`.
+
+        Called with ``_inflight_lock`` held. The deque is append-ordered by
+        completion time, so this is a bounded walk from the left.
+        """
+        cutoff = now - COMPLETION_RETENTION
+        while self._completed and self._completed[0][2] < cutoff:
+            self._completed.popleft()
+
+    @contextmanager
+    def dispatch(self, origin: str) -> Iterator[int]:
+        """Count one dispatch to *origin* for the duration of the block.
+
+        The preferred call shape: the release is in a ``finally``, so an
+        exception, an early ``return`` or a cancelled upstream cannot leak the
+        counter.
+        """
+        token = self.begin_dispatch(origin)
+        try:
+            yield token
+        finally:
+            self.end_dispatch(token)
+
+    def in_flight(self, origin: str, *, since: float | None = None) -> int:
+        """The SIGNED adjustment this box's own bookkeeping makes to *origin*'s
+        probed load — what :meth:`current` folds in. See :meth:`_reconcile`.
+
+        Positive when the probe has not seen work this box knows is out there,
+        NEGATIVE when the probe is still reporting work this box knows has
+        finished, and zero when the two agree (the steady state). *since*
+        overrides the probe stamp reconciled against; by default it is that
+        replica's own ``last_seen``.
+        """
+        probed = 0
+        for state in self._raw_states():
+            if state.origin == origin:
+                probed = state.running + state.waiting
+                if since is None:
+                    since = state.last_seen
+                break
+        return self._reconcile(origin, probed, since or 0.0, self._now()) - probed
+
+    def _reconcile(self, origin: str, probed: int, since: float, now: float) -> int:
+        """*origin*'s active count: the probe corrected by our own dispatches.
+
+        ``since`` is the probe's own stamp. A dispatch is registered before the
+        dial and released after the answer, so relative to that stamp each of
+        this box's dispatches to *origin* falls into exactly one bucket:
+
+        * **new** — started at/after the stamp. The probe cannot have seen it;
+          it is added outright. (This is the whole of the pre-F6 behaviour.)
+        * **outstanding-old** — started before the stamp and still running. The
+          probe MAY have seen it, but only if the request had actually reached
+          the engine when the sample was taken — the F6 race is precisely that
+          it had not. The probe's own count bounds how many of these it can
+          account for, so anything beyond ``probed`` is work the probe missed
+          and is added.
+        * **finished-old** — started before the stamp and finished after it.
+          The probe may have counted it, and it is demonstrably gone now, so it
+          is subtracted (bounded by ``probed``: we can only cancel load the
+          probe actually reported).
+
+        Both corrections are bounded by ``probed`` and therefore self-limiting:
+        this box never claims a peer is running work it never reported, and
+        never cancels more than it reported. Third-party load (another box
+        dispatching to the same peer) is included in ``probed`` and can make
+        the subtraction conservative for at most one refresh interval, after
+        which a fresh probe is authoritative again.
+        """
+        with self._inflight_lock:
+            outstanding = [
+                start
+                for entry_origin, start in self._inflight.values()
+                if entry_origin == origin and now - start <= INFLIGHT_MAX_AGE
+            ]
+            finished_old = sum(
+                1
+                for entry_origin, start, end in self._completed
+                if entry_origin == origin and start < since <= end
+            )
+        new = sum(1 for start in outstanding if start >= since)
+        outstanding_old = len(outstanding) - new
+        remaining = probed - min(probed, finished_old)
+        return max(remaining, outstanding_old) + new
+
+    def _count_inflight(self, origin: str, since: float, now: float) -> int:
+        """Outstanding dispatches to *origin* started at/after *since*.
+
+        The raw tally, with no probe reconciliation — :meth:`_reconcile` is
+        what the snapshot uses.
+        """
+        with self._inflight_lock:
+            entries = list(self._inflight.values())
+        return sum(
+            1
+            for entry_origin, start in entries
+            if entry_origin == origin and start >= since and now - start <= INFLIGHT_MAX_AGE
+        )
+
+    def _raw_states(self) -> tuple[ReplicaState, ...]:
+        """The snapshot exactly as probed — no in-flight fold. The lock is held
+        only for the dict reads; every state is frozen."""
         with self._lock:
             states: list[ReplicaState] = []
             if self._local_state is not None:
@@ -537,6 +1108,8 @@ class ReplicaCache:
         if fingerprint is None:
             return previous.evolve(ready=False, health="error", fingerprint=None)
         running, waiting = self._local_load(lane)
+        raw = lane.weight
+        resolved, capacity, calibrated, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=True,
             busy=False,  # local pressure is the caller's own signal, not a probe
@@ -545,8 +1118,12 @@ class ReplicaCache:
             waiting=waiting,
             fingerprint=fingerprint,
             compatible=True,
-            reason="",
+            reason=note,
             last_seen=self._now(),
+            weight=resolved,
+            capacity=capacity,
+            calibrated=calibrated,
+            capacity_fingerprint=pin,
         )
 
     def _peer_backend_entry(
@@ -643,6 +1220,12 @@ class ReplicaCache:
         )
         fingerprint = self._peer_fingerprint(caps_payload) if caps_payload is not None else None
         compatible, reason = compare_fingerprints(local_fp, fingerprint)
+        # The peer is the authority on its OWN capacity (q1): a value it
+        # publishes wins over the operator's fallback declaration for it.
+        raw = entry.get(PEER_CAPACITY_KEY)
+        if raw is None:
+            raw = peer.weight
+        resolved, capacity, calibrated, pin, note = self._keyed_capacity(previous, raw, fingerprint)
         return previous.evolve(
             ready=backend_health == "ok",
             busy=busy,
@@ -651,8 +1234,12 @@ class ReplicaCache:
             waiting=int(metrics.get("waiting", 0) or 0),
             fingerprint=fingerprint,
             compatible=compatible,
-            reason=reason,
+            reason=_with_note(reason, note),
             last_seen=last_seen,
+            weight=resolved,
+            capacity=capacity,
+            calibrated=calibrated,
+            capacity_fingerprint=pin,
         )
 
     # --- refresh passes ----------------------------------------------------

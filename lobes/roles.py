@@ -83,6 +83,7 @@ from dataclasses import dataclass
 
 from lobes.catalog import SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
+from lobes.gateway._replicas import UNCALIBRATED_WEIGHT
 from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
 from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._routing import RoutingTable
@@ -1127,7 +1128,21 @@ def _replica_row_from_state(state: ReplicaState) -> dict[str, object]:
         "compatible": state.compatible,
         "reason": state.reason,
         "fingerprint": dataclasses.asdict(state.fingerprint) if state.fingerprint else None,
+        # `weight` is the RESOLVED capacity `_selection.py` ranked by (post
+        # clamp, post kill switch) — unchanged key/meaning from before t6.
         "weight": state.weight,
+        # `capacity` (t6, additive) is the RAW capacity that replica claimed,
+        # pre-clamp — `None` when none was published. Kept alongside
+        # `weight` so a clamped peer (the diagnostic case: the two differ)
+        # is explainable from /capabilities alone, per the spec's h1/c24.
+        "capacity": state.capacity,
+        # `calibrated` (additive) says whether `weight` is a capacity actually
+        # IN FORCE. It is not derivable from the two numbers above: a MEASURED
+        # one-slot capacity and an unpublished one both show `weight: 1.0`,
+        # and a capacity discarded on a fingerprint change keeps its claimed
+        # `capacity` while reverting `weight`. This is the field that tells
+        # them apart, and the one `_selection.is_calibrated` reads.
+        "calibrated": state.calibrated,
     }
 
 
@@ -1136,6 +1151,15 @@ def _offline_replica_rows(
 ) -> list[dict[str, object]]:
     """The declared-only replica view: no probe ran, so every live field is
     honestly `None` rather than guessed — see :func:`annotate_replicas`.
+
+    ``weight``/``capacity``/``calibrated`` follow the same honesty rule (t6):
+    no probe ran, so no capacity was ingested — ``calibrated`` is ``False``,
+    ``weight`` reports the
+    :data:`~lobes.gateway._replicas.UNCALIBRATED_WEIGHT` sentinel (the
+    resolved-capacity fallback :func:`~lobes.gateway._selection.select_replica`
+    itself treats as "nothing published", never a measured one-slot capacity)
+    and ``capacity`` reports ``None`` — a not-probed row never guesses a raw
+    claimed number it never received.
     """
     local_origin = table.self_origin or "local"
     rows: list[dict[str, object]] = [
@@ -1149,7 +1173,9 @@ def _offline_replica_rows(
             "compatible": None,
             "reason": "not probed (offline)",
             "fingerprint": local_fingerprint,
-            "weight": 1.0,
+            "weight": UNCALIBRATED_WEIGHT,
+            "capacity": None,
+            "calibrated": False,
         }
     ]
     for origin in table.replica_origins.get(backend, ()):
@@ -1164,7 +1190,9 @@ def _offline_replica_rows(
                 "compatible": None,
                 "reason": "not probed (offline)",
                 "fingerprint": None,
-                "weight": 1.0,
+                "weight": UNCALIBRATED_WEIGHT,
+                "capacity": None,
+                "calibrated": False,
             }
         )
     return rows
@@ -1209,14 +1237,22 @@ def annotate_replicas(
 
     **replicas** — one entry per replica of the role, local first:
     ``{origin, local, ready, busy, running, waiting, compatible, reason,
-    fingerprint, weight}``. With a ``snapshot`` this is a straight
+    fingerprint, weight, capacity}``. With a ``snapshot`` this is a straight
     :class:`ReplicaState` → dict projection (live numbers, `None` fingerprint
     for an unprobed/incompatible peer). Without one (the CLI's offline path,
     which never has a live snapshot to hand) it is the DECLARED list only —
     :func:`_offline_replica_rows` — with every live field honestly ``None``
     and ``reason: "not probed (offline)"``, rather than guessing readiness
     from a config file (the same #96 lesson ``lobes capabilities``'s ``ready``
-    clamp already applies one level up).
+    clamp already applies one level up). ``weight`` (t6, additive) is the
+    RESOLVED capacity ``_selection.py`` ranked by — the ingested value after
+    the clamp and kill switch, or the
+    :data:`~lobes.gateway._replicas.UNCALIBRATED_WEIGHT` sentinel when
+    nothing was published or probed; ``capacity`` is the RAW capacity that
+    replica claimed, pre-clamp, ``None`` when none was published/probed. The
+    two are kept SEPARATE so a clamped peer — the case where they diverge —
+    is explainable from this row alone, rather than collapsed into one
+    number.
 
     Existing keys are never touched: ``feasible``/``proxied``/``hosted_by``/
     ``ready``/``loaded`` keep their documented type and single-owner meaning

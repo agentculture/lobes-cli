@@ -1718,8 +1718,13 @@ services:
       # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
       # with a perfectly healthy backend behind it (observed live 2026-07-31).
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
-      # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
-      # gateway wires a second backend only when these are present).
+      # Optional second generate backend. To add a fallback: run a
+      # vllm-fallback service and set FALLBACK_URL (+ optionally
+      # FALLBACK_SERVED_NAME) in .env — the gateway wires a second backend
+      # only when FALLBACK_URL is non-empty, so the empty defaults below
+      # leave the default fleet unchanged.
+      - FALLBACK_URL=${FALLBACK_URL:-}
+      - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-}
       # Minor co-resident generate backend (opt-in: activate with --profile minor
       # and set MINOR_BASE_URL in .env; empty defaults mean no backend is wired
       # unless the operator explicitly opts in — default fleet is unchanged).
@@ -1943,6 +1948,38 @@ services:
       - RERANK_PEER_API_KEYS=${RERANK_PEER_API_KEYS:-}
       - STT_PEER_API_KEYS=${STT_PEER_API_KEYS:-}
       - TTS_PEER_API_KEYS=${TTS_PEER_API_KEYS:-}
+      # Declared per-role CAPACITY (issue #199, capacity-relative pool
+      # routing): this box's own MEASURED max concurrently-active requests
+      # for that role, the weight the replica pool ranks a candidate's
+      # observed load against. Deliberately NOT <PREFIX>_MAX_NUM_SEQS —
+      # that knob is vLLM's OOM safety cap, not a validated throughput
+      # figure. Unset (the default) means this box declares no capacity
+      # and the pool falls back to its neutral ranking, byte-identical to
+      # a pre-#199 deployment. These MUST be listed here: the gateway does
+      # not use env_file (see the note above), so a knob an operator sets
+      # in .env but that is absent from this list never reaches the
+      # container and the feature is silently inert.
+      - PRIMARY_MAX_ACTIVE=${PRIMARY_MAX_ACTIVE:-}
+      - MULTIMODAL_MAX_ACTIVE=${MULTIMODAL_MAX_ACTIVE:-}
+      - MUSE_MAX_ACTIVE=${MUSE_MAX_ACTIVE:-}
+      - WORKER_MAX_ACTIVE=${WORKER_MAX_ACTIVE:-}
+      - ASSOCIATE_MAX_ACTIVE=${ASSOCIATE_MAX_ACTIVE:-}
+      - HAND_MAX_ACTIVE=${HAND_MAX_ACTIVE:-}
+      - EMBED_MAX_ACTIVE=${EMBED_MAX_ACTIVE:-}
+      - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
+      - STT_MAX_ACTIVE=${STT_MAX_ACTIVE:-}
+      - TTS_MAX_ACTIVE=${TTS_MAX_ACTIVE:-}
+      # GATEWAY_CAPACITY_KILL_SWITCH (issue #199): truthy pins EVERY
+      # resolved capacity — local and peer alike — back to the 1.0
+      # sentinel, reproducing today's ranking exactly while leaving the
+      # replica pool itself armed. Unset by default.
+      - GATEWAY_CAPACITY_KILL_SWITCH=${GATEWAY_CAPACITY_KILL_SWITCH:-}
+      # GATEWAY_FORCE_STRICT_TOOLS (colleague#320, opt-in, unset by
+      # default): injects "strict": true into every function tool on a
+      # cortex-lane chat request so tool-call arguments are grammar-
+      # constrained. Documented in env.example; must be listed here to
+      # reach the container at all.
+      - GATEWAY_FORCE_STRICT_TOOLS=${GATEWAY_FORCE_STRICT_TOOLS:-}
       # GATEWAY_SELF_ORIGIN (issue #199): this box's OWN origin, as its peers
       # would dial it (e.g. http://peer-a.example:8000) — used to stamp
       # X-Lobes-Served-By on a locally-answered pooled request so a caller

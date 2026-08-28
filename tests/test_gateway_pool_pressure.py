@@ -52,7 +52,9 @@ from lobes.gateway._config import build_config
 from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._selection import (
     REASON_LOCAL_BUSY_FORWARDED,
+    REASON_LOCAL_IDLE,
     REASON_NONE,
+    REASON_PEER_LESS_LOADED,
     REASON_SOLE_READY,
 )
 
@@ -69,6 +71,15 @@ _ORIN_KEY = "sk-orin-inbound-copy-0002"
 
 _HIGH_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 90.0}
 _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
+# Deviation d1 (capacity-relative-pool-routing): the two host signals split.
+# `swap` is first-party evidence that the box is PAGING — a resource the engine
+# itself needs — so it still sheds. `iowait` is a whole-host CPU-time statistic
+# that charges any process's block wait, including cgroups entirely outside
+# docker/vLLM (measured live: 60% iowait on a Spark whose engine read
+# running=0, traced to one sleeping desktop terminal with an EMPTY io.stat), so
+# on its own it no longer refuses POOLED work.
+_SWAP_ONLY_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 0.0}
+_IOWAIT_ONLY_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 90.0}
 
 
 # --- env / fixture builders --------------------------------------------------
@@ -164,7 +175,15 @@ def _state(
     waiting: int = 0,
     compatible: bool = True,
     weight: float = 1.0,
+    calibrated: bool | None = None,
 ) -> ReplicaState:
+    """A snapshot row, injected directly.
+
+    Pre-F2 cases in this file expressed "calibrated" by passing a weight other
+    than 1.0 and "uncalibrated" by leaving the 1.0 default, so `calibrated`
+    defaults to that same derivation and every such case keeps its intent. A
+    case needing the two decoupled (a MEASURED one-slot capacity) passes it.
+    """
     return ReplicaState(
         origin=origin,
         local=local,
@@ -178,6 +197,7 @@ def _state(
         reason="",
         last_seen=1.0,
         weight=weight,
+        calibrated=(weight != 1.0) if calibrated is None else calibrated,
     )
 
 
@@ -308,9 +328,35 @@ def test_busy_with_an_incompatible_peer_is_not_forwarded() -> None:
     assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_NONE
 
 
-def test_busy_peer_that_is_itself_busy_is_not_forwarded_to() -> None:
+def test_busy_peer_that_is_itself_busy_is_still_forwarded_to() -> None:
+    # RENEGOTIATED under deviation d1 — was
+    # `test_busy_peer_that_is_itself_busy_is_not_forwarded_to`, which asserted
+    # 429 + zero sockets. A PEER's `busy` flag is that peer's HOST-level
+    # pressure verdict, and host iowait is not a proxy for serving capacity
+    # (t3 decoupled candidacy from it, this test is that decision's pool-side
+    # face). The peer stays a candidate; what protects it is its OWN engine
+    # state — its capacity gate here and its own policy when the forward lands.
     table, cfg, specs = _build(_pool_env())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN, busy=True))
+    resp, calls = _post(
+        table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=snapshot
+    )
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _THOR_ORIGIN
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+
+
+def test_a_busy_peer_whose_engine_is_full_is_not_forwarded_to() -> None:
+    # The other half of d1, and the answer to "does decoupling make a
+    # saturated box attractive?" — no. A peer carrying the same pressure flag
+    # but whose CALIBRATED engine is at capacity is unselectable on the honest
+    # signal, so the shed stands and no socket leaves the box.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(
+        _state(_LOCAL_URL, local=True, busy=True),
+        _state(_THOR_ORIGIN, busy=True, weight=4.0, running=3, waiting=1),
+    )
     resp, calls = _post(
         table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=snapshot
     )
@@ -462,6 +508,251 @@ def test_a_marked_arrival_is_served_locally_when_not_busy() -> None:
     assert len(calls) == 1
     assert calls[0].backend.base_url == _LOCAL_URL
     assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+
+
+# ============================================================================
+# (2b) deviation d1 — the RECEIVING side stops shedding on a host-level
+# pressure verdict alone
+#
+# t3 decoupled the SENDING side: a peer's host pressure verdict no longer
+# gates whether we select it. The receiver still shed, so the chain was
+# "box A forwards -> box B refuses on its own iowait reading -> 429 relayed":
+# a wasted round trip and the same refusal. d1 moves the line.
+#
+# WHERE THE LINE SITS. A box protects itself on FIRST-PARTY evidence ABOUT
+# SERVING, and on nothing else:
+#
+#   * swap > threshold      -> SHED. The box is paging; weights and KV live in
+#                              the memory being paged, so a paging box serves
+#                              at a fraction of its rate and taking more work
+#                              cannot rescue it. Verifiable thrash.
+#   * engine at capacity    -> SHED (or forward). The serving lane itself is
+#                              full — the direct signal, and the one #199's
+#                              pool already ranks by.
+#   * iowait > threshold    -> NOT on its own, for a POOLED role. It is a
+#                              whole-host statistic charged for any process's
+#                              block wait, including cgroups outside docker
+#                              entirely. It still sets `mode: busy` (an honest
+#                              host observation, still published to peers and
+#                              to `lobes status --pressure`) — it just no
+#                              longer justifies refusing pooled work.
+#
+# The carve-out is POOLED-ONLY, deliberately. For a single-owner role a 429 is
+# honest backpressure ("nowhere else to go, come back later"); for a pooled
+# role it is a lie whenever a replica has room. Scoping it to pooled roles also
+# keeps h1 intact: a deployment with no `*_PEER_ORIGINS` is byte-identical to
+# the pre-pool contract, iowait shed included.
+# ============================================================================
+
+
+def test_iowait_only_pressure_serves_a_pooled_request_locally() -> None:
+    # d1, criterion 1: the poisoned-iowait Spark with an idle engine. Before
+    # d1 this was a 429 (or a pointless forward); now the box serves it itself.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _LOCAL_URL
+    assert _header(resp, S.SERVED_BY_HEADER) == _SPARK_ORIGIN
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_LOCAL_IDLE
+    assert _header(resp, S.PROXIED_BY_HEADER) is None
+
+
+def test_iowait_only_pressure_serves_a_marked_pooled_arrival() -> None:
+    # d1, criterion 1, the case that motivated the deviation: a request box A
+    # already forwarded lands on box B, whose only complaint is a host iowait
+    # reading. Serving it HERE is the whole point of the forward — and the
+    # single-hop rule is untouched (zero outbound sockets, `sole-ready`).
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        headers=[(S.PROXIED_HEADER, "primary")],
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _LOCAL_URL
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+    assert _header(resp, S.PROXIED_BY_HEADER) is None
+
+
+def test_swap_thrash_still_sheds_a_marked_pooled_arrival() -> None:
+    # d1, criterion 2: the line, from the other side. Identical request to the
+    # one above, iowait at ZERO and swap over the threshold — a genuinely
+    # thrashing box still refuses, and still never re-forwards.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        headers=[(S.PROXIED_HEADER, "primary")],
+        pressure=_SWAP_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 429
+    assert calls == []
+    assert _header(resp, "X-Lobes-Tier-Reason") == "busy"
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
+
+
+def test_a_full_fleet_queues_locally_under_iowait_only() -> None:
+    # RENEGOTIATED by deviation `d5` (was
+    # `test_a_full_local_engine_still_sheds_under_iowait_only`). d1 made a
+    # CALIBRATED local engine at capacity a shed signal; t10 measured the
+    # cost live — an 8-way flood at capacity 2 per box served 4/8 through the
+    # pool against 8/8 with the pool bypassed, the other four refused 429.
+    # Capacity was specified as a routing PREFERENCE (c5/h4), never admission
+    # control, so saturation now drives selection only. With every replica
+    # full, nothing is selectable and the request falls through to the LOCAL
+    # owner, where the engine's own queue holds it — the pre-pool behaviour,
+    # honestly marked `none`. The full contract is in
+    # tests/test_gateway_pool_saturation.py.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(
+        _state(_LOCAL_URL, local=True, weight=4.0, running=4),
+        _state(_THOR_ORIGIN, weight=4.0, running=2, waiting=2),
+    )
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 200
+    assert [c.backend.base_url for c in calls] == [_LOCAL_URL]
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_NONE
+
+
+def test_a_full_local_engine_forwards_to_a_peer_with_headroom() -> None:
+    # The same full local engine, but a peer with room: the box protects
+    # itself by FORWARDING, not by shedding. 429 stays reserved for "no
+    # replica anywhere can take it".
+    #
+    # RENEGOTIATED by deviation `d5`, in its REASON only. The placement is
+    # unchanged (`is_full` still excludes the saturated local replica, so the
+    # peer wins), but the exclusion is now a capacity fact rather than a
+    # pressure verdict — so `_selection.py`'s step-3 carve-out reports
+    # `peer-less-loaded` ("the local replica lost the utilisation comparison")
+    # instead of `local-busy-forwarded`. `local-busy-forwarded` still names a
+    # genuine local pressure verdict; see
+    # test_swap_pressure_still_forwards_with_local_busy_forwarded.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(
+        _state(_LOCAL_URL, local=True, weight=4.0, running=4),
+        _state(_THOR_ORIGIN, weight=4.0, running=1),
+    )
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 200
+    assert len(calls) == 1
+    assert calls[0].backend.base_url == _THOR_ORIGIN
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_PEER_LESS_LOADED
+
+
+def test_an_uncalibrated_local_engine_is_never_full() -> None:
+    # h3's promise, applied to the shed gate: the 1.0 weight sentinel means
+    # "no capacity published", never "a measured capacity of one slot". A box
+    # that has not been calibrated must not start refusing pooled work the
+    # moment it has a single request in flight.
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(_state(_LOCAL_URL, local=True, running=7), _state(_THOR_ORIGIN, running=9))
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=snapshot,
+    )
+    assert resp.status == 200
+    assert calls[0].backend.base_url == _LOCAL_URL
+
+
+def test_iowait_only_pressure_still_sheds_on_an_unpooled_box() -> None:
+    # h1, the reason the carve-out is pooled-only: a single-box deployment
+    # declares no `*_PEER_ORIGINS`, so its 429 stays byte-identical to the
+    # pre-pool contract — headers included. A 429 there is honest: there IS
+    # nowhere else for the request to go.
+    table, cfg, specs = _build(_base_env())
+    resp, calls = _post(table, cfg, specs, _body("cortex"), pressure=_IOWAIT_ONLY_PRESSURE)
+    assert resp.status == 429
+    assert calls == []
+    assert _header(resp, "X-Lobes-Tier-Reason") == "busy"
+    assert _header(resp, S.ROUTE_REASON_HEADER) is None
+
+
+def test_a_pooled_role_with_no_snapshot_still_sheds_on_iowait() -> None:
+    # The same rule from the other direction: declared peers but no snapshot
+    # provider injected (the pre-pool call shape) is NOT a pooled request, so
+    # the carve-out must not fire off the declaration alone.
+    table, cfg, specs = _build(_pool_env())
+    resp, calls = _post(table, cfg, specs, _body("cortex"), pressure=_IOWAIT_ONLY_PRESSURE)
+    assert resp.status == 429
+    assert calls == []
+
+
+def test_hand_is_still_the_floor_under_iowait_only_pressure() -> None:
+    # The floor is unconditional and d1 does not touch it: `hand` is served
+    # under either signal, and never dragged off-box by the primary's pool.
+    table, cfg, specs = _build(
+        _pool_env(
+            HAND_BASE_URL="http://vllm-hand:8000", HAND_SERVED_NAME="LiquidAI/LFM2.5-1.2B-Instruct"
+        )
+    )
+    for pressure in (_IOWAIT_ONLY_PRESSURE, _SWAP_ONLY_PRESSURE, _HIGH_PRESSURE):
+        resp, calls = _post(
+            table,
+            cfg,
+            specs,
+            _body("minor"),
+            pressure=pressure,
+            replica_snapshot=_snapshot(
+                _state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN)
+            ),
+        )
+        assert resp.status == 200
+        assert calls[0].backend.base_url == "http://vllm-hand:8000"
+        assert _header(resp, S.ROUTE_REASON_HEADER) is None
+
+
+def test_an_infeasible_role_still_404s_under_iowait_only_pressure() -> None:
+    # The feasibility gate outranks every load condition, d1's carve-out
+    # included: it runs before the pressure verdict is even computed.
+    table, cfg, specs = _build(_pool_env(PRIMARY_FEASIBLE="false"))
+    resp, calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        pressure=_IOWAIT_ONLY_PRESSURE,
+        replica_snapshot=_snapshot(_state(_THOR_ORIGIN)),
+    )
+    assert resp.status == 404
+    assert json.loads(resp.body)["error"]["code"] == "role_infeasible"
+    assert calls == []
 
 
 # ============================================================================
@@ -789,20 +1080,56 @@ def test_a_dropped_lane_gets_no_cache() -> None:
     assert "multimodal" not in caches
 
 
-def test_a_busy_peer_is_snapshotted_busy_and_sheds_the_forward() -> None:
+def test_an_incompatible_peer_in_a_live_snapshot_sheds_the_forward() -> None:
+    # RENAMED for accuracy (deviation d1) — was
+    # `test_a_busy_peer_is_snapshotted_busy_and_sheds_the_forward`, which
+    # claimed the peer's `busy` flag was what refused the forward. It never
+    # was: this fixture declares no PRIMARY_QUANTIZATION, so the local
+    # fingerprint reads `unknown` against the peer's `compressed-tensors` and
+    # the COMPATIBILITY gate is what sheds — asserted below so the name and
+    # the mechanism cannot drift apart again. Under d1 a busy-but-compatible
+    # peer IS forwarded to; that case is the test immediately following.
     table, cfg = build_config(_pool_env())
     specs = S.peer_specs_from_table(table, _pool_env())
     urlopen, _seen = _fake_urlopen(peer_busy=True)
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
     provider = S.replica_snapshot_provider(caches)
-    assert provider("primary")[1].busy is True
+    peer = provider("primary")[1]
+    assert peer.busy is True
+    assert peer.compatible is False  # <- the fact doing the work
+    assert peer.reason == "quantization: unknown"
 
-    # A live snapshot, not a hand-built one: the busy peer cannot absorb a shed.
+    # A live snapshot, not a hand-built one: an incompatible peer cannot
+    # absorb a shed no matter how idle it is.
     resp, calls = _post(
         table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=provider
     )
     assert resp.status == 429
     assert calls == []
+
+
+def test_a_busy_but_compatible_peer_in_a_live_snapshot_is_forwarded_to() -> None:
+    # The behaviour the test above was mis-named after, now covered for real:
+    # same live snapshot, same peer `busy` flag, but the fingerprints match —
+    # and under d1 a peer's host-level pressure verdict no longer removes it
+    # from the pool, so the shed becomes a forward.
+    env = _pool_env(PRIMARY_QUANTIZATION="compressed-tensors")
+    table, cfg = build_config(env)
+    specs = S.peer_specs_from_table(table, env)
+    urlopen, _seen = _fake_urlopen(peer_busy=True)
+    caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
+    provider = S.replica_snapshot_provider(caches)
+    peer = provider("primary")[1]
+    assert peer.busy is True
+    assert peer.compatible is True
+
+    resp, calls = _post(
+        table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=provider
+    )
+    assert resp.status == 200
+    assert [c.backend.base_url for c in calls] == [_THOR_ORIGIN]
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+    assert _header(resp, S.PROXIED_BY_HEADER) == _THOR_ORIGIN
 
 
 def test_capabilities_payload_carries_live_replicas_on_a_pooled_box() -> None:

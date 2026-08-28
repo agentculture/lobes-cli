@@ -492,6 +492,98 @@ def _replica_api_keys(
     return out
 
 
+class CapacityConfigError(ValueError):
+    """A ``<PREFIX>_MAX_ACTIVE`` value could not be parsed as a number.
+
+    Raised by :func:`_local_capacities` (capacity-relative-pool-routing,
+    issue #199, t1). A malformed capacity is worse than a missing one — an
+    absent value falls back cleanly to a neutral default a later task
+    chooses, but a value that silently parsed to something other than what
+    the operator typed would poison ranking without any visible error. So
+    this fails loudly at config-build time instead, naming the offending
+    backend and knob.
+    """
+
+
+# Per-backend "this box's own declared max ACTIVE requests for this role"
+# channel (capacity-relative-pool-routing, issue #199, t1). Same nine
+# ``<PREFIX>_<KNOB>`` backend-name keys as every other channel in this module
+# (mirrors :data:`PEER_ORIGINS_ENV` exactly). This is deliberately NOT
+# ``<PREFIX>_MAX_NUM_SEQS`` — that knob already exists (rendered per-card by
+# the profile system) but names vLLM's OOM safety cap, not a measured
+# throughput capacity; conflating the two would let an OOM guard silently
+# double as a routing weight it was never validated to be (see docs/plans/
+# 2026-08-27-capacity-relative-pool-routing.md, s3/c4). The MEASURED knee a
+# calibration routine produces (a later task) is what an operator is meant to
+# write here — this task only parses whatever number is present.
+MAX_ACTIVE_ENV: dict[str, str] = {
+    "primary": "PRIMARY_MAX_ACTIVE",
+    "multimodal": "MULTIMODAL_MAX_ACTIVE",
+    "muse": "MUSE_MAX_ACTIVE",
+    "worker": "WORKER_MAX_ACTIVE",
+    "associate": "ASSOCIATE_MAX_ACTIVE",
+    "hand": "HAND_MAX_ACTIVE",
+    "embed": "EMBED_MAX_ACTIVE",
+    "rerank": "RERANK_MAX_ACTIVE",
+    "stt": "STT_MAX_ACTIVE",
+    "tts": "TTS_MAX_ACTIVE",
+}
+
+# The sentinel every replica ranks at today (weight hardcoded 1.0 everywhere
+# — see lobes/gateway/_selection.py's own docstring). Named here, not
+# inlined, so the kill switch below and a later ranking task both cite the
+# same constant rather than two independently-typed "1.0"s drifting apart.
+CAPACITY_SENTINEL: float = 1.0
+
+# A single global env knob (deliberately NOT per-backend, unlike every other
+# channel in this module) that pins every resolved capacity — local AND
+# peer alike — back to :data:`CAPACITY_SENTINEL`, reproducing today's
+# ranking exactly while leaving the replica pool itself armed. Capacity-
+# relative routing's own kill switch (capacity-relative-pool-routing, issue
+# #199, t1, q4): the pool keeps routing and forwarding, only the capacity
+# INPUT reverts to 1.0. Read once at gateway start by :func:`_local_capacities`;
+# a later task (t4) applies the same switch to a probed PEER capacity before
+# it reaches `_selection.py`, so "local and peer alike" holds end to end.
+CAPACITY_KILL_SWITCH_ENV = "GATEWAY_CAPACITY_KILL_SWITCH"
+
+
+def _local_capacities(env: Mapping[str, str]) -> dict[str, float]:
+    """This box's own declared max-active-requests capacity, per backend name.
+
+    Read from ``<PREFIX>_MAX_ACTIVE`` (see :data:`MAX_ACTIVE_ENV`). Absent or
+    blank for a name yields NO entry — never a fabricated default and never
+    an error: the neutral fallback a caller should use for an undeclared
+    capacity is a ranking-policy decision made downstream (issue #199, t3),
+    not baked into this config layer. A present-but-unparseable value (e.g.
+    ``PRIMARY_MAX_ACTIVE=lots``) raises :class:`CapacityConfigError` naming
+    the backend and the offending value, rather than silently falling back
+    as if it had been absent.
+
+    When :data:`CAPACITY_KILL_SWITCH_ENV` is truthy (see :func:`_as_bool`),
+    every one of the nine role names resolves to :data:`CAPACITY_SENTINEL`
+    instead, and any declared ``<PREFIX>_MAX_ACTIVE`` values are ignored —
+    the kill switch always wins. A single-box deployment that sets neither
+    the per-role knobs nor the kill switch gets an empty mapping, byte-
+    identical to today's absence of any capacity signal.
+    """
+    if _as_bool(env, CAPACITY_KILL_SWITCH_ENV):
+        return dict.fromkeys(MAX_ACTIVE_ENV, CAPACITY_SENTINEL)
+    out: dict[str, float] = {}
+    for name, key in MAX_ACTIVE_ENV.items():
+        raw = (env.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            out[name] = float(raw)
+        except ValueError as exc:
+            raise CapacityConfigError(
+                f"{name.upper()}: {key}={raw!r} is not a valid number — "
+                "a declared capacity must be a plain float (this box's own "
+                "measured max active requests for that role)."
+            ) from exc
+    return out
+
+
 def _self_origin(env: Mapping[str, str]) -> str:
     """This box's own OPERATOR-DECLARED origin, from ``GATEWAY_SELF_ORIGIN``.
 
@@ -642,6 +734,23 @@ class ServerConfig:
     # never appear in repr/str of this object (logs, tracebacks, debug
     # output).
     api_key: str | None = field(default=None, repr=False)
+    # This box's own declared max-active-requests capacity per backend name
+    # (capacity-relative-pool-routing, issue #199, t1). Populated by
+    # :func:`_local_capacities` from ``<PREFIX>_MAX_ACTIVE`` (see
+    # :data:`MAX_ACTIVE_ENV`) — absent/blank names are simply missing from
+    # this mapping, never defaulted here; the neutral fallback for a missing
+    # name is a ranking-policy decision a later task (t3) makes at the point
+    # of use. Defaults to empty so an untouched deployment is unaffected.
+    local_capacities: Mapping[str, float] = field(default_factory=dict)
+    # The capacity kill switch (see :data:`CAPACITY_KILL_SWITCH_ENV`):
+    # when True, `local_capacities` above already holds
+    # :data:`CAPACITY_SENTINEL` for every role name — this field is the
+    # flag itself, carried through so a later task (t4) can apply the SAME
+    # switch to a probed PEER capacity before it reaches
+    # `lobes.gateway._selection`, satisfying "local and peer alike" end to
+    # end. Default False (off) — the pool's capacity signal is live by
+    # default wherever a capacity is declared.
+    capacity_kill_switch: bool = False
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -1238,5 +1347,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         public_url=(env.get("GATEWAY_PUBLIC_URL") or "").rstrip("/") or None,
         force_strict_tools=_as_bool(env, "GATEWAY_FORCE_STRICT_TOOLS"),
         api_key=_gateway_api_key(env),
+        local_capacities=_local_capacities(env),
+        capacity_kill_switch=_as_bool(env, CAPACITY_KILL_SWITCH_ENV),
     )
     return table, server
