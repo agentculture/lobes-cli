@@ -354,8 +354,9 @@ def test_blank_capacity_is_treated_as_unset() -> None:
 
 
 def test_malformed_capacity_raises_loudly() -> None:
+    env = _base_env(PRIMARY_MAX_ACTIVE="not-a-number")
     with pytest.raises(CapacityConfigError):
-        build_config(_base_env(PRIMARY_MAX_ACTIVE="not-a-number"))
+        build_config(env)
 
 
 def test_kill_switch_forces_sentinel_for_every_role_name_ignoring_declared() -> None:

@@ -781,7 +781,8 @@ def test_a_peer_publishing_no_capacity_falls_back_and_stays_routable() -> None:
     peer = _by_origin(cache.current())[PEER]
     assert peer.weight == R.UNCALIBRATED_WEIGHT
     assert peer.capacity is None
-    assert peer.ready is True and peer.compatible is True
+    assert peer.ready is True
+    assert peer.compatible is True
     assert S.is_calibrated(peer) is False
     assert S.is_full(peer) is False
 
@@ -794,7 +795,8 @@ def test_an_inflated_peer_capacity_is_clamped_and_the_clamp_is_in_the_reason() -
     assert "clamped" in peer.reason
     assert "10000" in peer.reason
     # Still poolable — a clamp bounds a peer's share, it does not evict it.
-    assert peer.compatible is True and peer.ready is True
+    assert peer.compatible is True
+    assert peer.ready is True
 
 
 def test_a_clamped_capacity_is_observable_rather_than_silent() -> None:
@@ -1010,9 +1012,13 @@ def test_the_dispatch_context_manager_counts_while_open_and_releases_on_exit() -
 def test_the_dispatch_context_manager_releases_on_an_exception() -> None:
     cache = _cache(_default_routes())
     cache.refresh()
-    with pytest.raises(RuntimeError):
+
+    def _dispatch_and_raise() -> None:
         with cache.dispatch(PEER):
             raise RuntimeError("upstream blew up mid-stream")
+
+    with pytest.raises(RuntimeError):
+        _dispatch_and_raise()
     assert cache.in_flight(PEER) == 0
 
 
@@ -1150,7 +1156,8 @@ def test_concurrent_arrivals_spread_across_two_idle_replicas() -> None:
         picked.append(choice.origin)
         held.append(cache.begin_dispatch(choice.origin))
     assert set(picked) == {LOCAL_URL, PEER}
-    assert picked.count(LOCAL_URL) == 2 and picked.count(PEER) == 2
+    assert picked.count(LOCAL_URL) == 2
+    assert picked.count(PEER) == 2
     for token in held:
         cache.end_dispatch(token)
     assert all(state.in_flight == 0 for state in cache.current())
