@@ -567,7 +567,7 @@ def _local_capacities(env: Mapping[str, str]) -> dict[str, float]:
     identical to today's absence of any capacity signal.
     """
     if _as_bool(env, CAPACITY_KILL_SWITCH_ENV):
-        return {name: CAPACITY_SENTINEL for name in MAX_ACTIVE_ENV}
+        return dict.fromkeys(MAX_ACTIVE_ENV, CAPACITY_SENTINEL)
     out: dict[str, float] = {}
     for name, key in MAX_ACTIVE_ENV.items():
         raw = (env.get(key) or "").strip()
