@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-27T14:00:50Z",
-  "updated": "2026-08-28T13:09:46Z",
+  "updated": "2026-08-28T14:28:48Z",
   "targets": [
     {
       "id": "c1",
@@ -517,6 +517,14 @@
     {
       "id": "r5",
       "text": "when Thor moves to DSpark to match the Spark's spec, both boxes' capacities auto-invalidate rather than going stale: t4 pins each capacity to the (served_id, quantization, max_model_len, runtime) fingerprint and discards it on change, falling back to the uncalibrated sentinel until 'lobes calibrate' is re-run. The recalibration is required, not optional -- routing degrades to even-split until it happens.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "OPERATOR DECISION (2026-08-28): capacity stays 2 and 2 -- it encodes each machine's PARALLELISM capacity (how many requests it can run at once), not its throughput. Rejected the alternative of weighting by decode rate. Consequence, recorded so it is not mistaken for a defect: the Spark is ~2.7x faster per stream (49.24 vs 18.18 tok/s single-stream) yet receives an equal share, so pooled gain comes partly from offloading to a faster box rather than from capacity-proportional routing. _selection.py's docstring calls weight a 'declared decode weight (higher is faster/more capacity)'; under this decision it is read strictly as slots, and that docstring wording should be corrected to match.",
       "kind": "follow_up",
       "task_id": null,
       "resolved": false,

@@ -115,3 +115,72 @@ f. **A regression was found here and fixed before this transcript.** The first
    t13 moved saturation to selection-only. These numbers are from dev457, after
    that fix. No offline test caught it — it lives in the interaction between the
    pressure verdict and the dispatch loop's fallthrough.
+
+================================================================================
+## AMENDMENT (same day) — the 8-way measurement above was the WRONG SHAPE
+
+Operator review flagged that the 8-way aggregate conflates two effects:
+distributing work, and simply using a faster machine. Re-measured per box, and
+at fleet capacity rather than beyond it.
+
+### Per-box, measured directly against each vllm-primary (pool bypassed)
+
+                     1 stream        2 streams (== that box's max_num_seqs)
+  Thor               18.18 tok/s     50.71 tok/s
+  Spark              49.24 tok/s     87.82 tok/s
+
+The Spark is ~2.7x faster per stream. Any pooled aggregate therefore mixes
+"work was distributed" with "work landed on the faster box", and the 8-way
+figure above cannot separate them.
+
+### At fleet capacity (4 concurrent == 2 slots + 2 slots)
+
+  Thor alone, 4 concurrent          50.71 tok/s
+  pooled, 4 concurrent              98.64 / 97.99 / 97.72 / 66.39 / 50.82 tok/s
+
+  best/typical pooled               ~98 tok/s  =  +94% over single-box
+
+### Why ~98 and not ~138
+
+138.5 (= 50.71 + 87.82) assumes both boxes stay busy for the whole window. With
+an EVEN 2/2 split of equal work they cannot: the faster box finishes first and
+idles.
+
+  Thor   222 tokens / 50.71 = 4.38 s
+  Spark  222 tokens / 87.82 = 2.53 s
+  wall   = max(4.38, 2.53)  = 4.38 s  ->  444 / 4.38 = 101.4 tok/s CEILING
+
+Measured 98.6 = **97% of the even-split ceiling**. The implementation is
+near-optimal for the chosen policy; the gap to 138.5 is the intrinsic cost of
+splitting evenly between unequal boxes, not inefficiency in the router.
+
+Reaching ~138 would require capacity-PROPORTIONAL splitting (more work to the
+faster box). OPERATOR DECISION 2026-08-28 (risk r6): capacity stays 2 and 2,
+because it encodes each machine's PARALLELISM capacity -- how many requests it
+can run at once -- not its throughput. The even split is intended, not a defect.
+
+### Open defect found by this amendment: stale peer load suppresses the split
+
+One run in five forwarded NOTHING and fell back to single-box (50.82 tok/s).
+Correlated against the replica snapshot taken immediately before each run:
+
+  before run 3:  peer ready=True busy=True run=2 ...  -> 50.82 tok/s, 0 forwarded
+  before run 4:  peer ready=True busy=True run=0 ...  -> 98.64 tok/s, 2 forwarded
+
+Run 3's snapshot still showed the Spark at run=2 from the PREVIOUS burst's two
+forwarded requests, which had already completed. At capacity=2 that reads as
+full, so the peer was unselectable and everything queued locally. Cause is the
+5 s `_DEFAULT_REFRESH_INTERVAL`: local in-flight accounting (t4/t5) corrects
+herding WITHIN a burst but does not correct probe data that is stale-HIGH
+between bursts.
+
+Impact: degrades to single-box throughput, never to an error, so it is a missed
+optimisation rather than a regression. Not fixed here. Candidate directions:
+age out probe load, or prefer locally-derived in-flight over a probe older than
+the last completion for that origin.
+
+### Correction to the headline above
+
+The "+29.5%" reported earlier is real but measured beyond fleet capacity, where
+overflow queues locally and dilutes the result. At fleet capacity the pool
+delivers **+94%**. The 8-way figure understates the design; both are recorded.

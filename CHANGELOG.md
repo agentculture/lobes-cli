@@ -139,7 +139,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   captured under this same artifact, per risk `r1`); `lobes calibrate` was not
   exercised on hardware; and capacity is an even 2:2 split ceilinged by
   `max_num_seqs`, so the capacity-*proportional* arm of the design remains
-  untested.
+  untested. **Amended the same day** after operator review: the 8-way figure was
+  the wrong shape — beyond fleet capacity the overflow queues locally and
+  dilutes the result, and the aggregate cannot separate "work was distributed"
+  from "work landed on the faster box" (the Spark is ~2.7x faster per stream:
+  49.24 vs 18.18 tok/s). Measured at fleet capacity (4 concurrent = 2 slots + 2
+  slots) the pool delivers **50.71 -> ~98.6 tok/s, +94%**. That is **97% of the
+  even-split ceiling** of 101.4 tok/s — 138.5 is unreachable with an even split
+  because the faster box finishes its half early and idles, which is the
+  intrinsic cost of the operator's decision (risk `r6`) that capacity encodes
+  each machine's PARALLELISM capacity rather than its throughput. One further
+  defect is recorded and NOT fixed: one run in five forwarded nothing because
+  the 5 s probe still reported the peer at `run=2` from a completed burst, which
+  at `capacity=2` reads as full — local in-flight accounting corrects herding
+  within a burst but not probe data that is stale-high between bursts.
 
 - **Engine saturation drives selection, not shedding (`d5`, found by live
   acceptance).** `d1`'s receiving-side work made `active >= capacity` a shed

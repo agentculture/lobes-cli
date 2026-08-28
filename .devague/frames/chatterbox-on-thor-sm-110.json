@@ -1,0 +1,414 @@
+{
+  "slug": "chatterbox-on-thor-sm-110",
+  "title": "chatterbox on thor (sm_110)",
+  "schema_version": 2,
+  "status": "drafting",
+  "created": "2026-07-17T07:52:13Z",
+  "updated": "2026-07-17T08:43:41Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes serves Chatterbox TTS on the Jetson AGX Thor: the audio overlay's TTS lane builds and speaks on sm_110, not just on the Spark GB10",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "the chatterbox container built from the repinned Dockerfile reaches healthy on the physical Thor and returns valid PCM16 mono 24 kHz from POST /v1/audio/speech \u2014 an on-device transcript, not an inference from the spike",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "repin torch/torchaudio 2.11.0+cu128 -> +cu130 (and the --extra-index-url) in lobes/templates/fleet/Dockerfile.chatterbox; rewrite the forward-compat comment block to state the arch axis explicitly; correct the cu128 recipe in docs/chatterbox-tts.md (~47-50) and pyproject.toml's [chatterbox] comment (~34-36); narrow the 'arm64 / Blackwell (sm_120) works' table row (line 33) to the cards that actually booted; scaffold audio on the Thor (lobes init --fleet --audio) and capture the transcript under docs/evidence/"
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Dockerfile.chatterbox repins torch/torchaudio 2.11.0+cu128 -> +cu130: the cu128 aarch64 wheel's libtorch_cuda.so carries SASS for sm_80/90/100/120 and zero PTX (cuobjdump --list-elf/--list-ptx), so it cannot execute on Thor's sm_110; cu130 is proven on this box (running model-gear-vllm-muse reports torch 2.11.0+cu130, arch list includes sm_110, cap (11,0))",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the repinned image builds on the physical Thor and its in-container torch reports sm_110 in get_arch_list() with a real GPU op executing \u2014 PROVEN by the 2026-07-17 spike (c11), pending only the same check in the shipped image",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Perth's C extension is re-validated to import cleanly against the cu130 torch/torchaudio ABI \u2014 Dockerfile.chatterbox's own header states the lean nvidia/cuda base was chosen (over NGC pytorch) BECAUSE NGC's torchaudio ABI-conflicts with resemble-perth at import, and explicitly warns not to move these versions without re-validating that",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "'import perth' and PerthImplicitWatermarker() succeed inside the cu130 image with no symbol lookup failure \u2014 PROVEN by the 2026-07-17 spike (c11): PerthNet (Implicit) loaded at step 250,000",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the machine-profile schema is NOT extended to carry the torch pin: lobes/profiles/schema.py:31-40 deliberately excludes stt/tts from ROLES ('fixed audio sidecars (Parakeet / Chatterbox) with no machine-dependent vLLM knobs of their own'), and RoleProfile's knob set is vLLM SERVING knobs only (gpu_mem_util/max_model_len/quantization/kv_cache_dtype/attention_backend/enforce_eager/max_num_seqs) \u2014 a build-time CUDA-arch pin is neither a role nor a serving knob",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the shipped diff touches no file under lobes/profiles/ \u2014 schema.py's ROLES tuple and RoleProfile's knob set are byte-identical after the change",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "a SINGLE cu130 pin serves both cards rather than per-card pins \u2014 cu130 ships both sm_120 (Spark GB10 sm_121) and sm_110 (Thor), so one image plausibly covers the mesh; this is the preferred end-state precisely because per-card pinning has no home in the profile schema (see the boundary claim) and would mean extending a system explicitly designed to exclude these sidecars",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "the Spark's currently-proven cu128 path is not silently regressed: if the single-pin route is taken, cu130 is re-validated ON the Spark before cu128 is dropped \u2014 the Spark is the only card where Chatterbox has a passing transcript (2026-06-21)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "contradiction with c17?",
+          "resolved": false,
+          "blocking": true
+        }
+      ],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "CI is not made to build or validate this image: .github/workflows/tests.yml runs entirely on ubuntu-latest (x86) with no docker build step for any Dockerfile \u2014 validation stays a live on-device boot plus an evidence transcript under docs/evidence/, per the #108 rule. No claim of Thor TTS support lands before that transcript does",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "the shipped diff adds no docker build step to .github/workflows/ \u2014 validation rests on the docs/evidence/ transcript alone, and the Dockerfile's 'CI does NOT build this' header stays true",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c8",
+      "kind": "non_goal",
+      "text": "Parakeet/STT on Thor is NOT in this scope: Dockerfile.parakeet is FROM scitrera/dgx-spark-vllm:0.16.0-t4 \u2014 a third-party, DGX-Spark-TARGETED base with no pin to bump, a different class of fix and not ours to repin. thor-muse hosts both stt and tts, so shipping TTS must not be read as 'audio works on Thor'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "no GPU budget or profile knob moves: tegrastats reads RAM 97243/125772MB (muse's util 0.55 reservation already inside that ~97GB), leaving ~28GB against Chatterbox's ~3.1GB VRAM (docs/chatterbox-tts.md:30). Capacity is a non-issue \u2014 this is purely an arch/pin problem and must not turn into a rebudgeting exercise",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "no *_GPU_MEM_UTIL or *_MAX_MODEL_LEN value changes in any profile or .env; muse's util 0.55 is untouched and chatterbox runs alongside it without a rebudget",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "the cu128 recipe is corrected everywhere it is stated, not just in the Dockerfile: docs/chatterbox-tts.md (manual recipe ~lines 47-50; the bake-off table's 'arm64 / Blackwell (sm_120) works' at line 33, which reads family-wide but is only true for the sm_120 line; and the 'VALIDATED on DGX Spark' scope), and pyproject.toml's [chatterbox] extra comment (~lines 34-36) which names the cu128 index URL as the recipe",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "grep -rn 'cu128' across the repo returns no stale recipe outside CHANGELOG history, and docs/chatterbox-tts.md's support table names sm_110 and sm_121 separately rather than a family-wide 'Blackwell (sm_120)' row",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c11",
+      "kind": "decision",
+      "text": "SPIKE RESULT (2026-07-17, physical Thor): Perth is ABI-clean on cu130 \u2014 v1 is answered, not assumed. A faithful copy of Dockerfile.chatterbox with ONLY cu128->cu130 swapped builds, and in-container: torch 2.11.0+cu130 / torchaudio 2.11.0+cu130, arch list ['sm_80','sm_90','sm_100','sm_110','sm_120'], capability (11,0), 'import perth' clean + PerthImplicitWatermarker instantiates + PerthNet (Implicit) loads at step 250,000, a real cuda matmul executes on sm_110, and ChatterboxTTS imports. The documented failure mode the lean base guards against is a symbol lookup failure AT IMPORT alongside NGC torchaudio \u2014 that is precisely what was tested and it does not reproduce",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c12",
+      "kind": "audience",
+      "text": "operators running the lobes audio overlay on a non-Spark Blackwell card \u2014 concretely the thor-muse box, whose shape declares hosts=[muse,embedder,reranker,stt,tts] but whose TTS image cannot execute on sm_110; and, downstream, any mesh box that is not a DGX Spark",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the thor-muse shape's hosts list includes tts while the box reports capability (11,0) \u2014 the audience is real and currently unserved, not hypothetical",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c13",
+      "kind": "after_state",
+      "text": "Dockerfile.chatterbox pins torch/torchaudio 2.11.0+cu130 as the single pin for both cards; the chatterbox image builds and speaks on the physical Thor (sm_110); an acceptance transcript lands under docs/evidence/; and every stated cu128 recipe + the family-wide 'Blackwell (sm_120) works' claim is corrected to what actually booted",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "on the Thor: docker shows the chatterbox container healthy, POST /v1/audio/speech returns valid PCM16 mono 24 kHz, and grep -rn cu128 finds no live recipe outside CHANGELOG history",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c14",
+      "kind": "before_state",
+      "text": "the TTS lane is contractually hosted on Thor and silently unrunnable: Dockerfile.chatterbox pins cu128 wheels carrying SASS for sm_80/90/100/120 and no PTX, so first GPU op on sm_110 would die with 'no kernel image is available for execution on the device' \u2014 behind a green CI that builds no Dockerfile at all",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "reproducible on demand: cuobjdump --list-elf on the cu128 wheel's libtorch_cuda.so lists sm_80/90/100/120 with an empty --list-ptx, and no workflow under .github/workflows/ contains a docker build step",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c15",
+      "kind": "why_it_matters",
+      "text": "the same family-level inference that sank the reranker (#105) and the Gemma tool parsers (#142) sank this: 'Blackwell' is treated as one arch when Spark is sm_121 and Thor is sm_110. Correcting the pin AND the rationale comment is what stops the next sidecar repeating it \u2014 the comment currently reads 'cu128 runs on cu130 hosts', full stop, which is true about the driver axis and silent about the arch axis",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "a reader can determine from the rewritten Dockerfile comment ALONE which cards the pin covers \u2014 it names the arch axis (which sm_* the wheel carries) separately from the driver axis (forward-compat)",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "on the physical Thor: the chatterbox container reaches healthy, POST /v1/audio/speech returns valid PCM16 mono 24 kHz, and the evidence transcript under docs/evidence/ shows torch 2.11.0+cu130 with sm_110 in the arch list \u2014 plus docs/chatterbox-tts.md no longer claims support for a card that has not booted it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the evidence transcript records all three together: container healthy, valid PCM16 24 kHz out, and torch 2.11.0+cu130 with sm_110 in get_arch_list()",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "the Spark's cu130 path is NOT claimed on Thor's transcript: per q1 this ships Thor-validated only, so docs must state cu130 is proven on sm_110 and UNVALIDATED on the Spark GB10 (whose only passing Chatterbox transcript, 2026-06-21, is on cu128) \u2014 with a follow-up issue filed for the Spark re-boot. #108: no support claim without a transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "docs/chatterbox-tts.md states cu130 is proven on sm_110 and UNVALIDATED on the Spark GB10, and a follow-up issue for the Spark re-boot exists and is linked from #145",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": ""
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "does cu130's torchaudio still satisfy Perth's C extension, or does it reproduce the NGC-class ABI conflict the lean base was chosen to avoid? Not decidable without building the image on-device",
+      "kind": "unknown_blocking",
+      "claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "whether the rest of the --no-deps pinned stack (chatterbox-tts==0.1.7, transformers==5.2.0, diffusers==0.29.0, s3tokenizer==0.3.0, resemble-perth==1.0.1) rides along unchanged on the cu130 ABI, or whether any of them needs a matching bump",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "whether Chatterbox's ~3.1GB VRAM and ~0.55-0.64 RTF (both DGX Spark GB10 measurements) hold on Thor's sm_110 \u2014 the perf numbers are inherited from a different card and are UNMEASURED here, exactly like the pin was",
+      "kind": "unknown_nonblocking",
+      "claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/templates/fleet/Dockerfile.chatterbox (torch/torchaudio cu128 pin + forward-compat rationale)",
+      "finding": "pins torch==2.11.0+cu128/torchaudio==2.11.0+cu128 via --extra-index-url .../whl/cu128; its comment justifies this as 'cu128 wheels run on the cu130 host driver via CUDA forward-compatibility (validated on DGX Spark, 580.126.09)' \u2014 true but off-axis: forward-compat spans the driver/runtime gap, never synthesizes SASS for an uncompiled arch. The misleading comment is itself in scope, else the pin recurs",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "torch-2.11.0+cu128-cp312-cp312-manylinux_2_28_aarch64.whl (the wheel the Dockerfile installs)",
+      "finding": "downloaded (517MB) and dumped: cuobjdump --list-elf libtorch_cuda.so -> sm_80/sm_90/sm_100/sm_120 only; --list-ptx -> empty. No sm_110 SASS and no PTX to JIT from (and compute_120 PTX could not JIT DOWN to sm_110 anyway). Validated 2026-06-21 on Spark GB10 = sm_121, which sm_120 SASS covers via minor-version compat \u2014 that is why this never surfaced",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "model-gear-vllm-muse container (the live cu130 counter-example on this box)",
+      "finding": "torch 2.11.0+cu130 with arch list ['sm_80','sm_90','sm_100','sm_110','sm_120'] and device capability (11,0) \u2014 cu130 is the Thor-safe line, proven on the target card, and torch-2.11.0+cu130 aarch64 wheels exist on download.pytorch.org/whl/cu130",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "Dockerfile.chatterbox base-image rationale + resemble-perth==1.0.1 --no-deps install",
+      "finding": "the lean nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04 base exists specifically because NGC pytorch's bundled torchaudio ABI-conflicts with Perth's C extension; Perth is installed --no-deps AFTER torch so it links the cu128 ABI. Moving to cu130 re-opens exactly the question that rationale closes \u2014 the repin is not a one-line bump",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/profiles/schema.py:31-40 (ROLES) + RoleProfile knob set",
+      "finding": "ROLES = (cortex, senses, muse, embedder, reranker) \u2014 stt/tts excluded on the stated premise that they are 'fixed audio sidecars with no machine-dependent vLLM knobs of their own'. #145 does not falsify that comment literally (a torch wheel arch is not a vLLM knob) but collides with its CONCLUSION: Chatterbox IS machine-dependent, just at build time. RoleProfile carries only serving knobs, so there is no build-knob field to hang a per-card pin on",
+      "seeds": [
+        "c4",
+        "c5"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/profiles/builtin/thor.toml + spark.toml",
+      "finding": "both declare only [roles.cortex|senses|embedder|reranker] serving knobs; neither mentions stt/tts/chatterbox/parakeet at all \u2014 confirming the schema exclusion is real in the data, not just the comment. A per-card torch pin would need BOTH a ROLES extension and a new non-vLLM knob class",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/templates/fleet/docker-compose.audio.yml build args (the fallback mechanism, if per-card is ever forced)",
+      "finding": "the chatterbox service already passes build args from env: MODEL_GEAR_VERSION and LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}. So an env -> compose -> build-arg path for a torch index URL already has a working precedent and would NOT need new machinery \u2014 but it would still need a per-card source for the value, which the profile schema declines to be",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": ".github/workflows/tests.yml + Dockerfile.chatterbox CI disclaimer",
+      "finding": "every job is runs-on: ubuntu-latest and NO workflow contains a docker build step \u2014 the Dockerfile's own header claim ('CI is CPU-only x86 and does NOT build this Dockerfile') is accurate. So nothing in CI can catch a card-wrong pin; only a live boot can. This is why #145 sat undetected behind a green pipeline",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "lobes/templates/fleet/Dockerfile.parakeet + docs/parakeet-stt.md:128",
+      "finding": "FROM scitrera/dgx-spark-vllm:0.16.0-t4 \u2014 a third-party DGX-Spark-specific base, unchecked on sm_110 and with no torch pin to bump (the base itself is card-targeted). Dockerfile.realtime is FROM python:3.12-slim (CPU bridge) and looks unaffected. STT is a separate, likely harder blocker",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "physical Thor box state (tegrastats, ~/.lobes/.env, thor-muse shape)",
+      "finding": "shape thor-muse declares hosts = [muse, embedder, reranker, stt, tts] \u2014 the box is CONTRACTUALLY a TTS host while the image cannot run on the card. The audio overlay was never scaffolded here (no docker-compose.audio.yml, no CHATTERBOX_PORT in .env), so the #145 failure is PREDICTED from the arch dump, not observed \u2014 no build/boot was attempted",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "docs/chatterbox-tts.md + pyproject.toml [chatterbox] extra",
+      "finding": "the cu128 recipe is stated in THREE places (Dockerfile pins, docs manual recipe ~47-50, pyproject extra comment ~34-36) and the support claim 'arm64 / Blackwell (sm_120) works' (line 33) reads as family-wide. Fixing only the Dockerfile leaves two copies of the wrong recipe and a support table that still overclaims \u2014 same shape as #105: 'Blackwell' is not one arch",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "cu130 spike build + in-container ABI/GPU probe (scratchpad Dockerfile.spike, image lobes/chatterbox-cu130-spike:test)",
+      "finding": "built the real Dockerfile.chatterbox recipe with only the cu128->cu130 swap (lobes-cli layer omitted as orthogonal, pins to a PyPI release per #99). Perth imports, instantiates and loads its net; cuda matmul runs on sm_110; ChatterboxTTS imports. Proves the repin is sufficient for the ABI risk AND that sm_110 kernels execute \u2014 the two things #145 could only predict",
+      "seeds": [
+        "c11"
+      ]
+    }
+  ]
+}
