@@ -32,6 +32,8 @@ while [[ $# -gt 0 ]]; do
     status|issues|metrics|hotspots|accept)
       COMMAND="$1"; shift ;;
     --project|-p)   require_value "$1" "$#"; PROJECT="$2";        shift 2 ;;
+    --pull-request|--pr)
+                    require_value "$1" "$#"; PULL_REQUEST="$2";   shift 2 ;;
     --severity|-s)  require_value "$1" "$#"; SEVERITY="$2";       shift 2 ;;
     --type|-t)      require_value "$1" "$#"; TYPE="$2";           shift 2 ;;
     --limit|-l)     require_value "$1" "$#"; LIMIT="$2";          shift 2 ;;
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --project, -p KEY       Project key (default: \$SONAR_PROJECT)"
+      echo "  --pull-request, --pr N  Scope to a PR's NEW CODE (status/issues)"
       echo "  --severity, -s LEVEL    Filter: BLOCKER, CRITICAL, MAJOR, MINOR, INFO"
       echo "  --type, -t TYPE         Filter: BUG, VULNERABILITY, CODE_SMELL"
       echo "  --limit, -l N           Max results (default: 25)"
@@ -90,7 +93,9 @@ api_get() {
 
 cmd_status() {
   local response
-  response=$(api_get "/api/qualitygates/project_status?projectKey=${PROJECT}")
+  local pr_q=""
+  [[ -n "${PULL_REQUEST:-}" ]] && pr_q="&pullRequest=${PULL_REQUEST}"
+  response=$(api_get "/api/qualitygates/project_status?projectKey=${PROJECT}${pr_q}")
 
   if [[ "$RAW" == "true" ]]; then
     echo "$response" | jq .
@@ -118,6 +123,7 @@ cmd_status() {
 
 cmd_issues() {
   local params="componentKeys=${PROJECT}&ps=${LIMIT}"
+  [[ -n "${PULL_REQUEST:-}" ]] && params="${params}&pullRequest=${PULL_REQUEST}"
   [[ -n "$SEVERITY" ]] && params="${params}&severities=${SEVERITY}"
   [[ -n "$TYPE" ]] && params="${params}&types=${TYPE}"
 

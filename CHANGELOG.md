@@ -48,6 +48,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   success-shaped payload to stdout before failing — matching how `up` and `init`
   already handle a refused write.
 
+- **SonarCloud on #221's new code: seven smells cleared, three refused.** Cleared
+  a `dict.fromkeys` simplification, three multi-throw `pytest.raises` blocks
+  (each narrowed to the single call under test, then sanity-checked by
+  temporarily breaking the pinned behaviour), and three composite assertions.
+  **Refused** three `S1940` "use the opposite operator" findings and marked them
+  ACCEPTED with rationale: `not (value > 0.0)` and `value <= 0.0` are NOT
+  equivalent under IEEE-754, since every comparison against NaN is False. The
+  negated form is a deliberate single check refusing NaN, zero and negatives
+  together — the rewrite would let a NaN capacity reach division and ranking,
+  which is the same defect class flagged on this PR's CLI arguments.
+- **`sonarclaude` gained `--pull-request/--pr`.** The vendored script could only
+  query project-wide, so PR-scoped new-code findings were invisible through it
+  and a project-wide query returned "0 issues in this PR's files" while the PR
+  view showed ten. Needs upstreaming to steward.
+
 ### Notes
 
 - One finding was **pushed back**, not fixed: Qodo flagged `_resolve_tier` for
