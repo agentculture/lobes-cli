@@ -662,13 +662,14 @@ def test_the_booby_trap_is_not_vacuous(monkeypatch) -> None:
         weight=1.0,
     )
     peer_specs = S.peer_specs_from_table(table, env)
+    body = _body("cortex")
     with pytest.raises(AssertionError, match="reached"):
         S.handle_post(
             table,
             cfg,
             "/v1/chat/completions",
             [],
-            _body("cortex"),
+            body,
             _opener_ok,
             pressure=_NO_PRESSURE,
             peer_specs=peer_specs,
