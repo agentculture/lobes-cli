@@ -5,16 +5,23 @@ Ramps concurrency against a role and reports the measured knee via
 writes the measured concurrency to ``.env`` as ``<PREFIX>_MAX_ACTIVE`` — and
 refuses to when the ramp never demonstrated a genuine plateau.
 
-All tests are hermetic: :func:`lobes.cli._commands.calibrate.run_concurrent`
+Most tests are hermetic: :func:`lobes.cli._commands.calibrate.run_concurrent`
 is monkeypatched at its imported name — no HTTP, no docker, no live engine
 (mirrors ``tests/test_benchmark_all_lobes.py``'s pattern). The autouse
 ``offline_runtime`` fixture in ``tests/conftest.py`` already neutralises every
 other external probe (docker, ``/health``, the live-``/capabilities`` probe).
+One block below (the F4 auth-propagation acceptance test) deliberately does
+NOT monkeypatch ``run_concurrent`` — it needs the REAL
+:class:`concurrent.futures.ThreadPoolExecutor` fan-out to exercise the bug —
+and instead runs a real loopback HTTP server, mirroring
+``tests/test_cli_gateway_auth.py``'s pattern.
 """
 
 from __future__ import annotations
 
+import http.server
 import json
+import threading
 
 import pytest
 
@@ -63,13 +70,20 @@ def _make_fake_run_concurrent(*, ms_per_token: dict, ttft_ms: dict, calls: list 
                 "total_s": 0.1,
             }
         mpt = ms_per_token[concurrency]
+        # aggregate_tok_s = concurrency * (1000 / mpt); reproduced here via
+        # total_completion_tokens / total_s (total_s pinned to 1.0) so the
+        # canned plateau/rising shapes stay numerically identical under the
+        # real (F3-fixed) `_aggregate_tok_s`, which reads THOSE two fields
+        # rather than `ms_per_token`.
+        aggregate_tok_s = concurrency * (1000.0 / mpt)
         return {
             "concurrency": concurrency,
             "requests_per_s": round(concurrency / (mpt / 1000.0), 3),
             "p50_latency_ms": mpt,
             "p95_latency_ms": mpt,
             "ms_per_token": mpt,
-            "total_s": 0.5,
+            "total_s": 1.0,
+            "total_completion_tokens": aggregate_tok_s,
         }
 
     return _fake
@@ -230,10 +244,15 @@ def test_calibrate_apply_refuses_when_ramp_never_plateaus(tmp_path, capsys, monk
         ]
     )
     assert rc != 0
-    err = json.loads(capsys.readouterr().err)
+    captured = capsys.readouterr()
+    err = json.loads(captured.err)
     assert "never plateaued" in err["message"] or "never plateaued" in err.get("remediation", "")
     # Nothing was written.
     assert _read_env(tmp_path, "PRIMARY_MAX_ACTIVE") is None
+    # Qodo F8 pin: a refused --apply must not write a success-shaped result
+    # to stdout — automation that only reads stdout must never see a
+    # misleading payload despite the nonzero exit.
+    assert captured.out == ""
 
 
 def test_calibrate_dry_run_still_reports_top_of_ramp_result(tmp_path, capsys, monkeypatch) -> None:
@@ -291,6 +310,7 @@ def test_calibrate_apply_refuses_zero_concurrency_ttft_bound_violation(
     )
     assert rc != 0
     assert _read_env(tmp_path, "PRIMARY_MAX_ACTIVE") is None
+    assert capsys.readouterr().out == ""  # Qodo F8 pin
 
 
 def test_calibrate_apply_allows_a_ttft_bound_stop_with_positive_concurrency(
@@ -391,18 +411,155 @@ def test_calibrate_rejects_non_positive_schedule_value(tmp_path, capsys) -> None
 
 
 # ---------------------------------------------------------------------------
+# Qodo review finding F7 (#221) — non-finite (NaN/Infinity) and non-positive
+# values must be REJECTED for every new numeric argument this verb added, at
+# the CLI layer, before any ramp runs. `float("nan")`/`float("inf")` both
+# parse cleanly through argparse's own `type=float` — a NaN `--ttft-bound-s`
+# makes every `ttft_s > ttft_bound_s` comparison False, silently disabling
+# the guard, so a bad flag must fail loudly here instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_value", ["nan", "inf", "-inf", "0", "-1.0"])
+def test_calibrate_rejects_non_finite_or_non_positive_ttft_bound(tmp_path, capsys, bad_value):
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            f"--ttft-bound-s={bad_value}",
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    err = json.loads(capsys.readouterr().err)
+    assert "ttft-bound-s" in err["message"]
+
+
+@pytest.mark.parametrize("bad_value", ["nan", "inf", "-inf"])
+def test_calibrate_rejects_non_finite_min_relative_gain(tmp_path, capsys, bad_value):
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            "--ttft-bound-s",
+            "5.0",
+            f"--min-relative-gain={bad_value}",
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    err = json.loads(capsys.readouterr().err)
+    assert "min-relative-gain" in err["message"]
+
+
+@pytest.mark.parametrize("bad_value", ["0", "-1"])
+def test_calibrate_rejects_non_positive_max_tokens(tmp_path, capsys, bad_value):
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            "--ttft-bound-s",
+            "5.0",
+            "--max-tokens",
+            bad_value,
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    err = json.loads(capsys.readouterr().err)
+    assert "max-tokens" in err["message"]
+
+
+@pytest.mark.parametrize("bad_value", ["nan", "inf", "-inf", "0", "-5"])
+def test_calibrate_rejects_non_finite_or_non_positive_timeout(tmp_path, capsys, bad_value):
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            "--ttft-bound-s",
+            "5.0",
+            f"--timeout={bad_value}",
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    err = json.loads(capsys.readouterr().err)
+    assert "timeout" in err["message"]
+
+
+def test_calibrate_accepts_finite_positive_min_relative_gain(tmp_path, monkeypatch):
+    """Sanity check: a normal, valid --min-relative-gain is NOT rejected."""
+    _scaffold_fleet(tmp_path)
+    monkeypatch.setattr(
+        calibrate_cmd,
+        "run_concurrent",
+        _make_fake_run_concurrent(ms_per_token=_PLATEAU_MS_PER_TOKEN, ttft_ms=_LOW_TTFT),
+    )
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            "--ttft-bound-s",
+            "5.0",
+            "--min-relative-gain",
+            "0.1",
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc == 0
+
+
+def test_require_finite_rejects_nan_and_infinity_directly() -> None:
+    with pytest.raises(calibrate_cmd.ModelGearError):
+        calibrate_cmd._require_finite(float("nan"), "--x")
+    with pytest.raises(calibrate_cmd.ModelGearError):
+        calibrate_cmd._require_finite(float("inf"), "--x")
+    with pytest.raises(calibrate_cmd.ModelGearError):
+        calibrate_cmd._require_finite(0.0, "--x")
+    assert calibrate_cmd._require_finite(1.5, "--x") == 1.5
+    assert calibrate_cmd._require_finite(None, "--x", allow_none=True) is None
+
+
+# ---------------------------------------------------------------------------
 # Unit tests on the pure/driver helpers directly (no CLI dispatch)
 # ---------------------------------------------------------------------------
 
 
 def test_aggregate_tok_s_from_run_concurrent_row() -> None:
-    row = {"concurrency": 4, "ms_per_token": 100.0}
+    row = {"total_completion_tokens": 400, "total_s": 10.0}
     assert calibrate_cmd._aggregate_tok_s(row) == pytest.approx(40.0)
 
 
 def test_aggregate_tok_s_zero_when_degenerate() -> None:
-    row = {"concurrency": 4, "ms_per_token": 0.0}
+    row = {"total_completion_tokens": 400, "total_s": 0.0}
     assert calibrate_cmd._aggregate_tok_s(row) == 0.0
+
+
+def test_aggregate_tok_s_uses_total_tokens_over_wall_time_not_mean_reciprocal() -> None:
+    """Qodo F3 pin: the aggregate must be total_completion_tokens / total_s,
+    NOT concurrency * (1000 / ms_per_token) — the two diverge sharply
+    whenever completion lengths/latencies are unequal across the batch."""
+    row = {
+        "concurrency": 2,
+        "ms_per_token": 10.0,
+        "total_completion_tokens": 110,
+        "total_s": 1.0,
+    }
+    assert calibrate_cmd._aggregate_tok_s(row) == pytest.approx(110.0)
+    # The old (wrong) formula would have given 2 * (1000 / 10) = 200.0.
+    old_wrong_formula = row["concurrency"] * (1000.0 / row["ms_per_token"])
+    assert old_wrong_formula == pytest.approx(200.0)
+    assert calibrate_cmd._aggregate_tok_s(row) != pytest.approx(old_wrong_formula)
 
 
 def test_drive_calibration_pure_over_injected_measure() -> None:
@@ -437,3 +594,101 @@ def test_no_calibration_logic_imported_from_gateway_package() -> None:
     assert "lobes.gateway._selection" not in src
     assert "lobes.gateway._replicas" not in src
     assert "lobes.gateway.server" not in src
+
+
+# ---------------------------------------------------------------------------
+# Qodo review finding F4 (#221) — cmd_calibrate() installs the gateway's
+# Authorization header via a ContextVar (lobes.assess.auth_headers), but
+# run_concurrent's ThreadPoolExecutor workers do NOT inherit the caller's
+# context on their own. This block does NOT monkeypatch run_concurrent — it
+# needs the real ThreadPoolExecutor fan-out to exercise the bug — and instead
+# runs a real, header-capturing loopback HTTP server end to end through
+# `lobes.cli.main`, mirroring `tests/test_cli_gateway_auth.py`'s pattern.
+# ---------------------------------------------------------------------------
+
+_CALIBRATE_AUTH_KEY = "calibrate-s3cr3t"
+
+
+class _CalibrateAuthCapturingHandler(http.server.BaseHTTPRequestHandler):
+    """Records every request's Authorization header; always answers 200."""
+
+    seen: list = []
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length:
+            self.rfile.read(length)
+        type(self).seen.append(self.headers.get("Authorization"))
+        body = json.dumps(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5},
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802 - only /health is hit, pre-dispatch
+        if self.path == "/health":
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *_a) -> None:  # silence test noise
+        pass
+
+
+@pytest.fixture
+def calibrate_auth_server():
+    handler = type(
+        "_BoundCalibrateAuthCapturingHandler", (_CalibrateAuthCapturingHandler,), {"seen": []}
+    )
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield httpd.server_address[1], handler
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_calibrate_propagates_gateway_auth_header_to_every_ramp_request(
+    tmp_path, calibrate_auth_server
+) -> None:
+    """Every outbound request `lobes calibrate` fires — throughput AND TTFT,
+    across every concurrent worker — must carry the deployment's configured
+    Authorization header, even though `run_concurrent` fans them out across
+    `ThreadPoolExecutor` worker threads that do not automatically inherit the
+    dispatching thread's `contextvars.Context`."""
+    port, handler = calibrate_auth_server
+    _scaffold_fleet(tmp_path)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "VLLM_PORT", str(port))
+    _env.set_env(tmp_path / _compose.ENV_FILE, "GATEWAY_API_KEY", _CALIBRATE_AUTH_KEY)
+
+    rc = main(
+        [
+            "calibrate",
+            "cortex",
+            "--ttft-bound-s",
+            "5.0",
+            "--schedule",
+            "3",  # one level, but concurrency=3 -> 3 workers per call
+            "--compose-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    # One throughput call + one TTFT call, each fanning out to 3 workers.
+    assert len(handler.seen) == 6
+    assert all(auth == f"Bearer {_CALIBRATE_AUTH_KEY}" for auth in handler.seen)
