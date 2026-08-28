@@ -424,8 +424,10 @@ by role name, each value carrying exactly these fields:
         "running": int,
         "waiting": int,
         "compatible": bool,               # served id + quantization + max context + runtime all agree
-        "reason": str,                    # e.g. "" when compatible, else which field differs
+        "reason": str,                    # which field differs, and/or a capacity note (clamp, discard) — see below
         "fingerprint": {...} | None,
+        "weight": float,                  # RESOLVED capacity `_selection.py` ranks by (post clamp, post kill switch); 1.0 = uncalibrated sentinel
+        "capacity": float | None,         # RAW capacity as CLAIMED by the replica, pre-clamp; None when none was published/probed
       },
       ...
     ],
@@ -456,6 +458,21 @@ failure/rollback table — lives in
 NVFP4 pair (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the CLI view is `lobes capabilities --replicas` / `lobes endpoint
 <role> --replicas`, which also prints a "would choose: `<origin>`
 (`<reason>`)" line.
+
+**`weight` vs `capacity` (capacity-relative-pool-routing, 2026-08-27,
+additive on top of the replica row above).** `weight` is the number
+`_selection.py` actually ranks by — the RESOLVED capacity, after this box's
+ingest clamp and after `GATEWAY_CAPACITY_KILL_SWITCH` if it is engaged.
+`capacity` is the RAW number that replica claimed on its own `/status`,
+pre-clamp, and is `None` when it never published one. The two are kept
+separate rather than collapsed into one field because a **clamped** peer is
+exactly the case where they diverge — a replica claiming `capacity: 128` but
+ranked at `weight: 64.0` is visibly explained by the clamp, versus a replica
+that never published anything at all (`capacity: null`, `weight: 1.0`, the
+uncalibrated sentinel). An offline/not-probed row reports `capacity: null`
+and `weight` at the sentinel, matching the honesty rule every other live
+field in this row already follows — a row that was never probed does not
+guess a number it never received.
 
 **`tools`** answers "can I put an OpenAI `tools` array on a request to this
 role?" — `true` for the four generate lobes (`cortex`/`senses`/`muse`/`worker`), `false`

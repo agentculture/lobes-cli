@@ -717,6 +717,7 @@ every pooled answer carries one honest placement marker plus why:
 | `X-Lobes-Served-By` | a LOCALLY-served pooled answer | this box's own `GATEWAY_SELF_ORIGIN`, or `local` if unset |
 | `X-Lobes-Proxied-By` | a FORWARDED pooled answer | the peer origin that actually served it (same header proxy-lobes already defines) |
 | `X-Lobes-Route-Reason` | every pooled answer | why: `local-idle` \| `peer-less-loaded` \| `local-busy-forwarded` \| `affinity` \| `sole-ready` \| `none` |
+| `X-Lobes-Route-Load` | every pooled answer | the capacity/utilisation the placement used, e.g. `active=1; capacity=8; utilisation=0.125; calibrated=true` — `calibrated=false` marks the neutral substitute rather than a measured one-slot capacity |
 | `X-Lobes-Route-Attempts` | only when >1 replica was dispatched to | a pre-dispatch failure retried the next selectable replica |
 
 A caller may also send `X-Lobes-Affinity: <key>` on a request to a pooled
@@ -724,6 +725,19 @@ role to prefer a sticky replica (honoured only when it stays selectable and
 not worse-placed by more than a declared margin); it is forwarded to
 whichever peer is chosen. With no pool declared, none of these headers ever
 appear — byte-identical to the pre-pool response.
+
+**`peer-less-loaded` was redefined by capacity-relative pool routing
+(2026-08-27); the vocabulary's membership is unchanged.** It used to mean
+"the peer has fewer active requests"; it now means "the peer is less loaded
+*relative to its own published capacity*" — a peer with MORE active requests
+than this box can legitimately win it if it has more headroom — and it is
+also now emitted when the local replica is excluded from selectability for
+being full on capacity, a state that previously reported
+`local-busy-forwarded`. A caller parsing the old closed set still gets the
+same six strings, but should not assume `peer-less-loaded` still means
+"fewer requests". See
+[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)
+for the full mechanism.
 
 ### Public exposure via Cloudflare Tunnel
 
