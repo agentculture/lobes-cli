@@ -82,13 +82,20 @@ Capacity and the uncalibrated fallback
 --------------------------------------
 
 `weight` is the capacity carrier: a replica's measured max active requests
-(the throughput knee, NOT the `--max-num-seqs` OOM cap). `1.0` is the
-UNCALIBRATED SENTINEL, not a measured capacity of one slot — it is the value
-`_replicas.py` / `roles.py` leave in place when a peer publishes nothing (an
-older lobes, or a non-lobes replica). Reading that sentinel as a real
-one-slot capacity would rank an uncalibrated peer 8x worse than a calibrated
-weight-8 peer at the same single active request (1/1.0 vs 1/8), silently
-draining a mixed-version fleet toward whichever boxes happen to be
+(the throughput knee, NOT the `--max-num-seqs` OOM cap). `1.0` is the value
+`_replicas.py` / `roles.py` leave in place when nothing was published (an
+older lobes, or a non-lobes replica) — but whether a capacity was published
+is carried by the SEPARATE `calibrated` flag, never inferred from the weight.
+That separation is load-bearing: `lobes calibrate` can validly measure and
+persist a knee of 1 (a box whose engine admits one request at a time has
+exactly that capacity), and reading every 1.0 as "nothing published" made
+such a replica never full and ranked it as uncalibrated, so its measured
+capacity did not affect routing at all.
+
+Reading an UNPUBLISHED capacity as a real one-slot capacity is the opposite
+mistake, and equally wrong: it would rank an uncalibrated peer 8x worse than
+a calibrated weight-8 peer at the same single active request (1/1.0 vs 1/8),
+silently draining a mixed-version fleet toward whichever boxes happen to be
 calibrated. So an uncalibrated replica ranks at a NEUTRAL capacity instead:
 the median of the calibrated capacities present in the same candidate set,
 falling back to `_DEFAULT_NEUTRAL_CAPACITY` when nothing in the set is
@@ -141,8 +148,9 @@ REASON_NONE = "none"
 _WEIGHT_EPSILON = 1e-9
 
 # The weight a replica carries when NO capacity has been published for it.
-# It is a sentinel, not a measured capacity of one slot — see the module
-# docstring's "Capacity and the uncalibrated fallback".
+# It is a FALLBACK VALUE only: "was a capacity published?" is answered by the
+# replica's own `calibrated` flag, never by comparing against this number —
+# see the module docstring's "Capacity and the uncalibrated fallback".
 UNCALIBRATED_WEIGHT = 1.0
 
 # Neutral capacity for an uncalibrated replica when NOTHING in the candidate
@@ -169,9 +177,16 @@ class ReplicaLike(Protocol):
     compatible: bool
     running: int
     waiting: int
-    # Capacity carrier: measured max active requests. `UNCALIBRATED_WEIGHT`
-    # (1.0) is the "nothing published" sentinel, not a one-slot capacity.
+    # Capacity carrier: measured max active requests. Meaningful only when
+    # `calibrated` is True; otherwise it is the `UNCALIBRATED_WEIGHT`
+    # fallback and this module substitutes a neutral capacity for ranking.
     weight: float
+    # Whether `weight` is a capacity actually IN FORCE for this replica. Set
+    # at ingest by the producer (`_replicas.ReplicaState`), which is the only
+    # place that knows whether anything was published, whether the kill switch
+    # is engaged, and whether a pinned capacity was discarded on a fingerprint
+    # change. A measured capacity of exactly 1 is legal and sets this True.
+    calibrated: bool
 
 
 @dataclass(frozen=True)
@@ -209,11 +224,15 @@ def _active(replica: ReplicaLike) -> int:
 def is_calibrated(replica: ReplicaLike) -> bool:
     """True when *replica* carries a real measured capacity.
 
-    The `UNCALIBRATED_WEIGHT` sentinel and any non-positive weight both mean
-    "no capacity published for this replica".
+    Two independent conditions, and the weight's VALUE is deliberately not one
+    of them: the producer must have declared a capacity in force
+    (`calibrated`), and that capacity must be usable arithmetic (a
+    non-positive weight is a misdeclaration, not a capacity). A published
+    capacity of exactly one slot therefore reads as calibrated — see the
+    module docstring.
     """
 
-    return replica.weight > _WEIGHT_EPSILON and replica.weight != UNCALIBRATED_WEIGHT
+    return replica.calibrated and replica.weight > _WEIGHT_EPSILON
 
 
 def neutral_capacity(candidates: Sequence[ReplicaLike]) -> float:

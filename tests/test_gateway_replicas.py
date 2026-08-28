@@ -1038,16 +1038,91 @@ def test_in_flight_is_folded_into_waiting_so_estimated_wait_self_corrects() -> N
 
 
 def test_a_dispatch_older_than_the_last_probe_is_not_counted_twice() -> None:
-    """Once a probe has SEEN the request, the probed number is authoritative."""
+    """Once a probe has SEEN the request, the probed number is authoritative.
+
+    The probe is MADE to see it here (the metrics body flips to running=1
+    before the second refresh). It used to be asserted on the strength of the
+    timestamp alone, with the probe still reporting an idle engine — which is
+    exactly the undercount F6 names, and is now pinned by
+    ``test_a_dispatch_the_probe_raced_past_is_still_counted`` below.
+    """
     clock = _Clock()
-    cache = _cache(_default_routes(), monotonic=clock)
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
     cache.refresh()
     token = cache.begin_dispatch(LOCAL_URL)
     assert _by_origin(cache.current())[LOCAL_URL].in_flight == 1
+    routes[LOCAL_URL + "/metrics"] = (200, _metrics_body(running=1))
     clock.t += 1.0
     cache.refresh()  # the probe now reports the request itself
-    assert _by_origin(cache.current())[LOCAL_URL].in_flight == 0
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.in_flight == 0
+    assert local.running + local.waiting == 1
     cache.end_dispatch(token)
+
+
+def test_a_dispatch_the_probe_raced_past_is_still_counted() -> None:
+    """F6 (Qodo, PR #221): a dispatch is registered BEFORE the dial, so a probe
+    that completes in the window between the token and the request reaching the
+    engine samples neither. Discarding the token because its start predates
+    ``last_seen`` then loses the request from both sides at once — the burst
+    undercount this accounting exists to prevent.
+    """
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+    token = cache.begin_dispatch(LOCAL_URL)  # registered, not yet on the engine
+    clock.t += 0.05
+    cache.refresh()  # probe samples an engine that has not seen it yet: 0
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.running + local.waiting == 1, "the raced dispatch vanished"
+    assert local.in_flight == 1
+    cache.end_dispatch(token)
+
+
+def test_a_probe_that_saw_only_some_of_a_burst_counts_the_rest() -> None:
+    """The partial-race case: three outstanding, the probe caught one."""
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+    tokens = [cache.begin_dispatch(LOCAL_URL) for _ in range(3)]
+    routes[LOCAL_URL + "/metrics"] = (200, _metrics_body(running=1))
+    clock.t += 0.05
+    cache.refresh()
+    local = _by_origin(cache.current())[LOCAL_URL]
+    assert local.running + local.waiting == 3
+    for token in tokens:
+        cache.end_dispatch(token)
+
+
+def test_probe_load_from_a_burst_that_has_already_finished_is_not_read_as_full() -> None:
+    """The mirror defect, measured live in the t10 acceptance AMENDMENT: a
+    probe reported the peer at ``run=2`` from a burst that had ALREADY
+    completed. At capacity 2 that reads as full, the peer becomes unselectable
+    and the whole next burst queues locally (one run in five: 50.82 tok/s
+    against 98.6). Our own completions are the evidence that probed load is
+    stale, and they are now reconciled against it.
+    """
+    clock = _Clock()
+    routes = _default_routes()
+    cache = _cache(routes, monotonic=clock)
+    cache.refresh()
+
+    tokens = [cache.begin_dispatch(PEER) for _ in range(2)]
+    clock.t += 1.0
+    routes[PEER + "/status"] = (200, _status_body(running=2, capacity=2))
+    cache.refresh()  # the probe sees the burst: genuinely 2 active
+    assert _by_origin(cache.current())[PEER].running == 2
+
+    clock.t += 1.0
+    for token in tokens:
+        cache.end_dispatch(token)  # both finish BEFORE the next probe
+
+    peer = _by_origin(cache.current())[PEER]
+    assert peer.running + peer.waiting == 0, "stale probe load survived our completions"
+    assert S.is_full(peer) is False
 
 
 def test_a_leaked_dispatch_expires_and_never_makes_a_box_look_full_forever() -> None:

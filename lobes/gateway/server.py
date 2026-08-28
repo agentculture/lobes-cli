@@ -1873,6 +1873,30 @@ def _dial_selected(
     return None, forwarded.attempts
 
 
+def _counted_local_dial(
+    dial_local: LocalDial,
+    headers: list[tuple[str, str]],
+    release: "Callable[[], None]",
+) -> "tuple[GatewayResponse | None, list[str]]":
+    """``dial_local(headers)`` with *release* fired on every way out.
+
+    The same count/dial/release sandwich :func:`_pool_attempt` uses, and for
+    the same reason: an answer with an ``upstream`` still to relay is not
+    finished, so its release rides on the response and the handler fires it
+    after the relay; everything else (a buffered answer, the owner-down
+    failure, an exception) is complete here and is released here.
+    """
+    answer: GatewayResponse | None = None
+    try:
+        answer, attempts = dial_local(headers)
+        if answer is not None:
+            answer = _hand_off_release(answer, release)
+        return answer, attempts
+    finally:
+        if answer is None or answer.on_complete is not release:
+            release()
+
+
 def _hand_off_release(response: GatewayResponse, release: "Callable[[], None]") -> GatewayResponse:
     """Move ``release`` onto ``response`` iff its completion escapes the
     dispatch block — i.e. it still has an ``upstream`` for the handler to
@@ -2452,13 +2476,25 @@ def handle_post(
     )
     if isinstance(outcome, GatewayResponse):
         return outcome
+    release = _no_release
     if isinstance(outcome, _PoolFallthrough):
-        # Pooled, but nothing was selectable: dial the local owner exactly as
+        # Pooled, but nothing was dispatched: dial the local owner exactly as
         # the pre-pool release would, honestly marked `none` rather than
         # claiming a selection happened (t7's behaviour, kept).
         tier_headers = _stamp_pool_headers(table, outcome.reason) + tier_headers
+        # ...and COUNT it. No placement is invented here — the markers above
+        # still say what actually happened — but the request is about to run
+        # on this box's own engine, and the in-flight tally is a record of
+        # what the engine is executing, not of what the router decided. Both
+        # fallthroughs reach this line and both are genuine local work: a
+        # single-hop marked arrival forwarded BY a peer (which would otherwise
+        # be invisible to this box's own snapshot until the next probe, so
+        # this box kept selecting an already-loaded local replica), and a
+        # fleet with no room anywhere, which `d5` queues locally rather than
+        # shedding. An UNPOOLED request (outcome None) is untouched — h1.
+        release = (dispatch_counter or _uncounted)(ordered[0].name, ordered[0].base_url)
 
-    response, attempts = dial_local(tier_headers)
+    response, attempts = _counted_local_dial(dial_local, tier_headers, release)
     if response is not None:
         return response
 

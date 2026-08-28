@@ -175,6 +175,7 @@ def _state(
     waiting: int = 0,
     compatible: bool = True,
     weight: float = 1.0,
+    calibrated: bool | None = None,
 ) -> ReplicaState:
     """A snapshot row, injected directly.
 
@@ -197,6 +198,7 @@ def _state(
         reason="",
         last_seen=1.0,
         weight=weight,
+        calibrated=(weight != 1.0) if calibrated is None else calibrated,
     )
 
 

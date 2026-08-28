@@ -146,6 +146,14 @@ def _caps() -> dict:
 
 
 def _state(origin, *, local=False, running=0, waiting=0, weight=1.0, **kw) -> R.ReplicaState:
+    """A snapshot row, injected directly.
+
+    Pre-F2 cases in this file expressed "calibrated" by passing a weight other
+    than 1.0 and "uncalibrated" by leaving the 1.0 default, so `calibrated`
+    defaults to that same derivation and every such case keeps its intent. A
+    case needing the two decoupled (a MEASURED one-slot capacity) passes it.
+    """
+    kw.setdefault("calibrated", weight != 1.0)
     return R.ReplicaState(
         origin=origin,
         local=local,
@@ -401,12 +409,22 @@ def test_an_unpooled_request_never_touches_the_counter() -> None:
     assert resp.release() is None
 
 
-def test_a_marked_arrival_is_not_counted_and_leaves_nothing_outstanding() -> None:
-    """A single-hop arrival is served locally WITHOUT a placement: selection
-    returns ``sole-ready`` with no origin, so the pool dispatches nothing and
-    the pre-pool local dial takes it. Counting it would mean inventing a
-    dispatch the pool never made — and the boundary that matters for the leak
-    is the one asserted here: nothing is left outstanding either way."""
+def test_a_marked_arrival_is_counted_as_local_work_and_released() -> None:
+    """F5 (Qodo, PR #221) — RENEGOTIATED from "is not counted".
+
+    A single-hop arrival makes no PLACEMENT: selection returns ``sole-ready``
+    with no origin, the pool dispatches nothing and the pre-pool local dial
+    takes it. That was read as "counting it would invent a dispatch the pool
+    never made", and the counter was skipped.
+
+    But the counter is not a record of decisions — it is this box's view of
+    what its own engine is executing. A forwarded arrival occupies the local
+    engine exactly like a locally-placed request, and leaving it uncounted let
+    concurrent forwarded traffic stay invisible to the receiver's own snapshot
+    until the next probe, so the receiver kept selecting an already-loaded
+    local replica. The work is counted; no placement is invented (the answer
+    still carries ``sole-ready`` and no ``X-Lobes-Served-By``).
+    """
     table, cfg, specs = _build(_pool_env())
     counter = _RecordingCounter()
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_PEER_ORIGIN))
@@ -419,7 +437,46 @@ def test_a_marked_arrival_is_not_counted_and_leaves_nothing_outstanding() -> Non
         headers=[(S.PROXIED_HEADER, "primary")],
     )
     assert resp.status == 200
-    assert counter.begun == []
+    assert counter.begun == [("primary", _LOCAL_URL)]
+    assert counter.outstanding == [("primary", _LOCAL_URL)]
+    resp.release()
+    assert counter.outstanding == []
+
+
+def test_a_marked_arrival_is_counted_against_the_local_engine_in_the_snapshot() -> None:
+    """The consequence F5 names: while a forwarded arrival is executing, this
+    box's OWN next selection must see the local replica as loaded."""
+    table, cfg, specs = _build(_pool_env())
+    cache = _live_cache(capacity=2)
+    caches = {"primary": cache}
+    resp, _ = _post(
+        table,
+        cfg,
+        specs,
+        snapshot=S.replica_snapshot_provider(caches),
+        counter=S.dispatch_counter(caches),
+        headers=[(S.PROXIED_HEADER, "primary")],
+    )
+    assert resp.status == 200
+    local = next(s for s in cache.current() if s.local)
+    assert local.running + local.waiting == 1
+    resp.release()
+    assert cache.in_flight(_LOCAL_URL) == 0
+
+
+def test_a_fallthrough_with_nothing_selectable_counts_the_local_dial() -> None:
+    """The other uncounted local execution: every replica is FULL, so nothing
+    is selectable and ``d5`` says dial the local owner anyway (vLLM queues it)
+    rather than shed. That request is executing locally too."""
+    table, cfg, specs = _build(_pool_env())
+    counter = _RecordingCounter()
+    snapshot = _snapshot(
+        _state(_LOCAL_URL, local=True, weight=2.0, running=2),
+        _state(_PEER_ORIGIN, weight=2.0, running=2),
+    )
+    resp, _ = _post(table, cfg, specs, snapshot=snapshot, counter=counter)
+    assert resp.status == 200
+    assert counter.begun == [("primary", _LOCAL_URL)]
     resp.release()
     assert counter.outstanding == []
 
