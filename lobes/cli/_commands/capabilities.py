@@ -359,10 +359,14 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
 class _ReplicaCandidate:
     """A ``replicas`` row, coerced to :class:`~lobes.gateway._selection.ReplicaLike`.
 
-    ``select_replica`` filters on ``compatible and ready and not busy`` before
-    it ever reads ``running``/``waiting``, so a ``None`` live field (the
-    offline "not probed" view) coerces to a falsy bool and the candidate is
-    simply never selectable — never a crash, never a guessed selection.
+    ``select_replica`` filters on ``compatible and ready and not full``
+    (capacity-relative-pool-routing, 2026-08-27) — a candidate is unselectable
+    once its active count (``running + waiting``) reaches its own ``weight``
+    (capacity); the ``busy`` flag no longer gates a PEER's candidacy at all
+    and only excludes the LOCAL candidate. So a ``None`` live field (the
+    offline "not probed" view) still coerces to a falsy bool — ``ready=False``
+    or ``compatible=False`` still makes the candidate simply never
+    selectable — never a crash, never a guessed selection.
     """
 
     origin: str

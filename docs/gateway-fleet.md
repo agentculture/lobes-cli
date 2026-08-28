@@ -760,18 +760,107 @@ anyway, by explicit operator decision, not bit-equivalence. An incompatible
 peer still appears in the `replicas` list, with `compatible: false` and a
 `reason` naming the differing field — never silently pooled.
 
-**Selection.** A request is served locally when the local replica is
-`compatible`, `ready`, and not `busy`; otherwise the least-loaded selectable
-peer wins. Estimated wait is `(running + waiting) / declared weight`; a
-local replica that is ready and idle always wins a tie (locality); a
-declared `X-Lobes-Affinity` request header is honoured — sticky to a
+**Selection is capacity-relative (capacity-relative-pool-routing,
+2026-08-27).** A candidate is selectable when it is `compatible`, `ready`,
+and NOT FULL — "full" meaning its active count (`running + waiting`) has
+reached its own CAPACITY, not a peer's host-level pressure verdict (see the
+d1 paragraph below). Every selectable candidate is then ranked by
+utilisation, `(running + waiting) / capacity`, ascending; a local replica
+that is ready and idle always wins a tie (locality); a declared
+`X-Lobes-Affinity` request header is honoured — sticky to a
 rendezvous-hashed preferred replica — only when that replica is selectable
 and not worse-placed than the best candidate by more than a declared margin
-(1.0). No candidate selectable at all → `Selection(None, "none")`. Every
-choice carries a reason from a closed vocabulary: `local-idle` |
-`peer-less-loaded` | `local-busy-forwarded` | `affinity` | `sole-ready` |
-`none`. This is deliberately NOT learned routing (no latency EMA, no
-history, no clock) — that stays parked in issue #128.
+(1.0). No candidate selectable at all → `Selection(None, "none")`. This is
+deliberately NOT learned routing (no latency EMA, no history, no clock) —
+that stays parked in issue #128.
+
+A box's **capacity** is `<PREFIX>_MAX_ACTIVE` from its own `.env` — a
+MEASURED throughput knee from `lobes calibrate <role> [--apply]`, explicitly
+**not** `<PREFIX>_MAX_NUM_SEQS` (vLLM's OOM safety cap, a number chosen to
+avoid running out of memory, not to describe useful throughput) and not
+vLLM's KV-derived concurrency ceiling either (the "N.NNx concurrency at
+depth D" figures elsewhere in this doc) — both are numbers chosen for other
+reasons, and conflating either of them with capacity is the specific
+confusion this work exists to prevent. A box learns its own capacity from
+`.env`; it learns a PEER's the same way it learns everything else about that
+peer — **self-published on the peer's own `/status`** at
+`backends[].capacity`, picked up by the probe `ReplicaCache` already runs
+every refresh interval, so declaring a pool stays O(machines) in config,
+never O(pairs). An **absent** `capacity` key means *uncalibrated* —
+deliberately distinct from a *declared* `1.0`, which would read as a real
+one-slot capacity. An uncalibrated replica is never full (an unpublished
+capacity must never make a replica unselectable) and ranks, for ranking
+purposes only, at the median of the calibrated capacities present in the
+same candidate set — not at the `1.0` sentinel, which would otherwise
+systematically drain a mixed-version fleet toward whichever boxes happen to
+be calibrated (an uncalibrated peer at one active request would rank 8x
+worse than a calibrated weight-8 peer at the same load, read literally).
+
+Because capacity is peer-CONTROLLED input that the ranking arithmetic
+DIVIDES by, an ingested capacity is **clamped** to a configured ceiling
+(`CAPACITY_CLAMP_MAX = 64.0`, chosen to sit above every concurrency figure
+this fleet has ever measured) — a peer publishing an inflated number would
+otherwise score a near-zero wait at every load level and silently vacuum the
+entire pool, a black hole with no error anywhere. The clamp is never silent:
+it is recorded in that replica row's `reason` field (e.g. `"capacity
+clamped: 128 -> 64"`), observable from `/capabilities` rather than inferred
+from traffic patterns. A single **`GATEWAY_CAPACITY_KILL_SWITCH`** env knob
+pins every resolved capacity — local and peer alike — back to the `1.0`
+sentinel fleet-wide, reproducing today's ranking exactly while leaving the
+pool armed and still forwarding; it exists because the only other rollback,
+un-declaring every `*_PEER_ORIGINS`, would trade away load balancing
+entirely just to escape one bad capacity number.
+
+Probed load is up to one refresh interval (5s) stale, and an accurate
+capacity makes a stale snapshot WORSE, not better: at yesterday's uniform
+weight of 1.0, ties resolved to local and a burst of concurrent arrivals
+stayed put; once ranking is genuinely capacity-relative, a burst would
+otherwise pile onto whichever replica the last probe saw as least-full,
+before the next probe corrects it. So each box also counts its OWN
+outstanding dispatches at the moment they are made — incremented before
+dial, released on completion including the error/retry paths — and folds
+that **local in-flight** count into the same `waiting` the ranking
+arithmetic reads, so the 5s snapshot self-corrects between probes rather
+than only after one.
+
+Every choice still carries a reason from the closed vocabulary: `local-idle`
+| `peer-less-loaded` | `local-busy-forwarded` | `affinity` | `sole-ready` |
+`none` — **unchanged in membership, but `peer-less-loaded` is REDEFINED.**
+It used to mean "the peer has fewer active requests"; it now means "the peer
+is less loaded *relative to its own capacity*" (lower utilisation) — so a
+peer with MORE active requests than this box can legitimately win it, if it
+has more headroom. `peer-less-loaded` is also now the reason emitted when
+the local replica is excluded from selectability for being FULL — a state
+that previously could only arise from a pressure verdict, and reported
+`local-busy-forwarded`. **A caller parsing the old closed set: the
+vocabulary is the same six strings, but the meaning behind one of them
+changed** — see `lobes/gateway/_selection.py`'s module docstring and
+`lobes/gateway/server.py`'s header-contract comment (where
+`ROUTE_REASON_HEADER`/`ROUTE_LOAD_HEADER` are declared) for the in-code
+version of this same statement.
+
+**Candidacy no longer depends on a peer's host-level pressure verdict, AND
+receiving a pooled arrival no longer sheds on host pressure alone — a
+two-sided change (deviation d1).** Before this work, a peer's `busy` flag
+(derived from ITS OWN swap/iowait reading) excluded it from the pool
+outright — which is how a fully idle DGX Spark (`running=0, waiting=0`) got
+evicted for a ~60% iowait reading traced to one sleeping desktop terminal
+cgroup with zero block I/O ever charged. Candidacy now gates on capacity
+utilisation (`active >= capacity`) instead — the same fact the fullness
+check above uses — never on a peer's pressure verdict; a peer under GENUINE
+pressure with a FULL engine still ranks last, since decoupling candidacy
+from the verdict must not make an actually-saturated box look attractive.
+The receiving side had to change too, or the fix was only half real: a box
+that forwarded to a peer which then shed the forwarded request on its OWN
+iowait reading alone had just wasted a round trip for the same 429. So a box
+no longer sheds a *pooled* arrival on host iowait alone; shedding remains on
+`swap > 75%` and on the same capacity-full check (`active >= capacity`) that
+gates candidacy. For a **single-owner** role a 429 is honest backpressure,
+but for a **pooled** role it is a lie whenever some replica has room — which
+is why the carve-out is pooled-only; an unpooled role's shed decision is
+untouched. `lobes status --pressure` / `/status`'s `mode` still report the
+host's swap/iowait state exactly as honestly as before — only the shed band
+that ACTS on it narrowed, and only for pooled roles.
 
 **Dispatch and markers.** The pool path applies identically whether the
 request names the role alias (`model=cortex`) or the raw served id
@@ -784,6 +873,7 @@ pooled answer carries exactly one of:
 | `X-Lobes-Served-By` | this box's own `GATEWAY_SELF_ORIGIN` (or literal `local` if unset) — present on every LOCALLY-served pooled answer |
 | `X-Lobes-Proxied-By` | the peer origin that actually served it — present on every FORWARDED pooled answer, exactly as proxy-lobes already defines it |
 | `X-Lobes-Route-Reason` | the selection reason (above) — present on EVERY pooled answer, local or forwarded |
+| `X-Lobes-Route-Load` | the capacity/utilisation the placement actually used, e.g. `active=1; capacity=8; utilisation=0.125; calibrated=true` — present on EVERY pooled answer; `calibrated=false` marks the neutral substitute rather than a measured one-slot capacity |
 | `X-Lobes-Route-Attempts` | how many replicas were actually dispatched to — present ONLY when more than one (a pre-dispatch retry happened) |
 
 plus one request-side header a caller may set: `X-Lobes-Affinity` (forwarded
