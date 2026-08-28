@@ -4,6 +4,60 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.1] - 2026-08-28
+
+### Fixed
+
+- **Qodo review round on #221 — seven findings, all real.** Two were latent bugs
+  in `lobes/assess.py`'s `run_concurrent` fan-out, so they affected every caller,
+  not just the new verb: aggregate throughput was computed as
+  `concurrency x reciprocal of the mean per-request rate` rather than **total
+  completion tokens over batch wall time** (the two diverge ~90% when completion
+  lengths differ, which would have made `calibration_knee` persist the wrong
+  capacity); and gateway auth was installed in a `ContextVar` that
+  `ThreadPoolExecutor` **does not propagate to worker threads** — the module's
+  own comment claimed the opposite — so a ramp against an authenticated gateway
+  would have 401'd on every request. Each submitted task now runs under its own
+  `copy_context()` snapshot, since re-running one `Context` concurrently raises
+  `RuntimeError: cyclic call`.
+- **The `1.0` capacity sentinel collided with a genuine measured capacity of 1.**
+  A box with `max_num_seqs=1` publishes a real knee of 1, which `is_calibrated`
+  read as "nothing published" — so it was never considered full and its measured
+  capacity never affected routing. Replaced the magic number with an explicit
+  `ReplicaState.calibrated` flag set at the single ingest point, and made the
+  operator-declared `weight` fields `float | None` so `PRIMARY_MAX_ACTIVE=1` is
+  no longer read as undeclared.
+- **Work executing locally is now counted even when no routing decision was
+  made.** A proxied arrival, and `d5`'s nothing-selectable queue-locally path,
+  both dialled the local backend without touching the dispatch counter — so a
+  receiver undercounted its own load and kept selecting an already-loaded local
+  replica. The counter now records what the engine is *executing*, not what the
+  router *decided*.
+- **Probe/in-flight reconciliation now corrects in both directions.** A dispatch
+  registered just before a probe sampled the engine was counted by neither
+  (stale-low, the burst undercount this accounting exists to prevent); and load
+  from a burst that had already completed was still read as current (stale-high
+  — measured live, it suppressed forwarding entirely in one run of five, 50.82
+  vs 98.6 tok/s). Each dispatch is now bucketed against the probe's own stamp
+  and corrections are bounded by the probed count, so a box never invents load a
+  peer never reported nor cancels more than it dispatched.
+- **`lobes calibrate` argument and output hygiene.** Non-finite and non-positive
+  values are rejected before any network call (`--ttft-bound-s nan` silently
+  disabled the TTFT guard entirely, and worse, fell through to a real ramp
+  against a nonexistent server), and a refused `--apply` no longer writes a
+  success-shaped payload to stdout before failing — matching how `up` and `init`
+  already handle a refused write.
+
+### Notes
+
+- One finding was **pushed back**, not fixed: Qodo flagged `_resolve_tier` for
+  omitting engine state from the pressure decision, citing "return 429 when no
+  replica is selectable". That requirement is exactly what deviation `d5`
+  reversed — live acceptance measured it shedding 4 of 8 requests the fleet
+  previously queued. `_is_selectable` still excludes a full replica, so routing
+  still prefers headroom; only the *shed* verdict changed. See
+  `docs/evidence/2026-08-28-accept-capacity-relative-pool-thor-spark.txt`.
+
 ## [0.67.0] - 2026-08-27
 
 ### Added
