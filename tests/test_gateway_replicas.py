@@ -419,7 +419,14 @@ def test_peer_malformed_status_body_is_error() -> None:
     assert peer.health == "error"
 
 
-def test_peer_reporting_busy_is_never_selectable() -> None:
+def test_peer_reporting_busy_is_flagged_busy_in_the_snapshot() -> None:
+    # RENAMED for accuracy (deviation d1) — was
+    # `test_peer_reporting_busy_is_never_selectable`. The body only ever
+    # asserted the FLAG, never selectability, and since t3 the claim in the
+    # old name is false: a peer's host-level busy verdict no longer removes it
+    # from the pool (see tests/test_gateway_selection.py::TestPressureDecoupling).
+    # The flag itself is still ingested and still published, so the assertion
+    # stands as written — only the name was wrong.
     cache = _cache(_default_routes(status={"busy": True}))
     cache.refresh()
     peer = _by_origin(cache.current())[PEER]
