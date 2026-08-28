@@ -54,6 +54,7 @@ from lobes.gateway._selection import (
     REASON_LOCAL_BUSY_FORWARDED,
     REASON_LOCAL_IDLE,
     REASON_NONE,
+    REASON_PEER_LESS_LOADED,
     REASON_SOLE_READY,
 )
 
@@ -600,11 +601,18 @@ def test_swap_thrash_still_sheds_a_marked_pooled_arrival() -> None:
     assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_SOLE_READY
 
 
-def test_a_full_local_engine_still_sheds_under_iowait_only() -> None:
-    # d1, criterion 2: engine-state-aware, not host-proxy-driven. iowait alone
-    # no longer sheds — but a CALIBRATED local engine at capacity does, because
-    # that is a first-party fact about serving. Here the one peer is full too,
-    # so there is nowhere to send it and the 429 is the honest answer.
+def test_a_full_fleet_queues_locally_under_iowait_only() -> None:
+    # RENEGOTIATED by deviation `d5` (was
+    # `test_a_full_local_engine_still_sheds_under_iowait_only`). d1 made a
+    # CALIBRATED local engine at capacity a shed signal; t10 measured the
+    # cost live — an 8-way flood at capacity 2 per box served 4/8 through the
+    # pool against 8/8 with the pool bypassed, the other four refused 429.
+    # Capacity was specified as a routing PREFERENCE (c5/h4), never admission
+    # control, so saturation now drives selection only. With every replica
+    # full, nothing is selectable and the request falls through to the LOCAL
+    # owner, where the engine's own queue holds it — the pre-pool behaviour,
+    # honestly marked `none`. The full contract is in
+    # tests/test_gateway_pool_saturation.py.
     table, cfg, specs = _build(_pool_env())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=4.0, running=4),
@@ -618,8 +626,8 @@ def test_a_full_local_engine_still_sheds_under_iowait_only() -> None:
         pressure=_IOWAIT_ONLY_PRESSURE,
         replica_snapshot=snapshot,
     )
-    assert resp.status == 429
-    assert calls == []
+    assert resp.status == 200
+    assert [c.backend.base_url for c in calls] == [_LOCAL_URL]
     assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_NONE
 
 
@@ -627,6 +635,15 @@ def test_a_full_local_engine_forwards_to_a_peer_with_headroom() -> None:
     # The same full local engine, but a peer with room: the box protects
     # itself by FORWARDING, not by shedding. 429 stays reserved for "no
     # replica anywhere can take it".
+    #
+    # RENEGOTIATED by deviation `d5`, in its REASON only. The placement is
+    # unchanged (`is_full` still excludes the saturated local replica, so the
+    # peer wins), but the exclusion is now a capacity fact rather than a
+    # pressure verdict — so `_selection.py`'s step-3 carve-out reports
+    # `peer-less-loaded` ("the local replica lost the utilisation comparison")
+    # instead of `local-busy-forwarded`. `local-busy-forwarded` still names a
+    # genuine local pressure verdict; see
+    # test_swap_pressure_still_forwards_with_local_busy_forwarded.
     table, cfg, specs = _build(_pool_env())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=4.0, running=4),
@@ -643,7 +660,7 @@ def test_a_full_local_engine_forwards_to_a_peer_with_headroom() -> None:
     assert resp.status == 200
     assert len(calls) == 1
     assert calls[0].backend.base_url == _THOR_ORIGIN
-    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_PEER_LESS_LOADED
 
 
 def test_an_uncalibrated_local_engine_is_never_full() -> None:
