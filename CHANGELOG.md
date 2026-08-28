@@ -124,6 +124,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The capacity knobs never reached the gateway container — the feature was
+  inert in every real deployment.** `lobes/templates/fleet/docker-compose.yml`
+  enumerates each env var the gateway receives (there is no `env_file`), and
+  none of the ten `<PREFIX>_MAX_ACTIVE` knobs nor
+  `GATEWAY_CAPACITY_KILL_SWITCH` were listed, so an operator's `.env` value
+  could never arrive. Every test passed because tests construct config
+  in-process, bypassing compose — this class of gap was structurally invisible
+  to the suite. A new guard test now derives the required env set from
+  `lobes/gateway/_config.py` itself (its `*_ENV` constants, the runtime
+  feasible×fingerprint cross-product, and an AST scan for literals passed to the
+  module's own env readers), so a future knob added without a compose line fails
+  automatically.
+- **Three unrelated knobs were already inert and are now plumbed**, surfaced by
+  that same guard: **`GATEWAY_FORCE_STRICT_TOOLS`** — documented to operators in
+  `env.example` and consumed by `server.py`, but never passed through, so
+  setting it did nothing — and **`FALLBACK_URL` / `FALLBACK_SERVED_NAME`**,
+  which `env.example` presented as `.env` keys while the compose comment told
+  operators to edit the template instead. Defaults are unchanged and empty, so
+  the default fleet renders identically. `GATEWAY_HOST` is deliberately NOT
+  passed through (inside the container `0.0.0.0` is the only correct bind; an
+  override could make the gateway unreachable while looking healthy) and that
+  exemption is recorded in a structure the guard itself validates.
+
 - **Diagnosed why the cortex replica pool has been running single-box.** The
   DGX Spark sits permanently in `mode: busy, shed: true` from a ~60 % iowait
   reading, which removes it from the pool entirely (`_is_selectable()` drops any

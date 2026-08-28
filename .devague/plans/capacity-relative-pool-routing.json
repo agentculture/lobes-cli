@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-27T14:00:50Z",
-  "updated": "2026-08-27T14:20:39Z",
+  "updated": "2026-08-28T13:09:46Z",
   "targets": [
     {
       "id": "c1",
@@ -503,6 +503,22 @@
       "text": "calibration cost and cadence are unspecified - a ramp per box per checkpoint is not free, and nothing yet says who re-runs it after a lobes switch",
       "kind": "unknown_nonblocking",
       "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "capacity is currently ceilinged by max_num_seqs=2 on BOTH boxes, not by memory: the Thor's KV supports 4.02x concurrency and the Spark's 2.90x, but the engine admits only 2. Operator decision (2026-08-28): accept 2:2 as fair and change nothing -- even at the cost of Thor headroom -- because Thor gains DSpark later and will then run to the same spec as the Spark. Raising max_num_seqs is deliberately NOT part of this work: the cap's own comment cites '4 OOMs at n=3/high context', Thor currently runs MTP n=2, so 4-at-n=2 is untested, and changing it restarts vLLM (a 27B reload) rather than just the gateway.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "when Thor moves to DSpark to match the Spark's spec, both boxes' capacities auto-invalidate rather than going stale: t4 pins each capacity to the (served_id, quantization, max_model_len, runtime) fingerprint and discards it on change, falling back to the uncalibrated sentinel until 'lobes calibrate' is re-run. The recalibration is required, not optional -- routing degrades to even-split until it happens.",
+      "kind": "follow_up",
+      "task_id": null,
       "resolved": false,
       "resolution": ""
     }
