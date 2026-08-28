@@ -1,0 +1,117 @@
+# t10 — capacity-relative pool routing, live acceptance
+
+date:      2026-08-28
+boxes:     Jetson AGX Thor (sm_110) + DGX Spark GB10, both cortex = unsloth/Qwen3.8-27B-NVFP4
+build:     lobes-cli 0.67.0.dev457 (gateway only; vLLM containers untouched throughout)
+config:    PRIMARY_MAX_ACTIVE=2 on both boxes (hand-set, not calibrated — see LIMITATIONS)
+workload:  8 concurrent POST /v1/chat/completions, max_tokens=200, temperature=0,
+           identical prompt, thinking disabled. 888 completion tokens in EVERY run.
+
+## Fixture — the false-pressure condition is PRESENT, not cleared
+spark /status pressure: mode=busy shed=True swap=18.9% iowait=71.5%
+spark engine:          running=0 waiting=0
+
+The Spark declares itself busy on ~62% iowait while its engine is IDLE. Root cause
+(diagnosed 2026-08-27): PSI localises the pressure to a sleeping ghostty terminal
+cgroup at 96.66% io-full whose io.stat is EMPTY — zero block I/O ever charged —
+entirely outside the docker/vLLM cgroups. Disk throughput measured 0 sectors read
+and static pswpin/pswpout over 5s, with zero D-state tasks.
+
+## Both replicas visible and compatible, Spark still flagged busy
+  http://vllm-primary:8000                       ready=True  busy=False weight=2.0 capacity=2.0
+  http://spark.tail0be7e0.ts.net:8001            ready=True  busy=True  weight=2.0 capacity=2.0
+
+## BASELINE — 8-way, pool bypassed (direct to Thor vllm-primary)
+wall=19.2s  completion_tokens=888  AGGREGATE=46.19 tok/s  errors=0
+wall=17.2s  completion_tokens=888  AGGREGATE=51.67 tok/s  errors=0
+wall=17.2s  completion_tokens=888  AGGREGATE=51.66 tok/s  errors=0
+
+## POOLED — 8-way to Thor's gateway, model=cortex
+wall=16.8s  completion_tokens=888  AGGREGATE=52.76 tok/s  errors=0
+served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
+proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+reasons: {'peer-less-loaded': 2, 'sole-ready': 1, 'local-idle': 1, 'none': 4}
+
+wall=13.3s  completion_tokens=888  AGGREGATE=66.92 tok/s  errors=0
+served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
+proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+reasons: {'peer-less-loaded': 2, 'none': 6}
+
+wall=13.2s  completion_tokens=888  AGGREGATE=67.37 tok/s  errors=0
+served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
+proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+reasons: {'peer-less-loaded': 2, 'none': 6}
+
+## RESULT
+
+                    run 1     run 2     run 3     median
+  baseline          46.19     51.67     51.66     51.66 tok/s   (8/8 served)
+  pooled            52.76     66.92     67.37     66.92 tok/s   (8/8 served)
+
+  median gain: +29.5%   (66.92 / 51.66 = 1.295x)
+
+Identical work in every run (888 completion tokens), zero errors on both sides.
+
+## WHAT IS PROVEN
+
+1. The Spark rejoins the pool WHILE STILL DECLARING ITSELF BUSY. `/capabilities`
+   lists it ready=True busy=True with a compatible fingerprint and capacity=2.0,
+   and it is genuinely dispatched to. Before this work `_is_selectable` dropped
+   any busy candidate outright, so the Thor never forwarded and the pool ran
+   single-box. This is the d1 two-sided decoupling working end to end: the
+   sending side no longer gates candidacy on a peer's pressure verdict, and the
+   receiving side no longer sheds a pooled arrival on iowait alone.
+
+2. Work genuinely crosses the wire. Two of eight requests per run carry
+   `X-Lobes-Proxied-By: http://spark...:8001` with `X-Lobes-Route-Reason:
+   peer-less-loaded` — reproducible across all three runs.
+
+3. Capacity reaches the container and is published. Both boxes report
+   `backends[].capacity = 2.0` on /status and both replica rows carry
+   weight=2.0 / capacity=2.0. This required the t12 compose-passthrough fix;
+   without it the knob was silently inert and this run would have measured
+   nothing.
+
+4. Throughput improves ~30% on a burst, with no requests refused.
+
+## LIMITATIONS — read before citing this transcript
+
+a. **The peer takes only 25% of the burst.** Two of eight requests forward; the
+   other four overflow via `_PoolFallthrough` to LOCAL queueing (reason `none`).
+   With capacity 2 per box the fleet has 4 dispatchable slots, and everything
+   beyond that queues on the box it arrived at rather than being distributed.
+   The measured +29.5% is therefore a floor, not the ceiling this design could
+   reach; distributing the overflow is unexplored work, not a claim made here.
+
+b. **The spec's c18 ratio target is NOT met on its own terms.** c18 asked for
+   >= 1.7x the recorded 11.0 tok/s single-owner baseline (i.e. >= 18.7 tok/s).
+   The absolute figure is exceeded by a wide margin (66.92), but that target was
+   calibrated against a baseline captured under what appears to be this same
+   iowait artifact. Re-measured honestly here (risk r1), the single-owner number
+   is ~51.7 tok/s and the gain is 1.295x, NOT 1.7x. The literal criterion passes;
+   the intent behind it does not. Recorded rather than rounded away.
+
+c. **`lobes calibrate` was NOT exercised on hardware.** PRIMARY_MAX_ACTIVE=2 was
+   hand-set on both boxes. Justification: max_num_seqs=2 on both engines means a
+   calibration ramp would find the plateau at 2 regardless, so the run would have
+   cost production load to learn what the config already states. The verb ships
+   unit-tested and unproven in the field.
+
+d. **Capacity is ceilinged by max_num_seqs, not by memory** (risk r4). The Thor's
+   KV supports 4.03x concurrency and the Spark's 2.90x, but both engines admit
+   only 2. So this is an EVEN SPLIT between equals, not capacity-proportional
+   routing — the ratio arm of the design is untested. Operator decision
+   (2026-08-28) is to accept 2:2 until the Thor gains DSpark and runs to the
+   Spark's spec.
+
+e. **Validated scope is cortex on the Spark+Thor NVFP4 pair only.** Every other
+   pooled role (senses/muse/worker/associate/embedder/reranker/hand/stt/tts) is
+   declared-but-unvalidated data, and the Orin's llama.cpp cortex is exempt as a
+   separate candidate.
+
+f. **A regression was found here and fixed before this transcript.** The first
+   pooled run on 0.67.0.dev456 served 4/8 and shed 4 with HTTP 429, because
+   engine saturation was wired as a shed signal. Deviation d5 records it; task
+   t13 moved saturation to selection-only. These numbers are from dev457, after
+   that fix. No offline test caught it — it lives in the interaction between the
+   pressure verdict and the dispatch loop's fallthrough.

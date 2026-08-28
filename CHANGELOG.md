@@ -124,6 +124,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **VALIDATED live on the Spark+Thor cortex pair, 2026-08-28**
+  (`docs/evidence/2026-08-28-accept-capacity-relative-pool-thor-spark.txt`).
+  With the Spark still declaring `mode: busy, shed: true` at ~62-72% iowait and
+  its engine idle, it rejoins the pool as a `ready` candidate and is genuinely
+  dispatched to — two of eight requests per run carry
+  `X-Lobes-Proxied-By: <spark>` with `peer-less-loaded`, reproducible across
+  three runs. An 8-way flood improves from a re-measured single-owner median of
+  **51.66 tok/s to 66.92 tok/s (+29.5%)** with identical work (888 completion
+  tokens) and zero errors on either side. Recorded honestly: the peer takes only
+  25% of the burst (the overflow falls through to local queueing, so the gain is
+  a floor); `c18`'s **ratio** target of 1.7x is NOT met on its own terms (1.295x
+  against the honest baseline — the 1.7x was calibrated against a baseline
+  captured under this same artifact, per risk `r1`); `lobes calibrate` was not
+  exercised on hardware; and capacity is an even 2:2 split ceilinged by
+  `max_num_seqs`, so the capacity-*proportional* arm of the design remains
+  untested.
+
 - **Engine saturation drives selection, not shedding (`d5`, found by live
   acceptance).** `d1`'s receiving-side work made `active >= capacity` a shed
   signal, which routed a saturated request down the busy path (429) instead of
