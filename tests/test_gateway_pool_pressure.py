@@ -1054,20 +1054,56 @@ def test_a_dropped_lane_gets_no_cache() -> None:
     assert "multimodal" not in caches
 
 
-def test_a_busy_peer_is_snapshotted_busy_and_sheds_the_forward() -> None:
+def test_an_incompatible_peer_in_a_live_snapshot_sheds_the_forward() -> None:
+    # RENAMED for accuracy (deviation d1) — was
+    # `test_a_busy_peer_is_snapshotted_busy_and_sheds_the_forward`, which
+    # claimed the peer's `busy` flag was what refused the forward. It never
+    # was: this fixture declares no PRIMARY_QUANTIZATION, so the local
+    # fingerprint reads `unknown` against the peer's `compressed-tensors` and
+    # the COMPATIBILITY gate is what sheds — asserted below so the name and
+    # the mechanism cannot drift apart again. Under d1 a busy-but-compatible
+    # peer IS forwarded to; that case is the test immediately following.
     table, cfg = build_config(_pool_env())
     specs = S.peer_specs_from_table(table, _pool_env())
     urlopen, _seen = _fake_urlopen(peer_busy=True)
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
     provider = S.replica_snapshot_provider(caches)
-    assert provider("primary")[1].busy is True
+    peer = provider("primary")[1]
+    assert peer.busy is True
+    assert peer.compatible is False  # <- the fact doing the work
+    assert peer.reason == "quantization: unknown"
 
-    # A live snapshot, not a hand-built one: the busy peer cannot absorb a shed.
+    # A live snapshot, not a hand-built one: an incompatible peer cannot
+    # absorb a shed no matter how idle it is.
     resp, calls = _post(
         table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=provider
     )
     assert resp.status == 429
     assert calls == []
+
+
+def test_a_busy_but_compatible_peer_in_a_live_snapshot_is_forwarded_to() -> None:
+    # The behaviour the test above was mis-named after, now covered for real:
+    # same live snapshot, same peer `busy` flag, but the fingerprints match —
+    # and under d1 a peer's host-level pressure verdict no longer removes it
+    # from the pool, so the shed becomes a forward.
+    env = _pool_env(PRIMARY_QUANTIZATION="compressed-tensors")
+    table, cfg = build_config(env)
+    specs = S.peer_specs_from_table(table, env)
+    urlopen, _seen = _fake_urlopen(peer_busy=True)
+    caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
+    provider = S.replica_snapshot_provider(caches)
+    peer = provider("primary")[1]
+    assert peer.busy is True
+    assert peer.compatible is True
+
+    resp, calls = _post(
+        table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=provider
+    )
+    assert resp.status == 200
+    assert [c.backend.base_url for c in calls] == [_THOR_ORIGIN]
+    assert _header(resp, S.ROUTE_REASON_HEADER) == REASON_LOCAL_BUSY_FORWARDED
+    assert _header(resp, S.PROXIED_BY_HEADER) == _THOR_ORIGIN
 
 
 def test_capabilities_payload_carries_live_replicas_on_a_pooled_box() -> None:
