@@ -64,13 +64,22 @@ _STATUS_REMEDIATION = "check 'lobes status' / 'docker logs model-gear-vllm'"
 #   boundary covers every read-only verb without a second, parallel
 #   plumbing pass through that module.
 #
-# `contextvars.ContextVar` (not a bare module global) is thread-safe:
-# `concurrent.futures.ThreadPoolExecutor` (used by `run_concurrent`'s
-# concurrent probe fan-out) copies the calling thread's context into each
-# worker since Python 3.9, so the header still reaches every in-flight
-# request. Default `None` (an immutable sentinel, never a shared mutable
-# `{}` — Sonar S8508) — readers go through `_current_auth_headers()`, so an
-# untouched call site sends no header at all, byte-identical to today.
+# `contextvars.ContextVar` (not a bare module global) is thread-safe, but
+# `concurrent.futures.ThreadPoolExecutor` does NOT automatically propagate the
+# submitting thread's context into its worker threads (unlike asyncio's
+# `loop.run_in_executor`, which wraps the callback in `Context.run` itself) —
+# each pool worker thread gets its own, empty top-level `Context` the first
+# time it runs a callable directly. A bare `pool.submit(fn)` from inside a
+# `with auth_headers(...)` block therefore loses the header entirely and the
+# request goes out unauthenticated (Qodo review finding F4 on #221). Every
+# concurrent fan-out in this module (`run_concurrent`) MUST snapshot the
+# calling thread's context via `contextvars.copy_context()` — one independent
+# snapshot PER submitted task, since re-running the SAME `Context` object
+# concurrently from more than one OS thread raises `RuntimeError: cyclic
+# call` — and submit `snapshot.run(fn)` rather than bare `fn`. Default `None`
+# (an immutable sentinel, never a shared mutable `{}` — Sonar S8508) —
+# readers go through `_current_auth_headers()`, so an untouched call site
+# sends no header at all, byte-identical to today.
 _auth_headers: "contextvars.ContextVar[dict[str, str] | None]" = contextvars.ContextVar(
     "_auth_headers", default=None
 )
@@ -1157,11 +1166,21 @@ def run_concurrent(
 
     Returns:
         ``{"concurrency": int, "requests_per_s": float, "p50_latency_ms": float,
-        "p95_latency_ms": float, "ms_per_token": float, "total_s": float}``
+        "p95_latency_ms": float, "ms_per_token": float, "total_s": float,
+        "total_completion_tokens": int}``
 
     * ``requests_per_s`` = concurrency / total_s (batch throughput).
     * ``p50``/``p95`` are per-request round-trip latencies.
-    * ``ms_per_token`` = mean of (latency_ms / completion_tokens) across requests.
+    * ``ms_per_token`` = mean of (latency_ms / completion_tokens) across requests
+      — a per-request LATENCY diagnostic only. It is **not** a valid basis for
+      an aggregate throughput figure (concurrency * 1000/ms_per_token distorts
+      badly under unequal completion lengths/latencies across the batch —
+      Qodo review finding F3 on #221); a caller wanting aggregate tok/s must
+      use ``total_completion_tokens / total_s`` instead, below.
+    * ``total_completion_tokens`` = sum of every request's own
+      ``completion_tokens``, so ``total_completion_tokens / total_s`` is the
+      actual aggregate decode rate over the batch's wall-clock duration — the
+      same quantity an operator would compute by hand.
     """
     url = url.rstrip("/")
 
@@ -1181,9 +1200,15 @@ def run_concurrent(
         ct = d["usage"]["completion_tokens"]
         return {"latency_ms": dt * 1000.0, "completion_tokens": ct}
 
+    # See the module-level comment above `_auth_headers`: each submitted task
+    # gets its OWN `copy_context()` snapshot of the calling thread's context
+    # (which carries the `auth_headers()` ContextVar, if the caller set one) —
+    # a bare `pool.submit(_one_request)` would silently drop it in every
+    # worker thread (Qodo review finding F4 on #221).
+    contexts = [contextvars.copy_context() for _ in range(concurrency)]
     t_batch = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = [pool.submit(_one_request) for _ in range(concurrency)]
+        futures = [pool.submit(ctx.run, _one_request) for ctx in contexts]
         results = [f.result() for f in futures]
     total_s = time.monotonic() - t_batch
 
@@ -1195,6 +1220,7 @@ def run_concurrent(
         r["latency_ms"] / r["completion_tokens"] for r in results if r["completion_tokens"] > 0
     ]
     ms_per_token = statistics.mean(ms_per_token_vals) if ms_per_token_vals else 0.0
+    total_completion_tokens = sum(r["completion_tokens"] for r in results)
 
     return {
         "concurrency": concurrency,
@@ -1203,6 +1229,7 @@ def run_concurrent(
         "p95_latency_ms": round(p95, 1),
         "ms_per_token": round(ms_per_token, 3),
         "total_s": round(total_s, 3),
+        "total_completion_tokens": total_completion_tokens,
     }
 
 

@@ -38,6 +38,7 @@ number this verb writes.
 from __future__ import annotations
 
 import argparse
+import math
 
 from lobes import assess as _assess
 from lobes.assess import CalibrationKnee, calibration_knee, run_concurrent
@@ -83,22 +84,69 @@ def _parse_schedule(raw: str | None) -> tuple[int, ...]:
     return tuple(sorted(values))
 
 
-def _aggregate_tok_s(row: dict) -> float:
-    """Approximate aggregate decode tok/s from a :func:`run_concurrent` row.
+def _require_finite(
+    value: float, name: str, *, positive: bool = True, allow_none: bool = False
+) -> float | None:
+    """Reject NaN/Infinity (and, when *positive*, non-positive values) for a
+    numeric CLI argument.
 
-    ``run_concurrent`` reports ``ms_per_token`` — the mean of each individual
-    request's own ``latency_ms / completion_tokens`` — rather than a total
-    token count, so the aggregate rate is recovered as
-    ``concurrency * (1000 / ms_per_token)``: each of the *concurrency*
-    in-flight requests decoding at roughly ``1000 / ms_per_token`` tok/s over
-    (approximately) the same wall-clock window. ``0.0`` when ``ms_per_token``
-    is degenerate (no completions), matching :func:`calibration_knee`'s own
-    zero-baseline handling.
+    ``float("nan")``/``float("inf")`` both parse cleanly through argparse's
+    own ``type=float`` — a NaN ``--ttft-bound-s`` makes every
+    ``ttft_s > ttft_bound_s`` comparison ``False``, silently disabling the
+    TTFT guard and letting :func:`~lobes.assess.calibration_knee` publish a
+    capacity that was never actually bound-checked (Qodo review finding F7 on
+    #221). Every new numeric flag this verb added is checked the same way,
+    not just ``--ttft-bound-s``.
+
+    ``value`` may be ``None`` only when *allow_none* is set (for the
+    optional ``--min-relative-gain``, whose absence means "use the default"),
+    in which case ``None`` passes through unchanged.
     """
-    ms_per_token = row.get("ms_per_token") or 0.0
-    if ms_per_token <= 0:
+    if value is None:
+        if allow_none:
+            return None
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name} is required",
+            remediation=f"pass a finite value for {name}",
+        )
+    if not math.isfinite(value):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name} must be a finite number; got {value!r}",
+            remediation=f"pass a normal, finite value for {name} (not NaN or Infinity)",
+        )
+    if positive and value <= 0:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name} must be a positive number; got {value!r}",
+            remediation=f"pass a positive value for {name}",
+        )
+    return value
+
+
+def _aggregate_tok_s(row: dict) -> float:
+    """Aggregate decode tok/s from a :func:`run_concurrent` row.
+
+    ``total_completion_tokens / total_s`` — the total completion tokens
+    across the whole batch divided by the batch's wall-clock duration, the
+    same quantity an operator would compute by hand.
+
+    Previously this multiplied ``concurrency`` by the reciprocal of the MEAN
+    per-request ``latency_ms / completion_tokens`` (``ms_per_token``), which
+    is not aggregate tokens over batch wall time — unequal completion
+    lengths or latencies across the batch distort it badly (Qodo review
+    finding F3 on #221; a live example is preserved in
+    ``tests/test_assess_perf.py::test_run_concurrent_total_completion_tokens_over_wall_time_is_the_true_aggregate``,
+    where the two formulas disagree by ~90%). ``0.0`` when ``total_s`` is
+    degenerate (no wall time elapsed), matching :func:`calibration_knee`'s
+    own zero-baseline handling.
+    """
+    total_s = row.get("total_s") or 0.0
+    if total_s <= 0:
         return 0.0
-    return round(row["concurrency"] * (1000.0 / ms_per_token), 3)
+    total_tokens = row.get("total_completion_tokens") or 0
+    return round(total_tokens / total_s, 3)
 
 
 def _measure_level(
@@ -220,8 +268,22 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     role = args.role
     schedule = _parse_schedule(getattr(args, "schedule", None))
-    ttft_bound_s = args.ttft_bound_s
     apply = bool(getattr(args, "apply", False))
+
+    # Validate every numeric argument this verb added BEFORE any network call
+    # — a non-finite (NaN/Infinity) or non-positive value must fail loudly
+    # here, not silently disable a guard deep inside calibration_knee (F7).
+    ttft_bound_s = _require_finite(args.ttft_bound_s, "--ttft-bound-s")
+    min_relative_gain = _require_finite(
+        getattr(args, "min_relative_gain", None), "--min-relative-gain", allow_none=True
+    )
+    if args.max_tokens <= 0 or not math.isfinite(args.max_tokens):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"--max-tokens must be a positive integer; got {args.max_tokens!r}",
+            remediation="pass a positive integer, e.g. --max-tokens 128",
+        )
+    timeout = _require_finite(float(args.timeout), "--timeout")
 
     info, deploy_dir = _resolve_role_info(args, role)
     if not info.loaded or not info.endpoint:
@@ -238,9 +300,9 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
             info.model,
             schedule=schedule,
             ttft_bound_s=ttft_bound_s,
-            min_relative_gain=getattr(args, "min_relative_gain", None),
+            min_relative_gain=min_relative_gain,
             max_tokens=args.max_tokens,
-            timeout=int(args.timeout),
+            timeout=int(timeout),
         )
 
     backend = ROLE_BACKEND[role]
@@ -266,11 +328,17 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
             )
         refusal = _refuse_reason(knee)
         if refusal is not None:
-            result["refused"] = refusal
-            if json_mode:
-                emit_result(result, json_mode=True)
-            else:
-                emit_result(_render_text(result), json_mode=False)
+            # Nothing goes to stdout here: this command is about to exit
+            # nonzero, and this repo's strict stdout/stderr contract
+            # (lobes/cli/_output.py) reserves stdout for a SUCCESSFUL result.
+            # Emitting a success-shaped payload to stdout before raising the
+            # actual failure (which the dispatcher writes to stderr) would
+            # let automation that only reads stdout consume a misleading
+            # "result" despite the nonzero exit (Qodo review finding F8 on
+            # #221) — sibling write verbs refusing a mutation (e.g.
+            # `lobes init`'s unknown-shape/--single-conflict checks, `lobes
+            # up`'s wiring checks) raise directly with no prior emit_result,
+            # and this matches that convention exactly.
             raise ModelGearError(
                 code=EXIT_USER_ERROR,
                 message=f"refusing to write a measured capacity for {role!r}: {refusal}",

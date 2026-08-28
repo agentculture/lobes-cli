@@ -10,6 +10,7 @@ sockets at all.
 from __future__ import annotations
 
 import http.server
+import itertools
 import json
 import threading
 import time
@@ -149,6 +150,171 @@ def test_run_concurrent_total_s_positive(perf_server: str) -> None:
     """total_s > 0 (elapsed wall time for the batch)."""
     result = A.run_concurrent(perf_server, "test-model", concurrency=2)
     assert result["total_s"] > 0.0
+
+
+def test_run_concurrent_total_completion_tokens_field(perf_server: str) -> None:
+    """``total_completion_tokens`` = sum of every request's own completion count."""
+    result = A.run_concurrent(perf_server, "test-model", concurrency=3)
+    assert result["total_completion_tokens"] == 3 * _CANNED_COMPLETION_TOKENS
+
+
+# ---------------------------------------------------------------------------
+# Qodo review finding F3 (#221) — aggregate throughput must be total
+# completion tokens across the batch divided by batch wall time, NOT
+# concurrency * (1000 / mean-per-request ms_per_token). The two diverge
+# sharply whenever completion lengths/latencies are unequal across the batch.
+# ---------------------------------------------------------------------------
+
+
+class _UnequalPerfHandler(http.server.BaseHTTPRequestHandler):
+    """Two distinct per-request profiles, assigned by arrival order: the
+    first request in is slow with many completion tokens, every other
+    request is fast with few — engineered so the CORRECT aggregate
+    (total_completion_tokens / total_s) diverges sharply from the
+    mean-reciprocal approximation (concurrency * 1000 / ms_per_token)."""
+
+    _lock = threading.Lock()
+    _counter = itertools.count()
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/v1/chat/completions":
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)
+        with self._lock:
+            idx = next(self._counter)
+        if idx == 0:
+            # Slow request, few tokens: a LOW per-request rate that dominates
+            # the batch's wall-clock time.
+            time.sleep(1.0)
+            completion_tokens = 5
+        else:
+            # Fast request, many tokens: a very HIGH per-request rate that
+            # barely touches the batch's wall-clock time.
+            time.sleep(0.01)
+            completion_tokens = 200
+        body = json.dumps(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {
+                    "prompt_tokens": _CANNED_PROMPT_TOKENS,
+                    "completion_tokens": completion_tokens,
+                },
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:  # noqa: D102
+        pass
+
+
+@pytest.fixture
+def unequal_perf_server():
+    _UnequalPerfHandler._counter = itertools.count()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _UnequalPerfHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+    yield base_url
+    server.shutdown()
+
+
+def test_run_concurrent_total_completion_tokens_over_wall_time_is_the_true_aggregate(
+    unequal_perf_server: str,
+) -> None:
+    """The mean-reciprocal approximation and the true aggregate diverge
+    sharply under unequal completion lengths/latencies (Qodo F3 on #221):
+    the true aggregate is total tokens / wall time, not
+    concurrency * (1000 / mean ms_per_token)."""
+    result = A.run_concurrent(unequal_perf_server, "test-model", concurrency=2)
+    assert result["total_completion_tokens"] == 205
+    true_aggregate = result["total_completion_tokens"] / result["total_s"]
+    naive_aggregate = result["concurrency"] * (1000.0 / result["ms_per_token"])
+    # The two formulas disagree by a wide margin on this deliberately skewed
+    # batch — proving ms_per_token's reciprocal is not a valid stand-in for
+    # aggregate throughput (direction of the skew isn't the point; that they
+    # diverge sharply is).
+    relative_gap = abs(true_aggregate - naive_aggregate) / true_aggregate
+    assert relative_gap > 0.5  # naive comes out roughly an order of magnitude off
+
+
+# ---------------------------------------------------------------------------
+# Qodo review finding F4 (#221) — `run_concurrent` fans requests out across
+# `ThreadPoolExecutor` workers, which do NOT automatically inherit the
+# calling thread's `contextvars.Context`. Without an explicit per-task
+# context copy, the `auth_headers()` context manager's Authorization header
+# is silently dropped in every worker thread and an authenticated gateway
+# 401s every calibration request.
+# ---------------------------------------------------------------------------
+
+
+class _AuthCapturingHandler(http.server.BaseHTTPRequestHandler):
+    """Records every request's headers for a test to assert on."""
+
+    captured: list = []
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/v1/chat/completions":
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)
+        self.captured.append(dict(self.headers))
+        body = json.dumps(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {
+                    "prompt_tokens": _CANNED_PROMPT_TOKENS,
+                    "completion_tokens": _CANNED_COMPLETION_TOKENS,
+                },
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:  # noqa: D102
+        pass
+
+
+@pytest.fixture
+def auth_capturing_server():
+    _AuthCapturingHandler.captured = []
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _AuthCapturingHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+    yield base_url, _AuthCapturingHandler.captured
+    server.shutdown()
+
+
+def test_run_concurrent_propagates_auth_header_to_every_worker(auth_capturing_server) -> None:
+    """Every one of `concurrency` requests must carry the Authorization
+    header installed via `auth_headers()` on the calling thread, even though
+    each request executes in its own `ThreadPoolExecutor` worker thread."""
+    base_url, captured = auth_capturing_server
+    with A.auth_headers({"Authorization": "Bearer secret-token"}):
+        A.run_concurrent(base_url, "test-model", concurrency=4)
+    assert len(captured) == 4
+    assert all(h.get("Authorization") == "Bearer secret-token" for h in captured)
+
+
+def test_run_concurrent_sends_no_auth_header_when_none_installed(perf_server: str) -> None:
+    """Sanity check on the fixture: outside `auth_headers()`, no Authorization
+    header is sent at all (byte-identical to pre-#127 behaviour)."""
+    result = A.run_concurrent(perf_server, "test-model", concurrency=2)
+    assert result["concurrency"] == 2  # request actually completed
 
 
 # ---------------------------------------------------------------------------
