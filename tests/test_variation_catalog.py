@@ -87,8 +87,8 @@ def test_published_catalog_validates() -> None:
 
 def test_published_catalog_readme_states_no_box_captured_yet() -> None:
     readme = (PUBLISHED_CATALOG / "README.md").read_text(encoding="utf-8")
-    assert vc.NO_MEASURED_RESULT in readme
-    assert "no real box has been captured" in readme.lower()
+    assert readme.count(vc.NO_MEASURED_RESULT) >= 1
+    assert readme.lower().count("no real box has been captured") >= 1
 
 
 def test_info_template_is_not_itself_a_variation() -> None:
@@ -337,8 +337,8 @@ def test_parse_info_strips_trailing_atx_hashes_and_whitespace_from_headings() ->
         )
     )
     assert info.title == "Title with trailing hashes"
-    assert vc.DESCRIPTION_HEADING in info.sections
-    assert "mentions #1 not a closing hash" in info.sections
+    assert info.sections.count(vc.DESCRIPTION_HEADING) == 1
+    assert info.sections.count("mentions #1 not a closing hash") == 1
 
 
 def test_parse_info_ignores_non_heading_lines() -> None:
@@ -451,7 +451,6 @@ def test_the_heading_separator_is_unquantified_so_it_cannot_be_ambiguous() -> No
     the ambiguity is real in the pattern, so the shipped regex removes it
     rather than depending on `(.*)$` never being backtracked into.
     """
-    assert "[ \t]+" not in vc._HEADING_RE.pattern
     assert vc._HEADING_RE.pattern == r"^(#{1,6})[ \t](.*)$"
 
 

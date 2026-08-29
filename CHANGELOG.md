@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.3] - 2026-08-29
+
+### Fixed
+
+- `tests/test_variation_catalog.py` uses one assertion argument order throughout (SonarCloud S3415); the membership checks became subject-first `.count()` assertions, which are also more specific than the bare `in` they replaced.
+
 ## [0.68.2] - 2026-08-29
 
 ### Fixed
