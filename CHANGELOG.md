@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.1] - 2026-08-29
+
+### Fixed
+
+- Secret scanner: `${VAR:-literal-secret}` and Dockerfile whitespace `ENV KEY secret` no longer bypass the required `secrets-scan` CI gate. An existing test had asserted the first bypass was safe behaviour.
+- `init --from-lock` refuses to write through a symlink in the target directory, and stages every file before committing so a failed restore leaves the deployment untouched rather than mixed.
+- A malformed `deployment.lock.toml` is now a controlled user error instead of a traceback out of `init`/`doctor`.
+- `lock_drift` compares the lock and the deployment symmetrically, so a knob added after capture is reported (tagged added/changed/removed).
+- The buildability guard routes `.devN` pins to TestPyPI rather than PyPI, where this repo actually publishes them.
+
 ## [0.68.0] - 2026-08-29
 
 ### Added
