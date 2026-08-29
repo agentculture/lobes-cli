@@ -4,13 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.69.1] - 2026-08-29
-
-### Added
-
-### Changed
+## [0.69.2] - 2026-08-29
 
 ### Fixed
+
+- An inbound auth rejection now logs its source and the reason it failed, and repeats from one source collapse to one line per 60s instead of flooding the log (issue #228). The 401 response is unchanged and still distinguishes nothing — the caller must not learn missing vs. malformed vs. wrong.
+
+## [0.69.1] - 2026-08-29
+
+### Fixed
+
+- The streamed relay also treats a `ValueError` from the upstream read as an upstream failure, so a malformed chunked body cannot skip the terminal SSE frames (PR #229 review).
+- `cmd_up` and `build_role_registry` were split into named helpers (`_audio_overlay_required`, `_resolve_build`, `_role_signals`) to stay under the cognitive-complexity gate.
 
 ## [0.69.0] - 2026-08-29
 

@@ -71,6 +71,7 @@ from urllib.parse import urlsplit
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
+from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
@@ -3113,6 +3114,10 @@ class _Handler(BaseHTTPRequestHandler):
     # coarse `loaded` proxy (the offline/unit path). Read only via .current()
     # (socket-free); the POST hot path never touches it.
     readiness_cache: ReadinessCache | None = None
+    # Collapsed auth-rejection logging (#228). `None` on every hand-built
+    # handler and in the unit suites — every rejection then logs plainly,
+    # exactly as it did before this existed.
+    rejection_log: RejectionLog | None = None
     # The proxied roles' peer specs (proxy-lobes t6, #115/#127), keyed by
     # backend name — built once by peer_specs_from_table and shared with the
     # ReadinessCache's peer-probe thread (see serve). None/empty → the proxy
@@ -3156,6 +3161,48 @@ class _Handler(BaseHTTPRequestHandler):
             return True
         return bearer_token_matches(api_key, self.headers.get("Authorization"))
 
+    def _rejection_source(self) -> str:
+        """The peer address to name in the rejection log (#228).
+
+        The SOCKET peer, deliberately — never ``X-Forwarded-For``. That header
+        is client-supplied, and a security log an attacker can write the
+        attribution field of is worse than one with no attribution: it would
+        let a flood be blamed on any address of its choosing. Behind the fleet
+        compose bridge this resolves to the calling container or the docker
+        gateway, which is exactly the distinction the #228 operator needed
+        (in-fleet resident vs. something off-box).
+        """
+        address = getattr(self, "client_address", None)
+        if isinstance(address, tuple) and address:
+            return str(address[0])
+        return "<unknown>"
+
+    def _log_rejection(self) -> bool:
+        """Log this rejection unless it is being collapsed; True if suppressed.
+
+        A suppressed rejection prints NOTHING — not this diagnostic and (via
+        :meth:`log_request`) not the ordinary access line either. Printing one
+        of the two would have left the observed 1190-line flood at 1190 lines.
+        """
+        if self.rejection_log is None:
+            return False
+        line = self.rejection_log.record(
+            self._rejection_source(),
+            self.command or "?",
+            self.path.split("?", 1)[0] or "?",
+            rejection_reason(self.headers.get("Authorization")),
+        )
+        if line is None:
+            return True
+        sys.stderr.write(f"[gateway] {line}\n")
+        return False
+
+    def log_request(self, code="-", size="-") -> None:  # noqa: N802 - stdlib API
+        """The ordinary access line, skipped for a collapsed rejection (#228)."""
+        if getattr(self, "_rejection_suppressed", False):
+            return
+        super().log_request(code, size)
+
     def _reject_unauthorized(self) -> None:
         """Send the 401 ``invalid_api_key`` response and close the connection.
 
@@ -3169,7 +3216,18 @@ class _Handler(BaseHTTPRequestHandler):
         (``BaseHTTPRequestHandler`` flips ``close_connection`` on it). The
         body/headers never echo any key material — see
         :func:`_invalid_api_key_body`.
+
+        The RESPONSE stays static while the LOG gains a source and a reason
+        (#228). That asymmetry is deliberate and is the whole point: the caller
+        must not learn whether its key was missing, malformed or merely wrong
+        (a 401 must not become a key-material oracle), while the operator
+        reading their own stderr needs exactly that to tell a misconfigured
+        client from someone guessing. Nothing added to the log travels back.
+
+        The suppression decision is taken BEFORE the response is sent, because
+        ``send_response`` is what triggers ``log_request``.
         """
+        self._rejection_suppressed = self._log_rejection()
         self._send_simple(
             401,
             [
@@ -3814,6 +3872,8 @@ def _make_handler(
             "server_config": cfg,
             "pressure_cache": pressure_cache,
             "readiness_cache": readiness_cache,
+            # One per server, shared across handler threads (#228).
+            "rejection_log": RejectionLog(),
             "peer_specs": peer_specs,
             # `staticmethod` is load-bearing, not decoration: `replica_snapshot`
             # is the ONLY class attribute here that is a plain function, so it
