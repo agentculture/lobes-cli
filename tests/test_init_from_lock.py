@@ -74,6 +74,7 @@ def _make_variation(
     card: str = "spark",
     shape: str | None = None,
     name: str = "variation",
+    lobes_version: str | None = "0.67.0",
 ) -> tuple[Path, Path]:
     """Scaffold a real deployment, then commit it as a variation folder + lock.
 
@@ -98,6 +99,9 @@ def _make_variation(
         variation=card,
         profile=card,
         shape=shape or init_cmd.DEFAULT_SHAPE,
+        # A real capture always records the version it was taken at; the
+        # buildability preflight reads it, so the fixture records one too.
+        lobes_version=lobes_version,
         files=files,
     )
     _lock.write_lock(source, lock)
@@ -504,3 +508,24 @@ def test_from_lock_is_absent_from_a_plain_init(tmp_path, monkeypatch, capsys) ->
     assert main(["init", str(tmp_path / "plain"), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert "from_lock" not in payload
+
+
+# --- buildability preflight (t10's guard, wired here — deviation d3) --------
+
+
+def test_a_dev_pinned_variation_warns_that_its_wheel_may_be_gone(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A `.devN` pin is published to TestPyPI by a PR and may not outlive it."""
+    source, _box = _make_variation(tmp_path, monkeypatch, lobes_version="0.67.0.dev428")
+    capsys.readouterr()
+    assert main(["init", "--from-lock", str(source), str(tmp_path / "restored"), "--apply"]) == 0
+    assert "development wheel" in capsys.readouterr().err
+
+
+def test_an_unversioned_variation_warns_but_still_restores(tmp_path, monkeypatch, capsys) -> None:
+    """Absent is "not recorded", never "broken" — it warns, it does not refuse."""
+    source, _box = _make_variation(tmp_path, monkeypatch, lobes_version=None)
+    capsys.readouterr()
+    assert main(["init", "--from-lock", str(source), str(tmp_path / "restored"), "--apply"]) == 0
+    assert "no MODEL_GEAR_VERSION" in capsys.readouterr().err

@@ -106,6 +106,13 @@ jobs:
       - name: scan committed deployment artifacts for secrets
         run: uv run python scripts/scan_deployment_secrets.py --root "$GITHUB_WORKSPACE"
 
+      # The default globs are rooted at deployments/, which do NOT reach the
+      # catalog FIXTURES under tests/fixtures/deployments/. Those are committed
+      # too, so a secret planted in a fixture variation would otherwise pass CI
+      # (flagged by t9; its own suite covers the tree, this makes CI cover it).
+      - name: scan committed catalog fixtures for secrets
+        run: uv run python scripts/scan_deployment_secrets.py --root "$GITHUB_WORKSPACE/tests/fixtures"
+
   site-build:
     runs-on: ubuntu-latest
     permissions:

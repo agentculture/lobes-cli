@@ -128,6 +128,7 @@ from lobes.profiles.shapes import (
     resolve_shape,
 )
 from lobes.runtime import _compose, _detect, _env
+from lobes.runtime._buildability import check_lock_buildability
 from lobes.runtime._lock import LOCK_FILENAME, DeploymentLock, file_digest, load_lock
 from lobes.variation import resolve_variation_id
 
@@ -1144,6 +1145,40 @@ def _from_lock_dry_run_lines(
     return lines
 
 
+def _guard_buildability(lock: DeploymentLock) -> None:
+    """Refuse (or warn about) a variation whose gateway wheel will not install.
+
+    The preflight t10's guard was built for, wired at the one moment a stale
+    pin becomes consequential. ``Dockerfile.gateway`` installs the gateway as
+    ``lobes-cli==${MODEL_GEAR_VERSION}``, so a variation can outlive the wheel
+    it references — and without this the operator meets that as a ``pip``
+    traceback nested in a ``docker build`` log, long after the restore claimed
+    success.
+
+    Deliberately OFFLINE and WARN-ONLY: no index is queried, because a restore
+    must not depend on network reachability, and offline nothing here can PROVE
+    a wheel uninstallable. ``lobes_version`` is optional in the lock schema, so
+    its absence means "not recorded", never "broken" — refusing on it would
+    reject every variation captured without one. The raising path
+    (:func:`assert_buildable` on a definitive ``installable is False``) needs an
+    index query, which stays opt-in; see issue tracking for wiring it to a
+    network-permitted verb.
+    """
+    result = check_lock_buildability(lock)
+    if result.risk == "ephemeral_dev":
+        emit_diagnostic(
+            f"warning: this variation pins a development wheel "
+            f"({lock.lobes_version}) — those are published to TestPyPI by a PR "
+            "and may no longer be installable; the gateway image build can fail"
+        )
+    elif result.risk == "unversioned":
+        emit_diagnostic(
+            "warning: this variation records no MODEL_GEAR_VERSION — "
+            "`docker compose build gateway` will resolve an empty pin unless "
+            "the deployment's own .env supplies one"
+        )
+
+
 def _emit_from_lock(
     raw_source: str,
     target: Path,
@@ -1166,6 +1201,7 @@ def _emit_from_lock(
     _verify_source(source_dir, lock, names)
     detected = _detected_variation()
     _guard_variation(lock, detected, allow_mismatch=allow_mismatch)
+    _guard_buildability(lock)
     removals = _restore_removals(target, names)
     env_path = target / _compose.ENV_FILE
     payload = _from_lock_payload(
