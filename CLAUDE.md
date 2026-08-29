@@ -757,6 +757,75 @@ plural peer family is generic across all nine role prefixes. See
 `docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
 schema: additive `replicas`/`fingerprint` fields).
 
+## The deployment lock and the variation catalog
+
+Orthogonal again to profile (how a role is tuned) and shape (which roles a
+box hosts) is **what a box actually runs**: the compose files, overrides and
+Dockerfiles on disk, which drift from the packaged templates the moment
+anyone hand-edits them. The **deployment lock** captures that as a committed
+artifact. The motivating incident is on the record, not remembered: on
+**2026-08-25**, preparing the cortex replica pool (#199), the Spark's
+`docker-compose.yml` was found hand-edited with the DSpark
+`--speculative-config` baked into `vllm-primary` while the Thor's equalled
+the template — only a live diff revealed it, the Spark could not be safely
+re-scaffolded (the pool's passthrough lines went into
+`docker-compose.override.yml` instead), and the two boxes' live fingerprints
+both read `speculative_config: unknown` while genuinely drafting differently
+(`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`, "Deploy
+record"; issue #214).
+
+- **`deployment.lock.toml`** (`lobes/runtime/_lock.py`) — `[variation]`
+  (machine type or setup, NEVER a hostname — `lobes/variation.py`), `[env]`
+  and `[files]` (name → `sha256:` digest). `[env]` is an **allowlist derived
+  from `lobes/profiles/render.py`'s own tables**, never a denylist-redacted
+  copy of a deployed `.env`, so a credential cannot enter by someone
+  forgetting to blank a line — narrowed by two exclusions (**deviation d1**):
+  `COMPOSE_PROFILES` (operator-typed) and any `_URL`-suffixed key (wiring).
+- **`lobes init --from-lock <dir|file>`** — a distinct SOURCE, not a fourth
+  renderer input: it bypasses profile/shape resolution and materialises the
+  committed files verbatim (refused alongside
+  `--single`/`--audio`/`--profile`/`--shape`). `.env` stays **merge-only** —
+  existing lines are never rewritten, only missing locked knobs appended. A
+  machine-type mismatch **refuses** (an UNKNOWN card counts as one) because
+  the bypass also skips the card's csv-vs-devices GPU-access correction; the
+  override is its own flag, `--allow-variation-mismatch`, never `--force`.
+- **`lobes doctor` → `lock_drift`** — names the SPECIFIC differing files and
+  locked keys; no lock present means no finding at all; read-only, so
+  `--fix`'s never-rewrite-an-existing-`.env`-line convention is untouched.
+  `lobes switch` warns whenever a lock is present. Note **deviation d4**: the
+  spec's claim that `switch` writes the locked key family is WRONG (it writes
+  only legacy `VLLM_*` keys, which never intersect the allowlist) — staleness
+  is caught by tracking `.env`'s own **digest** in `[files]` instead.
+- **`deployments/`** — the variation catalog, published for machine types
+  this operator may not run. Each `<id>[__<shape>]/` carries its lock, its
+  files and a `VARIATION.md` whose `## Measured result` either cites an
+  existing `docs/evidence/` transcript or states verbatim `No measured
+  result.` — never both, never neither (`lobes/variation_catalog.py`).
+- **Secrets** — a positional `.gitignore` rule (any name *ending* `.env` is
+  ignored; a `.env.` *prefix* is tracked, with a `!tests/goldens/**/*.env`
+  negation), a `.secrets.env` sibling read by every fleet service as a second
+  `required: false` `env_file` entry, and a **required** CI job
+  (`secrets-scan` → `scripts/scan_deployment_secrets.py`) over the lock and
+  every verbatim-committed compose/override/Dockerfile — the half the
+  allowlist cannot protect. Leak recovery: `docs/secret-rotation.md`.
+
+**Honesty (#108) — read this before citing any of it as working.** **No real
+box has been captured**: `deployments/` ships a README and a template and
+ZERO variations, and every catalog behaviour is exercised against fixtures
+under `tests/fixtures/deployments/`. **There is no capture verb** — the lock
+writer is a library with no CLI caller, so every "re-capture the lock"
+instruction means calling it. **Serve-after-restore is unmeasured**: the
+mechanism guarantees byte-identical files and a merge-only `.env` (both
+test-proven), but no box has been restored and then served. A lock-restored
+**fresh** box is not yet servable (**deviation d2**): the fleet compose
+bind-mounts `mg-logwrap.sh` and the tool-parser plugin, which are packaged
+SCAFFOLD files, so a lock naming only compose + Dockerfiles restores an
+incomplete deployment. The buildability preflight (`_buildability.py`, run by
+`--from-lock`) is **offline and warn-only** and cannot prove a wheel
+uninstallable — its raising path needs an index query nothing wires
+(**deviation d3**). All four deviations are `proposed`, not approved. See
+`docs/deployment-lock.md` (the deep reference) and `lobes explain lock`.
+
 ## Deployment model
 
 lobes is **scaffold-based, not checkout-based.** The canonical

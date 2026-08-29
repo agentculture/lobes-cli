@@ -1,8 +1,12 @@
 # Secret rotation and revocation
 
-This is a recovery procedure, not a preventive one. `.gitignore`'s bare
-`.env` line (and the explicit `.cf-tunnel.env` line beside it) keep the
-deployment secret files unstaged; `scripts/gen-api-key.py` rotates the
+This is a recovery procedure, not a preventive one. `.gitignore`'s positional
+rule — any name *ending* in `.env` is ignored by construction, so `.env`,
+`.cf-tunnel.env` and `.secrets.env` need no separate entries — keeps the
+deployment secret files unstaged, and the required `secrets-scan` CI job
+(`scripts/scan_deployment_secrets.py`) covers what the committed deployment
+lock practice adds (`docs/deployment-lock.md`);
+`scripts/gen-api-key.py` rotates the
 gateway bearer key **locally**. Neither answers the question this doc
 answers: **a credential leaked (committed, pasted into a chat, logged) — what
 do I do, in what order, and how do I know each step actually worked?**

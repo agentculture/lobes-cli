@@ -10,6 +10,11 @@ It is a catalog, not a backup: variations are published for machine types this
 operator may not run, so a third party can adopt a working deployment without
 owning the box it was measured on.
 
+The deep reference — how a lock is built, what `--from-lock` guarantees, what
+`lock_drift` catches, and the full list of what is **not** validated — is
+[`docs/deployment-lock.md`](../docs/deployment-lock.md) (`lobes explain lock`
+in the CLI).
+
 ## Status — no real box has been captured yet
 
 **This catalog is empty of real variations today.** Capturing one requires
