@@ -1,0 +1,6 @@
+# FIXTURE gateway image — mirrors the real template's version pin so a
+# buildability guard (t10) has the same shape to look at.
+FROM python:3.12-slim
+ARG MODEL_GEAR_VERSION=0.0.0
+RUN pip install --no-cache-dir "lobes-cli==${MODEL_GEAR_VERSION}"
+CMD ["python", "-m", "lobes.gateway"]

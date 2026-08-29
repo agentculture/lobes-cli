@@ -1,0 +1,21 @@
+# FIXTURE compose file — not a real deployment. Trimmed to the smallest shape
+# the variation-catalog contract needs (tests/test_variation_catalog.py).
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY}
+      - PRIMARY_MODEL=${PRIMARY_MODEL:-fixture/Fixture-Primary}
+    ports:
+      - "8000:8000"
+  vllm-primary:
+    image: fixture/vllm:pinned
+    command: >
+      --model ${PRIMARY_MODEL:-fixture/Fixture-Primary}
+      --gpu-memory-utilization ${PRIMARY_GPU_MEM_UTIL:-0.50}
+      --max-model-len ${PRIMARY_MAX_MODEL_LEN:-32768}
