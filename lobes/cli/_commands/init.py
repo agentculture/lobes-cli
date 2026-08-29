@@ -103,11 +103,12 @@ Mutation safety is unchanged: dry-run by default, ``--apply`` to write.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Sequence
 
 from lobes import __version__
-from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import GPU_ACCESS_RUNTIME
@@ -1037,9 +1038,7 @@ def _guard_variation(lock: DeploymentLock, detected: str, *, allow_mismatch: boo
     """
     if lock.variation == detected:
         return
-    detail = (
-        f"this box detects as {detected!r} but the lock declares variation " f"{lock.variation!r}"
-    )
+    detail = f"this box detects as {detected!r} but the lock declares variation {lock.variation!r}"
     if allow_mismatch:
         emit_diagnostic(
             f"warning: {detail}. Proceeding — you passed --allow-variation-mismatch. "
@@ -1064,8 +1063,176 @@ def _restore_removals(target: Path, names: list[str]) -> list[str]:
     return [name for name in RESTORE_SYNCED_FILES if name not in names and (target / name).exists()]
 
 
-def _merge_lock_env(env_path: Path, env: dict) -> list[str]:
-    """Merge the lock's rendered knobs into ``.env``; returns the keys APPENDED.
+def _check_restore_destinations(target: Path, names: list[str]) -> None:
+    """Refuse a restore whose DESTINATION carries a symlink.
+
+    :func:`_check_restorable_name` gates the lock's own ``[files]`` keys, so a
+    committed lock cannot name a path that escapes the deployment directory.
+    That says nothing about the target: a symlink already sitting at
+    ``<target>/docker-compose.yml`` would carry an ordinary
+    ``write_bytes``/append straight through to whatever it points at, so a
+    restore into an untrusted or tampered deployment dir could overwrite any
+    file this process can write. A variation is adopted from a repo — both
+    halves deserve suspicion, not just the lock.
+
+    **Refuse, not unlink.** Replacing the link silently would destroy an
+    arrangement lobes did not create and cannot reconstruct (an operator who
+    deliberately symlinks a compose file into a shared config tree has one),
+    and it would do so on the strength of a guess about intent. Refusing names
+    the file and hands the decision back — the same posture as every other
+    check on this path, all of which run before the first byte is written and
+    on the dry run too.
+    """
+    for name in (*names, *RESTORE_SYNCED_FILES, _compose.ENV_FILE):
+        path = target / name
+        if path.is_symlink():
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"refusing to restore over {name}: it is a symlink in {target} "
+                    f"(-> {os.readlink(path)})"
+                ),
+                remediation=(
+                    "a restore writes the variation's files verbatim and merges "
+                    f"{_compose.ENV_FILE}; writing through a symlink would mutate a file "
+                    "outside the deployment directory. Remove or resolve the link, then "
+                    "restore again."
+                ),
+            )
+
+
+#: Marks the same-directory temp files :class:`_RestoreWrite` creates, so a
+#: crash leaves droppings that are recognisable as lobes' own rather than
+#: mistakable for deployment files.
+_RESTORE_TEMP_TAG = ".lobes-restore"
+
+
+def _write_new_file(path: Path, data: bytes) -> None:
+    """Create *path* and write *data*, refusing to follow anything already there.
+
+    ``O_EXCL`` is the point: a staging file is created or the open fails, so a
+    pre-planted symlink at the temp name cannot redirect the write either.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _replace_file(src: Path, dst: Path) -> None:
+    """``os.replace`` behind a name — the commit phase's single seam."""
+    os.replace(src, dst)
+
+
+class _RestoreWrite:
+    """Stage-then-commit for a restore's whole write phase.
+
+    **The guarantee, stated exactly.** Every byte a restore writes goes to a
+    same-directory temp file FIRST (:meth:`stage`) and nothing in the
+    deployment is touched until :meth:`commit`. So every failure that
+    realistically occurs — an unreadable source file, a full disk, a permission
+    denial — happens while the deployment is still exactly as it was, and the
+    caller can abandon the attempt with :meth:`discard`.
+
+    The commit is then a sequence of same-directory :func:`os.replace` calls.
+    Each is atomic on POSIX, so **no file is ever observed half-written or
+    truncated**, and the rename cannot fail for lack of space. Because the
+    SEQUENCE is still not one transaction, the commit is made undoable instead:
+    every destination that already exists is renamed aside ("parked") before
+    the first file is placed, and a failure part way through unwinds the
+    renames already made and puts the parked files back.
+
+    **What is NOT claimed.** This is not a filesystem transaction. A power loss
+    between two renames, or a failure of the rollback renames themselves, can
+    still leave a directory holding some new files and some old ones — with
+    every individual file intact, and lobes' own parked copies still on disk
+    under the ``.lobes-restore`` tag. A genuine all-or-nothing commit across N
+    files needs a facility the stdlib does not have.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self._dir = directory
+        self._staged: list[tuple[Path, Path]] = []
+        self._removals: list[Path] = []
+
+    def _temp_path(self, name: str) -> Path:
+        return self._dir / f".{name}{_RESTORE_TEMP_TAG}.{os.getpid()}.tmp"
+
+    def stage(self, name: str, data: bytes, *, mode_from: Path | None = None) -> None:
+        """Write *data* to a temp file that :meth:`commit` will move onto *name*."""
+        tmp = self._temp_path(name)
+        tmp.unlink(missing_ok=True)  # a dropping from an earlier crashed run
+        _write_new_file(tmp, data)
+        if mode_from is not None:
+            os.chmod(tmp, os.stat(mode_from).st_mode & 0o777)
+        self._staged.append((tmp, self._dir / name))
+
+    def remove(self, name: str) -> None:
+        """Delete *name* as part of the same commit (a stale generated overlay)."""
+        self._removals.append(self._dir / name)
+
+    def discard(self) -> None:
+        """Abandon the staged writes; the deployment was never touched."""
+        for tmp, _ in self._staged:
+            tmp.unlink(missing_ok=True)
+        self._staged.clear()
+
+    def _destinations(self) -> list[Path]:
+        return [final for _, final in self._staged] + self._removals
+
+    def commit(self) -> None:
+        """Park every existing destination, then place the staged files."""
+        parked: list[tuple[Path, Path]] = []
+        placed: list[Path] = []
+        try:
+            for final in self._destinations():
+                if final.exists() or final.is_symlink():
+                    park = self._temp_path(f"{final.name}.bak")
+                    park.unlink(missing_ok=True)
+                    _replace_file(final, park)
+                    parked.append((final, park))
+            for tmp, final in self._staged:
+                _replace_file(tmp, final)
+                placed.append(final)
+        except OSError as exc:
+            self._rollback(parked, placed)
+            raise ModelGearError(
+                code=EXIT_ENV_ERROR,
+                message=f"restore failed while writing {self._dir}: {exc}",
+                remediation=(
+                    "the deployment was rolled back to its previous files; fix the "
+                    "underlying I/O problem (permissions, disk space) and restore again"
+                ),
+            ) from exc
+        for _, park in parked:
+            park.unlink(missing_ok=True)
+        self._staged.clear()
+
+    def _rollback(self, parked: list[tuple[Path, Path]], placed: list[Path]) -> None:
+        """Undo a partial commit; best effort, and deliberately silent on failure.
+
+        A rollback that itself fails must not mask the original error — the
+        parked copies stay on disk under the ``.lobes-restore`` tag, which is
+        the honest outcome to leave behind.
+        """
+        for final in placed:
+            try:
+                final.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        for final, park in parked:
+            try:
+                _replace_file(park, final)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        self.discard()
+
+
+def _lock_env_plan(env_path: Path, env: dict) -> tuple[list[str], bytes | None]:
+    """``(keys to APPEND, the whole new ``.env`` bytes)`` — pure, writes nothing.
 
     Append-only, by the same rule as
     :func:`lobes.runtime._compose.merge_env_template`: an existing line is never
@@ -1074,20 +1241,25 @@ def _merge_lock_env(env_path: Path, env: dict) -> list[str]:
     through a restore byte-identical when it already carries the lock's keys.
     Deliberately NOT :func:`lobes.runtime._env.set_env`, which rewrites the
     whole file even for a pure append.
+
+    It returns bytes rather than writing them because ``.env`` is committed by
+    the same staged write phase as every other file (:class:`_RestoreWrite`):
+    an append that lands while a compose file did not is exactly the mixed
+    deployment that staging exists to prevent. ``None`` means "no change at
+    all", and no ``.env`` write is staged in that case — which is what keeps a
+    no-op restore byte-identical, inode included.
     """
-    existing = (
-        _compose.env_keys(env_path.read_text(encoding="utf-8")) if env_path.exists() else set()
-    )
+    current = env_path.read_text(encoding="utf-8") if env_path.exists() else None
+    existing = _compose.env_keys(current) if current is not None else set()
     added = [key for key in sorted(env) if key not in existing]
     if not added:
-        return []
+        return [], None
     lines = [f"{key}={env[key]}" for key in added]
-    if env_path.exists():
-        with env_path.open("a", encoding="utf-8") as fh:
-            fh.write("\n".join([*_MERGED_ENV_HEADER, *lines, ""]))
+    if current is None:
+        text = _RESTORED_ENV_HEADER + "\n".join(lines) + "\n"
     else:
-        env_path.write_text(_RESTORED_ENV_HEADER + "\n".join(lines) + "\n", encoding="utf-8")
-    return added
+        text = current + "\n".join([*_MERGED_ENV_HEADER, *lines, ""])
+    return added, text.encode("utf-8")
 
 
 def _env_action(env_path: Path, env: dict) -> str:
@@ -1179,6 +1351,49 @@ def _guard_buildability(lock: DeploymentLock) -> None:
         )
 
 
+def _write_restore(
+    target: Path,
+    source_dir: Path,
+    names: list[str],
+    removals: list[str],
+    env_path: Path,
+    env: dict,
+) -> list[str]:
+    """The restore's whole write phase, staged then committed as one step.
+
+    Returns the ``.env`` keys appended. See :class:`_RestoreWrite` for the
+    atomicity guarantee this achieves — and for the one it does not claim.
+    """
+    writer = _RestoreWrite(target)
+    try:
+        for name in names:
+            source = source_dir / name
+            writer.stage(name, source.read_bytes(), mode_from=source)
+        added, env_bytes = _lock_env_plan(env_path, env)
+        if env_bytes is not None:
+            # A fresh .env is created 0600: it exists to receive this box's
+            # secrets next. An existing one keeps the mode it already had.
+            writer.stage(
+                _compose.ENV_FILE,
+                env_bytes,
+                mode_from=env_path if env_path.exists() else None,
+            )
+        for name in removals:
+            writer.remove(name)
+    except OSError as exc:
+        writer.discard()
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"restore failed while staging {target}: {exc}",
+            remediation=(
+                "nothing was written — the deployment is exactly as it was; fix the "
+                "underlying I/O problem (permissions, disk space) and restore again"
+            ),
+        ) from exc
+    writer.commit()
+    return added
+
+
 def _emit_from_lock(
     raw_source: str,
     target: Path,
@@ -1204,6 +1419,7 @@ def _emit_from_lock(
     _guard_buildability(lock)
     removals = _restore_removals(target, names)
     env_path = target / _compose.ENV_FILE
+    _check_restore_destinations(target, names)
     payload = _from_lock_payload(
         lock_file=lock_file,
         source_dir=source_dir,
@@ -1251,11 +1467,7 @@ def _emit_from_lock(
         return
 
     target.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        (target / name).write_bytes((source_dir / name).read_bytes())
-    for name in removals:
-        (target / name).unlink()
-    added = _merge_lock_env(env_path, dict(lock.env))
+    added = _write_restore(target, source_dir, names, removals, env_path, dict(lock.env))
     # The compose bind-mount source, exactly as the scaffold path creates it.
     _compose.ensure_log_dir(target)
     payload.update({"restored": str(target), "files": names, "removed": removals})

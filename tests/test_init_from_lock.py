@@ -201,7 +201,8 @@ def test_restore_refuses_when_the_detected_card_differs(tmp_path, monkeypatch, c
     capsys.readouterr()
     assert main(["init", "--from-lock", str(source), str(target), "--apply"]) == EXIT_USER_ERROR
     err = capsys.readouterr().err
-    assert "spark" in err and "thor" in err
+    assert "spark" in err
+    assert "thor" in err
     assert "--allow-variation-mismatch" in err
     assert not target.exists()
 
@@ -243,7 +244,8 @@ def test_the_override_is_explicit_and_warns(tmp_path, monkeypatch, capsys) -> No
     )
     captured = capsys.readouterr()
     assert "warning" in captured.err
-    assert "spark" in captured.err and "thor" in captured.err
+    assert "spark" in captured.err
+    assert "thor" in captured.err
     assert (target / _compose.COMPOSE_FILE).read_bytes() == (
         box / _compose.COMPOSE_FILE
     ).read_bytes()
@@ -383,7 +385,8 @@ def test_dry_run_names_every_file_apply_would_write(tmp_path, monkeypatch, capsy
     capsys.readouterr()
     assert main(["init", "--from-lock", str(source), str(tmp_path / "restored")]) == 0
     out = capsys.readouterr().out
-    assert "DRY RUN" in out and "--apply" in out
+    assert "DRY RUN" in out
+    assert "--apply" in out
     for name in _committed_names(box):
         assert name in out
 
@@ -465,7 +468,8 @@ def test_a_digest_mismatch_is_refused_before_any_write(tmp_path, monkeypatch, ca
     capsys.readouterr()
     assert main(["init", "--from-lock", str(source), str(target), "--apply"]) == EXIT_USER_ERROR
     err = capsys.readouterr().err
-    assert _compose.COMPOSE_FILE in err and "digest" in err
+    assert _compose.COMPOSE_FILE in err
+    assert "digest" in err
     assert not target.exists()
 
 
@@ -529,3 +533,175 @@ def test_an_unversioned_variation_warns_but_still_restores(tmp_path, monkeypatch
     capsys.readouterr()
     assert main(["init", "--from-lock", str(source), str(tmp_path / "restored"), "--apply"]) == 0
     assert "no MODEL_GEAR_VERSION" in capsys.readouterr().err
+
+
+# --- PR #223 review: a destination symlink must never be written through -----
+
+
+def test_restore_refuses_to_write_through_a_symlink_in_the_target(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """``_check_restorable_name`` gates the LOCK's names; this gates the TARGET.
+
+    A plain-name entry cannot escape the deployment directory, but a symlink
+    already sitting at the destination would carry the write anywhere the
+    process can reach. Both the lock and the target deserve suspicion, so the
+    restore refuses rather than following (or silently replacing) the link.
+    """
+    source, _box = _make_variation(tmp_path, monkeypatch)
+    target = tmp_path / "restored"
+    target.mkdir()
+    outside = tmp_path / "outside.yml"
+    outside.write_text("# untouched\n", encoding="utf-8")
+    (target / _compose.COMPOSE_FILE).symlink_to(outside)
+
+    capsys.readouterr()
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) == EXIT_USER_ERROR
+    err = capsys.readouterr().err
+    assert _compose.COMPOSE_FILE in err
+    assert "symlink" in err
+    assert outside.read_text(encoding="utf-8") == "# untouched\n"
+    assert (target / _compose.COMPOSE_FILE).is_symlink()
+
+
+def test_the_symlink_guard_refuses_on_the_dry_run_too(tmp_path, monkeypatch) -> None:
+    source, _box = _make_variation(tmp_path, monkeypatch)
+    target = tmp_path / "restored"
+    target.mkdir()
+    (target / _compose.COMPOSE_FILE).symlink_to(tmp_path / "outside.yml")
+    assert main(["init", "--from-lock", str(source), str(target)]) == EXIT_USER_ERROR
+
+
+def test_an_env_symlink_is_refused_before_the_merge(tmp_path, monkeypatch, capsys) -> None:
+    """``.env`` is merged, not overwritten — but an appending open() follows a
+    symlink just as happily."""
+    source, _box = _make_variation(tmp_path, monkeypatch)
+    target = tmp_path / "restored"
+    target.mkdir()
+    outside = tmp_path / "outside.env"
+    outside.write_text("KEEP=1\n", encoding="utf-8")
+    (target / _compose.ENV_FILE).symlink_to(outside)
+
+    capsys.readouterr()
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) == EXIT_USER_ERROR
+    assert "symlink" in capsys.readouterr().err
+    assert outside.read_text(encoding="utf-8") == "KEEP=1\n"
+
+
+# --- PR #223 review: the write phase is staged, never half-applied ----------
+
+
+def _seed_previous_deployment(target: Path, names: list[str]) -> None:
+    target.mkdir(exist_ok=True)
+    for name in names:
+        (target / name).write_text("# previous\n", encoding="utf-8")
+    (target / _compose.ENV_FILE).write_text("# previous env\n", encoding="utf-8")
+
+
+def _assert_previous_deployment_intact(target: Path, names: list[str]) -> None:
+    for name in names:
+        assert (target / name).read_text(encoding="utf-8") == "# previous\n"
+    assert (target / _compose.ENV_FILE).read_text(encoding="utf-8") == "# previous env\n"
+    leftovers = sorted(p.name for p in target.iterdir() if init_cmd._RESTORE_TEMP_TAG in p.name)
+    assert leftovers == []
+
+
+def test_a_staging_failure_leaves_the_deployment_untouched(tmp_path, monkeypatch) -> None:
+    """An I/O failure while staging mutates nothing at all."""
+    source, box = _make_variation(tmp_path, monkeypatch)
+    names = _committed_names(box)
+    target = tmp_path / "restored"
+    _seed_previous_deployment(target, names)
+
+    real = init_cmd._write_new_file
+    calls = {"n": 0}
+
+    def flaky(path: Path, data: bytes) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError(28, "No space left on device")
+        real(path, data)
+
+    monkeypatch.setattr(init_cmd, "_write_new_file", flaky)
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) != 0
+    _assert_previous_deployment_intact(target, names)
+
+
+def test_a_commit_failure_is_rolled_back(tmp_path, monkeypatch) -> None:
+    """Every destination is parked before the first replace, so a failure part
+    way through the commit puts the deployment back the way it was."""
+    source, box = _make_variation(tmp_path, monkeypatch)
+    names = _committed_names(box)
+    target = tmp_path / "restored"
+    _seed_previous_deployment(target, names)
+
+    real = init_cmd._replace_file
+    calls = {"n": 0}
+
+    def flaky(src: Path, dst: Path) -> None:
+        # Fail on the SECOND file placed (a staged temp moving onto its final
+        # name), i.e. after the commit has already mutated the deployment.
+        if init_cmd._RESTORE_TEMP_TAG in src.name and not src.name.endswith(".bak.tmp"):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError(5, "Input/output error")
+        real(src, dst)
+
+    monkeypatch.setattr(init_cmd, "_replace_file", flaky)
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) != 0
+    assert calls["n"] >= 2, "the injected failure never reached the placement phase"
+    _assert_previous_deployment_intact(target, names)
+
+
+def test_a_stale_overlay_removal_is_rolled_back_too(tmp_path, monkeypatch) -> None:
+    """The removals are part of the same commit, not a separate pass that has
+    already happened by the time a write fails."""
+    source, box = _make_variation(tmp_path, monkeypatch)
+    names = _committed_names(box)
+    stale = next(name for name in init_cmd.RESTORE_SYNCED_FILES if name not in names)
+    target = tmp_path / "restored"
+    _seed_previous_deployment(target, names)
+    (target / stale).write_text("# stale\n", encoding="utf-8")
+
+    real = init_cmd._replace_file
+    calls = {"n": 0}
+
+    def flaky(src: Path, dst: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError(5, "Input/output error")
+        real(src, dst)
+
+    monkeypatch.setattr(init_cmd, "_replace_file", flaky)
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) != 0
+    _assert_previous_deployment_intact(target, names)
+    assert (target / stale).read_text(encoding="utf-8") == "# stale\n"
+
+
+def test_a_successful_restore_leaves_no_staging_files_behind(tmp_path, monkeypatch) -> None:
+    source, box = _make_variation(tmp_path, monkeypatch)
+    target = tmp_path / "restored"
+    assert main(["init", "--from-lock", str(source), str(target), "--apply"]) == 0
+    assert [p.name for p in target.iterdir() if init_cmd._RESTORE_TEMP_TAG in p.name] == []
+    names = _committed_names(box)
+    match, mismatch, errors = filecmp.cmpfiles(box, target, names, shallow=False)
+    assert sorted(match) == sorted(names)
+    assert (mismatch, errors) == ([], [])
+
+
+# --- PR #223 review: a malformed lock is a user error, not a traceback ------
+
+
+def test_a_malformed_lock_is_a_clean_user_error(tmp_path, monkeypatch, capsys) -> None:
+    _patch_detect(monkeypatch, _card("spark"))
+    source = tmp_path / "variation"
+    source.mkdir()
+    (source / _lock.LOCK_FILENAME).write_text("this is not toml ][\n", encoding="utf-8")
+    capsys.readouterr()
+    assert (
+        main(["init", "--from-lock", str(source), str(tmp_path / "restored"), "--apply"])
+        == EXIT_USER_ERROR
+    )
+    err = capsys.readouterr().err
+    assert _lock.LOCK_FILENAME in err
+    assert "Traceback" not in err
