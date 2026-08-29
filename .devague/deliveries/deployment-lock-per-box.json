@@ -2,7 +2,7 @@
   "plan_slug": "deployment-lock-per-box",
   "schema_version": 1,
   "created": "2026-08-29T07:20:52Z",
-  "updated": "2026-08-29T07:44:59Z",
+  "updated": "2026-08-29T08:19:56Z",
   "deviations": [
     {
       "id": "d1",
@@ -16,7 +16,7 @@
         "c4"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable"
     },
     {
@@ -31,7 +31,7 @@
         "c14"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up"
     },
     {
@@ -45,7 +45,7 @@
         "h28"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up"
     },
     {
@@ -59,7 +59,7 @@
         "h7"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable"
     },
     {
@@ -76,7 +76,7 @@
         "h10"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up"
     },
     {
@@ -91,7 +91,7 @@
         "h7"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "risky"
     }
   ]

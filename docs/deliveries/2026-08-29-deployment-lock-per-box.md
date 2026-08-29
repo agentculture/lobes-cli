@@ -54,29 +54,28 @@ Quoted verbatim from the `devague summary` skeleton:
 
 ## Mid-work Decisions
 
-Six deviations were recorded during the run. **All six are `proposed`, none
-approved** — `devague deviate --confirm` is a user-only action and was not
-taken, so per the drift contract none of them can be cited here as recorded
-ground truth. They are quoted as proposals.
+Six deviations were recorded during the run and **all six were approved by the
+plan owner** on 2026-08-29, after the summary was first written. They are the
+recorded ground truth this section and the drift table below quote.
 
-- `d1` (proposed, `acceptable`) — the lock's key set is an allowlist **minus
+- `d1` (approved, `acceptable`) — the lock's key set is an allowlist **minus
   two exclusion rules**, not the pure allowlist the spec claims: `COMPOSE_PROFILES`
   (which `profile_env` does emit, and which `c4` names as operator-typed) and
   any `_URL`-suffixed key (the shape layer's `*_BASE_URL` / `PRIMARY_URL`
   wiring, hand-retargetable at a peer box). Both rules only ever *remove*
   keys, so the failure mode `c25` was written against remains impossible.
-- `d2` (proposed, `needs-follow-up`) — a lock-restored **fresh** box is not
+- `d2` (approved, `needs-follow-up`) — a lock-restored **fresh** box is not
   servable: the fleet compose bind-mounts `mg-logwrap.sh` and the tool-parser
   plugin, which are packaged scaffold files rather than compose/Dockerfiles.
-- `d3` (proposed, `needs-follow-up`) — `t10`'s guard shipped with no caller,
+- `d3` (approved, `needs-follow-up`) — `t10`'s guard shipped with no caller,
   because `t10` was forbidden from editing the only natural wiring points
   (`init.py`, `doctor.py`), both owned by sibling tasks.
-- `d4` (proposed, `acceptable`) — **spec claim `c33` is wrong.** `lobes switch`
+- `d4` (approved, `acceptable`) — **spec claim `c33` is wrong.** `lobes switch`
   writes only legacy `VLLM_*` keys, which never intersect `lock_keys()`. The
   claim's conclusion survives (a first-class verb does make a lock stale) but
   its stated mechanism does not.
-- `d5` (proposed, `needs-follow-up`) — **there is no capture verb.**
-- `d6` (proposed, `risky`) — `d4`'s staleness mechanism and `t7`'s restore path
+- `d5` (approved, `needs-follow-up`) — **there is no capture verb.**
+- `d6` (approved, `risky`) — `d4`'s staleness mechanism and `t7`'s restore path
   cannot both use one lock.
 - Not covered by any record: the integration pass deliberately made the
   buildability preflight **warn-only rather than raising**, because
@@ -88,12 +87,12 @@ ground truth. They are quoted as proposals.
 
 | Plan item | Reason for divergence | Classification |
 |-----------|-----------------------|----------------|
-| `t6` (`d1`, proposed) | the delivered lock is an allowlist minus two exclusion rules, not the pure allowlist `c25` and `h20` describe | acceptable |
-| `t7` (`d2`, proposed) | a restored fresh box lacks the two bind-mounted scaffold files, so `c1`/`h1`'s "byte-identical restore" does not yield a servable box | needs-follow-up |
-| `t10` (`d3`, proposed) | shipped with no caller; wired later as offline warn-only, so `h28`'s "reported unbuildable" is a warning, never a refusal | needs-follow-up |
-| `t8` (`d4`, proposed) | `c33`'s mechanism is factually wrong; staleness had to be caught by an `.env` digest instead | acceptable |
-| `t6`/`t7` (`d5`, proposed) | no CLI path captures a lock, so the practice cannot be exercised end to end — `c14`/`h10`'s adoption promise is unreachable today | needs-follow-up |
-| `t7`/`t8` (`d6`, proposed) | a drift-capable lock is not restorable and a restorable lock cannot detect `.env` drift; nothing reconciles them | risky |
+| `t6` (`d1`) | the delivered lock is an allowlist minus two exclusion rules, not the pure allowlist `c25` and `h20` describe | acceptable |
+| `t7` (`d2`) | a restored fresh box lacks the two bind-mounted scaffold files, so `c1`/`h1`'s "byte-identical restore" does not yield a servable box | needs-follow-up |
+| `t10` (`d3`) | shipped with no caller; wired later as offline warn-only, so `h28`'s "reported unbuildable" is a warning, never a refusal | needs-follow-up |
+| `t8` (`d4`) | `c33`'s mechanism is factually wrong; staleness had to be caught by an `.env` digest instead | acceptable |
+| `t6`/`t7` (`d5`) | no CLI path captures a lock, so the practice cannot be exercised end to end — `c14`/`h10`'s adoption promise is unreachable today | needs-follow-up |
+| `t7`/`t8` (`d6`) | a drift-capable lock is not restorable and a restorable lock cannot detect `.env` drift; nothing reconciles them | risky |
 | `t9` | zero real variations shipped — `h10` ("materialisable on a machine that never served it") is tested only against fixtures, since capture needs physical hardware | needs-follow-up |
 
 ## Evidence
@@ -153,9 +152,10 @@ ground truth. They are quoted as proposals.
    `unverified` claims above be measured. Requires hardware.
 5. **Wire an opt-in index query** so the buildability guard can refuse rather
    than warn (`d3`).
-6. **Adjudicate the six deviations** — all are `proposed`; `d1` in particular
-   corrects a confirmed claim (`c25`) that the exported spec still states in
-   its original form.
+6. **Reconcile the spec with `d1`** — the deviation is approved, but the
+   exported spec still states `c25` in its original pure-allowlist form.
+   Amending the claim (or recording the exclusions alongside it) keeps the
+   spec and the delivered mechanism from disagreeing.
 7. Carried from the frame, still open: no trust model exists for adopting a
    third party's variation (the challenge pass recorded this surface as
    unexamined), and `lock_drift` can only verify the local variation.
