@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import builtin_names, resolve_profile
 from lobes.profiles.render import profile_env
 from lobes.profiles.shape_render import render_shape
@@ -283,9 +284,9 @@ def test_write_lock_refuses_to_write_a_lock_carrying_a_secret(tmp_path: Path) ->
         files={},
         evidence=None,
     )
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(ModelGearError, match="GATEWAY_API_KEY") as excinfo:
         write_lock(tmp_path, rogue)
-    assert "GATEWAY_API_KEY" in str(excinfo.value)
+    assert excinfo.value.code == EXIT_USER_ERROR
     assert not (tmp_path / LOCK_FILENAME).exists()
 
 
@@ -339,3 +340,51 @@ def test_wiring_urls_never_enter_the_lock() -> None:
     assert "tailnet" not in lock_toml(lock)
     assert is_excluded("WORKER_BASE_URL")
     assert is_excluded("PRIMARY_URL")
+
+
+# --- PR #223 review: a malformed lock is untrusted input, not a crash --------
+
+#: ``(label, text)`` pairs — every one of these used to escape ``load_lock`` as
+#: a ``tomllib``/``TypeError``/``AttributeError`` traceback out of both
+#: ``lobes init --from-lock`` and ``lobes doctor``.
+_MALFORMED_LOCKS = [
+    ("not-toml", "this is not toml ][\n"),
+    ("bad-utf8", None),  # written as bytes below
+    ("variation-not-a-table", 'schema_version = 1\nvariation = "spark"\n'),
+    ("env-not-a-table", 'schema_version = 1\nenv = "PRIMARY_MODEL=x"\n'),
+    ("files-not-a-table", "schema_version = 1\nfiles = 3\n"),
+    ("env-value-not-a-string", "schema_version = 1\n[env]\nPRIMARY_MAX_MODEL_LEN = 4096\n"),
+    ("files-value-not-a-string", "schema_version = 1\n[files]\n'a.yml' = true\n"),
+    ("variation-id-not-a-string", "schema_version = 1\n[variation]\nid = 12\n"),
+    ("profile-not-a-string", 'schema_version = 1\n[variation]\nid = "v"\nprofile = 7\n'),
+]
+
+
+@pytest.mark.parametrize("label,text", _MALFORMED_LOCKS, ids=[case[0] for case in _MALFORMED_LOCKS])
+def test_a_malformed_lock_raises_a_controlled_user_error(
+    tmp_path: Path, label: str, text: str | None
+) -> None:
+    path = tmp_path / LOCK_FILENAME
+    if text is None:
+        path.write_bytes(b"schema_version = 1\n[env]\nA = \xff\xfe\n")
+    else:
+        path.write_text(text, encoding="utf-8")
+    with pytest.raises(ModelGearError) as excinfo:
+        load_lock(path)
+    assert excinfo.value.code == EXIT_USER_ERROR
+    assert LOCK_FILENAME in str(excinfo.value)
+    assert excinfo.value.remediation
+
+
+def test_a_well_formed_lock_still_loads(tmp_path: Path) -> None:
+    """The validation narrows nothing a real capture produces."""
+    lock = build_lock(
+        variation="spark",
+        env=_golden_env("spark"),
+        profile="spark",
+        shape="machine-as-brain",
+        lobes_version="0.68.0",
+        files={"docker-compose.yml": "sha256:" + "0" * 64},
+    )
+    write_lock(tmp_path, lock)
+    assert load_lock(lock_path(tmp_path)) == lock
