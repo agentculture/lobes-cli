@@ -24,6 +24,15 @@ request's `model` field. Clients point at the same URL either way.
 | `/capabilities` | GET | gateway | the nine-role Colleague contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
 | `/health` | GET | gateway | liveness |
 
+**Unlisted POST paths pass through.** The POST router is path-agnostic: it
+resolves the model from the request body and forwards the *original* path to
+that model's owning lane. So a vLLM-native route the table above does not
+list — `/tokenize` is the one seen in practice — reaches the backend and works,
+rather than 404ing. It is a passthrough, not a contract: nothing here promises
+it, the fleet's non-vLLM lanes need not serve it, and it is subject to the same
+inbound bearer gate as everything else (which is how issue #228's 1190
+unauthenticated `POST /tokenize` rejections came about).
+
 Embeddings, rerank, score, and audio (including the `/v1/realtime` WebSocket
 session) require the **fleet overlay** — they are not available when running
 the raw vLLM container in single-model mode. The generate endpoints

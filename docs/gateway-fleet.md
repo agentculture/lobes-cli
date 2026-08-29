@@ -512,6 +512,42 @@ The gate runs *before* the request body is read off the socket, before model
 resolution, and before any upstream connection, so a rejected request costs
 the fleet zero parsing and zero sockets.
 
+**What the rejection LOGS (issue #228).** The response says as little as
+possible; the log says as much as the operator needs, and the asymmetry is
+deliberate — the caller must not learn whether its key was missing, malformed
+or merely wrong (that would make a 401 a key-material oracle), while whoever
+reads their own gateway's stderr needs exactly that to tell a misconfigured
+client from someone guessing. A rejection logs:
+
+```text
+[gateway] auth: rejected POST /tokenize from 172.21.0.1 (no Authorization header)
+```
+
+— the method and path, the **socket peer** (never `X-Forwarded-For`: a
+security log whose attribution field the caller can write is worse than one
+with none), and a reason from a fixed set (`no Authorization header` /
+`not a Bearer credential` / `empty Bearer token` /
+`Bearer token did not match this gateway's key`). No reason string is derived
+from the presented credential or the configured key, so the classification
+cannot leak what it classified.
+
+Repeats from one source **collapse to one line per 60 s**, and the next line
+after that window carries what was suppressed:
+
+```text
+[gateway] auth: rejected POST /tokenize from 172.21.0.1 (no Authorization header) [+28 more from this source in the previous 123s]
+```
+
+Both the diagnostic *and* the ordinary access line are suppressed for a
+collapsed repeat — suppressing only one would leave the flood at its original
+size. This is sized against the measured failure: a client with no key retried
+in bursts of ~29 every ~2 minutes, putting **1190 identical, sourceless,
+reasonless lines** into four hours of a DGX Spark's gateway log and burying
+everything else it had to say. Sources collapse independently, so a second
+address appearing is never hidden by a first one that is already flooding, and
+the tracking table is capped (least-recently-seen evicted) because its keys are
+attacker-chosen.
+
 **Hosting `associate` makes the key non-optional — enforced by `lobes
 doctor`.** The bearer gate above is opt-in fleet-wide, but the `associate`
 lane is the one role whose exposure has already gone wrong in practice. On
