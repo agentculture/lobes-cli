@@ -68,16 +68,47 @@ toolkit resolves to legacy csv mode) gets its GPU services' ``deploy:`` stanza
 no shape involvement — and written on every ``--apply``, which is what makes it
 survive a re-render. Every card that takes the default ``gpu_access =
 "devices"`` writes nothing at all.
+
+``--from-lock <path-or-dir>`` (deployment-lock plan, t7) is a **fourth thing
+entirely: a SOURCE, not another input to the renderer.** The three axes above
+(topology, ``--profile``, ``--shape``) all feed
+:mod:`lobes.profiles.render`; ``--from-lock`` bypasses that path completely and
+materialises a COMMITTED variation — the compose files, overrides and
+Dockerfiles a box actually ran, digest-checked against its
+``deployment.lock.toml`` — verbatim. That bypass is what makes a restore
+byte-identical to what the box ran, hand edits included, instead of to what
+the renderer would produce today.
+
+Three consequences follow, and all three are enforced rather than documented:
+
+* ``.env`` stays **merge-only** (:data:`lobes.runtime._compose.MERGE_ONLY_FILES`).
+  A restore may replace compose files and Dockerfiles wholesale; it appends the
+  lock's rendered knobs only where the ``.env`` lacks them and never rewrites an
+  existing line. No secret is restorable from a lock — it carries none, by
+  construction.
+* Bypassing resolution also bypasses :func:`_sync_gpu_overrides`, so the
+  card-driven csv-vs-devices GPU-access correction does not run. A lock whose
+  declared variation differs from what :mod:`lobes.runtime._detect` +
+  :mod:`lobes.variation` resolve on this box is therefore REFUSED
+  (:func:`_guard_variation`); the override is its own explicit flag,
+  ``--allow-variation-mismatch``, never ``--force``.
+* The generated overlays the lock does NOT name are removed
+  (:data:`RESTORE_SYNCED_FILES`) — the remove-on-mismatch behaviour of
+  ``_sync_shape_override`` / ``_sync_gpu_overrides``, surviving a lock round
+  trip. Nothing else is ever deleted.
+
+Mutation safety is unchanged: dry-run by default, ``--apply`` to write.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Sequence
 
 from lobes import __version__
-from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.schema import GPU_ACCESS_RUNTIME
@@ -97,7 +128,10 @@ from lobes.profiles.shapes import (
     builtin_shape_names,
     resolve_shape,
 )
-from lobes.runtime import _compose, _env
+from lobes.runtime import _compose, _detect, _env
+from lobes.runtime._buildability import check_lock_buildability
+from lobes.runtime._lock import LOCK_FILENAME, DeploymentLock, file_digest, load_lock
+from lobes.variation import resolve_variation_id
 
 # The deployment shape a bare `lobes init` (no --shape) resolves: the
 # whole-brain identity shape, hosting every role this card can serve. t3's
@@ -846,8 +880,670 @@ def _emit_apply(
     )
 
 
+# --- --from-lock: restore a committed deployment variation (lock plan, t7) ---
+#
+# `--from-lock` is a distinct SOURCE, not a fourth input to the renderer. The
+# three axes above (topology, --profile, --shape) all feed
+# `lobes/profiles/render.py`; this path never reaches it. That bypass is the
+# whole point: a restore is byte-identical to what the box RAN, hand edits
+# included, rather than to what the renderer would produce today.
+#
+# It is also why `_guard_variation` exists. Bypassing resolution also bypasses
+# `_sync_gpu_overrides`, the card-driven correction that decides whether a
+# deployment asks for its GPU the modern (`deploy.resources`) or the legacy
+# (`runtime: nvidia`) way — so restoring a csv-mode variation onto a
+# devices-mode board (or the reverse) would silently reproduce exactly the bug
+# those overlays exist to fix. The lock's declared machine type is therefore
+# checked against detection, and a mismatch refuses by default.
+
+#: Overlays `--apply` GENERATES on the normal path (`_sync_shape_override` /
+#: `_sync_gpu_overrides`). Each is written when the lock names it and REMOVED
+#: when it does not — the remove-on-mismatch behaviour of those two syncs,
+#: surviving a lock round-trip. Nothing outside this tuple is ever deleted: an
+#: operator's own `docker-compose.override.yml` is not lobes' to remove.
+RESTORE_SYNCED_FILES: tuple[str, ...] = (
+    _compose.SHAPE_OVERLAY,
+    _compose.GPU_OVERLAY,
+    _compose.GPU_AUDIO_OVERLAY,
+)
+
+#: The `.env` block header a restore writes when the target has no `.env` yet.
+_RESTORED_ENV_HEADER = (
+    "# .env — RESTORED by `lobes init --from-lock` from a committed\n"
+    f"# {LOCK_FILENAME}. These are the RENDERED KNOBS the lock carries.\n"
+    "#\n"
+    "# The lock is secret-free BY CONSTRUCTION (an allowlist of rendered keys,\n"
+    "# never a copy of a deployed .env), so no credential can be restored from\n"
+    "# it: GATEWAY_API_KEY, every *_PEER_*, COMPOSE_PROFILES and HF_TOKEN must\n"
+    "# be generated (scripts/gen-api-key.py) or supplied from a gitignored\n"
+    "# secret file before this deployment can serve.\n"
+)
+
+_MERGED_ENV_HEADER = (
+    "",
+    "# --- appended by `lobes init --from-lock`: lock keys this .env did not set ---",
+    "# Existing lines above were left untouched (a restore never rewrites them).",
+)
+
+
+def _lock_source(raw: str) -> tuple[Path, Path]:
+    """``(lock file, variation dir)`` for a ``--from-lock`` argument.
+
+    Accepts either the variation FOLDER (the ``deployments/<id>/`` case) or the
+    lock file itself, so a path a human copied out of either context works.
+    """
+    path = Path(raw).expanduser()
+    lock_file = path / LOCK_FILENAME if path.is_dir() else path
+    if not lock_file.is_file():
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"no {LOCK_FILENAME} at {path}",
+            remediation=(
+                f"pass a variation directory containing {LOCK_FILENAME}, or the " "lock file itself"
+            ),
+        )
+    return lock_file, lock_file.parent
+
+
+def _check_restorable_name(name: str) -> None:
+    """Refuse a ``[files]`` entry that is not a plain, non-secret filename.
+
+    Two hazards, one gate. A name carrying a separator or ``..`` would let a
+    committed lock write OUTSIDE the deployment directory — a lock is adopted
+    from a repo, so it is untrusted input, not lobes' own output. And a name in
+    the ``.env`` SECRET family (the repo's positional gitignore rule: a ``.env``
+    SUFFIX is ignored) is the one thing a committed variation may never carry:
+    ``.env`` is merge-only and holds the operator-typed state
+    :data:`lobes.runtime._compose.MERGE_ONLY_FILES` names.
+    """
+    if not name or name != Path(name).name or name in {".", ".."}:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to restore {name!r}: not a plain filename",
+            remediation=(
+                f"a {LOCK_FILENAME} [files] key must name one file inside the "
+                "variation folder, never a path"
+            ),
+        )
+    if name == _compose.ENV_FILE or name.endswith(_compose.ENV_FILE):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to restore {name!r}: the .env family is never committed",
+            remediation=(
+                "secrets stay in the gitignored .env family; a lock records "
+                "rendered knobs, which a restore MERGES into .env instead"
+            ),
+        )
+
+
+def _lock_file_names(lock: DeploymentLock) -> list[str]:
+    """The validated, sorted set of files a lock says a restore materialises."""
+    names = sorted(lock.files)
+    if not names:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{LOCK_FILENAME} names no deployment files",
+            remediation=(
+                "a restorable variation records its compose files and Dockerfiles "
+                "in the lock's [files] table — re-capture the lock"
+            ),
+        )
+    for name in names:
+        _check_restorable_name(name)
+    return names
+
+
+def _verify_source(source_dir: Path, lock: DeploymentLock, names: list[str]) -> None:
+    """Every named file exists in the variation folder and matches its digest.
+
+    Runs BEFORE anything is written (and on the dry run), so a variation folder
+    that has drifted from its own lock is refused with nothing half-restored.
+    """
+    for name in names:
+        path = source_dir / name
+        if not path.is_file():
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=f"{name}: named by {LOCK_FILENAME} but missing from {source_dir}",
+                remediation="the committed variation is incomplete — restore is not possible",
+            )
+        actual = file_digest(path)
+        if actual != lock.files[name]:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"{name}: digest {actual} does not match the "
+                    f"{LOCK_FILENAME} entry {lock.files[name]}"
+                ),
+                remediation=(
+                    "the committed variation and its lock disagree — re-capture the "
+                    "lock, or restore a variation whose files match it"
+                ),
+            )
+
+
+def _detected_variation() -> str:
+    """This box's variation id (machine type, never a hostname)."""
+    return resolve_variation_id(_detect.detect_card())
+
+
+def _guard_variation(lock: DeploymentLock, detected: str, *, allow_mismatch: bool) -> None:
+    """Refuse a cross-machine-type restore unless the operator said so explicitly.
+
+    An UNKNOWN card is a mismatch, not a pass: "we could not tell" is not
+    evidence that the lock fits. The override is a flag of its own rather than
+    the existing ``--force`` (which means "overwrite files") — a restore onto
+    the wrong machine type is a different decision from clobbering a file, and
+    conflating them would let one be taken while meaning the other.
+    """
+    if lock.variation == detected:
+        return
+    detail = f"this box detects as {detected!r} but the lock declares variation {lock.variation!r}"
+    if allow_mismatch:
+        emit_diagnostic(
+            f"warning: {detail}. Proceeding — you passed --allow-variation-mismatch. "
+            "The restored GPU-access overlays are the LOCK's, not this card's."
+        )
+        return
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=f"refusing to restore a variation captured on another machine type: {detail}",
+        remediation=(
+            "--from-lock bypasses profile/shape resolution, so it also bypasses the "
+            "card's gpu_access correction: a csv-mode variation restored onto a "
+            "devices-mode board (or the reverse) asks for the GPU the wrong way. "
+            f"Restore a {detected!r} variation, or pass --allow-variation-mismatch "
+            "to take that risk deliberately."
+        ),
+    )
+
+
+def _restore_removals(target: Path, names: list[str]) -> list[str]:
+    """Generated overlays present in *target* that this lock does not name."""
+    return [name for name in RESTORE_SYNCED_FILES if name not in names and (target / name).exists()]
+
+
+def _check_restore_destinations(target: Path, names: list[str]) -> None:
+    """Refuse a restore whose DESTINATION carries a symlink.
+
+    :func:`_check_restorable_name` gates the lock's own ``[files]`` keys, so a
+    committed lock cannot name a path that escapes the deployment directory.
+    That says nothing about the target: a symlink already sitting at
+    ``<target>/docker-compose.yml`` would carry an ordinary
+    ``write_bytes``/append straight through to whatever it points at, so a
+    restore into an untrusted or tampered deployment dir could overwrite any
+    file this process can write. A variation is adopted from a repo — both
+    halves deserve suspicion, not just the lock.
+
+    **Refuse, not unlink.** Replacing the link silently would destroy an
+    arrangement lobes did not create and cannot reconstruct (an operator who
+    deliberately symlinks a compose file into a shared config tree has one),
+    and it would do so on the strength of a guess about intent. Refusing names
+    the file and hands the decision back — the same posture as every other
+    check on this path, all of which run before the first byte is written and
+    on the dry run too.
+    """
+    for name in (*names, *RESTORE_SYNCED_FILES, _compose.ENV_FILE):
+        path = target / name
+        if path.is_symlink():
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=(
+                    f"refusing to restore over {name}: it is a symlink in {target} "
+                    f"(-> {os.readlink(path)})"
+                ),
+                remediation=(
+                    "a restore writes the variation's files verbatim and merges "
+                    f"{_compose.ENV_FILE}; writing through a symlink would mutate a file "
+                    "outside the deployment directory. Remove or resolve the link, then "
+                    "restore again."
+                ),
+            )
+
+
+#: Marks the same-directory temp files :class:`_RestoreWrite` creates, so a
+#: crash leaves droppings that are recognisable as lobes' own rather than
+#: mistakable for deployment files.
+_RESTORE_TEMP_TAG = ".lobes-restore"
+
+
+def _write_new_file(path: Path, data: bytes) -> None:
+    """Create *path* and write *data*, refusing to follow anything already there.
+
+    ``O_EXCL`` is the point: a staging file is created or the open fails, so a
+    pre-planted symlink at the temp name cannot redirect the write either.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _replace_file(src: Path, dst: Path) -> None:
+    """``os.replace`` behind a name — the commit phase's single seam."""
+    os.replace(src, dst)
+
+
+class _RestoreWrite:
+    """Stage-then-commit for a restore's whole write phase.
+
+    **The guarantee, stated exactly.** Every byte a restore writes goes to a
+    same-directory temp file FIRST (:meth:`stage`) and nothing in the
+    deployment is touched until :meth:`commit`. So every failure that
+    realistically occurs — an unreadable source file, a full disk, a permission
+    denial — happens while the deployment is still exactly as it was, and the
+    caller can abandon the attempt with :meth:`discard`.
+
+    The commit is then a sequence of same-directory :func:`os.replace` calls.
+    Each is atomic on POSIX, so **no file is ever observed half-written or
+    truncated**, and the rename cannot fail for lack of space. Because the
+    SEQUENCE is still not one transaction, the commit is made undoable instead:
+    every destination that already exists is renamed aside ("parked") before
+    the first file is placed, and a failure part way through unwinds the
+    renames already made and puts the parked files back.
+
+    **What is NOT claimed.** This is not a filesystem transaction. A power loss
+    between two renames, or a failure of the rollback renames themselves, can
+    still leave a directory holding some new files and some old ones — with
+    every individual file intact, and lobes' own parked copies still on disk
+    under the ``.lobes-restore`` tag. A genuine all-or-nothing commit across N
+    files needs a facility the stdlib does not have.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self._dir = directory
+        self._staged: list[tuple[Path, Path]] = []
+        self._removals: list[Path] = []
+
+    def _temp_path(self, name: str) -> Path:
+        return self._dir / f".{name}{_RESTORE_TEMP_TAG}.{os.getpid()}.tmp"
+
+    def stage(self, name: str, data: bytes, *, mode_from: Path | None = None) -> None:
+        """Write *data* to a temp file that :meth:`commit` will move onto *name*."""
+        tmp = self._temp_path(name)
+        tmp.unlink(missing_ok=True)  # a dropping from an earlier crashed run
+        _write_new_file(tmp, data)
+        if mode_from is not None:
+            os.chmod(tmp, os.stat(mode_from).st_mode & 0o777)
+        self._staged.append((tmp, self._dir / name))
+
+    def remove(self, name: str) -> None:
+        """Delete *name* as part of the same commit (a stale generated overlay)."""
+        self._removals.append(self._dir / name)
+
+    def discard(self) -> None:
+        """Abandon the staged writes; the deployment was never touched."""
+        for tmp, _ in self._staged:
+            tmp.unlink(missing_ok=True)
+        self._staged.clear()
+
+    def _destinations(self) -> list[Path]:
+        return [final for _, final in self._staged] + self._removals
+
+    def commit(self) -> None:
+        """Park every existing destination, then place the staged files."""
+        parked: list[tuple[Path, Path]] = []
+        placed: list[Path] = []
+        try:
+            for final in self._destinations():
+                if final.exists() or final.is_symlink():
+                    park = self._temp_path(f"{final.name}.bak")
+                    park.unlink(missing_ok=True)
+                    _replace_file(final, park)
+                    parked.append((final, park))
+            for tmp, final in self._staged:
+                _replace_file(tmp, final)
+                placed.append(final)
+        except OSError as exc:
+            self._rollback(parked, placed)
+            raise ModelGearError(
+                code=EXIT_ENV_ERROR,
+                message=f"restore failed while writing {self._dir}: {exc}",
+                remediation=(
+                    "the deployment was rolled back to its previous files; fix the "
+                    "underlying I/O problem (permissions, disk space) and restore again"
+                ),
+            ) from exc
+        for _, park in parked:
+            park.unlink(missing_ok=True)
+        self._staged.clear()
+
+    def _rollback(self, parked: list[tuple[Path, Path]], placed: list[Path]) -> None:
+        """Undo a partial commit; best effort, and deliberately silent on failure.
+
+        A rollback that itself fails must not mask the original error — the
+        parked copies stay on disk under the ``.lobes-restore`` tag, which is
+        the honest outcome to leave behind.
+        """
+        for final in placed:
+            try:
+                final.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        for final, park in parked:
+            try:
+                _replace_file(park, final)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        self.discard()
+
+
+def _lock_env_plan(env_path: Path, env: dict) -> tuple[list[str], bytes | None]:
+    """``(keys to APPEND, the whole new ``.env`` bytes)`` — pure, writes nothing.
+
+    Append-only, by the same rule as
+    :func:`lobes.runtime._compose.merge_env_template`: an existing line is never
+    rewritten or reordered, so a live ``.env`` — the one file a restore may
+    never clobber (:data:`lobes.runtime._compose.MERGE_ONLY_FILES`) — comes
+    through a restore byte-identical when it already carries the lock's keys.
+    Deliberately NOT :func:`lobes.runtime._env.set_env`, which rewrites the
+    whole file even for a pure append.
+
+    It returns bytes rather than writing them because ``.env`` is committed by
+    the same staged write phase as every other file (:class:`_RestoreWrite`):
+    an append that lands while a compose file did not is exactly the mixed
+    deployment that staging exists to prevent. ``None`` means "no change at
+    all", and no ``.env`` write is staged in that case — which is what keeps a
+    no-op restore byte-identical, inode included.
+    """
+    current = env_path.read_text(encoding="utf-8") if env_path.exists() else None
+    existing = _compose.env_keys(current) if current is not None else set()
+    added = [key for key in sorted(env) if key not in existing]
+    if not added:
+        return [], None
+    lines = [f"{key}={env[key]}" for key in added]
+    if current is None:
+        text = _RESTORED_ENV_HEADER + "\n".join(lines) + "\n"
+    else:
+        text = current + "\n".join([*_MERGED_ENV_HEADER, *lines, ""])
+    return added, text.encode("utf-8")
+
+
+def _env_action(env_path: Path, env: dict) -> str:
+    """What ``--apply`` would do to ``.env``: ``create``, ``merge`` or ``none``."""
+    if not env_path.exists():
+        return "create" if env else "none"
+    existing = _compose.env_keys(env_path.read_text(encoding="utf-8"))
+    return "merge" if any(key not in existing for key in env) else "none"
+
+
+def _from_lock_payload(
+    *,
+    lock_file: Path,
+    source_dir: Path,
+    target: Path,
+    lock: DeploymentLock,
+    detected: str,
+) -> dict:
+    """The shared JSON skeleton both the dry run and ``--apply`` report."""
+    return {
+        "from_lock": True,
+        "lock": str(lock_file),
+        "source": str(source_dir),
+        "target": str(target),
+        "variation": lock.variation,
+        "detected_variation": detected,
+        "variation_mismatch": lock.variation != detected,
+        "profile": lock.profile,
+        "shape": lock.shape,
+    }
+
+
+def _from_lock_dry_run_lines(
+    source_dir: Path, target: Path, names: list[str], removals: list[str], env_plan: dict
+) -> list[str]:
+    lines = [f"DRY RUN — would restore the variation in {source_dir} into {target}:"]
+    for name in names:
+        exists = (target / name).exists()
+        lines.append(f"  {name}{' (exists; would be REPLACED verbatim)' if exists else ''}")
+    for name in removals:
+        lines.append(f"  {name} (stale — would be REMOVED: this lock does not name it)")
+    if env_plan["action"] == "create":
+        lines.append(
+            f"  {_compose.ENV_FILE} (would be CREATED with the lock's "
+            f"{len(env_plan['keys'])} rendered knob(s); no secret is restorable from a lock)"
+        )
+    elif env_plan["action"] == "merge":
+        lines.append(
+            f"  {_compose.ENV_FILE} (MERGE-ONLY — would append "
+            f"{len(env_plan['keys'])} missing key(s); existing lines untouched)"
+        )
+    else:
+        lines.append(f"  {_compose.ENV_FILE} (unchanged — it already sets every locked knob)")
+    lines.append("Re-run with --apply to write.")
+    return lines
+
+
+def _guard_buildability(lock: DeploymentLock) -> None:
+    """Refuse (or warn about) a variation whose gateway wheel will not install.
+
+    The preflight t10's guard was built for, wired at the one moment a stale
+    pin becomes consequential. ``Dockerfile.gateway`` installs the gateway as
+    ``lobes-cli==${MODEL_GEAR_VERSION}``, so a variation can outlive the wheel
+    it references — and without this the operator meets that as a ``pip``
+    traceback nested in a ``docker build`` log, long after the restore claimed
+    success.
+
+    Deliberately OFFLINE and WARN-ONLY: no index is queried, because a restore
+    must not depend on network reachability, and offline nothing here can PROVE
+    a wheel uninstallable. ``lobes_version`` is optional in the lock schema, so
+    its absence means "not recorded", never "broken" — refusing on it would
+    reject every variation captured without one. The raising path
+    (:func:`assert_buildable` on a definitive ``installable is False``) needs an
+    index query, which stays opt-in; see issue tracking for wiring it to a
+    network-permitted verb.
+    """
+    result = check_lock_buildability(lock)
+    if result.risk == "ephemeral_dev":
+        emit_diagnostic(
+            f"warning: this variation pins a development wheel "
+            f"({lock.lobes_version}) — those are published to TestPyPI by a PR "
+            "and may no longer be installable; the gateway image build can fail"
+        )
+    elif result.risk == "unversioned":
+        emit_diagnostic(
+            "warning: this variation records no MODEL_GEAR_VERSION — "
+            "`docker compose build gateway` will resolve an empty pin unless "
+            "the deployment's own .env supplies one"
+        )
+
+
+def _write_restore(
+    target: Path,
+    source_dir: Path,
+    names: list[str],
+    removals: list[str],
+    env_path: Path,
+    env: dict,
+) -> list[str]:
+    """The restore's whole write phase, staged then committed as one step.
+
+    Returns the ``.env`` keys appended. See :class:`_RestoreWrite` for the
+    atomicity guarantee this achieves — and for the one it does not claim.
+    """
+    writer = _RestoreWrite(target)
+    try:
+        for name in names:
+            source = source_dir / name
+            writer.stage(name, source.read_bytes(), mode_from=source)
+        added, env_bytes = _lock_env_plan(env_path, env)
+        if env_bytes is not None:
+            # A fresh .env is created 0600: it exists to receive this box's
+            # secrets next. An existing one keeps the mode it already had.
+            writer.stage(
+                _compose.ENV_FILE,
+                env_bytes,
+                mode_from=env_path if env_path.exists() else None,
+            )
+        for name in removals:
+            writer.remove(name)
+    except OSError as exc:
+        writer.discard()
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message=f"restore failed while staging {target}: {exc}",
+            remediation=(
+                "nothing was written — the deployment is exactly as it was; fix the "
+                "underlying I/O problem (permissions, disk space) and restore again"
+            ),
+        ) from exc
+    writer.commit()
+    return added
+
+
+def _emit_from_lock(
+    raw_source: str,
+    target: Path,
+    *,
+    apply: bool,
+    json_mode: bool,
+    allow_mismatch: bool,
+) -> None:
+    """Restore a committed variation — the whole ``--from-lock`` path.
+
+    Everything that can refuse does so before the first byte is written: the
+    lock parses, its ``[files]`` names are plain and non-secret, the variation
+    folder matches its own digests, and the machine type agrees (or was
+    explicitly overridden). The dry run runs the identical checks, so a plan
+    never describes a restore that would then fail halfway.
+    """
+    lock_file, source_dir = _lock_source(raw_source)
+    lock = load_lock(lock_file)
+    names = _lock_file_names(lock)
+    _verify_source(source_dir, lock, names)
+    detected = _detected_variation()
+    _guard_variation(lock, detected, allow_mismatch=allow_mismatch)
+    _guard_buildability(lock)
+    removals = _restore_removals(target, names)
+    env_path = target / _compose.ENV_FILE
+    _check_restore_destinations(target, names)
+    payload = _from_lock_payload(
+        lock_file=lock_file,
+        source_dir=source_dir,
+        target=target,
+        lock=lock,
+        detected=detected,
+    )
+
+    if not apply:
+        env_plan = {
+            "file": _compose.ENV_FILE,
+            "action": _env_action(env_path, dict(lock.env)),
+            "keys": sorted(
+                key
+                for key in lock.env
+                if key
+                not in (
+                    _compose.env_keys(env_path.read_text(encoding="utf-8"))
+                    if env_path.exists()
+                    else set()
+                )
+            ),
+        }
+        payload.update(
+            {
+                "dry_run": True,
+                "files": [
+                    {
+                        "name": name,
+                        "action": "overwrite" if (target / name).exists() else "create",
+                    }
+                    for name in names
+                ],
+                "remove": removals,
+                "env": env_plan,
+            }
+        )
+        if json_mode:
+            emit_result(payload, json_mode=True)
+            return
+        emit_result(
+            "\n".join(_from_lock_dry_run_lines(source_dir, target, names, removals, env_plan)),
+            json_mode=False,
+        )
+        return
+
+    target.mkdir(parents=True, exist_ok=True)
+    added = _write_restore(target, source_dir, names, removals, env_path, dict(lock.env))
+    # The compose bind-mount source, exactly as the scaffold path creates it.
+    _compose.ensure_log_dir(target)
+    payload.update({"restored": str(target), "files": names, "removed": removals})
+    payload["env_keys_added"] = added
+    if json_mode:
+        emit_result(payload, json_mode=True)
+        return
+    removed_note = "".join(f"\n  {name} (removed — not in this lock)" for name in removals)
+    env_note = (
+        f"\n  {_compose.ENV_FILE} (+{len(added)} locked knob(s); existing lines untouched)"
+        if added
+        else f"\n  {_compose.ENV_FILE} (unchanged)"
+    )
+    emit_result(
+        f">> restored {target} from {lock_file}:\n"
+        + "\n".join(f"  {name}" for name in names)
+        + removed_note
+        + env_note
+        + f"\n>> variation: {lock.variation} (detected: {detected})"
+        + "\n>> next: supply this box's secrets (GATEWAY_API_KEY, HF_TOKEN, any "
+        "*_PEER_API_KEY), then 'lobes fleet up --apply'",
+        json_mode=False,
+    )
+
+
+#: ``lobes init`` flags that feed the RENDERER — every one of them is a
+#: conflict with ``--from-lock``, which is a different source entirely.
+_RENDERER_AXES: tuple[tuple[str, str], ...] = (
+    ("single", "--single"),
+    ("audio", "--audio"),
+    ("profile", "--profile"),
+    ("shape", "--shape"),
+)
+
+
+def _guard_from_lock_axes(args: argparse.Namespace) -> None:
+    """Refuse ``--from-lock`` alongside any renderer axis.
+
+    Not a stylistic objection: a restore materialises the lock's files verbatim
+    and never calls :func:`lobes.profiles.shape_render.render_shape`, so a
+    ``--profile`` or ``--shape`` passed here would be silently inert — the one
+    failure mode worse than an error.
+    """
+    for dest, flag in _RENDERER_AXES:
+        if getattr(args, dest, None):
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=f"{flag} is incompatible with --from-lock",
+                remediation=(
+                    "--from-lock is a distinct SOURCE, not a renderer input: it "
+                    "materialises a committed variation verbatim and never resolves "
+                    f"a profile or shape. Drop {flag}, or drop --from-lock to render."
+                ),
+            )
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
+    from_lock = getattr(args, "from_lock", None)
+    if from_lock:
+        # The restore SOURCE (lock plan, t7). Dispatched before any topology /
+        # profile / shape decision is even computed — that is the bypass, and
+        # putting it first is what makes it unreachable-around rather than a
+        # branch some later code path could still fall through.
+        _guard_from_lock_axes(args)
+        target = (
+            Path(args.target).expanduser() if args.target else _compose.default_deployment_dir()
+        )
+        _emit_from_lock(
+            from_lock,
+            target,
+            apply=bool(args.apply),
+            json_mode=json_mode,
+            allow_mismatch=bool(getattr(args, "allow_variation_mismatch", False)),
+        )
+        return 0
     # The fleet duo is the DEFAULT (issue #69); --single (alias --legacy) opts out
     # to the legacy single-model scaffold. --fleet is a default-implied no-op alias.
     single = bool(getattr(args, "single", False))
@@ -990,6 +1686,34 @@ def register(sub: argparse._SubParsersAction) -> None:
         "NEVER overwrites .env: that file is merge-only always — missing keys "
         "are appended, existing lines are left untouched. Without --force an "
         "existing file is skipped, not an error.",
+    )
+    p.add_argument(
+        "--from-lock",
+        metavar="PATH",
+        help="Restore a COMMITTED deployment variation instead of rendering one "
+        f"(lock plan, t7). PATH is a variation directory holding a {LOCK_FILENAME} "
+        "(e.g. deployments/<variation>/) or that lock file itself. A distinct "
+        "SOURCE, not a renderer input: the lock's compose files, overrides and "
+        "Dockerfiles are materialised VERBATIM and no profile or shape is "
+        "resolved, which is what makes a restore byte-identical to what the box "
+        "ran — hand edits included. Incompatible with --single/--audio/--profile/"
+        "--shape. '.env' is MERGE-ONLY as always: the lock's rendered knobs are "
+        "appended when missing and every existing line is left untouched (no "
+        "secret is restorable from a lock — it carries none by construction). "
+        "The generated overlays this lock does not name are REMOVED. Because a "
+        "restore bypasses the card's gpu_access correction, a lock whose declared "
+        "variation differs from the detected machine type is REFUSED — see "
+        "--allow-variation-mismatch. Dry-run by default; --apply writes.",
+    )
+    p.add_argument(
+        "--allow-variation-mismatch",
+        action="store_true",
+        help="Restore --from-lock even though this box's detected machine type "
+        "differs from the lock's declared variation (warns, then proceeds). The "
+        "risk is concrete: the restored deployment asks for its GPU the way the "
+        "CAPTURING card did, so a csv-mode variation on a devices-mode board (or "
+        "the reverse) fails at container create. Separate from --force, which is "
+        "only about overwriting files.",
     )
     p.add_argument("--apply", action="store_true", help="Actually write the files.")
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")

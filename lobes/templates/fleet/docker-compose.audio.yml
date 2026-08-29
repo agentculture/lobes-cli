@@ -29,6 +29,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - CHATTERBOX_HOST=0.0.0.0
       - CHATTERBOX_PORT=${CHATTERBOX_PORT:-9000}
@@ -71,6 +73,8 @@ services:
     restart: unless-stopped
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - PARAKEET_PORT=${PARAKEET_PORT:-9002}

@@ -1,0 +1,7 @@
+# FIXTURE hand-edit surface — docker compose's own convention, the one file
+# lobes never writes and cannot vouch for. Committed VERBATIM, which is why
+# scripts/scan_deployment_secrets.py must cover it.
+services:
+  vllm-primary:
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}

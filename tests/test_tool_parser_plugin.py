@@ -194,29 +194,28 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # to it; this LANE's own command/volumes were not touched by that, which is
     # exactly what this unchanged hash proves. See
     # tests/test_associate_compose.py.
-    "vllm-associate": "d266895d3a4848bd0562f66df42e8d8037335efc37375e55889f10ddaa669c6b",
-    "vllm-embed": "3ec917f0bece01886872d70d2beacceeac23bb72a02925e74038d30376c98fe6",
-    "vllm-embed-deep": "80773caf4f49dbd37a2c62069888f84959b9734fb3a3378e3b5344a79742d711",
-    "vllm-hand": "38c5807709d1d0b3e711ab4a15e426d2dadda872b74f6992c548a1e1d63aaacc",
-    "vllm-middle": "efef630842164793e43313fff2b588b92d7f57aad35fffc941a3617cddc1a129",
-    "vllm-minor": "ddca0c0c64eb06514ba23d5327f61ce410bf8de40d3d7f519c399c6b8c60bc01",
-    "vllm-multimodal": "64c129b764059c3e78ed248da60634cd2ecf4a0af26c61e3508c5676ddb11134",
-    "vllm-multimodal-coder": "f871a7d1aaac4a66eea8804c3ae4d9b4db1703bbaf1973b58a5ad2de5f7020e6",
-    "vllm-muse": "6d61fb34b4ec56dfe7400021c23a41d61a0cc584d0e191df3d17f8de2bdaa2ae",
-    "vllm-rerank": "6d9b3aa91863c05e2592716db85cb2110a49523ba99a74b521ed84913c0e530e",
-    # Recomputed 2026-08-20 for the spec-knobs task: `vllm-worker` moved (only
-    # service that did, besides `vllm-primary` itself, which this tripwire
-    # never hashes). Two hand-edits two deployed boxes had to make today
-    # became knobs: WORKER_SPECULATIVE_CONFIG (the same MTP off-switch
-    # mechanism vllm-multimodal already has — a set-but-empty value drops
-    # --speculative-config entirely) and WORKER_REASONING_PARSER (default
-    # moved from hardcoded qwen3 to nemotron_v3, matching the catalog's
-    # CURRENT role_hint=worker model). `command:` changed shape from a YAML
-    # list to a shell-lexed STRING for the same reason vllm-multimodal's did
-    # (t5) — a list item cannot be conditionally omitted. See
-    # tests/test_worker_compose.py and tests/test_senses_speculative_config.py.
-    # 2026-08-20: worker defaults -> Lightning (qodo PR #190 #3)
-    "vllm-worker": "5c8e612b01e4b54153910effc4ed96f9e035778920d18ea7b1d935908ed2e08a",
+    # Recomputed 2026-08-29 for the deployment-lock-per-box plan, t4: every
+    # vllm-* lane that already read `.env` via `env_file:` gained a SECOND,
+    # `required: false` entry for `.secrets.env` — a gitignored-by-suffix
+    # sibling file so an operator (or scripts/gen-api-key.py) can drop
+    # generated/file-supplied secrets there instead of `.env` itself.
+    # `gateway` and `llamacpp-primary` are deliberately untouched (neither
+    # used `env_file` before this task and neither does now — the gateway
+    # reads only scoped, non-secret keys via `environment:` interpolation,
+    # and llamacpp-primary serves a local GGUF with no HF_TOKEN need), which
+    # is why their hashes above are unchanged. See
+    # tests/test_fleet_secrets_env_file.py.
+    "vllm-associate": "66850d08430be6496502d34f90fd7a56bb896fbfd2914f8fcb3caad60182a4d7",
+    "vllm-embed": "52d6afc61fb6f23d23655251443ab0a50ab17ba350fb78ef3b1653a206117a1d",
+    "vllm-embed-deep": "f73a2c1f7fe25664ea0ca12adb72ff445503cb5dd03ff9d027b6dc58cb1b0bcb",
+    "vllm-hand": "7337db5b60adf2fcd47d1530eb149adf6c3652d029bb7102896f2da4432b7428",
+    "vllm-middle": "cb09dd82886e67ac05d97815c8f567dbc97a422de5ba28dcf4055c5a0ea4f36b",
+    "vllm-minor": "8e5b98ae680d8274eb563b897382b21f077a568af8a3aaf1f28f75b40f967b8f",
+    "vllm-multimodal": "1bd3641b1df10ab26b5ca411fd5323e65ff8eb712a6c4c6ffbe85216b8e94f38",
+    "vllm-multimodal-coder": "4e286dfd1fd9e250cb03190ea88151fa7030d3d5054f8901d8580ff910a5ecac",
+    "vllm-muse": "00b16677ddedcd2605ef0e6a6d817fd23089751cb7946e8680d3b760e4307f24",
+    "vllm-rerank": "2441f0e3d4c0d105e2803382f7128c68ee8fc03f6db7f2a2fa471cb2d0eafaf0",
+    "vllm-worker": "8251c941e0667600d1d306db5a65d90ee9216391efdb6e246cdcc64f866c96e6",
 }
 
 

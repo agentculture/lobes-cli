@@ -1,0 +1,98 @@
+{
+  "plan_slug": "deployment-lock-per-box",
+  "schema_version": 1,
+  "created": "2026-08-29T07:20:52Z",
+  "updated": "2026-08-29T08:19:56Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the lock's key set is an allowlist MINUS two exclusion rules, not a pure allowlist: COMPOSE_PROFILES (which profile_env does emit, and which c4 names as operator-typed) and any key with a _URL suffix (the shape layer's *_BASE_URL / PRIMARY_URL wiring)",
+      "task_ref": "t6",
+      "reason": "two facts the frame did not know: profile_env emits COMPOSE_PROFILES, and the shape layer emits *_BASE_URL keys that the renderer only ever fills with compose-internal DNS names but which are hand-retargetable at a peer box \u2014 committing one would land an internal origin in a committed file, the exact harm c17's peer-origin exclusion exists to prevent",
+      "affects": [
+        "c25",
+        "h20",
+        "c17",
+        "c4"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "a lock-restored FRESH box is not yet servable: the fleet compose bind-mounts mg-logwrap.sh and qwen3_thinking_tool_parser.py, which are packaged SCAFFOLD files rather than compose/Dockerfiles, so a variation whose [files] table names only compose+Dockerfiles restores an incomplete deployment",
+      "task_ref": "t7",
+      "reason": "found while implementing t7: the restore materialises exactly what the lock's [files] table names, and the frame assumed the compose/Dockerfile set was the whole serving contract. It is not \u2014 two bind-mounted scaffold files are load-bearing. The mechanism already covers them if a variation records them, so this is a catalog-contract gap (t9) not a restore-mechanism gap",
+      "affects": [
+        "t9",
+        "c1",
+        "h1",
+        "c14"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "t10's buildability guard ships as a library with NO caller, so its acceptance criterion 'the check fails early, not deep inside a docker build' is unproven in the delivered system",
+      "task_ref": "t10",
+      "reason": "t10 was forbidden from editing init.py (t7's file) and doctor.py (t8's), which are the only natural wiring points, so the guard could not be wired by the task that built it",
+      "affects": [
+        "t7",
+        "c34",
+        "h28"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d4",
+      "what": "c33 is WRONG as written: lobes switch does NOT write the key family the lock captures. It writes only legacy VLLM_* keys, which never intersect lock_keys() (PRIMARY_*/MULTIMODAL_*/... derived from ROLE_ENV_PREFIX), verified directly against the allowlist. t8 therefore catches switch-induced staleness by tracking .env's DIGEST in the lock's existing files table (a hash, never its content) rather than via the allowlist",
+      "task_ref": "t8",
+      "reason": "the challenge pass read switch.py:510,546 as writing lock-captured keys; implementing against the real allowlist disproved it. The CONCLUSION of c33 survives \u2014 a first-class verb does make a committed lock stale \u2014 but its stated mechanism does not, and the fix had to be a different one",
+      "affects": [
+        "c33",
+        "c10",
+        "h7"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "there is NO CAPTURE VERB: capture_lock/build_lock/write_lock have no CLI caller anywhere in lobes/cli/. An operator can RESTORE a variation but cannot CAPTURE one, so the practice cannot be exercised end to end from the CLI \u2014 every 're-capture the lock' instruction in doctor's remediation, switch's warning and the catalog README currently means 'call the library'",
+      "task_ref": "t12",
+      "reason": "no task in the plan owned a capture verb: t6 built the writer library, t7 built the restore verb, and the plan's coverage targets never asked for the capture side. Found by t12 via an AST check of imports while documenting the feature; a test now asserts it stays true until fixed",
+      "affects": [
+        "t6",
+        "t7",
+        "c1",
+        "h1",
+        "c14",
+        "h10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "d4's staleness mechanism and t7's restore path cannot both use one lock: t8 catches switch-induced drift by recording .env's digest in the lock's [files] table, but t7's _check_restorable_name REFUSES any .env-family name in [files], so a drift-capable lock is not restorable and a restorable lock cannot detect .env drift",
+      "task_ref": "t12",
+      "reason": "the two mechanisms were built in parallel by sibling tasks against the same [files] field with opposite requirements, and neither could see the other. Verified by running --from-lock against such a lock; nothing in the tree reconciles them",
+      "affects": [
+        "t7",
+        "t8",
+        "c10",
+        "h7"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky"
+    }
+  ]
+}

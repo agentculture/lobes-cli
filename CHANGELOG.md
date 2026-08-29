@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.4] - 2026-08-29
+
+### Fixed
+
+- The last three membership assertions in `tests/test_variation_catalog.py` are subject-first, completing SonarCloud S3415 for the file — the previous pass missed module constants on the left because it scanned only for bare literals.
+
+## [0.68.3] - 2026-08-29
+
+### Fixed
+
+- `tests/test_variation_catalog.py` uses one assertion argument order throughout (SonarCloud S3415); the membership checks became subject-first `.count()` assertions, which are also more specific than the bare `in` they replaced.
+
+## [0.68.2] - 2026-08-29
+
+### Fixed
+
+- The `VARIATION.md` heading regex uses an unquantified `[ \t]` separator, removing the ambiguity between it and the trailing capture group (SonarCloud S8786). Measured behaviour was already linear; the change removes the ambiguity rather than relying on it.
+
+## [0.68.1] - 2026-08-29
+
+### Fixed
+
+- Secret scanner: `${VAR:-literal-secret}` and Dockerfile whitespace `ENV KEY secret` no longer bypass the required `secrets-scan` CI gate. An existing test had asserted the first bypass was safe behaviour.
+- `init --from-lock` refuses to write through a symlink in the target directory, and stages every file before committing so a failed restore leaves the deployment untouched rather than mixed.
+- A malformed `deployment.lock.toml` is now a controlled user error instead of a traceback out of `init`/`doctor`.
+- `lock_drift` compares the lock and the deployment symmetrically, so a knob added after capture is reported (tagged added/changed/removed).
+- The buildability guard routes `.devN` pins to TestPyPI rather than PyPI, where this repo actually publishes them.
+
+## [0.68.0] - 2026-08-29
+
+### Added
+
+- `lobes init --from-lock` restores a committed deployment variation verbatim, bypassing profile/shape resolution, with a machine-type guard and an offline buildability preflight.
+- `deployment.lock.toml` — a secret-free-by-construction lock whose key set is an allowlist derived from `profile_env`.
+- `deployments/` — the published variation catalog, its info-file honesty contract, and a validator. Ships with zero real variations; capture needs physical hardware.
+- `lobes doctor` reports `lock_drift`, naming the specific differing files; `lobes switch` warns that a committed lock has gone stale.
+- A required `secrets-scan` CI job over every committed deployment artifact.
+- `docs/secret-rotation.md` — the leaked-key drill and the full key-copy inventory.
+- `lobes explain lock` and `docs/deployment-lock.md`.
+
+### Changed
+
+- `.gitignore` now uses a positional rule: a `.env` suffix is ignored, a `.env.` prefix is allowed. The committed goldens keep an explicit negation.
+- Every fleet service reads an optional `.secrets.env` alongside `.env`, so no secret is ever retyped by hand.
+
 ## [0.67.1] - 2026-08-28
 
 ### Fixed

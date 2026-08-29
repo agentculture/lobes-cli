@@ -66,6 +66,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain gateway`
 - `lobes explain roles` (the ten-role Colleague contract:
   cortex/senses/muse/embedder/reranker/stt/tts)
+- `lobes explain lock` (the committed deployment lock + the variation catalog)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
 - `lobes explain backend`
@@ -112,6 +113,12 @@ speculative-config is *not* carried — it fails to load on that checkpoint), an
 `--speculative-config` (plus `--trust-remote-code` / `--language-model-only`).
 Only one ~30B-class model fits on a single GB10 at a time, so the switch frees
 the prior model before starting the new one.
+
+If the deployment carries a committed `deployment.lock.toml`, `switch` warns
+that this write makes the lock stale — a normal, documented verb is just as
+capable of leaving a committed lock describing a box that no longer exists as
+a hand edit is. `lobes doctor`'s `lock_drift` names what now differs; see
+`lobes explain lock`.
 """
 
 _SERVE = """\
@@ -174,6 +181,14 @@ _INIT = """\
 `~/.lobes`; pass a path, or `.` for the current folder. **Dry-run by
 default** (lists what it would write); `--apply` writes, `--force` overwrites
 existing files. Supports `--json`.
+
+`--from-lock <path-or-dir>` is a different SOURCE, not another renderer input:
+it restores a committed variation (`deployment.lock.toml` plus the compose
+files and Dockerfiles it names) **verbatim**, bypassing profile/shape
+resolution, and is refused alongside `--single`/`--audio`/`--profile`/
+`--shape`. `.env` stays merge-only — existing lines are never rewritten — and
+a machine-type mismatch refuses unless you pass `--allow-variation-mismatch`.
+See `lobes explain lock`.
 """
 
 _BACKEND = """\
@@ -530,7 +545,12 @@ a genuine operator override only downgrades to info), `health_reachable`
 (`/health` responds), and `gateway_version_match` (the deployed gateway's own
 `lobes-cli` release, read from its `GET /health` `version` field, matches this
 CLI's — issue #99, catching a stale `MODEL_GEAR_VERSION` pin baked into
-`Dockerfile.gateway` at scaffold time and never re-pinned). A down model is a
+`Dockerfile.gateway` at scaffold time and never re-pinned), and `lock_drift`
+(the deployed files and locked knobs still match a committed
+`deployment.lock.toml` — no lock present means no finding at all; a
+divergence *warns* and names the specific differing files and keys, never
+merely "drift exists"; read-only, so `--fix` never touches it — see `lobes
+explain lock`). A down model is a
 *warning*, not a failure; an unreachable gateway degrades the version check to
 a non-fatal informational result (not a false pass) — only missing docker, an
 un-scaffolded deployment, or an actual version *mismatch* make the run exit
@@ -1403,6 +1423,98 @@ See `docs/colleague-stack.md` (the full contract + client-flow example),
 (topology, tier-alias fallback, pressure policy).
 """
 
+_LOCK = """\
+# lobes lock — the committed deployment lock and the variation catalog
+
+A box's real serving contract is the compose files, overrides and Dockerfiles
+it *actually runs*, not the packaged templates it was scaffolded from. The
+**deployment lock** (`deployment.lock.toml`) captures that as a committed
+artifact; `deployments/<id>/` publishes it so someone else can adopt it;
+`lobes init --from-lock` restores it; `lobes doctor` reports `lock_drift`
+when the deployment stops matching.
+
+Motivating incident, on the record: on 2026-08-25 the Spark's compose was
+found hand-edited with the DSpark `--speculative-config` while the Thor's
+equalled the template — only a live diff revealed it, and the Spark could not
+be safely re-scaffolded (see the "Deploy record" section of
+`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`, and
+issue #214).
+
+## What the lock records
+
+`deployment.lock.toml` — TOML, deliberately NOT env-shaped (the repo's
+positional gitignore rule ignores a `.env` SUFFIX and allows a `.env.`
+PREFIX, so an env-shaped committed file is exactly where a real `.env` would
+get pasted and half-blanked).
+
+- `[variation]` — the variation id (machine type or setup, NEVER a hostname),
+  plus the profile, shape, `lobes_version` and an optional `evidence` path.
+- `[env]` — an **ALLOWLIST** of rendered knob keys, derived from
+  `lobes/profiles/render.py`'s own tables, never a denylist-redacted copy of
+  a deployed `.env`. A credential is not a `RoleProfile` field, so it cannot
+  enter. Two exclusions narrow it further: `COMPOSE_PROFILES` (operator-typed)
+  and any `_URL`-suffixed key (wiring, retargetable by hand).
+- `[files]` — filename to `sha256:<hex>` digest. A digest, never content.
+
+## Restoring
+
+```bash
+lobes init --from-lock deployments/<id>            # dry run (default)
+lobes init --from-lock deployments/<id> --apply    # writes
+```
+
+`--from-lock` is a distinct SOURCE, not a fourth renderer input: it bypasses
+profile/shape resolution entirely (and is refused alongside `--single`,
+`--audio`, `--profile`, `--shape`), which is what makes a restore
+byte-identical to what the box RAN, hand edits included.
+
+- `.env` stays **merge-only**: existing lines are never rewritten, only
+  missing locked knobs are appended. No secret is restorable from a lock.
+- A machine-type mismatch **refuses** (an UNKNOWN card counts as a mismatch),
+  because bypassing resolution also bypasses the card's csv-vs-devices
+  GPU-access correction. The override is its own flag,
+  `--allow-variation-mismatch`, never `--force`.
+- Generated overlays the lock does not name are removed; an operator's own
+  `docker-compose.override.yml` never is.
+
+## Drift
+
+`lobes doctor` adds `lock_drift`: no lock present means no finding at all;
+a match passes as `info`; a divergence warns and names the SPECIFIC differing
+files and locked keys. It is read-only — `doctor --fix` never touches it, so
+the never-rewrite-an-existing-`.env`-line convention is unchanged. `lobes
+switch` warns whenever a lock is present, since it writes `.env`.
+
+## Honesty — what is NOT validated (#108)
+
+- **No real box has been captured.** `deployments/` ships a README and a
+  template and ZERO variations; the contract is exercised against fixtures.
+- **There is no capture verb.** `capture_lock` / `build_lock` / `write_lock`
+  are a library (`lobes/runtime/_lock.py`) with no CLI caller — "re-capture
+  the lock" means calling it, not running a command.
+- **Serve-after-restore is unmeasured.** Byte-identical files plus a
+  merge-only `.env` is an argument, not a measurement; no box has been
+  restored and then served.
+- **A restored FRESH box is not yet servable:** the fleet compose bind-mounts
+  `mg-logwrap.sh` and the tool-parser plugin, which are packaged SCAFFOLD
+  files, so a lock naming only compose + Dockerfiles restores an incomplete
+  deployment.
+- **The buildability preflight is offline and warn-only** — it warns on a
+  `.devN` or missing `MODEL_GEAR_VERSION` pin, and cannot prove a wheel
+  uninstallable; the raising path needs an index query nothing wires.
+- Four implementation deviations are recorded and remain PROPOSED, not
+  approved.
+
+## See also
+
+- `docs/deployment-lock.md` — the deep reference (audiences, the three costs,
+  every success signal and the broken input it fails on, the full
+  unvalidated list)
+- `deployments/README.md` — the catalog layout and info-file contract
+- `docs/secret-rotation.md` — leak recovery
+- `lobes explain shapes` / `lobes explain profiles` — the orthogonal axes
+"""
+
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
     ("lobes",): _ROOT,
@@ -1451,4 +1563,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("colleague",): _ROLES,
     ("colleague-stack",): _ROLES,
     ("capabilities",): _ROLES,
+    ("lock",): _LOCK,
+    ("deployment-lock",): _LOCK,
+    ("variations",): _LOCK,
 }

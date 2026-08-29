@@ -35,6 +35,7 @@ from lobes.cli import _runtime_ops
 from lobes.cli._commands.whoami import _gpu_name
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env, _health, _parser
+from lobes.runtime._lock import LOCK_FILENAME
 
 
 def _catalogued(model_id: str):
@@ -267,6 +268,28 @@ def _engine_notice(model) -> str | None:
     )
 
 
+def _lock_staleness_notice(deploy_dir) -> str | None:
+    """A committed ``deployment.lock.toml`` is present — say so before writing ``.env``.
+
+    ``lobes switch`` writes model/serve knobs straight into ``.env``
+    (:func:`_apply_switch`, :func:`_apply_env_only`) — a normal, documented,
+    dry-run-guarded verb, not a hand edit. The deployment-lock-per-box plan's
+    drift story assumed hand edits were the only source of divergence; a
+    first-class verb that mutates ``.env`` is just as capable of leaving a
+    committed lock describing a box that no longer exists. This fires
+    whenever a lock is present, independent of which specific keys this
+    switch happens to write — ``lobes doctor``'s ``lock_drift`` check is what
+    names the SPECIFIC differing files/keys after the fact.
+    """
+    if not (deploy_dir / LOCK_FILENAME).is_file():
+        return None
+    return (
+        f"a committed {LOCK_FILENAME} is present — this switch writes to .env, "
+        f"so re-capture and commit {LOCK_FILENAME} afterwards (or run 'lobes "
+        "doctor' to see what now differs) so the lock keeps describing this box"
+    )
+
+
 def _serve_notices(model_id: str, args: argparse.Namespace | None = None) -> list[str]:
     """Reminders for compose ``command:`` edits a switch implies.
 
@@ -476,6 +499,7 @@ def _emit_dry_run(deploy_dir, env_path, plan, messages, notices, port, probe, js
                 "tool_call_parser": plan.get("VLLM_TOOL_CALL_PARSER"),
                 "quantization": plan.get("VLLM_QUANTIZATION"),
                 "compose_edits": notices,
+                "messages": messages,
                 "probe": probe,
             },
             json_mode=True,
@@ -573,6 +597,14 @@ def cmd_switch(args: argparse.Namespace) -> int:
     served = args.served_name or args.model
     plan, messages = _build_plan(args, port, served)
     notices = _serve_notices(args.model, args)
+    # A lock-staleness heads-up is NOT a required compose edit — appending it
+    # to `notices` would wrongly route through `_apply_env_only` (the "don't
+    # restart, a compose edit is pending" path) below, for a switch that has
+    # nothing to do with a compose file. It rides in `messages` instead, which
+    # is purely informational and never gates anything.
+    lock_notice = _lock_staleness_notice(deploy_dir)
+    if lock_notice:
+        messages.append(lock_notice)
 
     effective_task = _resolve_task(args)
     is_pooling = effective_task != "generate"

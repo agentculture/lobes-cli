@@ -204,6 +204,67 @@ def test_explain_roles_replicas(alias: str, capsys: pytest.CaptureFixture[str]) 
     assert "--replicas" in out
 
 
+@pytest.mark.parametrize("alias", ["lock", "deployment-lock", "variations"])
+def test_explain_lock(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """The deployment-lock page must render under every alias and name the
+    mechanism each audience reaches it by."""
+    rc = main(["explain", alias])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "deployment.lock.toml" in out
+    assert "--from-lock" in out
+    assert "lock_drift" in out
+    assert "docs/deployment-lock.md" in out
+
+
+def test_explain_lock_is_honest_about_what_is_unvalidated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#108: nothing may read as validated that has not been measured. The page
+    must say plainly that no box has been captured, that there is no capture
+    verb, and that serve-after-restore is unmeasured."""
+    rc = main(["explain", "lock"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ZERO variations" in out
+    assert "no capture verb" in out.lower()
+    assert "unmeasured" in out
+    assert "warn-only" in out
+    assert "PROPOSED" in out
+
+
+def test_explain_lock_cites_the_motivating_incident(capsys: pytest.CaptureFixture[str]) -> None:
+    """The 2026-08-25 Spark/Thor compose divergence is cited to a committed
+    transcript and an issue, never merely remembered."""
+    rc = main(["explain", "lock"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt" in out
+    assert "#214" in out
+
+
+def test_explain_init_names_the_from_lock_source(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "init"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "--from-lock" in out
+    assert "--allow-variation-mismatch" in out
+
+
+def test_explain_doctor_names_lock_drift(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "doctor"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "lock_drift" in out
+
+
+def test_explain_switch_warns_about_lock_staleness(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "switch"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "deployment.lock.toml" in out
+
+
 def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain", "switch", "--json"])
     assert rc == 0

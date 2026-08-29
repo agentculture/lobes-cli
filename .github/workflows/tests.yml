@@ -80,6 +80,39 @@ jobs:
       - name: afi rubric gate
         run: uv run afi cli doctor . --strict
 
+  secrets-scan:
+    # CI secret gate over every committed deployment artifact (t3,
+    # docs/plans/2026-08-29-deployment-lock-per-box.md). Deliberately not
+    # continue-on-error: the deployment-lock practice widens what gets
+    # committed (rendered compose files, an operator-authored
+    # docker-compose.override.yml, Dockerfiles, and the generated
+    # deployment.lock.toml), so this must stay a required, blocking job to
+    # keep "secrets stay in .env" honest.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - name: scan committed deployment artifacts for secrets
+        run: uv run python scripts/scan_deployment_secrets.py --root "$GITHUB_WORKSPACE"
+
+      # The default globs are rooted at deployments/, which do NOT reach the
+      # catalog FIXTURES under tests/fixtures/deployments/. Those are committed
+      # too, so a secret planted in a fixture variation would otherwise pass CI
+      # (flagged by t9; its own suite covers the tree, this makes CI cover it).
+      - name: scan committed catalog fixtures for secrets
+        run: uv run python scripts/scan_deployment_secrets.py --root "$GITHUB_WORKSPACE/tests/fixtures"
+
   site-build:
     runs-on: ubuntu-latest
     permissions:
