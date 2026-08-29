@@ -1,0 +1,716 @@
+{
+  "slug": "deployment-lock-per-box",
+  "title": "deployment lock per box",
+  "frame_slug": "deployment-lock-per-box",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-29T06:59:55Z",
+  "updated": "2026-08-29T07:01:44Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every box's deployment is a committed lock: the compose files, overrides and Dockerfiles it actually runs are versioned in the repo under deployments/<box>/, secrets stay in the never-committed .env, lobes init --from-lock restores a box from it, and lobes doctor reports lock_drift when the deployed files no longer match.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "a box restored with --from-lock produces a byte-identical compose/override/Dockerfile set to what it ran before, proven by diff, and its .env is left untouched",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the genuinely GENERATED per-(card,shape) artifacts a lock must capture are docker-compose.shape.yml (_compose.SHAPE_OVERLAY, written by init when a shape drops a core role) and the docker-compose.gpu.yml / docker-compose.gpu-audio.yml pair (init.py render_gpu_overrides, written when the card declares gpu_access=runtime and REMOVED when it does not). _sync_gpu_overrides force-writes and deletes these on every --apply.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "a lock captured on a csv-mode card restores both GPU overlays, and one captured on a devices card restores neither \u2014 the remove-on-mismatch behaviour of _sync_gpu_overrides survives a lock round-trip",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the merge-only .env guarantee must not be weakened: _compose.MERGE_ONLY_FILES is exactly {ENV_FILE} and its docstring names GATEWAY_API_KEY, every *_PEER_*, COMPOSE_PROFILES and HF_TOKEN as the operator-typed state no template can regenerate. Every other scaffold file is overwrite-on---force. A --from-lock restore inherits that split: it may replace compose/Dockerfiles wholesale, never .env.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "--from-lock against a box with a live .env leaves every existing .env line byte-identical, asserted by a test rather than by convention",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "the lock must not become a second, drifting copy of tests/goldens/: goldens are the (profile, shape, template) render contract and their README already states that editing one machine's bundle must leave the others byte-identical. A deployments/<box>/ lock that re-states rendered knobs would need its own regeneration story or it silently disagrees with the goldens it duplicates.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the lock's rendered keys are derived from profile_env itself, or a test diffs them against the matching tests/goldens file \u2014 the two cannot disagree silently",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "today's leak guard is weak and the practice must not rest on it: .gitignore line 151 is the bare pattern .env, applied at any depth, so deployments/<box>/.env is unstageable by accident \u2014 but ANY other name (the issue's env.lock.example included) is committable, leaving redaction as unenforced discipline. Superseded in mechanism by c22's positional rule, which is what makes the guard structural rather than a habit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "a secret-shaped value committed into a lock is caught by a machine gate, not by a reviewer noticing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "no CI job scans for committed secrets today: .github/workflows/ holds only tests.yml (test / lint / site-build / version-check) and publish.yml, and neither runs gitleaks, trufflehog or detect-secrets. 'Secrets stay in .env' is currently enforced only by the .gitignore pattern and reviewer attention, so a committed-lock practice that widens what gets committed needs a mechanical gate to keep the claim honest.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "a PR adding a credential-shaped value to any committed file fails a REQUIRED CI job, not an advisory one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "lobes doctor already has the exact shape a lock_drift finding needs: _check(id, passed, severity, message, remediation) builds every finding, _diagnose assembles them, and _scaffold_files_check is a direct precedent (it compares expected scaffold dests against what is on disk). doctor --fix already has the write lane and its convention \u2014 write absent files and keys, never rewrite an existing .env line \u2014 which a lock restore must obey.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "lock_drift names the specific differing files, and doctor --fix still never rewrites an existing .env line",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "a top-level deployments/ directory is automatically excluded from the wheel: pyproject.toml's [tool.hatch.build.targets.wheel] declares packages = [\"lobes\"], so committed per-box locks never ship to PyPI consumers. The lock is a repo artifact, not a distributed one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "uv build produces a wheel containing no deployments/ path, asserted by a test rather than by inspection",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "--from-lock is a distinct SOURCE, not a fourth input to the renderer: it materialises the committed files verbatim and does NOT re-resolve profile+shape. init's other three axes (topology --single/--fleet/--audio, card --profile, shape --shape) all feed lobes/profiles/render.py; --from-lock bypasses that path entirely, which is what makes a restore byte-identical to what the box runs today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "restoring a lock on a box whose DETECTED card differs from the lock's still produces the lock's files verbatim \u2014 profile/shape resolution is provably not consulted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "the repo publishes ALL docker variations under deployments/, not only the boxes this operator happens to run \u2014 a chooser's catalog, so a third party can pick a variation and adopt it. This widens the practice beyond the issue's stated backup/restore motive.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "a variation this operator does not run is present in the repo and materialisable by --from-lock on a machine that has never served it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "each variation folder carries a SEPARATE spec/info file, in the same folder, naming what the variation is and the measured result of running it. Provenance: measured results live in docs/evidence/ (57 committed transcripts) today, so the info file must CITE its evidence transcript rather than restate the numbers, or the two drift.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "every variation info file either names an existing docs/evidence/ transcript path or states no measured result; a test asserts the cited path exists",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "variation identity is MACHINE TYPE OR SETUP \u2014 spark and jetson clear, other machines possibly different, and for an AI accelerator the accelerator itself. This reuses vocabulary lobes already has: lobes/runtime/_detect.py resolves a card from nvidia-smi name+compute_cap, /proc/meminfo, the Jetson device-tree model and hostname, and lobes/profiles/builtin/ is already keyed base/orin/spark/thor. Identity is NOT the hostname, though _detect does probe one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "two different physical machines of the same type resolve to the SAME variation id, and no variation id contains a hostname",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "peer origins are internal information and are blanked in the committed env lock, alongside GATEWAY_API_KEY, every *_PEER_API_KEY(S) and HF_TOKEN. This frame does NOT retro-scrub the 57 committed evidence transcripts that already carry tailnet origins in cleartext \u2014 that is a separate correction to the evidence convention, filed, not folded in here.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "no committed lock contains a *_PEER_ORIGIN value, checked mechanically rather than by reading",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "a variation's info file must state UNVALIDATED honestly rather than imply a result it does not have: CLAUDE.md's #108 rule makes most shipped shapes declared-not-measured (all four Orin shapes and thor-muse have no acceptance transcript), so 'choose a variation and see the result' will show 'no measured result' for most of the catalog on day one. Publishing the catalog must not manufacture the appearance of evidence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "a variation with no acceptance transcript renders as an explicit 'no measured result' in its info file and in any listing \u2014 never as a blank a reader could mistake for a measurement",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "nothing is ever retyped by hand: the secret half of a deployment is materialised by files or code, not operator memory. Two mechanisms already exist in-tree and generalise. (1) scripts/gen-api-key.py GENERATES a bearer key with the stdlib secrets module, writes it into the gitignored deployment .env and deliberately never prints it \u2014 a secret that is created, not typed. (2) cf-tunnel.env.example is committed verbatim and the owner copies it to the gitignored .cf-tunnel.env \u2014 a committed shape whose values are filled locally.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "a fresh box reaches a serving state without the operator typing any secret value by hand: every credential is generated by code or read from a gitignored file",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "the split lands as a .*.env FAMILY read alongside .env, which compose already supports natively: every service in lobes/templates/fleet/docker-compose.yml uses the long-form 'env_file: [{path: .env, required: false}]', and that list takes further entries. Adding a second required:false entry per service is a backwards-compatible template change \u2014 an absent file changes nothing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "adding the second env_file entry leaves a deployment that has no such file behaving byte-identically \u2014 compose starts and serves exactly as before",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "boundary",
+      "text": "the gitignore convention is a POSITIONAL naming rule, not a per-file line: a '.env' SUFFIX is ignored (covering .env itself, .cf-tunnel.env, .secrets.env and every future secret dotfile by construction), a '.env.' PREFIX is allowed (.env.example, .env.sample, .env.lock). This replaces .gitignore's current bare '.env' \u2014 which matches only that exact component and is why line 155 must spell out .cf-tunnel.env separately \u2014 and makes a forgotten ignore line structurally impossible. Naming consequence: the committed redacted artifact is named .env.lock (allowed by the prefix rule, deliberately), not the issue's proposed env.lock.example, which matches neither rule and would be committable only by accident of suffix ordering.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "git check-ignore proves .env, .cf-tunnel.env and .secrets.env are ignored while .env.example and .env.sample are not",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "adopting '*.env' ignored requires an explicit un-ignore for the goldens: 37 tracked files match it today, all under tests/goldens (5 at the root \u2014 base/orin/spark/thor/template-defaults \u2014 and 32 under shapes/). They are already tracked so they would not vanish, but tests/goldens/README.md states a future built-in profile's golden 'must still be generated and committed' \u2014 that new file would be silently unstageable. A '!tests/goldens/**/*.env' negation (or renaming the goldens) is mandatory, not optional.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "after the gitignore change a newly generated golden for a new built-in profile is stageable, proven by a check rather than remembered",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "the committed lock is RENAMED out of the .env family entirely \u2014 proposed 'deployment.lock.toml', matching the house format (lobes/profiles/builtin/*.toml and builtin_shapes/*.toml are already TOML). Rationale: the .env. prefix rule makes anything in that family committable BY CONSTRUCTION, so an env-shaped committed file is the one place a copied real .env would land undetected. A name that is visibly not an env file removes the invitation. Note 'lock.env' is disqualified automatically \u2014 the .env SUFFIX rule ignores it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "the committed lock filename matches NEITHER the .env suffix rule nor the .env. prefix rule, asserted by a test on the name itself",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "the lock's contents are an ALLOWLIST of rendered keys, never a denylist-redacted copy of the deployed .env. Evidence: profile_env renders only <ROLE>_{MODEL,SERVED_NAME,GPU_MEM_UTIL,MAX_MODEL_LEN,QUANTIZATION,KV_CACHE_DTYPE} plus attention-backend and max-num-seqs knobs \u2014 non-secret by construction \u2014 and 36 of the 37 committed goldens contain no API_KEY/HF_TOKEN/PEER_ORIGIN at all. The single hit, tests/goldens/template-defaults.env, lists those key NAMES with empty values because it is the template's ${VAR} default surface, not a render. A denylist over a real .env silently ships the next secret key someone adds; an allowlist cannot.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "feeding the lock writer a .env that contains GATEWAY_API_KEY produces a lock without it \u2014 the allowlist is proven by construction, not by redaction",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "c9's CI secret gate becomes load-bearing rather than optional once anything deployment-shaped is committed: the positional gitignore rule protects files NAMED like env files, and the lock is deliberately named otherwise, so the naming rule provides it zero protection. A scanner is the only mechanical guard left on the lock itself.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "the secret scanner covers the lock path specifically, not merely the repository default set",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "audience",
+      "text": "the fleet operator running lobes on more than one box (today: DGX Spark, Jetson AGX Thor, Jetson AGX Orin), a third party who wants to adopt a working variation without owning the box it was measured on, and two machine consumers \u2014 lobes doctor, which diffs the lock against what is deployed, and CI, which gates what may be committed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "each named audience can actually reach the artifact: the operator via lobes init --from-lock, the third party from a repo checkout alone with no access to the measured box, doctor via a file diff, and CI via a required job \u2014 no audience is served only by prose",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "after_state",
+      "text": "every box's deployment is reproducible from the repo: lobes init --from-lock materialises a committed variation verbatim, a third party can adopt one they have never run, lobes doctor names any divergence as lock_drift, and no credential or peer origin has ever entered git.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "the after-state is checkable as a whole, not claim by claim: a box restored from its committed variation serves the same model at the same knobs as before the restore, and git log over the repo shows no commit ever introduced a credential or peer origin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "before_state",
+      "text": "the deployed ~/.lobes/docker-compose.yml is the real serving contract and nothing tracks its divergence from the packaged template. Found during #199 t11 prep on 2026-08-25: the Spark's compose was hand-edited with the DSpark --speculative-config baked into the vllm-primary command while the Thor's happened to equal the template \u2014 a difference only a live diff revealed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "the before-state is evidenced, not remembered: the 2026-08-25 Spark/Thor compose divergence is recorded in a citable transcript or issue #214 itself, so the motivating incident survives as more than a claim in this frame",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "why_it_matters",
+      "text": "three costs follow from that gap: a deployment cannot be shared or restored without re-applying every hand edit from memory; re-scaffolding is unsafe on any hand-edited box, so operators avoid lobes init --apply and the passthrough drift the gateway_passthrough check guards against accumulates; and evidence transcripts cite only MODEL_GEAR_VERSION plus a shape name, which under-describes what actually ran.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "each of the three costs is separately observable today \u2014 a hand-edited box that cannot be re-scaffolded safely, a transcript citing only version plus shape, and at least one accumulated passthrough drift the gateway_passthrough check would flag",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "success_signal",
+      "text": "three checks, all mechanical: (1) a box restored with lobes init --from-lock produces a byte-identical compose/override/Dockerfile set to what it ran before, with its .env untouched; (2) lobes doctor reports lock_drift naming the differing files when they diverge, and passes when they do not; (3) a CI job fails a PR that commits a credential- or origin-shaped value anywhere, including in a lock.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "all three success signals are mechanical and run without a human judging them: each is a test, a doctor check, or a CI job, and each FAILS on a deliberately broken input, not merely passes on a good one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "c25's allowlist protects ONLY the .env-derived lock \u2014 it does not extend to the files the practice commits VERBATIM. #214 explicitly lists docker-compose.override.yml among them, and _compose.LOCAL_OVERRIDE is the one file lobes never writes, never templates and cannot vouch for: an operator may inline anything in it, including an environment: block with a real token. The Spark's baked --speculative-config proves operators do hand-edit these files. Every verbatim-committed file needs the same scanning gate as the lock, or the secret-free claim covers only the half that was never at risk.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "the secret scanner runs over every committed variation file \u2014 the four compose files and the Dockerfiles \u2014 not only the generated lock; proven by a test that plants a token in a committed override and sees CI fail",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "a committed variation can become UNBUILDABLE with time: Dockerfile.gateway installs lobes-cli==${MODEL_GEAR_VERSION} from PyPI, or a .devN wheel from TestPyPI for a PR build (lines 12-28). A variation captured at a dev version references an artifact that may not outlive the PR, so c14's promise that a third party can materialise a variation they never ran fails at BUILD time, not at restore time. The capacity-pool frame recorded this same class as deviation d2.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "a variation whose gateway version is no longer installable is DETECTED as unbuildable with a clear message, rather than failing deep inside a docker build",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "the frame gates against a leak but specifies no RECOVERY from one. Blast radius is larger than one box: under proxy-lobes each <PREFIX>_PEER_API_KEY is a COPY of the peer's own inbound GATEWAY_API_KEY, so rotating one leaked key requires updating every peer holding that copy. scripts/gen-api-key.py --force rotates locally only. A committed secret also survives git rm \u2014 it needs history rewrite. A documented rotation-and-revocation path belongs in the spec, since it changes what ships, not merely how it is built.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "the rotation path is written down and names every place a copy of the key lives, and a leaked-key drill can be followed end to end by someone who did not write it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "--from-lock must refuse, or loudly warn on, a MACHINE-TYPE MISMATCH between the lock and the restoring box. Because c13 makes --from-lock bypass profile/shape resolution entirely, it also bypasses _sync_gpu_overrides \u2014 so restoring a variation captured on a devices-mode card onto a csv-mode board (or the reverse) silently produces a deployment whose GPU access is wrong, the exact failure the generated overlays exist to prevent. Nothing in the frame today makes the lock's declared identity checked against detection.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "restoring a lock whose declared machine type differs from what _detect resolves does NOT silently proceed \u2014 it refuses by default, and any override is explicit",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Positional gitignore rule + goldens negation",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "git check-ignore proves .env, .cf-tunnel.env and .secrets.env ignored; .env.example and .env.sample not",
+        "a newly created tests/goldens/<new>.env and tests/goldens/shapes/<new>.env are both stageable",
+        "the test fails if the negation line is removed"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "h17",
+        "c23",
+        "h18",
+        "c8",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Variation identity resolver (machine type, never hostname)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "two hosts of the same machine type resolve to the same variation id",
+        "no resolved id contains a hostname, asserted against a fake host with a distinctive name",
+        "an unrecognised card resolves to an explicit unknown, never a guess"
+      ],
+      "deps": [],
+      "covers": [
+        "c16",
+        "h12"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "CI secret gate over every committed deployment artifact",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a PR planting a token in a committed docker-compose.override.yml fails a REQUIRED job",
+        "the scanner path list names the lock and all verbatim-committed compose/Dockerfiles, not just repo defaults",
+        "the job fails on the planted token and passes on the clean tree"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h6",
+        "c26",
+        "h21",
+        "c32",
+        "h27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Secret env family: second env_file entry across fleet services",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a deployment with no .secrets.env behaves byte-identically \u2014 compose config output unchanged",
+        "every fleet service that reads .env also reads the second file, verified by parsing the template",
+        "a fresh box reaches serving state with no hand-typed secret: keys generated or file-supplied"
+      ],
+      "deps": [],
+      "covers": [
+        "c20",
+        "h15",
+        "c21",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Wheel-exclusion test for the deployments tree",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "uv build produces a wheel whose namelist contains no deployments/ path",
+        "the test fails if packages= is widened to include it"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Lock writer: allowlist from profile_env into deployment.lock.toml",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "feeding a .env containing GATEWAY_API_KEY, HF_TOKEN and PRIMARY_PEER_ORIGIN yields a lock containing none of them",
+        "the key set derives from profile_env, not a denylist: a newly added secret key stays excluded with no code change",
+        "the lock filename matches neither the .env suffix nor the .env. prefix rule",
+        "lock contents for a (profile, shape) agree with the matching tests/goldens file on every key both carry"
+      ],
+      "deps": [],
+      "covers": [
+        "c24",
+        "h19",
+        "c25",
+        "h20",
+        "c17",
+        "h13",
+        "c7",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "lobes init --from-lock: verbatim materialise, bypass resolution, guard machine type",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a restored box has a byte-identical compose/override/Dockerfile set, proven by diff, with .env untouched",
+        "restoring on a box whose DETECTED card differs from the lock refuses by default; any override is explicit",
+        "a lock captured on a csv-mode card restores both GPU overlays; one from a devices card restores neither",
+        "profile/shape resolution is provably not consulted \u2014 patched to raise, the restore still succeeds",
+        "dry-run by default, --apply to write, matching the repo mutation-safety convention"
+      ],
+      "deps": [
+        "t6",
+        "t2"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c13",
+        "h9",
+        "c4",
+        "h3",
+        "c3",
+        "h2",
+        "c36",
+        "h30"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "doctor lock_drift + switch staleness warning",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lock_drift names the specific differing files, not merely that drift exists",
+        "doctor --fix still never rewrites an existing .env line",
+        "running lobes switch makes the lock stale and lock_drift reports it; switch itself warns the lock needs re-committing"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c10",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Variation catalog: deployments/<id>/ layout + info file contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a variation this box does not run is materialisable by --from-lock on a machine that never served it",
+        "every info file names an existing docs/evidence/ path or states no measured result; a test asserts cited paths exist",
+        "a variation with no transcript renders an explicit 'no measured result', never a blank readable as a measurement"
+      ],
+      "deps": [
+        "t6",
+        "t2"
+      ],
+      "covers": [
+        "c14",
+        "h10",
+        "c15",
+        "h11",
+        "c19",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Buildability guard for a variation's pinned MODEL_GEAR_VERSION",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a variation whose gateway wheel is no longer installable is reported unbuildable with a clear message",
+        "the check fails early, not deep inside a docker build"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c34",
+        "h28"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Secret rotation and revocation path",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the procedure names every place a copy of an inbound key lives, including each peer's <PREFIX>_PEER_API_KEY",
+        "a leaked-key drill is followable end to end by someone who did not write it",
+        "it states that git rm does not remove a committed secret and names the history-rewrite step"
+      ],
+      "deps": [],
+      "covers": [
+        "c35",
+        "h29"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Docs + framing: audience, before/after state, why it matters, success signals",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each named audience reaches the artifact by a real mechanism, none served only by prose",
+        "a restored box serves the same model at the same knobs as before the restore",
+        "the motivating 2026-08-25 Spark/Thor divergence is cited to a transcript or issue, not remembered",
+        "each of the three costs is separately observable, and each success signal FAILS on a deliberately broken input"
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t9",
+        "t3"
+      ],
+      "covers": [
+        "c27",
+        "h22",
+        "c28",
+        "h23",
+        "c29",
+        "h24",
+        "c30",
+        "h25",
+        "c31",
+        "h26"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the catalog's executable value is unproven: c34 shows a variation can outlive its buildable wheel and c36 shows a cross-machine-type restore is hazardous, so adoption by a third party may work only for variations whose wheel still resolves",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "no trust model exists for adopting a third party's variation \u2014 it names build contexts, bind mounts and image refs, so adoption is execution rather than reading; the challenge pass flagged this surface as unexamined",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "t1 changes .gitignore for the whole repo; if the goldens negation is wrong in a way the test misses, a future golden silently fails to stage \u2014 merge t1 before any task that adds a committed artifact",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}
