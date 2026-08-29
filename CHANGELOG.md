@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0] - 2026-08-29
+
+### Added
+
+- `lobes init --from-lock` restores a committed deployment variation verbatim, bypassing profile/shape resolution, with a machine-type guard and an offline buildability preflight.
+- `deployment.lock.toml` — a secret-free-by-construction lock whose key set is an allowlist derived from `profile_env`.
+- `deployments/` — the published variation catalog, its info-file honesty contract, and a validator. Ships with zero real variations; capture needs physical hardware.
+- `lobes doctor` reports `lock_drift`, naming the specific differing files; `lobes switch` warns that a committed lock has gone stale.
+- A required `secrets-scan` CI job over every committed deployment artifact.
+- `docs/secret-rotation.md` — the leaked-key drill and the full key-copy inventory.
+- `lobes explain lock` and `docs/deployment-lock.md`.
+
+### Changed
+
+- `.gitignore` now uses a positional rule: a `.env` suffix is ignored, a `.env.` prefix is allowed. The committed goldens keep an explicit negation.
+- Every fleet service reads an optional `.secrets.env` alongside `.env`, so no secret is ever retyped by hand.
+
 ## [0.67.1] - 2026-08-28
 
 ### Fixed
