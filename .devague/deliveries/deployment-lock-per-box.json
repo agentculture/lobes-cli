@@ -2,7 +2,7 @@
   "plan_slug": "deployment-lock-per-box",
   "schema_version": 1,
   "created": "2026-08-29T07:20:52Z",
-  "updated": "2026-08-29T07:31:55Z",
+  "updated": "2026-08-29T07:44:59Z",
   "deviations": [
     {
       "id": "d1",
@@ -61,6 +61,38 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "there is NO CAPTURE VERB: capture_lock/build_lock/write_lock have no CLI caller anywhere in lobes/cli/. An operator can RESTORE a variation but cannot CAPTURE one, so the practice cannot be exercised end to end from the CLI \u2014 every 're-capture the lock' instruction in doctor's remediation, switch's warning and the catalog README currently means 'call the library'",
+      "task_ref": "t12",
+      "reason": "no task in the plan owned a capture verb: t6 built the writer library, t7 built the restore verb, and the plan's coverage targets never asked for the capture side. Found by t12 via an AST check of imports while documenting the feature; a test now asserts it stays true until fixed",
+      "affects": [
+        "t6",
+        "t7",
+        "c1",
+        "h1",
+        "c14",
+        "h10"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "d4's staleness mechanism and t7's restore path cannot both use one lock: t8 catches switch-induced drift by recording .env's digest in the lock's [files] table, but t7's _check_restorable_name REFUSES any .env-family name in [files], so a drift-capable lock is not restorable and a restorable lock cannot detect .env drift",
+      "task_ref": "t12",
+      "reason": "the two mechanisms were built in parallel by sibling tasks against the same [files] field with opposite requirements, and neither could see the other. Verified by running --from-lock against such a lock; nothing in the tree reconciles them",
+      "affects": [
+        "t7",
+        "t8",
+        "c10",
+        "h7"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "risky"
     }
   ]
 }
