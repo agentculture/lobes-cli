@@ -65,6 +65,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -438,6 +440,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -524,6 +528,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -580,6 +586,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -673,6 +681,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -755,6 +765,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -883,6 +895,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -977,6 +991,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -1138,6 +1154,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -1241,6 +1259,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -1348,6 +1368,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -1594,6 +1616,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
