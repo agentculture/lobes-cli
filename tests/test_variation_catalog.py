@@ -179,7 +179,7 @@ def test_measured_fixture_cites_a_real_transcript() -> None:
 
     assert lock.evidence is not None
     assert (REPO_ROOT / lock.evidence).is_file()
-    assert lock.evidence in info.measured_evidence_paths
+    assert info.measured_evidence_paths.count(lock.evidence) == 1
     assert not info.declares_no_measured_result
 
 
@@ -209,7 +209,7 @@ def test_unmeasured_fixture_says_so_explicitly() -> None:
     assert info.declares_no_measured_result
     assert info.measured_evidence_paths == ()
     # The words are fixed by the contract, not left to each author's phrasing.
-    assert vc.NO_MEASURED_RESULT in info.measured_result_body
+    assert info.measured_result_body.count(vc.NO_MEASURED_RESULT) >= 1
 
 
 def test_a_blank_measured_result_is_rejected(tmp_path) -> None:
@@ -306,7 +306,7 @@ def test_parse_info_reads_title_sections_and_citations() -> None:
     )
 
     assert info.title == "fixture-card — a fixture"
-    assert vc.MEASURED_RESULT_HEADING in info.sections
+    assert info.sections.count(vc.MEASURED_RESULT_HEADING) == 1
     assert info.measured_evidence_paths == ("docs/evidence/2026-08-20-accept-hand-spark.txt",)
     assert len(info.evidence_paths) == 2
     assert not info.declares_no_measured_result

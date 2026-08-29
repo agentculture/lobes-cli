@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.4] - 2026-08-29
+
+### Fixed
+
+- The last three membership assertions in `tests/test_variation_catalog.py` are subject-first, completing SonarCloud S3415 for the file — the previous pass missed module constants on the left because it scanned only for bare literals.
+
 ## [0.68.3] - 2026-08-29
 
 ### Fixed
