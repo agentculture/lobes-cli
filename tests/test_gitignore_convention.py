@@ -70,13 +70,13 @@ def _is_stageable(repo: Path, relpath: str) -> bool:
     return any(line[:2] == "A " and line[3:] == relpath for line in status.stdout.splitlines())
 
 
-@pytest.fixture()
+@pytest.fixture
 def real_gitignore_text() -> str:
     assert GITIGNORE_PATH.exists(), f"missing {GITIGNORE_PATH}"
     return GITIGNORE_PATH.read_text()
 
 
-@pytest.fixture()
+@pytest.fixture
 def repo(tmp_path: Path, real_gitignore_text: str) -> Path:
     return _init_repo(tmp_path, real_gitignore_text)
 

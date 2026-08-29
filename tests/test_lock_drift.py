@@ -34,7 +34,14 @@ from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.profiles.shape_render import render_shape
 from lobes.profiles.shapes import resolve_shape
 from lobes.runtime import _compose, _detect, _env, _health
-from lobes.runtime._lock import LOCK_FILENAME, build_lock, file_digest, lock_toml, write_lock
+from lobes.runtime._lock import (
+    LOCK_FILENAME,
+    allowlist_env,
+    build_lock,
+    file_digest,
+    lock_toml,
+    write_lock,
+)
 
 
 def _card(resolved: str = "spark", name: str = "NVIDIA GB10", cc: str = "sm_121") -> object:
@@ -175,6 +182,41 @@ def test_lock_drift_names_the_specific_differing_locked_key(tmp_path, monkeypatc
     assert check["passed"] is False
     assert "PRIMARY_GPU_MEM_UTIL" in check["message"]
     assert "PRIMARY_MAX_MODEL_LEN" not in check["message"]
+
+
+def test_lock_drift_names_a_locked_key_added_after_capture(tmp_path, monkeypatch, capsys) -> None:
+    """PR #223 review (confirmed defect 1): ``_lock_env_diffs`` iterated only
+    ``lock.env``'s own keys, so an allowlisted knob written into the deployed
+    ``.env`` AFTER capture (never present in the lock at all) was invisible —
+    ``lock_drift`` passed even though the deployment now genuinely diverges.
+    The comparison must be symmetric: report a key present in the deployment
+    but absent from the lock too, distinguishable from a changed value."""
+    _scaffold_fleet(tmp_path)
+    env = _env.read_env_file(tmp_path / ".env")
+    tracked_env = allowlist_env(env)
+    assert "PRIMARY_GPU_MEM_UTIL" in tracked_env  # sanity: a real allowlisted knob
+    # Capture a lock that predates this knob ever being set — simulating a
+    # knob added to the deployment after the lock was last captured.
+    incomplete_env = {k: v for k, v in tracked_env.items() if k != "PRIMARY_GPU_MEM_UTIL"}
+    lock = build_lock(
+        variation="spark-test",
+        env=incomplete_env,
+        profile="spark",
+        shape=DEFAULT_SHAPE,
+        files=_tracked_files(tmp_path),
+    )
+    write_lock(tmp_path, lock)
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    monkeypatch.setattr(_detect, "detect_card", lambda: _card())
+
+    payload = _doctor_json(capsys)
+    check = _find(payload["checks"], "lock_drift")
+    assert check["passed"] is False
+    assert "PRIMARY_GPU_MEM_UTIL" in check["message"]
+    # The message must distinguish "added since capture" from "changed" so an
+    # operator can act on it, not just see the key name.
+    assert "added" in check["message"].lower()
 
 
 def test_lock_drift_names_a_missing_tracked_file(tmp_path, monkeypatch, capsys) -> None:

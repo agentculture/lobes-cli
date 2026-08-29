@@ -95,8 +95,23 @@ EVIDENCE_DIRNAME = "docs/evidence"
 #: Separates a variation id from an applied shape in a directory name.
 SHAPE_SEPARATOR = "__"
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$", re.MULTILINE)
+# Deliberately NOT `^(#{1,6})\s+(.*?)\s*#*\s*$` (python:S8786): `.*?` lazily
+# overlapping the trailing `\s*#*\s*` gives the engine exponentially many
+# ways to partition a long run of whitespace/`#`, so a heading-shaped line
+# with no terminating `$` on this same logical run (e.g. deep inside a
+# larger malformed match attempt) is catastrophically slow to reject.
+# Instead this captures the whole rest of the line with a single greedy
+# group — linear, no ambiguity — and :func:`_heading_text` strips the
+# optional trailing ATX ``#`` marker(s) afterward, in plain Python.
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$", re.MULTILINE)
 _EVIDENCE_RE = re.compile(rf"{re.escape(EVIDENCE_DIRNAME)}/[A-Za-z0-9][A-Za-z0-9._+-]*")
+
+
+def _heading_text(match: re.Match) -> str:
+    """The heading name from a :data:`_HEADING_RE` match, trailing ATX
+    ``#`` marker(s) and surrounding whitespace stripped — same result the
+    old ``\\s*#*\\s*$`` suffix produced, computed without backtracking."""
+    return match.group(2).strip().rstrip("#").rstrip()
 
 
 @dataclass(frozen=True)
@@ -139,7 +154,7 @@ def _dedup(paths: list[str]) -> tuple[str, ...]:
 def _section_body(text: str, heading: str) -> str:
     """The text under the level-2 *heading*, up to the next heading of any level."""
     for match in _HEADING_RE.finditer(text):
-        if len(match.group(1)) != 2 or match.group(2) != heading:
+        if len(match.group(1)) != 2 or _heading_text(match) != heading:
             continue
         start = match.end()
         following = _HEADING_RE.search(text, start)
@@ -153,7 +168,7 @@ def parse_info(text: str) -> VariationInfo:
     A pure string function — it never touches the filesystem, so the contract
     can be exercised on candidate text that was never written to disk.
     """
-    headings = [(len(m.group(1)), m.group(2)) for m in _HEADING_RE.finditer(text)]
+    headings = [(len(m.group(1)), _heading_text(m)) for m in _HEADING_RE.finditer(text)]
     title = next((name for level, name in headings if level == 1), "")
     sections = tuple(name for level, name in headings if level == 2)
     measured = _section_body(text, MEASURED_RESULT_HEADING)
@@ -195,28 +210,28 @@ def variation_dirs(catalog_root: Path) -> list[Path]:
     )
 
 
-def _validate_info(
-    directory: Path, lock: DeploymentLock | None, repo_root: Path, problems: list[str]
-) -> None:
-    name = directory.name
-    info_path = directory / INFO_FILENAME
-    if not info_path.is_file():
-        problems.append(f"{name}: missing {INFO_FILENAME}")
-        return
-
-    info = parse_info(info_path.read_text(encoding="utf-8"))
+def _validate_structure(name: str, info: VariationInfo, problems: list[str]) -> None:
+    """Title + required sections — the shape checks that don't need the lock."""
     if not info.title:
         problems.append(f"{name}/{INFO_FILENAME}: no level-1 title naming the variation")
     if DESCRIPTION_HEADING not in info.sections:
         problems.append(f"{name}/{INFO_FILENAME}: missing '## {DESCRIPTION_HEADING}' section")
     if not info.has_measured_result_section:
         problems.append(f"{name}/{INFO_FILENAME}: missing '## {MEASURED_RESULT_HEADING}' section")
-        return
 
+
+def _validate_evidence_citations(
+    name: str, info: VariationInfo, repo_root: Path, problems: list[str]
+) -> None:
+    """Every ``docs/evidence/`` citation anywhere in the file resolves on disk."""
     for cited in info.evidence_paths:
         if not (repo_root / cited).is_file():
             problems.append(f"{name}/{INFO_FILENAME}: cites missing evidence {cited}")
 
+
+def _validate_measured_result_claim(name: str, info: VariationInfo, problems: list[str]) -> None:
+    """The #108 honesty rule: exactly one of "cites a transcript" or the
+    fixed :data:`NO_MEASURED_RESULT` sentence — never both, never neither."""
     if info.declares_no_measured_result and info.measured_evidence_paths:
         problems.append(
             f"{name}/{INFO_FILENAME}: '{MEASURED_RESULT_HEADING}' both declares "
@@ -229,22 +244,48 @@ def _validate_info(
             "— a blank here reads as a measurement"
         )
 
-    if lock is None:
-        return
+
+def _validate_lock_agreement(
+    name: str, info: VariationInfo, lock: DeploymentLock, problems: list[str]
+) -> None:
+    """The info file's claim and the lock's own ``evidence`` field must agree."""
     if lock.evidence is None and not info.declares_no_measured_result:
         problems.append(
             f"{name}: the lock records no evidence but {INFO_FILENAME} claims a measured result"
         )
-    if lock.evidence is not None:
-        if info.declares_no_measured_result:
-            problems.append(
-                f"{name}: the lock cites evidence {lock.evidence} but {INFO_FILENAME} "
-                f"states '{NO_MEASURED_RESULT}'"
-            )
-        elif lock.evidence not in info.measured_evidence_paths:
-            problems.append(
-                f"{name}/{INFO_FILENAME}: does not cite the lock's own evidence {lock.evidence}"
-            )
+        return
+    if lock.evidence is None:
+        return
+    if info.declares_no_measured_result:
+        problems.append(
+            f"{name}: the lock cites evidence {lock.evidence} but {INFO_FILENAME} "
+            f"states '{NO_MEASURED_RESULT}'"
+        )
+    elif lock.evidence not in info.measured_evidence_paths:
+        problems.append(
+            f"{name}/{INFO_FILENAME}: does not cite the lock's own evidence {lock.evidence}"
+        )
+
+
+def _validate_info(
+    directory: Path, lock: DeploymentLock | None, repo_root: Path, problems: list[str]
+) -> None:
+    name = directory.name
+    info_path = directory / INFO_FILENAME
+    if not info_path.is_file():
+        problems.append(f"{name}: missing {INFO_FILENAME}")
+        return
+
+    info = parse_info(info_path.read_text(encoding="utf-8"))
+    _validate_structure(name, info, problems)
+    if not info.has_measured_result_section:
+        return
+
+    _validate_evidence_citations(name, info, repo_root, problems)
+    _validate_measured_result_claim(name, info, problems)
+
+    if lock is not None:
+        _validate_lock_agreement(name, info, lock, problems)
 
 
 def _validate_files(directory: Path, lock: DeploymentLock, problems: list[str]) -> None:
