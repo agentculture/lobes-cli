@@ -65,7 +65,7 @@ def test_up_is_registered_as_top_level_verb() -> None:
 def test_role_service_map_covers_exactly_the_ten_roles() -> None:
     """ROLE_SERVICE must stay in lockstep with lobes.roles.ROLES (single source)."""
     assert set(up_cmd.ROLE_SERVICE) == set(roles.ROLES)
-    assert up_cmd.TARGETS == roles.ROLES + ("colleague-stack",)
+    assert up_cmd.TARGETS == roles.ROLES + ("colleague-stack", "gateway")
 
 
 # --- acceptance 2: a single role targets ONLY its service ------------------
@@ -77,7 +77,7 @@ def test_up_cortex_dry_run_targets_only_primary(tmp_path, capsys) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out
-    assert "docker compose up -d vllm-primary" in out
+    assert "docker compose up -d --no-deps vllm-primary" in out
     # ONLY cortex's service — never the multimodal (senses) or pooling gears.
     assert "vllm-multimodal" not in out
     assert "vllm-embed" not in out
@@ -99,7 +99,7 @@ def test_up_each_fleet_role_targets_its_service(tmp_path, capsys, role, service)
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["services"] == [service]
-    assert payload["command"] == f"docker compose up -d {service}"
+    assert payload["command"] == f"docker compose up -d --no-deps {service}"
 
 
 def test_up_fleet_role_ignores_audio_overlay_even_when_present(tmp_path, capsys) -> None:
@@ -109,7 +109,7 @@ def test_up_fleet_role_ignores_audio_overlay_even_when_present(tmp_path, capsys)
     rc = main(["up", "cortex", "--compose-dir", str(tmp_path), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["command"] == "docker compose up -d vllm-primary"
+    assert payload["command"] == "docker compose up -d --no-deps vllm-primary"
     assert "docker-compose.audio.yml" not in payload["command"]
 
 
@@ -127,7 +127,7 @@ def test_up_colleague_stack_dry_run_covers_every_default_role(tmp_path, capsys) 
     assert payload["services"] == _STACK
     # ...across the fleet + audio compose files.
     assert payload["command"] == (
-        "docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d "
+        "docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d --no-deps "
         "vllm-primary vllm-multimodal vllm-hand vllm-embed vllm-rerank stt chatterbox"
     )
 
@@ -168,7 +168,7 @@ def test_up_stt_dry_run_includes_audio_overlay(tmp_path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["services"] == ["stt"]
     assert payload["command"] == (
-        "docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d stt"
+        "docker compose -f docker-compose.yml -f docker-compose.audio.yml up -d --no-deps stt"
     )
 
 
@@ -207,7 +207,7 @@ def test_up_apply_invokes_runner_with_only_the_target(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(_compose, "run_compose", fake_run)
     rc = main(["up", "cortex", "--compose-dir", str(tmp_path), "--apply", "--json"])
     assert rc == 0
-    assert captured["argv"] == ["docker", "compose", "up", "-d", "vllm-primary"]
+    assert captured["argv"] == ["docker", "compose", "up", "-d", "--no-deps", "vllm-primary"]
 
 
 def test_up_apply_colleague_stack_runs_full_argv(tmp_path, monkeypatch) -> None:
@@ -227,6 +227,7 @@ def test_up_apply_colleague_stack_runs_full_argv(tmp_path, monkeypatch) -> None:
         "docker-compose.audio.yml",
         "up",
         "-d",
+        "--no-deps",
         *_STACK,
     ]
 
@@ -301,7 +302,8 @@ def test_up_hosted_role_includes_shape_overlay_last(tmp_path, capsys) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["command"] == (
-        "docker compose -f docker-compose.yml -f docker-compose.shape.yml up -d vllm-primary"
+        "docker compose -f docker-compose.yml -f docker-compose.shape.yml "
+        "up -d --no-deps vllm-primary"
     )
 
 
@@ -432,5 +434,5 @@ def test_up_fleet_role_without_overlays_omits_override(tmp_path, capsys) -> None
     rc = main(["up", "cortex", "--compose-dir", str(tmp_path)])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "docker compose up -d vllm-primary" in out
+    assert "docker compose up -d --no-deps vllm-primary" in out
     assert "-f" not in out

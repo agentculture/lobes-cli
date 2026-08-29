@@ -661,19 +661,51 @@ carries `hosted_by` at most, never `proxied`).
 touching the rest of the fleet:
 
 ```bash
-lobes up cortex --apply             # docker compose up -d vllm-primary
-lobes up senses --apply             # docker compose up -d vllm-multimodal
-lobes up muse --apply               # docker compose up -d vllm-muse (muse-hosting shape only — currently no box hosts one, see the dormant callout above)
-lobes up worker --apply             # docker compose up -d vllm-worker (verb wired; live on the Spark since d1, errors helpfully off any other non-hosting box)
-lobes up embedder --apply           # docker compose up -d vllm-embed
-lobes up reranker --apply           # docker compose up -d vllm-rerank
+lobes up cortex --apply             # docker compose up -d --no-deps vllm-primary
+lobes up senses --apply             # docker compose up -d --no-deps vllm-multimodal
+lobes up muse --apply               # docker compose up -d --no-deps vllm-muse (muse-hosting shape only — currently no box hosts one, see the dormant callout above)
+lobes up worker --apply             # docker compose up -d --no-deps vllm-worker (verb wired; live on the Spark since d1, errors helpfully off any other non-hosting box)
+lobes up embedder --apply           # docker compose up -d --no-deps vllm-embed
+lobes up reranker --apply           # docker compose up -d --no-deps vllm-rerank
 lobes up stt --apply                # requires the --audio overlay
 lobes up tts --apply                # requires the --audio overlay
 lobes up colleague-stack --apply    # the SEVEN default roles at once (requires --audio scaffolded)
+lobes up gateway --apply            # the gateway ALONE (not a role — see below)
+lobes up gateway --build --apply    # ...re-imaged at the current MODEL_GEAR_VERSION
 ```
 
 Dry-run by default (prints the exact `docker compose …` command); `--apply`
-commits. `colleague-stack` is a first-class bundle — the four default fleet
+commits.
+
+### `--no-deps` is what makes "without touching the rest of the fleet" true
+
+**Issue #222.** `docker compose up -d <service>` **walks `depends_on`** and
+(re)creates every dependency, so before #222 this verb's isolation promise was
+documentation only. Hit live on a Jetson AGX Thor 2026-08-28: a gateway-only
+rebuild recreated the resident 27B cortex (a multi-minute reload) *and* started
+`vllm-multimodal` on a box declaring `MULTIMODAL_FEASIBLE=false` with an active
+proxy to a peer — burning the exact GPU budget that declaration exists to
+reclaim, in a unified-memory race against the load it was meant to leave alone.
+
+Every `up` now carries `--no-deps`, and the base compose no longer gives the
+gateway a `depends_on` at all (belt and braces: the flag fixes this CLI, the
+template fixes the hand-written `docker compose` command and every
+lock-restored box). `--down` needs no equivalent — compose `stop` never walks
+`depends_on`, which is exactly why the asymmetry went unnoticed. The dry-run
+PLAN is rendered from the argv that later runs, so the printed command is the
+executed one.
+
+### `gateway` is a target, not a role
+
+`gateway` is deliberately **not** in `lobes.roles.ROLES`, not in the role→service
+map, and not in the `colleague-stack` bundle — it is the stdlib reverse proxy
+*fronting* the roles, not one of them. It is an `up` target because it is the
+service an operator most often needs to touch alone: pure stdlib, rebuilds in
+seconds, and it bakes `MODEL_GEAR_VERSION` into its image, while the lobes
+behind it take minutes and hold tens of GiB. `lobes up gateway --build --apply`
+is the "reinstall the gateway, touch nothing else" operation that had no verb
+before #222 — which is why it was being done by hand, with the consequences
+above. `colleague-stack` is a first-class bundle — the four default fleet
 roles **plus** the audio overlay's `stt`/`tts` — not a compose `profiles:`
 tag, because tagging the already-default-on services with a profile would
 demote them out of the default fleet (a regression). If the audio overlay

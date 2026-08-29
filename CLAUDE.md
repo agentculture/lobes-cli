@@ -238,7 +238,14 @@ busy — the former degrade-to-`minor` substitution path was removed outright,
 so there is no cheaper-rung fallback for any of the four); an explicit
 `hand` request (or its `minor`/`cheap` spellings) is the servable floor and is
 always served regardless of pressure. `lobes status --pressure` shows the current busy/warm state.
-Start/stop one role at a time with `lobes up <role>` (or the
+Start/stop one role at a time with `lobes up <role>` — which since issue #222
+actually isolates: every `up` carries `--no-deps` and the base compose gives
+the gateway no `depends_on` at all, because `docker compose up -d <service>`
+walks that list and a gateway-only restart was therefore recreating every heavy
+lane (measured live on the Thor 2026-08-28, including starting a lane the box
+declares `MULTIMODAL_FEASIBLE=false`). `gateway` is now an `up` TARGET too (not
+a role): `lobes up gateway --build --apply` re-images the front at a new
+`MODEL_GEAR_VERSION` without touching the lobes behind it. Or the
 seven-default-role bundle, `lobes up colleague-stack` — `muse` and `worker` are
 deliberately excluded from the bundle, both being opt-in-hosted, while `hand`
 IS included, being default-hosted and un-gated; `lobes up muse` works on
@@ -704,8 +711,20 @@ stays byte-identical to the pre-proxy contract.
 **Live as of 2026-07-31:** the DGX Spark (`spark-lobe`) proxies TWO roles —
 `senses` → the AGX Orin and `worker` → the Jetson AGX Thor — so a caller
 addresses either on the Spark's own gateway and never dials the peer box.
-Both answer 200 with `X-Lobes-Proxied-By`, image input included. Note a proxied
-role reports `feasible: false` **by design** (it means "this box does not *host*
+Both answer 200 with `X-Lobes-Proxied-By`, image input included. **A proxied
+role's `ready` and `context` are the PEER's own advert (issue #220):** the
+background probe reads the peer's `GET /capabilities` and relays that role
+entry, falling back to the old `/v1/models` served-id check only for a peer
+with no such entry. Both halves fixed a measured lie — on the Spark,
+2026-08-27, `associate` advertised `ready:false, context:1048576` against an
+Orin reporting `ready:true, context:128000` — with two distinct causes: the
+`/v1/models` check is unsatisfiable for a box forwarding an ALIAS (which
+`associate` must do, sharing a checkpoint with `worker`), and a role this box
+does not host has no `<PREFIX>_MAX_MODEL_LEN` to read, so context fell through
+to the catalog's native ceiling. That collision is also why **role-name
+addressing (`model=associate`) is the documented proxied path** — the raw
+checkpoint id is ambiguous and resolves to the local `worker` lane. Note a
+proxied role reports `feasible: false` **by design** (it means "this box does not *host*
 it", not "you cannot use it here"); `proxied: true` + `hosted_by` + `ready` are
 the fields that say it is usable, and `loaded` is a *wiring* fact, not a
 running one. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`

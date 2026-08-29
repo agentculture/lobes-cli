@@ -23,6 +23,22 @@ Roles → compose services (issue #81, t7)::
 These are the compose SERVICE names (top-level keys under ``services:``), NOT the
 ``container_name:`` values — ``docker compose up -d <service>`` addresses services.
 
+**The gateway is a target too (issue #222).** ``gateway`` is not a Colleague role
+— it is the stdlib reverse proxy fronting them — but it is the service an operator
+most often needs to touch ALONE: it is pure stdlib, rebuilds in seconds, and bakes
+``MODEL_GEAR_VERSION`` into its image, while the lobes behind it take minutes and
+hold tens of GiB. Before #222 there was no verb for "reinstall the gateway, touch
+nothing else", so the operator hand-wrote ``docker compose up -d --build gateway``
+— which walked ``depends_on`` and recreated the whole fleet. ``lobes up gateway
+--build`` is that need, named.
+
+**Isolation is real, not just documented (issue #222).** Every ``up`` here runs
+with ``--no-deps`` (:data:`lobes.runtime._compose.NO_DEPS_FLAG`); without it
+``docker compose up -d <service>`` follows ``depends_on`` and (re)creates the
+dependencies too, which is how a gateway-only restart became a fleet-wide one on
+a live Thor. ``--down`` needs no equivalent: compose ``stop`` never walks
+``depends_on``.
+
 **r4 (issue #81) — colleague-stack bundles audio.** ``colleague-stack`` is a
 first-class target that brings up the FULL seven-role default-hosted set = the default
 fleet roles (cortex/senses/embedder/reranker) PLUS the audio-overlay roles
@@ -54,6 +70,7 @@ from lobes import roles
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
+from lobes.profiles.shape_render import GATEWAY_SERVICE
 from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
 from lobes.runtime import _compose, _env
 
@@ -87,9 +104,21 @@ _AUDIO_ROLES: frozenset[str] = frozenset({"stt", "tts"})
 # ``up``'s own composite target.
 COLLEAGUE_STACK = "colleague-stack"
 
-# Every valid ``up`` target: the NINE roles (canonical order) + the bundle. Keyed
-# off :data:`lobes.roles.ROLES` so this and the role registry never drift.
-TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK,)
+# The gateway service (issue #222). NOT a Colleague role — deliberately absent
+# from :data:`lobes.roles.ROLES`, from ROLE_SERVICE, and from the colleague-stack
+# bundle, so nothing that enumerates roles starts counting it as one. It is a
+# first-class ``up`` TARGET only: the one service an operator legitimately
+# restarts or re-images on its own.
+# The TARGET name a caller types. Equal to the compose SERVICE name
+# (:data:`lobes.profiles.shape_render.GATEWAY_SERVICE`, imported above rather
+# than re-spelled) but a separate constant: those are two namespaces, and every
+# other target here is a ROLE whose name differs from its service.
+GATEWAY_TARGET = GATEWAY_SERVICE
+
+# Every valid ``up`` target: the TEN roles (canonical order) + the bundle + the
+# gateway. Keyed off :data:`lobes.roles.ROLES` so this and the role registry
+# never drift.
+TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK, GATEWAY_TARGET)
 
 
 def _resolve(target: str) -> tuple[list[str], bool]:
@@ -100,6 +129,10 @@ def _resolve(target: str) -> tuple[list[str], bool]:
     """
     if target == COLLEAGUE_STACK:
         return [ROLE_SERVICE[r] for r in DEFAULT_HOSTED_ROLES], True
+    if target == GATEWAY_TARGET:
+        # The gateway lives in the BASE fleet file and fronts the audio lanes over
+        # HTTP rather than declaring them, so it never pulls in the audio overlay.
+        return [GATEWAY_SERVICE], False
     if target in ROLE_SERVICE:
         return [ROLE_SERVICE[target]], target in _AUDIO_ROLES
     raise ModelGearError(
@@ -146,7 +179,14 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
     if not shape_present:
         return False
     overlay_text = (Path(deploy_dir) / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
-    dropped = _compose._override_service_keys(overlay_text) - {"gateway"}
+    # The gateway key is subtracted, not treated as dropped: overrides scaffolded
+    # BEFORE #222 also name `gateway` (they carried `depends_on: !reset null` to
+    # clear the base template's edge). Since #222 the base template declares no
+    # gateway `depends_on` and the override stops emitting the block, but an
+    # existing deployment dir keeps its old file until re-scaffolded — so this
+    # subtraction stays for those, and `lobes up gateway` must not be refused on
+    # one of them.
+    dropped = _compose._override_service_keys(overlay_text) - {GATEWAY_SERVICE}
     blocked = sorted(set(services) & dropped)
     if blocked:
         raise ModelGearError(
@@ -228,7 +268,14 @@ def cmd_up(args: argparse.Namespace) -> int:
         _compose.local_override_present(deploy_dir),
         _compose.gpu_overlay_present(deploy_dir),
     )
-    argv = _compose.compose_service_argv(action, compose_files, services)
+    build = bool(getattr(args, "build", False))
+    if build and action == "stop":
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--build has no meaning with --down (a stop never builds an image)",
+            remediation="drop --build, or drop --down to rebuild and restart the target",
+        )
+    argv = _compose.compose_service_argv(action, compose_files, services, build=build)
     command = " ".join(argv)
 
     if not args.apply:
@@ -238,6 +285,7 @@ def cmd_up(args: argparse.Namespace) -> int:
             "action": action,
             "services": services,
             "command": command,
+            "build": build,
             "deployment_dir": str(deploy_dir),
         }
         verb_word = "STOP" if action == "stop" else "START"
@@ -264,6 +312,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         "target": target,
         "services": services,
         "command": command,
+        "build": build,
         "deployment_dir": str(deploy_dir),
     }
     done = "started" if action == "up" else "stopped"
@@ -280,7 +329,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "role",
         metavar="ROLE",
-        help="cortex | senses | muse | worker | embedder | reranker | stt | tts | colleague-stack.",
+        help="cortex | senses | muse | worker | associate | hand | embedder | "
+        "reranker | stt | tts | colleague-stack | gateway.",
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--apply", action="store_true", help="Actually run docker compose.")
@@ -289,6 +339,13 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Stop the target service(s) instead of starting — a scoped "
         "'docker compose stop' that leaves the rest of the fleet untouched.",
+    )
+    p.add_argument(
+        "--build",
+        action="store_true",
+        help="Rebuild the target's image before starting it (up only). Only the "
+        "gateway is built from a local Dockerfile — use this to re-image it at a "
+        "new MODEL_GEAR_VERSION without touching the lobes behind it (#222).",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_up)

@@ -766,19 +766,48 @@ def compose_up_build(deploy_dir: os.PathLike | str):
     )
 
 
-def compose_service_argv(action: str, compose_files: list[str], services: list[str]) -> list[str]:
+# The flag that makes a role-targeted ``up`` mean what its docstring says (#222).
+# ``docker compose up -d <service>`` WALKS ``depends_on`` and (re)creates every
+# dependency, so without this a one-role start is a fleet-wide restart. Measured
+# live on the Jetson AGX Thor 2026-08-28: `docker compose up -d --build gateway`
+# recreated all four vLLM lanes (a multi-minute 27B cortex reload) and STARTED
+# vllm-multimodal on a box declaring MULTIMODAL_FEASIBLE=false. ``stop`` needs no
+# twin: compose ``stop`` does not walk ``depends_on``, which is exactly why the
+# asymmetry went unnoticed for so long.
+NO_DEPS_FLAG = "--no-deps"
+
+
+def compose_service_argv(
+    action: str,
+    compose_files: list[str],
+    services: list[str],
+    *,
+    build: bool = False,
+) -> list[str]:
     """Build the ``docker compose ...`` argv for a role-targeted up/stop (t7, #81).
 
-    ``action`` is ``"up"`` (→ ``up -d``) or ``"stop"`` (→ ``stop``). ``compose_files``
-    is the ``-f`` prefix — ``[]`` for the base file only, or ``["-f", COMPOSE_FILE,
-    "-f", AUDIO_OVERLAY]`` when the target reaches into the audio overlay (stt/tts).
-    ``services`` are the compose SERVICE names to target; only these are
-    (re)started/stopped, so one role toggles without disturbing the rest of the
-    fleet. ``lobes up`` renders its dry-run PLAN from this same argv it later runs
-    under ``--apply``, so the two are byte-identical. Note ``stop`` (not ``down``):
-    a project-wide ``docker compose down`` would remove EVERY container.
+    ``action`` is ``"up"`` (→ ``up -d --no-deps``) or ``"stop"`` (→ ``stop``).
+    ``compose_files`` is the ``-f`` prefix — ``[]`` for the base file only, or
+    ``["-f", COMPOSE_FILE, "-f", AUDIO_OVERLAY]`` when the target reaches into the
+    audio overlay (stt/tts). ``services`` are the compose SERVICE names to target;
+    only these are (re)started/stopped, so one role toggles without disturbing the
+    rest of the fleet — a promise :data:`NO_DEPS_FLAG` is what actually keeps (see
+    its comment; before #222 this docstring described behaviour the argv did not
+    have). ``lobes up`` renders its dry-run PLAN from this same argv it later runs
+    under ``--apply``, so the two are byte-identical and the printed plan is
+    truthful. Note ``stop`` (not ``down``): a project-wide ``docker compose down``
+    would remove EVERY container.
+
+    ``build`` adds ``--build`` (``up`` only) so a service built from a local
+    Dockerfile — the gateway, whose image bakes in ``MODEL_GEAR_VERSION`` — can be
+    re-imaged in the same one-service command. It is a no-op for the pulled vLLM
+    lanes, so it is opt-in rather than always-on.
     """
-    verb = ["up", "-d"] if action == "up" else ["stop"]
+    if action != "up":
+        return ["docker", "compose"] + list(compose_files) + ["stop"] + list(services)
+    verb = ["up", "-d", NO_DEPS_FLAG]
+    if build:
+        verb.append("--build")
     return ["docker", "compose"] + list(compose_files) + verb + list(services)
 
 

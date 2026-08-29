@@ -128,8 +128,8 @@ actually activates a template change on a running fleet.
 The gateway adds a second backend **only** when `FALLBACK_URL` or
 `FALLBACK_SERVED_NAME` is set. To add a warm fallback: define a `vllm-fallback`
 service in the fleet compose (mirror `vllm-primary` with the fallback's model /
-quantization / tokenizer / tool-parser), add it to the gateway's `depends_on`,
-set `FALLBACK_URL` + `FALLBACK_SERVED_NAME` on the gateway, and **drop both
+quantization / tokenizer / tool-parser), set `FALLBACK_URL` +
+`FALLBACK_SERVED_NAME` on the gateway, and **drop both
 `*_GPU_MEM_UTIL` values** so they sum well under 1.0. The archived dense Mistral
 fallback config is in git history and
 [`docs/mistral-small-3.2-24b-nvfp4.md`](mistral-small-3.2-24b-nvfp4.md).
@@ -656,15 +656,52 @@ policy when the forward arrives. Shedding here too would gate the role a
 second time, against the wrong box's load.
 
 **`/v1/models` and `GET /capabilities` only advertise what the peer honestly
-serves.** A background thread probes the declared peer's own `GET
-/v1/models` (with the pairwise key, when declared) and lists the proxied id
-on *this* box's `/v1/models` only when the peer's own response actually
-lists it — issue #92 ("advertised implies reachable") extended across a box
-boundary. `GET /capabilities` mirrors this: a proxied role reports
-`"proxied": true` alongside `"hosted_by": "<peer origin>"`, and its `ready`
-reflects the same live peer-probe verdict, never a hardcoded `true`. See
+serves.** A background thread probes the declared peer and lists the proxied
+id on *this* box's `/v1/models` only when the peer honestly serves it —
+issue #92 ("advertised implies reachable") extended across a box boundary. `GET
+/capabilities` mirrors this: a proxied role reports `"proxied": true`
+alongside `"hosted_by": "<peer origin>"`, and its `ready` reflects the live
+peer-probe verdict, never a hardcoded `true`. See
 [`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied)
 for the role-contract view.
+
+**The advert is the PEER's, not a local guess (issue #220).** That background
+probe reads the peer's own `GET /capabilities` and relays the role entry's
+`ready` **and** `context`. Both halves fix a measured lie. On the DGX Spark,
+2026-08-27, `associate` advertised `ready:false, context:1048576` against an
+Orin reporting `ready:true, context:128000` and serving the seat in 0.6 s:
+
+- *`ready`* — the probe used to require the peer's `/v1/models` to list the
+  id this box forwards. That is unsatisfiable whenever the box forwards an
+  **alias** rather than a raw checkpoint id, which `associate` must do (see
+  below). The `/v1/models` check is **kept as a fallback** for a peer with no
+  `/capabilities` entry for the role — an older lobes gateway, or a bare vLLM
+  someone pointed a peer origin at — so no working deployment loses its
+  signal.
+- *`context`* — a role this box does not host has no
+  `<PREFIX>_MAX_MODEL_LEN` in this box's `.env`, so the local computation fell
+  through to the **catalog's native ceiling**: the checkpoint's maximum, not
+  the window the peer chose to serve. A peer that reports no usable context
+  leaves the local answer exactly as it was.
+
+Only a role in the peer-proxy set reads this channel; a role this box hosts
+always computes its own context from its own `.env`.
+
+**Address a proxied role by its ROLE NAME.** `model=<role>` — `associate`,
+`senses`, `worker` — is the supported way to reach a proxied lane, and for
+some lanes it is the *only* one. Two lanes can share a checkpoint (`worker`
+and `associate` both serve
+`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`, one checkpoint with two
+public addresses of different authority), so the **raw model id is ambiguous**:
+it resolves to whichever backend this box wires locally, which on a box that
+hosts `worker` and proxies `associate` is the local `worker` — the proxied
+role then 404s `role_infeasible` for the raw id and for the other role's name,
+while `model=associate` routes correctly. This is why such a lane declares
+`ASSOCIATE_SERVED_NAME=associate` (forwarding the alias, not the checkpoint
+id), and in turn why the `/v1/models` readiness check above could never
+succeed for it. Role-name addressing is the documented contract
+([`docs/colleague-stack.md`](colleague-stack.md)); a raw checkpoint id is a
+convenience that only survives while it is unambiguous.
 
 **Default off, byte-identical.** With no `<PREFIX>_PEER_PROXY` set anywhere —
 every deployment that predates this feature, and every referral-only

@@ -277,10 +277,16 @@ half-served, never silently rerouted:
    docker-compose.shape.yml`, which `lobes fleet up --apply` auto-includes
    when present). It parks each dropped core service in the inert
    `shape-dropped` compose profile — a profile **nothing** activates, so
-   `docker compose up` skips it — and clears the gateway's `depends_on` with
-   the compose `!reset` merge tag (list *replacement* is `!override`; `!reset`
-   is what removes the now-dangling edge to a profile-disabled service).
-   **Requires Docker Compose v2.24+** (the `!reset` tag). The resolved `-f`
+   `docker compose up` skips it. It used to *also* clear the gateway's
+   `depends_on` with the compose `!reset` merge tag, because the base template
+   listed every core lane there and a profile-disabled service left that edge
+   dangling; since **issue #222** the base template declares no gateway
+   `depends_on` at all, so the override no longer patches the gateway and no
+   longer needs Compose v2.24+. (The edge was never a correctness property —
+   the gateway routes and fails over per request — but it *was* a hazard: any
+   gateway start walked it and brought up every heavy lane, dropped or not.
+   Removing it in the base file also covers the hand-scaffolded and
+   lock-restored boxes no shape override reaches.) The resolved `-f`
    chain comes from one builder (#137) and is printable read-only via
    `lobes fleet files` — anything driving `docker compose` by hand (scripts,
    operators) should consume that instead of re-deriving the file list.

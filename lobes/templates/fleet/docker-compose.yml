@@ -405,9 +405,10 @@ services:
   # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
   # the primary keeps its solo generate headroom. To add
   # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
-  # your fallback model with its own quantization / tokenizer / parser), add it to
-  # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the
-  # gateway, and lower both GPU utils so they sum well under 1.0. The archived
+  # your fallback model with its own quantization / tokenizer / parser), set
+  # FALLBACK_URL + FALLBACK_SERVED_NAME on the gateway, and lower both GPU utils
+  # so they sum well under 1.0. Do NOT give the gateway a `depends_on` edge to it
+  # — see the gateway service's own comment (issue #222). The archived
   # dense Mistral-Small-3.2-24B (NVFP4) fallback config is in git history (the
   # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
   # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
@@ -1701,13 +1702,25 @@ services:
     # inheriting HF_TOKEN or any other .env secret into the gateway (the
     # vllm-* services legitimately keep env_file since they need HF_TOKEN
     # to pull gated checkpoints; Qodo finding on PR #117).
-    # Start order only — the gateway tolerates a backend still loading (it routes
-    # and fails over per request), so it must not block on backend health.
-    depends_on:
-      - vllm-primary
-      - vllm-multimodal
-      - vllm-embed
-      - vllm-rerank
+    # NO `depends_on` — deliberately (issue #222). It used to list every core
+    # vLLM lane as "start order only", but `docker compose up -d <service>` WALKS
+    # `depends_on`: any gateway (re)start therefore started/recreated all four
+    # heavy lanes unconditionally, ignoring MULTIMODAL_FEASIBLE=false, a declared
+    # peer origin and an active proxy alike. Measured live on the Jetson AGX Thor
+    # 2026-08-28: `docker compose up -d --build gateway`, meant to re-image the
+    # gateway alone, recreated the resident 27B cortex (a multi-minute reload) and
+    # STARTED vllm-multimodal on a box that proxies that role to a peer — burning
+    # the exact GPU budget the shape exists to reclaim, in a unified-memory race
+    # against the load it was meant to leave alone.
+    #
+    # The edge bought nothing to lose: the gateway tolerates a backend still
+    # loading (it routes and fails over per request, and reports
+    # `health: unreachable` per lane rather than failing), so ordering it after
+    # the lanes was never a correctness property. A role-dropping shape already
+    # had to `!reset` this attribute away for exactly this reason
+    # (`lobes init --shape`, docker-compose.shape.yml) — #222 makes the base
+    # template honest instead, which also covers the hand-scaffolded and
+    # lock-restored boxes no shape override reaches.
     environment:
       - GATEWAY_PORT=8000
       # MUST default to EMPTY (issue #92 / #96). GATEWAY_PUBLIC_URL is an

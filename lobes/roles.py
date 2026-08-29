@@ -142,6 +142,14 @@ ROLE_BACKEND: dict[str, str] = {
     "tts": "tts",
 }
 
+# The inverse of :data:`ROLE_BACKEND` — backend name → the role it serves.
+# Well-defined because every role maps to a DISTINCT backend (``associate`` and
+# ``worker`` share a checkpoint and a catalog ``role_hint``, but each has its own
+# backend lane). Needed wherever a caller holds a backend name and must speak the
+# ROLE key space — a peer's ``GET /capabilities`` is keyed by role, not backend
+# (issue #220), and the gateway's own model advertisement does the same lookup.
+BACKEND_ROLE: dict[str, str] = {backend: role for role, backend in ROLE_BACKEND.items()}
+
 # role → the catalog ``role_hint`` of its canonical model. Used to (a) look up
 # context/quant/mtp for that role, and (b) name the model a role WOULD serve
 # when its backend is not wired in this deployment (loaded=False but still named).
@@ -652,6 +660,7 @@ def _gateway_role(
     env: Mapping[str, str],
     ready_signal: bool | None,
     peer_signal: bool | None = None,
+    peer_context: int | None = None,
 ) -> RoleInfo:
     """Resolve a gateway-fronted role (cortex/senses/muse/worker/embedder/reranker).
 
@@ -678,6 +687,19 @@ def _gateway_role(
     undialable, or hardware-infeasible role, plus the separate proxied-role
     ``peer_signal`` channel — is computed by :func:`_resolve_ready`; see its
     docstring for the full rationale (issues #92, #115/#127).
+
+    ``peer_context`` is the CONTEXT half of the same peer advert (issue #220),
+    and applies under exactly the same condition as ``peer_signal``: the builder
+    supplies it only for a role in ``table.peer_proxied`` whose peer actually
+    reported one. When present it WINS over the local computation, because for a
+    role this box does not host the local computation is a guess: there is no
+    ``<PREFIX>_MAX_MODEL_LEN`` in this box's ``.env``, so
+    :func:`_served_context` falls through to the catalog's NATIVE ceiling — the
+    checkpoint's maximum, not the window the peer chose to serve. Measured on
+    the DGX Spark 2026-08-27: ``associate`` advertised ``1048576`` against an
+    Orin serving ``128000``. ``None`` (every non-proxied role, every peer that
+    did not say, and every caller that supplies no advert at all) keeps the
+    pre-#220 local answer byte-for-byte.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -694,13 +716,16 @@ def _gateway_role(
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
     ready = _resolve_ready(loaded, feasible, endpoint, ready_signal, peer_signal)
+    context = (
+        peer_context if peer_context is not None else _served_context(role, env, native_context)
+    )
     return RoleInfo(
         role=role,
         model=model_id,
         runtime=_VLLM_RUNTIME,
         endpoint=endpoint,
         path=ROLE_PATH[role],
-        context=_served_context(role, env, native_context),
+        context=context,
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
         tools=bool(entry.tool_parser) if entry else False,
@@ -771,6 +796,7 @@ def build_role_registry(
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_ready: Mapping[str, bool | None] | None = None,
+    peer_context: Mapping[str, int | None] | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the ten first-class roles to live metadata — the #81 contract.
 
@@ -899,7 +925,16 @@ def build_role_registry(
         peer_signal = None
         if peer_ready is not None and ROLE_BACKEND[role] in table.peer_proxied:
             peer_signal = peer_ready.get(ROLE_BACKEND[role]) is True
-        registry[role] = _gateway_role(role, table, gateway, resolved_env, signal, peer_signal)
+        # The CONTEXT half of the same advert (#220), gated identically: a role
+        # this box HOSTS always computes its own context from its own .env, so a
+        # peer value can never override a local truth — only fill in a local
+        # guess. A peer that reported nothing leaves this None.
+        peer_ctx = None
+        if peer_context is not None and ROLE_BACKEND[role] in table.peer_proxied:
+            peer_ctx = peer_context.get(ROLE_BACKEND[role])
+        registry[role] = _gateway_role(
+            role, table, gateway, resolved_env, signal, peer_signal, peer_ctx
+        )
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
