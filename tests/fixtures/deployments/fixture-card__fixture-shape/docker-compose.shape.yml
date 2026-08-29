@@ -1,0 +1,6 @@
+# FIXTURE shape overlay — the generated per-(card, shape) artifact a shape
+# writes when it drops a core role to a peer box.
+services:
+  vllm-multimodal:
+    deploy:
+      replicas: 0
