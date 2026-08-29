@@ -43,6 +43,7 @@ from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
 from lobes.runtime import _compose, _detect, _env, _health
+from lobes.runtime._lock import LOCK_FILENAME, allowlist_env, file_digest, load_lock
 
 
 def _culture_model_tail() -> str | None:
@@ -703,6 +704,81 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
     return _staleness_verdict(profile.name, missing, stale, overridden, notes), missing
 
 
+# --- committed deployment lock drift (deployment-lock-per-box plan, t8) -----
+
+
+def _lock_file_diffs(deploy_dir: Path, lock_files: dict) -> list[str]:
+    """Names of ``lock.files`` entries whose current digest differs (or is gone).
+
+    ``lock.files`` is a plain ``name -> "sha256:<hex>"`` mapping (t6's
+    :func:`lobes.runtime._lock.file_digest`) — any tracked name is compared
+    the same way, not only the compose/Dockerfile set a capture happens to
+    have recorded, so a lock that also tracks ``.env``'s own digest (a hash,
+    never its content) is diffed identically to a compose file.
+    """
+    diffs: list[str] = []
+    for name, digest in sorted(lock_files.items()):
+        path = deploy_dir / name
+        if not path.is_file():
+            diffs.append(f"{name} (missing)")
+            continue
+        if file_digest(path) != digest:
+            diffs.append(name)
+    return diffs
+
+
+def _lock_env_diffs(deploy_dir: Path, lock_env: dict) -> list[str]:
+    """Names of ``lock.env`` keys whose current allowlisted value differs.
+
+    Re-derives the allowlisted subset of the CURRENTLY deployed ``.env`` the
+    same way :func:`lobes.runtime._lock.build_lock` does
+    (:func:`lobes.runtime._lock.allowlist_env`), so this can never flag a
+    secret key — only the rendered knobs the lock is permitted to carry.
+    """
+    current = allowlist_env(_env.read_env_file(deploy_dir / _compose.ENV_FILE))
+    return [key for key, value in sorted(lock_env.items()) if current.get(key) != value]
+
+
+_LOCK_DRIFT_REMEDIATION = (
+    f"re-capture and commit {LOCK_FILENAME} (or restore the box from it with "
+    "'lobes init --from-lock' if the deployment is the one that's wrong) so "
+    "the lock keeps describing this box"
+)
+
+
+def _lock_drift_check(deploy_dir: Path) -> dict | None:
+    """The deployed files/env still match the committed ``deployment.lock.toml``.
+
+    Returns ``None`` — no finding at all — when no lock is present: absence of
+    a lock is not drift, and a deployment that has never adopted the lock
+    practice must behave exactly as it did before this check existed.
+
+    Names the SPECIFIC differing files and locked keys (never merely "drift
+    exists"), mirroring :func:`_scaffold_files_check`'s precedent. Read-only:
+    this never writes anything, so it does not interact with ``--fix`` at all
+    (``_apply_fix`` never calls it) — the never-rewrite-an-existing-.env-line
+    convention is untouched by this check's existence.
+    """
+    path = deploy_dir / LOCK_FILENAME
+    if not path.is_file():
+        return None
+    lock = load_lock(path)
+    file_diffs = _lock_file_diffs(deploy_dir, lock.files)
+    env_diffs = _lock_env_diffs(deploy_dir, lock.env)
+    if not file_diffs and not env_diffs:
+        return _check("lock_drift", True, "info", f"deployed files and env match {LOCK_FILENAME}")
+    parts = []
+    if file_diffs:
+        parts.append(
+            f"{len(file_diffs)} file(s) differ from {LOCK_FILENAME}: {', '.join(file_diffs)}"
+        )
+    if env_diffs:
+        parts.append(
+            f"{len(env_diffs)} locked key(s) differ from {LOCK_FILENAME}: {', '.join(env_diffs)}"
+        )
+    return _check("lock_drift", False, "warn", "; ".join(parts), _LOCK_DRIFT_REMEDIATION)
+
+
 def _apply_fix(deploy_dir: Path) -> list[str]:
     """Write the missing-only heal: absent files, then absent ``.env`` keys.
 
@@ -785,6 +861,12 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
             if auth_gate is not None:
                 checks.append(auth_gate)
             fix_plan = {"files": missing_files, "env": missing_env}
+        # Committed deployment lock (deployment-lock-per-box plan, t8) — not
+        # fleet-gated: a lock is orthogonal to topology, and a deployment that
+        # has never adopted the practice gets no finding at all.
+        lock_check = _lock_drift_check(deploy_dir)
+        if lock_check is not None:
+            checks.append(lock_check)
 
     checks.append(_health_check(port))
     checks.append(_version_skew_check(port, deploy_dir))
