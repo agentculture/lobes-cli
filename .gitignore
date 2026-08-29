@@ -148,11 +148,18 @@ activemq-data/
 *.sage.py
 
 # Environments
-.env
-# Cloudflare Tunnel run config (model tunnel) — holds the public hostname + the
-# cloudflared run-token; the `.env` rule above does NOT match this name. The
-# cloudflared pid/log are covered by *.pid / *.log.
-.cf-tunnel.env
+#
+# Positional rule, not a per-file list: any name ENDING in `.env` is a secret
+# dotfile and is ignored by construction — `.env`, `.cf-tunnel.env` (the
+# Cloudflare Tunnel run config, holding the public hostname + the cloudflared
+# run-token), `.secrets.env`, and any future secret dotfile need no separate
+# entry here. A name that instead STARTS with `.env.` (e.g. `.env.example`,
+# `.env.sample`, `.env.lock`) is a template/sample and stays tracked.
+*.env
+# The tests/goldens/ tree commits real *.env files on purpose (fixture
+# snapshots of rendered .env output, not secrets) — un-ignore them so a
+# newly generated golden stays stageable. See tests/goldens/README.md.
+!tests/goldens/**/*.env
 .envrc
 .venv
 env/
