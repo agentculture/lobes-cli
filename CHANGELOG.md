@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.69.1] - 2026-08-29
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.69.0] - 2026-08-29
+
+### Added
+
+- `lobes up gateway` (and `--build`) — a first-class path to restart or re-image the gateway alone at a new `MODEL_GEAR_VERSION` (issue #222).
+
+### Fixed
+
+- `lobes up <role>` now runs with `--no-deps` and the fleet gateway declares no `depends_on`, so a targeted start can no longer recreate the whole fleet or boot a lane the box declares infeasible (issue #222).
+- A streamed `/v1/chat/completions` relay always terminates the client stream: an upstream that dies mid-stream now yields an SSE error event, `data: [DONE]` and the chunked terminator, and a client that hung up is logged instead of leaving a wedged socket (issue #220).
+- A proxied role advertises the hosting peer's own `ready` and `context`, read from the peer's `GET /capabilities`, instead of a locally-guessed catalog ceiling and an unsatisfiable `/v1/models` check (issue #220).
+
 ## [0.68.4] - 2026-08-29
 
 ### Fixed

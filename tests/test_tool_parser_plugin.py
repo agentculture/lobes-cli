@@ -57,6 +57,15 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed 2026-08-29 for the gateway depends_on removal (issue #222):
+    # ONLY `gateway` moved, and it moved by LOSING a key — its `depends_on` list
+    # of the four core vLLM lanes is gone. `docker compose up -d <service>` walks
+    # `depends_on`, so that "start order only" edge made EVERY gateway restart a
+    # fleet-wide one: measured live on a Jetson AGX Thor 2026-08-28, a
+    # gateway-only rebuild recreated the resident 27B cortex and started
+    # vllm-multimodal on a box declaring MULTIMODAL_FEASIBLE=false. Every other
+    # service is byte-identical, which is this tripwire proving the blast radius.
+    #
     # Recomputed 2026-08-10 for the `hand` lobe (hand-lobe plan t6). TWO
     # services moved and both are deliberate:
     #
@@ -180,7 +189,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # which were inert for the same reason. `gateway` is again the ONLY
     # service that moved; no vLLM lane was touched. The new guard against
     # this whole class of gap is tests/test_gateway_env_passthrough_guard.py.
-    "gateway": "e54d72e114cf4026f3ba1a516943864c53cacb90f4035af0df8b050797c173d3",
+    "gateway": "95fa6d9cf4eb802b1bbb8ab6489501d1202030eb9469f1e87d0e8e75933ee039",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

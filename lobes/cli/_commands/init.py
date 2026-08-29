@@ -115,7 +115,6 @@ from lobes.profiles.schema import GPU_ACCESS_RUNTIME
 from lobes.profiles.schema import ROLES as CORE_ROLES
 from lobes.profiles.schema import ExclusiveRoles, Profile
 from lobes.profiles.shape_render import (
-    GATEWAY_SERVICE,
     ROLE_SERVICE,
     compose_profile,
     overcommitted_groups,
@@ -191,9 +190,16 @@ def render_shape_override(shape: Shape, profile: Profile) -> str | None:
     ``None`` when the shape drops no core role (machine-as-brain / bare init) — the
     caller writes no file, keeping the scaffold byte-identical to before this flag.
     Otherwise a docker-compose *override* (mirrors ``docker-compose.audio.yml``):
-    each dropped core service is parked in the inert :data:`SHAPE_DROPPED_PROFILE`,
-    and the gateway's ``depends_on`` is cleared with the compose ``!reset`` tag so
-    it no longer references the now-profile-disabled service.
+    each dropped core service is parked in the inert :data:`SHAPE_DROPPED_PROFILE`.
+
+    It used to ALSO clear the gateway's ``depends_on`` with the compose ``!reset``
+    tag, because the base template listed every core lane there and a
+    profile-disabled service made that edge dangle. Since #222 the base template
+    declares no gateway ``depends_on`` at all (an unconditional edge turned every
+    gateway restart into a fleet-wide one — see its comment), so there is nothing
+    left to reset and the block is gone. An override scaffolded before #222 still
+    carries it; ``!reset`` on an absent attribute is legal, and re-running
+    ``lobes init --shape ... --apply`` rewrites the file either way.
     """
     dropped = _shape_dropped_services(shape, profile)
     if not dropped:
@@ -211,22 +217,18 @@ def render_shape_override(shape: Shape, profile: Profile) -> str | None:
         "# base compose boots every core gear unconditionally, so a dropped lobe would",
         "# RUN and eat the GPU budget the shape reclaimed (proven live on the GB10).",
         "#",
-        "# The gateway's base `depends_on` lists every core service, so once one is",
-        "# profile-disabled that edge dangles (compose errors on / auto-enables a",
-        "# depends_on to an inactive-profile service). The compose `!reset` tag CLEARS",
-        "# the attribute (the value is ignored — list *replacement* is `!override`,",
-        "# which is not what we want): the remaining core gears carry no profile and",
-        "# start regardless of `depends_on`, and the gateway tolerates a backend still",
-        "# loading (see its base comment), so dropping the start-order edge is safe.",
-        "#",
-        "# REQUIRES Docker Compose v2.24+ (compose-spec `!reset` merge tag).",
+        "# The gateway needs no patch here. It used to be reset with the compose",
+        "# `!reset` merge tag, because the base template made every core service a",
+        "# hard start-order dependency of the gateway and a profile-disabled service",
+        "# left that edge dangling. Since issue #222 the base template declares no",
+        "# such dependency at all — an unconditional one meant ANY gateway restart",
+        "# started every heavy lane, including one this box declares infeasible — so",
+        "# there is nothing left here to reset.",
         "services:",
     ]
     for service in dropped:
         lines.append(f"  {service}:")
         lines.append(f'    profiles: ["{SHAPE_DROPPED_PROFILE}"]')
-    lines.append(f"  {GATEWAY_SERVICE}:")
-    lines.append("    depends_on: !reset null")
     return "\n".join(lines) + "\n"
 
 
@@ -266,7 +268,7 @@ def _shape_override_plan_line(plan: dict) -> str | None:
     if plan["action"] == "write":
         return (
             f"  {plan['file']} (parks {', '.join(plan['disables'])} in the inert "
-            f"'{SHAPE_DROPPED_PROFILE}' profile; !resets gateway depends_on)"
+            f"'{SHAPE_DROPPED_PROFILE}' profile)"
         )
     if plan["action"] == "remove":
         return f"  {plan['file']} (stale — would be REMOVED: this shape drops no lobe)"

@@ -1,0 +1,276 @@
+{
+  "slug": "targeted-ops-and-honest-streams",
+  "title": "targeted ops and honest streams",
+  "schema_version": 5,
+  "status": "drafting",
+  "created": "2026-08-29T12:18:43Z",
+  "updated": "2026-08-29T12:19:55Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes keeps two promises it currently breaks: a targeted lobe operation touches only what it names, and a streamed or proxied answer is honest about what it is \u2014 every SSE relay ends with a terminal frame and a closed socket even when its upstream dies, and a proxied role advertises the hosting peer's own ready and context rather than a locally-guessed one.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "compose_service_argv's up branch gains --no-deps: lobes/runtime/_compose.py:769-782 builds ['docker','compose',*files,'up','-d',*services] and its own docstring already promises 'only these are (re)started ... without disturbing the rest of the fleet' \u2014 grep for no-deps/no_deps across lobes/ returns nothing, so the docstring is the spec and the argv is the defect. lobes/cli/_commands/up.py:231 is the single caller and renders its dry-run PLAN from the same argv, so the printed plan becomes truthful in the same change.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the fleet template's gateway depends_on stops being an unconditional hard edge: lobes/templates/fleet/docker-compose.yml:1706-1710 lists vllm-primary/vllm-multimodal/vllm-embed/vllm-rerank, its own adjacent comment says 'Start order only \u2014 the gateway tolerates a backend still loading ... so it must not block on backend health', and lobes/cli/_commands/init.py:230 already !resets exactly this attribute for a role-dropping shape \u2014 so the edge is already known-droppable.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "lobes gains a first-class gateway update path: lobes/cli/_commands/up.py:92 sets TARGETS = roles.ROLES + (colleague-stack,), so 'gateway' is not an addressable target and the operator need ('reinstall the gateway at a new MODEL_GEAR_VERSION, touch nothing else') has no verb \u2014 which is why issue 222 was hit through a hand-written docker compose up -d --build gateway.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "_relay_streaming terminates the client stream on an upstream failure: lobes/gateway/server.py:3442-3457 loops resp.upstream.read(_CHUNK) -> wfile.write(frame_chunk(chunk)) with no try/except, so an exception from either side skips both CHUNK_TERMINATOR and any terminal SSE frame; _Upstream.read (server.py:482) is a bare http.client read1 that can raise OSError/HTTPException mid-stream.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "a proxied role's advertised ready and context come from the hosting peer's own /capabilities, not from local data: lobes/roles.py:682-711 derives context from _served_context(role, env, native_context) over the LOCAL .env plus the catalog's native_max_model_len (1048576 for the Lightning entry), and lobes/gateway/_readiness.py:212-266 probe_peer_ready only checks that the peer's /v1/models lists served_name \u2014 which a box forwarding the alias (ASSOCIATE_SERVED_NAME) can never satisfy, yielding the reported ready:false/context:1048576 against the Orin's own ready:true/context:128000.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "probe_audio_peer_ready (lobes/gateway/_readiness.py:322-341) is the existing precedent for reading a peer's GET /capabilities and trusting roles[role].ready \u2014 the core-role relay is that same shape widened to carry context, not a new mechanism.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "the shape override contract is untouched: lobes/cli/_commands/init.py:187-231 renders docker-compose.shape.yml parking dropped services in the inert shape-dropped profile AND emitting 'depends_on: !reset null' on the gateway; tests/test_shape_goldens.py and tests/test_init_shape.py pin that text, so a base-template depends_on change must leave the override renderable and its goldens honest (a !reset of an absent attribute is legal but the comment prose around it would become false).",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "the stop branch of compose_service_argv stays as it is: docker compose stop does not walk depends_on, so --no-deps belongs on the up branch only \u2014 the issue itself names this asymmetry as why the defect went unnoticed.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "the per-heavy-lobe depends_on edges are NOT in scope: vllm-muse (docker-compose.yml:1245), vllm-worker (:1354) and vllm-associate (:1602) each wait on vllm-embed/vllm-rerank service_healthy as a MEASURED mitigation for the Thor unified-memory first-boot race (2026-07-17, docs/machine-profiles.md) \u2014 only the gateway's edge is the defect.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "non_goal",
+      "text": "issue 220 part 4 (bursts of 29x POST /tokenize 401 every ~2 min) is not fixed here: the issue itself states the fix is on the resident side (an older spark-colleague mesh resident without the gateway key), and nothing under lobes/gateway/ is misbehaving \u2014 a 401 on an unauthenticated POST is the #127 inbound gate working.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "non_goal",
+      "text": "issue 220 part 3 (reranker calibration \u2014 distractors scoring 0.72-0.77, a NOTICE sentence out-ranking a toolbatch sentence) is not fixed here: it is a served-prompt-template/measurement investigation against Qwen3-Reranker-0.6B's model card, with no defect localised in lobes yet, and the reporter's own verdict is 'usable for top-k ordering, not thresholds'.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "no live-box validation is claimed: the #108 rule in CLAUDE.md forbids doc, support-table or lobes capabilities output claiming validation without an acceptance transcript under docs/evidence/, and the boxes this was observed on (spark, the Thor peer, the Orin) are not being re-booted by this change \u2014 every claim here is offline-testable or stays UNVALIDATED.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "the reported symptom (client hangs, SSE socket ESTABLISHED, no terminal frame) is not fully explained by the traceback in the issue: a BrokenPipeError on wfile.write means the CLIENT already went away, yet the client reported still waiting \u2014 so there may be a second failure mode (the JSONDecodeError traceback, or a pre-relay path) that the _relay_streaming fix alone does not close.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "whether an infeasible-but-PROXIED role should relay the peer's context verbatim or a min(local ceiling, peer context) \u2014 a caller that trusts a relayed 128000 is right today, but the value is the peer's, and this box cannot honour it if the proxy is later withdrawn.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/runtime/_compose.py:769-782 (compose_service_argv)",
+      "finding": "the up branch emits 'up -d <services>' with no --no-deps while its docstring promises fleet isolation; grep -rn 'no-deps|no_deps' lobes/ returns nothing",
+      "seeds": [
+        "c2",
+        "c9"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/cli/_commands/up.py (TARGETS, ROLE_SERVICE, _resolve)",
+      "finding": "the single caller of compose_service_argv (line 231); TARGETS at line 92 is roles.ROLES + colleague-stack, so 'gateway' is not an addressable target; ROLE_SERVICE maps ten roles to services, gateway absent",
+      "seeds": [
+        "c2",
+        "c4"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml (gateway service, line ~1690-1712)",
+      "finding": "gateway depends_on lists all four default core lanes unconditionally, annotated 'Start order only \u2014 the gateway ... must not block on backend health'; the muse/worker/associate lanes at 1245/1354/1602 carry a DIFFERENT, measured depends_on on embed+rerank service_healthy",
+      "seeds": [
+        "c3",
+        "c10"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/cli/_commands/init.py:143-231 (SHAPE_DROPPED_PROFILE, render_shape_override)",
+      "finding": "a role-dropping shape already parks dropped services in the inert 'shape-dropped' profile and emits 'depends_on: !reset null' on the gateway \u2014 so the base edge is known-droppable, and its prose/goldens are the constraint on changing the base",
+      "seeds": [
+        "c3",
+        "c8"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/gateway/server.py:432-436, 482-495, 3442-3457 (_relay_streaming, _Upstream.read, frame_chunk)",
+      "finding": "the relay loop has no exception handling around either the upstream read1 or the client wfile.write, so a mid-stream failure skips CHUNK_TERMINATOR entirely and emits no terminal SSE frame",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/roles.py:120-170 and 682-711 (ROLE_BACKEND/ROLE_ROLE_HINT, _core_role entry builder)",
+      "finding": "context comes from _served_context over the LOCAL .env plus the catalog native_max_model_len, and associate shares worker's role_hint (one checkpoint, two addresses) \u2014 which is also why the raw model id and 'worker' resolve to the local worker backend and 404 role_infeasible on the proxying box",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/gateway/_readiness.py:212-266 (probe_peer_ready) and :322-341 (probe_audio_peer_ready)",
+      "finding": "the core-role peer probe asserts the peer's /v1/models lists served_name \u2014 unsatisfiable when the box forwards an alias \u2014 while the AUDIO peer probe already reads the peer's GET /capabilities and trusts roles[role].ready; the audio shape is the precedent to widen",
+      "seeds": [
+        "c6",
+        "c7"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "issue 220 parts 3 and 4 as filed",
+      "finding": "part 4 names its own fix as resident-side (an old spark-colleague without the gateway key); part 3 has no defect localised in lobes and asks for a served-prompt-template check against the model card \u2014 neither is a lobes code change today",
+      "seeds": [
+        "c11",
+        "c12"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "CLAUDE.md (#108 honesty rule) and docs/evidence/",
+      "finding": "no acceptance transcript may be claimed without a live boot; the boxes in both issue reports are not being re-booted here, so every claim must be offline-testable or explicitly stay UNVALIDATED",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "tests/ (test_cli_up.py, test_compose_chain.py, test_shape_goldens.py, test_init_shape.py, test_gateway_readiness.py, test_gateway_capabilities.py, test_gateway_proxy.py)",
+      "finding": "existing offline suites already cover the argv, the compose chain, the shape override goldens, the peer probes and the capabilities payload \u2014 issue 222's requested guard tests (argv contains --no-deps; an infeasible role is never a started dependency) land in files that already exist",
+      "seeds": [
+        "c2",
+        "c3"
+      ]
+    }
+  ],
+  "lapses": []
+}

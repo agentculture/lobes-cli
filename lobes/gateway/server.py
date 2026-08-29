@@ -436,6 +436,44 @@ def frame_chunk(chunk: bytes) -> bytes:
 
 CHUNK_TERMINATOR = b"0\r\n\r\n"
 
+# --- terminal SSE frames for a stream that dies mid-flight (issue #220) -----
+#
+# An SSE stream has exactly one honest ending: the sentinel `data: [DONE]`
+# event, then the zero-length chunk that closes HTTP chunked framing. Before
+# #222/#220 the relay loop below sent NEITHER when it failed: an exception
+# unwound out of `_relay_streaming` and the client — parked in a blocking read
+# on a still-ESTABLISHED socket — had nothing to distinguish "the model is
+# still thinking" from "the upstream died 20 minutes ago". Observed on the
+# DGX Spark 2026-08-27/28: 5 of 15 streamed runs sat 17-24 minutes with
+# `vllm:num_requests_running 0` and the GPU at 3-7% before being cut by hand.
+#
+# So: whatever happens, this handler ends the stream. A client that already
+# hung up gets nothing (there is nowhere to write); an upstream that failed
+# mid-stream gets an error event AND the sentinel, so a client that only knows
+# how to look for `[DONE]` still terminates.
+SSE_DONE = b"data: [DONE]\n\n"
+
+
+def sse_error_frame(message: str) -> bytes:
+    """One OpenAI-shaped SSE error event (``data: {"error": {...}}``).
+
+    Shaped like the error body a non-streamed request would have received, so a
+    caller can parse a mid-stream failure with the code it already has. The
+    ``type``/``code`` are the gateway's own ``upstream_error`` — this is never
+    the upstream's own error payload (by the time it fires the upstream has
+    stopped producing bytes), and mislabelling it as one would be a lie.
+    """
+    payload = json.dumps(
+        {
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": "upstream_error",
+            }
+        }
+    )
+    return b"data: " + payload.encode("utf-8") + b"\n\n"
+
 
 def read_chunked_body(rfile, max_bytes: int = 64 * 1024 * 1024) -> bytes:
     """Decode an HTTP/1.1 ``Transfer-Encoding: chunked`` request body from ``rfile``.
@@ -937,6 +975,9 @@ def peer_specs_from_table(
     only protects against a hand-built table violating that invariant. Key
     material rides only the ``repr``-hidden ``PeerSpec.api_key`` field.
     """
+    # deferred import — see the module-level NOTE
+    from lobes.roles import BACKEND_ROLE
+
     resolved_env = os.environ if env is None else env
     specs: dict[str, PeerSpec] = {}
     for name in sorted(table.peer_proxied):
@@ -957,6 +998,11 @@ def peer_specs_from_table(
             origin=origin,
             served_name=served_name,
             api_key=table.peer_api_keys.get(name),
+            # A peer's GET /capabilities is keyed by ROLE, not backend (#220):
+            # backend `multimodal` is role `senses`, `primary` is `cortex`. Fall
+            # back to the backend name for a hand-built table naming something
+            # outside the registry — PeerSpec.role_name() does the same.
+            role=BACKEND_ROLE.get(name, name),
         )
     return specs
 
@@ -2922,6 +2968,7 @@ def capabilities_payload(
     gateway_url: str | None = None,
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
+    peer_context: Mapping[str, int | None] | None = None,
     replica_snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
 ) -> dict:
     """The nine first-class roles (issue #81), resolved via the shared registry.
@@ -2957,6 +3004,15 @@ def capabilities_payload(
     channel, and a proxied role's ``ready`` honestly reflects the live
     proxied-path probe (h2). With ``backend_ready`` omitted, or with no
     proxied names, nothing is derived and every payload is unchanged.
+
+    ``peer_context`` (issue #220) is the other half of the same advert —
+    :meth:`ReadinessCache.current_peer_context`, keyed by the same internal
+    backend names — and is passed straight to the builder, which applies it
+    ONLY to a role in ``table.peer_proxied``. It exists because a role this box
+    does not host has no local ``<PREFIX>_MAX_MODEL_LEN`` to read, so the local
+    computation falls back to the CATALOG's native ceiling and advertises a
+    window the peer never serves. ``None`` (its default, and every deployment
+    with no proxied roles) leaves every payload byte-identical.
     """
     # deferred imports — see the module-level NOTE
     from lobes.roles import (
@@ -2978,6 +3034,7 @@ def capabilities_payload(
         audio_ready=audio_ready,
         backend_ready=backend_ready,
         peer_ready=peer_ready,
+        peer_context=peer_context,
     )
     payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
     # Opt-in honest referral (mesh-brain t3): annotate each unhosted
@@ -3335,6 +3392,13 @@ class _Handler(BaseHTTPRequestHandler):
         # backend can never be advertised ready=True no matter who calls the
         # builder. (This deletes t6's _ready_iff_true bridge — see roles.py.)
         backend_ready = self.readiness_cache.current() if self.readiness_cache is not None else None
+        # The CONTEXT half of the peer advert (#220), read from the SAME cache
+        # and the same O(1) discipline — a snapshot copy, never a probe.
+        peer_context = (
+            self.readiness_cache.current_peer_context()
+            if self.readiness_cache is not None
+            else None
+        )
         self._send_json(
             200,
             capabilities_payload(
@@ -3343,6 +3407,7 @@ class _Handler(BaseHTTPRequestHandler):
                 gateway_url=origin,
                 audio_ready=audio_ready,
                 backend_ready=backend_ready,
+                peer_context=peer_context,
                 replica_snapshot=replica_role_snapshot(self.replica_caches),
             ),
         )
@@ -3440,19 +3505,94 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def _relay_streaming(self, resp: GatewayResponse) -> None:
+        """Relay an upstream SSE stream, and ALWAYS end it (issue #220).
+
+        Three ways this returns, and the client can tell them apart:
+
+        * **clean** — the upstream reached EOF; the bytes it sent (its own
+          ``data: [DONE]``) are followed by :data:`CHUNK_TERMINATOR`.
+        * **upstream died mid-stream** — a read raised; the client gets a
+          :func:`sse_error_frame`, then :data:`SSE_DONE`, then the terminator,
+          and the connection is closed rather than kept alive. Both frames are
+          sent: a caller that parses error events learns *why*, and a caller
+          that only watches for the ``[DONE]`` sentinel still terminates.
+        * **client hung up** — a write raised; there is nowhere to send a
+          terminal frame, so it is logged and the connection closed.
+
+        Before #220 none of the failure paths sent anything at all: the
+        exception unwound and left the client blocked on an ESTABLISHED socket
+        with no terminal frame (measured: 17-24 minute hangs against an idle
+        vLLM). Every exit now writes a terminator or explains why it could not.
+        """
         self.send_response(resp.status)
         for key, value in resp.headers:
             self.send_header(key, value)
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
+        upstream_failure: str | None = None
         while True:
-            chunk = resp.upstream.read(_CHUNK)
+            try:
+                chunk = resp.upstream.read(_CHUNK)
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                # The BACKEND stopped mid-stream (reset, read timeout, a
+                # truncated or malformed chunked body). The client is still
+                # there and still waiting — tell it.
+                #
+                # The same triple `open_upstream` catches, and for the same
+                # reason: `_Upstream.read` delegates straight to
+                # `HTTPResponse.read1`, so a malformed chunk size surfaces as a
+                # `ValueError` from the stdlib's own int parse (this module's
+                # `read_chunked_body` treats a bad size the same way). Missing
+                # it would let the one exception this method exists to handle
+                # escape it, skipping the error event, `[DONE]` and the
+                # terminator alike — the exact hang #220 is about.
+                upstream_failure = f"{type(exc).__name__}: {exc}"
+                break
             if not chunk:
                 break
-            self.wfile.write(frame_chunk(chunk))
-            self.wfile.flush()  # SSE must flush per chunk or it buffers until EOF
-        self.wfile.write(CHUNK_TERMINATOR)
-        self.wfile.flush()
+            try:
+                self.wfile.write(frame_chunk(chunk))
+                self.wfile.flush()  # SSE must flush per chunk or it buffers until EOF
+            except OSError as exc:
+                # The CLIENT went away (BrokenPipeError / ConnectionResetError).
+                # Nothing can be delivered to it; stop reading the upstream
+                # rather than draining a whole turn into a dead socket. The
+                # caller's `finally` still closes the upstream and releases the
+                # replica-pool in-flight counter.
+                self._abort_stream(resp, f"client disconnected: {type(exc).__name__}: {exc}")
+                return
+        self._end_stream(resp, upstream_failure)
+
+    def _abort_stream(self, resp: GatewayResponse, reason: str) -> None:
+        """Log an undeliverable stream and make sure the socket is not reused."""
+        self.close_connection = True
+        sys.stderr.write(
+            f"[gateway] stream aborted (upstream status {resp.status}, "
+            f"attempts {'>'.join(resp.attempts) or '<none>'}): {reason}\n"
+        )
+
+    def _end_stream(self, resp: GatewayResponse, upstream_failure: str | None) -> None:
+        """Write the terminal frames. Never raises — the response is over either way."""
+        tail = CHUNK_TERMINATOR
+        if upstream_failure is not None:
+            self._abort_stream(resp, f"upstream read failed: {upstream_failure}")
+            tail = (
+                frame_chunk(
+                    sse_error_frame(
+                        "the upstream backend stopped sending mid-stream "
+                        f"({upstream_failure}); this response is incomplete"
+                    )
+                )
+                + frame_chunk(SSE_DONE)
+                + CHUNK_TERMINATOR
+            )
+        try:
+            self.wfile.write(tail)
+            self.wfile.flush()
+        except OSError as exc:
+            # The client hung up between the last chunk and the terminator.
+            # There is nothing left to deliver and nothing left to do.
+            self._abort_stream(resp, f"client gone before terminator: {type(exc).__name__}: {exc}")
 
     def _send_json(self, status: int, obj: dict) -> None:
         self._send_simple(status, [("Content-Type", _CONTENT_TYPE_JSON)], json.dumps(obj).encode())
@@ -3544,9 +3684,9 @@ def build_replica_caches(
     if not table.replica_origins:
         return {}
     # Deferred import — see the module-level NOTE on the lobes.roles cycle.
-    from lobes.roles import ROLE_BACKEND
+    from lobes.roles import BACKEND_ROLE
 
-    role_of = {backend: role for role, backend in ROLE_BACKEND.items()}
+    role_of = BACKEND_ROLE
     caches: dict[str, ReplicaCache] = {}
     for backend in table.backends:
         if backend.name in table.infeasible:

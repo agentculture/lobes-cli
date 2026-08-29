@@ -142,6 +142,14 @@ ROLE_BACKEND: dict[str, str] = {
     "tts": "tts",
 }
 
+# The inverse of :data:`ROLE_BACKEND` — backend name → the role it serves.
+# Well-defined because every role maps to a DISTINCT backend (``associate`` and
+# ``worker`` share a checkpoint and a catalog ``role_hint``, but each has its own
+# backend lane). Needed wherever a caller holds a backend name and must speak the
+# ROLE key space — a peer's ``GET /capabilities`` is keyed by role, not backend
+# (issue #220), and the gateway's own model advertisement does the same lookup.
+BACKEND_ROLE: dict[str, str] = {backend: role for role, backend in ROLE_BACKEND.items()}
+
 # role → the catalog ``role_hint`` of its canonical model. Used to (a) look up
 # context/quant/mtp for that role, and (b) name the model a role WOULD serve
 # when its backend is not wired in this deployment (loaded=False but still named).
@@ -652,6 +660,7 @@ def _gateway_role(
     env: Mapping[str, str],
     ready_signal: bool | None,
     peer_signal: bool | None = None,
+    peer_context: int | None = None,
 ) -> RoleInfo:
     """Resolve a gateway-fronted role (cortex/senses/muse/worker/embedder/reranker).
 
@@ -678,6 +687,19 @@ def _gateway_role(
     undialable, or hardware-infeasible role, plus the separate proxied-role
     ``peer_signal`` channel — is computed by :func:`_resolve_ready`; see its
     docstring for the full rationale (issues #92, #115/#127).
+
+    ``peer_context`` is the CONTEXT half of the same peer advert (issue #220),
+    and applies under exactly the same condition as ``peer_signal``: the builder
+    supplies it only for a role in ``table.peer_proxied`` whose peer actually
+    reported one. When present it WINS over the local computation, because for a
+    role this box does not host the local computation is a guess: there is no
+    ``<PREFIX>_MAX_MODEL_LEN`` in this box's ``.env``, so
+    :func:`_served_context` falls through to the catalog's NATIVE ceiling — the
+    checkpoint's maximum, not the window the peer chose to serve. Measured on
+    the DGX Spark 2026-08-27: ``associate`` advertised ``1048576`` against an
+    Orin serving ``128000``. ``None`` (every non-proxied role, every peer that
+    did not say, and every caller that supplies no advert at all) keeps the
+    pre-#220 local answer byte-for-byte.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
     loaded = backend is not None
@@ -694,13 +716,16 @@ def _gateway_role(
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
     ready = _resolve_ready(loaded, feasible, endpoint, ready_signal, peer_signal)
+    context = (
+        peer_context if peer_context is not None else _served_context(role, env, native_context)
+    )
     return RoleInfo(
         role=role,
         model=model_id,
         runtime=_VLLM_RUNTIME,
         endpoint=endpoint,
         path=ROLE_PATH[role],
-        context=_served_context(role, env, native_context),
+        context=context,
         quant=entry.quantization if entry else "",
         mtp=bool(entry.speculative_config) if entry else False,
         tools=bool(entry.tool_parser) if entry else False,
@@ -762,6 +787,55 @@ def _audio_role(
     )
 
 
+def _role_signals(
+    role: str,
+    table: RoutingTable,
+    backend_ready: Mapping[str, bool | None] | None,
+    peer_ready: Mapping[str, bool | None] | None,
+    peer_context: Mapping[str, int | None] | None,
+) -> tuple[bool | None, bool | None, int | None]:
+    """The three live signals :func:`_gateway_role` takes, resolved for ``role``.
+
+    Extracted from :func:`build_role_registry`'s loop so the three channels'
+    (identical) gating discipline is stated once, in one place, rather than
+    thickening the builder.
+
+    **Local readiness** (``backend_ready``, first return value):
+
+    * mapping NOT SUPPLIED (``None``) → back-compat: no live signal at all, so
+      ``_gateway_role`` falls back to the coarse ``loaded`` proxy (the original
+      t4 behaviour). ``None`` here is that sentinel — never confused with the
+      authoritative branch, which never yields a ``None``.
+    * mapping SUPPLIED → AUTHORITATIVE, and resolved to a concrete bool HERE so
+      a present ``None``, a present ``False``, and a MISSING KEY all collapse to
+      "not ready" (issue #92 / honesty h14). This is the invariant the builder
+      SELF-ENFORCES rather than leaving to caller discipline: a supplied mapping
+      is the single source of truth, and "no live signal" is never evidence of
+      health. In particular :meth:`ReadinessCache.current` reports a
+      dead/unreachable backend as ``None``; reading that ``None`` as "no signal
+      → fall back to loaded" (which for a wired backend is ``True``) is the
+      exact #92 defect — the cache's ``None`` means UNREACHABLE, the opposite of
+      "unknown, assume configured". Yielding a concrete ``True``/``False`` on
+      the supplied path means that trap cannot recur.
+
+    **The peer channel** (``peer_ready``/``peer_context``, second and third):
+    both are read ONLY for a backend in ``table.peer_proxied``, and only when
+    the caller supplied the mapping. Readiness applies the same h14 collapse as
+    above; context passes through as-is, since ``None`` there already means
+    "the peer did not say" and :func:`_gateway_role` falls back to the local
+    computation for it. Every other role — and every caller without a peer
+    signal — gets ``(…, None, None)``, so the clamp behaves exactly as it did
+    before either channel existed.
+    """
+    backend = ROLE_BACKEND[role]
+    signal = None if backend_ready is None else backend_ready.get(backend) is True
+    if backend not in table.peer_proxied:
+        return signal, None, None
+    peer_signal = None if peer_ready is None else peer_ready.get(backend) is True
+    peer_ctx = None if peer_context is None else peer_context.get(backend)
+    return signal, peer_signal, peer_ctx
+
+
 def build_role_registry(
     table: RoutingTable,
     server: ServerConfig,
@@ -771,6 +845,7 @@ def build_role_registry(
     audio_ready: bool | None = None,
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_ready: Mapping[str, bool | None] | None = None,
+    peer_context: Mapping[str, int | None] | None = None,
 ) -> dict[str, RoleInfo]:
     """Resolve the ten first-class roles to live metadata — the #81 contract.
 
@@ -870,36 +945,12 @@ def build_role_registry(
     registry: dict[str, RoleInfo] = {}
 
     for role in GATEWAY_FRONTED_ROLES:
-        if backend_ready is None:
-            # NOT SUPPLIED → back-compat: no live signal at all, so fall back to
-            # the coarse `loaded` proxy (the original t4 behaviour). `None` here
-            # is `_gateway_role`'s "fall back to loaded" sentinel — never confused
-            # with the AUTHORITATIVE branch below, which never passes it a `None`.
-            signal = None
-        else:
-            # SUPPLIED → AUTHORITATIVE, and resolved to a concrete bool HERE so a
-            # present `None`, a present `False`, and a MISSING KEY all collapse to
-            # "not ready" (issue #92 / honesty h14). This is the invariant this
-            # builder now SELF-ENFORCES rather than leaving to caller discipline:
-            # a supplied mapping is the single source of truth, and "no live
-            # signal" is never evidence of health. In particular
-            # `ReadinessCache.current()` reports a dead/unreachable backend as
-            # `None`; reading that `None` as "no signal → fall back to loaded"
-            # (which for a wired backend is `True`) is the exact #92 defect — the
-            # cache's `None` means UNREACHABLE, the opposite of "unknown, assume
-            # configured". By passing `_gateway_role` a concrete `True`/`False`
-            # (never `None`) on the supplied path, that trap cannot recur.
-            signal = backend_ready.get(ROLE_BACKEND[role]) is True
-        # The SEPARATE peer channel (t6): only a PROXIED role's backend, and
-        # only when a live peer_ready mapping was supplied, gets a concrete
-        # bool (missing key / present None / present False all collapse to
-        # "not ready", the same h14 discipline as the local channel above).
-        # Every other role — and every caller without a peer signal — passes
-        # None, so _gateway_role's clamp behaves exactly as before.
-        peer_signal = None
-        if peer_ready is not None and ROLE_BACKEND[role] in table.peer_proxied:
-            peer_signal = peer_ready.get(ROLE_BACKEND[role]) is True
-        registry[role] = _gateway_role(role, table, gateway, resolved_env, signal, peer_signal)
+        signal, peer_signal, peer_ctx = _role_signals(
+            role, table, backend_ready, peer_ready, peer_context
+        )
+        registry[role] = _gateway_role(
+            role, table, gateway, resolved_env, signal, peer_signal, peer_ctx
+        )
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)

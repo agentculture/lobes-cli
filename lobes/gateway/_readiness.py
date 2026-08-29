@@ -338,20 +338,126 @@ def probe_audio_peer_ready(
     contract, same opener injection, same never-raise degradation as the
     model-routed probe.
     """
+    entry = _peer_role_entry(origin, role, timeout, api_key, opener)
+    return entry is not None and entry.get("ready") is True
+
+
+_CAPABILITIES_PATH = "/capabilities"
+
+
+@dataclass(frozen=True)
+class PeerAdvert:
+    """What a proxied role's PEER says about itself (issue #220).
+
+    Two facts, from one probe:
+
+    ``ready``
+        Is the lane consumable right now? Same plain-bool contract as
+        :func:`probe_peer_ready` — never ``None`` once a probe has run.
+    ``context``
+        The peer's own served ``--max-model-len`` for this role, or ``None``
+        when the peer did not say (an older peer, a non-lobes upstream, a
+        malformed payload). ``None`` means "unknown", never "zero": a caller
+        falls back to its LOCAL answer rather than advertising a made-up one.
+
+    Why context travels with readiness rather than being derived locally: the
+    proxying box has no ``<PREFIX>_MAX_MODEL_LEN`` for a role it does not host,
+    so :func:`lobes.roles._served_context` falls through to the CATALOG's native
+    ceiling — which is the checkpoint's maximum, not the window the peer chose
+    to serve. Measured on the DGX Spark 2026-08-27: it advertised
+    ``associate context: 1048576`` while the Orin actually served ``128000``.
+    """
+
+    ready: bool
+    context: int | None = None
+
+
+def _peer_role_entry(
+    origin: str,
+    role: str,
+    timeout: float,
+    api_key: str | None,
+    opener: "PeerOpener | None",
+) -> dict | None:
+    """The peer's ``roles[<role>]`` entry from its ``GET /capabilities``, or ``None``.
+
+    ``None`` covers every degradation — unreachable, non-200, malformed JSON,
+    no such role — so a caller never has to distinguish them. Never raises.
+    """
     get_caps = opener or _default_peer_opener
     try:
-        status, body = get_caps(origin.rstrip("/") + "/capabilities", timeout, api_key)
+        status, body = get_caps(origin.rstrip("/") + _CAPABILITIES_PATH, timeout, api_key)
     except (OSError, http.client.HTTPException, ValueError):
-        return False
+        return None
     if status != 200:
-        return False
+        return None
     try:
         payload = json.loads(body)
         roles = payload.get("roles", payload)
         entry = roles.get(role)
     except (ValueError, TypeError, AttributeError):
-        return False
-    return isinstance(entry, dict) and entry.get("ready") is True
+        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def _positive_int(value: object) -> int | None:
+    """``value`` as a positive int, else ``None`` (a 0/negative/garbage context
+    is not a fact about the peer — it is an absent one)."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def probe_peer_advert(
+    origin: str,
+    role: str,
+    served_name: str,
+    *,
+    timeout: float = _PEER_PROBE_TIMEOUT,
+    api_key: str | None = None,
+    opener: PeerOpener | None = None,
+) -> PeerAdvert:
+    """Live-probe one proxied role's peer and RELAY what it says (issue #220).
+
+    Asks the peer's ``GET /capabilities`` — the surface
+    :func:`probe_audio_peer_ready` has always used for the audio lanes — and
+    reads ``roles[role]``'s own ``ready`` and ``context``. This is the peer's
+    first-person claim about a role it hosts, which is strictly better evidence
+    than the second-hand check it replaces.
+
+    **Why not just keep the ``/v1/models`` check.** :func:`probe_peer_ready`
+    calls a peer ready only when its ``/v1/models`` lists ``served_name``. That
+    is unsatisfiable whenever this box forwards an ALIAS rather than the raw
+    checkpoint id — which the ``associate`` lane must do, because the alias is
+    the only address that survives the shared-checkpoint collision with
+    ``worker``. Measured on the DGX Spark 2026-08-27: ``associate`` advertised
+    ``ready:false`` against an Orin that answered ``ready:true`` and served the
+    seat in 0.6 s.
+
+    **The fallback is kept, not replaced.** A peer that does not answer
+    ``/capabilities`` with an entry for this role — an older lobes gateway, or a
+    bare vLLM someone pointed a peer origin at — still gets the ``/v1/models``
+    check, so no working deployment loses its readiness signal. Such a peer
+    yields ``context=None``: unknown, and the caller keeps its local answer.
+
+    Never raises; every failure degrades to ``PeerAdvert(ready=False)``.
+    """
+    entry = _peer_role_entry(origin, role, timeout, api_key, opener)
+    if entry is None:
+        return PeerAdvert(
+            ready=probe_peer_ready(
+                origin, served_name, timeout=timeout, api_key=api_key, opener=opener
+            ),
+            context=None,
+        )
+    return PeerAdvert(
+        ready=entry.get("ready") is True,
+        context=_positive_int(entry.get("context")),
+    )
 
 
 @dataclass(frozen=True)
@@ -371,10 +477,17 @@ class PeerSpec:
             one ``.current()`` snapshot.
         origin: the operator-declared peer base URL (never derived — see the
             #92 lesson recorded on ``RoutingTable.peer_origins``).
+        role: the Colleague ROLE name this backend serves (``"senses"`` for
+            backend ``"multimodal"``, and so on — :data:`lobes.roles.BACKEND_ROLE`).
+            A peer's ``GET /capabilities`` is keyed by ROLE, not backend, so the
+            advert probe needs both names (issue #220). Defaults to ``name``,
+            which is already correct for every role whose backend shares its
+            name (``muse``/``worker``/``associate``/``hand``/``stt``/``tts``).
         served_name: the model id this box would forward to the peer under
             this role. The honesty check in :func:`probe_peer_ready`
             succeeds only when the peer's OWN ``/v1/models`` actually lists
-            this id.
+            this id — which is why it is the FALLBACK, not the primary, since
+            #220: a box forwarding an alias can never satisfy it.
         api_key: this box's outbound credential for the peer (``RoutingTable
             .peer_api_keys.get(name)``), sent as ``Authorization: Bearer
             <api_key>`` when declared, omitted entirely otherwise.
@@ -386,12 +499,22 @@ class PeerSpec:
     origin: str
     served_name: str
     api_key: str | None = field(default=None, repr=False)
+    role: str = ""
+
+    def role_name(self) -> str:
+        """The role key to look up in the peer's ``/capabilities`` — ``role``
+        when declared, else ``name`` (correct for every backend named after its
+        own role)."""
+        return self.role or self.name
 
 
-# A peer probe maps a PeerSpec to a plain bool (never None — see
+# A peer probe maps a PeerSpec to a :class:`PeerAdvert` (never None — see
 # probe_peer_ready's docstring). Injectable so ReadinessCache is
-# unit-testable without sockets, mirroring Probe above.
-PeerProbe = Callable[[PeerSpec], bool]
+# unit-testable without sockets, mirroring Probe above. A probe that returns a
+# plain ``bool`` is still accepted and normalised to ``PeerAdvert(ready=...,
+# context=None)`` — the pre-#220 contract, kept so an injected test double or a
+# third-party probe does not have to change to keep working.
+PeerProbe = Callable[[PeerSpec], "PeerAdvert | bool"]
 
 # An adapter probe maps (base_url, declared adapter names) to the subset the
 # backend's engine actually serves. Never None: an empty set IS the answer for
@@ -469,7 +592,7 @@ class ReadinessCache:
         # wholesale — can never wipe out peer values, and vice versa; see
         # :meth:`current` for where they are merged for reading.
         self._value: dict[str, bool | None] = dict.fromkeys(self._targets, None)
-        self._peer_value: dict[str, bool | None] = dict.fromkeys(self._peer_specs, None)
+        self._peer_value: dict[str, PeerAdvert | None] = dict.fromkeys(self._peer_specs, None)
         # LoRA adapter inventory per backend name -> (base_url, declared names).
         # A THIRD independent store, seeded EMPTY rather than None: "no adapter
         # confirmed" is the honest pre-probe state and the honest failure state
@@ -547,26 +670,42 @@ class ReadinessCache:
             if adapters is not None:
                 self._adapter_value = adapters
 
-    def _default_peer_probe(self, spec: PeerSpec) -> bool:
-        """The default peer probe: :func:`probe_peer_ready` bound to OUR OWN
+    def _default_peer_probe(self, spec: PeerSpec) -> PeerAdvert:
+        """The default peer probe: :func:`probe_peer_advert` bound to OUR OWN
         ``peer_timeout`` — deliberately never ``self._timeout`` (the local
         backend probe's budget); see the module docstring's "Peer probing"
-        section and :func:`probe_peer_ready`'s own docstring.
+        section.
 
-        Audio roles (``stt``/``tts``, issue #129) probe the peer's
-        ``/capabilities`` instead — they are path-routed and never appear on a
-        gateway's ``/v1/models``, so the model-listing check would
-        false-negative every audio peer; see :func:`probe_audio_peer_ready`.
+        ONE probe for every proxied role since #220. It reads the peer's
+        ``GET /capabilities`` — the surface the audio lanes (``stt``/``tts``,
+        issue #129) always had to use, since they are path-routed and never
+        appear on a gateway's ``/v1/models`` — and falls back to the
+        model-listing check only when the peer has no entry for this role. That
+        collapses what used to be a two-branch split, and it fixes the
+        model-routed branch's own blind spot: a box forwarding an ALIAS could
+        never satisfy the ``/v1/models`` check (the ``associate`` lane, #220).
+        Audio adverts carry no ``context`` — the audio roles have none.
         """
-        if spec.name in ("stt", "tts"):
-            return probe_audio_peer_ready(
-                spec.origin, spec.name, timeout=self._peer_timeout, api_key=spec.api_key
-            )
-        return probe_peer_ready(
-            spec.origin, spec.served_name, timeout=self._peer_timeout, api_key=spec.api_key
+        return probe_peer_advert(
+            spec.origin,
+            spec.role_name(),
+            spec.served_name,
+            timeout=self._peer_timeout,
+            api_key=spec.api_key,
         )
 
-    def _read_peers(self) -> dict[str, bool]:
+    @staticmethod
+    def _as_advert(result: "PeerAdvert | bool") -> PeerAdvert:
+        """Normalise a probe result to a :class:`PeerAdvert`.
+
+        An injected probe from before #220 returns a plain ``bool``; it keeps
+        working and simply says nothing about context (``None`` = unknown).
+        """
+        if isinstance(result, PeerAdvert):
+            return result
+        return PeerAdvert(ready=bool(result), context=None)
+
+    def _read_peers(self) -> dict[str, PeerAdvert]:
         """Probe every peer spec once, degrading a raising probe to ``False``.
 
         Per-peer ``try`` so one misbehaving/raising probe cannot abort the
@@ -578,12 +717,12 @@ class ReadinessCache:
         however long a hung peer stretches it, can never delay a local
         refresh pass.
         """
-        result: dict[str, bool] = {}
+        result: dict[str, PeerAdvert] = {}
         for name, spec in self._peer_specs.items():
             try:
-                result[name] = bool(self._peer_probe(spec))
+                result[name] = self._as_advert(self._peer_probe(spec))
             except Exception:  # nosec B110 — peer probing is best-effort; never crash the daemon
-                result[name] = False
+                result[name] = PeerAdvert(ready=False)
         return result
 
     def _refresh_once_peers(self) -> None:
@@ -626,9 +765,33 @@ class ReadinessCache:
         fresh copy, so a caller mutating it cannot corrupt the cache.
         """
         with self._lock:
-            merged = dict(self._value)
-            merged.update(self._peer_value)
+            merged: dict[str, bool | None] = dict(self._value)
+            merged.update(
+                {
+                    name: (advert.ready if advert is not None else None)
+                    for name, advert in self._peer_value.items()
+                }
+            )
             return merged
+
+    def current_peer_context(self) -> dict[str, int | None]:
+        """Peer name → the CONTEXT that peer says it serves for the role, or ``None``.
+
+        The second half of the #220 advert relay, kept in its own accessor
+        rather than folded into :meth:`current`: readiness is a tri-state bool
+        merged across local and peer stores, while context is peer-only and an
+        integer, and conflating the two would force every existing
+        ``current()`` consumer to learn a new value shape. ``None`` means the
+        peer did not say (never probed, unreachable, an older peer, a
+        non-lobes upstream) — a caller must fall back to its own answer, not
+        advertise a zero. Never probes, never blocks; the returned dict is a
+        fresh copy.
+        """
+        with self._lock:
+            return {
+                name: (advert.context if advert is not None else None)
+                for name, advert in self._peer_value.items()
+            }
 
     def current_adapters(self) -> dict[str, frozenset[str]]:
         """Backend name → the LoRA adapters its engine confirmed it serves.

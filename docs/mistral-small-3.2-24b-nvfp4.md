@@ -45,8 +45,10 @@ two-part change (see
 [`docs/gateway-fleet.md` → Adding a fallback](gateway-fleet.md#adding-a-fallback)):
 
 1. **Add a `vllm-fallback` service** to the fleet `docker-compose.yml` (mirror
-   `vllm-primary`) that serves Mistral with its own knobs, and add it to the
-   `gateway` service's `depends_on`:
+   `vllm-primary`) that serves Mistral with its own knobs. Do **not** add it to
+   the `gateway` service's `depends_on` — the gateway deliberately declares
+   none (issue #222): `docker compose up -d gateway` walks `depends_on`, so an
+   edge there turns every gateway restart into a fleet-wide one.
 
    ```yaml
    command:

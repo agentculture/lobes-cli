@@ -378,13 +378,19 @@ def test_spark_lobe_writes_shape_override_disabling_multimodal(tmp_path, monkeyp
     assert "vllm-primary" not in services
     assert "vllm-embed" not in services
     assert "vllm-rerank" not in services
-    # The gateway's depends_on is cleared with the !reset tag (sentinel), so it no
-    # longer references the now-profile-disabled vllm-multimodal.
-    assert services["gateway"]["depends_on"] == {"__reset__": True}
-    # The raw text carries the literal merge tag + a compose-version note.
-    raw = override_path.read_text(encoding="utf-8")
-    assert "depends_on: !reset" in raw
-    assert "v2.24" in raw
+    # The gateway is NOT patched at all (issue #222): the base template declares
+    # no gateway `depends_on` any more, so there is no dangling edge to !reset.
+    assert "gateway" not in services
+    # The header PROSE still explains the history (why a gateway patch used to be
+    # here), so the tripwire reads the YAML lines only — a comment must never be
+    # able to fail, or pass, this assertion.
+    body = "\n".join(
+        line
+        for line in override_path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "depends_on" not in body
+    assert "!reset" not in body
 
 
 def test_thor_lobe_shape_override_disables_primary(tmp_path, monkeypatch) -> None:
@@ -396,7 +402,7 @@ def test_thor_lobe_shape_override_disables_primary(tmp_path, monkeypatch) -> Non
     services = doc["services"]
     assert services["vllm-primary"]["profiles"] == ["shape-dropped"]
     assert "vllm-multimodal" not in services
-    assert services["gateway"]["depends_on"] == {"__reset__": True}
+    assert "gateway" not in services
 
 
 def test_shape_override_disabled_service_matches_render_api(tmp_path, monkeypatch) -> None:

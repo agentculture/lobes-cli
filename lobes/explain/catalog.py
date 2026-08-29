@@ -960,8 +960,10 @@ hosts `stt`/`tts` identically, except the two Orin ones — `orin-lobe` and
 
 A mesh shape's dropped core role never half-serves: the generated
 `docker-compose.shape.yml` override parks its service in the inert
-`shape-dropped` compose profile (requires Docker Compose v2.24+ for the
-`!reset` merge tag on the gateway's `depends_on`) so it never runs;
+`shape-dropped` compose profile so it never runs (the gateway needs no
+patch: since issue #222 the base template declares no `depends_on` at all,
+because `docker compose up -d <service>` WALKS it and a gateway restart
+therefore started every heavy lane, dropped or not);
 `lobes capabilities` and the gateway's `GET /capabilities` both flag it
 `feasible: false`; `/v1/models` omits it; every alias 404s
 `role_infeasible`; and `lobes up <dropped-role>` is a user error naming the
