@@ -105,6 +105,11 @@ def test_clean_stream_relays_chunks_then_the_terminator() -> None:
         ConnectionResetError(104, "Connection reset by peer"),
         TimeoutError("timed out"),
         http.client.IncompleteRead(b"partial"),
+        # A malformed chunked body surfaces as a ValueError out of the stdlib's
+        # own chunk-size parse — the same third member `open_upstream` catches.
+        # Without it the one exception this path exists to handle would escape
+        # it, skipping every terminal frame.
+        ValueError("invalid literal for int() with base 16: b'zz'"),
     ],
 )
 def test_upstream_failure_sends_an_error_frame_then_done_then_the_terminator(
@@ -140,7 +145,8 @@ def test_error_frame_is_parseable_openai_shaped_json() -> None:
     import json
 
     raw = S.sse_error_frame("upstream went away")
-    assert raw.startswith(b"data: ") and raw.endswith(b"\n\n")
+    assert raw.startswith(b"data: ")
+    assert raw.endswith(b"\n\n")
     payload = json.loads(raw[len(b"data: ") :].decode())
     assert payload["error"]["message"] == "upstream went away"
     assert payload["error"]["type"] == "upstream_error"

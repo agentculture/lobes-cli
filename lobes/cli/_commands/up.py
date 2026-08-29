@@ -228,6 +228,44 @@ def _compose_file_args(
     )
 
 
+def _audio_overlay_required(deploy_dir: Path, target: str, needs_audio: bool) -> None:
+    """Raise USER_ERROR when the target reaches into an unscaffolded audio overlay.
+
+    ``colleague-stack`` / ``stt`` / ``tts`` need ``docker-compose.audio.yml`` (r4).
+    Explain how to add it rather than silently yielding only the non-audio roles.
+    """
+    if not needs_audio or _compose.audio_overlay_present(deploy_dir):
+        return
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"target '{target}' needs the audio overlay "
+            f"({_compose.AUDIO_OVERLAY}), which is not scaffolded in {deploy_dir}"
+        ),
+        remediation=(
+            "re-scaffold with 'lobes init --fleet --audio --apply' to add the "
+            "stt/tts overlay, then retry"
+        ),
+    )
+
+
+def _resolve_build(args: argparse.Namespace, action: str) -> bool:
+    """``--build``, refusing the one combination that cannot mean anything.
+
+    ``--build`` maps to ``docker compose up --build``; a ``--down`` is a
+    ``stop``, which never builds an image. Silently ignoring the flag there
+    would let an operator believe they had re-imaged something.
+    """
+    build = bool(getattr(args, "build", False))
+    if build and action == "stop":
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--build has no meaning with --down (a stop never builds an image)",
+            remediation="drop --build, or drop --down to rebuild and restart the target",
+        )
+    return build
+
+
 def cmd_up(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     target = args.role
@@ -239,20 +277,7 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     deploy_dir = _runtime_ops.deployment_dir(args)
 
-    # colleague-stack / stt / tts reach into the audio overlay — it MUST be
-    # scaffolded (r4). Explain how to add it rather than silently dropping audio.
-    if needs_audio and not _compose.audio_overlay_present(deploy_dir):
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message=(
-                f"target '{target}' needs the audio overlay "
-                f"({_compose.AUDIO_OVERLAY}), which is not scaffolded in {deploy_dir}"
-            ),
-            remediation=(
-                "re-scaffold with 'lobes init --fleet --audio --apply' to add the "
-                "stt/tts overlay, then retry"
-            ),
-        )
+    _audio_overlay_required(deploy_dir, target, needs_audio)
 
     # An opt-in core role (muse) needs its compose profile activated by a
     # hosting shape — name the real fix instead of compose's "no such service".
@@ -268,13 +293,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         _compose.local_override_present(deploy_dir),
         _compose.gpu_overlay_present(deploy_dir),
     )
-    build = bool(getattr(args, "build", False))
-    if build and action == "stop":
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message="--build has no meaning with --down (a stop never builds an image)",
-            remediation="drop --build, or drop --down to rebuild and restart the target",
-        )
+    build = _resolve_build(args, action)
     argv = _compose.compose_service_argv(action, compose_files, services, build=build)
     command = " ".join(argv)
 

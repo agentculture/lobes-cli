@@ -3533,10 +3533,19 @@ class _Handler(BaseHTTPRequestHandler):
         while True:
             try:
                 chunk = resp.upstream.read(_CHUNK)
-            except (OSError, http.client.HTTPException) as exc:
+            except (OSError, http.client.HTTPException, ValueError) as exc:
                 # The BACKEND stopped mid-stream (reset, read timeout, a
-                # truncated chunked body). The client is still there and still
-                # waiting — tell it.
+                # truncated or malformed chunked body). The client is still
+                # there and still waiting — tell it.
+                #
+                # The same triple `open_upstream` catches, and for the same
+                # reason: `_Upstream.read` delegates straight to
+                # `HTTPResponse.read1`, so a malformed chunk size surfaces as a
+                # `ValueError` from the stdlib's own int parse (this module's
+                # `read_chunked_body` treats a bad size the same way). Missing
+                # it would let the one exception this method exists to handle
+                # escape it, skipping the error event, `[DONE]` and the
+                # terminator alike — the exact hang #220 is about.
                 upstream_failure = f"{type(exc).__name__}: {exc}"
                 break
             if not chunk:
