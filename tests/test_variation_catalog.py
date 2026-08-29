@@ -312,6 +312,54 @@ def test_parse_info_reads_title_sections_and_citations() -> None:
     assert not info.declares_no_measured_result
 
 
+def test_parse_info_strips_trailing_atx_hashes_and_whitespace_from_headings() -> None:
+    """python:S8786: ``_HEADING_RE`` was rewritten to avoid catastrophic
+    backtracking (``^(#{1,6})\\s+(.*?)\\s*#*\\s*$`` -> a greedy full-line
+    capture plus a plain-Python strip in ``_heading_text``). Same behaviour:
+    a closing ATX ``##`` and trailing whitespace are both stripped, and a
+    ``#`` that is genuinely part of the heading text is not."""
+    info = vc.parse_info(
+        "\n".join(
+            [
+                "# Title with trailing hashes ##",
+                "",
+                "## What this variation is   ",
+                "",
+                "Prose.",
+                "",
+                "## Measured result",
+                "",
+                vc.NO_MEASURED_RESULT,
+                "",
+                "## mentions #1 not a closing hash",
+                "",
+            ]
+        )
+    )
+    assert info.title == "Title with trailing hashes"
+    assert vc.DESCRIPTION_HEADING in info.sections
+    assert "mentions #1 not a closing hash" in info.sections
+
+
+def test_parse_info_ignores_non_heading_lines() -> None:
+    """A line that is not ``#{1,6}`` followed by a space is not a heading —
+    a bare ``#`` with no following text, or a ``#`` mid-sentence."""
+    info = vc.parse_info(
+        "\n".join(
+            [
+                "not a heading # at all",
+                "#no-space-after-hash",
+                "# ",
+                "## real section",
+                "",
+                "body",
+            ]
+        )
+    )
+    assert info.title == ""
+    assert info.sections == ("real section",)
+
+
 def test_parse_info_detects_the_no_measured_result_marker() -> None:
     info = vc.parse_info(
         "\n".join(

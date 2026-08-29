@@ -54,6 +54,12 @@ PYPI_PACKAGE = "lobes-cli"
 #: query failure, not a clean "not found".
 PYPI_JSON_URL = "https://pypi.org/pypi/{package}/{version}/json"
 
+#: TestPyPI's per-release JSON endpoint, same shape as :data:`PYPI_JSON_URL`.
+#: Per this repo's publish convention (CLAUDE.md: "PRs publish a `.devN` to
+#: TestPyPI"), a dev-shaped pin was never published to PyPI at all — querying
+#: PYPI_JSON_URL for one always 404s, even when the build genuinely resolves.
+TESTPYPI_JSON_URL = "https://test.pypi.org/pypi/{package}/{version}/json"
+
 #: PEP 440's dev-release segment: a trailing ``.devN`` (or bare ``devN``
 #: immediately after the release segment, e.g. ``0.67.0dev12``). This repo's
 #: own publish convention (CLAUDE.md: "PRs publish a ``.devN`` to TestPyPI")
@@ -89,8 +95,24 @@ def is_dev_version(version: str) -> bool:
 IndexQuery = Callable[[str, str], bool]
 
 
+def pypi_index_url_for(package: str, version: str) -> str:
+    """The JSON endpoint to query for *package*==*version* — PyPI or TestPyPI.
+
+    Pure URL-selection, no network: a dev-shaped *version* (see
+    :func:`is_dev_version`) routes to :data:`TESTPYPI_JSON_URL` because that
+    is the only index this repo's publish convention ever puts a `.devN`
+    build on; anything else routes to :data:`PYPI_JSON_URL`. Split out from
+    :func:`default_pypi_index_query` so the routing decision itself is
+    testable without making a request (PR #223 review, defect 2: the guard
+    previously always asked PyPI, so an available dev pin was reported
+    unbuildable).
+    """
+    template = TESTPYPI_JSON_URL if is_dev_version(version) else PYPI_JSON_URL
+    return template.format(package=package, version=version)
+
+
 def default_pypi_index_query(package: str, version: str, *, timeout: float = 5.0) -> bool:
-    """Real network check against PyPI's JSON API.
+    """Real network check against PyPI's (or TestPyPI's) JSON API.
 
     NOT exercised by the committed test suite (which is hermetic — no
     network) and NOT called anywhere by default: it is only ever invoked by a
@@ -98,17 +120,20 @@ def default_pypi_index_query(package: str, version: str, *, timeout: float = 5.0
     :func:`check_buildability` / :func:`check_lock_buildability`. See the
     module docstring's "two layers" note.
 
-    Returns ``True`` if ``package==version`` resolves, ``False`` on a clean
-    404 (that exact version does not exist on PyPI). Any other failure
+    Queries whichever index :func:`pypi_index_url_for` selects for *version*
+    — TestPyPI for a `.devN`-shaped pin, PyPI otherwise, since this repo's
+    publish convention only ever puts a dev build on TestPyPI. Returns
+    ``True`` if ``package==version`` resolves on that index, ``False`` on a
+    clean 404 (that exact version does not exist there). Any other failure
     (network error, non-404 HTTP status) is re-raised rather than silently
     reported as "unbuildable" — an outage is not proof of unbuildability.
     """
-    url = PYPI_JSON_URL.format(package=package, version=version)
+    url = pypi_index_url_for(package, version)
     request = urllib.request.Request(url, headers={"User-Agent": "lobes-buildability-guard"})
     try:
         with urllib.request.urlopen(
             request, timeout=timeout
-        ) as response:  # nosec B310 - fixed https pypi.org URL
+        ) as response:  # nosec B310 - fixed https pypi.org/test.pypi.org URL
             response.read()
         return True
     except urllib.error.HTTPError as exc:

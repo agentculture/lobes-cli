@@ -728,15 +728,42 @@ def _lock_file_diffs(deploy_dir: Path, lock_files: dict) -> list[str]:
 
 
 def _lock_env_diffs(deploy_dir: Path, lock_env: dict) -> list[str]:
-    """Names of ``lock.env`` keys whose current allowlisted value differs.
+    """Names of allowlisted keys whose lock vs. deployed value differs.
 
     Re-derives the allowlisted subset of the CURRENTLY deployed ``.env`` the
     same way :func:`lobes.runtime._lock.build_lock` does
     (:func:`lobes.runtime._lock.allowlist_env`), so this can never flag a
     secret key — only the rendered knobs the lock is permitted to carry.
+
+    Symmetric by construction (PR #223 review, confirmed defect 1): a naive
+    ``for key in lock_env`` only ever iterates keys STORED IN THE LOCK, so an
+    allowlisted knob written into the deployment AFTER capture — never
+    present in the lock at all — was invisible, and ``lock_drift`` passed
+    while the deployment genuinely diverged. Every key is tagged so the
+    caller's message can distinguish the two honestly:
+
+    * ``"<key> (changed)"`` — both sides carry the key, values differ;
+    * ``"<key> (added)"`` — the deployment has it, the lock never captured
+      it (a knob added since the last capture);
+    * ``"<key> (removed)"`` — the lock has it, the deployment no longer does.
+
+    This matters beyond cosmetics: issue #225 may drop ``.env`` from the
+    lock's ``[files]`` digest tracking, at which point this env diff becomes
+    the ONLY drift signal for a post-capture knob addition.
     """
     current = allowlist_env(_env.read_env_file(deploy_dir / _compose.ENV_FILE))
-    return [key for key, value in sorted(lock_env.items()) if current.get(key) != value]
+    diffs: list[str] = []
+    for key in sorted(set(lock_env) | set(current)):
+        in_lock = key in lock_env
+        in_current = key in current
+        if in_lock and in_current:
+            if lock_env[key] != current[key]:
+                diffs.append(f"{key} (changed)")
+        elif in_current:
+            diffs.append(f"{key} (added)")
+        else:
+            diffs.append(f"{key} (removed)")
+    return diffs
 
 
 _LOCK_DRIFT_REMEDIATION = (

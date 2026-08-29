@@ -15,12 +15,15 @@ import pytest
 
 from lobes.cli._errors import ModelGearError
 from lobes.runtime._buildability import (
+    PYPI_JSON_URL,
     PYPI_PACKAGE,
+    TESTPYPI_JSON_URL,
     BuildabilityResult,
     assert_buildable,
     check_buildability,
     check_lock_buildability,
     is_dev_version,
+    pypi_index_url_for,
 )
 from lobes.runtime._lock import DeploymentLock
 
@@ -226,3 +229,46 @@ def test_check_lock_buildability_can_feed_assert_buildable_end_to_end() -> None:
     with pytest.raises(ModelGearError) as excinfo:
         assert_buildable(result)
     assert "0.55.0.dev7" in str(excinfo.value)
+
+
+# --- pypi_index_url_for: a dev-shaped pin routes to TestPyPI, not PyPI -------
+#
+# PR #223 review (confirmed defect 2): default_pypi_index_query always asked
+# pypi.org. Per CLAUDE.md's publish convention, only a PR publishes a `.devN`
+# wheel, and only to TestPyPI — so once the live index_query path is wired, a
+# genuinely-available dev pin would be reported unavailable for asking the
+# wrong index. These tests exercise only the URL-selection decision — no
+# network call is made (`default_pypi_index_query` stays untested here, per
+# the module's own hermetic-suite convention).
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.67.0.dev12",
+        "0.67.0.dev0",
+        "1.2.3dev5",
+        "1.2.3.dev",
+    ],
+)
+def test_dev_shaped_version_routes_to_testpypi(version: str) -> None:
+    url = pypi_index_url_for(PYPI_PACKAGE, version)
+    assert url == TESTPYPI_JSON_URL.format(package=PYPI_PACKAGE, version=version)
+    assert "test.pypi.org" in url
+    assert url != PYPI_JSON_URL.format(package=PYPI_PACKAGE, version=version)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.67.0",
+        "1.2.3",
+        "0.67.0rc1",
+        "0.67.0.post1",
+    ],
+)
+def test_released_version_routes_to_pypi(version: str) -> None:
+    url = pypi_index_url_for(PYPI_PACKAGE, version)
+    assert url == PYPI_JSON_URL.format(package=PYPI_PACKAGE, version=version)
+    assert "pypi.org" in url
+    assert "test.pypi.org" not in url
