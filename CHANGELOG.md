@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.2] - 2026-08-29
+
+### Fixed
+
+- The `VARIATION.md` heading regex uses an unquantified `[ \t]` separator, removing the ambiguity between it and the trailing capture group (SonarCloud S8786). Measured behaviour was already linear; the change removes the ambiguity rather than relying on it.
+
 ## [0.68.1] - 2026-08-29
 
 ### Fixed

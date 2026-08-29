@@ -442,3 +442,37 @@ def _measured_citation() -> str:
     lock = load_lock(FIXTURE_CATALOG / FIXTURE_MEASURED / LOCK_FILENAME)
     assert lock.evidence is not None
     return lock.evidence
+
+
+def test_the_heading_separator_is_unquantified_so_it_cannot_be_ambiguous() -> None:
+    """`[ \\t]+` would let the separator and `(.*)` both claim a space (S8786).
+
+    Measured, Python's engine does not degrade on the quantified form — but
+    the ambiguity is real in the pattern, so the shipped regex removes it
+    rather than depending on `(.*)$` never being backtracked into.
+    """
+    assert "[ \t]+" not in vc._HEADING_RE.pattern
+    assert vc._HEADING_RE.pattern == r"^(#{1,6})[ \t](.*)$"
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("# One space", ("#", "One space")),
+        ("##  Two spaces", ("##", "Two spaces")),
+        ("###\t\t Tabs then space", ("###", "Tabs then space")),
+        ("#### Closed ####", ("####", "Closed")),
+        ("##   ", ("##", "")),
+    ],
+)
+def test_extra_separators_are_stripped_not_captured(line, expected) -> None:
+    """Dropping the `+` moves surplus separators into group 2; `_heading_text`
+    strips them, so every previously-accepted spelling parses identically."""
+    match = vc._HEADING_RE.search(line)
+    assert match is not None
+    assert (match.group(1), vc._heading_text(match)) == expected
+
+
+@pytest.mark.parametrize("line", ["#NoSpace", "####### Seven hashes", "plain text"])
+def test_non_headings_stay_unmatched(line) -> None:
+    assert vc._HEADING_RE.search(line) is None

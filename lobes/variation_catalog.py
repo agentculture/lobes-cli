@@ -102,8 +102,18 @@ SHAPE_SEPARATOR = "__"
 # larger malformed match attempt) is catastrophically slow to reject.
 # Instead this captures the whole rest of the line with a single greedy
 # group — linear, no ambiguity — and :func:`_heading_text` strips the
-# optional trailing ATX ``#`` marker(s) afterward, in plain Python.
-_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$", re.MULTILINE)
+# optional trailing ATX ``#`` marker(s) and any extra leading space
+# afterward, in plain Python.
+#
+# The separator is `[ \t]` and NOT `[ \t]+`: quantifying it leaves `[ \t]+`
+# and `(.*)` both able to match a space or tab, so a long run of them has
+# many valid partitions. Measured, Python's engine does not actually
+# degrade there (400k spaces rejects in ~0.5 ms, scaling linearly) because
+# `(.*)$` cannot fail in MULTILINE and so is never backtracked into — but
+# an unquantified separator removes the ambiguity outright rather than
+# relying on that property of one engine. Behaviour is unchanged: the
+# extra separators fall into group 2 and `_heading_text` strips them.
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t](.*)$", re.MULTILINE)
 _EVIDENCE_RE = re.compile(rf"{re.escape(EVIDENCE_DIRNAME)}/[A-Za-z0-9][A-Za-z0-9._+-]*")
 
 

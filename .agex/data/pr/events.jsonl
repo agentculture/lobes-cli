@@ -149,3 +149,15 @@
 {"ts":"2026-08-29T07:47:56.193134+00:00","type":"pr_webhook_posted","pr":223,"event":"pr_opened"}
 {"ts":"2026-08-29T07:48:59.271917+00:00","type":"readiness_arrived","pr":223,"waited_secs":60}
 {"ts":"2026-08-29T07:49:04.311212+00:00","type":"pr_read","pr":223,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-29T09:01:24.992947+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:26.061699+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:27.302240+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:28.408630+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:29.867202+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:31.196153+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:32.314783+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:33.605016+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:34.881379+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:36.311565+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-08-29T09:01:36.320656+00:00","type":"pr_batch_replied","pr":223,"count":10,"resolved":0}
+{"ts":"2026-08-29T09:01:37.167234+00:00","type":"pr_webhook_posted","pr":223,"event":"pr_replied"}
