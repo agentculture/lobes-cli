@@ -551,6 +551,14 @@ measure`'s audio-overlay (`stt`/`tts`) probes build their requests with raw
 request against a keyed gateway gets the ordinary 401), never crash or
 half-answer.
 
+**If a key leaks.** Rotating `GATEWAY_API_KEY`/`CULTURE_VLLM_API_KEY` locally
+is only half the job — every peer proxying or pooling to this box holds a
+copy as its own `<PREFIX>_PEER_API_KEY`/`<PREFIX>_PEER_API_KEYS`, and a
+committed secret survives `git rm`. See
+[`docs/secret-rotation.md`](secret-rotation.md) for the ordered drill:
+rotate, restart, update every peer copy, and — if the leak was committed —
+the history-rewrite step.
+
 ### Proxy-lobes: the third lobe state (opt-in)
 
 A dropped role (`<PREFIX>_FEASIBLE=false` — see
