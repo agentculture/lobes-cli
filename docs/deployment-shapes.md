@@ -452,7 +452,14 @@ asleep (referral) / proxy vocabulary above is unchanged. Declaring
 with `<PREFIX>_PEER_API_KEYS`) beside the singular `<PREFIX>_PEER_ORIGIN`
 lets a box that HOSTS a role also forward some of that role's requests to an
 equally-compatible peer when it is less loaded — the mirror image of
-proxy-lobes' "I dropped this role, dial my peer for it". `GET /capabilities`
+proxy-lobes' "I dropped this role, dial my peer for it". The same plural
+family on a box that **hosts the role nowhere** (`<PREFIX>_FEASIBLE=false`)
+makes its *proxy* state pooled too: instead of pinning every request to the
+singular `<PREFIX>_PEER_ORIGIN`, it places each one across the declared
+replicas. That still is not a fourth state — the role stays `feasible:false`,
+`hosted_by` stays the singular origin (which is why declaring the plural
+channel without it is refused at startup), and nothing selectable falls
+through to exactly the singular forward it replaced. `GET /capabilities`
 gains an additive `replicas` list per role (compatible/ready/load per
 candidate) and locally-served pooled answers gain `X-Lobes-Served-By`
 alongside the existing `X-Lobes-Proxied-By` and a new `X-Lobes-Route-Reason`

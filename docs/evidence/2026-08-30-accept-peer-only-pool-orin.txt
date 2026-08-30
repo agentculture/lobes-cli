@@ -1,0 +1,311 @@
+ACCEPTANCE — peer-only replica pools on the Jetson AGX Orin
+============================================================
+Date:      2026-08-30
+Box:       Jetson AGX Orin 64 GB (sm_87); cortex NOT hosted
+           (PRIMARY_FEASIBLE=false)
+Peers:     Spark  http://spark.tail0be7e0.ts.net:8001  (inbound gate: YES)
+           Thor   http://thor.tail0be7e0.ts.net:8000   (inbound gate: NO)
+Build:     lobes-cli 0.70.0, branch feat/peer-only-replica-pools, local wheel
+           into the gateway image (Dockerfile.gateway LOCAL-WHEEL VARIANT)
+Baseline:  docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt
+Spec:      docs/specs/2026-08-30-peer-only-replica-pools.md (plan task t9)
+
+VERDICT: the MECHANISM is validated; the THROUGHPUT target is NOT MET.
+Three of the four measurable targets in success signal c23 pass. The fourth
+— aggregate throughput — fails, and fails for a reason worth keeping: the
+pool balances by QUEUE DEPTH, and these two replicas differ in SPEED by
+4.4x with no capacity declared for either. Per honesty condition h22 the
+number is reported as measured, not softened.
+
+
+(0) CONFIGURATION UNDER TEST
+-----------------------------
+    PRIMARY_FEASIBLE=false
+    PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_PROXY=true
+    PRIMARY_PEER_API_KEY=<spark's inbound GATEWAY_API_KEY>
+    PRIMARY_PEER_ORIGINS=http://spark...:8001,http://thor...:8000
+    PRIMARY_PEER_API_KEYS=,
+
+Both key slots are EMPTY on purpose. The Spark's slot exercises the
+inheritance path (its origin IS the singular peer, so it inherits
+PRIMARY_PEER_API_KEY); the Thor genuinely runs no inbound gate. Verified
+directly before the run:
+
+    thor  /status            no auth -> 200
+    thor  /v1/chat/...       no auth -> 200
+    spark /v1/chat/...       no auth -> 401
+
+Had the singular key NOT been inherited, every Spark placement in this run
+would have been a 401. None was. Claim c19 / honesty h16: MET, live.
+
+GATEWAY_SELF_ORIGIN is NOT declared, confirming the clean-lens finding from
+the challenge pass (scope entry s17): it stamps X-Lobes-Served-By on locally
+served answers only, and a box with no local replica never emits one.
+
+Only model-gear-gateway was rebuilt and recreated (always with --no-deps).
+model-gear-vllm-associate was never touched: Up 4 days, healthy, ready:true
+at every capabilities read in this transcript.
+
+
+(1) THE ADVERT — ready and context now match the replicas          [MET]
+------------------------------------------------------------------------
+GET /capabilities on the Orin, cortex entry:
+
+    BEFORE (baseline):  ready=False  context=1048576
+    AFTER:              ready=True   context=262144
+    unchanged:          feasible=False  proxied=True
+                        hosted_by=http://spark.tail0be7e0.ts.net:8001
+
+    replicas:
+      http://spark.tail0be7e0.ts.net:8001  ready=True compat=True
+                                           reason="fingerprint reference"
+      http://thor.tail0be7e0.ts.net:8000   ready=True compat=True  reason=""
+
+Both peers serve unsloth/Qwen3.8-27B-NVFP4 at 262144, so 262144 is the
+fingerprint-agreed window. 1048576 was this box's own PRIMARY_MAX_MODEL_LEN
+mirror — a window no replica serves. feasible stays false: pooling does not
+make this box a host. Claims c20/h17 and c9: MET.
+
+GET /v1/models now lists the pooled role:
+
+    ['nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4', 'cortex']
+
+Claim c17/c18, honesty h15: MET.
+
+
+(2) PLACEMENT ACROSS BOTH PEERS                                    [MET]
+------------------------------------------------------------------------
+4 concurrent POST /v1/chat/completions, model=cortex, max_tokens=160,
+temperature=0, to the Orin's own gateway:
+
+    req3 spark  peer-less-loaded  154 tok   3.469 s
+    req4 spark  peer-less-loaded  155 tok   3.471 s
+    req1 thor   peer-less-loaded  155 tok  13.999 s
+    req2 thor   sole-ready        155 tok  14.426 s
+
+    per-peer split: spark 2/4 (50%), thor 2/4 (50%)
+
+Neither peer served 0%; neither served 100%. Baseline was 100% / 0%.
+Every placed answer carried X-Lobes-Proxied-By and X-Lobes-Route-Reason from
+the existing closed vocabulary — no new reason string was invented
+(claim c12 / honesty h6: MET).
+
+An 8-concurrent burst placed 6 spark / 2 thor, and four of the eight carried
+route_reason=none — those took the singular-proxy FALL-THROUGH because at
+that instant no replica was selectable. That is decision c24 working on the
+live path, not a failure: nothing selectable falls through to exactly the
+forward this feature replaced.
+
+
+(3) A DEFECT THIS RUN CAUGHT, AND THE FIX
+------------------------------------------
+The FIRST run of (2) placed 4/4 onto the Spark with route_reason set on all
+four — placement was happening, but every request chose the same replica.
+Cause: the peer-only branch dialled without COUNTING the dispatch. Probed
+load is up to one refresh interval (5 s) stale, so four concurrent arrivals
+read the same idle snapshot, ranked the same replica first (ties break on
+origin string ascending) and stampeded it — the exact herd
+lobes/gateway/_replicas.py's in-flight accounting exists to prevent, which
+the hosted pool gets via _pool_attempt and the peer-only branch was not
+using.
+
+Fixed by wiring the same count/dial/release sandwich into the peer-only
+forward, with two regression tests
+(tests/test_gateway_peer_only_pool.py::test_concurrent_placements_spread_across_replicas
+and ::test_a_released_dispatch_stops_counting_against_its_replica). The
+numbers in (2) are from the rebuilt gateway. A peer-only pool needs the
+counter MORE than a hosted one: it has no local replica to absorb a tie.
+
+
+(4) THROUGHPUT                                                 [NOT MET]
+------------------------------------------------------------------------
+Target (c23): aggregate at least 40% above the pinned baseline of
+88.1 tok/s, i.e. >= 123.3 tok/s.
+
+    N=4  pinned (baseline)   624 tok / 7.080 s  =  88.1 tok/s   4 spark/0 thor
+    N=4  pooled              619 tok / 14.472 s =  42.8 tok/s   2 spark/2 thor
+    N=8  pinned (same-run)  1248 tok / 14.029 s =  89.0 tok/s   8 spark/0 thor
+    N=8  pooled             1243 tok / 14.474 s =  85.9 tok/s   6 spark/2 thor
+
+The N=8 pinned figure was measured in this same session by commenting out
+PRIMARY_PEER_ORIGINS and recreating the gateway, so the two N=8 numbers are
+a fair same-burst-size comparison.
+
+NOT MET, and not marginally: the pool is 51% SLOWER at N=4 and 3.5% slower
+at N=8. It never approached +40%.
+
+Cause, measured:
+
+    spark single-stream: 154 tok / 3.149 s = 48.9 tok/s
+    thor  single-stream: 155 tok / 14.100 s = 11.0 tok/s
+                                              ^ 4.4x asymmetry
+
+The selection policy ranks by capacity-relative WAIT. Both replicas DO
+publish a capacity and both are calibrated — verified on the wire:
+
+    spark /status primary: capacity=2.0
+    thor  /status primary: capacity=2.0
+    orin's own replica rows: weight=2.0 capacity=2.0 calibrated=True (both)
+
+(An earlier draft of this transcript claimed neither published one. That was
+wrong and is corrected here.) Equal capacities divide out, so ranking
+reduces to raw queue depth anyway.
+
+The problem is not a missing declaration — it is what the declaration MEANS.
+`<PREFIX>_MAX_ACTIVE` is a CONCURRENCY figure: how many requests a box will
+run at once. It is confirmed as 2 on both boxes BY DESIGN. Nothing in the
+fingerprint or the capacity model expresses SERVICE RATE, so two boxes with
+two slots each rank identically while one produces tokens 4.4x faster. Two
+requests sent to the slower box finish 4x later, and a burst's wall-clock
+aggregate is set by its slowest stream. Sending work to the idle-but-slow
+replica is the right answer for QUEUEING and the wrong answer for
+THROUGHPUT, and no field in the current model can tell the router which it
+is being asked to optimise.
+
+The asymmetry is STRUCTURAL, not a transient load artifact, and is already
+on the record: CLAUDE.md's deviation d1 measures the Thor's local cortex at
+12.1 tok/s single-stream (1,048,576-token YaRN window, MTP OFF — no sm_110
+kernel image for this checkpoint's MTP variant), while the Spark serves
+cortex at 262144 with DSpark drafting. 11.0 tok/s measured here agrees with
+that 12.1. The two boxes are not interchangeable replicas by speed even
+though they are byte-identical by fingerprint — which is exactly the case
+the fingerprint gate cannot see, since served id, window, runtime and
+quantization all match. The Thor also serves this checkpoint to the rest of
+the mesh (the Spark's own cortex pool lists it), so its capacity is shared
+beyond this box's view.
+
+This is a gap in the capacity half of #199, not in the peer-only branch,
+and the peer-only pool inherits it rather than causing it. Two distinct
+follow-ups fall out:
+
+  * there is no SERVICE-RATE weight anywhere in the model — capacity is
+    slots, and slots are the wrong unit for a heterogeneous pool. Lowering
+    the slower box's MAX_ACTIVE would spread traffic directionally, but that
+    is a misuse of a knob whose value is confirmed as intentional, and it is
+    the slower box's own declaration about itself, shared with every peer
+    that pools it;
+  * build_replica_caches constructs each PeerReplica(origin=..., api_key=...)
+    with NO weight, so even if a pooling box knew a peer's service rate it
+    has no channel to declare it — a peer's capacity can only arrive from
+    that peer's own /status advert.
+
+
+(5) CONTINUITY WITH A REPLICA UNAVAILABLE                          [MET*]
+-------------------------------------------------------------------------
+*SIMULATED. The target as written says "with one peer's gateway stopped".
+There is no ssh access from this box to the Thor (host key not accepted, and
+none was auto-accepted), so a peer gateway was NOT stopped. Instead one
+declared replica origin was pointed at an unreachable address
+(http://127.0.0.1:9) alongside the real Thor. What that proves is "one
+declared replica is unavailable", which is the substance of the target; what
+it does not prove is a mid-flight peer dying.
+
+    replicas:
+      http://127.0.0.1:9                   ready=False compat=False
+                                           reason="peer gateway unreachable"
+      http://thor.tail0be7e0.ts.net:8000   ready=True  compat=True
+                                           reason="fingerprint reference"
+
+    ready=True  context=262144   (both still correct with one replica down)
+
+3 concurrent requests: 3/3 answered HTTP 200.
+    req2 thor   sole-ready   155 tok
+    req3 thor   sole-ready   155 tok
+    req1 spark  none         154 tok   (singular-proxy fall-through)
+
+Two placed onto the one selectable replica; one fell through to the singular
+forward when the Thor was counted full. No request failed.
+
+This also validates the reference rule precisely: the Thor became the
+"fingerprint reference" even though the unreachable origin is declared
+FIRST. The reference is the first READY peer in declaration order, not the
+first declared one (decision c16: MET).
+
+
+(5b) CONTINUITY WITH THE PEER'S GATEWAY ACTUALLY STOPPED        [MET]
+------------------------------------------------------------------------
+The target as written was re-run for real once ssh access to the Thor was
+available (user `thor`, host key verified against
+SHA256:wmE5cTORkB/re5PxUXAkyCEzyD/z60mqCurS2a9ljRk). `docker stop
+model-gear-gateway` on the Thor; the Thor's vLLM was left running.
+
+The Orin noticed within one refresh interval:
+
+    http://spark...:8001  ready=True  compat=True  "fingerprint reference"
+    http://thor...:8000   ready=False compat=True  "peer gateway unreachable"
+    role-level: ready=True context=262144
+
+4 concurrent requests, one peer gateway stopped:
+
+    req1 spark  sole-ready  155 tok   3.509 s
+    req4 spark  none        154 tok   3.509 s
+    req2 spark  none        155 tok   7.160 s
+    req3 spark  sole-ready  160 tok   7.160 s
+
+    4/4 answered HTTP 200. split: spark 4/4, thor 0/4.
+    aggregate 624 tok / 7.208 s = 86.6 tok/s
+
+100% still served, at essentially the pinned baseline rate (86.6 vs 88.1) —
+losing a replica costs nothing here precisely because the lost one was the
+slow one. Two requests placed (`sole-ready`, the surviving replica) and two
+took the singular-proxy fall-through when it was counted full.
+
+The Thor's gateway was restarted immediately and verified recovered:
+`Up (healthy)`, cortex `feasible=True ready=True context=262144`, both its
+own replicas (local + Spark) ready and compatible. Its pool config was
+confirmed intact — GATEWAY_SELF_ORIGIN, PRIMARY_PEER_ORIGINS naming the
+Spark, PRIMARY_MAX_ACTIVE=2.
+
+This run supersedes the simulated result in (5). Both are kept: (5) is what
+the unreachable-origin variant proves (including the reference falling
+through to the second-declared peer), (5b) is the target as written.
+
+A DEFECT THIS RUN CAUGHT, AND THE FIX (second one)
+---------------------------------------------------
+With the Thor's gateway stopped, its row read `ready=False` beside
+`compatible=True` — visible in the capabilities output above. Cause:
+`_probe_peer`'s failure branch evolves the PREVIOUS state, which still
+carries the fingerprint of the last successful probe, and the reference pass
+then re-derived compatibility from that stale fingerprint. Selection was
+never affected (an unready replica is not selectable), but GET /capabilities
+was publishing a compatibility judgement about a box it had just failed to
+reach — exactly the "never pool an unknown" rule (#199 h11) leaking in the
+one direction nobody had tested.
+
+Fixed by stamping the pass start and re-evaluating only states whose
+`last_seen` was refreshed during that pass; a state carrying a verdict from
+an earlier pass keeps the probe's own. Two regression tests:
+::test_a_peer_that_goes_dark_does_not_stay_compatible_on_a_stale_fingerprint
+and ::test_the_reference_is_never_a_peer_that_went_dark. The capabilities
+output quoted in (5b) is from BEFORE that fix and is left as measured.
+
+Re-verified live after the fix, with the Thor's gateway stopped a second
+time:
+
+    http://spark...:8001  ready=True  compat=True   "fingerprint reference"
+    http://thor...:8000   ready=False compat=False  "peer gateway unreachable"
+    role-level: ready=True context=262144
+
+and on restart, both rows returned to ready=True compat=True. The Thor's
+gateway was confirmed `Up (healthy)` after each stop in this transcript.
+
+
+(6) SUMMARY AGAINST SUCCESS SIGNAL c23
+---------------------------------------
+    both peer origins appear, neither 0% nor 100%     MET
+    aggregate >= 40% above the 88.1 tok/s baseline    NOT MET (42.8 / 85.9)
+    one peer's gateway stopped -> 100% still 200      MET (see 5b; (5) is
+                                                      the simulated variant)
+    ready/context match what the replicas serve       MET
+
+Per h22 no target was softened after the run, and the failing one is
+reported as failing.
+
+STATUS: the peer-only pool MECHANISM is VALIDATED live on this box —
+placement, the reference rule, credential inheritance, the fall-through, the
+markers, the advert fold, the models listing, and continuity with a replica
+down. Its THROUGHPUT BENEFIT is DISPROVEN on this particular replica pair
+and must not be claimed anywhere until capacity weighting exists for peers.
+On a homogeneous pair the arithmetic would differ; that is untested and may
+not be asserted.

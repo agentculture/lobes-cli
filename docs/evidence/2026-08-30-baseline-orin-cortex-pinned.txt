@@ -1,0 +1,126 @@
+BASELINE — cortex from the Jetson AGX Orin pins to ONE peer
+============================================================
+Date:      2026-08-30
+Box:       Jetson AGX Orin 64 GB (sm_87), shape: associate + hand + embedder +
+           reranker; cortex NOT hosted (PRIMARY_FEASIBLE=false)
+Peers:     Spark  http://spark.tail0be7e0.ts.net:8001
+           Thor   http://thor.tail0be7e0.ts.net:8000
+Purpose:   the PRE-change baseline for peer-only replica pools
+           (docs/specs/2026-08-30-peer-only-replica-pools.md, claim c13/h13).
+           Captured BEFORE any code change landed, per the #108 rule.
+
+This is a BASELINE, not an acceptance run. It records what the deployed
+gateway does today so the later acceptance transcript has something honest to
+be compared against. Nothing here was restarted, rebuilt, or reconfigured for
+the measurement; the only change on the box that day was
+PRIMARY_PEER_PROXY=false -> true (see "Deploy record" below), made before
+these numbers were taken.
+
+
+(0) DEPLOY RECORD
+-----------------
+~/.lobes/.env on the Orin, cortex lines (secrets elided):
+
+    PRIMARY_FEASIBLE=false
+    PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_PROXY=true          # flipped from false on 2026-08-30
+    PRIMARY_PEER_API_KEY=<spark's inbound GATEWAY_API_KEY>
+    # no PRIMARY_PEER_ORIGINS / PRIMARY_PEER_API_KEYS declared
+
+Gateway container recreated once to pick that up
+(`docker compose up -d --no-deps gateway`); model-gear-vllm-associate was not
+touched (Up 4 days, healthy, answering 200 throughout).
+
+Before the flip, `model=cortex` on this box answered:
+
+    HTTP 404
+    {"error": {"message": "The model `cortex` is not feasible on this machine
+     ... It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` —
+     address that box directly; this gateway never proxies requests to peers.",
+     "type": "role_infeasible", "code": "role_infeasible", ...}}
+
+
+(1) BOTH PEERS HOST CORTEX, AND ALREADY POOL WITH EACH OTHER
+-------------------------------------------------------------
+GET /capabilities on each peer, cortex entry:
+
+    spark: feasible=True ready=True context=262144  proxied=None hosted_by=None
+      replicas:
+        http://vllm-primary:8000                local ready=True compat=True
+        http://thor.tail0be7e0.ts.net:8000      peer  ready=True compat=True
+    thor:  feasible=True ready=True context=262144  proxied=None hosted_by=None
+      replicas:
+        http://vllm-primary:8000                local ready=True compat=True
+        http://spark.tail0be7e0.ts.net:8001     peer  ready=True compat=True
+
+Both serve unsloth/Qwen3.8-27B-NVFP4 at max_model_len 262144, runtime vllm,
+quantization compressed-tensors. The #199 pool between them is armed and
+mutual. The Orin is the box that cannot reach it.
+
+
+(2) THE DEFECT — 4 CONCURRENT REQUESTS, ALL PINNED TO ONE PEER
+---------------------------------------------------------------
+4 concurrent POST /v1/chat/completions with model=cortex, max_tokens=160,
+temperature=0, issued to the Orin's own gateway:
+
+    req1 served_by=http://spark.tail0be7e0.ts.net:8001 route_reason=none
+         completion_tokens=155 elapsed=3.594s
+    req2 served_by=http://spark.tail0be7e0.ts.net:8001 route_reason=none
+         completion_tokens=160 elapsed=3.747s
+    req3 served_by=http://spark.tail0be7e0.ts.net:8001 route_reason=none
+         completion_tokens=154 elapsed=7.032s
+    req4 served_by=http://spark.tail0be7e0.ts.net:8001 route_reason=none
+         completion_tokens=155 elapsed=7.032s
+
+    wall_clock_total = 7.080 s
+    completion tokens = 624
+    AGGREGATE = 624 / 7.080 = 88.1 tok/s
+
+    per-peer split: Spark 4/4 (100%), Thor 0/4 (0%)
+    X-Lobes-Route-Reason: absent on every response (no placement happened)
+
+The 3.6 s / 7.0 s split is the queue: two requests complete in the first
+batch, two wait for the second. The Spark's PRIMARY_MAX_NUM_SEQS is 2.
+
+Peer load sampled immediately after the burst:
+
+    spark /status primary: health=ok running=0 waiting=0
+                           requests_succeeded=361
+    thor  /status primary: health=ok running=1 waiting=0
+                           requests_succeeded=573
+
+The Thor was healthy and serving throughout. It received none of this box's
+four requests.
+
+
+(3) THE ADVERT IS ALSO WRONG TODAY
+-----------------------------------
+GET /capabilities on the Orin, cortex entry:
+
+    {'feasible': False, 'ready': False, 'context': 1048576,
+     'proxied': True, 'hosted_by': 'http://spark.tail0be7e0.ts.net:8001',
+     'loaded': True}
+
+Both fields disagree with the peers that actually serve it:
+
+    ready:   False here, True on both peers
+    context: 1048576 here, 262144 on both peers
+
+1048576 is this box's own PRIMARY_MAX_MODEL_LEN mirror, not a window any
+replica serves — the same class of defect #220 fixed for the single-peer
+relay, reappearing because a box with several declared replicas has no single
+peer whose advert can be relayed.
+
+
+(4) WHAT THIS BASELINE COMMITS THE ACCEPTANCE RUN TO
+-----------------------------------------------------
+Success signal c23 measures against exactly these numbers:
+
+  * per-peer split must show BOTH origins (neither 0%, neither 100%);
+    baseline: 100% / 0%
+  * aggregate must exceed 88.1 tok/s by at least 40% (>= 123.3 tok/s)
+  * with one peer's gateway stopped, 100% of requests must still answer 200
+  * ready/context must match what the replicas actually serve
+
+Per honesty condition h22, any target not met is reported as NOT met in the
+acceptance transcript; none is softened after the run.

@@ -776,6 +776,52 @@ plural peer family is generic across all nine role prefixes. See
 `docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
 schema: additive `replicas`/`fingerprint` fields).
 
+**Peer-only pools — a role the box hosts NOWHERE (DECLARED, not validated).**
+The pool above forwards a role a box *hosts*; a box that hosts it nowhere took
+the referral/proxy branch, which dials the **singular**
+`<PREFIX>_PEER_ORIGIN` and therefore pins every request to one peer. Measured
+on the Jetson AGX Orin 2026-08-30: every `model=cortex` request answered 200
+with `X-Lobes-Proxied-By` naming the same peer, while the Spark and Thor each
+published two compatible ready cortex replicas. Declaring the plural family on
+a `FEASIBLE=false` role now places each request across the declared replicas
+instead. Four rules, each a recorded decision: **peers agree with each other**
+(no local lane means no reference, so the first READY peer in DECLARATION
+order supplies the fingerprint every other peer is compared to, published as
+`reason: "fingerprint reference"`; disagreement leaves nothing compatible,
+which is #199 h11 restated); **the singular origin is REQUIRED** (`hosted_by`
+reads it,
+so plural-without-singular is refused at startup with a named
+`ReplicaConfigError` — a pool on a role the box HOSTS needs no singular
+origin, publishing no referral at all); **never worse than today** (nothing
+selectable falls through to the existing singular forward, and with no
+singular origin the 404 `role_infeasible` is byte-identical); and **the
+singular credential is inherited** by the replica whose origin IS the singular
+peer, since the two key channels parse independently and an upgraded box would
+otherwise start sending no `Authorization` to a peer it was already
+authenticated to. `/capabilities` folds the advert across the set (`ready` =
+any compatible replica ready; `context` = the fingerprint-agreed window, not
+the catalog ceiling) and `/v1/models` lists a pooled dropped role on that same
+evidence; `feasible` stays `false` — pooling never makes a box a host. Local
+pressure is not re-applied and the single-hop 508 guard is unchanged.
+**Status: MECHANISM VALIDATED live 2026-08-30 on the Orin against the
+Spark and Thor (`docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`);
+THROUGHPUT BENEFIT DISPROVEN on that pair** — placement across both peers,
+the reference rule, credential inheritance, the fall-through, the advert
+fold (`ready` false→true, `context` 1048576→262144) and continuity with a
+replica down all measured, but aggregate throughput came in **51% slower at
+4 concurrent and 3.5% slower at 8** than pinning, because the pool balances
+by QUEUE DEPTH while the two replicas differ in SPEED by 4.4x (Spark 48.9
+vs Thor 11.0 tok/s single-stream). Both DO publish a calibrated capacity
+(2.0 each, by design), but `<PREFIX>_MAX_ACTIVE` is CONCURRENCY — equal slot
+counts rank equal however differently the boxes produce tokens, and nothing
+in the model expresses SERVICE RATE; `build_replica_caches` also builds each
+`PeerReplica` with no weight, so a pooling box has no channel to declare a
+peer's worth even if it knew (both gaps in #199's capacity half, inherited
+not caused). **No throughput benefit may be claimed for a
+heterogeneous pair.** Baseline:
+`docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt`; spec/plan under
+`docs/specs/` and `docs/plans/2026-08-30-peer-only-replica-pools.md`.
+
 ## The deployment lock and the variation catalog
 
 Orthogonal again to profile (how a role is tuned) and shape (which roles a

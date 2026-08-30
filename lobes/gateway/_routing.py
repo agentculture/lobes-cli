@@ -442,6 +442,8 @@ def list_models_payload(
     ready: Mapping[str, "bool | None"] | None = None,
     peer_served: Mapping[str, str] | None = None,
     loaded_adapters: Mapping[str, frozenset[str]] | None = None,
+    *,
+    pooled: "frozenset[str]" = frozenset(),
 ) -> dict:
     """OpenAI ``/v1/models`` shape listing the fleet's served models.
 
@@ -514,14 +516,41 @@ def list_models_payload(
                 for adapter in backend.adapters
                 if adapter in confirmed
             )
-    if peer_served and ready is not None:
-        listed = {entry["id"] for entry in data}
-        for name in sorted(table.peer_proxied):
-            served = peer_served.get(name)
-            if served and served not in listed and ready.get(name) is True:
-                data.append({"id": served, "object": "model", "owned_by": "lobes"})
-                listed.add(served)
+    data.extend(_peer_model_entries(table, ready, peer_served, pooled, data))
     return {"object": "list", "data": data}
+
+
+def _peer_model_entries(
+    table: RoutingTable,
+    ready: Mapping[str, "bool | None"] | None,
+    peer_served: Mapping[str, str] | None,
+    pooled: "frozenset[str]",
+    listed_entries: list,
+) -> list:
+    """The off-box model ids to append: proxied roles, plus pooled ones.
+
+    Split out of :func:`list_models_payload` to keep that function under the
+    cognitive-complexity budget (Sonar S3776) once pooling added a second
+    admission rule beside the proxied one.
+
+    A POOLED name carries its own live evidence (peer-only replica pools): the
+    caller derived it from a snapshot in which some declared replica is
+    compatible AND ready, which is strictly stronger than the singular peer
+    probe this otherwise consults — and it survives that one peer being down
+    while another serves. A non-pooled proxied name keeps the #92 rule
+    exactly: no live ``ready`` verdict, no listing.
+    """
+    if not peer_served or (ready is None and not pooled):
+        return []
+    listed = {entry["id"] for entry in listed_entries}
+    entries = []
+    for name in sorted(frozenset(table.peer_proxied) | frozenset(pooled)):
+        served = peer_served.get(name)
+        usable = name in pooled or (ready is not None and ready.get(name) is True)
+        if served and served not in listed and usable:
+            entries.append({"id": served, "object": "model", "owned_by": "lobes"})
+            listed.add(served)
+    return entries
 
 
 def supported_models_payload(table: RoutingTable, catalog) -> dict:
