@@ -455,9 +455,16 @@ class RoleInfo:
     endpoint: str  # base URL of the service the caller hits ("" when not wired)
     path: str  # the OpenAI path, e.g. "/v1/chat/completions"
     # The SERVED context (tokens): the deployment's `--max-model-len` override
-    # (ROLE_MAX_MODEL_LEN_ENV) when the env sets one, else the catalog native
+    # (ROLE_MAX_MODEL_LEN_ENV) when the env sets one, else the peer's own
+    # advertised window for a proxied role (#220), else the catalog native
     # (`SupportedModel.native_max_model_len`) — issue #81 t5. 0 for audio roles.
-    context: int
+    # ``None`` when NO box is known to serve this role at all (issue #234): a
+    # role this box declares infeasible, whose peer supplied no window and for
+    # which the operator declared none locally, has no served window to report —
+    # and the catalog ceiling is a checkpoint maximum, not a deployment fact.
+    # Measured 2026-08-30: the Thor advertised `associate`/`worker` at the
+    # catalog's 1048576 while hosting neither. See :func:`_resolve_context`.
+    context: int | None
     quant: str  # vLLM quantization for the model; "" when n/a (pooling/audio)
     mtp: bool  # speculative decoding (MTP draft head) active for this model
     # Does this role's endpoint accept OpenAI `tools` on a request? Derived from
@@ -571,6 +578,74 @@ def _gateway_base_url(server: ServerConfig) -> str:
     wins over this fallback.
     """
     return (server.public_url or "").rstrip("/")
+
+
+def _declared_context(role: str, env: Mapping[str, str]) -> int | None:
+    """The deployment's OWN ``--max-model-len`` override for ``role``, else ``None``.
+
+    The operator-typed half of :func:`_served_context`, split out so
+    :func:`_resolve_context` can tell "this deployment declared a window" from
+    "we fell back to the catalog" — a distinction the merged form could not
+    express, and the reason a role no box serves used to advertise the
+    checkpoint ceiling (issue #234).
+
+    ``None`` for an unset key, a blank value, a malformed override, and for
+    ``role`` values absent from :data:`ROLE_MAX_MODEL_LEN_ENV` (the audio
+    roles). Never raises.
+    """
+
+    key = ROLE_MAX_MODEL_LEN_ENV.get(role)
+    if key is None:
+        return None
+    raw = env.get(key)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_context(
+    role: str,
+    env: Mapping[str, str],
+    native: int,
+    *,
+    feasible: bool,
+    peer_context: int | None,
+) -> int | None:
+    """The window to ADVERTISE for ``role`` — ``None`` when nobody serves it.
+
+    Precedence, most authoritative first:
+
+    1. ``peer_context`` — the hosting peer's own advertised window for a
+       proxied role (issue #220). A peer that answered is the authority on
+       what it serves.
+    2. The deployment's own ``<PREFIX>_MAX_MODEL_LEN`` — operator-typed, and
+       honoured even for a role this box declares infeasible, because an
+       explicit declaration outranks an inference about it.
+    3. ``None`` when ``feasible`` is False and neither of the above applied:
+       this box does not host the role, no peer told us a window, and the
+       operator declared none. There is no served window to report, and the
+       catalog ``native`` ceiling is a property of the CHECKPOINT, not of any
+       deployment — publishing it is the measured lie of issue #234 (the Thor
+       advertising ``associate`` at 1048576 while hosting it nowhere).
+    4. ``native`` otherwise — this box hosts the role and simply serves the
+       checkpoint's full window.
+
+    Deliberately NOT nulled: a hosted role (``feasible`` True) always reports a
+    number, so every existing reader of a served role's ``context`` is
+    unaffected.
+    """
+
+    if peer_context is not None:
+        return peer_context
+    declared = _declared_context(role, env)
+    if declared is not None:
+        return declared
+    if not feasible:
+        return None
+    return native
 
 
 def _served_context(role: str, env: Mapping[str, str], native: int) -> int:
@@ -716,8 +791,8 @@ def _gateway_role(
     native_context = entry.native_max_model_len if entry else 0
     endpoint = gateway
     ready = _resolve_ready(loaded, feasible, endpoint, ready_signal, peer_signal)
-    context = (
-        peer_context if peer_context is not None else _served_context(role, env, native_context)
+    context = _resolve_context(
+        role, env, native_context, feasible=feasible, peer_context=peer_context
     )
     return RoleInfo(
         role=role,

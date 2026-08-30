@@ -756,7 +756,7 @@ _GOLDEN_CAPABILITIES = {
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
-        "context": 131072,
+        "context": None,
         "quant": "compressed-tensors",
         "mtp": True,
         # senses serves `pythonic` tool calls (the 12B Gemma gear) — `tools` is
@@ -789,7 +789,7 @@ _GOLDEN_CAPABILITIES = {
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
-        "context": 262144,
+        "context": None,
         "quant": "modelopt",
         "mtp": True,
         # True even though this deployment does not HOST muse: `tools` is a fact
@@ -836,7 +836,7 @@ _GOLDEN_CAPABILITIES = {
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
-        "context": 1048576,
+        "context": None,
         "quant": "modelopt",
         "mtp": False,
         # True even though this deployment does not HOST worker: `tools` is a
@@ -885,7 +885,7 @@ _GOLDEN_CAPABILITIES = {
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
-        "context": 1048576,
+        "context": None,
         "quant": "modelopt",
         "mtp": False,
         "tools": True,

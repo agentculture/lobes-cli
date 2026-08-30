@@ -27,11 +27,13 @@ fixed ``${MINOR_MODEL:-...}``/``${VLLM_MINOR_GPU_MEM_UTIL:-...}``/
 ``overrides`` — only in ``hosts``.
 
 Every built-in shape (:mod:`lobes.profiles.builtin_shapes`) is PURE DATA: the
-five shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``,
-``thor-muse``, ``orin-small``) differ from each other only in their ``hosts``
-role subset
+shipped TOML files (``machine-as-brain``, ``spark-lobe``, ``thor-lobe``,
+``thor-muse``, ``thor-worker``, ``orin-small``, ``orin-lobe``, ``orin-cortex``,
+``orin-associate``) differ from each other only in their ``hosts`` role subset
 and their ``overrides`` budget re-derivation — there is no per-shape Python
-branch anywhere in this module.
+branch anywhere in this module. The set is DISCOVERED at import time from the
+package's own TOML files (see :func:`builtin_shapes`), never hardcoded, so this
+list is documentation of what ships today and not a source of truth.
 
 ``overrides`` here are DECLARED DATA, never a runtime mutation: this task (t1)
 leaves every shape's overrides empty (machine-as-brain must ALWAYS stay

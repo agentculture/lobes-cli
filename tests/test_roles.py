@@ -144,8 +144,13 @@ def test_every_role_carries_the_full_metadata_block() -> None:
         assert info.runtime
         assert isinstance(info.endpoint, str)
         assert info.path.startswith("/v1/")
-        assert isinstance(info.context, int)
-        assert info.context >= 0
+        # `context` is int | None since issue #234: None exactly when no box is
+        # known to serve the role (infeasible here, no peer window, no local
+        # knob). A role this deployment DOES host always reports a number.
+        assert isinstance(info.context, int) or info.context is None
+        if info.feasible:
+            assert isinstance(info.context, int), f"{name} is hosted but has no window"
+            assert info.context >= 0
         assert isinstance(info.quant, str)
         assert isinstance(info.mtp, bool)
         assert isinstance(info.responsibilities, tuple)
@@ -454,7 +459,14 @@ def test_worker_is_present_and_resolves_to_the_worker_gear() -> None:
     assert worker.role == "worker"
     assert worker.model == _WORKER_ID
     assert worker.path == "/v1/chat/completions"
-    assert worker.context == entry.native_max_model_len
+    # Issue #234: `worker` is an OPT-IN role that this env does not host, and no
+    # peer advertised a window for it, so the advert must NOT fall back to the
+    # checkpoint's catalog ceiling — that was the measured lie (the Thor
+    # advertising a 1048576 window for a role it hosts nowhere). The catalog
+    # entry still exists; it is simply not a deployment fact.
+    assert not worker.feasible
+    assert worker.context is None
+    assert entry.native_max_model_len > 0  # the ceiling exists, but is not advertised
     assert worker.quant == entry.quantization
     assert worker.mtp is bool(entry.speculative_config)
     assert worker.tools is True  # qwen3_coder tool parser
@@ -1020,3 +1032,56 @@ def test_measure_family_map_covers_every_role() -> None:
     assert not missing, f"_FAMILY_BY_ROLE is missing: {missing}"
     assert roles_measure._FAMILY_BY_ROLE["hand"] == "llm"
     assert "hand" in roles_measure._LLM_ROLES
+
+
+# --- issue #234: a role no box serves advertises no window -------------------
+#
+# Measured on the live mesh 2026-08-30: the Jetson AGX Thor advertised
+# `associate` and `worker` at `context: 1048576` — the checkpoint's catalog
+# ceiling — while hosting neither, and the DGX Spark advertised `associate` at
+# 1048576 while proxying it to an Orin that served 128000. #220 fixed the
+# proxied half (the peer's own window wins); these guard the half it left: a
+# role nobody serves has no window to report, and the catalog ceiling is a
+# property of the CHECKPOINT, not of any deployment.
+
+
+def test_unhosted_role_advertises_no_window_instead_of_the_catalog_ceiling() -> None:
+    """An infeasible role with no peer window and no local knob reports None."""
+    registry = _registry(_full_env())
+    worker = registry["worker"]
+    assert not worker.feasible, "precondition: this env does not host worker"
+    assert worker.context is None
+    # The ceiling still exists in the catalog — it is simply not a deployment fact.
+    assert _catalog(_WORKER_ID).native_max_model_len > 0
+
+
+def test_a_hosted_role_always_reports_a_window() -> None:
+    """The null is scoped to 'nobody serves it' — a served role is unaffected."""
+    registry = _registry(_full_env())
+    for name, info in registry.items():
+        if info.feasible:
+            assert isinstance(info.context, int), f"{name} is hosted but reports no window"
+
+
+def test_an_operator_declared_window_wins_over_the_null() -> None:
+    """`<PREFIX>_MAX_MODEL_LEN` is operator-typed, so it outranks the inference.
+
+    A box that declares a window for a role it does not host is making an
+    explicit statement; the advert repeats it rather than nulling it.
+    """
+    env = _full_env() | {"WORKER_MAX_MODEL_LEN": "65536"}
+    worker = _registry(env)["worker"]
+    assert not worker.feasible
+    assert worker.context == 65536
+
+
+def test_a_peer_supplied_window_wins_over_the_null() -> None:
+    """The #220 peer advert still beats the null for a proxied role."""
+    env = _full_env() | {
+        "WORKER_FEASIBLE": "false",
+        "WORKER_PEER_ORIGIN": "http://peer.test:8000",
+        "WORKER_PEER_PROXY": "true",
+    }
+    worker = _registry(env, peer_context={"worker": 128000})["worker"]
+    assert not worker.feasible  # proxying never makes this box a host
+    assert worker.context == 128000
