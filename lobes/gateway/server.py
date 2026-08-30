@@ -959,6 +959,127 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
     return next((m.id for m in SUPPORTED_MODELS if m.role_hint == hint), "")
 
 
+# --- the peer-only pool: placing a role this box does NOT host -------------
+#
+# The FIFTH thing that can happen to a model-routed POST, and the mirror of
+# the pool branch further down. That one may forward a role this box HOSTS
+# because a peer replica is better placed; this one places a role this box
+# hosts NOWHERE, across the replicas that do. It has to run BEFORE the
+# referral/proxy branch, because that branch forwards to the SINGULAR
+# `<PREFIX>_PEER_ORIGIN` and would consume every request before any placement
+# could happen — the exact behaviour measured on the Orin on 2026-08-30,
+# where all traffic pinned to one of two equally-good peers.
+#
+# It keeps every guard the singular branch has:
+#
+# * **One hop, always.** A request that ARRIVES marked `X-Lobes-Proxied` is
+#   not placed; it falls through to `_proxied_owner`, which answers 508
+#   `proxy_loop` exactly as before (c7/h4). A box with no local replica has
+#   nothing to serve a marked arrival with, so 508 is still the honest answer.
+# * **Never worse than today.** Nothing selectable — no ready peer, or peers
+#   that disagree with each other — returns None and the request takes the
+#   pre-change path: the singular forward, or the terminal 404
+#   `role_infeasible` when no singular origin is declared (frame decision c24).
+# * **Pressure is not re-applied.** This sits on the same side of the pressure
+#   gate as the singular proxy branch, so a role this box cannot serve is
+#   never shed on this box's own swap/iowait (c21) — the peer's gateway
+#   applies its own policy, and its 429 rides back through the one-forward
+#   rule.
+
+
+def pooled_backends(
+    table: RoutingTable, replica_snapshot: ReplicaSnapshot | None
+) -> frozenset[str]:
+    """Backend names this box PLACES across replicas instead of pinning to one.
+
+    The single predicate for "is this role pooled here", shared by the request
+    path (:func:`_peer_only_forward`) and the ``/v1/models`` advertisement, so
+    the two can never disagree about which roles the pool is answering for —
+    a box that places a role but does not list it, or lists one it would not
+    place, is lying in one direction or the other.
+
+    A name qualifies on four facts, all of them live: this box does not host
+    it, it has declared plural origins, it has the singular origin the
+    fall-through and ``hosted_by`` both need, and at least one declared
+    replica is right now compatible and ready. The last is what makes the
+    listing self-healing — every peer going unready drops the entry again.
+    """
+    if replica_snapshot is None or not table.replica_origins:
+        return frozenset()
+    return frozenset(
+        name
+        for name in table.replica_origins
+        if name in table.infeasible
+        and table.peer_origins.get(name)
+        and any(s.compatible and s.ready and not s.local for s in replica_snapshot(name))
+    )
+
+
+def _peer_only_forward(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    peer_specs: Mapping[str, PeerSpec] | None,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    requested: str | None,
+    replica_snapshot: ReplicaSnapshot | None,
+) -> GatewayResponse | None:
+    """Place one request across the replicas of a role this box does not host.
+
+    ``None`` means "not applicable, take the pre-change path" — no snapshot,
+    no plural origins, the role is hosted here, the request already crossed a
+    hop, or nothing was selectable. Every one of those is a fall-through, not
+    an error: the pool is an optimisation over the singular forward and can
+    never leave a box worse off than it was without it.
+    """
+    backend_name = infeasible_owner(table, requested)
+    # `pooled_backends` carries every precondition — dropped here, plural
+    # origins, the singular origin the fall-through needs, and a compatible
+    # ready replica. A name it omits takes the pre-change path untouched.
+    if backend_name is None or backend_name not in pooled_backends(table, replica_snapshot):
+        return None
+    if _arriving_hop_marker(req_headers) is not None:
+        return None  # single hop: let _proxied_owner answer 508 as it always has
+    placement = _pool_selection(
+        table,
+        backend_name,
+        req_headers,
+        replica_snapshot=replica_snapshot,
+        # There is no local replica to be busy: `local_busy` only ever excludes
+        # a LOCAL candidate (`_selection._is_selectable`), so False is not an
+        # assumption about this box's load — it is the absence of a local
+        # candidate to apply it to.
+        local_busy=False,
+    )
+    origin = placement.selection.origin if placement is not None else None
+    if not origin:
+        return None
+    spec = (peer_specs or {}).get(backend_name)
+    markers = [(ROUTE_REASON_HEADER, placement.selection.reason)] + _route_load_header(placement)
+    return _proxy_to_peer(
+        cfg,
+        _ForwardTarget(
+            name=backend_name,
+            # The served id a peer is asked for is the SAME one the singular
+            # forward would have used, so a caller cannot tell the two paths
+            # apart by what the peer was asked to serve. With no PeerSpec (a
+            # pooled-but-unproxied role) the body is forwarded verbatim below.
+            origin=origin,
+            served_name=spec.served_name if spec is not None else (requested or ""),
+            api_key=_replica_api_key(table, backend_name, origin),
+        ),
+        path,
+        req_headers,
+        body,
+        open_upstream,
+        rewrite=spec is not None,
+        extra_response_headers=markers,
+    )
+
+
 def peer_specs_from_table(
     table: RoutingTable, env: Mapping[str, str] | None = None
 ) -> dict[str, PeerSpec]:
@@ -1544,7 +1665,20 @@ def _replica_api_key(table: RoutingTable, backend_name: str, origin: str) -> str
         index = origins.index(origin)
     except ValueError:
         return ""
-    return keys[index] if index < len(keys) else ""
+    if index < len(keys) and keys[index]:
+        return keys[index]
+    # INHERIT the singular credential (peer-only-replica-pools, c19). The two
+    # channels parse independently — `_replica_api_keys` returns nothing at all
+    # when <PREFIX>_PEER_API_KEYS is unset — so a deployment that has been
+    # forwarding happily on the singular pair for months would, on adding
+    # plural origins, start sending NO Authorization to the very same peer and
+    # collect a 401 from a box it was already authenticated to. Inheritance is
+    # scoped to the origin that IS the singular peer: any other replica needs
+    # its own slot, and an empty slot still means "this peer runs no inbound
+    # gate" (h29), never "borrow someone else's key".
+    if origin == table.peer_origins.get(backend_name):
+        return table.peer_api_keys.get(backend_name, "")
+    return ""
 
 
 def _pool_selection(
@@ -2452,6 +2586,19 @@ def handle_post(
     """
     requested = extract_model(body)
     req_headers = list(req_headers)
+    pooled = _peer_only_forward(
+        table,
+        cfg,
+        peer_specs,
+        path,
+        req_headers,
+        body,
+        open_upstream,
+        requested=requested,
+        replica_snapshot=replica_snapshot,
+    )
+    if pooled is not None:
+        return pooled
     if peer_specs:
         proxied_name = _proxied_owner(table, peer_specs, requested)
         if proxied_name is not None:
@@ -2961,6 +3108,45 @@ def probe_audio_ready(
         return None
 
 
+def _pooled_peer_advert(
+    table: RoutingTable,
+    replica_snapshot: "Mapping[str, tuple[ReplicaState, ...]] | None",
+) -> tuple[dict[str, bool | None], dict[str, int | None]]:
+    """``(ready, context)`` per BACKEND name for every pooled role, or two empty dicts.
+
+    Keyed by backend name because that is the vocabulary
+    :func:`lobes.roles._role_signals` reads, while ``replica_snapshot`` is
+    keyed by ROLE — the two are translated here rather than at either end.
+
+    Only NON-LOCAL replicas are folded: a box that hosts the role has its own
+    lane readiness already, and the peer channel exists precisely for the
+    boxes that do not. A replica that is not ``compatible`` contributes
+    nothing to either value — pooling an unknown is what #199 h11 forbids, and
+    advertising a window this box would never route to is the #220 lie in a
+    new costume.
+    """
+    if not replica_snapshot or not table.replica_origins:
+        return {}, {}
+    # Deferred import — see the module-level NOTE on the lobes.roles cycle.
+    from lobes.roles import BACKEND_ROLE
+
+    ready: dict[str, bool | None] = {}
+    context: dict[str, int | None] = {}
+    for backend in table.replica_origins:
+        states = replica_snapshot.get(BACKEND_ROLE.get(backend, backend)) or ()
+        usable = [s for s in states if not s.local and s.compatible]
+        if not usable:
+            continue
+        ready[backend] = any(s.ready for s in usable)
+        windows = {
+            s.fingerprint.max_model_len
+            for s in usable
+            if s.fingerprint is not None and s.fingerprint.max_model_len
+        }
+        context[backend] = windows.pop() if len(windows) == 1 else None
+    return ready, context
+
+
 def capabilities_payload(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -3027,6 +3213,21 @@ def capabilities_payload(
     peer_ready = None
     if backend_ready is not None and table.peer_proxied:
         peer_ready = {name: backend_ready.get(name) for name in table.peer_proxied}
+    # The POOLED advert (peer-only-replica-pools): a role served by N replicas
+    # has no single peer whose /capabilities can be relayed, so the honest
+    # answer is folded from the snapshot the pool already probes — ready is
+    # true when ANY compatible replica is ready, and context is the
+    # fingerprint-AGREED max_model_len (agreed by construction: max_model_len
+    # is a disqualifying field, so two compatible replicas cannot disagree on
+    # it). This channel WINS over the singular peer relay for a pooled role:
+    # #220's per-peer probe reads one declared origin, which is not the
+    # authority once several serve the same role. With no pool it is empty and
+    # every payload keeps its pre-pool bytes.
+    pooled_ready, pooled_context = _pooled_peer_advert(table, replica_snapshot)
+    if pooled_ready:
+        peer_ready = {**(peer_ready or {}), **pooled_ready}
+    if pooled_context:
+        peer_context = {**(peer_context or {}), **pooled_context}
     registry = build_role_registry(
         table,
         cfg,
@@ -3429,6 +3630,14 @@ class _Handler(BaseHTTPRequestHandler):
                     if self.readiness_cache is not None
                     else None
                 ),
+                # A POOLED dropped role is listed on the pool's own evidence
+                # (frame decision c17): a caller that never reads /capabilities
+                # can still discover a model this box will happily place. The
+                # names come from the SAME predicate the placement path uses,
+                # and the singular peer probe is not consulted — a pool whose
+                # declared peer is down but whose second replica is up is
+                # usable, and must therefore be listed.
+                pooled=pooled_backends(self.table, replica_snapshot_provider(self.replica_caches)),
             ),
         )
 
@@ -3708,6 +3917,56 @@ def declared_lane_config(lane: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def _check_pool_arming(table: RoutingTable) -> None:
+    """Refuse a pool that would silently drop this box's honest referral.
+
+    ``hosted_by`` — the annotation that tells a caller which box actually runs
+    a role it asked for here — is read from the SINGULAR
+    ``<PREFIX>_PEER_ORIGIN`` (:func:`lobes.roles.annotate_peer_referrals`).
+    The plural channel is an ADDITION to it, never a replacement, so a
+    deployment that declared only ``<PREFIX>_PEER_ORIGINS`` would arm a pool
+    and lose the referral at the same time — and the loss would be invisible,
+    because a working pool answers 200 and nobody reads ``hosted_by`` until
+    the pool is empty. Refusing at startup is the loud version of that bug.
+
+    It is also what makes the empty-pool fallback well-defined: "nothing
+    selectable falls through to the singular-proxy forward" (frame decision
+    c24) presumes a singular origin exists to fall through to.
+
+    Raises :class:`~lobes.gateway._config.ReplicaConfigError`, the same error
+    the positional key-length mismatch raises, so a pool misconfiguration is
+    one error class end to end.
+    """
+    # Scoped to DROPPED roles only. A box that HOSTS the role it pools (the
+    # #199 case: cortex on the Spark and Thor) publishes no referral at all —
+    # `hosted_by` exists precisely for roles this box does not host — so
+    # demanding a singular origin there would refuse every pool that shipped
+    # before this feature existed. The requirement belongs exactly where the
+    # referral does.
+    missing = sorted(
+        name
+        for name in table.replica_origins
+        if name in table.infeasible and not table.peer_origins.get(name)
+    )
+    if not missing:
+        return
+    # Deferred import: _config imports nothing from here, but the error type
+    # belongs to the config layer that owns every other pool parse failure.
+    from lobes.gateway._config import PEER_ORIGINS_ENV, ReplicaConfigError
+
+    names = ", ".join(
+        f"{PEER_ORIGINS_ENV.get(name, name.upper() + '_PEER_ORIGINS')} without "
+        f"{name.upper()}_PEER_ORIGIN"
+        for name in missing
+    )
+    raise ReplicaConfigError(
+        f"{names} — the plural replica channel is an addition to the singular "
+        "peer channel, not a replacement: without the singular origin this box "
+        "has no hosted_by to publish and nothing to fall back to when no "
+        "replica is selectable. Declare both."
+    )
+
+
 def build_replica_caches(
     table: RoutingTable,
     *,
@@ -3741,27 +4000,39 @@ def build_replica_caches(
     """
     if not table.replica_origins:
         return {}
+    _check_pool_arming(table)
     # Deferred import — see the module-level NOTE on the lobes.roles cycle.
     from lobes.roles import BACKEND_ROLE
 
     role_of = BACKEND_ROLE
     caches: dict[str, ReplicaCache] = {}
     for backend in table.backends:
-        if backend.name in table.infeasible:
-            continue  # a dropped lane has no local replica to probe or publish
         origins = table.replica_origins.get(backend.name, ())
+        if backend.name in table.infeasible and not origins:
+            continue  # a dropped lane with no declared replicas has nothing to probe
         declared = table.lane_fingerprints.get(backend.name, {})
         if not origins and not declared and backend.task != "generate":
             continue
         keys = table.replica_api_keys.get(backend.name, ())
-        caches[backend.name] = ReplicaCache(
-            role=role_of.get(backend.name, backend.name),
-            local=LocalLane(
+        # PEER-ONLY (peer-only-replica-pools, c2): a dropped lane has no local
+        # replica to probe, but its declared peers are still replicas of the
+        # same role — so the cache is built with `local=None` rather than
+        # skipped. `ReplicaCache` has always taken an Optional lane; this is
+        # the first caller to pass None, and `_apply_reference` supplies the
+        # compatibility reference the missing lane used to be.
+        local_lane = (
+            None
+            if backend.name in table.infeasible
+            else LocalLane(
                 base_url=backend.base_url,
                 served_name=backend.served_name,
                 declared=declared_lane_config(declared),
                 **_local_weight(capacities, backend.name),
-            ),
+            )
+        )
+        caches[backend.name] = ReplicaCache(
+            role=role_of.get(backend.name, backend.name),
+            local=local_lane,
             peers=tuple(
                 PeerReplica(origin=origin, api_key=keys[i] if i < len(keys) else "")
                 for i, origin in enumerate(origins)
@@ -3772,7 +4043,15 @@ def build_replica_caches(
             start=False,
         )
     for cache in caches.values():
-        cache.refresh()
+        # A peer-only cache probes ACROSS BOXES on the bind path (c22): a peer
+        # that is down, slow, or misbehaving must cost at most the peer probe
+        # timeout and must never stop this gateway from serving every role it
+        # does host. Each probe already swallows its own failure per-peer; this
+        # is the outer guard for anything that escapes the pass entirely.
+        try:
+            cache.refresh()
+        except Exception:  # nosec B110 - boot must not depend on a peer
+            pass
         if start:
             cache.start()
     return caches

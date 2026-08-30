@@ -1,0 +1,475 @@
+{
+  "slug": "peer-only-replica-pools",
+  "title": "peer-only replica pools",
+  "frame_slug": "peer-only-replica-pools",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-30T08:25:59Z",
+  "updated": "2026-08-30T08:33:33Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "A box that hosts none of a role still spreads that role's traffic across every declared replica of it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The claim is literal: after this ships, a box hosting NO replica of a role still distributes that role's requests across every declared replica \u2014 demonstrated by a live run where one box's requests are answered by two different peers, not by a config that merely permits it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "build_replica_caches skips every backend in table.infeasible (lobes/gateway/server.py:3752, 'a dropped lane has no local replica to probe or publish'), so a non-hosted role gets no ReplicaCache at all today; that skip is the change point \u2014 a role with declared <PREFIX>_PEER_ORIGINS must get a peer-only cache.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "With no *_PEER_ORIGINS declared for an infeasible backend, build_replica_caches still returns no cache for it \u2014 proven by a test asserting the pre-change cache map for a referral-only and a proxy deployment.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "A peer-only pool needs a compatibility REFERENCE that is not the local lane: compare_fingerprints(local=None, peer) returns (False, 'fingerprint: unknown (local replica not probed)') at lobes/gateway/_replicas.py:598, so with no local lane every peer is marked incompatible and selection would pick nothing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A peer whose fingerprint disagrees with the chosen reference is excluded with a reason naming the differing field, and a pool whose peers do not agree with each other selects nothing rather than guessing \u2014 no unknown ever pools silently (#199 h11 restated for the lane-less case).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Precedence must change: handle_post calls _proxied_owner and forwards to the SINGULAR <PREFIX>_PEER_ORIGIN (lobes/gateway/server.py:2456) before the feasibility 404 and before _pool_selection (server.py:1550), so a pooled non-hosted role has to be placed ahead of the singular proxy branch or the one declared origin always wins.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A pooled non-hosted role never produces more than one forward per request: placement happens once, the chosen peer is stamped X-Lobes-Proxied, and a pre-dispatch failure retries at most once per remaining replica (the #199 t8 semantics) \u2014 verified by a test that counts upstream opens.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "The single-hop guard is untouched: _proxy_to_peer stamps X-Lobes-Proxied (lobes/gateway/server.py:1253) and a marked arrival skips selection and is served locally (_pool_selection, server.py:1578). This work adds fan-out at the ORIGINATING box only \u2014 never a second hop, never a peer re-forwarding.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "A request arriving at this box already marked X-Lobes-Proxied is never placed across peers: with no local replica it still answers 508 proxy_loop, exactly as the pre-change _proxied_owner path does.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "Config parsing and doctor are already generic and stay unchanged: _replica_origins/_replica_api_keys (lobes/gateway/_config.py:439/473) are keyed by backend name with no feasibility check, and doctor passes PEER_ORIGINS/PEER_API_KEYS through for every role prefix (lobes/cli/_commands/doctor.py:269).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "No change lands in lobes/gateway/_config.py's origin/key parsing or in doctor's pass-through suffix tables \u2014 proven by those files being untouched in the diff, with the existing config and doctor tests passing unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "audience",
+      "text": "Operators of a mesh box that hosts none of a heavy role but declares peers for it \u2014 the Jetson AGX Orin today; any future gear-only or edge box tomorrow \u2014 plus every caller that addresses that box's gateway by role name.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The behaviour is generic across all ten role prefixes, not special-cased to cortex or to the Orin: the peer-only path keys off PEER_ORIGINS_ENV's existing mapping, and a test exercises it on a second, non-cortex prefix.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "after_state",
+      "text": "A box with no local replica of a role places each request across all declared <PREFIX>_PEER_ORIGINS by live-probed load, stamping X-Lobes-Proxied-By and X-Lobes-Route-Reason, instead of pinning every request to the singular <PREFIX>_PEER_ORIGIN.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The placement is observable: every answer carries X-Lobes-Proxied-By naming the serving peer and X-Lobes-Route-Reason from the existing closed vocabulary \u2014 no new reason string is invented for the peer-only case (peer-less-loaded already covers it, _selection.py l.63-66).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "before_state",
+      "text": "Today the Orin's gateway forwards every cortex request to one declared origin (measured 2026-08-30: 200 with X-Lobes-Proxied-By = the Spark, always), even though the Spark and Thor each publish two compatible ready cortex replicas \u2014 so the Orin's traffic cannot use the pool that already exists.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The before-state is measured, not asserted: the 2026-08-30 probe on the physical Orin (200, X-Lobes-Proxied-By = the Spark on every request, both peers publishing two compatible ready cortex replicas) is filed as the baseline transcript under docs/evidence/ before the change lands.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "why_it_matters",
+      "text": "Capacity the mesh already has is unreachable from the boxes most likely to need it: a gear-only box is exactly the one that hosts no heavy lobe, and pinning its traffic to one peer wastes half the fleet's cortex capacity and makes that one peer a single point of failure for it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The capacity claim is quantified against the baseline rather than assumed: the acceptance run reports aggregate throughput for concurrent Orin-originated cortex requests before and after, in the same shape as the #199 single-owner baseline.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "A live cross-box transcript from the Orin under load: concurrent cortex requests answered by BOTH the Spark and the Thor (distinct X-Lobes-Proxied-By values with X-Lobes-Route-Reason), a peer taken down still served by the other, and a deployment with no *_PEER_ORIGINS byte-identical to today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The acceptance transcript is a LIVE cross-box run on the physical Orin against the Spark and Thor, filed under docs/evidence/ per the #108 rule \u2014 declared-only data may not be described as validated anywhere in docs, CLAUDE.md, or lobes capabilities.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The measurable targets in the new success_signal claim are reported as raw numbers in the transcript, not as a summary judgement.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "The /v1/models change is scoped to POOLED roles only: a referral-only role (hosted_by, no proxy) and a singular-proxy role (PEER_ORIGIN + PEER_PROXY, no plural origins) keep today's payload byte for byte \u2014 listing is gated on the same 'is this role pooled' predicate the placement path uses, never on infeasible-plus-a-peer-origin.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "A referral-only and a singular-proxy deployment's GET /v1/models payloads are asserted byte-identical before and after, and the pooled listing is driven by the same predicate the placement path uses \u2014 a single source of truth, not two independent conditions that can drift.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Credential blind spot: the plural channel is positional and INDEPENDENT of the singular one \u2014 _replica_api_keys (lobes/gateway/_config.py:473) returns no entry when <PREFIX>_PEER_API_KEYS is unset, so _replica_api_key yields \"\" and the forward carries no Authorization. On the exact target deployment (the Orin declares only the singular PRIMARY_PEER_API_KEY, and the Spark runs an inbound gate) every pooled forward would 401. The change must either inherit the singular key for an origin equal to <PREFIX>_PEER_ORIGIN, or refuse to arm the pool with a named config error \u2014 never silently 401.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A pooled deployment whose plural origins have no matching key slot is caught at startup or by an inherited key \u2014 proven by a test that arms a pool with only the singular PEER_API_KEY set and asserts the forward carries the same Authorization the singular proxy path would have sent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "A pooled non-hosted role's advertised ready must be the OR across its compatible replicas, and its context the fingerprint-agreed max_model_len: probe_peer_ready (lobes/gateway/_readiness.py:212) and the #220 relay are built for ONE peer origin, so with N replicas the capabilities surface has no defined answer today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "With two ready replicas the role advertises ready:true and the agreed context; with every replica unready it advertises ready:false and never fabricates a context from the catalog (the #220 lesson: a role this box does not host has no <PREFIX>_MAX_MODEL_LEN to read).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "Local pressure must not shed a peer-only pooled request: handle_post's proxy branch deliberately runs BEFORE pressure shedding (lobes/gateway/server.py:2417 \u2014 'pressure describes THIS box's load; the model runs on the peer'), and placing the pool ahead of that branch must preserve the bypass, not re-gate a role this box cannot serve on its own swap/iowait.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A test drives a peer-only pooled box under simulated swap/iowait pressure and asserts the pooled role is still forwarded, never shed 429.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "A down or slow peer must never delay or fail the gateway's bind: build_replica_caches refreshes every cache SYNCHRONOUSLY before serve() binds (lobes/gateway/server.py:3775), so adding peer-only caches puts cross-box probes of roles this box does not host on the boot path \u2014 the peer probe timeout must bound it and an unreachable peer must leave the gateway serving every other role normally.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "A test constructs a peer-only cache whose every peer refuses the connection and asserts serve() still binds within the probe timeout and that the role reports ready:false rather than the gateway failing to start.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "success_signal",
+      "text": "Measurable target for the acceptance run on the physical Orin: at least 4 concurrent cortex requests produce BOTH declared peer origins in X-Lobes-Proxied-By (neither peer serving 0 and neither serving 100%), aggregate tok/s is at least 40% above the pinned-to-one-peer baseline, and with one peer's gateway stopped 100% of requests still answer 200 from the other.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Every number in the target is reported as a measured value in the acceptance transcript \u2014 per-peer split, aggregate tok/s against the recorded baseline, and the one-peer-down result \u2014 or the claim is reported as NOT met; no target is quietly softened after the run.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Capture the pre-change baseline transcript on the physical Orin",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt records: every cortex request answered 200 with X-Lobes-Proxied-By pinned to a single peer, both peers' /capabilities showing two compatible ready cortex replicas, and an aggregate tok/s figure for N concurrent requests",
+        "the transcript is filed BEFORE any code change lands, per the #108 measured-not-declared rule"
+      ],
+      "deps": [],
+      "covers": [
+        "c13",
+        "h13"
+      ],
+      "instruction": "Read-only probing of the live Orin/Spark/Thor gateways; no container is stopped or recreated."
+    },
+    {
+      "id": "t2",
+      "summary": "Reference fingerprint for a lane-less pool in _replicas.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "ReplicaCache with local=None takes the first READY peer in declaration order as the reference and compares every other peer to it with compare_fingerprints",
+        "a peer that disagrees is marked incompatible with a reason naming the differing field; peers that disagree with each other leave nothing compatible rather than guessing",
+        "the published replicas array names which peer supplied the reference",
+        "no local-lane behaviour changes: existing ReplicaCache tests pass untouched"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h2"
+      ],
+      "instruction": "Add the reference path inside ReplicaCache._refresh_peers; keep _probe_peer's signature by passing the resolved reference as local_fp."
+    },
+    {
+      "id": "t3",
+      "summary": "Fold the capabilities ready/context relay across a replica set in roles.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a non-hosted pooled role advertises ready = any(compatible and ready) across its replicas",
+        "context is the fingerprint-agreed max_model_len, and is absent (never catalog-derived) when no replica is compatible",
+        "feasible stays false and hosted_by/proxied are unchanged for the same role"
+      ],
+      "deps": [],
+      "covers": [
+        "c20",
+        "h17"
+      ],
+      "instruction": "Extend the peer_ready/peer_context channel in lobes/roles.py only; do not touch annotate_peer_referrals' hosted_by/proxied logic."
+    },
+    {
+      "id": "t4",
+      "summary": "Peer-only cache construction, arming gate and credentials in server.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "build_replica_caches skips an infeasible backend only when it has no declared replica origins; otherwise it builds a cache with local=None and the declared peers",
+        "declaring <PREFIX>_PEER_ORIGINS without <PREFIX>_PEER_ORIGIN raises a named ReplicaConfigError at startup, so hosted_by never silently vanishes",
+        "a replica origin equal to <PREFIX>_PEER_ORIGIN inherits <PREFIX>_PEER_API_KEY when no positional key slot is declared; a forward therefore carries the same Authorization the singular proxy path would have sent",
+        "every peer refusing the connection still lets serve() bind within the peer probe timeout, with the role reporting ready:false \u2014 build_replica_caches never raises for an unreachable peer",
+        "with no *_PEER_ORIGINS declared anywhere the returned cache map is byte-identical to today for referral-only and singular-proxy deployments"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1",
+        "c19",
+        "h16",
+        "c22",
+        "h19"
+      ],
+      "instruction": "All four behaviours land in build_replica_caches and _replica_api_key in server.py \u2014 lobes/gateway/_config.py stays untouched (boundary c8), reusing its ReplicaConfigError."
+    },
+    {
+      "id": "t5",
+      "summary": "Peer-only placement precedence, fallback and guards in handle_post",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "peer-only placement runs before the _proxied_owner branch, gated on 'this backend is pooled' (plural origins declared AND at least one compatible ready replica)",
+        "nothing selectable falls through to the existing singular-proxy forward; with no singular origin the 404 role_infeasible body is byte-identical to today",
+        "a placed answer carries X-Lobes-Proxied-By naming the chosen peer and X-Lobes-Route-Reason from the existing vocabulary \u2014 no new reason string",
+        "an inbound X-Lobes-Proxied request never enters placement and still answers 508 proxy_loop",
+        "at most one forward per request: a test counting upstream opens proves a pre-dispatch failure retries at most once per remaining replica and a 2xx-then-dropped response is never replayed",
+        "under simulated swap/iowait pressure a peer-only pooled request is still forwarded, never shed 429"
+      ],
+      "deps": [
+        "t2",
+        "t4"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c7",
+        "h4",
+        "c12",
+        "h6",
+        "c21",
+        "h18"
+      ],
+      "instruction": "Insert the peer-only branch ahead of _proxied_owner in handle_post, on the same side of the pressure gate as the existing proxy branch."
+    },
+    {
+      "id": "t6",
+      "summary": "List a pooled non-hosted role in GET /v1/models",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a role with declared plural origins and at least one compatible ready replica appears in /v1/models",
+        "the entry disappears again when every replica goes unready",
+        "referral-only and singular-proxy deployments' /v1/models payloads are asserted byte-identical before and after",
+        "the listing is driven by the SAME 'is pooled' predicate the placement path uses \u2014 one source of truth, asserted by a test that would fail if the two diverged"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c18",
+        "h15"
+      ],
+      "instruction": "Expose the pooled predicate as one helper and call it from both the placement path and the models-list filter."
+    },
+    {
+      "id": "t7",
+      "summary": "Byte-identity and generic-prefix regression suite",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_no_config_byte_identity.py passes unchanged",
+        "lobes/gateway/_config.py and lobes/cli/_commands/doctor.py are untouched, verified by diff in the PR",
+        "the peer-only path is exercised on a non-cortex prefix (e.g. multimodal/senses) proving it is generic across all ten role prefixes",
+        "a referral-only 404 role_infeasible body and a singular-proxy forward are byte-identical before and after"
+      ],
+      "deps": [
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c8",
+        "h11",
+        "c11",
+        "h12"
+      ],
+      "instruction": "Tests only; the diff for this task must add no non-test lines."
+    },
+    {
+      "id": "t8",
+      "summary": "Document the peer-only pool and bump the version",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gateway-fleet.md and docs/deployment-shapes.md describe the peer-only state, the reference-fingerprint rule, the singular-origin requirement and the empty-pool fallback",
+        "CLAUDE.md's replica-pool paragraph records the new capability and marks it DECLARED until the acceptance transcript lands (#108)",
+        "the version is bumped via .claude/skills/version-bump/scripts/bump.py and CHANGELOG.md carries an entry"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c1",
+        "h10",
+        "c14",
+        "h14"
+      ],
+      "instruction": "Mark the capability DECLARED in CLAUDE.md until t9's transcript lands; bump with the version-bump skill."
+    },
+    {
+      "id": "t9",
+      "summary": "Live acceptance run on the physical Orin against the Spark and Thor",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "at least 4 concurrent cortex requests produce BOTH declared peer origins in X-Lobes-Proxied-By, neither peer serving 0 nor 100 percent",
+        "aggregate tok/s is at least 40 percent above the t1 baseline, reported as raw numbers",
+        "with one peer's gateway stopped, 100 percent of requests still answer 200 from the other",
+        "the transcript lands under docs/evidence/ and any target not met is reported as NOT met rather than softened"
+      ],
+      "deps": [
+        "t1",
+        "t8"
+      ],
+      "covers": [
+        "c15",
+        "h7",
+        "h20",
+        "c23",
+        "h22"
+      ],
+      "instruction": "Requires rebuilding the Orin gateway image and recreating model-gear-gateway \u2014 ask the operator before running."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The Orin declares only the singular PRIMARY_PEER_API_KEY today, so the new arming gate must land WITH the key-inheritance behaviour or the live acceptance run 401s against the Spark on its first request.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "t4 and t5 both edit lobes/gateway/server.py, so they are formally sequential at merge \u2014 t5 depends on t4 for that reason, not only for content. Building them in parallel would collide.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "N independent forwarding boxes cannot see each other's in-flight dispatches (frame park v2), so herding between 5s refreshes is unaddressed by this plan and may only appear at a mesh scale larger than the current three boxes.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

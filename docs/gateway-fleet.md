@@ -790,6 +790,79 @@ with no change to the request it sends.
 > separately-addressed candidate; a llama.cpp replica needs its own
 > `/status` field mapping before it could ever be compatible.
 
+#### Peer-only pools — a role this box hosts NOWHERE
+
+The pool above forwards a role a box *hosts*. A box that hosts the role
+**nowhere** used to have no such choice: its dropped role took the
+referral/proxy branch, which forwards to the **singular**
+`<PREFIX>_PEER_ORIGIN` and therefore pins every request to one peer — even
+when several equally-good replicas were declared. Measured on the Jetson AGX
+Orin, 2026-08-30: every `model=cortex` request answered 200 with
+`X-Lobes-Proxied-By` naming the same peer, while the Spark and Thor each
+published two compatible, ready cortex replicas.
+
+A **peer-only pool** closes that. Declare the plural family on a box whose
+role is `FEASIBLE=false` and the gateway places each request across the
+declared replicas instead of pinning:
+
+```bash
+# On the Orin (hosts no cortex; both peers do):
+PRIMARY_FEASIBLE=false
+PRIMARY_PEER_ORIGIN=http://spark.example.ts.net:8001    # REQUIRED, see below
+PRIMARY_PEER_API_KEY=<spark's inbound GATEWAY_API_KEY>
+PRIMARY_PEER_ORIGINS=http://spark.example.ts.net:8001,http://thor.example.ts.net:8000
+PRIMARY_PEER_API_KEYS=<spark's key>,<thor's key>
+```
+
+Four rules make it safe, and each one is a decision with a reason:
+
+- **Peers agree with each other.** With no local lane there is nothing to
+  compare a peer against, so the **first READY peer in declaration order**
+  supplies the reference fingerprint and every other declared peer is
+  compared to it — the same disqualifying fields, the same field-naming
+  reason strings. Declaration order, not probe order, so the verdict does not
+  move with network timing. The replica that supplied it is published with
+  `reason: "fingerprint reference"`. Peers that disagree leave nothing
+  compatible; an unknown never pools silently (#199 h11 restated).
+- **The singular origin is REQUIRED.** `hosted_by` — the honest referral —
+  is read from `<PREFIX>_PEER_ORIGIN`, so declaring only the plural channel
+  would arm a pool and silently drop the referral at the same time.
+  Plural-without-singular is refused at startup with a named
+  `ReplicaConfigError`. (A pool on a role the box *hosts* needs no singular
+  origin — it publishes no referral at all.)
+- **Never worse than today.** Nothing selectable — no ready peer, or peers
+  that disagree — falls through to the existing singular-proxy forward; with
+  no singular origin the terminal 404 `role_infeasible` is byte-identical to
+  the pre-pool contract. The pool is an optimisation, never a new failure
+  mode.
+- **The singular credential is inherited.** The two key channels parse
+  independently, so a box that has been forwarding on `<PREFIX>_PEER_API_KEY`
+  would otherwise start sending *no* `Authorization` to that same peer the
+  moment plural origins were added. The replica whose origin **is** the
+  singular peer inherits the singular key; any other replica needs its own
+  positional slot.
+
+Two surfaces follow the placement. `GET /capabilities` folds the advert
+across the set — `ready` is true when **any** compatible replica is ready
+(not when one probed peer is), and `context` is the fingerprint-agreed
+window rather than the catalog ceiling (the #220 lie in a new costume).
+`GET /v1/models` lists a pooled dropped role on that same evidence, so a
+plain OpenAI client that never reads `/capabilities` can discover it; the
+entry disappears again when every replica goes unready. `feasible` stays
+`false` throughout — pooling does not make a box a host.
+
+Local **pressure** is not re-applied: a peer-only pooled request sits on the
+same side of the pressure gate as the singular proxy branch, because
+this box's swap/iowait says nothing about a model it does not run. The
+single-hop guard is unchanged — an arriving `X-Lobes-Proxied` request is
+never placed and still answers 508 `proxy_loop`.
+
+> **Status: DECLARED, not VALIDATED (#108).** The mechanism is unit-proven
+> (`tests/test_gateway_peer_only_pool.py`) and the pre-change baseline is
+> filed, but no live cross-box acceptance run has landed. Nothing here may be
+> described as validated until a transcript under `docs/evidence/` shows one
+> box's concurrent requests answered by two different peers.
+
 **Declaring a pool — the plural peer family.** Beside each role's existing
 singular `<PREFIX>_PEER_ORIGIN` (proxy-lobes, above), a new **plural**
 channel declares a whole set of same-role replicas:

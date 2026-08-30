@@ -442,6 +442,8 @@ def list_models_payload(
     ready: Mapping[str, "bool | None"] | None = None,
     peer_served: Mapping[str, str] | None = None,
     loaded_adapters: Mapping[str, frozenset[str]] | None = None,
+    *,
+    pooled: "frozenset[str]" = frozenset(),
 ) -> dict:
     """OpenAI ``/v1/models`` shape listing the fleet's served models.
 
@@ -514,11 +516,19 @@ def list_models_payload(
                 for adapter in backend.adapters
                 if adapter in confirmed
             )
-    if peer_served and ready is not None:
+    if peer_served and (ready is not None or pooled):
         listed = {entry["id"] for entry in data}
-        for name in sorted(table.peer_proxied):
+        for name in sorted(frozenset(table.peer_proxied) | frozenset(pooled)):
             served = peer_served.get(name)
-            if served and served not in listed and ready.get(name) is True:
+            # A POOLED name carries its own live evidence (peer-only replica
+            # pools): the caller derived it from a snapshot in which some
+            # declared replica is compatible AND ready, which is strictly
+            # stronger than the singular peer probe this branch otherwise
+            # consults — and survives that one peer being down while another
+            # serves. A non-pooled proxied name keeps the #92 rule exactly:
+            # no live `ready` verdict, no listing.
+            usable = name in pooled or (ready is not None and ready.get(name) is True)
+            if served and served not in listed and usable:
                 data.append({"id": served, "object": "model", "owned_by": "lobes"})
                 listed.add(served)
     return {"object": "list", "data": data}

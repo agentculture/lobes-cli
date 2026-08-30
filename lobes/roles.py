@@ -829,7 +829,14 @@ def _role_signals(
     """
     backend = ROLE_BACKEND[role]
     signal = None if backend_ready is None else backend_ready.get(backend) is True
-    if backend not in table.peer_proxied:
+    # A POOLED role reads the peer channel too (peer-only-replica-pools): a box
+    # that declares <PREFIX>_PEER_ORIGINS is answered by a replica set, and its
+    # folded ready/context is exactly the advert this channel carries — whether
+    # or not the operator also armed the singular <PREFIX>_PEER_PROXY. Without
+    # this, a pooled-but-unproxied role would fall back to the local
+    # computation and advertise the catalog's native ceiling, which is the
+    # #220 defect the pool would otherwise reintroduce.
+    if backend not in table.peer_proxied and backend not in table.replica_origins:
         return signal, None, None
     peer_signal = None if peer_ready is None else peer_ready.get(backend) is True
     peer_ctx = None if peer_context is None else peer_context.get(backend)

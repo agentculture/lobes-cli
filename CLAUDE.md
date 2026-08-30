@@ -776,6 +776,38 @@ plural peer family is generic across all nine role prefixes. See
 `docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
 schema: additive `replicas`/`fingerprint` fields).
 
+**Peer-only pools — a role the box hosts NOWHERE (DECLARED, not validated).**
+The pool above forwards a role a box *hosts*; a box that hosts it nowhere took
+the referral/proxy branch, which dials the **singular**
+`<PREFIX>_PEER_ORIGIN` and therefore pins every request to one peer. Measured
+on the Jetson AGX Orin 2026-08-30: every `model=cortex` request answered 200
+with `X-Lobes-Proxied-By` naming the same peer, while the Spark and Thor each
+published two compatible ready cortex replicas. Declaring the plural family on
+a `FEASIBLE=false` role now places each request across the declared replicas
+instead. Four rules, each a recorded decision: **peers agree with each other**
+(no local lane means no reference, so the first READY peer in DECLARATION
+order supplies the fingerprint every other peer is compared to, published as
+`reason: "fingerprint reference"`; disagreement leaves nothing compatible —
+#199 h11 restated); **the singular origin is REQUIRED** (`hosted_by` reads it,
+so plural-without-singular is refused at startup with a named
+`ReplicaConfigError` — a pool on a role the box HOSTS needs no singular
+origin, publishing no referral at all); **never worse than today** (nothing
+selectable falls through to the existing singular forward, and with no
+singular origin the 404 `role_infeasible` is byte-identical); and **the
+singular credential is inherited** by the replica whose origin IS the singular
+peer, since the two key channels parse independently and an upgraded box would
+otherwise start sending no `Authorization` to a peer it was already
+authenticated to. `/capabilities` folds the advert across the set (`ready` =
+any compatible replica ready; `context` = the fingerprint-agreed window, not
+the catalog ceiling) and `/v1/models` lists a pooled dropped role on that same
+evidence; `feasible` stays `false` — pooling never makes a box a host. Local
+pressure is not re-applied and the single-hop 508 guard is unchanged.
+**Status: DECLARED (#108)** — unit-proven in
+`tests/test_gateway_peer_only_pool.py`, spec/plan under
+`docs/specs/2026-08-30-peer-only-replica-pools.md` and
+`docs/plans/2026-08-30-peer-only-replica-pools.md`, with **no** live
+cross-box acceptance transcript yet.
+
 ## The deployment lock and the variation catalog
 
 Orthogonal again to profile (how a role is tuned) and shape (which roles a

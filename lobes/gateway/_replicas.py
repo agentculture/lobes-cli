@@ -127,6 +127,21 @@ from ._selection import UNCALIBRATED_WEIGHT
 # unchanged and reads the same in a CLI table.
 UNKNOWN = "unknown"
 
+# The compatibility REASON a peer-only pool stamps on the replica that supplied
+# the reference fingerprint (peer-only-replica-pools, frame decision c16). A
+# box with no local lane has nothing to compare peers against — the first READY
+# peer in DECLARATION order becomes the reference and every other declared peer
+# is compared to it, so "peers agree with each other" replaces "peers agree
+# with us". Naming it in the published `reason` is how `GET /capabilities`
+# answers "which replica was the reference?" without a new schema field.
+REFERENCE_NOTE = "fingerprint reference"
+
+# The reason every deferred peer carries when NO peer could supply a reference
+# (none ready, or none serving the role). It keeps the #199 h11 contract intact
+# for the lane-less case: an unknown never pools silently, and the honest
+# outcome is an empty candidate set, not a guess.
+NO_REFERENCE_REASON = "fingerprint: unknown (no ready peer to reference)"
+
 # How often each daemon thread re-probes. Replica load moves faster than
 # readiness, but probing costs a cross-box round trip (~110 ms measured on the
 # Thor), so the ReadinessCache interval is reused rather than tightened —
@@ -1181,8 +1196,23 @@ class ReplicaCache:
         )
 
     def _probe_peer(
-        self, peer: PeerReplica, previous: ReplicaState, local_fp: Fingerprint | None
+        self,
+        peer: PeerReplica,
+        previous: ReplicaState,
+        local_fp: Fingerprint | None,
+        *,
+        defer_compatibility: bool = False,
     ) -> ReplicaState:
+        """Probe one peer; ``defer_compatibility`` leaves the verdict to
+        :meth:`_apply_reference`.
+
+        A peer-only cache cannot decide compatibility during the probe pass:
+        the reference is itself one of the peers, and it is not known until
+        every peer has answered. Deferring leaves ``compatible=False`` (the
+        honest pre-verdict state) and a ``reason`` carrying ONLY the capacity
+        note, so the reference pass can fold the compatibility reason in front
+        of it with :func:`_with_note` and lose nothing.
+        """
         origin = peer.origin.rstrip("/")
         key = peer.api_key or None
         status_payload, health = self._get_json(origin + _STATUS_PATH, self._peer_timeout, key)
@@ -1219,7 +1249,10 @@ class ReplicaCache:
             origin + _CAPABILITIES_PATH, self._peer_timeout, key
         )
         fingerprint = self._peer_fingerprint(caps_payload) if caps_payload is not None else None
-        compatible, reason = compare_fingerprints(local_fp, fingerprint)
+        if defer_compatibility:
+            compatible, reason = False, ""
+        else:
+            compatible, reason = compare_fingerprints(local_fp, fingerprint)
         # The peer is the authority on its OWN capacity (q1): a value it
         # publishes wins over the operator's fallback declaration for it.
         raw = entry.get(PEER_CAPACITY_KEY)
@@ -1263,17 +1296,73 @@ class ReplicaCache:
         with self._lock:
             previous = dict(self._peer_states)
             local_fp = self._local_state.fingerprint if self._local_state else None
+        peer_only = self._local_lane is None
         updated: dict[str, ReplicaState] = {}
         for peer in self._peers:
             seed = previous.get(peer.origin) or self._seed(peer.origin, False, peer.weight)
             try:
-                updated[peer.origin] = self._probe_peer(peer, seed, local_fp)
+                updated[peer.origin] = self._probe_peer(
+                    peer, seed, local_fp, defer_compatibility=peer_only
+                )
             except Exception:  # nosec B110 - one bad peer never aborts the pass
                 updated[peer.origin] = seed.evolve(
                     ready=False, health="error", compatible=False, reason="probe failed"
                 )
+        if peer_only:
+            updated = self._apply_reference(updated)
         with self._lock:
             self._peer_states = updated
+
+    def _apply_reference(self, states: dict[str, ReplicaState]) -> dict[str, ReplicaState]:
+        """Decide compatibility for a LANE-LESS pool: peers agree with each other.
+
+        The reference is the first peer in DECLARATION order that is both
+        ``ready`` and carries a fingerprint — declaration order, not probe
+        order, so the verdict is deterministic and does not move with network
+        timing. Every other peer is then compared to it exactly as a hosted
+        box compares peers to its own lane, which is why the reason strings a
+        caller sees are the same ones :func:`compare_fingerprints` produces
+        today.
+
+        Three outcomes, none of them a guess:
+
+        * **a reference exists** — it is compatible with itself and stamped
+          :data:`REFERENCE_NOTE`; the rest carry their real verdict;
+        * **no peer could supply one** (none ready, or none serving the role)
+          — every peer that answered carries :data:`NO_REFERENCE_REASON` and
+          nothing is compatible, so the pool is empty and the caller falls
+          through to the singular-proxy forward (frame decision c24);
+        * **a peer never answered** — its ``fingerprint`` is ``None`` and its
+          probe-time reason ("peer gateway timeout", "peer does not serve role
+          X") is authoritative, so it is left exactly as probed.
+        """
+        reference: Fingerprint | None = None
+        reference_origin: str | None = None
+        for peer in self._peers:  # declaration order, deliberately
+            state = states.get(peer.origin)
+            if state is not None and state.ready and state.fingerprint is not None:
+                reference, reference_origin = state.fingerprint, peer.origin
+                break
+        resolved: dict[str, ReplicaState] = {}
+        for origin, state in states.items():
+            if state.fingerprint is None:
+                resolved[origin] = state  # never answered; its own reason stands
+                continue
+            if reference is None:
+                resolved[origin] = state.evolve(
+                    compatible=False, reason=_with_note(NO_REFERENCE_REASON, state.reason)
+                )
+                continue
+            if origin == reference_origin:
+                resolved[origin] = state.evolve(
+                    compatible=True, reason=_with_note(REFERENCE_NOTE, state.reason)
+                )
+                continue
+            compatible, reason = compare_fingerprints(reference, state.fingerprint)
+            resolved[origin] = state.evolve(
+                compatible=compatible, reason=_with_note(reason, state.reason)
+            )
+        return resolved
 
     # --- daemon threads (mirrors ReadinessCache) ---------------------------
 
