@@ -870,9 +870,13 @@ never placed and still answers 508 `proxy_loop`.
 > ran 51% slower at 4 concurrent requests and 3.5% slower at 8 than pinning
 > to one peer, because it balances by QUEUE DEPTH while those two replicas
 > differ in SPEED by 4.4x (Spark 48.9 tok/s vs Thor 11.0 tok/s
-> single-stream) and neither publishes a capacity. `build_replica_caches`
-> builds each `PeerReplica` with no weight, so a pooling box cannot declare
-> what a peer is worth — a gap in #199's capacity half that the peer-only
+> single-stream). Both DO publish a capacity — 2.0 each, calibrated, and
+> intentional — but `<PREFIX>_MAX_ACTIVE` is a CONCURRENCY figure: nothing in
+> the fingerprint or the capacity model expresses SERVICE RATE, so equal slot
+> counts rank equal however differently the two boxes actually produce
+> tokens. `build_replica_caches` also builds each `PeerReplica` with no
+> weight, so a pooling box has no channel to declare what a peer is worth
+> even if it knew. Both are gaps in #199's capacity half that the peer-only
 > pool inherits rather than causes. **Do not claim a throughput benefit for
 > a heterogeneous pair.** The live run also caught a real defect before
 > merge: the first build placed 4/4 onto one peer because the branch dialled

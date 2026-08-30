@@ -834,3 +834,42 @@ def test_a_released_dispatch_stops_counting_against_its_replica() -> None:
     # first's choice rather than alternating blindly.
     _second, second_url = place()
     assert first_url == second_url == _SPARK
+
+
+def test_a_peer_that_goes_dark_does_not_stay_compatible_on_a_stale_fingerprint() -> None:
+    """A replica that stops answering must not keep a compatibility verdict.
+
+    Measured live on the Orin, 2026-08-30, with the Thor's gateway stopped:
+    the row read ``ready=False`` beside ``compatible=True``, because
+    ``_probe_peer``'s failure branch evolves the PREVIOUS state — which still
+    carries the last successful probe's fingerprint — and the reference pass
+    then re-derived compatibility from it. Selection was never affected (an
+    unready replica is not selectable), but ``GET /capabilities`` was
+    publishing a judgement about a box it had failed to reach.
+    """
+    reachable = {_SPARK: _peer_payload(), _THOR: _peer_payload()}
+    cache = _peer_only_cache(reachable)
+    cache.refresh()
+    assert all(s.compatible for s in cache.current())
+
+    # The Thor goes dark; the Spark keeps answering.
+    reachable.pop(_THOR)
+    cache.refresh()
+    states = {s.origin: s for s in cache.current()}
+    assert states[_SPARK].compatible and states[_SPARK].ready
+    assert not states[_THOR].ready
+    assert not states[_THOR].compatible, "a peer that went dark stayed compatible"
+    assert "peer gateway" in states[_THOR].reason
+
+
+def test_the_reference_is_never_a_peer_that_went_dark() -> None:
+    # The Spark supplied the reference while reachable; once dark, the Thor
+    # must take over rather than the pool leaning on a stale fingerprint.
+    reachable = {_SPARK: _peer_payload(), _THOR: _peer_payload()}
+    cache = _peer_only_cache(reachable)
+    cache.refresh()
+    assert [s.origin for s in cache.current() if s.reason == REFERENCE_NOTE] == [_SPARK]
+
+    reachable.pop(_SPARK)
+    cache.refresh()
+    assert [s.origin for s in cache.current() if s.reason == REFERENCE_NOTE] == [_THOR]

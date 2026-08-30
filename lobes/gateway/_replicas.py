@@ -1297,6 +1297,15 @@ class ReplicaCache:
             previous = dict(self._peer_states)
             local_fp = self._local_state.fingerprint if self._local_state else None
         peer_only = self._local_lane is None
+        # Stamped BEFORE the pass so `_apply_reference` can tell a peer probed
+        # in THIS pass from one carrying a verdict (and a fingerprint) left
+        # over from an earlier one — the failure branches of `_probe_peer`
+        # evolve the previous state and deliberately do not refresh
+        # `last_seen`.
+        # Read the clock ONLY on the peer-only path: `_apply_reference` is the
+        # sole consumer, and an unconditional read would consume a tick from
+        # an injected clock and shift every timestamp a hosted cache records.
+        pass_start = self._now() if peer_only else 0.0
         updated: dict[str, ReplicaState] = {}
         for peer in self._peers:
             seed = previous.get(peer.origin) or self._seed(peer.origin, False, peer.weight)
@@ -1309,11 +1318,13 @@ class ReplicaCache:
                     ready=False, health="error", compatible=False, reason="probe failed"
                 )
         if peer_only:
-            updated = self._apply_reference(updated)
+            updated = self._apply_reference(updated, pass_start)
         with self._lock:
             self._peer_states = updated
 
-    def _apply_reference(self, states: dict[str, ReplicaState]) -> dict[str, ReplicaState]:
+    def _apply_reference(
+        self, states: dict[str, ReplicaState], pass_start: float
+    ) -> dict[str, ReplicaState]:
         """Decide compatibility for a LANE-LESS pool: peers agree with each other.
 
         The reference is the first peer in DECLARATION order that is both
@@ -1332,21 +1343,37 @@ class ReplicaCache:
           — every peer that answered carries :data:`NO_REFERENCE_REASON` and
           nothing is compatible, so the pool is empty and the caller falls
           through to the singular-proxy forward (frame decision c24);
-        * **a peer never answered** — its ``fingerprint`` is ``None`` and its
-          probe-time reason ("peer gateway timeout", "peer does not serve role
-          X") is authoritative, so it is left exactly as probed.
+        * **a peer never answered** — its probe-time reason ("peer gateway
+          timeout", "peer does not serve role X") is authoritative, so it is
+          left exactly as probed.
+
+        That last case is why ``pass_start`` exists. ``_probe_peer``'s failure
+        branch evolves the PREVIOUS state, which still carries the fingerprint
+        of the last successful probe — so re-deriving compatibility from it
+        would resurrect a peer that just went dark as ``compatible: true`` on
+        evidence nobody could confirm. Seen live on the Orin, 2026-08-30, with
+        the Thor's gateway stopped: the row read ``ready=False`` beside
+        ``compatible=True``. Selection was unaffected (an unready replica is
+        never selectable), but ``GET /capabilities`` was advertising a
+        judgement about a box it had failed to reach. Only a state whose
+        ``last_seen`` was refreshed during this pass is re-evaluated.
         """
         reference: Fingerprint | None = None
         reference_origin: str | None = None
         for peer in self._peers:  # declaration order, deliberately
             state = states.get(peer.origin)
-            if state is not None and state.ready and state.fingerprint is not None:
+            if (
+                state is not None
+                and state.ready
+                and state.fingerprint is not None
+                and state.last_seen >= pass_start
+            ):
                 reference, reference_origin = state.fingerprint, peer.origin
                 break
         resolved: dict[str, ReplicaState] = {}
         for origin, state in states.items():
-            if state.fingerprint is None:
-                resolved[origin] = state  # never answered; its own reason stands
+            if state.fingerprint is None or state.last_seen < pass_start:
+                resolved[origin] = state  # not probed this pass; its verdict stands
                 continue
             if reference is None:
                 resolved[origin] = state.evolve(

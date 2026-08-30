@@ -810,10 +810,13 @@ fold (`ready` false→true, `context` 1048576→262144) and continuity with a
 replica down all measured, but aggregate throughput came in **51% slower at
 4 concurrent and 3.5% slower at 8** than pinning, because the pool balances
 by QUEUE DEPTH while the two replicas differ in SPEED by 4.4x (Spark 48.9
-vs Thor 11.0 tok/s single-stream) and neither publishes a capacity —
-`build_replica_caches` builds each `PeerReplica` with no weight, so a
-pooling box cannot declare what a peer is worth (a gap in #199's capacity
-half, inherited not caused). **No throughput benefit may be claimed for a
+vs Thor 11.0 tok/s single-stream). Both DO publish a calibrated capacity
+(2.0 each, by design), but `<PREFIX>_MAX_ACTIVE` is CONCURRENCY — equal slot
+counts rank equal however differently the boxes produce tokens, and nothing
+in the model expresses SERVICE RATE; `build_replica_caches` also builds each
+`PeerReplica` with no weight, so a pooling box has no channel to declare a
+peer's worth even if it knew (both gaps in #199's capacity half, inherited
+not caused). **No throughput benefit may be claimed for a
 heterogeneous pair.** Baseline:
 `docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt`; spec/plan under
 `docs/specs/` and `docs/plans/2026-08-30-peer-only-replica-pools.md`.
