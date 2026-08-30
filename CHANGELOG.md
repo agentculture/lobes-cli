@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.0] - 2026-08-30
+
+### Added
+
+- `lobes doctor --role <role>` probes one lane against the RUNNING deployment instead of the scaffold: the advert, the served window read from `/tokenize` (the engine's own `max_model_len`, not a restatement of the advert), alias routing, peer liveness for a proxied role, and whether the raw served id routes — naming the alias to use when it does not (issue #234). Opt-in because it issues one bounded completion; never part of a plain `lobes doctor`. The generate probe sends `enable_thinking: false` and treats an empty HTTP 200 as a failure, because a small `max_tokens` with thinking on returns exactly that.
+
+### Fixed
+
+- A role no box serves no longer advertises the checkpoint's catalog ceiling as its `context` (issue #234). Measured on the live mesh 2026-08-30: the Thor advertised `associate` and `worker` at 1048576 while hosting neither, and a consumer sizing work from that field overran a window that was never there. `context` is now `null` when the role is infeasible here, no peer supplied a window and the operator declared none; every hosted or peer-backed role still reports an integer, so no reader of a served role's context is affected. #220 fixed the proxied half; this fixes the half it left.
+- `lobes profiles.shapes`' module docstring claimed five built-in shapes where nine ship. The set is discovered from the package's TOML at import, so the list is now labelled documentation rather than a source of truth.
+
 ## [0.70.1] - 2026-08-30
 
 ### Changed
