@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.70.1] - 2026-08-30
+
+### Changed
+
+- Split list_models_payload's off-box entry loop into _peer_model_entries, and build_replica_caches' skip/lane decisions into _skips_cache and _cache_local_lane, to stay under the cognitive-complexity budget (Sonar S3776).
+
+### Fixed
+
+- Peer-only pools: a role that is pooled but has no selectable replica now carries X-Lobes-Route-Reason: none on its singular-forward fall-through, so a trace can tell an empty pool from no pool at all (Qodo #5 on PR #233).
+- Peer-only pools: /v1/models lists a pooled role whether or not the singular <PREFIX>_PEER_PROXY is armed. The served id was derived from the proxy-only peer_specs mapping, so a pooled-but-unproxied role could be placed while the model list omitted it (Qodo #6 on PR #233).
+
 ## [0.70.0] - 2026-08-30
 
 ### Added

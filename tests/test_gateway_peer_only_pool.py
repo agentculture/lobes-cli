@@ -269,9 +269,11 @@ def test_first_ready_peer_in_declaration_order_is_the_reference() -> None:
     cache = _peer_only_cache({_SPARK: _peer_payload(), _THOR: _peer_payload()})
     cache.refresh()
     states = {s.origin: s for s in cache.current()}
-    assert states[_SPARK].compatible and states[_SPARK].reason == REFERENCE_NOTE
+    assert states[_SPARK].compatible
+    assert states[_SPARK].reason == REFERENCE_NOTE
     # The second peer is compatible on its own merits, not by being the reference.
-    assert states[_THOR].compatible and states[_THOR].reason == ""
+    assert states[_THOR].compatible
+    assert states[_THOR].reason == ""
 
 
 def test_reference_is_declaration_order_not_probe_order() -> None:
@@ -292,7 +294,8 @@ def test_a_disagreeing_peer_is_excluded_with_the_field_named() -> None:
     assert states[_SPARK].compatible
     assert not states[_THOR].compatible
     assert "max_model_len" in states[_THOR].reason
-    assert "262144" in states[_THOR].reason and "131072" in states[_THOR].reason
+    assert "262144" in states[_THOR].reason
+    assert "131072" in states[_THOR].reason
 
 
 def test_a_different_checkpoint_never_pools_silently() -> None:
@@ -309,7 +312,8 @@ def test_no_ready_peer_leaves_nothing_compatible() -> None:
     )
     cache.refresh()
     states = cache.current()
-    assert states and not any(s.compatible for s in states)
+    assert states
+    assert not any(s.compatible for s in states)
     assert all(NO_REFERENCE_REASON in s.reason for s in states)
 
 
@@ -856,7 +860,8 @@ def test_a_peer_that_goes_dark_does_not_stay_compatible_on_a_stale_fingerprint()
     reachable.pop(_THOR)
     cache.refresh()
     states = {s.origin: s for s in cache.current()}
-    assert states[_SPARK].compatible and states[_SPARK].ready
+    assert states[_SPARK].compatible
+    assert states[_SPARK].ready
     assert not states[_THOR].ready
     assert not states[_THOR].compatible, "a peer that went dark stayed compatible"
     assert "peer gateway" in states[_THOR].reason
@@ -873,3 +878,61 @@ def test_the_reference_is_never_a_peer_that_went_dark() -> None:
     reachable.pop(_SPARK)
     cache.refresh()
     assert [s.origin for s in cache.current() if s.reason == REFERENCE_NOTE] == [_THOR]
+
+
+def test_a_full_pool_falls_through_and_says_so() -> None:
+    """A pooled role whose replicas are all FULL forwards with an honest reason.
+
+    Raised by Qodo on PR #233: a fall-through carried no
+    ``X-Lobes-Route-Reason``, so a trace could not tell "the pool placed
+    nothing" from "this deployment has no pool". `REASON_NONE` is the existing
+    vocabulary's word for "no replica was selected" — no new string.
+
+    The distinction that matters: the marker appears only when the role really
+    IS pooled (some replica is compatible and ready) and placement still found
+    nothing — i.e. every replica is full. A pool whose replicas are unready is
+    not pooled by the predicate at all, and its response stays byte-identical
+    to the pre-pool contract (asserted separately below).
+    """
+    table, cfg, specs = _build(_orin_env())
+    full = _snapshot(
+        _state(_SPARK, running=2, weight=2.0, calibrated=True),
+        _state(_THOR, running=2, weight=2.0, calibrated=True),
+    )
+    resp, calls = _post(table, cfg, specs, _body("cortex"), replica_snapshot=full)
+    assert resp.status == 200
+    assert _header(resp, S.PROXIED_BY_HEADER) == _SPARK  # the singular forward
+    assert _header(resp, S.ROUTE_REASON_HEADER) == "none"
+    assert [c.url for c in calls] == [_SPARK]
+
+
+def test_an_unready_pool_falls_through_with_no_marker_at_all() -> None:
+    table, cfg, specs = _build(_orin_env())
+    resp, _calls = _post(
+        table,
+        cfg,
+        specs,
+        _body("cortex"),
+        replica_snapshot=_snapshot(_state(_SPARK, ready=False), _state(_THOR, ready=False)),
+    )
+    assert _header(resp, S.ROUTE_REASON_HEADER) is None
+
+
+def test_a_pooled_but_unproxied_role_is_still_listed() -> None:
+    """Placement must not depend on the proxy knob while listing does.
+
+    Raised by Qodo on PR #233: `peer_served` is derived from `peer_specs`,
+    which holds only roles with `<PREFIX>_PEER_PROXY` armed — so a pooled
+    role without it could be placed while `/v1/models` omitted its model,
+    breaking the one-predicate promise. The served id is now resolved the
+    same way `peer_specs_from_table` resolves it, independently of the knob.
+    """
+    env = _orin_env(PRIMARY_PEER_PROXY="false")
+    table, _cfg = build_config(env)
+    assert "primary" not in table.peer_proxied  # the knob really is off
+    pooled = S.pooled_backends(table, _snapshot(_state(_SPARK), _state(_THOR)))
+    assert pooled == frozenset({"primary"}), "placement still treats it as pooled"
+    served = S._peer_served_name(table, "primary", env)
+    assert served, "a pooled role resolves a served id with no PeerSpec"
+    payload = list_models_payload(table, {"multimodal": True}, {"primary": served}, pooled=pooled)
+    assert served in {entry["id"] for entry in payload["data"]}

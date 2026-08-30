@@ -2625,8 +2625,27 @@ def handle_post(
     if peer_specs:
         proxied_name = _proxied_owner(table, peer_specs, requested)
         if proxied_name is not None:
+            # A role that IS pooled but had nothing selectable reaches the
+            # singular forward. Stamp the honest reason for that: without it a
+            # trace cannot tell "the pool placed nothing because it is empty"
+            # from "this deployment has no pool at all", two very different
+            # operational states. REASON_NONE is the existing vocabulary's
+            # word for "no replica was selected" — no new string. A role with
+            # no pool declared is not in `pooled_backends`, so its response
+            # stays byte-identical (h1/h5).
+            fallthrough = (
+                [(ROUTE_REASON_HEADER, REASON_NONE)]
+                if proxied_name in pooled_backends(table, replica_snapshot)
+                else []
+            )
             return _proxy_to_peer(
-                cfg, peer_specs[proxied_name], path, req_headers, body, open_upstream
+                cfg,
+                peer_specs[proxied_name],
+                path,
+                req_headers,
+                body,
+                open_upstream,
+                extra_response_headers=fallthrough,
             )
     early, served, tier_headers, local_busy = _resolve_served_or_early(
         table,
@@ -3638,6 +3657,25 @@ class _Handler(BaseHTTPRequestHandler):
             if self.peer_specs
             else None
         )
+        # A POOLED role is placeable whether or not the operator also armed
+        # the singular <PREFIX>_PEER_PROXY — `_peer_only_forward` never
+        # consults `peer_proxied`. `peer_specs`, though, is built ONLY from
+        # proxied roles, so deriving the served id from it alone would let a
+        # pooled-but-unproxied role be placed while /v1/models omitted it,
+        # breaking the one-predicate promise this listing exists to keep
+        # (Qodo #6 on PR #233). Resolve those names the way
+        # `peer_specs_from_table` does, and keep the audio lanes out for the
+        # same reason it does: their ids are not requestable via `model`.
+        pooled_names = pooled_backends(self.table, replica_snapshot_provider(self.replica_caches))
+        if pooled_names:
+            resolved = dict(peer_served or {})
+            for name in pooled_names:
+                if name in ("stt", "tts") or resolved.get(name):
+                    continue
+                served = _peer_served_name(self.table, name, os.environ)
+                if served:
+                    resolved[name] = served
+            peer_served = resolved or None
         # LoRA adapters (hand-lobe plan t4): only those the owning engine's own
         # /v1/models confirmed it loaded. A declared-but-unloaded adapter must
         # never read as usable (#92 for adapters) — see
@@ -3660,7 +3698,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # and the singular peer probe is not consulted — a pool whose
                 # declared peer is down but whose second replica is up is
                 # usable, and must therefore be listed.
-                pooled=pooled_backends(self.table, replica_snapshot_provider(self.replica_caches)),
+                pooled=pooled_names,
             ),
         )
 
@@ -3990,6 +4028,47 @@ def _check_pool_arming(table: RoutingTable) -> None:
     )
 
 
+def _skips_cache(
+    table: RoutingTable, backend: Backend, origins: tuple, declared: Mapping[str, str]
+) -> bool:
+    """Does this backend get no :class:`ReplicaCache` at all?
+
+    Two independent reasons, split out of :func:`build_replica_caches` to keep
+    it under the cognitive-complexity budget (Sonar S3776): a DROPPED lane
+    with no declared replicas has nothing to probe or publish, and a
+    non-generate lane with neither replicas nor a declared fingerprint has
+    nothing to say either.
+    """
+    if backend.name in table.infeasible and not origins:
+        return True
+    return not origins and not declared and backend.task != "generate"
+
+
+def _cache_local_lane(
+    table: RoutingTable,
+    backend: Backend,
+    declared: Mapping[str, str],
+    capacities: Mapping[str, float] | None,
+) -> "LocalLane | None":
+    """This box's own lane for the cache, or ``None`` for a PEER-ONLY pool.
+
+    peer-only-replica-pools, claim c2: a dropped lane has no local replica to
+    probe, but its declared peers are still replicas of the same role — so the
+    cache is built with ``local=None`` rather than skipped. ``ReplicaCache``
+    has always taken an Optional lane; this is the first caller to pass
+    ``None``, and ``ReplicaCache._apply_reference`` supplies the compatibility
+    reference the missing lane used to be.
+    """
+    if backend.name in table.infeasible:
+        return None
+    return LocalLane(
+        base_url=backend.base_url,
+        served_name=backend.served_name,
+        declared=declared_lane_config(declared),
+        **_local_weight(capacities, backend.name),
+    )
+
+
 def build_replica_caches(
     table: RoutingTable,
     *,
@@ -4031,31 +4110,13 @@ def build_replica_caches(
     caches: dict[str, ReplicaCache] = {}
     for backend in table.backends:
         origins = table.replica_origins.get(backend.name, ())
-        if backend.name in table.infeasible and not origins:
-            continue  # a dropped lane with no declared replicas has nothing to probe
         declared = table.lane_fingerprints.get(backend.name, {})
-        if not origins and not declared and backend.task != "generate":
+        if _skips_cache(table, backend, origins, declared):
             continue
         keys = table.replica_api_keys.get(backend.name, ())
-        # PEER-ONLY (peer-only-replica-pools, c2): a dropped lane has no local
-        # replica to probe, but its declared peers are still replicas of the
-        # same role — so the cache is built with `local=None` rather than
-        # skipped. `ReplicaCache` has always taken an Optional lane; this is
-        # the first caller to pass None, and `_apply_reference` supplies the
-        # compatibility reference the missing lane used to be.
-        local_lane = (
-            None
-            if backend.name in table.infeasible
-            else LocalLane(
-                base_url=backend.base_url,
-                served_name=backend.served_name,
-                declared=declared_lane_config(declared),
-                **_local_weight(capacities, backend.name),
-            )
-        )
         caches[backend.name] = ReplicaCache(
             role=role_of.get(backend.name, backend.name),
-            local=local_lane,
+            local=_cache_local_lane(table, backend, declared, capacities),
             peers=tuple(
                 PeerReplica(origin=origin, api_key=keys[i] if i < len(keys) else "")
                 for i, origin in enumerate(origins)
