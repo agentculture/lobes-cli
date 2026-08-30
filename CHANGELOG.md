@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.2] - 2026-08-30
+
+### Changed
+
+- Cleared all 15 SonarCloud findings on PR #237. One was a real narrowing: `_request`'s except tuple named both `urllib.error.URLError` and `OSError`, and the former subclasses the latter (S5713). The other 14 were test style — composite assertions split so a failure names the condition that broke (S9073), and `pytest.raises` blocks narrowed to the single call under test (S5778).
+
+## [0.71.1] - 2026-08-30
+
+### Fixed
+
+- `doctor --role`'s alias probe treated an OpenAI-shaped 200 carrying `content: null` as healthy, and crashed with `AttributeError` on a non-string content. That null is exactly what this lane returns when a thinking model exhausts its budget inside the reasoning trace (`finish_reason: length`) — the condition the check exists to catch — so the probe reported the motivating failure as a pass. Absent, null, non-string and blank content now all fail as "a 200 that carried no answer" (Qodo #1 on PR #237).
+- `_request` did not catch `http.client.HTTPException`, so a truncated body (`IncompleteRead`) escaped a helper documented as never raising and aborted the whole role diagnosis. It now reads as status 0, like every other transport failure (Qodo #2).
+- `doctor --role` returned before the `--apply requires --fix` validation, so `--role X --apply` silently ignored the flag. The heal flags are now validated before any branch consumes them, and `--role` with `--fix`/`--apply` is refused outright — one probes a running lane, the other heals scaffold files (Qodo #3).
+- `doctor --role` dialed `/capabilities` outside `friendly_unauthorized_errors`, so a 401 surfaced as a raw `HTTPError` with bug-filing guidance instead of the actionable `.env` remediation every other gateway-dialing read-only verb gives (Qodo #4).
+
+## [0.71.0] - 2026-08-30
+
+### Added
+
+- `lobes doctor --role <role>` probes one lane against the RUNNING deployment instead of the scaffold: the advert, the served window read from `/tokenize` (the engine's own `max_model_len`, not a restatement of the advert), alias routing, peer liveness for a proxied role, and whether the raw served id routes — naming the alias to use when it does not (issue #234). Opt-in because it issues one bounded completion; never part of a plain `lobes doctor`. The generate probe sends `enable_thinking: false` and treats an empty HTTP 200 as a failure, because a small `max_tokens` with thinking on returns exactly that.
+
+### Fixed
+
+- A role no box serves no longer advertises the checkpoint's catalog ceiling as its `context` (issue #234). Measured on the live mesh 2026-08-30: the Thor advertised `associate` and `worker` at 1048576 while hosting neither, and a consumer sizing work from that field overran a window that was never there. `context` is now `null` when the role is infeasible here, no peer supplied a window and the operator declared none; every hosted or peer-backed role still reports an integer, so no reader of a served role's context is affected. #220 fixed the proxied half; this fixes the half it left.
+- `lobes profiles.shapes`' module docstring claimed five built-in shapes where nine ship. The set is discovered from the package's TOML at import, so the list is now labelled documentation rather than a source of truth.
+
 ## [0.70.1] - 2026-08-30
 
 ### Changed

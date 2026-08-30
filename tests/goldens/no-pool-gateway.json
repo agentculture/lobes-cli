@@ -2,7 +2,7 @@
   "capabilities": {
     "body": {
       "associate": {
-        "context": 1048576,
+        "context": null,
         "endpoint": "http://gateway.test:8000",
         "feasible": false,
         "forbidden_responsibilities": [
@@ -101,7 +101,7 @@
         "tools": true
       },
       "muse": {
-        "context": 262144,
+        "context": null,
         "endpoint": "http://gateway.test:8000",
         "feasible": false,
         "forbidden_responsibilities": [
@@ -211,7 +211,7 @@
         "tools": false
       },
       "worker": {
-        "context": 1048576,
+        "context": null,
         "endpoint": "http://gateway.test:8000",
         "feasible": false,
         "forbidden_responsibilities": [

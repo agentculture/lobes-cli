@@ -283,6 +283,20 @@ def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
     return offline, "offline"
 
 
+def _context_cell(info: dict) -> str:
+    """The ``context`` column, rendering a nulled window as ``-`` (issue #234).
+
+    ``RoleInfo.context`` is ``None`` when no box is known to serve the role at
+    all — this machine does not host it, no peer advertised a window, and the
+    operator declared none locally. A dash says "no served window" without
+    inventing the catalog ceiling the field used to print; a plain format spec
+    on ``None`` would raise instead.
+    """
+
+    value = info.get("context")
+    return "-" if value is None else str(value)
+
+
 def _loaded_cell(info: dict) -> str:
     """The ``loaded`` column's THREE states — where a role is served, not just whether.
 
@@ -326,7 +340,7 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         info = registry[role]
         model = info["model"] if len(info["model"]) <= 48 else info["model"][:45] + "..."
         lines.append(
-            f"{info['role']:<9} {model:<48} {info['context']:>8}  "
+            f"{info['role']:<9} {model:<48} {_context_cell(info):>8}  "
             f"{_loaded_cell(info):<8}  {info['endpoint'] or '(none)'}"
         )
         # Hardware feasibility (task t6): a role this machine's per-machine
