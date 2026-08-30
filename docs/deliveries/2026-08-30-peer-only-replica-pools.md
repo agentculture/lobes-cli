@@ -108,6 +108,7 @@ decisions no record covers.
 - evidence transcripts: `docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt`, `docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`
 - spec / plan: `docs/specs/2026-08-30-peer-only-replica-pools.md`, `docs/plans/2026-08-30-peer-only-replica-pools.md`
 - issues: #232 (capacity expresses concurrency, not service rate)
+- PR: #233
 
 ## Delivery Claims
 
