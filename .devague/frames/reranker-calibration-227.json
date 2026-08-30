@@ -1,0 +1,485 @@
+{
+  "slug": "reranker-calibration-227",
+  "title": "reranker calibration (#227)",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-30T14:45:33Z",
+  "updated": "2026-08-30T15:11:14Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The reranker lane serves Qwen3-Reranker-0.6B with the model card's judge prompt, so relevance scores are calibrated and a caller's instruction is honored instead of silently dropped",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "the live lane's usage.prompt_tokens per pair rises to roughly the template's length after the change, proving the prompt is rendered \u2014 not just that the flag was accepted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja (bind-mounted from a vendored lobes/templates/fleet/qwen3_reranker.jinja) to the vllm-rerank command; measure before and after with the #220 probe set through the spark gateway; record in docs/evidence and docs/qwen3-reranker-0.6b.md",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "vllm-rerank adds --chat-template with the Qwen3-Reranker judge prompt (system 'Judge whether the Document meets the requirements...', <Instruct>/<Query>/<Document>, empty <think> block). The served build (vllm 0.26.1rc1.dev942, io_processor.py get_score_prompt) applies a score template ONLY when one is explicitly passed; with none, Qwen3ForSequenceClassification (no SupportsScoreTemplate) falls to bare query+document concatenation \u2014 measured live on spark 2026-08-30: 3 pairs = 71 prompt tokens total, so no judge prompt reaches the model. vLLM's own qwen3_reranker_online.py example for this exact --hf-overrides invocation includes the --chat-template flag; lobes never did.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "docker inspect of model-gear-vllm-rerank after re-render shows the --chat-template arg, and the vllm boot log shows no 'ChatTemplateResolutionError' fall-through to default_tokenizer_encode",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does the jinja's empty <think>\\n\\n</think> block plus the from_2_way_softmax head reproduce the card's reference scores on the card's own example pairs, or does vLLM's seq-cls conversion differ from the card's causal-LM logit read?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "In lobes/templates/fleet/docker-compose.yml vllm-rerank command, add '--chat-template=/usr/local/share/lobes/qwen3_reranker.jinja' after the --hf-overrides line; update the one compose golden; lobes init re-render on spark; docker inspect proves the arg",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The template ships as a lobes scaffold file (lobes/templates/fleet/qwen3_reranker.jinja, a verbatim copy of the image's /vllm-workspace/examples/pooling/score/template/qwen3_reranker.jinja) bind-mounted read-only like mg-logwrap.sh and the tool-parser plugin \u2014 cite-don't-import, never a path inside the image that a digest bump can move. This adds a third packaged-scaffold file to the deployment lock's deviation-d2 gap (docs/deployment-lock.md) and must be named there.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the vendored jinja is byte-identical to the image's examples/pooling/score/template/qwen3_reranker.jinja at the pinned digest (diff recorded in the transcript), and docs/deployment-lock.md deviation d2 names it as a third scaffold file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Copy /vllm-workspace/examples/pooling/score/template/qwen3_reranker.jinja out of the pinned image into lobes/templates/fleet/qwen3_reranker.jinja; add it to the init scaffold list next to mg-logwrap.sh; bind-mount './qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro' on vllm-rerank; name it in docs/deployment-lock.md deviation d2",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Per-request 'instruction' becomes live: vLLM's ScoringRequestMixin folds a top-level 'instruction' into chat_template_kwargs and the jinja reads it, defaulting to 'Given a web search query, retrieve relevant passages that answer the query'. Measured live today the field is accepted and silently IGNORED (identical scores, 53 tokens with vs without). docs/qwen3-reranker-0.6b.md documents the default instruct and the per-request override on both /v1/rerank and /v1/score.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "two /v1/rerank calls differing only in 'instruction' return different relevance_scores for at least one pair, on both /v1/rerank and /v1/score",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "After the flag lands, probe /v1/rerank and /v1/score with and without 'instruction' and record the score delta; document the default instruct text and the field on both endpoints in docs/qwen3-reranker-0.6b.md",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Before/after live measurement under #108: a transcript in docs/evidence/ re-running the #220 probe set (sky; 'which file lists the ports' -> ledger; 'cats purr' distractor; the NOTICE-vs-toolbatch batching inversion) plus assess.py's France probe, on the untemplated lane first (that baseline is unrecoverable after the change \u2014 the model-switch-playbook rule) and then on the templated lane, recording score deltas and whether the inversion persists. Today's untemplated spark baseline: ledger 0.933, cats-purr 0.523, bananas 0.514.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the before-run is executed and saved BEFORE the compose change lands on the box (the untemplated numbers cannot be recovered afterwards)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Write scripts or a shell transcript running the #220 probe set + France probe against http://localhost:8001 on spark; run it BEFORE re-render, save as docs/evidence/<date>-baseline-reranker-untemplated-spark.txt; run again after, save as docs/evidence/<date>-accept-reranker-template-spark.txt",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "docs/qwen3-reranker-0.6b.md records the calibration finding for callers \u2014 'usable for top-k ordering, not thresholds' as measured on the untemplated lane, and whatever the templated re-measurement shows \u2014 before anyone wires a cutoff; it also notes the rerank-ordering probe is unverified on the GB10 (#106). The doc's build claim is stale and gets corrected in passing: it cites vllm 0.23.1rc1.dev672 / digest 7c5a10e9, while the compose template pins 8bd082c2 and the live lane reports 0.26.1rc1.dev942.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "docs/qwen3-reranker-0.6b.md states the measured before/after distractor band and cites the transcript by filename; its build/digest line matches the compose template's pinned digest",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Rewrite docs/qwen3-reranker-0.6b.md: add a 'Prompt template and calibration' section (judge prompt, default instruct, per-request instruction, measured before/after band, 'top-k ordering, not thresholds' if still true, #106 note); replace the 0.23.1rc1.dev672/7c5a10e9 build line with the compose-pinned digest and the live-reported version",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "The change is a score-VALUE change, not an API break: the only in-mesh consumers are eidetic-cli (eidetic/memory/embed.py maps index->relevance_score and sorts; no threshold) and colleague (colleague/lobes.py reads the reranker role and discards it). No caller found pins a cutoff, so no contract migration is needed beyond the doc note; the assess.py France probe (top_index==0) is ordering-only and should still pass.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "grep of eidetic-cli and colleague at the time of the change finds no comparison of relevance_score against a constant; tests/test_lobes.py in colleague still passes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "The gateway keeps relaying /v1/rerank and /v1/score bodies verbatim (lobes/gateway/server.py POST relay; the rerank/score routes are pass-through with no body rewrite). lobes shapes the instruction inside the engine via --chat-template only \u2014 the gateway never injects, rewrites, or defaults an 'instruction' field.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the gateway's forwarded rerank/score body is byte-identical to the caller's (tests/ pass-through test), before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify by reading lobes/gateway/server.py's rerank/score relay and the existing pass-through test; make no gateway change",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "The lane's other flags are untouched: --runner=pooling --convert=classify, the --hf-overrides (Qwen3ForSequenceClassification / classifier_from_token [no,yes] / is_original_qwen3_reranker), RERANK_MAX_MODEL_LEN=8192, RERANK_GPU_MEM_UTIL=0.06, and Thor's sm_110 divergences (RERANK_ATTENTION_BACKEND=TRITON_ATTN, RERANK_ENFORCE_EAGER=--enforce-eager, #105/#106/#109). A --chat-template does not change memory budget (pooling, no decode) but adds ~60 prompt tokens per pair, well inside 8192.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "a diff of the rendered docker-compose.yml before/after shows exactly one added line in vllm-rerank (the --chat-template arg) and one added bind mount; RERANK_* env keys unchanged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Diff the rendered docker-compose.yml on spark before/after: exactly one added command line and one added volume line under vllm-rerank",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "No checkpoint swap: the catalog entry stays Qwen/Qwen3-Reranker-0.6B loaded via hf_overrides; the converted tomaarsen/Qwen3-Reranker-0.6B-seq-cls checkpoint vLLM's examples also mention is not adopted (same template requirement, different weights provenance).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "non_goal",
+      "text": "The assess.py rerank probe fixture and its PASS rule (relevant doc ranks first) are not redefined into a calibration/threshold gate; #106 (probe unverified on GB10) stays its own issue.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "non_goal",
+      "text": "The embedder lane (vllm-embed, Qwen3-Embedding-0.6B) is not touched here even though Qwen3-Embedding has its own instruct-prefix convention; whether it has the same silent-template gap is parked, not fixed, in this frame.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "audience",
+      "text": "Callers of the fleet's /v1/rerank and /v1/score \u2014 today eidetic-cli's retrieval lane, tomorrow colleague's #277 retrieval lane \u2014 and the lobes operator who decides whether a score is safe to threshold",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "eidetic-cli's embed.py rerank call and colleague's #277 retrieval lane are named as the callers in the doc's calibration note; no other in-mesh /v1/rerank caller exists at grep time",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Name the two callers in the doc's calibration note",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "before_state",
+      "text": "The vllm-rerank lane scores bare query+document concatenations: no --chat-template, so the served build never renders the card's judge prompt (measured 2026-08-30: ~24 prompt tokens per pair), distractors land at 0.5-0.77, one position-independent inversion was observed, and a caller's 'instruction' field is accepted but silently dropped; docs say nothing about thresholds",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the before-run transcript records usage.prompt_tokens per pair (~24) and the distractor scores on the untemplated lane, so the before-state is evidence, not recollection",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Captured by the baseline transcript (c5)",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "The lane renders the model card's judge prompt for every pair (system judge line, <Instruct>/<Query>/<Document>, empty think block), the default instruct is the card's, a per-request 'instruction' actually changes the score, and docs/qwen3-reranker-0.6b.md tells a caller what the scores mean (measured before/after) before they wire a cutoff",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the after-run transcript shows the template's token cost per pair, an instruction-dependent score, and the doc paragraph is quoted in the transcript's 'Deploy record'",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Captured by the acceptance transcript (c5) and the doc rewrite (c6)",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "A reranker whose scores are uncalibrated is only safe for top-k ordering; eidetic and colleague's retrieval lanes will want a relevance cutoff eventually, and vLLM's own example shows the lane was simply missing the flag its checkpoint requires \u2014 a one-flag defect masquerading as model behaviour",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "the exported spec cites vLLM's examples/pooling/score/qwen3_reranker_online.py serving line as the source of the flag, and the fix is one compose line plus one vendored file \u2014 if it needs more, this claim is wrong",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Cite the vLLM example serving line in the spec and the doc",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "success_signal",
+      "text": "docs/evidence/<date>-accept-reranker-template-spark.txt shows the same probe set scored before and after: prompt_tokens per pair rises from ~24 to ~85 (template present), the France/Amazon/bananas probe still ranks index 0 first, the 'cats purr' distractor drops materially below the untemplated 0.52, and a request carrying 'instruction' returns a different score than one without",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "every number in the success signal is read from the transcript, not predicted; if the distractor band does NOT drop, the transcript says so and the doc keeps 'top-k ordering, not thresholds'",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Read every number from the acceptance transcript; record a non-drop honestly",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "USER DECISION (q1): --chat-template is BAKED into the vllm-rerank compose command, hardcoded like --hf-overrides; no env knob, one compose golden changes",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "USER DECISION (q2): the doc's stale vLLM build/digest claim is corrected in this frame alongside the calibration note",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether the judge template fixes the NOTICE-vs-toolbatch ordering inversion (0.64 vs 0.32) or only the distractor band is unknown until the templated re-measurement; the claim in c5 is a measurement plan, not a predicted outcome",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "The embedder lane (vllm-embed, Qwen3-Embedding-0.6B) may have the same silent gap for its instruct-prefix convention; unexplored here \u2014 candidate follow-up issue",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "The image's example template path (/vllm-workspace/examples/...) is stable on the pinned digest but unverified across digest bumps; vendoring (c3) sidesteps it, but the vendored copy then needs a drift check against the image on each nightly bump",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/templates/fleet/docker-compose.yml vllm-rerank command (+ live docker inspect of model-gear-vllm-rerank on spark)",
+      "finding": "The lane passes --runner=pooling --convert=classify + --hf-overrides and NO --chat-template; the live container's args match the template byte-for-byte, so the gap is in the template, not local drift",
+      "seeds": [
+        "c2",
+        "c9"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "vllm 0.26.1rc1.dev942 in the served image: entrypoints/pooling/scoring/io_processor.py get_score_prompt + model_executor/models/interfaces.py SupportsScoreTemplate",
+      "finding": "A score template is applied only when explicitly provided (FIXME in-source: tokenizer chat templates are deliberately NOT trusted); only jina_vl implements SupportsScoreTemplate, so Qwen3ForSequenceClassification takes default_tokenizer_encode -> use_sep_token defaults True -> tokenizer(text=query, text_pair=doc), a bare concatenation with no judge prompt",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "/vllm-workspace/examples/pooling/score/{qwen3_reranker_online.py,using_template_online.py,template/qwen3_reranker.jinja} in the served image",
+      "finding": "vLLM's own serving line for the ORIGINAL checkpoint with these exact hf_overrides appends --chat-template examples/pooling/score/template/qwen3_reranker.jinja; the jinja is the model card's format verbatim (system judge prompt, <Instruct>/<Query>/<Document>, empty <think> block) with instruction defaulting to the card's 'Given a web search query, retrieve relevant passages that answer the query'",
+      "seeds": [
+        "c2",
+        "c3",
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "vllm entrypoints/pooling/scoring/protocol.py ScoringRequestMixin",
+      "finding": "Both /v1/rerank and /v1/score accept a top-level 'instruction' that is folded into chat_template_kwargs; without a template it is parsed and dropped. Live probe on spark 2026-08-30 confirmed: same scores with and without the field",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "live /v1/rerank probe through the spark gateway (port 8001), 2026-08-30, read-only",
+      "finding": "Untemplated baseline: ledger doc 0.933, 'cats purr' 0.523, bananas 0.514 for the ports query; usage.prompt_tokens=71 for three pairs, i.e. ~24 tokens/pair \u2014 the ~60-token judge prompt is provably absent. Reporter's 0.72-0.77 distractors were a different query; the distractor band is uncalibrated either way",
+      "seeds": [
+        "c5",
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/gateway/server.py (POST relay, lines ~195-215; rerank/score listed as pass-through routes)",
+      "finding": "The gateway forwards rerank/score bodies unchanged after the bearer gate; shaping the prompt belongs in the engine flag, not a gateway rewrite",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "eidetic-cli eidetic/memory/embed.py:300-310 and colleague colleague/lobes.py (reranker role read and discarded)",
+      "finding": "eidetic maps index->relevance_score and sorts (no threshold); colleague ignores the reranker; no mesh consumer pins a cutoff, so a score-value change is not an API break",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/templates/fleet/docker-compose.yml bind mounts (mg-logwrap.sh, vllm_plugins tool parser) + docs/deployment-lock.md deviation d2",
+      "finding": "Packaged scaffold files are bind-mounted from the deployment dir; a template jinja follows the same pattern and joins the d2 list of files a lock-only restore is missing",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/qwen3-reranker-0.6b.md",
+      "finding": "Doc claims vllm 0.23.1rc1.dev672 / digest 7c5a10e9; compose pins 8bd082c2 and the live lane reports 0.26.1rc1.dev942 \u2014 stale build claim to correct alongside the calibration note; it currently says nothing about thresholds or instruction",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "lobes/assess.py probe_rerank_correctness + _RERANK_PROBE_* (France/Amazon/bananas)",
+      "finding": "PASS is ordering-only (top_index==0); it does not read score magnitudes, so it neither detects the calibration gap nor breaks when scores shift",
+      "seeds": [
+        "c7",
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "tests/goldens (1 golden carries the rerank hf-overrides line; 37 carry RERANK_ keys) + lobes/profiles/render.py RERANK prefix + lobes/runtime/_lock.py allowlist",
+      "finding": "A baked flag changes one compose golden; a new RERANK_CHAT_TEMPLATE knob would instead touch render.py tables, env.example, 37 goldens and the lock allowlist \u2014 the knob-vs-bake choice sets the blast radius",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "docs/model-switch-playbook.md ordering rule (benchmark the incumbent first)",
+      "finding": "The untemplated lane's numbers are unrecoverable once the flag lands; the before-run is mandatory and today's probe is only a partial baseline",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "lobes/catalog.py Qwen/Qwen3-Reranker-0.6B entry",
+      "finding": "Catalog carries hf_overrides but has no field for a score/chat template; a template-bearing gear either hardcodes it in compose (as hf_overrides already is) or the catalog grows a field \u2014 no swap of the entry itself",
+      "seeds": [
+        "c10"
+      ]
+    }
+  ],
+  "lapses": []
+}
