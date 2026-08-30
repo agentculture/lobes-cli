@@ -138,3 +138,29 @@ Findings:
 ## Scope of validation
   spark-f8a9 (DGX Spark GB10) only, per decision q3. Thor (sm_110) and Orin
   (sm_87) still serve untemplated until their next re-render (plan risk r5).
+
+================================================================================
+## Live test through the real consumer — eidetic-cli 0.13.0 (same day, after the change)
+
+Finding first: eidetic ships EmbedClient.rerank() -> POST /v1/rerank but NOTHING
+calls it — `eidetic recall --mode hybrid` is embedding + BM25 only. Filed
+agentculture/eidetic-cli#39. So the test below drives eidetic's OWN client code
+(`_remote_rerank`, called directly so its silent lexical fallback cannot mask
+a failure) on the records a real recall returned.
+
+  $ recall.sh "why does the reranker score distractors high" --top-k 4 --json   # embed via gateway
+  hybrid top-4: 0.9999 reranker-lane-missing-chat-template-227
+                0.510  spark-reranker-templated-2026-08-30
+                0.231  lobes-pressure-swap-occupancy-sticky-2026-07-09
+                0.227  devague-no-resolve-park
+  $ EmbedClient(base_url=http://localhost:8001/v1)._remote_rerank(q, top-4 texts + "Cats purr when they are content.")
+    remote  lexical  doc
+     0.993    0.034  reranker-lane-missing-chat-template-227
+     0.936    0.016  spark-reranker-templated-2026-08-30
+     0.000    0.016  lobes-pressure-swap-occupancy-sticky-2026-07-09
+     0.000    0.018  devague-no-resolve-park
+     0.000    0.000  cats-purr (distractor)
+
+  Both on-topic records kept and GRADED (0.993 vs 0.936 — real-length records
+  do not saturate the way the short graded probe did); both off-topic records
+  hybrid still surfaced at ~0.23, and the injected distractor, go to 0.000.

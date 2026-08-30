@@ -2,7 +2,7 @@
   "plan_slug": "reranker-calibration-227",
   "schema_version": 1,
   "created": "2026-08-30T16:24:16Z",
-  "updated": "2026-08-30T16:24:59Z",
+  "updated": "2026-08-30T16:32:17Z",
   "deviations": [
     {
       "id": "d1",
@@ -12,6 +12,19 @@
       "affects": [
         "c8",
         "h8"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "t6's instruction says 'lobes init --apply --force' to re-render ~/.lobes on spark. The deployed docker-compose.yml is hand-edited (primary lane converted to a string command with DSpark speculative config, older env_file block \u2014 the #214 incident CLAUDE.md records as 'could not be safely re-scaffolded'), so a --force render would clobber the cortex lane. Instead: back up docker-compose.yml as docker-compose.yml.bak-20260830-pre-227 (the box's convention), copy the vendored jinja into ~/.lobes byte-identical, and hand-apply exactly the two lines (mount + --chat-template) to the deployed vllm-rerank service, then 'lobes up reranker --apply'. The before/after diff is still exactly two lines (h9); doctor sees the file (h18).",
+      "task_ref": "t6",
+      "reason": "The Spark cannot be force-re-rendered without destroying hand edits outside this frame; the change reaching the lane is identical either way.",
+      "affects": [
+        "c9",
+        "h9"
       ],
       "origin": "llm",
       "status": "approved",
