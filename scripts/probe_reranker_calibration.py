@@ -227,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--latency-samples", type=int, default=5)
     a = ap.parse_args(argv)
+    if a.latency_samples < 1:
+        ap.error("--latency-samples must be >= 1")
     url = a.url.rstrip("/")
     try:
         header(url, a.model)
