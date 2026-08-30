@@ -204,7 +204,11 @@ fine-tuning base and trained specialist — default-hosted on EVERY card, the
 `minor`/`cheap` tier, and the pressure-policy servable floor; see the
 paragraph below), `embedder`
 (`Qwen/Qwen3-Embedding-0.6B` → `POST /v1/embeddings`), `reranker`
-(`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score`), and the
+(`Qwen/Qwen3-Reranker-0.6B` → `POST /v1/rerank` + `/v1/score` — since #227 the
+lane renders the model card's judge prompt via a baked `--chat-template`
+(vendored `qwen3_reranker.jinja`), so scores saturate: a relevance threshold is
+safe, but ordering among several relevant documents is coarse; see
+`docs/qwen3-reranker-0.6b.md#prompt-template-and-calibration`), and the
 opt-in audio overlay's `stt`/`tts`. Roles are routed by **task family**
 (`generate` / `embed` / `score` / `rerank`) and discoverable via `lobes
 capabilities` / `lobes endpoint <role>` / gateway `GET /capabilities` — a
