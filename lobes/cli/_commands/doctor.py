@@ -33,6 +33,9 @@ from importlib.resources import files as _resource_files
 from pathlib import Path
 
 from lobes import __version__
+from lobes.cli import _runtime_ops
+from lobes.cli._commands import _role_probe
+from lobes.cli._commands.capabilities import _fetch_gateway_capabilities
 from lobes.cli._commands.init import DEFAULT_SHAPE, _values_equal
 from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
@@ -42,6 +45,7 @@ from lobes.gateway._config import FEASIBLE_ENV
 from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
+from lobes.roles import ROLES
 from lobes.runtime import _compose, _detect, _env, _health
 from lobes.runtime._lock import LOCK_FILENAME, allowlist_env, file_digest, load_lock
 
@@ -976,7 +980,47 @@ def _render_text(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _cmd_doctor_role(args: argparse.Namespace, role: str) -> int:
+    """The live per-role lane (issue #234) — see :mod:`._role_probe`.
+
+    Separate from the scaffold sweep on purpose: it asks the RUNNING
+    deployment questions (including one bounded completion) rather than
+    reading files, so it must be requested explicitly and never rides along
+    with a plain `lobes doctor`.
+    """
+    if role not in ROLES:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"unknown role: {role}",
+            remediation=f"one of: {', '.join(ROLES)}",
+        )
+    json_mode = bool(getattr(args, "json", False))
+    compose_dir = getattr(args, "compose_dir", None)
+    port, _ = _runtime_ops.resolve_port_soft(args)
+    base_url = f"http://localhost:{port}"
+    try:
+        deploy_dir = _compose.resolve_deployment_dir(compose_dir)
+    except ModelGearError:
+        deploy_dir = None
+    headers = _runtime_ops.gateway_auth_headers(deploy_dir)
+    registry = _fetch_gateway_capabilities(port, headers=headers)
+    entry = None if registry is None else registry.get(role)
+    checks = _role_probe.probe_role(base_url, role, entry, headers=headers)
+    healthy = all(c["passed"] or c["severity"] != "error" for c in checks)
+    report = {"role": role, "endpoint": base_url, "checks": checks, "healthy": healthy}
+    if json_mode:
+        emit_result(report, json_mode=True)
+    else:
+        lines = [f"lobes doctor --role {role}: {'healthy' if healthy else 'unhealthy'}", ""]
+        lines += _render_check_lines(checks)
+        emit_result("\n".join(lines), json_mode=False)
+    return 0 if healthy else 1
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
+    role = getattr(args, "role", None)
+    if role:
+        return _cmd_doctor_role(args, role)
     fix = bool(getattr(args, "fix", False))
     apply = bool(getattr(args, "apply", False))
     if apply and not fix:
@@ -1027,5 +1071,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="With --fix: actually write the heal plan (absent files/keys only).",
     )
+    p.add_argument(
+        "--role",
+        metavar="ROLE",
+        help="Probe ONE role against the running deployment instead of the "
+        "scaffold sweep: served model, served window (/tokenize), alias "
+        "routing, served-id routing and peer liveness. Issues one small "
+        "completion, so it is opt-in and never part of a plain 'doctor'.",
+    )
+    p.add_argument("--port", type=int, help="Gateway port (default: resolved from .env).")
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_doctor)
