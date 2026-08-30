@@ -428,6 +428,7 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
         "Dockerfile.vllm-gemma4",  # custom vLLM image for vllm-multimodal (issue #71)
         "mg-logwrap.sh",
         "cf-tunnel.env.example",
+        "qwen3_reranker.jinja",  # reranker chat template (#227), fleet-only
         "qwen3_thinking_tool_parser.py",  # tool-parser plugin (t2), fleet-only
     }
     assert not target.exists()
