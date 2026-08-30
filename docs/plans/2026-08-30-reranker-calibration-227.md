@@ -91,3 +91,4 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 - [follow_up] thor and orin serve untemplated scores until their next lobes init --apply (decision q3): open a follow-up issue to re-render both and probe on `sm_110`/`sm_87`, where nothing has scored a templated pair
 - [follow_up] vllm-embed (Qwen3-Embedding-0.6B) may have the same silent instruct-prefix gap; unexplored — follow-up issue
 - [unknown_nonblocking] A document that previously fit 8192 may now exceed it by the template's ~60 tokens; whether vLLM truncates or 400s is unexamined — t7 documents the shrunken effective length, the edge itself is not tested (task t7)
+- [follow_up] eidetic-cli ships EmbedClient.rerank() but recall never calls it, and its fallback silently substitutes lexical scores on the same scale — the calibrated lane is unused by its main consumer until agentculture/eidetic-cli#39 lands (opt-in --rerank stage, visible fallback, optional instruction)
