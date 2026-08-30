@@ -29,6 +29,16 @@ LOG_WRAPPER = "mg-logwrap.sh"
 LOG_DIRNAME = "logs"
 LOG_DIR_ENV = "MODEL_GEAR_LOG_DIR"
 
+# Reranker chat template (issue #227). vendored verbatim from the pinned vLLM
+# image's examples/pooling/score/template/qwen3_reranker.jinja
+# (sha256:e1ee98e69aab7b2da366edf1c50efcef37e34b4a0c50fb816336213e68d9047a,
+# extracted 2026-08-30 via `docker cp model-gear-vllm-rerank:...` from the
+# digest pinned in docker-compose.yml). Without it vllm-rerank scores a bare
+# query+document concatenation instead of the model card's judge prompt, so
+# relevance scores are uncalibrated. Bind-mounted read-only into vllm-rerank
+# by the compose template (t3, docker-compose.yml's --chat-template flag).
+RERANK_TEMPLATE = "qwen3_reranker.jinja"
+
 # Fleet container names (lobes init --fleet / lobes fleet ...): the always-warm
 # Qwen generate primary, the always-on multimodal (Gemma 4 12B) generate gear, the
 # co-resident embedding + reranker gears, and the stdlib gateway that fronts them on
@@ -162,6 +172,8 @@ FLEET_TEMPLATES = {
     "fleet/Dockerfile.vllm-gemma4": "Dockerfile.vllm-gemma4",
     LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
+    # See RERANK_TEMPLATE's comment above for provenance/sha256.
+    "fleet/qwen3_reranker.jinja": RERANK_TEMPLATE,
 }
 # The --audio extras layered on FLEET_TEMPLATES: the compose override, the three
 # image build files, and the vendored Parakeet server. The audio .env keys are

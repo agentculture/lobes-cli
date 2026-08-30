@@ -603,6 +603,12 @@ services:
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # Reranker chat template (issue #227) — vendored verbatim from the
+      # pinned vLLM image's own examples/pooling/score/qwen3_reranker_online.py
+      # serving line (see _compose.RERANK_TEMPLATE's comment for provenance/
+      # sha256). Bind-mounted read-only, never baked into the image, so
+      # `lobes doctor --fix --apply` can restore it without a rebuild.
+      - ./qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -636,6 +642,26 @@ services:
       # mid-request). See #109/#106.
       - ${RERANK_ENFORCE_EAGER:---no-enforce-eager}
       - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      # vLLM only applies a score/rerank chat template when one is passed
+      # explicitly — without it Qwen3ForSequenceClassification scores a bare
+      # query+document concatenation, silently dropping a caller's own
+      # `instruction`, and relevance scores go uncalibrated against the model
+      # card's judge prompt. vLLM's own example serving line for this exact
+      # --hf-overrides invocation
+      # (examples/pooling/score/qwen3_reranker_online.py) adds this flag, so
+      # this mirrors the vendor's own recipe rather than inventing one. Baked
+      # (not a RERANK_* env knob, issue #227 t3 decision) — this template is
+      # architecture-specific to is_original_qwen3_reranker above, so there is
+      # no other value an operator would sanely swap in.
+      #
+      # A PATH (not a literal template string) is deliberate: if the bind
+      # mount below is ever missing, vLLM's own validate_chat_template fails
+      # LOUD at arg-parse time (the engine refuses to boot) instead of
+      # silently falling back to untemplated scoring. Recovery is
+      # `lobes init --apply` or `lobes doctor --fix --apply`, either of which
+      # restores ./qwen3_reranker.jinja byte-identical (see _compose.py's
+      # FLEET_TEMPLATES / RERANK_TEMPLATE).
+      - --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja
       - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
     healthcheck:

@@ -140,6 +140,39 @@ def test_spark_partial_audio_scaffold_flags_files_and_keys(tmp_path, monkeypatch
     assert "AUDIO_URL" in payload["fix_plan"]["env"]
 
 
+def test_reranker_template_deleted_is_flagged_and_healed(tmp_path, monkeypatch, capsys):
+    """issue #227 (task t2): ``qwen3_reranker.jinja`` is a FLEET_TEMPLATES
+    scaffold file like any other — deleting it must surface under
+    ``scaffold_files`` exactly like the audio Dockerfiles above, and
+    ``doctor --fix --apply`` must restore it byte-identical to the packaged
+    template."""
+    _scaffold_fleet(tmp_path)
+    (tmp_path / "qwen3_reranker.jinja").unlink()
+    monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    monkeypatch.setattr(_detect, "detect_card", lambda: _card("spark"))
+
+    payload = _doctor_json(capsys)
+    ids = {c["id"]: c for c in payload["checks"]}
+    files = ids["scaffold_files"]
+    assert files["passed"] is False
+    assert "qwen3_reranker.jinja" in files["message"]
+    assert "doctor --fix" in files["remediation"]
+    assert payload["fix_plan"]["files"] == ["qwen3_reranker.jinja"]
+
+    payload = _doctor_json(capsys, "--fix", "--apply")
+    assert any(a == "wrote qwen3_reranker.jinja" for a in payload["fix_applied"])
+    ids = {c["id"]: c for c in payload["checks"]}
+    assert ids["scaffold_files"]["passed"] is True
+
+    from importlib.resources import files as resource_files
+
+    root = resource_files("lobes.templates")
+    restored = (tmp_path / "qwen3_reranker.jinja").read_bytes()
+    packaged = _compose._read_template(root, "fleet/qwen3_reranker.jinja").encode("utf-8")
+    assert restored == packaged
+
+
 # --- the heal lane -----------------------------------------------------------
 
 

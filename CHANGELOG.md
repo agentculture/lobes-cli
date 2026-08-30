@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.72.0] - 2026-08-30
+
+### Added
+
+- `lobes assess --probes --role reranker` reports `prompt_tokens {total, per_pair}` in its evidence — the one externally visible tell that a box renders the reranker template (#227).
+- `scripts/probe_reranker_calibration.py` — the stdlib before/after calibration probe (score per document, prompt tokens per pair, instruction sensitivity, 1×5 latency) whose verbatim output is the evidence transcript format.
+- Test that every `./`-file bind mount in the fleet compose is a file `FLEET_TEMPLATES` (or the plugin writer) scaffolds, so a scaffold can never omit a file the compose mounts; gateway tests pinning that `/v1/rerank` and `/v1/score` bodies (incl. `instruction`) are relayed semantically unmodified (re-encoded, not byte-identical — approved deviation d1).
+
+### Fixed
+
+- **Reranker calibration — the lane now renders the model card's judge prompt (#227).** `vllm-rerank` bakes `--chat-template=/usr/local/share/lobes/qwen3_reranker.jinja`, bind-mounted read-only from a vendored, scaffolded `qwen3_reranker.jinja` (a verbatim copy of vLLM's own `examples/pooling/score/template/qwen3_reranker.jinja`, registered in `FLEET_TEMPLATES` so `lobes init` writes it, `lobes doctor` reports it missing and `lobes doctor --fix --apply` heals it). vLLM applies a score template only when one is passed explicitly and `Qwen3ForSequenceClassification` does not implement `SupportsScoreTemplate`, so the lane had been scoring bare query+document concatenations. Measured on the DGX Spark 2026-08-30 (`docs/evidence/2026-08-30-baseline-reranker-untemplated-spark.txt` → `docs/evidence/2026-08-30-accept-reranker-template-spark.txt`): prompt tokens per pair 17–30 → 88–100, every distractor 0.000, every relevant document ≥ 0.995, the #220 NOTICE-vs-toolbatch inversion resolved, latency 28.0 → 18.1 ms median at 1 query × 5 docs. A per-request top-level `instruction` on `/v1/rerank` and `/v1/score` is now live where it was previously accepted and silently ignored. Scores SATURATE: the graded probe's two relevant documents both scored 1.000 with the weaker one first, so a relevance threshold is now safe but fine ordering among several relevant documents is not guaranteed. Validated on the Spark only; Thor and Orin serve untemplated scores until their next `lobes init --apply`. A deployment dir re-rendered without the jinja crash-loops `vllm-rerank` at arg-parse rather than degrading silently — recover with `lobes init --apply` or `lobes doctor --fix --apply` before `lobes up reranker --apply`. See `docs/qwen3-reranker-0.6b.md#prompt-template-and-calibration`.
+
 ## [0.71.2] - 2026-08-30
 
 ### Changed

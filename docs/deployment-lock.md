@@ -464,9 +464,10 @@ this section exists so no reader has to infer it.
   transcript exists.
 - **A lock-restored FRESH box is not yet servable** (deviation `d2`,
   **proposed / needs-follow-up**). The fleet compose bind-mounts
-  `mg-logwrap.sh` (the durable-log entrypoint, issue #50) and
-  `qwen3_thinking_tool_parser.py` (the cortex tool-parser plugin). Both are
-  packaged **scaffold** files, not compose files or Dockerfiles, so a
+  `mg-logwrap.sh` (the durable-log entrypoint, issue #50),
+  `qwen3_thinking_tool_parser.py` (the cortex tool-parser plugin) and
+  `qwen3_reranker.jinja` (the reranker score template, issue #227). All three
+  are packaged **scaffold** files, not compose files or Dockerfiles, so a
   variation whose `[files]` table names only compose + Dockerfiles restores an
   *incomplete* deployment. `--from-lock` accepts any plain non-`.env`
   filename, so naming them in `[files]` is the obvious workaround — but no

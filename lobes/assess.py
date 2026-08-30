@@ -1004,6 +1004,21 @@ def probe_rerank_correctness(
         ranked = sorted(d["results"], key=lambda r: r["relevance_score"], reverse=True)
         top_index = ranked[0]["index"]
         ok = top_index == _RERANK_PROBE_RELEVANT_INDEX
+        # #227 — the only externally visible tell of whether this lane rendered
+        # the model card's judge prompt (~85 prompt_tokens/pair) versus scored
+        # raw (~24/pair). Surfaced when the response carries it; never inferred
+        # or defaulted, so a lane/response that omits `usage` reports None
+        # rather than a misleading total.
+        usage = d.get("usage") if isinstance(d, dict) else None
+        prompt_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        if isinstance(prompt_tokens, (int, float)):
+            total = int(prompt_tokens)
+            prompt_tokens_evidence = {
+                "total": total,
+                "per_pair": round(total / len(_RERANK_PROBE_DOCS), 1),
+            }
+        else:
+            prompt_tokens_evidence = None
         return _probe_result(
             "reranker",
             PROBE_NAMES["reranker"],
@@ -1012,6 +1027,7 @@ def probe_rerank_correctness(
                 "top_index": top_index,
                 "expected_index": _RERANK_PROBE_RELEVANT_INDEX,
                 "ranking": [r["index"] for r in ranked],
+                "prompt_tokens": prompt_tokens_evidence,
             },
             latency_ms,
         )

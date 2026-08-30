@@ -93,6 +93,20 @@ def _fake_post_rerank_wrong(url, payload, timeout=300, path="/v1/chat/completion
     }
 
 
+def _fake_post_rerank_with_usage(url, payload, timeout=300, path="/v1/chat/completions"):
+    assert path == "/v1/rerank"
+    # A healthy, correctly-ordered response that also carries `usage` — the
+    # #227 tell for whether the lane rendered the model card's judge prompt.
+    return {
+        "results": [
+            {"index": 0, "relevance_score": 0.95},
+            {"index": 1, "relevance_score": 0.2},
+            {"index": 2, "relevance_score": 0.1},
+        ],
+        "usage": {"prompt_tokens": 71},
+    }
+
+
 def _fake_post_timeout(url, payload, timeout=300, path="/v1/chat/completions"):
     raise TimeoutError("timed out")
 
@@ -281,6 +295,29 @@ def test_probe_rerank_correctness_passes(monkeypatch: pytest.MonkeyPatch) -> Non
     assert r["role"] == "reranker"
     assert r["probe"] == "rerank_relevance"
     assert r["evidence"]["top_index"] == A._RERANK_PROBE_RELEVANT_INDEX
+
+
+def test_probe_rerank_correctness_reports_prompt_tokens_from_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #227 — the only externally visible tell of whether the rerank lane
+    # rendered the model card's judge prompt (~85 tok/pair) vs scored raw
+    # (~24 tok/pair): usage.prompt_tokens on the /v1/rerank response.
+    monkeypatch.setattr(A, "_post", _fake_post_rerank_with_usage)
+    r = A.probe_rerank_correctness("http://x", "model")
+    assert r["ok"] is True  # PASS/FAIL rule (top_index == expected) unchanged
+    assert r["evidence"]["prompt_tokens"] == {"total": 71, "per_pair": 23.7}
+
+
+def test_probe_rerank_correctness_prompt_tokens_none_without_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_fake_post_all_correct`'s rerank branch carries no `usage` field at
+    # all — must be None, never a crash or a fabricated total.
+    monkeypatch.setattr(A, "_post", _fake_post_all_correct)
+    r = A.probe_rerank_correctness("http://x", "model")
+    assert r["ok"] is True  # PASS/FAIL rule unchanged even with no usage
+    assert r["evidence"]["prompt_tokens"] is None
 
 
 def test_probe_rerank_correctness_fails_when_irrelevant_doc_ranks_first(

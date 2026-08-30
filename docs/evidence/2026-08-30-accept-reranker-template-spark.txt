@@ -1,0 +1,166 @@
+# reranker calibration probe (#227)
+date:       2026-08-30T19:34:44+0300
+host:       spark-f8a9
+url:        http://localhost:8001
+model:      Qwen/Qwen3-Reranker-0.6B
+git sha:    3f12f0c
+container:  vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+args:       ["/usr/local/bin/mg-logwrap","vllm","serve","Qwen/Qwen3-Reranker-0.6B","--served-model-name=Qwen/Qwen3-Reranker-0.6B","--host=0.0.0.0","--port=8000","--runner=pooling","--convert=classify","--attention-config={\"backend\": \"auto\"}","--no-enforce-eager","--hf-overrides={\"architectures\": [\"Qwen3ForSequenceClassification\"], \"classifier_from_token\": [\"no\", \"yes\"], \"is_original_qwen3_reranker\": true}","--chat-template=/usr/local/share/lobes/qwen3_reranker.jinja","--max-model-len=8192","--gpu-memory-utilization=0.06"]
+templated:  True
+vllm:       0.26.1rc1.dev942+g5a4c8d992
+
+## probe set — relevance_score per document, usage.prompt_tokens
+
+[sky]  Q: What colour is the sky on a clear day?
+  prompt_tokens total=279 per_pair=93.0  latency=32ms
+  [0] 0.998  On a clear day the sky is blue because air scatters short wavelengths.
+  [1] 0.000  Cats purr when they are content.
+  [2] 0.000  The invoice is due on the last business day of the month.
+  ranking: [0, 1, 2]
+
+[ports-ledger]  Q: Which file lists the ports the gateway exposes?
+  prompt_tokens total=283 per_pair=94.3  latency=13ms
+  [0] 1.000  The gateway port ledger is docs/gateway-fleet.md, which lists 8000 and 8001.
+  [1] 0.000  Cats purr when they are content.
+  [2] 0.000  Bananas are a good source of potassium.
+  ranking: [0, 1, 2]
+
+[france (assess probe)]  Q: What is the capital of France?
+  prompt_tokens total=264 per_pair=88.0  latency=13ms
+  [0] 0.995  Paris is the capital and most populous city of France.
+  [1] 0.000  The Amazon rainforest spans several South American countries.
+  [2] 0.000  Bananas are a good source of potassium.
+  ranking: [0, 2, 1]
+
+[toolbatch inversion]  Q: How does the tool batcher group tool calls into one request?
+  prompt_tokens total=292 per_pair=97.3  latency=14ms
+  [0] 0.000  NOTICE: this file is generated; do not edit by hand.
+  [1] 1.000  toolbatch collects consecutive tool calls and issues them as a single batched 
+  [2] 0.000  Cats purr when they are content.
+  ranking: [1, 0, 2]
+
+[graded relevance]  Q: How do I stop the lobes fleet without deleting the deployment directory?
+  prompt_tokens total=301 per_pair=100.3  latency=13ms
+  [0] 1.000  Run `lobes stop --apply`; it runs `docker compose down`, removing the containe
+  [1] 1.000  `lobes stop` stops the fleet.
+  [2] 0.000  Cats purr when they are content.
+  ranking: [1, 0, 2]
+
+## instruction probe — same pair with and without a top-level `instruction`
+  /v1/rerank: without=[(0, 0.9999), (1, 0.0)] tokens=194
+  /v1/rerank: with   =[(0, 0.9996), (1, 0.0)] tokens=200
+  /v1/rerank: instruction changes scores: True
+  /v1/score: without=[(0, 0.9999), (1, 0.0)] tokens=194
+  /v1/score: with   =[(0, 0.9996), (1, 0.0)] tokens=200
+  /v1/score: instruction changes scores: True
+
+## latency — 1 query x 5 docs, median of 5 (1 warm-up discarded)
+  samples_ms=[18.1, 18.2, 15.9, 16.5, 19.1]
+  median_ms=18.1
+
+================================================================================
+## Deploy record (t6, operator: main agent; deviation d2 approved)
+
+The Spark's deployed docker-compose.yml is hand-edited (#214 incident), so the
+plan's 'lobes init --apply --force' was NOT run. Applied instead:
+  cp ~/.lobes/docker-compose.yml ~/.lobes/docker-compose.yml.bak-20260830-pre-227
+  cp lobes/templates/fleet/qwen3_reranker.jinja ~/.lobes/   # sha256 e1ee98e69aab7b2d…  == image copy
+  diff bak → live: exactly two added lines under vllm-rerank:
+    382a383  - ./qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro
+    415a417  - --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja
+  uv run lobes up reranker --apply   (recreates model-gear-vllm-rerank only; --no-deps)
+  healthy after ~115 s (24 x 5 s polls), restarts=0
+  boot log /home/spark/.lobes/logs/rerank-20260830T163238Z.log:
+    non-default args include 'chat_template': '/usr/local/share/lobes/qwen3_reranker.jinja'
+    "Detected the chat template content format to be 'string'"; no ChatTemplateResolutionError, no Traceback
+  GET /capabilities reranker: ready:true loaded:true context:8192
+  lobes doctor scaffold_files: scaffold_files", "passed": true, "severity": "info", "message": "all 14 expected scaffold files present", "remediation": ""}, {"id": "profile_staleness", "passed": false, "severity": "warn", "message": "20 required key(s) missing from .env: AUDIO_URL, BARGE_IN
+
+## lobes assess --probes --role reranker --json (after)
+{"passed": true, "probes": {"reranker": {"role": "reranker", "probe": "rerank_relevance", "ok": true, "evidence": {"top_index": 0, "expected_index": 0, "ranking": [0, 2, 1], "prompt_tokens": {"total": 264, "per_pair": 88.0}}, "latency_ms": 31.7, "error": null}}}
+
+## Before → after (baseline: docs/evidence/2026-08-30-baseline-reranker-untemplated-spark.txt)
+
+| probe                | doc                         | before | after |
+|----------------------|-----------------------------|-------:|------:|
+| sky                  | sky is blue (relevant)      |  0.973 | 0.998 |
+| sky                  | cats purr                   |  0.794 | 0.000 |
+| sky                  | invoice due                 |  0.290 | 0.000 |
+| ports-ledger         | ledger (relevant)           |  0.936 | 1.000 |
+| ports-ledger         | cats purr                   |  0.524 | 0.000 |
+| ports-ledger         | bananas                     |  0.510 | 0.000 |
+| france (assess)      | Paris (relevant)            |  0.973 | 0.995 |
+| france (assess)      | Amazon                      |  0.216 | 0.000 |
+| france (assess)      | bananas                     |  0.876 | 0.000 |
+| toolbatch inversion  | NOTICE (distractor)         |  0.790 | 0.000 |
+| toolbatch inversion  | toolbatch (relevant)        |  0.988 | 1.000 |
+| toolbatch inversion  | cats purr                   |  0.741 | 0.000 |
+| graded relevance     | full answer (best)          |  0.970 | 1.000 |
+| graded relevance     | terse answer (weaker)       |  0.700 | 1.000 |
+| graded relevance     | cats purr                   |  0.283 | 0.000 |
+| prompt_tokens/pair   |                             |  17–30 | 88–100 |
+| instruction changes score (rerank / score) |     | no / no | yes / yes |
+| latency 1x5 median   |                             | 28.0 ms | 18.1 ms |
+
+Findings:
+  * Every distractor drops to 0.000; every relevant doc ≥ 0.995. The #220
+    inversion (NOTICE above toolbatch) is RESOLVED, not merely narrowed.
+  * SATURATION (challenge-pass assumption c21, CONFIRMED on the GPU lane): the
+    graded pair both score 1.000 and the WEAKER answer ranked first ([1, 0, 2]).
+    Ranking resolution among several relevant documents is coarse — a
+    threshold is now safe; fine ordering inside the relevant set is not
+    guaranteed. The doc must say both.
+  * 'instruction' is live on both endpoints (0.9999 → 0.9996, +6 tokens).
+  * Latency did not rise despite ~3.5x prompt tokens per pair (18 vs 28 ms
+    median; both within noise of a cold-vs-warm cache) — the lane is prefill-
+    cheap at this size.
+  * bf16 GPU agrees with the fp32 CPU probe below to 3 decimals on every pair.
+
+## Appendix — CPU counter-evidence probe (challenge pass, 2026-08-30, fp32,
+## transformers causal-LM yes/no logits inside the running container, read-only)
+
+  Q: Which file lists the ports the gateway exposes?
+    card=1.000  concat=0.933  | The gateway port ledger is docs/gateway-fleet.md…
+    card=0.000  concat=0.533  | Cats purr when they are content.
+    card=0.000  concat=0.514  | Bananas are a good source of potassium.
+  Q: What is the capital of France?
+    card=0.995  concat=0.970  | Paris is the capital and most populous city of France.
+    card=0.000  concat=0.197  | The Amazon rainforest spans several South American countries
+    card=0.000  concat=0.870  | Bananas are a good source of potassium.
+  Q: How does the tool batcher group tool calls into one request?
+    card=0.000  concat=0.786  | NOTICE: this file is generated; do not edit by hand.
+    card=1.000  concat=0.988  | toolbatch collects consecutive tool calls and issues them as…
+    card=0.000  concat=0.740  | Cats purr when they are content.
+  (card = model-card judge template; concat = bare query+document, i.e. the
+   pre-change served path. Script: scratch card_probe.py — loads the HF cache
+   snapshot with CUDA_VISIBLE_DEVICES= ; ~3 min on CPU.)
+
+## Scope of validation
+  spark-f8a9 (DGX Spark GB10) only, per decision q3. Thor (sm_110) and Orin
+  (sm_87) still serve untemplated until their next re-render (plan risk r5).
+
+================================================================================
+## Live test through the real consumer — eidetic-cli 0.13.0 (same day, after the change)
+
+Finding first: eidetic ships EmbedClient.rerank() -> POST /v1/rerank but NOTHING
+calls it — `eidetic recall --mode hybrid` is embedding + BM25 only. Filed
+agentculture/eidetic-cli#39. So the test below drives eidetic's OWN client code
+(`_remote_rerank`, called directly so its silent lexical fallback cannot mask
+a failure) on the records a real recall returned.
+
+  $ recall.sh "why does the reranker score distractors high" --top-k 4 --json   # embed via gateway
+  hybrid top-4: 0.9999 reranker-lane-missing-chat-template-227
+                0.510  spark-reranker-templated-2026-08-30
+                0.231  lobes-pressure-swap-occupancy-sticky-2026-07-09
+                0.227  devague-no-resolve-park
+  $ EmbedClient(base_url=http://localhost:8001/v1)._remote_rerank(q, top-4 texts + "Cats purr when they are content.")
+    remote  lexical  doc
+     0.993    0.034  reranker-lane-missing-chat-template-227
+     0.936    0.016  spark-reranker-templated-2026-08-30
+     0.000    0.016  lobes-pressure-swap-occupancy-sticky-2026-07-09
+     0.000    0.018  devague-no-resolve-park
+     0.000    0.000  cats-purr (distractor)
+
+  Both on-topic records kept and GRADED (0.993 vs 0.936 — real-length records
+  do not saturate the way the short graded probe did); both off-topic records
+  hybrid still surfaced at ~0.23, and the injected distractor, go to 0.000.

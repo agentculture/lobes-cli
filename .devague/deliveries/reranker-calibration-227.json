@@ -1,0 +1,34 @@
+{
+  "plan_slug": "reranker-calibration-227",
+  "schema_version": 1,
+  "created": "2026-08-30T16:24:16Z",
+  "updated": "2026-08-30T16:32:17Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "h8/c8 say the gateway relays rerank/score bodies BYTE-identical; measured in t5, handle_post always runs rewrite_model() which json.loads/json.dumps the body even when model already equals the served name, so the wire bytes are re-encoded (whitespace) while every field \u2014 instruction included \u2014 is semantically unmodified. t5's tests pin the true behaviour (content equality + explicit re-encoding proof) instead of a false byte-identical assertion; server.py untouched.",
+      "task_ref": "t5",
+      "reason": "The boundary's substantive intent (never inject/rewrite/default instruction) holds; the honesty condition's wording over-specified the wire. Fixing the gateway to relay raw bytes is a production change outside this frame's scope.",
+      "affects": [
+        "c8",
+        "h8"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "t6's instruction says 'lobes init --apply --force' to re-render ~/.lobes on spark. The deployed docker-compose.yml is hand-edited (primary lane converted to a string command with DSpark speculative config, older env_file block \u2014 the #214 incident CLAUDE.md records as 'could not be safely re-scaffolded'), so a --force render would clobber the cortex lane. Instead: back up docker-compose.yml as docker-compose.yml.bak-20260830-pre-227 (the box's convention), copy the vendored jinja into ~/.lobes byte-identical, and hand-apply exactly the two lines (mount + --chat-template) to the deployed vllm-rerank service, then 'lobes up reranker --apply'. The before/after diff is still exactly two lines (h9); doctor sees the file (h18).",
+      "task_ref": "t6",
+      "reason": "The Spark cannot be force-re-rendered without destroying hand edits outside this frame; the change reaching the lane is identical either way.",
+      "affects": [
+        "c9",
+        "h9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}
