@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-30T15:59:53Z",
-  "updated": "2026-08-30T16:06:24Z",
+  "updated": "2026-08-30T16:13:13Z",
   "targets": [
     {
       "id": "c1",
@@ -270,7 +270,7 @@
         "h11",
         "h5"
       ],
-      "instruction": ""
+      "instruction": "Stdlib urllib only (mirror lobes/assess.py). Read GATEWAY_API_KEY from ~/.lobes/.env or .secrets.env if --key is absent. Run on spark from the repo: uv run python scripts/probe_reranker_calibration.py --url http://localhost:8001 | tee docs/evidence/2026-08-30-baseline-reranker-untemplated-spark.txt. Do NOT touch ~/.lobes. Commit the transcript first; nothing else in this wave may re-render the box."
     },
     {
       "id": "t2",
@@ -289,7 +289,7 @@
         "c22",
         "h18"
       ],
-      "instruction": ""
+      "instruction": "Extract the jinja with: docker run --rm --entrypoint cat vllm/vllm-openai@sha256:<pinned digest from docker-compose.yml> /vllm-workspace/examples/pooling/score/template/qwen3_reranker.jinja > lobes/templates/fleet/qwen3_reranker.jinja (or docker cp from the running container). Add the FLEET_TEMPLATES entry next to LOG_WRAPPER with a comment citing #227 and the vLLM example. Update tests/goldens for init dry-run; add the doctor scaffold_files test beside the existing plugin-file test. Package data: confirm pyproject includes lobes/templates/** so the wheel ships it."
     },
     {
       "id": "t3",
@@ -309,7 +309,7 @@
         "c9",
         "c23"
       ],
-      "instruction": ""
+      "instruction": "Model the mount on the mg-logwrap.sh line of vllm-rerank. Keep the compose comment style: cite #227, the vLLM example serving line, and why the path form (not literal) \u2014 it fails loud at arg-parse when the file is absent. The mount-matches-scaffold test parses the compose YAML, collects volume sources starting with ./ that have an extension, and asserts each is in FLEET_TEMPLATES values or the plugin dest name."
     },
     {
       "id": "t4",
@@ -324,7 +324,7 @@
       "covers": [
         "c24"
       ],
-      "instruction": ""
+      "instruction": "Details dict gains prompt_tokens: {'total': usage.prompt_tokens, 'per_pair': round(total/len(docs), 1)} or None when usage is absent. Extend tests/test_assess*.py with the fake-response fixture; keep _RERANK_PROBE_* untouched."
     },
     {
       "id": "t5",
@@ -340,7 +340,7 @@
         "c8",
         "h8"
       ],
-      "instruction": ""
+      "instruction": "Look for an existing pass-through/relay test in tests/test_gateway_*.py first (grep 'rerank'). Add the /v1/score + 'instruction' cases to it; assert the fake backend received byte-identical body. No production code change."
     },
     {
       "id": "t6",
@@ -379,7 +379,7 @@
         "h19",
         "h9"
       ],
-      "instruction": ""
+      "instruction": "Operator task on spark, sequenced: (1) verify t1's transcript is committed; (2) from the merged branch: uv run lobes init --apply --force (dry-run first, keep the printed diff); (3) diff ~/.lobes/docker-compose.yml against the pre-render copy; (4) uv run lobes up reranker --apply; watch lobes logs reranker for template errors; (5) re-run the t1 script to the accept transcript; (6) uv run lobes assess --json --role reranker. Header must include git sha, digest, vLLM version, docker inspect args. If bf16 disagrees with the CPU probe, write that down \u2014 do not tune."
     },
     {
       "id": "t7",
@@ -403,7 +403,7 @@
         "c16",
         "h13"
       ],
-      "instruction": ""
+      "instruction": "Read the accept transcript before writing a single number. Section order: What it is / Serving (add the flag + mount) / Prompt template and calibration (new) / API shapes (add instruction) / Upgrade note (crash-loop + recovery) / Benchmark (after-run latency). Update CLAUDE.md's reranker pointer and docs/deployment-lock.md d2 list. markdownlint-cli2 --fix."
     },
     {
       "id": "t8",
@@ -419,7 +419,7 @@
         "t7"
       ],
       "covers": [],
-      "instruction": ""
+      "instruction": "python3 .claude/skills/version-bump/scripts/bump.py minor reads a changelog JSON on stdin \u2014 pipe it, then uv lock and commit the re-pin. Open the PR with the cicd skill; sign '- lobes (Claude)'. PR body: validated on spark only; thor/orin declared; link both transcripts, #227, #220."
     }
   ],
   "risks": [

@@ -8,6 +8,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t1 — t1 Baseline: probe script + untemplated transcript on spark (BEFORE any compose change)
 
+- instruction: Stdlib urllib only (mirror lobes/assess.py). Read `GATEWAY_API_KEY` from ~/.lobes/.env or .secrets.env if --key is absent. Run on spark from the repo: uv run python scripts/`probe_reranker_calibration.py` --url <http://localhost:8001> | tee docs/evidence/2026-08-30-baseline-reranker-untemplated-spark.txt. Do NOT touch ~/.lobes. Commit the transcript first; nothing else in this wave may re-render the box.
 - covers: c14, h11, h5
 - acceptance:
   - scripts/`probe_reranker_calibration.py` exists: stdlib-only, takes --url/--key, runs the #220 set (sky; ports→ledger; cats-purr distractor; NOTICE-vs-toolbatch), the France/Amazon/bananas probe, a graded query (two relevant docs, one clearly better), and an instruction/no-instruction pair; prints per-doc scores, usage.`prompt_tokens` total and per pair, and 1x5 rerank latency (median of 5)
@@ -16,6 +17,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t2 — t2 Vendor `qwen3_reranker`.jinja + register in `FLEET_TEMPLATES` (init/doctor/lock)
 
+- instruction: Extract the jinja with: docker run --rm --entrypoint cat vllm/vllm-openai@sha256:<pinned digest from docker-compose.yml> /vllm-workspace/examples/pooling/score/template/`qwen3_reranker`.jinja > lobes/templates/fleet/`qwen3_reranker`.jinja (or docker cp from the running container). Add the `FLEET_TEMPLATES` entry next to `LOG_WRAPPER` with a comment citing #227 and the vLLM example. Update tests/goldens for init dry-run; add the doctor `scaffold_files` test beside the existing plugin-file test. Package data: confirm pyproject includes lobes/templates/\*\* so the wheel ships it.
 - covers: c3, c22, h18
 - acceptance:
   - lobes/templates/fleet/`qwen3_reranker`.jinja is byte-identical to /vllm-workspace/examples/pooling/score/template/`qwen3_reranker`.jinja in the pinned image (sha256 recorded in the file's sibling comment in `_compose.py` or the PR description)
@@ -25,6 +27,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t3 — t3 Compose: --chat-template arg + read-only bind mount on vllm-rerank; goldens; mount-matches-scaffold test
 
+- instruction: Model the mount on the mg-logwrap.sh line of vllm-rerank. Keep the compose comment style: cite #227, the vLLM example serving line, and why the path form (not literal) — it fails loud at arg-parse when the file is absent. The mount-matches-scaffold test parses the compose YAML, collects volume sources starting with ./ that have an extension, and asserts each is in `FLEET_TEMPLATES` values or the plugin dest name.
 - depends on: t2
 - covers: c2, c9, c23
 - acceptance:
@@ -34,6 +37,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t4 — t4 assess: rerank probe reports usage.`prompt_tokens` (total, `per_pair`) in details
 
+- instruction: Details dict gains `prompt_tokens`: {'total': usage.`prompt_tokens`, '`per_pair`': round(total/len(docs), 1)} or None when usage is absent. Extend tests/`test_assess`\*.py with the fake-response fixture; keep `_RERANK_PROBE_`\* untouched.
 - covers: c24
 - acceptance:
   - `probe_rerank_correctness` details carry `prompt_tokens`={total, `per_pair`} read from the response's usage; PASS rule unchanged (`top_index` == expected)
@@ -41,6 +45,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t5 — t5 Gateway pass-through: prove rerank/score bodies are relayed byte-identical
 
+- instruction: Look for an existing pass-through/relay test in tests/`test_gateway_`\*.py first (grep 'rerank'). Add the /v1/score + 'instruction' cases to it; assert the fake backend received byte-identical body. No production code change.
 - covers: c8, h8
 - acceptance:
   - a test posts a /v1/rerank and a /v1/score body (including an 'instruction' key) through the gateway to a fake backend and asserts the backend received the exact bytes; if such a test already exists, cite it in the PR and add only the 'instruction' case
@@ -48,6 +53,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t6 — t6 Acceptance on spark: re-render, GPU measurement, acceptance transcript
 
+- instruction: Operator task on spark, sequenced: (1) verify t1's transcript is committed; (2) from the merged branch: uv run lobes init --apply --force (dry-run first, keep the printed diff); (3) diff ~/.lobes/docker-compose.yml against the pre-render copy; (4) uv run lobes up reranker --apply; watch lobes logs reranker for template errors; (5) re-run the t1 script to the accept transcript; (6) uv run lobes assess --json --role reranker. Header must include git sha, digest, vLLM version, docker inspect args. If bf16 disagrees with the CPU probe, write that down — do not tune.
 - depends on: t1, t2, t3, t4
 - covers: c1, h1, h2, h3, c4, h4, c5, h15, c15, h12, c17, h14, c20, h16, h20, h19, h9
 - acceptance:
@@ -59,6 +65,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t7 — t7 Docs: qwen3-reranker-0.6b.md calibration section, stale build line, crash-loop recovery, deployment-lock d2, CHANGELOG
 
+- instruction: Read the accept transcript before writing a single number. Section order: What it is / Serving (add the flag + mount) / Prompt template and calibration (new) / API shapes (add instruction) / Upgrade note (crash-loop + recovery) / Benchmark (after-run latency). Update CLAUDE.md's reranker pointer and docs/deployment-lock.md d2 list. markdownlint-cli2 --fix.
 - depends on: t6
 - covers: c6, h6, c13, h10, c16, h13
 - acceptance:
@@ -69,6 +76,7 @@ slug: `reranker-calibration-227` · status: `exported` · from frame: `reranker-
 
 ### t8 — t8 Version bump (minor) + PR
 
+- instruction: python3 .claude/skills/version-bump/scripts/bump.py minor reads a changelog JSON on stdin — pipe it, then uv lock and commit the re-pin. Open the PR with the cicd skill; sign '- lobes (Claude)'. PR body: validated on spark only; thor/orin declared; link both transcripts, #227, #220.
 - depends on: t5, t7
 - acceptance:
   - python3 .claude/skills/version-bump/scripts/bump.py minor run with a changelog JSON on stdin; uv.lock re-pinned and committed; version-check, secrets-scan, afi rubric and the full CI matrix green
