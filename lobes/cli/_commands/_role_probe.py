@@ -74,10 +74,12 @@ def _request(
             status = resp.status
     except urllib.error.HTTPError as exc:  # a real answer with a non-2xx status
         raw, status = exc.read(), exc.code
-    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
-        # http.client.HTTPException covers IncompleteRead: a backend or proxy
+    except (http.client.HTTPException, OSError, ValueError):
+        # `http.client.HTTPException` covers IncompleteRead: a backend or proxy
         # that drops a buffered body mid-read must read as "nothing answered",
         # not abort the whole role diagnosis (this helper promises not to raise).
+        # `OSError` covers the socket failures AND `urllib.error.URLError`,
+        # which subclasses it — naming both would be redundant (Sonar S5713).
         return 0, None, round(time.monotonic() - started, 3)
     elapsed = round(time.monotonic() - started, 3)
     try:

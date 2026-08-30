@@ -29,23 +29,26 @@ def _stub_probe(monkeypatch, checks, *, registry=None):
 
 def test_apply_without_fix_is_refused_even_with_a_role() -> None:
     """Qodo #3: the role branch must not swallow an invalid flag combination."""
+    args = _args(role="associate", apply=True)
     with pytest.raises(ModelGearError) as exc:
-        doc.cmd_doctor(_args(role="associate", apply=True))
+        doc.cmd_doctor(args)
     assert exc.value.code == EXIT_USER_ERROR
     assert "--apply requires --fix" in exc.value.message
 
 
 def test_role_with_fix_is_refused_rather_than_silently_ignored() -> None:
     """Qodo #3: `--role` probes a running lane; `--fix` heals files. Not both."""
+    args = _args(role="associate", fix=True)
     with pytest.raises(ModelGearError) as exc:
-        doc.cmd_doctor(_args(role="associate", fix=True))
+        doc.cmd_doctor(args)
     assert "cannot be combined" in exc.value.message
     assert "associate" in exc.value.remediation
 
 
 def test_an_unknown_role_is_a_user_error_naming_the_valid_ones() -> None:
+    args = _args(role="nonsense")
     with pytest.raises(ModelGearError) as exc:
-        doc.cmd_doctor(_args(role="nonsense"))
+        doc.cmd_doctor(args)
     assert exc.value.code == EXIT_USER_ERROR
     assert "cortex" in exc.value.remediation
 
@@ -90,8 +93,9 @@ def test_a_401_reaches_the_friendly_wrapper(monkeypatch) -> None:
     monkeypatch.setattr(doc._runtime_ops, "resolve_port_soft", lambda a: (8000, None))
     monkeypatch.setattr(doc._runtime_ops, "gateway_auth_headers", lambda d: {})
     monkeypatch.setattr(doc, "_fetch_gateway_capabilities", _boom)
+    args = _args(role="associate")
     with pytest.raises(ModelGearError) as exc:
-        doc.cmd_doctor(_args(role="associate"))
+        doc.cmd_doctor(args)
     # The wrapper's actionable message, not a raw HTTPError.
     assert "401" in str(exc.value.message) or "key" in str(exc.value.message).lower()
 

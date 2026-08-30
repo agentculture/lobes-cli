@@ -56,8 +56,10 @@ def test_a_window_disagreement_is_an_error_not_a_note(monkeypatch) -> None:
     """The advert saying 1048576 while the engine serves 128000 is THE defect."""
     monkeypatch.setattr(rp, "_request", lambda *a, **k: (200, {"max_model_len": 128000}, 0.01))
     check = rp.window_check("http://gw", "associate", 1048576, {}, 5.0)
-    assert check["passed"] is False and check["severity"] == "error"
-    assert "1048576" in check["message"] and "128000" in check["message"]
+    assert check["passed"] is False
+    assert check["severity"] == "error"
+    assert "1048576" in check["message"]
+    assert "128000" in check["message"]
 
 
 def test_a_matching_window_passes(monkeypatch) -> None:
@@ -69,7 +71,8 @@ def test_an_empty_200_is_a_failure_not_a_healthy_lane(monkeypatch) -> None:
     """The measured caller hazard: HTTP 200 carrying no content looks like success."""
     monkeypatch.setattr(rp, "_request", lambda *a, **k: (200, _ok_completion(""), 0.4))
     check = rp.alias_check("http://gw", "associate", {}, 5.0)
-    assert check["passed"] is False and check["severity"] == "error"
+    assert check["passed"] is False
+    assert check["severity"] == "error"
     assert "EMPTY" in check["message"]
     assert "enable_thinking" in check["remediation"]
 
@@ -85,7 +88,8 @@ def test_a_refused_alias_is_an_error(monkeypatch) -> None:
 def test_a_working_alias_passes(monkeypatch) -> None:
     monkeypatch.setattr(rp, "_request", lambda *a, **k: (200, _ok_completion(), 0.19))
     check = rp.alias_check("http://gw", "associate", {}, 5.0)
-    assert check["passed"] is True and "0.19s" in check["message"]
+    assert check["passed"] is True
+    assert "0.19s" in check["message"]
 
 
 def test_an_unroutable_served_id_names_the_alias_to_use(monkeypatch) -> None:
@@ -124,7 +128,8 @@ def test_a_null_content_200_fails_instead_of_passing(monkeypatch) -> None:
     body = {"choices": [{"message": {"content": None}, "finish_reason": "length"}]}
     monkeypatch.setattr(rp, "_request", lambda *a, **k: (200, body, 0.4))
     check = rp.alias_check("http://gw", "associate", {}, 5.0)
-    assert check["passed"] is False and check["severity"] == "error"
+    assert check["passed"] is False
+    assert check["severity"] == "error"
     assert "EMPTY" in check["message"]
 
 
@@ -182,7 +187,9 @@ def test_request_returns_status_body_and_elapsed_over_a_real_socket() -> None:
         )
     finally:
         srv.shutdown()
-    assert status == 200 and body == {"max_model_len": 128000} and elapsed >= 0
+    assert status == 200
+    assert body == {"max_model_len": 128000}
+    assert elapsed >= 0
 
 
 def test_request_reports_a_non_2xx_as_a_result_not_an_exception() -> None:
@@ -191,7 +198,8 @@ def test_request_reports_a_non_2xx_as_a_result_not_an_exception() -> None:
         status, body, _ = rp._request(f"{base}/x", payload={}, headers={}, timeout=5.0)
     finally:
         srv.shutdown()
-    assert status == 404 and body["error"]["code"] == "model_not_found"
+    assert status == 404
+    assert body["error"]["code"] == "model_not_found"
 
 
 def test_request_survives_a_truncated_body(monkeypatch) -> None:
@@ -201,7 +209,8 @@ def test_request_survives_a_truncated_body(monkeypatch) -> None:
         status, body, _ = rp._request(f"{base}/x", payload={}, headers={}, timeout=5.0)
     finally:
         srv.shutdown()
-    assert status == 0 and body is None
+    assert status == 0
+    assert body is None
 
 
 def test_request_survives_an_undecodable_body() -> None:
@@ -210,12 +219,14 @@ def test_request_survives_an_undecodable_body() -> None:
         status, body, _ = rp._request(f"{base}/x", payload={}, headers={}, timeout=5.0)
     finally:
         srv.shutdown()
-    assert status == 200 and body is None
+    assert status == 200
+    assert body is None
 
 
 def test_request_survives_a_dead_port() -> None:
     status, body, _ = rp._request("http://127.0.0.1:9/x", payload={}, headers={}, timeout=0.5)
-    assert status == 0 and body is None
+    assert status == 0
+    assert body is None
 
 
 def test_a_tokenize_answer_without_a_window_is_a_warning(monkeypatch) -> None:

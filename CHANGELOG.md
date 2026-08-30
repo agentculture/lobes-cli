@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.2] - 2026-08-30
+
+### Changed
+
+- Cleared all 15 SonarCloud findings on PR #237. One was a real narrowing: `_request`'s except tuple named both `urllib.error.URLError` and `OSError`, and the former subclasses the latter (S5713). The other 14 were test style — composite assertions split so a failure names the condition that broke (S9073), and `pytest.raises` blocks narrowed to the single call under test (S5778).
+
 ## [0.71.1] - 2026-08-30
 
 ### Fixed
