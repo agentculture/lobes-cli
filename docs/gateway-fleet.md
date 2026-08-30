@@ -857,11 +857,27 @@ this box's swap/iowait says nothing about a model it does not run. The
 single-hop guard is unchanged — an arriving `X-Lobes-Proxied` request is
 never placed and still answers 508 `proxy_loop`.
 
-> **Status: DECLARED, not VALIDATED (#108).** The mechanism is unit-proven
-> (`tests/test_gateway_peer_only_pool.py`) and the pre-change baseline is
-> filed, but no live cross-box acceptance run has landed. Nothing here may be
-> described as validated until a transcript under `docs/evidence/` shows one
-> box's concurrent requests answered by two different peers.
+> **Status: MECHANISM VALIDATED live 2026-08-30 on the Jetson AGX Orin
+> against the Spark and Thor
+> (`docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`); THROUGHPUT
+> BENEFIT DISPROVEN on that pair.** Placement across both peers, the
+> reference rule (the Thor became the reference when a replica declared
+> ahead of it was unreachable), credential inheritance (the Spark runs an
+> inbound gate and every placement onto it authenticated), the
+> nothing-selectable fall-through, the markers, the advert fold
+> (`ready` false→true, `context` 1048576→262144) and continuity with a
+> replica down are all measured. **Aggregate throughput is not**: the pool
+> ran 51% slower at 4 concurrent requests and 3.5% slower at 8 than pinning
+> to one peer, because it balances by QUEUE DEPTH while those two replicas
+> differ in SPEED by 4.4x (Spark 48.9 tok/s vs Thor 11.0 tok/s
+> single-stream) and neither publishes a capacity. `build_replica_caches`
+> builds each `PeerReplica` with no weight, so a pooling box cannot declare
+> what a peer is worth — a gap in #199's capacity half that the peer-only
+> pool inherits rather than causes. **Do not claim a throughput benefit for
+> a heterogeneous pair.** The live run also caught a real defect before
+> merge: the first build placed 4/4 onto one peer because the branch dialled
+> without counting the dispatch, so every concurrent arrival read the same
+> idle snapshot and stampeded.
 
 **Declaring a pool — the plural peer family.** Beside each role's existing
 singular `<PREFIX>_PEER_ORIGIN` (proxy-lobes, above), a new **plural**

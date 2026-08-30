@@ -751,3 +751,86 @@ def test_context_is_the_agreed_window_not_the_catalog_ceiling() -> None:
         },
     )
     assert payload["cortex"]["context"] == 262144
+
+
+# ============================================================================
+# in-flight accounting — the herd the live run caught
+# ============================================================================
+
+
+def test_concurrent_placements_spread_across_replicas() -> None:
+    """Consecutive placements must not all land on the same peer.
+
+    Measured live on the Orin, 2026-08-30: four concurrent ``model=cortex``
+    requests were all placed onto the Spark while the Thor sat idle, because
+    the peer-only branch dialled without COUNTING the dispatch. Probed load is
+    up to one refresh interval stale, so every arrival read the same idle
+    snapshot, ranked the same replica first (ties break on origin string
+    ascending) and stampeded it. Counting is what makes the snapshot
+    self-correct between probes — and a peer-only pool needs it more than a
+    hosted one, having no local replica to absorb the tie.
+    """
+    table, cfg, specs = _build(_orin_env())
+    cache = _peer_only_cache({_SPARK: _peer_payload(), _THOR: _peer_payload()})
+    cache.refresh()
+    caches = {"primary": cache}
+    counter = S.dispatch_counter(caches)
+    snapshot = S.replica_snapshot_provider(caches)
+
+    served = []
+    holds = []
+    for _ in range(4):
+        opener, calls = _opener()
+        # A response still holding an upstream keeps its dispatch counted
+        # until the handler relays it — exactly the in-flight window a burst
+        # of concurrent requests occupies.
+        resp = S.handle_post(
+            table,
+            cfg,
+            "/v1/chat/completions",
+            [],
+            _body("cortex"),
+            opener,
+            peer_specs=specs,
+            replica_snapshot=snapshot,
+            dispatch_counter=counter,
+        )
+        holds.append(resp)
+        served.append(calls[0].url)
+
+    assert set(served) == {_SPARK, _THOR}, f"all four placed onto {set(served)}"
+    # Releasing every hold returns the pool to an even footing.
+    for resp in holds:
+        if resp.on_complete is not None:
+            resp.on_complete()
+
+
+def test_a_released_dispatch_stops_counting_against_its_replica() -> None:
+    table, cfg, specs = _build(_orin_env())
+    cache = _peer_only_cache({_SPARK: _peer_payload(), _THOR: _peer_payload()})
+    cache.refresh()
+    caches = {"primary": cache}
+
+    def place():
+        opener, calls = _opener()
+        resp = S.handle_post(
+            table,
+            cfg,
+            "/v1/chat/completions",
+            [],
+            _body("cortex"),
+            opener,
+            peer_specs=specs,
+            replica_snapshot=S.replica_snapshot_provider(caches),
+            dispatch_counter=S.dispatch_counter(caches),
+        )
+        return resp, calls[0].url
+
+    first, first_url = place()
+    if first.on_complete is not None:
+        first.on_complete()
+    # With the first dispatch released, the pool is level again and the same
+    # deterministic tie-break applies — so the second request repeats the
+    # first's choice rather than alternating blindly.
+    _second, second_url = place()
+    assert first_url == second_url == _SPARK

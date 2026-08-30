@@ -1026,6 +1026,7 @@ def _peer_only_forward(
     *,
     requested: str | None,
     replica_snapshot: ReplicaSnapshot | None,
+    counter: DispatchCounter | None = None,
 ) -> GatewayResponse | None:
     """Place one request across the replicas of a role this box does not host.
 
@@ -1059,25 +1060,46 @@ def _peer_only_forward(
         return None
     spec = (peer_specs or {}).get(backend_name)
     markers = [(ROUTE_REASON_HEADER, placement.selection.reason)] + _route_load_header(placement)
-    return _proxy_to_peer(
-        cfg,
-        _ForwardTarget(
-            name=backend_name,
-            # The served id a peer is asked for is the SAME one the singular
-            # forward would have used, so a caller cannot tell the two paths
-            # apart by what the peer was asked to serve. With no PeerSpec (a
-            # pooled-but-unproxied role) the body is forwarded verbatim below.
-            origin=origin,
-            served_name=spec.served_name if spec is not None else (requested or ""),
-            api_key=_replica_api_key(table, backend_name, origin),
-        ),
-        path,
-        req_headers,
-        body,
-        open_upstream,
-        rewrite=spec is not None,
-        extra_response_headers=markers,
+    target = _ForwardTarget(
+        name=backend_name,
+        # The served id a peer is asked for is the SAME one the singular
+        # forward would have used, so a caller cannot tell the two paths
+        # apart by what the peer was asked to serve. With no PeerSpec (a
+        # pooled-but-unproxied role) the body is forwarded verbatim below.
+        origin=origin,
+        served_name=spec.served_name if spec is not None else (requested or ""),
+        api_key=_replica_api_key(table, backend_name, origin),
     )
+    # COUNT the dispatch, exactly as `_pool_attempt` does for a hosted pool.
+    # Probed load is up to one refresh interval stale, so without this every
+    # concurrent arrival reads the same idle snapshot, ranks the same replica
+    # first (ties break on origin string) and stampedes it — measured live on
+    # the Orin on 2026-08-30, where four concurrent requests all placed onto
+    # the same peer while the other sat idle. The counter is what makes the
+    # snapshot self-correct BETWEEN refreshes; a peer-only pool needs it more
+    # than a hosted one, because it has no local replica to absorb a tie.
+    release = (counter or _uncounted)(backend_name, origin)
+    answer: GatewayResponse | None = None
+    try:
+        answer = _proxy_to_peer(
+            cfg,
+            target,
+            path,
+            req_headers,
+            body,
+            open_upstream,
+            rewrite=spec is not None,
+            extra_response_headers=markers,
+        )
+        return _hand_off_release(answer, release)
+    finally:
+        # Same discipline as `_pool_attempt`: an answer still holding an
+        # upstream is released by the handler after the relay; everything
+        # else — a buffered body, the peer-down 503, an exception — is
+        # complete here and released here. `end_dispatch` is idempotent, so a
+        # double release is a no-op rather than a negative count.
+        if answer is None or answer.on_complete is not release:
+            release()
 
 
 def peer_specs_from_table(
@@ -2596,6 +2618,7 @@ def handle_post(
         open_upstream,
         requested=requested,
         replica_snapshot=replica_snapshot,
+        counter=dispatch_counter,
     )
     if pooled is not None:
         return pooled

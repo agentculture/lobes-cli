@@ -802,11 +802,21 @@ any compatible replica ready; `context` = the fingerprint-agreed window, not
 the catalog ceiling) and `/v1/models` lists a pooled dropped role on that same
 evidence; `feasible` stays `false` — pooling never makes a box a host. Local
 pressure is not re-applied and the single-hop 508 guard is unchanged.
-**Status: DECLARED (#108)** — unit-proven in
-`tests/test_gateway_peer_only_pool.py`, spec/plan under
-`docs/specs/2026-08-30-peer-only-replica-pools.md` and
-`docs/plans/2026-08-30-peer-only-replica-pools.md`, with **no** live
-cross-box acceptance transcript yet.
+**Status: MECHANISM VALIDATED live 2026-08-30 on the Orin against the
+Spark and Thor (`docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`);
+THROUGHPUT BENEFIT DISPROVEN on that pair** — placement across both peers,
+the reference rule, credential inheritance, the fall-through, the advert
+fold (`ready` false→true, `context` 1048576→262144) and continuity with a
+replica down all measured, but aggregate throughput came in **51% slower at
+4 concurrent and 3.5% slower at 8** than pinning, because the pool balances
+by QUEUE DEPTH while the two replicas differ in SPEED by 4.4x (Spark 48.9
+vs Thor 11.0 tok/s single-stream) and neither publishes a capacity —
+`build_replica_caches` builds each `PeerReplica` with no weight, so a
+pooling box cannot declare what a peer is worth (a gap in #199's capacity
+half, inherited not caused). **No throughput benefit may be claimed for a
+heterogeneous pair.** Baseline:
+`docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt`; spec/plan under
+`docs/specs/` and `docs/plans/2026-08-30-peer-only-replica-pools.md`.
 
 ## The deployment lock and the variation catalog
 
