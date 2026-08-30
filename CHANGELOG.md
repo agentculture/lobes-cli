@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.1] - 2026-08-30
+
+### Fixed
+
+- `doctor --role`'s alias probe treated an OpenAI-shaped 200 carrying `content: null` as healthy, and crashed with `AttributeError` on a non-string content. That null is exactly what this lane returns when a thinking model exhausts its budget inside the reasoning trace (`finish_reason: length`) — the condition the check exists to catch — so the probe reported the motivating failure as a pass. Absent, null, non-string and blank content now all fail as "a 200 that carried no answer" (Qodo #1 on PR #237).
+- `_request` did not catch `http.client.HTTPException`, so a truncated body (`IncompleteRead`) escaped a helper documented as never raising and aborted the whole role diagnosis. It now reads as status 0, like every other transport failure (Qodo #2).
+- `doctor --role` returned before the `--apply requires --fix` validation, so `--role X --apply` silently ignored the flag. The heal flags are now validated before any branch consumes them, and `--role` with `--fix`/`--apply` is refused outright — one probes a running lane, the other heals scaffold files (Qodo #3).
+- `doctor --role` dialed `/capabilities` outside `friendly_unauthorized_errors`, so a 401 surfaced as a raw `HTTPError` with bug-filing guidance instead of the actionable `.env` remediation every other gateway-dialing read-only verb gives (Qodo #4).
+
 ## [0.71.0] - 2026-08-30
 
 ### Added

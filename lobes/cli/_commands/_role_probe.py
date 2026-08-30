@@ -36,6 +36,7 @@ empty 200 as its own failure rather than passing it.
 
 from __future__ import annotations
 
+import http.client
 import json
 import time
 import urllib.error
@@ -73,7 +74,10 @@ def _request(
             status = resp.status
     except urllib.error.HTTPError as exc:  # a real answer with a non-2xx status
         raw, status = exc.read(), exc.code
-    except (urllib.error.URLError, OSError, ValueError):
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+        # http.client.HTTPException covers IncompleteRead: a backend or proxy
+        # that drops a buffered body mid-read must read as "nothing answered",
+        # not abort the whole role diagnosis (this helper promises not to raise).
         return 0, None, round(time.monotonic() - started, 3)
     elapsed = round(time.monotonic() - started, 3)
     try:
@@ -199,14 +203,31 @@ def _generate(
     )
 
 
-def _content_of(body: dict | None) -> str | None:
+def _answer_text(body: dict | None) -> str | None:
+    """The assistant text of an OpenAI-shaped 200, or ``None`` if there is none.
+
+    ``None`` covers every shape that is not usable text — a malformed body, no
+    choices, ``message.content: null``, or a non-string content — because the
+    caller must treat them identically: a 200 that carried no answer.
+
+    ``content: null`` is not hypothetical. It is what this lane returns when a
+    thinking model exhausts its token budget inside the reasoning trace
+    (measured live 2026-08-30, `finish_reason: length`), which is the exact
+    condition :func:`alias_check` exists to catch. An earlier version of this
+    function returned that ``None`` through to a check that only rejected
+    non-``None`` blanks, so the probe reported the motivating failure as
+    healthy (Qodo #1 on PR #237).
+    """
+
     if not isinstance(body, dict):
         return None
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
         return None
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    return message.get("content") if isinstance(message, dict) else None
+    first = choices[0]
+    message = first.get("message") if isinstance(first, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    return content if isinstance(content, str) else None
 
 
 def alias_check(base_url: str, role: str, headers: Mapping[str, str], timeout: float) -> dict:
@@ -225,9 +246,11 @@ def alias_check(base_url: str, role: str, headers: Mapping[str, str], timeout: f
             "this is the documented address for the role — if it refuses, no "
             "consumer can reach the lane by contract",
         )
-    content = _content_of(body)
-    if content is not None and not content.strip():
-        # The empty-200 hazard, named rather than passed (issue #234).
+    content = _answer_text(body)
+    if content is None or not content.strip():
+        # The empty-200 hazard, named rather than passed (issue #234). Covers a
+        # null/absent/non-string content as well as a blank string: all four are
+        # a 200 that carried no answer, and only a non-empty string passes.
         return _check(
             "alias_routes",
             False,

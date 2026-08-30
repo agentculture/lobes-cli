@@ -1003,7 +1003,13 @@ def _cmd_doctor_role(args: argparse.Namespace, role: str) -> int:
     except ModelGearError:
         deploy_dir = None
     headers = _runtime_ops.gateway_auth_headers(deploy_dir)
-    registry = _fetch_gateway_capabilities(port, headers=headers)
+    # `_fetch_gateway_capabilities` deliberately RE-RAISES a 401 rather than
+    # folding it into None, so the caller can turn it into the actionable
+    # ".env key" message every other gateway-dialing read-only verb gives. Not
+    # wrapping it surfaced a raw HTTPError with bug-filing guidance instead
+    # (Qodo #4 on PR #237).
+    with _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        registry = _fetch_gateway_capabilities(port, headers=headers)
     entry = None if registry is None else registry.get(role)
     checks = _role_probe.probe_role(base_url, role, entry, headers=headers)
     healthy = all(c["passed"] or c["severity"] != "error" for c in checks)
@@ -1019,16 +1025,30 @@ def _cmd_doctor_role(args: argparse.Namespace, role: str) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     role = getattr(args, "role", None)
-    if role:
-        return _cmd_doctor_role(args, role)
     fix = bool(getattr(args, "fix", False))
     apply = bool(getattr(args, "apply", False))
+    # Validate the heal flags BEFORE any branch consumes them, so `--role`
+    # cannot silently swallow a combination the scaffold lane would refuse
+    # (Qodo #3 on PR #237: `--role X --apply` reported lane health and ignored
+    # the flag entirely).
     if apply and not fix:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--apply requires --fix",
             remediation="run 'lobes doctor --fix' for the heal plan, then add --apply",
         )
+    if role:
+        if fix:
+            # `--role` probes a RUNNING lane; `--fix` heals scaffold files. They
+            # answer different questions and share no work, so pairing them is a
+            # mistake worth naming rather than silently resolving one way.
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message="--role cannot be combined with --fix/--apply",
+                remediation="run 'lobes doctor --fix' to heal the scaffold, then "
+                f"'lobes doctor --role {role}' to probe the running lane",
+            )
+        return _cmd_doctor_role(args, role)
     compose_dir = getattr(args, "compose_dir", None)
     json_mode = bool(getattr(args, "json", False))
     report = _diagnose(compose_dir)
