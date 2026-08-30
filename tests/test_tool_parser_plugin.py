@@ -223,7 +223,9 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-multimodal": "1bd3641b1df10ab26b5ca411fd5323e65ff8eb712a6c4c6ffbe85216b8e94f38",
     "vllm-multimodal-coder": "4e286dfd1fd9e250cb03190ea88151fa7030d3d5054f8901d8580ff910a5ecac",
     "vllm-muse": "00b16677ddedcd2605ef0e6a6d817fd23089751cb7946e8680d3b760e4307f24",
-    "vllm-rerank": "2441f0e3d4c0d105e2803382f7128c68ee8fc03f6db7f2a2fa471cb2d0eafaf0",
+    # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
+    # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
+    "vllm-rerank": "8fea9569d776f62385b87a0086131c8286df82accf7bb6b639dc275c2a168007",
     "vllm-worker": "8251c941e0667600d1d306db5a65d90ee9216391efdb6e246cdcc64f866c96e6",
 }
 
