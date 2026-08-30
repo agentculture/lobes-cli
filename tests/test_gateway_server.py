@@ -657,6 +657,112 @@ def test_handle_post_rerank_path_routes_to_rerank_backend() -> None:
     assert json.loads(calls[0][1])["model"] == _RERANK_SERVED
 
 
+# --- issue #227 (t5): body relay fidelity for /v1/rerank and /v1/score -------
+#
+# The #227 spec's boundary claim c8 says the gateway never injects, rewrites,
+# or defaults the caller's top-level ``instruction`` field — it forwards the
+# body "verbatim" after the bearer gate. These tests pin down what "verbatim"
+# actually means here: handle_post ALWAYS calls rewrite_model() on the model-
+# routed lane (server.py, the `fwd_body = rewrite_model(body, served)` line
+# shared by chat/completions, embeddings, rerank and score), which parses the
+# body as JSON and re-serialises it with json.dumps — even when the caller's
+# own ``model`` field already equals the resolved served_name. That re-encode
+# is NOT guaranteed byte-identical to the bytes the client sent: json.dumps's
+# default separators normalise whitespace (e.g. ``["d1","d2"]`` becomes
+# ``["d1", "d2"]``), so a client that sent compact JSON (as most HTTP client
+# libraries do) will NOT see its exact bytes echoed at the backend socket.
+# c8's real guarantee, proven below, is SEMANTIC fidelity of the
+# ``instruction`` field and the rest of the payload, not byte-for-byte relay.
+
+_INSTRUCTION = "Given a web search query, retrieve relevant passages that answer the query"
+
+
+def test_handle_post_rerank_instruction_relayed_semantically_unmodified() -> None:
+    # #227 c8: the gateway must not inject/rewrite/default `instruction`. A
+    # caller-supplied instruction reaches the rerank backend with its value
+    # untouched, alongside every other field the caller sent.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"rerank": 200, "primary": 200})
+    body = json.dumps(
+        {
+            "model": _RERANK_SERVED,
+            "instruction": _INSTRUCTION,
+            "query": "what is the capital of France?",
+            "documents": ["Paris is the capital of France.", "Berlin is in Germany."],
+        }
+    ).encode()
+    resp = S.handle_post(table, cfg, "/v1/rerank", [], body, opener)
+    assert resp.status == 200
+    assert calls[0][0] == "rerank"
+    forwarded = json.loads(calls[0][1])
+    original = json.loads(body)
+    assert forwarded["instruction"] == _INSTRUCTION == original["instruction"]
+    assert forwarded == original  # every field, value-for-value, survives the hop
+
+
+def test_handle_post_score_instruction_relayed_semantically_unmodified() -> None:
+    # Same claim, /v1/score: routing is purely by model name (not path — see
+    # the sibling /v1/rerank test above), so the same rerank backend and the
+    # same rewrite_model() re-encode apply here too.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"rerank": 200, "primary": 200})
+    body = json.dumps(
+        {
+            "model": _RERANK_SERVED,
+            "instruction": _INSTRUCTION,
+            "text_1": "what is the capital of France?",
+            "text_2": ["Paris is the capital of France.", "Berlin is in Germany."],
+        }
+    ).encode()
+    resp = S.handle_post(table, cfg, "/v1/score", [], body, opener)
+    assert resp.status == 200
+    assert calls[0][0] == "rerank"
+    forwarded = json.loads(calls[0][1])
+    original = json.loads(body)
+    assert forwarded["instruction"] == _INSTRUCTION == original["instruction"]
+    assert forwarded == original
+
+
+def test_handle_post_rerank_body_is_reencoded_not_byte_identical_relay() -> None:
+    # SPEC FINDING (#227 c8): "the gateway forwards the body verbatim" reads
+    # as byte-for-byte relay, but it is not — rewrite_model() always parses
+    # and re-serialises the JSON, even when `model` already equals the
+    # resolved served_name (a no-op value-wise). A client sending the compact
+    # JSON typical of real HTTP client libraries (no space after `:`/`,`)
+    # gets its bytes re-shaped by json.dumps's default separators before the
+    # rerank backend ever sees them. Content survives; raw bytes do not.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"rerank": 200, "primary": 200})
+    body = (
+        b'{"model":"' + _RERANK_SERVED.encode() + b'",'
+        b'"instruction":"' + _INSTRUCTION.encode() + b'",'
+        b'"query":"q","documents":["d1","d2"]}'
+    )
+    resp = S.handle_post(table, cfg, "/v1/rerank", [], body, opener)
+    assert resp.status == 200
+    forwarded = calls[0][1]
+    # Not byte-identical to what the client sent...
+    assert forwarded != body
+    # ...but semantically identical, instruction included.
+    assert json.loads(forwarded) == json.loads(body)
+
+
+def test_handle_post_score_body_is_reencoded_not_byte_identical_relay() -> None:
+    # Same finding, /v1/score.
+    table, cfg = _task_cfg()
+    opener, calls = _opener({"rerank": 200, "primary": 200})
+    body = (
+        b'{"model":"' + _RERANK_SERVED.encode() + b'",'
+        b'"instruction":"' + _INSTRUCTION.encode() + b'",'
+        b'"text_1":"q","text_2":["d1","d2"]}'
+    )
+    resp = S.handle_post(table, cfg, "/v1/score", [], body, opener)
+    assert resp.status == 200
+    forwarded = calls[0][1]
+    assert forwarded != body
+    assert json.loads(forwarded) == json.loads(body)
+
+
 # --- pressure-aware tier downgrade + manual override (t6, #68) ----------------
 
 from lobes.gateway._tier_request import PressureCache  # noqa: E402
