@@ -787,8 +787,9 @@ a `FEASIBLE=false` role now places each request across the declared replicas
 instead. Four rules, each a recorded decision: **peers agree with each other**
 (no local lane means no reference, so the first READY peer in DECLARATION
 order supplies the fingerprint every other peer is compared to, published as
-`reason: "fingerprint reference"`; disagreement leaves nothing compatible —
-#199 h11 restated); **the singular origin is REQUIRED** (`hosted_by` reads it,
+`reason: "fingerprint reference"`; disagreement leaves nothing compatible,
+which is #199 h11 restated); **the singular origin is REQUIRED** (`hosted_by`
+reads it,
 so plural-without-singular is refused at startup with a named
 `ReplicaConfigError` — a pool on a role the box HOSTS needs no singular
 origin, publishing no referral at all); **never worse than today** (nothing
