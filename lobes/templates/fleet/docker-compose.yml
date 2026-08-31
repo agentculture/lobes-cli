@@ -1800,7 +1800,7 @@ services:
       - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
       # Multimodal gear (default-on: always started, always wired). Default id is
       # the NVFP4 base + native-MTP gear (docs/vllm-nightly-migration.md §7).
-      - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}
+      - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-}
       - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
       # Opt-in coder gear (activate with --profile multimodal-coder and set
       # MULTIMODAL_CODER_BASE_URL in .env; empty defaults mean no backend is wired
