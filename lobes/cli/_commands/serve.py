@@ -46,7 +46,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # Ensure the durable-log dir exists (user-owned) before compose bind-mounts it.
         _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
         _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
-        _health.wait_health(port)
+        # issue #111: wait on the container the deployment shape actually runs —
+        # the fleet primary, not the legacy single-model name.
+        container = _compose.FLEET_PRIMARY if _compose.is_fleet(deploy_dir) else _compose.CONTAINER
+        _health.wait_health(port, container=container)
         result = {"serving": True, "port": port, "deployment_dir": str(deploy_dir)}
         tc = None
         if not args.no_probe:

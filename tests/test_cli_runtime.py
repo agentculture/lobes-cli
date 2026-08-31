@@ -964,6 +964,26 @@ def test_serve_apply(tmp_path, monkeypatch) -> None:
     assert calls == ["up"]
 
 
+def test_serve_apply_resolves_container_from_deployment_shape(tmp_path, monkeypatch) -> None:
+    # issue #111: serve must wait on the container the deployment shape actually
+    # runs — the fleet primary, not the legacy single-model name.
+    fleet_dir = tmp_path / "fleet"
+    single_dir = tmp_path / "single"
+    _compose.write_scaffold(fleet_dir, force=True, templates=_compose.FLEET_TEMPLATES)
+    _compose.write_scaffold(single_dir, force=True)
+    seen: dict[str, str] = {}
+
+    def fake_wait(port, **kwargs):
+        seen["container"] = kwargs["container"]
+
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
+    monkeypatch.setattr(_health, "wait_health", fake_wait)
+    assert main(["serve", "--compose-dir", str(fleet_dir), "--apply", "--no-probe"]) == 0
+    assert seen["container"] == _compose.FLEET_PRIMARY
+    assert main(["serve", "--compose-dir", str(single_dir), "--apply", "--no-probe"]) == 0
+    assert seen["container"] == _compose.CONTAINER
+
+
 def test_serve_apply_records_tool_probe(tmp_path, monkeypatch, capsys) -> None:
     _scaffold(tmp_path)
     monkeypatch.setattr(_compose, "compose_up_detached", lambda d: _ok())
