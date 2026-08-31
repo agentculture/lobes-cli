@@ -189,3 +189,58 @@ def test_apply_leaves_every_other_operator_line_intact(tmp_path, capsys) -> None
 
     text = _env_path(deploy).read_text(encoding="utf-8")
     assert "PRIMARY_PEER_ORIGIN=http://peer:8000" in text
+
+
+# ---------------------------------------------------------------------------
+# TEXT-mode rendering — the half Qodo #3 was actually about.
+#
+# The bug it reported was that `--repin-version` printed nothing outside
+# `--json`. Fixing it and then testing only the JSON path would leave the fix
+# itself unexercised — which is the same gap that produced the bug.
+# ---------------------------------------------------------------------------
+
+
+def _doctor_text(capsys, *args: str) -> str:
+    from lobes.cli import main
+
+    main(["doctor", *args])
+    return capsys.readouterr().out
+
+
+def test_text_dry_run_shows_the_proposed_change(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", "0.1.0")
+    out = _doctor_text(capsys, "--repin-version", "--compose-dir", str(deploy))
+    assert "version re-pin (DRY RUN" in out
+    assert f"would set MODEL_GEAR_VERSION={__version__} (currently 0.1.0)" in out
+
+
+def test_text_dry_run_says_nothing_to_do_when_current(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", __version__)
+    out = _doctor_text(capsys, "--repin-version", "--compose-dir", str(deploy))
+    assert "nothing to re-pin — the pin is already current" in out
+
+
+def test_text_apply_shows_what_was_written(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", "0.1.0")
+    out = _doctor_text(capsys, "--repin-version", "--apply", "--compose-dir", str(deploy))
+    assert "version re-pin applied:" in out
+    assert f"re-pinned MODEL_GEAR_VERSION={__version__} (was 0.1.0)" in out
+    assert "DRY RUN" not in out
+
+
+def test_text_apply_on_a_current_pin_reports_the_no_op(tmp_path, capsys) -> None:
+    """`repin_applied == []` must render as a no-op, not as an empty section."""
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", __version__)
+    out = _doctor_text(capsys, "--repin-version", "--apply", "--compose-dir", str(deploy))
+    assert "version re-pin applied:" in out
+    assert "nothing to re-pin — the pin is already current" in out
+
+
+def test_text_omits_the_repin_section_entirely_when_not_requested(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    out = _doctor_text(capsys, "--compose-dir", str(deploy))
+    assert "version re-pin" not in out

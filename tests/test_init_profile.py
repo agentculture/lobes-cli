@@ -398,3 +398,27 @@ def test_mixed_case_operator_profile_is_still_disclosed(tmp_path, monkeypatch, c
     assert "OPERATOR profile" in out
     assert "Thor.toml" in out
     assert "shadows the built-in thor" in out
+
+
+def test_profiles_dir_without_a_matching_file_discloses_nothing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A `profiles/` dir holding only UNRELATED files shadows nothing.
+
+    The scan added for Qodo #6 walks the directory rather than probing one
+    stem, so it must still return `None` when nothing in there matches the
+    resolved profile — otherwise merely having a profiles dir would claim a
+    shadow that does not exist.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "spark.toml").write_text(
+        'summary = "a different card"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: thor (auto-detected:" in out
+    assert "OPERATOR profile" not in out
+    assert "shadows the built-in" not in out
