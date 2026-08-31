@@ -1123,53 +1123,56 @@ def _run_repin(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     return report
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
-    role = getattr(args, "role", None)
-    fix = bool(getattr(args, "fix", False))
-    apply = bool(getattr(args, "apply", False))
-    repin = bool(getattr(args, "repin_version", False))
-    # Validate the heal flags BEFORE any branch consumes them, so `--role`
-    # cannot silently swallow a combination the scaffold lane would refuse
-    # (Qodo #3 on PR #237: `--role X --apply` reported lane health and ignored
-    # the flag entirely).
+def _validate_doctor_flags(role: str | None, *, fix: bool, apply: bool, repin: bool) -> None:
+    """Refuse incoherent flag combinations BEFORE any branch consumes them.
+
+    Front-loaded so `--role` cannot silently swallow a combination the scaffold
+    lane would refuse (Qodo #3 on PR #237: `--role X --apply` reported lane
+    health and ignored the flag entirely). Lifted out of :func:`cmd_doctor` to
+    keep it under SonarCloud's cognitive-complexity ceiling — validation and
+    dispatch are separate jobs and read better apart.
+    """
     if apply and not (fix or repin):
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--apply requires --fix or --repin-version",
             remediation="run 'lobes doctor --fix' for the heal plan, then add --apply",
         )
-    if repin and role:
-        # Same reasoning as --role/--fix: --role probes a RUNNING lane, this
-        # rewrites the scaffold's .env. Different questions, no shared work.
+    if not role:
+        return
+    # `--role` probes a RUNNING lane; the write lanes touch the scaffold's
+    # files and .env. Different questions, no shared work — so pairing them is
+    # a mistake worth naming rather than silently resolving one way.
+    if repin:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--role cannot be combined with --repin-version",
             remediation="run 'lobes doctor --repin-version --apply' first, then "
             f"'lobes doctor --role {role}'",
         )
-    if role:
-        if fix:
-            # `--role` probes a RUNNING lane; `--fix` heals scaffold files. They
-            # answer different questions and share no work, so pairing them is a
-            # mistake worth naming rather than silently resolving one way.
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message="--role cannot be combined with --fix/--apply",
-                remediation="run 'lobes doctor --fix' to heal the scaffold, then "
-                f"'lobes doctor --role {role}' to probe the running lane",
-            )
-        return _cmd_doctor_role(args, role)
-    compose_dir = getattr(args, "compose_dir", None)
-    json_mode = bool(getattr(args, "json", False))
-    report = _diagnose(compose_dir)
-    if fix and "fix_plan" not in report:
+    if fix:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--role cannot be combined with --fix/--apply",
+            remediation="run 'lobes doctor --fix' to heal the scaffold, then "
+            f"'lobes doctor --role {role}' to probe the running lane",
+        )
+
+
+def _run_fix(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
+    """The ``--fix`` heal lane — the sibling of :func:`_run_repin`.
+
+    Extracted alongside it so the two write lanes read symmetrically and
+    :func:`cmd_doctor` stays a dispatcher rather than an implementation.
+    """
+    if "fix_plan" not in report:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--fix needs a scaffolded FLEET deployment to heal",
             remediation="scaffold one first ('lobes init --apply'); the legacy "
             "single-model dir has no profile render to heal against",
         )
-    if fix and apply:
+    if apply:
         deploy_dir = _compose.resolve_deployment_dir(compose_dir)
         emit_diagnostic(f">> healing {deploy_dir} (missing-only)")
         applied = _apply_fix(deploy_dir)
@@ -1177,10 +1180,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # heal worked is the checks passing, not the writes having happened.
         report = _diagnose(compose_dir)
         report["fix_applied"] = applied
+    report["fix_requested"] = True
+    return report
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    role = getattr(args, "role", None)
+    fix = bool(getattr(args, "fix", False))
+    apply = bool(getattr(args, "apply", False))
+    repin = bool(getattr(args, "repin_version", False))
+    _validate_doctor_flags(role, fix=fix, apply=apply, repin=repin)
+    if role:
+        return _cmd_doctor_role(args, role)
+    compose_dir = getattr(args, "compose_dir", None)
+    json_mode = bool(getattr(args, "json", False))
+    report = _diagnose(compose_dir)
+    if fix:
+        report = _run_fix(report, compose_dir, apply=apply)
     if repin:
         report = _run_repin(report, compose_dir, apply=apply)
-    if fix:
-        report["fix_requested"] = True
     emit_result(report if json_mode else _render_text(report), json_mode=json_mode)
     return 0 if report["healthy"] else 1
 
