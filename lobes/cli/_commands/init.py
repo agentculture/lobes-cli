@@ -537,12 +537,27 @@ def _operator_shadow_line(target: Path, profile) -> str | None:
     key = profile.name.strip().lower()
     if key not in builtin_names():
         return None
-    operator_file = target / "profiles" / f"{key}.toml"
-    if not operator_file.is_file():
+    # `resolve_profile` matches an operator file case-INSENSITIVELY, so
+    # `profiles/Thor.toml` shadows the built-in `thor` just as `thor.toml`
+    # does. Probing only the lower-cased stem missed those files and left the
+    # shadow silent — the exact failure this disclosure exists to prevent
+    # (Qodo #6 on PR #241). Scan the directory instead and compare normalised
+    # stems.
+    profiles_dir = target / "profiles"
+    if not profiles_dir.is_dir():
         return None
+    operator_file = next(
+        (f for f in sorted(profiles_dir.glob("*.toml")) if f.stem.strip().lower() == key),
+        None,
+    )
+    if operator_file is None:
+        return None
+    # Name the BUILT-IN by its canonical key, not by `profile.name`: with a
+    # mixed-case operator file the resolved name carries that file's casing, so
+    # reusing it would claim a built-in `Thor` that does not exist.
     return (
         f"Profile: {profile.name} (OPERATOR profile at {operator_file} "
-        f"- shadows the built-in {profile.name})"
+        f"- shadows the built-in {key})"
     )
 
 

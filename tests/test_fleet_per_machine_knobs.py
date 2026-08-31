@@ -28,6 +28,7 @@ gated on a GB10 live-verification tracked in agentculture/lobes-cli#109.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import yaml
@@ -122,7 +123,11 @@ class TestMultimodalAttentionBackendMigratedOffTheDeadEnv:
         """The operator knob survives the migration — same name, same default."""
         compose = _fleet_compose()
         command = compose["services"]["vllm-multimodal"]["command"]
-        tokens = command.split() if isinstance(command, str) else command
+        # The multimodal lane's command is a YAML folded scalar that Compose
+        # lexes with shlex, and its JSON args are single-quoted to survive that
+        # (#120). Lex it the same way rather than splitting on whitespace, or
+        # the quoted flag reads as two half-tokens.
+        tokens = shlex.split(command) if isinstance(command, str) else command
         flag = [t for t in tokens if str(t).startswith("--attention-config=")]
         assert flag, "the multimodal lane must select its backend explicitly"
         assert "MULTIMODAL_ATTENTION_BACKEND" in flag[0]

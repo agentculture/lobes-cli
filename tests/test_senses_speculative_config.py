@@ -76,8 +76,12 @@ _BASELINE_ARGV = [
         '"google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'
     ),
     # #120: the lane's attention backend moved from a dead VLLM_ATTENTION_BACKEND
-    # env to the --attention-config flag every other lane already uses.
-    "--attention-config={backend:TRITON_ATTN}",
+    # env to the --attention-config flag every other lane already uses. The JSON
+    # must arrive INTACT: this command is a YAML string that Compose lexes with
+    # shlex, so an unquoted flag loses its inner double quotes and vLLM receives
+    # the malformed `{backend:TRITON_ATTN}`. Single-quoting in the template is
+    # what preserves it — the same reason the speculative flag above is quoted.
+    '--attention-config={"backend": "TRITON_ATTN"}',
     "--trust-remote-code",
 ]
 

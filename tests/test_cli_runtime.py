@@ -1034,3 +1034,34 @@ def test_status_json(tmp_path, capsys) -> None:
     assert payload["health"] == "not responding"  # offline is_healthy → False
     assert payload["model"] == "unsloth/Qwen3.8-27B-NVFP4"
     assert payload["tool_call_parser"] == "qwen3_coder"  # scaffolded default
+
+
+def test_serve_liveness_anchor_falls_back_to_the_gateway_when_the_shape_drops_cortex(
+    tmp_path,
+) -> None:
+    """A mesh-brain shape that drops `cortex` runs no vllm-primary (#111 redux).
+
+    `thor-lobe`, `orin-lobe` and `thor-worker` all render
+    `PRIMARY_FEASIBLE=false`. Anchoring the health-wait on the primary there
+    reproduces the exact failure #111 reported — "container is 'missing' —
+    load failed" while the deployment comes up healthy — just on a different
+    box. The gateway is the container every fleet runs.
+    """
+    from lobes.cli._commands.serve import _liveness_container
+
+    deploy = tmp_path / "fleet"
+    _compose.write_scaffold(deploy, force=True, templates=dict(_compose.FLEET_TEMPLATES))
+    env_path = deploy / _compose.ENV_FILE
+
+    assert _liveness_container(deploy, env_path) == _compose.FLEET_PRIMARY
+
+    _env.set_env(env_path, "PRIMARY_FEASIBLE", "false")
+    assert _liveness_container(deploy, env_path) == _compose.FLEET_GATEWAY
+
+
+def test_serve_liveness_anchor_is_the_legacy_container_on_a_single_scaffold(tmp_path) -> None:
+    from lobes.cli._commands.serve import _liveness_container
+
+    deploy = tmp_path / "single"
+    _compose.write_scaffold(deploy, force=True)
+    assert _liveness_container(deploy, deploy / _compose.ENV_FILE) == _compose.CONTAINER

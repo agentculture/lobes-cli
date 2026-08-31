@@ -23,7 +23,7 @@ def _env_path(deploy: Path) -> Path:
     return deploy / _compose.ENV_FILE
 
 
-@pytest.fixture()
+@pytest.fixture
 def deploy(tmp_path: Path) -> Path:
     d = tmp_path / "deploy"
     d.mkdir()
@@ -39,7 +39,8 @@ def deploy(tmp_path: Path) -> Path:
 def test_repin_rewrites_the_stale_pin(deploy: Path) -> None:
     actions = doctor._repin_version(deploy)
     assert _env.read_env(_env_path(deploy), "MODEL_GEAR_VERSION") == __version__
-    assert actions and "0.1.0" in actions[0]
+    assert actions
+    assert "0.1.0" in actions[0]
 
 
 def test_repin_preserves_every_other_operator_line(deploy: Path) -> None:
@@ -62,7 +63,8 @@ def test_repin_appends_when_the_key_is_absent(tmp_path: Path) -> None:
     _env_path(d).write_text("OTHER=1\n", encoding="utf-8")
     actions = doctor._repin_version(d)
     assert _env.read_env(_env_path(d), "MODEL_GEAR_VERSION") == __version__
-    assert actions and "appended" in actions[0]
+    assert actions
+    assert "appended" in actions[0]
 
 
 def test_the_heal_lane_still_never_rewrites_an_existing_line(deploy: Path) -> None:

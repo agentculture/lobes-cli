@@ -166,6 +166,9 @@ def test_doctor_version_mismatch_names_both_versions_and_fails_the_run(
     # -d --build gateway`, which predates both.
     assert "--repin-version --apply" in check["remediation"]
     assert "lobes up gateway --build --apply" in check["remediation"]
+    # Both commands must name the DIAGNOSED deployment, or the copy-pasteable
+    # remediation targets the default one instead (Qodo #5 on PR #241).
+    assert check["remediation"].count(f"--compose-dir {tmp_path}") == 2
     # A real skew defect DOES fail the overall run — that is the whole point.
     assert payload["healthy"] is False
     assert rc == 1

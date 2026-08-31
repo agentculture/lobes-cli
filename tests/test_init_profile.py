@@ -376,3 +376,25 @@ def test_resolve_init_profile_explicit_profile_genuine_mismatch_still_warns(
     assert card.resolved == "thor"
     assert warning is not None
     assert "detected card 'thor'" in warning
+
+
+def test_mixed_case_operator_profile_is_still_disclosed(tmp_path, monkeypatch, capsys) -> None:
+    """`profiles/Thor.toml` shadows the built-in `thor` — say so (Qodo #6, PR #241).
+
+    Profile resolution matches the operator file case-insensitively, so a
+    mixed-case filename wins exactly like a lower-case one. Probing only the
+    lower-cased stem left that shadow silent, which is precisely the silent
+    no-op #175 exists to prevent.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "Thor.toml").write_text(
+        'summary = "mixed-case operator override"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "OPERATOR profile" in out
+    assert "Thor.toml" in out
+    assert "shadows the built-in thor" in out

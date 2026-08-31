@@ -223,9 +223,9 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-hand": "7337db5b60adf2fcd47d1530eb149adf6c3652d029bb7102896f2da4432b7428",
     "vllm-middle": "cb09dd82886e67ac05d97815c8f567dbc97a422de5ba28dcf4055c5a0ea4f36b",
     "vllm-minor": "8e5b98ae680d8274eb563b897382b21f077a568af8a3aaf1f28f75b40f967b8f",
-    "vllm-multimodal": "6ea82ed5d2d64a7215026751e7f62b31fdbf3355d8b06c17508bead30498df36",
-    "vllm-multimodal-coder": "0c4404b2846af033068aa3df03b46d175eec3e4d3dd8d1cb20b2fab0db59c544",
-    "vllm-muse": "3cf814246e885805e5f3be200b8da5e5050193990e947f2145c348c9782b0e04",
+    "vllm-multimodal": "e2895d0933383774cdf2e983daf826da947a075e0d63a45c39bdc8b95ae2f271",
+    "vllm-multimodal-coder": "a2909d32484894bc4d10507157322f2abb739e6817ee83a7340803a9f096449d",
+    "vllm-muse": "b694144cae4d9acacd5d1eb6e217a0323ed418bc3bc4ec699595021631ef5923",
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
     "vllm-rerank": "8fea9569d776f62385b87a0086131c8286df82accf7bb6b639dc275c2a168007",

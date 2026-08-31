@@ -132,12 +132,23 @@ _VERSION_PIN_KEY = "MODEL_GEAR_VERSION"
 def _version_skew_remediation(deploy_dir: Path | None) -> str:
     """The exact fix for a version mismatch — names both the file and the pin
     to change, plus the follow-up rebuild, so this is copy-pasteable."""
-    env_path = f"{deploy_dir}/.env" if deploy_dir is not None else "<deployment>/.env"
+    if deploy_dir is None:
+        # No path diagnosed — keep the default-deployment wording rather than
+        # inventing a --compose-dir the operator did not use.
+        return (
+            f"run 'lobes doctor --repin-version --apply' to set "
+            f"{_VERSION_PIN_KEY}={__version__} in <deployment>/.env "
+            "(the one key doctor may rewrite), then "
+            "'lobes up gateway --build --apply' to re-image the front"
+        )
+    # A non-default deployment was diagnosed, so both commands must NAME it —
+    # otherwise the copy-pasteable remediation silently repins and rebuilds the
+    # DEFAULT deployment instead of the one just reported on (Qodo #5, PR #241).
     return (
-        f"run 'lobes doctor --repin-version --apply' to set "
-        f"{_VERSION_PIN_KEY}={__version__} in {env_path} "
+        f"run 'lobes doctor --repin-version --apply --compose-dir {deploy_dir}' to set "
+        f"{_VERSION_PIN_KEY}={__version__} in {deploy_dir}/.env "
         "(the one key doctor may rewrite), then "
-        "'lobes up gateway --build --apply' to re-image the front"
+        f"'lobes up gateway --build --apply --compose-dir {deploy_dir}' to re-image the front"
     )
 
 
@@ -1003,6 +1014,29 @@ def _render_fix_plan_lines(plan: dict, *, applied: list[str] | None) -> list[str
     return lines
 
 
+def _render_repin_lines(report: dict) -> list[str]:
+    """The ``--repin-version`` section (Qodo #3 on PR #241).
+
+    ``cmd_doctor`` recorded ``repin_plan`` / ``repin_applied`` but the text
+    renderer never read them, so ``lobes doctor --repin-version`` printed the
+    ordinary report and appeared to do nothing — the dry-run review step the
+    flag exists for was invisible unless you asked for ``--json``.
+    """
+    applied = report.get("repin_applied")
+    if applied is not None:
+        lines = ["", "version re-pin applied:"]
+        lines.extend(f"  {action}" for action in applied)
+        if not applied:
+            lines.append("  nothing to re-pin — the pin is already current")
+        return lines
+    plan = report.get("repin_plan") or []
+    lines = ["", "version re-pin (DRY RUN — re-run with --apply to write):"]
+    lines.extend(f"  {action}" for action in plan)
+    if not plan:
+        lines.append("  nothing to re-pin — the pin is already current")
+    return lines
+
+
 def _render_text(report: dict) -> str:
     status = "healthy" if report["healthy"] else "unhealthy"
     lines = [f"lobes doctor: {status}", ""]
@@ -1011,6 +1045,8 @@ def _render_text(report: dict) -> str:
         lines.extend(_render_machine_profile_lines(report["machine_profile"]))
     if "fix_plan" in report and report.get("fix_requested"):
         lines.extend(_render_fix_plan_lines(report["fix_plan"], applied=report.get("fix_applied")))
+    if report.get("repin_requested"):
+        lines.extend(_render_repin_lines(report))
     return "\n".join(lines)
 
 
@@ -1055,6 +1091,36 @@ def _cmd_doctor_role(args: argparse.Namespace, role: str) -> int:
         lines += _render_check_lines(checks)
         emit_result("\n".join(lines), json_mode=False)
     return 0 if healthy else 1
+
+
+def _run_repin(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
+    """The ``--repin-version`` lane, lifted out of :func:`cmd_doctor`.
+
+    Extracted so ``cmd_doctor`` stays under SonarCloud's cognitive-complexity
+    ceiling: the branch is self-contained (resolve the dir, then either write
+    and re-diagnose, or compute the dry-run plan), so it reads better alone
+    than as a fourth nested arm of the command dispatcher.
+    """
+    deploy_dir = _compose.resolve_deployment_dir(compose_dir)
+    if apply:
+        emit_diagnostic(f">> re-pinning {_VERSION_PIN_KEY} in {deploy_dir}")
+        repin_applied = _repin_version(deploy_dir)
+        # Re-diagnose so the report describes the AFTER state — but CARRY every
+        # action key across it. Replacing the report wholesale dropped
+        # `fix_applied` when both write modes were requested (Qodo #4 on PR
+        # #241), so `--fix --repin-version --apply` reported the heal as an
+        # unexecuted plan.
+        carried = {k: report[k] for k in ("fix_applied", "fix_requested") if k in report}
+        report = {**_diagnose(compose_dir), **carried, "repin_applied": repin_applied}
+    else:
+        current = _env.read_env(deploy_dir / _compose.ENV_FILE, _VERSION_PIN_KEY)
+        report["repin_plan"] = (
+            []
+            if current == __version__
+            else [f"would set {_VERSION_PIN_KEY}={__version__} (currently {current or 'unset'})"]
+        )
+    report["repin_requested"] = True
+    return report
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -1112,22 +1178,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         report = _diagnose(compose_dir)
         report["fix_applied"] = applied
     if repin:
-        deploy_dir = _compose.resolve_deployment_dir(compose_dir)
-        if apply:
-            emit_diagnostic(f">> re-pinning {_VERSION_PIN_KEY} in {deploy_dir}")
-            report["repin_applied"] = _repin_version(deploy_dir)
-            report = {**_diagnose(compose_dir), "repin_applied": report["repin_applied"]}
-        else:
-            env_path = deploy_dir / _compose.ENV_FILE
-            current = _env.read_env(env_path, _VERSION_PIN_KEY)
-            report["repin_plan"] = (
-                []
-                if current == __version__
-                else [
-                    f"would set {_VERSION_PIN_KEY}={__version__} (currently {current or 'unset'})"
-                ]
-            )
-        report["repin_requested"] = True
+        report = _run_repin(report, compose_dir, apply=apply)
     if fix:
         report["fix_requested"] = True
     emit_result(report if json_mode else _render_text(report), json_mode=json_mode)
