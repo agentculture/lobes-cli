@@ -9,6 +9,7 @@ named flag, and ``--fix --apply`` must still leave every existing line alone.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -102,3 +103,87 @@ def test_repin_and_role_are_refused_together() -> None:
     with pytest.raises(ModelGearError) as err:
         doctor.cmd_doctor(args)
     assert "--repin-version" in err.value.message
+
+
+# ---------------------------------------------------------------------------
+# The CLI flow — `lobes doctor --repin-version` end to end.
+#
+# The tests above exercise the writer and the argument validation directly.
+# These drive `cmd_doctor` itself, which is the surface an operator actually
+# touches: the dry-run plan, the --apply write, and the report keys each
+# emits. Without them the whole `if repin:` branch in `cmd_doctor` is
+# untested (it was, until SonarCloud's new-code coverage gate said so).
+# ---------------------------------------------------------------------------
+
+
+def _scaffold_fleet(path: Path) -> Path:
+    """A complete fleet deployment, as ``lobes init --apply`` leaves it."""
+    _compose.write_scaffold(path, force=True, templates=dict(_compose.FLEET_TEMPLATES))
+    _compose.write_plugin_file(path, force=True)
+    return path
+
+
+def _doctor_json(capsys, *args: str) -> dict:
+    from lobes.cli import main
+
+    main(["doctor", "--json", *args])
+    return json.loads(capsys.readouterr().out)
+
+
+def test_dry_run_names_the_write_without_making_it(tmp_path, capsys) -> None:
+    """`--repin-version` alone is read-only — it plans, it does not write."""
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", "0.1.0")
+    before = _env_path(deploy).read_text(encoding="utf-8")
+
+    report = _doctor_json(capsys, "--repin-version", "--compose-dir", str(deploy))
+
+    assert report["repin_requested"] is True
+    assert report["repin_plan"] == [f"would set MODEL_GEAR_VERSION={__version__} (currently 0.1.0)"]
+    assert "repin_applied" not in report
+    assert _env_path(deploy).read_text(encoding="utf-8") == before, "dry run must not write"
+
+
+def test_dry_run_on_an_absent_key_says_unset(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    env_text = _env_path(deploy).read_text(encoding="utf-8")
+    _env_path(deploy).write_text(
+        "\n".join(ln for ln in env_text.splitlines() if not ln.startswith("MODEL_GEAR_VERSION"))
+        + "\n",
+        encoding="utf-8",
+    )
+    report = _doctor_json(capsys, "--repin-version", "--compose-dir", str(deploy))
+    assert report["repin_plan"] == [f"would set MODEL_GEAR_VERSION={__version__} (currently unset)"]
+
+
+def test_dry_run_on_a_current_pin_plans_nothing(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", __version__)
+    report = _doctor_json(capsys, "--repin-version", "--compose-dir", str(deploy))
+    assert report["repin_plan"] == [], "an already-current pin is a no-op, not a write"
+
+
+def test_apply_writes_the_pin_and_reports_it(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", "0.1.0")
+
+    report = _doctor_json(capsys, "--repin-version", "--apply", "--compose-dir", str(deploy))
+
+    assert report["repin_requested"] is True
+    assert report["repin_applied"] == [f"re-pinned MODEL_GEAR_VERSION={__version__} (was 0.1.0)"]
+    assert _env.read_env(_env_path(deploy), "MODEL_GEAR_VERSION") == __version__
+    # The report describes the AFTER state — the same re-diagnose contract
+    # `--fix --apply` follows, so the checks reflect the world post-write.
+    assert "checks" in report
+
+
+def test_apply_leaves_every_other_operator_line_intact(tmp_path, capsys) -> None:
+    deploy = _scaffold_fleet(tmp_path)
+    with _env_path(deploy).open("a", encoding="utf-8") as fh:
+        fh.write("\nPRIMARY_PEER_ORIGIN=http://peer:8000\n")
+    _env.set_env(_env_path(deploy), "MODEL_GEAR_VERSION", "0.1.0")
+
+    _doctor_json(capsys, "--repin-version", "--apply", "--compose-dir", str(deploy))
+
+    text = _env_path(deploy).read_text(encoding="utf-8")
+    assert "PRIMARY_PEER_ORIGIN=http://peer:8000" in text

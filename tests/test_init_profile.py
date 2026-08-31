@@ -266,6 +266,30 @@ def test_builtin_only_resolution_prints_no_shadow_line(tmp_path, monkeypatch, ca
     assert "shadows the built-in" not in out
 
 
+def test_operator_profile_with_a_novel_name_shadows_nothing(tmp_path, monkeypatch, capsys) -> None:
+    """An operator profile whose name matches NO built-in prints no shadow line.
+
+    This is the documented custom-profile workflow
+    (`docs/machine-profiles.md#writing-your-own-profile`): an operator adds
+    `<deploy-dir>/profiles/<their-name>.toml` and forces it with `--profile`.
+    Nothing is being overridden, so the disclosure would be a lie — the line
+    exists to warn that a built-in was shadowed, not to announce that an
+    operator profile was used.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "myrig.toml").write_text(
+        'summary = "a bespoke card, not a built-in"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target), "--profile", "myrig"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: myrig" in out
+    assert "OPERATOR profile" not in out, "myrig shadows no built-in — there is nothing to disclose"
+    assert "shadows the built-in" not in out
+
+
 # --- acceptance 4: dry-run-by-default preserved ------------------------------
 
 
