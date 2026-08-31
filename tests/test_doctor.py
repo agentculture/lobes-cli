@@ -160,7 +160,12 @@ def test_doctor_version_mismatch_names_both_versions_and_fails_the_run(
     assert __version__ in check["message"]
     assert f"MODEL_GEAR_VERSION={__version__}" in check["remediation"]
     assert f"{tmp_path}/.env" in check["remediation"] or str(tmp_path) in check["remediation"]
-    assert "docker compose up -d --build gateway" in check["remediation"]
+    # The remediation names the two verbs that actually close the skew: the
+    # opt-in re-pin (#99 — doctor's ONE existing-line rewrite) and the
+    # gateway-only re-image (#222). It used to name a raw `docker compose up
+    # -d --build gateway`, which predates both.
+    assert "--repin-version --apply" in check["remediation"]
+    assert "lobes up gateway --build --apply" in check["remediation"]
     # A real skew defect DOES fail the overall run — that is the whole point.
     assert payload["healthy"] is False
     assert rc == 1
