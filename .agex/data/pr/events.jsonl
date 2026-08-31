@@ -161,3 +161,10 @@
 {"ts":"2026-08-29T09:01:36.311565+00:00","type":"pr_reply","pr":223,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-08-29T09:01:36.320656+00:00","type":"pr_batch_replied","pr":223,"count":10,"resolved":0}
 {"ts":"2026-08-29T09:01:37.167234+00:00","type":"pr_webhook_posted","pr":223,"event":"pr_replied"}
+{"ts":"2026-08-30T16:43:12.603285+00:00","type":"pr_opened","pr":238,"title":"fix(reranker): serve Qwen3-Reranker-0.6B with the model card's judge prompt \u2014 calibrated scores, live instruction (#227) (0.72.0)"}
+{"ts":"2026-08-30T16:43:14.437374+00:00","type":"pr_review_triggered","pr":238,"command":"/agentic_review"}
+{"ts":"2026-08-30T16:43:15.186511+00:00","type":"pr_webhook_posted","pr":238,"event":"pr_opened"}
+{"ts":"2026-08-30T16:44:18.180662+00:00","type":"readiness_arrived","pr":238,"waited_secs":60}
+{"ts":"2026-08-30T16:44:22.908502+00:00","type":"pr_read","pr":238,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-08-30T16:44:39.990517+00:00","type":"readiness_arrived","pr":238,"waited_secs":0}
+{"ts":"2026-08-30T16:44:44.072043+00:00","type":"pr_read","pr":238,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
