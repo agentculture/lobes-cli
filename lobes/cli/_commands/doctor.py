@@ -123,13 +123,21 @@ def _health_check(port: int) -> dict:
     )
 
 
+#: The single ``.env`` key ``--repin-version`` is allowed to rewrite. Named as a
+#: constant so the flag, the writer and the remediation text can never drift
+#: onto different keys (issue #99).
+_VERSION_PIN_KEY = "MODEL_GEAR_VERSION"
+
+
 def _version_skew_remediation(deploy_dir: Path | None) -> str:
     """The exact fix for a version mismatch — names both the file and the pin
     to change, plus the follow-up rebuild, so this is copy-pasteable."""
     env_path = f"{deploy_dir}/.env" if deploy_dir is not None else "<deployment>/.env"
     return (
-        f"set MODEL_GEAR_VERSION={__version__} in {env_path}, "
-        "then docker compose up -d --build gateway"
+        f"run 'lobes doctor --repin-version --apply' to set "
+        f"{_VERSION_PIN_KEY}={__version__} in {env_path} "
+        "(the one key doctor may rewrite), then "
+        "'lobes up gateway --build --apply' to re-image the front"
     )
 
 
@@ -862,6 +870,32 @@ def _append_missing_env(deploy_dir: Path, missing_env: dict[str, str]) -> list[s
     return [f"appended {key}" for key in sorted(missing_env)]
 
 
+def _repin_version(deploy_dir: Path) -> list[str]:
+    """Rewrite ``MODEL_GEAR_VERSION`` in ``.env`` to this CLI's own version.
+
+    This is the ONLY place ``doctor`` rewrites a line that already exists, and
+    it is reachable ONLY behind its own named flag (``--repin-version``) —
+    never from a plain ``--fix --apply``. That asymmetry is the whole design:
+    issue #99 is real (``lobes init`` writes the pin once and no verb ever
+    re-pins it, so a merged gateway fix never reaches a deployment), but the
+    never-rewrite-an-existing-``.env``-line convention is what #174 and #191
+    cost when it was broken — ``init --force`` destroyed 12 operator-typed
+    keys on a real deployment. So the fix is an explicit opt-in that names
+    exactly one key, not a general relaxation of the heal lane.
+
+    Absent key → this appends it, same as the missing-only heal would.
+    Already current → a no-op, reported as such rather than as a write.
+    """
+    env_path = deploy_dir / _compose.ENV_FILE
+    current = _env.read_env(env_path, _VERSION_PIN_KEY)
+    if current == __version__:
+        return []
+    _env.set_env(env_path, _VERSION_PIN_KEY, __version__)
+    verb = "re-pinned" if current else "appended"
+    was = f" (was {current})" if current else ""
+    return [f"{verb} {_VERSION_PIN_KEY}={__version__}{was}"]
+
+
 def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks: list[dict] = [_docker_check()]
 
@@ -1027,15 +1061,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     role = getattr(args, "role", None)
     fix = bool(getattr(args, "fix", False))
     apply = bool(getattr(args, "apply", False))
+    repin = bool(getattr(args, "repin_version", False))
     # Validate the heal flags BEFORE any branch consumes them, so `--role`
     # cannot silently swallow a combination the scaffold lane would refuse
     # (Qodo #3 on PR #237: `--role X --apply` reported lane health and ignored
     # the flag entirely).
-    if apply and not fix:
+    if apply and not (fix or repin):
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="--apply requires --fix",
+            message="--apply requires --fix or --repin-version",
             remediation="run 'lobes doctor --fix' for the heal plan, then add --apply",
+        )
+    if repin and role:
+        # Same reasoning as --role/--fix: --role probes a RUNNING lane, this
+        # rewrites the scaffold's .env. Different questions, no shared work.
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--role cannot be combined with --repin-version",
+            remediation="run 'lobes doctor --repin-version --apply' first, then "
+            f"'lobes doctor --role {role}'",
         )
     if role:
         if fix:
@@ -1067,6 +1111,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # heal worked is the checks passing, not the writes having happened.
         report = _diagnose(compose_dir)
         report["fix_applied"] = applied
+    if repin:
+        deploy_dir = _compose.resolve_deployment_dir(compose_dir)
+        if apply:
+            emit_diagnostic(f">> re-pinning {_VERSION_PIN_KEY} in {deploy_dir}")
+            report["repin_applied"] = _repin_version(deploy_dir)
+            report = {**_diagnose(compose_dir), "repin_applied": report["repin_applied"]}
+        else:
+            env_path = deploy_dir / _compose.ENV_FILE
+            current = _env.read_env(env_path, _VERSION_PIN_KEY)
+            report["repin_plan"] = (
+                []
+                if current == __version__
+                else [
+                    f"would set {_VERSION_PIN_KEY}={__version__} (currently {current or 'unset'})"
+                ]
+            )
+        report["repin_requested"] = True
     if fix:
         report["fix_requested"] = True
     emit_result(report if json_mode else _render_text(report), json_mode=json_mode)
@@ -1090,6 +1151,13 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--apply",
         action="store_true",
         help="With --fix: actually write the heal plan (absent files/keys only).",
+    )
+    p.add_argument(
+        "--repin-version",
+        action="store_true",
+        help=f"Rewrite {_VERSION_PIN_KEY} in .env to this CLI's version "
+        "(issue #99). The ONE key doctor may rewrite, hence its own flag: "
+        "--fix --apply never touches an existing line. Dry-run; --apply commits.",
     )
     p.add_argument(
         "--role",
