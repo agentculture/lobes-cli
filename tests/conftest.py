@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 from lobes.cli._commands import capabilities as _capabilities
-from lobes.runtime import _compose, _health
+from lobes.runtime import _compose, _detect, _health
 
 
 @pytest.fixture(autouse=True)
@@ -42,3 +42,40 @@ def offline_runtime(monkeypatch, tmp_path):
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var
     empty = tmp_path / "home-lobes"
     monkeypatch.setattr(_compose, "default_deployment_dir", lambda: empty)
+
+
+@pytest.fixture(autouse=True)
+def _pin_unknown_card(monkeypatch) -> None:
+    """Pin detection to an UNKNOWN card so no test inherits the host's real GPU.
+
+    ``detect_card`` probes the live host (nvidia-smi, /proc/meminfo, ...), so a
+    suite whose result depends on which physical machine runs it is broken —
+    the same reason ``offline_runtime`` above neutralises the other probes.
+    An unrecognised card is the honest ``resolved="unknown"`` result
+    (``DetectedCard.is_known`` is False); the raw facts are left ``None``
+    since they are incidental here. A test that wants a specific card
+    overrides this by re-monkeypatching ``_detect.detect_card`` itself, same
+    as ``tests/test_init.py``'s ``_pin_spark_detection`` does.
+
+    Only the bare no-arg call is neutralised — that is the one path that
+    touches the real host. Calls that inject their own probe functions
+    (``tests/test_detect.py``, ``tests/test_variation.py``) are already
+    deterministic and are delegated to the real implementation.
+    """
+    card = _detect.DetectedCard(
+        resolved=_detect.UNKNOWN,
+        device_name=None,
+        compute_capability=None,
+        total_memory_gb=None,
+        hostname=None,
+        device_tree_model=None,
+        sources={},
+    )
+    real_detect_card = _detect.detect_card
+
+    def _detect_card(*args, **kwargs):
+        if not args and not kwargs:
+            return card
+        return real_detect_card(*args, **kwargs)
+
+    monkeypatch.setattr(_detect, "detect_card", _detect_card)
