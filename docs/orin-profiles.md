@@ -30,11 +30,20 @@ data by booting it, and this boot is what earned Orin's. The repo's built-in
 
 | role | model | context | gpu_mem_util | result |
 |---|---|---|---|---|
-| `senses` | `coolthor/gemma-4-12B-it-NVFP4A16` | **131072 (full native 128K)** | **0.45** | KV pool **802,644 tokens**, **6.12×** concurrency at 131,072/request |
+| `senses` | `coolthor/gemma-4-12B-it-NVFP4A16` | **131072 (full native 128K)** | **0.45** | KV pool **802,644 tokens**, **6.12×** concurrency at 131,072/request — **senses-first boot order** (see note below) |
 | `embedder` | `Qwen/Qwen3-Embedding-0.6B` | 8192 | 0.06 | healthy; 1024-dim embeddings |
 | `reranker` | `Qwen/Qwen3-Reranker-0.6B` | 8192 | 0.06 | healthy; **rerank ordering probe passes** |
 | `cortex` | — | — | — | `feasible=false` (see "Why no cortex"), referred/proxied to the Spark |
 | `stt`/`tts` | — | — | — | dropped locally; `/v1/audio/*` forwards to a peer gateway via `AUDIO_URL` |
+
+> **The senses KV figure is boot-order-dependent (measured 2026-08-04).** The
+> **802,644 tokens / 6.12×** row above was measured under a **senses-first**
+> boot order. At the *identical* knobs (`gpu_mem_util=0.45`,
+> `max_model_len=131072`) but with the **pooling gears booted first**, the
+> engine reported **11.29 GiB** available KV = **480,431 tokens** = **3.67×**
+> concurrency at 131,072/request — **1.67× smaller**. The cause is boot
+> **ORDER**, not the knobs: on this unified-memory board vLLM measures
+> free-at-boot, so whichever engine boots first claims the larger share.
 
 Probes passed (2026-07-17, via the gateway on `:8000`): senses known-answer
 (text, `model=senses` alias), senses **vision** intake (solid-color image →
