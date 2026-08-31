@@ -89,19 +89,44 @@ class TestRerankAttentionConfigAndEnforceEagerAreParameterised:
         assert "--enforce-eager" not in command
 
 
-class TestMultimodalAttentionBackendDeviationIsPreserved:
-    """DEVIATION (binding, per the task brief): MULTIMODAL_ATTENTION_BACKEND
-    stays exactly as-is — its removal is gated on GB10 live-verification
-    (agentculture/lobes-cli#109, risk r6), not this task."""
+class TestMultimodalAttentionBackendMigratedOffTheDeadEnv:
+    """The #109 gate is CLOSED, so the deviation it protected is retired (#120).
 
-    def test_multimodal_attention_backend_env_is_unchanged(self) -> None:
+    This class used to assert the opposite — that
+    ``VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}``
+    stayed byte-for-byte, because removing it was gated on a GB10
+    live-verification (issue #109, risk r6). That verification ran and
+    closed with an explicit routing decision:
+
+        env dead on GB10 -> t3 deletes as planned - zero regression risk on
+        Spark; the GB10 senses backend is model-forced regardless
+
+    with the evidence that ``'VLLM_ATTENTION_BACKEND' in
+    vllm.envs.environment_variables`` is ``False`` on the pinned nightly and
+    the engine logs ``Unknown vLLM environment variable detected``, while
+    Gemma 4 lands on TRITON_ATTN by model-side forcing anyway.
+
+    The knob itself is NOT deleted: all three card profiles declare
+    ``senses.attention_backend = "TRITON_ATTN"`` and ``profile_env`` renders
+    ``MULTIMODAL_ATTENTION_BACKEND`` into every ``.env``, so deleting the
+    consumer would orphan a live rendered key (issue #204's complaint).
+    It moves to the ``--attention-config`` flag the pooling lanes already use.
+    """
+
+    def test_the_dead_env_is_gone(self) -> None:
         compose = _fleet_compose()
         env = compose["services"]["vllm-multimodal"]["environment"]
-        assert "VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}" in env
+        assert not any("VLLM_ATTENTION_BACKEND" in entry for entry in env)
 
-    def test_deviation_comment_points_at_109(self) -> None:
-        text = _FLEET_COMPOSE.read_text(encoding="utf-8")
-        assert "#109" in text
+    def test_the_knob_still_drives_the_backend_via_the_flag(self) -> None:
+        """The operator knob survives the migration — same name, same default."""
+        compose = _fleet_compose()
+        command = compose["services"]["vllm-multimodal"]["command"]
+        tokens = command.split() if isinstance(command, str) else command
+        flag = [t for t in tokens if str(t).startswith("--attention-config=")]
+        assert flag, "the multimodal lane must select its backend explicitly"
+        assert "MULTIMODAL_ATTENTION_BACKEND" in flag[0]
+        assert "TRITON_ATTN" in flag[0]
 
 
 class TestThorReproducingEnvSetIsDocumented:

@@ -1024,12 +1024,6 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      # Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
-      # TRITON_ATTN. The native gemma4_unified class auto-forces it, but we set it
-      # explicitly too (belt-and-suspenders; matches the vLLM recipe).
-      # DELIBERATELY LEFT AS-IS (not removed as dead env): its removal is gated
-      # on a GB10 live-verification tracked in agentculture/lobes-cli#109 (risk r6).
-      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
       # vLLM 0.23 reserves an ESTIMATED cudagraph-memory headroom inside the util
       # budget, and for this gear it wildly overshoots — 12.74 GiB estimated vs
       # 0.46 GiB actual (#71) — starving the KV cache so util 0.12 fails with "No
@@ -1133,6 +1127,7 @@ services:
       --tool-call-parser=gemma4
       --reasoning-parser=gemma4
       ${MULTIMODAL_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'}
+      --attention-config={"backend":"${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}"}
       --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -1186,7 +1181,6 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
@@ -1208,6 +1202,7 @@ services:
       - --quantization=${MULTIMODAL_CODER_QUANTIZATION:-compressed-tensors}
       - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
+      - --attention-config={"backend":"${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}"}
       - --enable-auto-tool-choice
       - --tool-call-parser=gemma4
       # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
@@ -1292,9 +1287,6 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the
-      # same divergence the 12B senses gear carries (see vllm-multimodal).
-      - VLLM_ATTENTION_BACKEND=${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}
       # Same vLLM 0.23 cudagraph-estimate overshoot mitigation as the 12B
       # gear (#71) — the estimate starves the KV cache inside the util budget.
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MUSE_CUDAGRAPH_ESTIMATE:-0}
@@ -1318,6 +1310,7 @@ services:
       - --quantization=${MUSE_QUANTIZATION:-modelopt}
       - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
       - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.55}
+      - --attention-config={"backend":"${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}"}
       - --enable-auto-tool-choice
       - --tool-call-parser=gemma4
       # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False

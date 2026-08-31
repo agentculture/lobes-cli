@@ -541,16 +541,25 @@ def test_fleet_compose_multimodal_coder_is_opt_in_with_no_spec_decode() -> None:
 
 
 def test_fleet_compose_multimodal_forces_triton_attention() -> None:
-    """vllm-multimodal sets VLLM_ATTENTION_BACKEND=TRITON_ATTN — Gemma4's non-square
-    attention (global_head_dim 512 ≠ head_dim 256) needs it (#71)."""
+    """vllm-multimodal selects TRITON_ATTN — Gemma4's non-square attention
+    (global_head_dim 512 != head_dim 256) needs it (#71).
+
+    Since #120 the selection is the ``--attention-config`` FLAG, not the
+    ``VLLM_ATTENTION_BACKEND`` env: that env does not exist in the pinned
+    nightly (``'VLLM_ATTENTION_BACKEND' in vllm.envs.environment_variables``
+    is False and the engine logs "Unknown vLLM environment variable
+    detected"), verified live on the GB10 in issue #109. The default is
+    unchanged, so a Thor/Orin deployment still lands on TRITON_ATTN.
+    """
     block = _service_block(_fleet_compose_text(), "vllm-multimodal")
-    assert (
-        "VLLM_ATTENTION_BACKEND" in block
-    ), "vllm-multimodal must set VLLM_ATTENTION_BACKEND for Gemma4 non-square attention"
-    assert "TRITON_ATTN" in block, (
-        "vllm-multimodal must set VLLM_ATTENTION_BACKEND=TRITON_ATTN for Gemma4 "
-        "non-square attention"
+    assert "--attention-config=" in block, (
+        "vllm-multimodal must select its backend via --attention-config; the "
+        "VLLM_ATTENTION_BACKEND env is dead on the pinned nightly (#109/#120)"
     )
+    assert (
+        "TRITON_ATTN" in block
+    ), "vllm-multimodal must default to TRITON_ATTN for Gemma4 non-square attention"
+    assert "VLLM_ATTENTION_BACKEND=" not in block, "the dead env must not come back (#120)"
 
 
 def test_fleet_compose_middle_is_behind_profile() -> None:

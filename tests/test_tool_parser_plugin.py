@@ -57,6 +57,9 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed 2026-08-31 for issue #120: the three Gemma-family lanes
+    # moved their attention backend off the dead VLLM_ATTENTION_BACKEND env
+    # onto --attention-config (the #109 gate closed).
     # Recomputed 2026-08-29 for the gateway depends_on removal (issue #222):
     # ONLY `gateway` moved, and it moved by LOSING a key — its `depends_on` list
     # of the four core vLLM lanes is gone. `docker compose up -d <service>` walks
@@ -220,9 +223,9 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-hand": "7337db5b60adf2fcd47d1530eb149adf6c3652d029bb7102896f2da4432b7428",
     "vllm-middle": "cb09dd82886e67ac05d97815c8f567dbc97a422de5ba28dcf4055c5a0ea4f36b",
     "vllm-minor": "8e5b98ae680d8274eb563b897382b21f077a568af8a3aaf1f28f75b40f967b8f",
-    "vllm-multimodal": "1bd3641b1df10ab26b5ca411fd5323e65ff8eb712a6c4c6ffbe85216b8e94f38",
-    "vllm-multimodal-coder": "4e286dfd1fd9e250cb03190ea88151fa7030d3d5054f8901d8580ff910a5ecac",
-    "vllm-muse": "00b16677ddedcd2605ef0e6a6d817fd23089751cb7946e8680d3b760e4307f24",
+    "vllm-multimodal": "6ea82ed5d2d64a7215026751e7f62b31fdbf3355d8b06c17508bead30498df36",
+    "vllm-multimodal-coder": "0c4404b2846af033068aa3df03b46d175eec3e4d3dd8d1cb20b2fab0db59c544",
+    "vllm-muse": "3cf814246e885805e5f3be200b8da5e5050193990e947f2145c348c9782b0e04",
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
     "vllm-rerank": "8fea9569d776f62385b87a0086131c8286df82accf7bb6b639dc275c2a168007",
