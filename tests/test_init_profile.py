@@ -226,6 +226,46 @@ def test_unknown_card_base_profile_marks_senses_infeasible(tmp_path, monkeypatch
     assert "MULTIMODAL_FEASIBLE=false" in env
 
 
+# --- operator profile shadowing a built-in (issue #175) ----------------------
+
+
+def test_operator_profile_shadowing_builtin_names_winning_file(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # An operator file at <deploy-dir>/profiles/<name>.toml shadows the built-in
+    # of the same name (operator-wins — the intended escape hatch). The dry-run
+    # plan must SAY SO, naming the winning file, because the plain
+    # 'Profile: thor (...)' line is true of BOTH files and distinguishes
+    # neither.
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "thor.toml").write_text(
+        'summary = "operator override"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"Profile: thor (OPERATOR profile at {target / 'profiles' / 'thor.toml'}" in out
+    assert "shadows the built-in thor" in out
+    # The plain line is still there (the disclosure is an ADDITION, not a
+    # replacement of the forced/auto-detected facts).
+    assert "Profile: thor (auto-detected:" in out
+
+
+def test_builtin_only_resolution_prints_no_shadow_line(tmp_path, monkeypatch, capsys) -> None:
+    # No operator file: the resolution is built-in-only and the plan must NOT
+    # print a shadow line.
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: thor (auto-detected:" in out
+    assert "OPERATOR profile" not in out
+    assert "shadows the built-in" not in out
+
+
 # --- acceptance 4: dry-run-by-default preserved ------------------------------
 
 
