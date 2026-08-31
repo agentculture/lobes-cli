@@ -596,17 +596,28 @@ the peer answered and its own `/v1/models` lists exactly this id). Two roles
 in the same proxied state, both forwarding happily, can therefore report
 different `loaded` values:
 
-- `loaded: false` is the common case — a dropped role realistically has no
-  `<PREFIX>_BASE_URL`, so no local `Backend` is built (the example above).
-- `loaded: true` also occurs, and is **not** a bug in the payload: any
-  `<PREFIX>_BASE_URL` still present wires a local `Backend` even when no such
-  container runs here. Note `multimodal` is the one optional generate backend
-  whose fleet-compose default is **non-empty**
-  (`MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}`,
-  where `MINOR_BASE_URL` and `MUSE_BASE_URL` both default to empty), and
-  because `${VAR:-default}` ignores an explicit empty value too, a proxied
-  `senses` reports `loaded: true` on every fleet deployment and **cannot** be
-  unwired from `.env`.
+- `loaded: false` is the case for a role this box declares **infeasible** —
+  a dropped role usually has no `<PREFIX>_BASE_URL` so no local `Backend` is
+  built, and since issue #158 a role marked `<PREFIX>_FEASIBLE=false` reports
+  `loaded: false` even when one *is* built. `loaded` derives from feasibility
+  as well as wiring, so a box cannot advertise as wired a lane it has
+  declared it does not serve.
+- `loaded: true` means this box both declares the role feasible AND has a
+  backend wired for it.
+
+> **Changed in #158.** `loaded` used to be wiring alone
+> (`backend is not None`), which made `senses` report `loaded: true` on
+> *every* fleet deployment — `multimodal` is the one always-on generate
+> backend whose compose default is **non-empty**
+> (`MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}`),
+> and `${VAR:-default}` substitutes for an explicit empty value too, so no
+> `.env` edit could unwire it. Emptying that default is **not** the fix: the
+> opt-in gears (`MINOR_`/`MUSE_`/`WORKER_BASE_URL`) default empty because
+> they have explicit activation tables in `shape_render.py`, whereas for an
+> always-on core role the compose default *is* the wiring — see
+> `render.py::profile_env`, which leaves `${VAR:-default}` in effect for
+> anything a profile is silent on. Deriving `loaded` from feasibility fixes
+> the advert without breaking the boxes that genuinely host `senses`.
 
 Because of that, `lobes capabilities` does not render `loaded` verbatim: a
 role this box serves by forwarding shows **`by-proxy`** in the `loaded`

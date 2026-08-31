@@ -716,3 +716,36 @@ def test_overview_still_works_and_lists_the_new_verbs(capsys) -> None:
     joined = " ".join(verbs_section["items"])
     assert "capabilities" in joined
     assert "endpoint" in joined
+
+
+def test_senses_is_not_loaded_on_a_box_that_declares_it_infeasible(tmp_path, capsys) -> None:
+    """Issue #158: a dropped `senses` must not report `loaded: true`.
+
+    `MULTIMODAL_BASE_URL` is the one generate backend whose compose default is
+    NON-empty — it is an always-on core role, so unlike every opt-in gear that
+    default IS its wiring. Because `${VAR:-default}` substitutes for an EMPTY
+    value too, a mesh-brain box that dropped `senses` still built a Backend and
+    advertised it as wired, and no `.env` edit could change that. `loaded` now
+    derives from feasibility as well, so the advert matches reality.
+
+    The lever matters: emptying the compose default would ALSO make this pass,
+    and would break the wiring of every box that genuinely hosts `senses`.
+    """
+    _scaffold_fleet(tmp_path)
+    # What a senses-dropping shape (spark-lobe) renders — see shape_render.
+    with (tmp_path / _compose.ENV_FILE).open("a", encoding="utf-8") as fh:
+        fh.write("\nMULTIMODAL_FEASIBLE=false\n")
+
+    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["senses"]["feasible"] is False
+    assert payload["senses"]["loaded"] is False, (
+        "a role this box declares infeasible is not wired here, whatever the "
+        "compose template's non-empty default says (#158)"
+    )
+    # The fix is scoped: every role this box DOES serve is unaffected.
+    assert payload["cortex"]["loaded"] is True
+    assert payload["embedder"]["loaded"] is True
+    assert payload["reranker"]["loaded"] is True

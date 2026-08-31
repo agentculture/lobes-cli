@@ -23,6 +23,29 @@ from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env, _health
 
 
+def _liveness_container(deploy_dir, env_path) -> str:
+    """The container ``wait_health`` watches for an early load failure.
+
+    ``wait_health`` polls ``/health`` on the gateway port; ``container`` is only
+    the liveness anchor it inspects to fail fast and pull logs. Three cases:
+
+    * legacy single-model scaffold -> the single container (issue #111: this
+      name was previously used for EVERY deployment, so a fleet reported
+      ``container is 'missing' — load failed`` while coming up healthy);
+    * a fleet that hosts ``cortex`` -> the primary lane;
+    * a fleet whose SHAPE dropped ``cortex`` (``thor-lobe``, ``orin-lobe``,
+      ``thor-worker`` all render ``PRIMARY_FEASIBLE=false``) -> the gateway,
+      which every fleet runs. Anchoring on a primary the shape deliberately
+      excludes would resurrect the exact bug #111 reported, on a different box.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return _compose.CONTAINER
+    feasible = (_env.read_env(env_path, "PRIMARY_FEASIBLE") or "").strip().lower()
+    if feasible == "false":
+        return _compose.FLEET_GATEWAY
+    return _compose.FLEET_PRIMARY
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     deploy_dir = _runtime_ops.deployment_dir(args)
@@ -46,7 +69,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # Ensure the durable-log dir exists (user-owned) before compose bind-mounts it.
         _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
         _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
-        _health.wait_health(port)
+        _health.wait_health(port, container=_liveness_container(deploy_dir, env_path))
         result = {"serving": True, "port": port, "deployment_dir": str(deploy_dir)}
         tc = None
         if not args.no_probe:

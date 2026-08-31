@@ -75,6 +75,13 @@ _BASELINE_ARGV = [
         '--speculative-config={"method": "mtp", "model": '
         '"google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'
     ),
+    # #120: the lane's attention backend moved from a dead VLLM_ATTENTION_BACKEND
+    # env to the --attention-config flag every other lane already uses. The JSON
+    # must arrive INTACT: this command is a YAML string that Compose lexes with
+    # shlex, so an unquoted flag loses its inner double quotes and vLLM receives
+    # the malformed `{backend:TRITON_ATTN}`. Single-quoting in the template is
+    # what preserves it — the same reason the speculative flag above is quoted.
+    '--attention-config={"backend": "TRITON_ATTN"}',
     "--trust-remote-code",
 ]
 
@@ -182,7 +189,11 @@ def test_knob_carries_the_current_literal_as_its_default() -> None:
     """The shipped default is the incumbent MTP config, byte for byte."""
     gemma = next(m for m in SUPPORTED_MODELS if m.id == _GEMMA_BASE_ID)
     assert speculative_config_item(gemma) in _BASELINE_ARGV
-    assert _render_argv()[-2] == speculative_config_item(gemma)
+    # Index from the flag itself rather than the tail: #120 appended
+    # --attention-config after it, so a positional [-2] silently drifts.
+    argv = _render_argv()
+    spec = [t for t in argv if t.startswith("--speculative-config")]
+    assert spec == [speculative_config_item(gemma)]
 
 
 def test_custom_value_replaces_the_default() -> None:

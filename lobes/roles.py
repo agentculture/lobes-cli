@@ -777,8 +777,19 @@ def _gateway_role(
     pre-#220 local answer byte-for-byte.
     """
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[role]), None)
-    loaded = backend is not None
     feasible = ROLE_BACKEND[role] not in table.infeasible
+    # `loaded` is a wiring fact, but a role this box declares INFEASIBLE is not
+    # wired here whatever the compose template says (issue #158). The multimodal
+    # lane is the case that forced this: unlike every opt-in gear, whose
+    # `*_BASE_URL` defaults empty, `MULTIMODAL_BASE_URL` carries a non-empty
+    # compose default because it is an always-on core role whose only wiring IS
+    # that default. `${VAR:-default}` substitutes for an EMPTY value too, so a
+    # box that had never run `vllm-multimodal` still built a Backend and
+    # reported `senses loaded: true` — and no .env edit could say otherwise.
+    # Deriving `loaded` from feasibility as well makes the advert honest without
+    # touching the template (emptying the default would break the wiring of
+    # every box that DOES host senses).
+    loaded = backend is not None and feasible
     if backend is not None:
         model_id = backend.served_name
     else:

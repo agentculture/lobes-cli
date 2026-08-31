@@ -1,0 +1,1000 @@
+{
+  "slug": "quick-wins-finish-the-rename",
+  "title": "quick-wins + finish the rename",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-31T04:31:12Z",
+  "updated": "2026-08-31T05:58:15Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships the #239 quick-wins batch and finishes the gear-to-lobes rename",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "PR1 and PR2 both merge with the version-check CI job green \u2014 every AgentCulture PR bumps the version, no exceptions",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Ship as two PRs off main, each with its own version bump via .claude/skills/version-bump/scripts/bump.py, and follow the repo PR workflow: wait for Qodo/Copilot, reply to every thread, resolve all, never merge with unaddressed comments.",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The seven #239 items are all single-surface edits with a known file and line: fleet compose:1803 + env.example:369 (#158), serve.py:49 (#111), fleet compose:1032/1189/1297 (#120), docs/orin-profiles.md:33 (#171), tests/conftest.py (#172 leftover), init.py profile disclosure (#175 item 1), doctor.py _version_skew_check write path (#99)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "each of the seven items is verified against its cited file and line before the PR opens, not assumed from the issue text",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Work the seven items in this order so the two same-file edits land as separate commits: (1) #158 fleet compose:1803 + env.example:369, (2) #120 fleet compose:1032/1189/1297, (3) #111 serve.py:49, (4) #172 tests/conftest.py autouse UNKNOWN pin, (5) #175 init.py profile-shadow disclosure line, (6) #99 named opt-in re-pin, (7) #171 docs/orin-profiles.md:33 + machine-profiles.md.",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "docs/orin-profiles.md and docs/machine-profiles.md are the ONLY surfaces #171 touches \u2014 it is a documentation correction of a measured figure, not a knob change; lobes/profiles/builtin/orin.toml is not edited",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the gears-first 3.67x counterpart is cited to docs/evidence/ or to the 2026-08-04 measurement, never restated from memory",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Edit docs/orin-profiles.md:33 to name the senses-first boot order beside the 802,644/6.12x figure and add the gears-first 480,431/3.67x counterpart; then strengthen the boot-ordering caveat in docs/machine-profiles.md to say order changes the served KV budget, not just OOM risk. Do not edit lobes/profiles/builtin/orin.toml.",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#111 and the container-name rename touch the same surface: lobes/runtime/_compose.py:18 CONTAINER='model-gear-vllm' is both the legacy name serve.py:49 wrongly health-waits on AND one of the 18 model-gear-* names the rename would change \u2014 they must be sequenced, not merged blindly",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "#111's fix is proven by a fleet lobes serve --apply that reports success, not only by a unit test asserting the container name string",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Fix serve.py:49 in PR1 against the CURRENT spelling: resolve the container from the deployment shape (fleet vs --single) and pass it to wait_health. In PR2, the constant rename then flows through that call site unchanged \u2014 do not revert or re-derive the PR1 fix.",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "#99's fix must not relax lobes doctor --fix's never-rewrite-an-existing-.env-line convention; re-pinning MODEL_GEAR_VERSION has to be an explicit named opt-in, because #174 (init --force destroyed 12 operator-typed keys) and #191 (init is merge-only always) are what that convention costs when broken",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "no existing .env line is rewritten by the #99 re-pin path; the write is reachable only through an explicitly named opt-in flag",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add the re-pin behind its own named flag on doctor --fix (or lobes up gateway); assert in a test that a .env with an existing MODEL_GEAR_VERSION line is byte-identical after a --fix --apply run without that flag.",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "non_goal",
+      "text": "MODEL_GEAR_DIR is NOT part of the remaining rename work \u2014 lobes/runtime/_compose.py:303-336 already resolves --compose-dir then $LOBES_DIR then $MODEL_GEAR_DIR (legacy) with the legacy source named in the error text; that leg shipped and only its deprecation loudness is open",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Read _compose.py:303-336 and change nothing there. Cite it as the reference pattern for c25's other two key pairs.",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "The rename's real surface is four things at depth (c): 18 container_name: model-gear-* in the templates (mirrored by CONTAINER plus 13 FLEET_* constants in _compose.py), the bind-mounted mg-logwrap.sh scaffold file (39 refs), two operator-typed .env keys with no LOBES_ successor (MODEL_GEAR_VERSION 162 refs, MODEL_GEAR_LOG_DIR 39 refs), and the /logs/model-gear in-container mount path. All four are now in scope.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Enumerate all four surfaces before editing: git grep -n 'container_name: model-gear' lobes/templates/, the CONTAINER + FLEET_* block at _compose.py:18-74, git grep -n mg-logwrap, and git grep -n '/logs/model-gear'.",
+      "revisions": [
+        {
+          "text": "The rename's real surface is four things, not one: 18 container_name: model-gear-* in the templates (mirrored by 14 constants in _compose.py), the bind-mounted mg-logwrap.sh scaffold file (39 refs), two operator-typed .env keys with no LOBES_ successor (MODEL_GEAR_VERSION 162 refs, MODEL_GEAR_LOG_DIR 39 refs), and the /logs/model-gear in-container mount path",
+          "kind": "assumption",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Renaming MODEL_GEAR_VERSION or MODEL_GEAR_LOG_DIR needs a read-both-keys fallback exactly like LOBES_DIR/MODEL_GEAR_DIR already has, because .env is merge-only by contract (#191): lobes init will never rewrite the old key on a deployed box, so a rename with no fallback silently drops the operator's value",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "a box whose .env sets only the OLD key (MODEL_GEAR_VERSION / MODEL_GEAR_LOG_DIR) still resolves that value after upgrading, proven by a test that writes only the legacy key",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Mirror the LOBES_DIR pattern already at _compose.py:324-336: read the LOBES_ key first, fall back to the MODEL_GEAR_ key, and name the legacy source in any error text the way '$MODEL_GEAR_DIR (legacy)' already does.",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "docs/evidence/ transcripts are frozen records of what a box actually printed \u2014 the 10 evidence files containing MODEL_GEAR_ must NOT be rewritten by the rename; the same holds for .devague/frames, .devague/plans and .devague/deliveries, which record what was decided at the time",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "no file under docs/evidence/ or .devague/ differs after PR2 \u2014 verified by git diff --stat on those paths",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "After PR2's last commit, run: git diff --stat main -- docs/evidence .devague \u2014 it must print nothing. Never use a repo-wide sed.",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "packaging/model-gear/ and .github/workflows/publish.yml:122-127 keep publishing the deprecated model-gear PyPI alias that redirects to lobes-cli; finishing the rename must not unpublish or stop building it, because that breaks every existing pip install",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the publish workflow still builds and publishes the model-gear alias after PR2, verified by reading publish.yml, not assumed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Read .github/workflows/publish.yml:118-130 after the rename and confirm the model-gear alias job still builds; do not edit packaging/model-gear/.",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Renaming the 18 container_name entries changes every file digest the deployment lock tracks in [files] and, if the .env keys move too, the [env] allowlist derived from profiles/render.py \u2014 so every locked box reports lock_drift on upgrade and cannot restore with --from-lock until it re-captures, which #224 says there is no verb for",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "a lock captured before the rename and restored after it is either still restorable or fails with a named, actionable error \u2014 never a silent partial restore",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "Is there any box in the mesh with a captured deployment.lock.toml today? deployments/ is empty in-repo, but an operator could hold one locally.",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "Before renaming, run scripts against a locally captured lock if one exists; if none does, record that fact in the PR body as the reason the [files] churn is safe to take now.",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "tests/test_upgrade_compat.py builds a previous-version scaffold from tests/fixtures/upgrade_compat/{single,fleet}/docker-compose.yml, both of which carry model-gear-* container names \u2014 the rename must keep those fixtures spelling the OLD names, since their whole job is proving an old scaffold still works",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "tests/fixtures/upgrade_compat/{single,fleet}/docker-compose.yml still spell the OLD model-gear-* container names after PR2, and test_upgrade_compat passes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Leave tests/fixtures/upgrade_compat/{single,fleet}/docker-compose.yml byte-identical. If test_upgrade_compat fails, the production code is wrong, not the fixture.",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "assumption",
+      "text": "Renaming mg-logwrap.sh is LESS risky than first scoped: LOG_WRAPPER is a member of _compose.FLEET_TEMPLATES (_compose.py:162,173) and doctor.py:530 reads that dict, so lobes doctor already reports the file missing and lobes doctor --fix --apply heals it \u2014 the same mechanism #227 used for qwen3_reranker.jinja. The residual risk is ordering (a box that re-renders compose and starts it BEFORE healing gets a bind-mount to a file that is not there) and an orphaned old script left on disk, which is harmless.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the rename ships mg-logwrap.sh's new name in FLEET_TEMPLATES in the SAME commit as the compose reference, and lobes doctor on an un-healed box names the missing file rather than failing opaquely",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does renaming mg-logwrap.sh require a coordinated scaffold step, or does lobes doctor --fix --apply already heal a deployment whose compose names a script it does not have on disk?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "Add the new wrapper name to FLEET_TEMPLATES in the same commit that changes the compose bind-mount reference; verify lobes doctor on a stale deployment dir names the missing file.",
+      "revisions": [
+        {
+          "text": "Renaming mg-logwrap.sh is the riskiest single item: it is a packaged SCAFFOLD file bind-mounted by the fleet compose, so a box whose compose re-renders to the new name while the old script is still on disk fails to start \u2014 this is deployment-lock deviation d2 (#226) reached by a different road",
+          "kind": "assumption",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "PROBED, and the original premise was wrong: renaming container_name does NOT orphan containers. Live docker compose 29.1.3 matched the running container by its com.docker.compose.service label, printed 'Recreated', and left zero orphans \u2014 so there is no manual reap step and no port-holding conflict. The real and only cost is that each renamed lane RESTARTS once, which for a 27B NVFP4 lane means a model reload of minutes. That cost is accepted for PR2; the *_CONTAINER_NAME override that would avoid it is deferred, not required (see the follow-up park)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Document the reap step in the PR body and CHANGELOG: after upgrading, 'docker rm' the orphaned model-gear-* containers once the lobes-* ones are healthy. Do not automate it.",
+      "revisions": [
+        {
+          "text": "Renaming container_name does not migrate a running box's containers \u2014 docker compose recreates under the new name and the old containers are orphaned; reaping them is an operator step this work documents, not something the rename does automatically",
+          "kind": "non_goal",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "Depth (b) still changes [files] digests, because Dockerfile.gateway, Dockerfile.realtime and Dockerfile.chatterbox all carry the renamed key in their lobes-cli== pip pin \u2014 but deployments/ ships only README.md and VARIATION.template.md, so ZERO real variations are captured and no operator hits lock_drift from this. That window closes the moment the first box is captured (#224), which argues for doing the rename now rather than after",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-run the lock scan (see c22's honesty condition) at PR2 time and paste the result into the PR body.",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "Only depth (d) is out of scope: packaging/model-gear/ and .github/workflows/publish.yml:122-127 keep publishing the deprecated model-gear PyPI alias that redirects to lobes-cli. Container names, the 14 _compose.py constants, mg-logwrap.sh and the /logs/model-gear mount path moved IN when v1 resolved to 'yes, rename'.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "pip install model-gear still resolves to lobes-cli after PR2",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Confirm 'pip download model-gear' still resolves post-merge, or read publish.yml to confirm the job is unchanged.",
+      "revisions": [
+        {
+          "text": "Container names, the 14 _compose.py constants, mg-logwrap.sh, the /logs/model-gear mount path and the model-gear PyPI alias are all OUT of scope at depth (b) \u2014 v1 stays parked, not resolved, and #111 is fixed against the CURRENT constant spelling",
+          "kind": "boundary",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "PR1 ships the seven #239 quick wins and PR2 ships the rename on top; #111's serve.py:49 fix therefore lands in PR1 reading _compose.CONTAINER as it is spelled today, and PR2 rebases on it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "PR2 rebases on PR1 rather than reverting it: the serve.py:49 fix survives the constant rename intact",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Branch PR2 off PR1's head, not off main, so serve.py:49 is already fixed when the constants move.",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "MODEL_GEAR_LOG_DIR becomes a read fallback, not a deletion: LOBES_LOG_DIR is the new primary and _compose.py:30 LOG_DIR_ENV grows a two-key read, because the sole-key check confirmed it is NOT already a fallback",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "LOBES_LOG_DIR wins when both keys are set, and MODEL_GEAR_LOG_DIR alone still resolves \u2014 both directions covered by a test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Change _compose.py:30 LOG_DIR_ENV into a two-key read: LOBES_LOG_DIR first, MODEL_GEAR_LOG_DIR second. Update the compose default at templates/docker-compose.yml to ${LOBES_LOG_DIR:-${MODEL_GEAR_LOG_DIR:-./logs}} so a legacy .env still resolves.",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "audience",
+      "text": "lobes operators running the three live boxes (DGX Spark, Jetson AGX Thor, Jetson AGX Orin), plus mesh consumers that read the gateway advert \u2014 and the next contributor, who currently meets two naming systems in one repo",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the three boxes named are the three that actually run lobes today \u2014 verified against the deployment evidence under docs/evidence/, not assumed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No implementation. Use this to decide who the CHANGELOG entry and PR body are written for: operators upgrading three live boxes, not new installs.",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "before_state",
+      "text": "Seven small defects sit in #239 with known file and line, each too small to justify its own PR and so none of them ships. Meanwhile the repo answers to two names: the CLI, verbs and JSON keys all say lobes, while every container, the log-wrapper scaffold and three .env keys still say model-gear \u2014 and lobes serve health-waits on one of those legacy names, so the fleet's own start verb reports failure on a stack that came up healthy",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "every defect named in the before_state is still open and reproducible at its cited file and line when PR1 opens; any that is already fixed is dropped from the batch rather than reported as fixed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify each defect still reproduces at its cited line before writing the fix; drop any that is already fixed rather than reporting it fixed.",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "after_state",
+      "text": "PR1 lands the seven #239 quick wins. PR2 finishes the rename at depth (c): containers, constants, mg-logwrap.sh and the mount path carry lobes names, MODEL_GEAR_VERSION and MODEL_GEAR_LOG_DIR gain LOBES_ primaries with read-both fallbacks, and the deprecated model-gear PyPI alias keeps publishing. One name, with no deployed box left stranded",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "every claim in the after_state is checked against the merged tree, not against the plan",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Check this list against the merged tree at the end, item by item, and record the result in the delivery summary.",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "why_it_matters",
+      "text": "The rename is cheapest now and gets permanently more expensive later: deployments/ holds zero captured variations today, so the [files] digest churn costs nothing \u2014 after the first capture (#224) every renamed file drifts a real operator's lock with no verb to re-baseline it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the zero-captured-locks claim is re-checked at PR2 time, not carried over from the 2026-08-31 scan \u2014 if a lock has appeared since, the cheapest-now argument is withdrawn and c26's copy-forward path is exercised for real",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Put the zero-captured-locks evidence in PR2's body as the stated reason the timing is right.",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "success_signal",
+      "text": "lobes serve on a fleet deployment waits on a container that exists and reports success; git grep for model-gear outside docs/evidence, .devague and tests/fixtures/upgrade_compat returns only packaging/model-gear and the two back-compat fallback reads; the full suite passes including test_upgrade_compat; and a box upgraded without touching its .env still resolves its log dir and version pin",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "the git grep in this success signal is actually run and its output recorded in the PR body",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run the grep as: git grep -l 'model-gear' -- . ':!docs/evidence' ':!.devague' ':!tests/fixtures/upgrade_compat' ':!CHANGELOG.md' and paste the output into the PR body.",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "The rename touches env var NAMES only, never on-disk deployment DIRECTORIES: ~/.model-gear stays a valid legacy default alongside ~/.lobes, no deployment dir is migrated, moved or renamed, and no operator is asked to relocate one",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "no code path added by PR2 writes, moves or requires migrating a deployment directory; a box whose deploy dir is still ~/.model-gear keeps working untouched",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Grep the diff for any write to a deployment directory path; there must be none. ~/.model-gear must remain a valid --compose-dir target after PR2.",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "Every renamed env key follows one rule with no exceptions: the LOBES_ name becomes primary, the MODEL_GEAR_ name stays readable as a fallback, and nothing is deleted. LOBES_DIR/MODEL_GEAR_DIR already satisfies it (no change needed); MODEL_GEAR_VERSION and MODEL_GEAR_LOG_DIR are brought up to it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "for each of the three key pairs a test proves the old-key-only case still resolves, and no branch of the rename deletes a MODEL_GEAR_ read",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement all three the same way, mirroring _compose.py:324-336: try the LOBES_ key, fall back to the MODEL_GEAR_ key, and label the legacy source in error text as '$MODEL_GEAR_X (legacy)'. LOBES_DIR/MODEL_GEAR_DIR is already correct \u2014 read it as the reference implementation, do not rewrite it.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The rename copies rather than moves at the FILE level, mirroring what c25 does at the env-key level: an existing deployment.lock.toml is copied forward to the new names rather than invalidated, and a renamed scaffold file leaves the old one in place rather than deleting it \u2014 so a box mid-upgrade resolves under either spelling and 'move' is never a moment where neither works",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "a deployment.lock.toml written before PR2 still restores after PR2 \u2014 proven against a fixture lock carrying the OLD file names, not only against a freshly written one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Copy, never rename in place. For deployment.lock.toml: read the old [files] keys, emit the new names alongside, keep the old entries resolvable. For mg-logwrap.sh: register the new name in FLEET_TEMPLATES and leave the old file on disk untouched (doctor already heals the new one, per c13). Deleting either old artifact is a separate, later decision \u2014 not this PR.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "success_signal",
+      "text": "Measurable targets: 7 of 7 #239 items closed by PR1; 0 files changed under docs/evidence and .devague across both PRs; 0 occurrences of model-gear outside packaging/model-gear, tests/fixtures/upgrade_compat, docs/evidence, .devague and CHANGELOG.md after PR2; 3 of 3 env key pairs resolving from the legacy key alone in tests; and the full suite green with 0 failures including test_upgrade_compat",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "each of the five numbers is actually measured and pasted into the PR body, not asserted \u2014 the grep, the diff --stat, the issue closures and the test count",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run and paste: gh issue list --state closed for the 7; git diff --stat main -- docs/evidence .devague; the c23 grep; uv run pytest -n auto -q tail line.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "BUILD-ARG SUBSTITUTION HAS NO PYTHON FALLBACK, so the version key FAILS CLOSED. docker-compose.yml:1717 passes the version as a build ARG and Dockerfile.gateway:26,28 runs 'pip install lobes-cli==${...}'; a merge-only .env on an upgraded box carries only the old key, and an empty interpolation would silently build 'pip install lobes-cli=='. Resolution: the compose/Dockerfile side uses LOBES_VERSION only and ERRORS when it is absent \u2014 no nested-default interpolation, which was never verified on the Jetsons' docker compose. lobes init's merge-only append is what supplies LOBES_VERSION on an upgraded box",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "a box whose .env carries ONLY MODEL_GEAR_VERSION builds the gateway image successfully after PR2 \u2014 proven by an actual image build against a legacy-key-only .env, not by a Python unit test, because the failure is in compose interpolation and a Python test cannot see it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Make the absent case a NAMED error, not an empty string: fail the build or the up with a message that says LOBES_VERSION is missing and to run 'lobes init --apply' to add it. Verify by building the gateway image against a .env carrying only MODEL_GEAR_VERSION \u2014 it must fail loudly, never install an unpinned wheel.",
+      "revisions": [
+        {
+          "text": "BUILD-ARG SUBSTITUTION HAS NO PYTHON FALLBACK. docker-compose.yml:1717 passes 'MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}' as a build ARG and Dockerfile.gateway:26,28 runs 'pip install lobes-cli==${MODEL_GEAR_VERSION}'. A merge-only .env on an upgraded box carries only the OLD key, so renaming the compose side to ${LOBES_VERSION:-} resolves EMPTY and the gateway image builds 'pip install lobes-cli==' \u2014 the c8/c25 read-both-keys pattern is Python-level and cannot reach this path. The compose value must itself carry the fallback, e.g. ${LOBES_VERSION:-${MODEL_GEAR_VERSION:-}}, and the nested-default form must be verified against the deployed docker compose version before it is relied on",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "MG_LOG_DIR and MG_LOG_NAME are a THIRD legacy prefix the frame never enumerated (17 uses each, lobes/templates). They are in-container env vars, not operator-typed .env keys, so they carry no merge-only risk and can be renamed freely with the mount path \u2014 but c7's four-surface enumeration is incomplete without them",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "MG_LOG_DIR and MG_LOG_NAME are renamed together with the /logs/model-gear mount path in one commit, and a lane started after PR2 writes its per-boot log where lobes logs looks for it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Rename MG_LOG_DIR/MG_LOG_NAME and the /logs/<name> mount point in the same commit; existing per-boot logs under the old host path are left where they are and are not migrated.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "boundary",
+      "text": "CHANGELOG.md is frozen historical record like docs/evidence and .devague: its model-gear occurrences describe releases that really were named that, and the rename must not rewrite them. c9 named evidence and .devague but omitted CHANGELOG, and c23's success-signal grep already excludes it \u2014 this closes that inconsistency",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "git diff --stat main -- CHANGELOG.md shows only the new release entry after each PR, never edits to historical entries",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add the new CHANGELOG entry via the version-bump script only; never sed historical entries. The c23 success grep already excludes CHANGELOG.md \u2014 keep that exclusion.",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "assumption",
+      "text": "Seven scripts couple to the legacy names (accept-by-proxy.sh, accept-shape.sh, live-check.sh, probe_reranker_calibration.py, spec-arms.py, spike-preflight.sh, validate-tiers.sh). These are live operator/acceptance tooling, not frozen record, so they move WITH the rename \u2014 but they are not covered by the test suite, so a rename that misses one fails only at the next acceptance run",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "after PR2, running scripts/live-check.sh and scripts/accept-shape.sh against a real box succeeds \u2014 the seven scripts are exercised, not just grepped",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "decision",
+      "text": "PROBED AND DISPROVEN: c14's premise is wrong. A live docker compose 29.1.3 probe changed only container_name on a running service and ran 'docker compose up -d': compose matched the existing container by its com.docker.compose.service label, printed 'Recreated', started it under the new name, and left ZERO orphans (docker ps -a showed only the new name). Renaming container_name therefore needs no manual reap step and creates no port-holding orphan \u2014 c14 should be rejected or amended to say the opposite",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "non_goal",
+      "text": "PR2 does NOT ship the <ROLE>_CONTAINER_NAME override knob, and does NOT refactor the 14 hardcoded constants at _compose.py:18,48-65 into env-resolved reads. The mechanism was probed and works (absent key holds the default and a re-up prints 'Running', so an existing box could upgrade with zero downtime) but the operator's call is that the keys are not a requirement \u2014 PR2 hard-renames the defaults and accepts one restart per lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "with no <ROLE>_CONTAINER_NAME set anywhere, a re-up on an existing deployment reports Running (not Recreated) for every lane \u2014 verified against a real box, not only the busybox probe",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Replace the 14 literals at _compose.py:18,48-65 with reads that resolve <ROLE>_CONTAINER_NAME from .env and fall back to the same default the compose template uses, so the two can never disagree. Derive both from ONE table the way HAND_LORA_MODULES is read by both the engine flag and the gateway alias.",
+      "revisions": [
+        {
+          "text": "Container names become an OVERRIDE knob, not a literal: every container_name: in the templates renders as ${<ROLE>_CONTAINER_NAME:-<default>}, and the 14 hardcoded constants in _compose.py:18,48-65 become env-resolved reads so _health, lobes logs and lobes status all resolve the same name the compose does. PROBED live on docker 29.1.3: with the key absent the default holds and a re-up prints 'Running', not 'Recreated' \u2014 so an existing box takes ZERO downtime and no model reload; with the key set the new name is used and no orphan is left",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c34",
+      "kind": "non_goal",
+      "text": "lobes init does NOT append legacy container-name overrides on a pre-existing deployment in PR2 \u2014 that migration belongs to the deferred override work, not here",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "a box upgraded with lobes init --apply keeps every container it was already running: docker ps shows the same names and the same uptimes before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "Does lobes init reliably distinguish a pre-existing deployment from a fresh scaffold at the point it would append the overrides, or does --force blur that?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "lobes init appends the LEGACY container-name overrides when and only when it is merging into a pre-existing deployment (.env already present), so an upgraded box pins its running names automatically and never recreates a lane; a fresh scaffold writes no override and gets the new lobes-* defaults. This is merge-only-safe by construction \u2014 appending an absent key is exactly what init already does, and no existing line is rewritten",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "The container rename is a HARD rename of the defaults in PR2: templates and constants both move to lobes-*, each lane restarts once, and no override knob ships. The default-renamed-plus-overridable design is probed and viable but deferred to a later refactor \u2014 recorded so the next person does not re-derive it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The container rename is DEFAULT-RENAMED + OVERRIDABLE rather than a hard rename: templates carry lobes-* as the default, ${<ROLE>_CONTAINER_NAME:-...} is the escape hatch, and init's pre-existing-deployment migration keeps the three live boxes on their current containers until they choose otherwise. This removes container recreation, model reload and downtime from PR2's cost entirely",
+          "kind": "decision",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "lobes/explain/catalog.py is TAUGHT CONTENT shipped in the CLI and names the legacy containers directly (lines 137, 204, 280-282, 315) plus MODEL_GEAR_VERSION (547, 1505) \u2014 so 'lobes learn' and 'lobes explain' actively teach the old names and must be refreshed by PR2. The ('model-gear',) alias at line 1525 is a deliberate back-compat entry and STAYS",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "after PR2, 'lobes explain gateway' and 'lobes learn' name no legacy container, and the ('model-gear',) back-compat alias at catalog.py:1525 still resolves",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Refresh lobes/explain/catalog.py lines 137, 204, 280-282, 315, 547 and 1505 to the new names. Do NOT touch line 1525 \u2014 that alias is the deprecated dist/repo name and must keep resolving.",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether renaming container_name is worth its cost at all: the names are invisible to every documented CLI path (lobes logs, status and doctor all resolve them internally) and only surface to an operator running raw docker ps \u2014 so the benefit may be identity tidiness against a cost of container recreation plus lock drift on three live boxes",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "YES, rename. Depth escalates from (b) to (c): the 18 container_name entries, the 14 _compose.py constants, mg-logwrap.sh and the /logs/model-gear mount path are all IN. Depth (d) is still NOT taken \u2014 the model-gear PyPI alias keeps being published.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Whether the fleet compose still needs MODEL_GEAR_LOG_DIR as an operator knob at all, or whether the rename is the moment to fold it into the profile/shape render path like every other knob",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "MODEL_GEAR_LOG_DIR survives as a read fallback. Verified it is NOT already a fallback \u2014 _compose.py:30 LOG_DIR_ENV = 'MODEL_GEAR_LOG_DIR' is the sole key \u2014 so the operator's rule 'can survive as fallback for now; if it's already fallback, can remove' lands on the first clause: add LOBES_LOG_DIR as primary, keep reading the old key. Folding it into the profile render path is NOT done here.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether the deployed docker compose on the Thor and Orin supports the nested-default interpolation ${LOBES_VERSION:-${MODEL_GEAR_VERSION:-}} \u2014 verified only against docker 29.1.3 on the Spark; if an older compose on a Jetson does not, c28's fix does not work there and the compose-side key must stay legacy",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Use LOBES_VERSION and ERROR if missing \u2014 fail closed, no nested-default interpolation. The compose build ARG becomes LOBES_VERSION and an absent value is a named startup error rather than 'pip install lobes-cli==' resolving to whatever is latest. This sidesteps the unverified ${A:-${B:-}} nesting on the Jetsons' docker compose entirely; lobes init's merge-only append is what puts LOBES_VERSION into an upgraded .env.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Whether any out-of-repo consumer (colleague, daria, reachy-mini-cli, eidetic-cli, culture mesh tooling) greps lobes container names or reads MODEL_GEAR_* \u2014 the challenge pass examined this repo only and could not read sibling repos",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Examined and CLEAN across the mesh. Scanned every local sibling repo plus ~/git on the Thor and the Orin over ssh: the Thor has zero legacy-name hits outside lobes-cli itself, and every Orin hit is a lobes-cli worktree (agent-qodo), i.e. this repo. Only two real cross-repo surfaces exist, both local and both minor: edge-ai-lab/tests/test_arm_run.py:498 writes MODEL_GEAR_VERSION=1 into a test .env (a genuine coupling, and the read-both-keys fallback keeps it working), and eidetic-cli/eidetic/memory/embed.py:29 names the embed/rerank containers in a COMMENT only.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "The <ROLE>_CONTAINER_NAME override + env-resolved constants refactor: probed viable (absent key holds the default, a re-up prints 'Running', so an existing box could upgrade with zero downtime and no model reload) but deliberately deferred out of PR2. Picking it up also answers q3 and removes the hardcoding that made #111 possible",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/templates/fleet/docker-compose.yml + env.example (#158, #120)",
+      "finding": "three separate quick wins live in one file: MULTIMODAL_BASE_URL's non-empty default at :1803 (env.example:369), and the dead VLLM_ATTENTION_BACKEND env at :1032/:1189/:1297 which the same file contradicts at :840 \u2014 they will collide in one PR and should be one commit each",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/cli/_commands/serve.py:49 and lobes/runtime/_compose.py:18,48-65",
+      "finding": "serve.py calls wait_health(port) with the default container=_compose.CONTAINER = 'model-gear-vllm', the legacy single-model name; _compose.py also holds 13 more FLEET_* constants all spelled model-gear-*, so the #111 fix reads the same constants the rename rewrites",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "docs/orin-profiles.md:33 and docs/machine-profiles.md",
+      "finding": "the 802,644-token / 6.12x senses figure is quoted with no boot order; the live 2026-08-04 measurement at identical knobs was 480,431 / 3.67x \u2014 the fix is annotation plus the gears-first counterpart, and does not touch lobes/profiles/builtin/orin.toml",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/cli/_commands/doctor.py _version_skew_check + init.py:756 + lobes/runtime/_env.py",
+      "finding": "doctor already reads the gateway's deployed version off GET /health and init writes MODEL_GEAR_VERSION exactly once; the only missing piece is a WRITE, which lands squarely on the merge-only .env convention that #191 and #174 established",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/runtime/_compose.py:303-336 (deploy-dir resolution)",
+      "finding": "MODEL_GEAR_DIR already has its LOBES_DIR successor with a documented three-step fallback and a '$MODEL_GEAR_DIR (legacy)' error label \u2014 this leg of the rename is finished, and the 19 remaining MODEL_GEAR_DIR refs are the fallback itself plus its docs",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "git grep MODEL_GEAR_ (208 hits, 83 files)",
+      "finding": "only three distinct identifiers exist \u2014 MODEL_GEAR_VERSION (162), MODEL_GEAR_LOG_DIR (39), MODEL_GEAR_DIR (19) \u2014 and they split cleanly by surface: shipped code and templates, versus frozen docs/evidence and .devague records that must not be touched",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/templates/*/docker-compose*.yml container_name entries + _compose.py:18,48-65",
+      "finding": "18 container_name: model-gear-* lines in the templates are mirrored by CONTAINER plus 13 FLEET_* constants in _compose.py; _health and lobes logs both resolve containers by these exact strings, so template and constant must move in the same commit or the health-wait breaks the way #111 already breaks it",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/runtime/_lock.py:89-103 (EXCLUDED_RENDERED_KEYS / EXCLUDED_KEY_SUFFIXES)",
+      "finding": "the lock's [env] is an allowlist derived from profiles/render.py minus COMPOSE_PROFILES and any _URL suffix, and [files] is sha256 per file \u2014 a rename moves both, so every locked box drifts on upgrade with no capture verb (#224) to re-baseline it",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "tests/fixtures/upgrade_compat/{single,fleet}/docker-compose.yml + test_upgrade_compat.py",
+      "finding": "both fixtures carry model-gear-* container names and exist specifically to prove a previous-version scaffold still works; they are the one place the OLD spelling must survive the rename verbatim",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "mg-logwrap.sh (39 refs across templates, scripts and tests)",
+      "finding": "a packaged scaffold file bind-mounted by the fleet compose \u2014 renaming it splits the compose reference from the on-disk file on any box that re-renders one without the other, the same failure shape as deployment-lock deviation d2 (#226)",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "packaging/model-gear/ + .github/workflows/publish.yml:122-127",
+      "finding": "the deprecated model-gear PyPI alias is built by rewriting its pyproject version and lobes-cli== pin at publish time; it is a live install path for existing consumers and is out of scope for removal",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "docs/evidence/ (10 files), .devague/{frames,plans,deliveries} (13 files)",
+      "finding": "these carry MODEL_GEAR_ as frozen historical record \u2014 evidence transcripts are verbatim console output and devague records are what was decided at the time; a repo-wide sed would corrupt both",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "lobes CLI verb surface (lobes/cli/_commands/, 27 modules)",
+      "finding": "no verb name, flag or JSON key contains 'gear' or 'model-gear' \u2014 the user-facing CLI was fully renamed already; what remains is deployment-artifact naming and internal constants, which is why 'finalize' is a smaller question than the 208 grep hits suggest",
+      "seeds": []
+    },
+    {
+      "id": "s14",
+      "surface": "CLAUDE.md deployment-model section",
+      "finding": "the resolution order is documented as --compose-dir then $LOBES_DIR then ~/.lobes, falling back to legacy $MODEL_GEAR_DIR then ~/.model-gear 'so a pre-rename deployment keeps working' \u2014 that sentence is the repo's own stated policy on renames, and it argues for fallbacks over replacements",
+      "seeds": []
+    },
+    {
+      "id": "s15",
+      "surface": "lobes/profiles/render.py::profile_env vs lobes/cli/_commands/init.py:756",
+      "finding": "MODEL_GEAR_VERSION is written by init, not rendered as a profile knob, so it never enters the lock's [env] allowlist \u2014 the depth-(b) key rename is invisible to that half of the lock",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "deployments/ (README.md + VARIATION.template.md only)",
+      "finding": "the variation catalog holds ZERO captured boxes, so the [files] digest churn a rename causes is theoretical today; the cost becomes real only after the first capture, which #224 says has no verb yet",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "lobes/runtime/_compose.py:165-177 FLEET_TEMPLATES + doctor.py:530",
+      "finding": "mg-logwrap.sh is already a registered scaffold template, so init writes it, doctor reports it missing and --fix --apply heals it \u2014 the rename inherits #227's proven qwen3_reranker.jinja mechanism rather than needing a new one",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "~/.lobes and ~/.model-gear on spark, thor and orin (live check, read-only)",
+      "finding": "ZERO deployment.lock.toml exists on any of the three boxes \u2014 checked ~/.lobes, ~/.model-gear and a depth-4 find under $HOME on each, plus deployments/ in-repo which holds only README.md and VARIATION.template.md; so the rename's [files] digest churn drifts no real lock and hard question q2 is answered no",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / adjacent-systems lens: docker-compose.yml:1717 + Dockerfile.gateway:26,28",
+      "finding": "the version key crosses a Python-to-compose boundary as a build ARG; read-both-keys in Python cannot cover it, and an empty interpolation yields 'pip install lobes-cli==' rather than an error",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / adjacent-systems lens: scripts/ (7 files)",
+      "finding": "accept-by-proxy.sh, accept-shape.sh, live-check.sh, probe_reranker_calibration.py, spec-arms.py, spike-preflight.sh and validate-tiers.sh all reference legacy names and are NOT covered by the test suite",
+      "seeds": [
+        "c31"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / adjacent-systems lens: tests/goldens/",
+      "finding": "CLEAN \u2014 no golden contains a container name (grep -rl model-gear tests/goldens returns nothing), so the goldens contract does not churn on the rename; c12's upgrade_compat coverage is sufficient",
+      "seeds": []
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / failure-mode lens: live docker compose 29.1.3 probe in scratch space",
+      "finding": "changed container_name on a running service and re-upped: compose matched by service label, Recreated, zero orphans \u2014 DISPROVES c14's manual-reap premise",
+      "seeds": [
+        "c32"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / unstated-assumptions lens: MG_LOG_DIR / MG_LOG_NAME (17 uses each)",
+      "finding": "a third legacy prefix the frame never enumerated; in-container only, so no merge-only exposure, but c7's four-surface list was incomplete",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / reversibility lens: rollback to a pre-PR2 lobes-cli",
+      "finding": "an operator who downgrades keeps LOBES_LOG_DIR in .env, which old code does not read, so the log dir silently reverts to the default rather than erroring \u2014 asymmetric with the forward path, which reads both keys",
+      "seeds": []
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / operations lens: docs/evidence, .devague, CHANGELOG.md",
+      "finding": "CHANGELOG.md carries model-gear as accurate release history but was NOT named frozen by c9, while c23's grep already excludes it \u2014 an inconsistency between two confirmed claims",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / security lens: .gitignore positional rule, .secrets.env, GATEWAY_API_KEY",
+      "finding": "CLEAN \u2014 the rename touches no credential path: the positional gitignore rule keys on the .env suffix (unchanged), .secrets.env is not renamed, and no auth key is in the renamed set",
+      "seeds": []
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / overlooked-actors lens: sibling repos (colleague, daria, reachy-mini-cli, eidetic-cli)",
+      "finding": "NOT EXAMINED \u2014 the pass was scoped to this repo; these consumers address the gateway by role name and URL, which the rename does not touch, but no grep was run against their trees to confirm none reads a container name or MODEL_GEAR_ key",
+      "seeds": []
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / migration lens: live docker compose 29.1.3 probe of container_name interpolation",
+      "finding": "container_name: ${X:-default} interpolates correctly; absent key holds the legacy default and a re-up is a no-op ('Running'), set key renames with no orphan \u2014 this is what makes the zero-downtime upgrade path real rather than hypothetical",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / overlooked-actors lens: ~/git on the Thor and the Orin (ssh, read-only)",
+      "finding": "CLEAN \u2014 the Thor has zero legacy-name hits outside lobes-cli; every Orin hit is a lobes-cli worktree. Only edge-ai-lab/tests/test_arm_run.py:498 (writes MODEL_GEAR_VERSION=1) and an eidetic-cli comment couple cross-repo, both local and both survived by the read-both-keys fallback",
+      "seeds": []
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / documentation lens: lobes/explain/catalog.py",
+      "finding": "the CLI SHIPS the legacy names as taught content at lines 137/204/280-282/315/547/1505 \u2014 'lobes learn' and 'lobes explain' actively teach them, a surface neither c7's four-surface enumeration nor c31's scripts list covered",
+      "seeds": [
+        "c36"
+      ]
+    }
+  ],
+  "lapses": []
+}

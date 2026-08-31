@@ -226,6 +226,70 @@ def test_unknown_card_base_profile_marks_senses_infeasible(tmp_path, monkeypatch
     assert "MULTIMODAL_FEASIBLE=false" in env
 
 
+# --- operator profile shadowing a built-in (issue #175) ----------------------
+
+
+def test_operator_profile_shadowing_builtin_names_winning_file(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # An operator file at <deploy-dir>/profiles/<name>.toml shadows the built-in
+    # of the same name (operator-wins — the intended escape hatch). The dry-run
+    # plan must SAY SO, naming the winning file, because the plain
+    # 'Profile: thor (...)' line is true of BOTH files and distinguishes
+    # neither.
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "thor.toml").write_text(
+        'summary = "operator override"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"Profile: thor (OPERATOR profile at {target / 'profiles' / 'thor.toml'}" in out
+    assert "shadows the built-in thor" in out
+    # The plain line is still there (the disclosure is an ADDITION, not a
+    # replacement of the forced/auto-detected facts).
+    assert "Profile: thor (auto-detected:" in out
+
+
+def test_builtin_only_resolution_prints_no_shadow_line(tmp_path, monkeypatch, capsys) -> None:
+    # No operator file: the resolution is built-in-only and the plan must NOT
+    # print a shadow line.
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: thor (auto-detected:" in out
+    assert "OPERATOR profile" not in out
+    assert "shadows the built-in" not in out
+
+
+def test_operator_profile_with_a_novel_name_shadows_nothing(tmp_path, monkeypatch, capsys) -> None:
+    """An operator profile whose name matches NO built-in prints no shadow line.
+
+    This is the documented custom-profile workflow
+    (`docs/machine-profiles.md#writing-your-own-profile`): an operator adds
+    `<deploy-dir>/profiles/<their-name>.toml` and forces it with `--profile`.
+    Nothing is being overridden, so the disclosure would be a lie — the line
+    exists to warn that a built-in was shadowed, not to announce that an
+    operator profile was used.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "myrig.toml").write_text(
+        'summary = "a bespoke card, not a built-in"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target), "--profile", "myrig"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: myrig" in out
+    assert "OPERATOR profile" not in out, "myrig shadows no built-in — there is nothing to disclose"
+    assert "shadows the built-in" not in out
+
+
 # --- acceptance 4: dry-run-by-default preserved ------------------------------
 
 
@@ -312,3 +376,49 @@ def test_resolve_init_profile_explicit_profile_genuine_mismatch_still_warns(
     assert card.resolved == "thor"
     assert warning is not None
     assert "detected card 'thor'" in warning
+
+
+def test_mixed_case_operator_profile_is_still_disclosed(tmp_path, monkeypatch, capsys) -> None:
+    """`profiles/Thor.toml` shadows the built-in `thor` — say so (Qodo #6, PR #241).
+
+    Profile resolution matches the operator file case-insensitively, so a
+    mixed-case filename wins exactly like a lower-case one. Probing only the
+    lower-cased stem left that shadow silent, which is precisely the silent
+    no-op #175 exists to prevent.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "Thor.toml").write_text(
+        'summary = "mixed-case operator override"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "OPERATOR profile" in out
+    assert "Thor.toml" in out
+    assert "shadows the built-in thor" in out
+
+
+def test_profiles_dir_without_a_matching_file_discloses_nothing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A `profiles/` dir holding only UNRELATED files shadows nothing.
+
+    The scan added for Qodo #6 walks the directory rather than probing one
+    stem, so it must still return `None` when nothing in there matches the
+    resolved profile — otherwise merely having a profiles dir would claim a
+    shadow that does not exist.
+    """
+    _patch_detect(monkeypatch, _fake_card("thor"))
+    target = tmp_path / "deploy"
+    (target / "profiles").mkdir(parents=True)
+    (target / "profiles" / "spark.toml").write_text(
+        'summary = "a different card"\n', encoding="utf-8"
+    )
+    rc = main(["init", str(target)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Profile: thor (auto-detected:" in out
+    assert "OPERATOR profile" not in out
+    assert "shadows the built-in" not in out

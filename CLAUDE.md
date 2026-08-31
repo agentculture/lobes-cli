@@ -942,10 +942,18 @@ fleet down`. `lobes switch <model>` is a down+up with a model swap. `lobes statu
 `fleet down`, `tunnel`) default to **dry-run**; require `--apply` to commit. Agents
 call CLIs in loops, so safe-by-default is mandatory. The read-only verbs (`status`,
 `assess`, `benchmark`, `logs`, `overview`, `whoami`, `explain`, `doctor`) never
-change the world — with one opt-in exception: `doctor --fix` is doctor's write
-lane (#119), and it follows the same convention (`--fix` alone prints the
-missing-only heal plan; `--fix --apply` writes absent files/keys, never
-rewriting an existing `.env` line).
+change the world — with two opt-in exceptions, both on `doctor`:
+
+- **`doctor --fix`** is the heal lane (#119) and follows the same convention
+  (`--fix` alone prints the missing-only heal plan; `--fix --apply` writes
+  absent files/keys, **never rewriting an existing `.env` line**).
+- **`doctor --repin-version`** is the ONLY path that rewrites an existing
+  `.env` line, and it rewrites exactly one key — `MODEL_GEAR_VERSION` (#99).
+  It is deliberately NOT part of `--fix`: the heal lane's append-only
+  guarantee is load-bearing (#174 destroyed 12 operator-typed keys when it
+  was broken), so the re-pin gets its own named flag rather than relaxing
+  that lane. Same dry-run convention — `--repin-version` alone prints the
+  plan, `--apply` commits it.
 
 ## Build / test / publish
 

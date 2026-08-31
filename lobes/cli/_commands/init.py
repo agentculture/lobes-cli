@@ -111,6 +111,7 @@ from lobes import __version__
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
+from lobes.profiles.loader import builtin_names
 from lobes.profiles.schema import GPU_ACCESS_RUNTIME
 from lobes.profiles.schema import ROLES as CORE_ROLES
 from lobes.profiles.schema import ExclusiveRoles, Profile
@@ -522,7 +523,47 @@ def _guard_coresidency(shape: Shape, profile: Profile, *, shape_explicit: bool) 
     )
 
 
-def _profile_plan_lines(profile, card, profile_name: str | None, shape: Shape) -> list[str]:
+def _operator_shadow_line(target: Path, profile) -> str | None:
+    """The disclosure line for a resolved profile that an OPERATOR file won.
+
+    ``resolve_profile`` prefers ``<deploy-dir>/profiles/<name>.toml`` over the
+    built-in of the same name (operator-wins — the intended escape hatch, and
+    the precedence this line must NOT change). When that operator file shadows
+    a built-in, the plan names the winning file so a stale operator profile is
+    never mistaken for the built-in it overrides (issue #175: on a real Orin
+    box a profile upgrade was a silent no-op because the old operator file
+    kept winning). ``None`` for a built-in-only resolution — no shadow, no line.
+    """
+    key = profile.name.strip().lower()
+    if key not in builtin_names():
+        return None
+    # `resolve_profile` matches an operator file case-INSENSITIVELY, so
+    # `profiles/Thor.toml` shadows the built-in `thor` just as `thor.toml`
+    # does. Probing only the lower-cased stem missed those files and left the
+    # shadow silent — the exact failure this disclosure exists to prevent
+    # (Qodo #6 on PR #241). Scan the directory instead and compare normalised
+    # stems.
+    profiles_dir = target / "profiles"
+    if not profiles_dir.is_dir():
+        return None
+    operator_file = next(
+        (f for f in sorted(profiles_dir.glob("*.toml")) if f.stem.strip().lower() == key),
+        None,
+    )
+    if operator_file is None:
+        return None
+    # Name the BUILT-IN by its canonical key, not by `profile.name`: with a
+    # mixed-case operator file the resolved name carries that file's casing, so
+    # reusing it would claim a built-in `Thor` that does not exist.
+    return (
+        f"Profile: {profile.name} (OPERATOR profile at {operator_file} "
+        f"- shadows the built-in {key})"
+    )
+
+
+def _profile_plan_lines(
+    target: Path, profile, card, profile_name: str | None, shape: Shape
+) -> list[str]:
     facts = (
         f"device_name={card.device_name!r}, compute_capability={card.compute_capability!r}, "
         f"total_memory_gb={card.total_memory_gb!r}"
@@ -532,6 +573,12 @@ def _profile_plan_lines(profile, card, profile_name: str | None, shape: Shape) -
     else:
         why = f"auto-detected: {facts}"
     lines = [f"Profile: {profile.name} ({why})"]
+    # When an operator file shadows the built-in of the same name, name the
+    # WINNING file (issue #175) — the line above is true of both files and
+    # distinguishes neither. A built-in-only resolution prints no shadow line.
+    shadow = _operator_shadow_line(target, profile)
+    if shadow:
+        lines.append(shadow)
     lines.append(f"Shape: {shape.name} (hosts={list(shape.hosts)})")
     rendered = render_shape(shape, profile)
     lines.append(f"  would set {len(rendered.env)} env var(s) in {_compose.ENV_FILE}")
@@ -678,7 +725,7 @@ def _dry_run_lines(
     if audio:
         lines.append("  .env (+ audio keys appended)")
     if fleet:
-        lines.extend(_profile_plan_lines(profile, card, profile_name, shape))
+        lines.extend(_profile_plan_lines(target, profile, card, profile_name, shape))
         for line in (
             _shape_override_plan_line(_shape_override_plan(target, shape, profile)),
             _gpu_override_plan_line(_gpu_override_plan(target, profile)),

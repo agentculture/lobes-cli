@@ -768,6 +768,15 @@ primary starts alone: this is a bring-up race, not a steady-state
 misconfiguration. Bring-up ordering is not expressible as a per-gear env knob
 — tracked as follow-up work (plan risk r7).
 
+**The ordering is not only an OOM risk — it quantitatively changes the served
+KV budget.** On the Jetson AGX Orin (unified memory), the *identical*
+`gpu_mem_util`/`max_model_len` knobs served **802,644 tokens (6.12×
+concurrency)** when `senses` booted first but only **480,431 tokens (3.67×)**
+when the pooling gears booted first — a 1.67× difference in the served KV pool
+from boot order alone (measured 2026-08-04; see `docs/orin-profiles.md`).
+vLLM measures free-at-boot, so whichever engine boots first claims the larger
+share.
+
 **Workaround (validated):**
 
 ```sh
