@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.7] - 2026-09-02
+
+### Fixed
+
+- `.claude/skills/summarize-delivery/SKILL.md` and `.claude/skills/deviate/SKILL.md` — both opened with a stale six-leg flow chain omitting `challenge` and `validate-delivery`, contradicting the eight-leg chain stated further down `summarize-delivery`'s own Provenance section. An operator reading only the intro would have skipped the evidence leg this release adds.
+
+## [0.73.6] - 2026-09-02
+
+### Changed
+
+- `docs/skill-sources.md` gains a Divergences-from-upstream section recording both patches, so the next wholesale re-vendor knows to re-apply them if upstream has not fixed them.
+
+### Fixed
+
+- `.claude/skills/assign-to-workforce/SKILL.md` — replaced upstream's backslash-escaped backticks *inside* a code span with double-backtick fencing. CommonMark does not honour backslash escapes inside code spans, so the backticks mispaired and the repo-wide `markdownlint` MD038 gate failed on PR #242.
+- `.claude/skills/spec-to-plan/SKILL.md` — upstream's export-hygiene section claimed there is no task-edit move and told operators to hand-edit `.devague/` state JSON. `devague plan amend` and `devague plan instruct` both exist (and the same file's move table documents them); the section now names the CLI moves and their re-confirm behaviour.
+
+## [0.73.5] - 2026-09-02
+
+### Added
+
+- `.claude/skills/validate-delivery/` — the devague chain's eighth leg (execution→evidence), vendored verbatim from `agentculture/devague`: runs the confirmed plan's behavioral tests agent-side after assign-to-workforce merges its waves, then files evidence records and behavioral deltas.
+
+### Changed
+
+- Refreshed the seven previously-vendored devague operator skills (`scope`, `think`, `challenge`, `spec-to-plan`, `assign-to-workforce`, `deviate`, `summarize-delivery`) to their current upstream text — the flow order now names `validate-delivery` between `deviate` and `summarize-delivery`, `challenge` gains the `devague lapse` self-report row, and `assign-to-workforce`'s resolver script gains `split-plan --write` (the durable gate-2 record under `docs/plans/`, with owner/model annotations read back on re-run), the enriched `plan waves --json` payload, and the `plan deliverables` End-state section. The `think`/`spec-to-plan` scripts pick up only the steward→guildmaster re-broadcast rename.
+- `docs/skill-sources.md` and `CLAUDE.md` now record eight devague skills (not three), their CLI-driving vs method-only shapes, and that refreshing them is a wholesale re-vendor because the copies carry no lobes-local divergence.
+
 ## [0.73.4] - 2026-08-31
 
 ### Added

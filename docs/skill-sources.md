@@ -8,29 +8,74 @@ runtime-depends on a sibling checkout.
 
 "Citation path" is where the copy was taken from when a sibling is checked out
 alongside this repo (the shared-workspace layout). "Origin" is the repo that
-*authors and maintains* the skill upstream. The two differ for the devague trio:
-those skills are authored in `agentculture/devague` and *re-broadcast* through
+*authors and maintains* the skill upstream. The two differ for the devague skills:
+those are authored in `agentculture/devague` and *re-broadcast* through
 `agentculture/guildmaster`, so guildmaster is the citation point even though
 devague is the author.
 
-## devague workflow trio — origin `agentculture/devague`, via guildmaster
+## devague operator skills — origin `agentculture/devague`, via guildmaster
 
-The idea→spec→plan→implementation operator chain for the deterministic `devague`
-CLI. Each leg hands off to the next; the `SKILL.md` descriptions cross-reference
-one another. They carry `type: command` in their frontmatter, which is
-load-bearing on the culture/agex backend (a `SKILL.md` without `type:` is
-silently skipped when the repo declares an agent in `culture.yaml`).
+The idea→spec→plan→implementation→evidence→closure operator chain for the
+deterministic `devague` CLI — **eight legs**, in flow order. Each leg hands off
+to the next; the `SKILL.md` descriptions cross-reference one another. They carry
+`type: command` in their frontmatter, which is load-bearing on the culture/agex
+backend (a `SKILL.md` without `type:` is silently skipped when the repo declares
+an agent in `culture.yaml`).
 
-| Skill | Citation path | Origin | Notes |
-|-------|---------------|--------|-------|
-| `think` | `../guildmaster/.claude/skills/think/` | `agentculture/devague` | idea→spec leg. Verbatim copy, incl. `type: command` — no divergence. |
-| `spec-to-plan` | `../guildmaster/.claude/skills/spec-to-plan/` | `agentculture/devague` | spec→plan leg (drives `devague plan`). Verbatim copy — no divergence. |
-| `assign-to-workforce` | `../guildmaster/.claude/skills/assign-to-workforce/` | `agentculture/devague` | plan→parallel implementation leg. Verbatim copy — no divergence. |
+Two shapes ship upstream: **CLI-driving** skills (`think`, `spec-to-plan`,
+`assign-to-workforce`) carry a `scripts/<name>.sh` portable CLI resolver;
+**method-only** skills (`scope`, `challenge`, `deviate`, `validate-delivery`,
+`summarize-delivery`) are `SKILL.md` alone and invoke the `devague` CLI directly.
 
-Runtime dependency (all three): the `devague` CLI (`uv tool install devague`).
-The wrappers resolve it portably — an installed `devague` on `PATH`, falling
-back to `uv run devague` inside a devague checkout — so no dependency is added to
-`pyproject.toml`.
+| Skill | Shape | Citation path | Origin | Notes |
+|-------|-------|---------------|--------|-------|
+| `scope` | method-only | `../guildmaster/.claude/skills/scope/` | `agentculture/devague` | idea→explored-scope leg (optional opener). Verbatim copy — no divergence. |
+| `think` | CLI-driving | `../guildmaster/.claude/skills/think/` | `agentculture/devague` | idea→spec leg. Verbatim copy, incl. `type: command` — no divergence. |
+| `challenge` | method-only | `../guildmaster/.claude/skills/challenge/` | `agentculture/devague` | blind-spot pass between spec export and `plan new`. Verbatim copy — no divergence. |
+| `spec-to-plan` | CLI-driving | `../guildmaster/.claude/skills/spec-to-plan/` | `agentculture/devague` | spec→plan leg (drives `devague plan`). **One divergence** — see below. |
+| `assign-to-workforce` | CLI-driving | `../guildmaster/.claude/skills/assign-to-workforce/` | `agentculture/devague` | plan→parallel implementation leg. **One divergence** — see below. |
+| `deviate` | method-only | `../guildmaster/.claude/skills/deviate/` | `agentculture/devague` | execution-time: records human-approved departures from the confirmed plan. **One divergence** — see below. |
+| `validate-delivery` | method-only | `../guildmaster/.claude/skills/validate-delivery/` | `agentculture/devague` | execution→evidence leg: runs the plan's behavioral tests agent-side, files evidence + behavioral deltas. Added 2026-09-02. Verbatim copy — no divergence. |
+| `summarize-delivery` | method-only | `../guildmaster/.claude/skills/summarize-delivery/` | `agentculture/devague` | closure leg: the committed accountability artifact. **One divergence** — see below. |
+
+Runtime dependency (all eight): the `devague` CLI (`uv tool install devague`).
+The three CLI-driving wrappers resolve it portably — an installed `devague` on
+`PATH`, falling back to `uv run devague` inside a devague checkout — so no
+dependency is added to `pyproject.toml`.
+
+### Divergences from upstream
+
+Three, all filed upstream on `agentculture/devague` and all to be dropped when
+an upstream fix lands:
+
+- **`assign-to-workforce/SKILL.md`** — upstream escapes backticks *inside* a
+  code span (`` `... \`devague plan deliverables\` ...` ``). CommonMark does
+  not honour backslash escapes inside code spans, so the backticks mispair and
+  `markdownlint` MD038 fails. lobes lints every tracked `.md` in CI, so the
+  span is rewritten with double-backtick fencing. Rendering is unchanged.
+- **`spec-to-plan/SKILL.md`** — upstream's export-hygiene section says *"There
+  is no task-edit move yet, so fixing text after confirmation means
+  hand-editing state JSON."* Both moves exist (`devague plan amend
+  --summary/--accept-replace/--accept-remove`, `devague plan instruct`), and
+  the same file's own move table documents them; the advice also contradicts
+  the family-wide rule never to hand-edit `.devague/` state. Replaced with the
+  CLI moves.
+
+- **`summarize-delivery/SKILL.md` + `deviate/SKILL.md`** — both open with a
+  stale **six-leg** flow chain (`scope -> think -> spec-to-plan ->
+  assign-to-workforce -> deviate -> summarize-delivery`) that omits
+  `challenge` *and* `validate-delivery`, contradicting the eight-leg chain
+  `summarize-delivery`'s own Provenance section states further down the same
+  file. An operator reading only the intro would skip the evidence leg
+  entirely. Both chains corrected to eight legs.
+
+Refreshing these copies is otherwise a **wholesale re-vendor**, not a merge:
+apart from the two divergences above they carry no lobes-local content, so the
+update is `devague learn skills:<name>` for the source URL and a verbatim
+overwrite — then re-apply the two patches if upstream has not fixed them.
+`devague learn` is the authority on how many legs exist and what each one
+does; if it disagrees with the table above, `devague learn` is right and this
+table is stale.
 
 ## steward skills — origin `agentculture/steward`
 

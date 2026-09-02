@@ -18,10 +18,10 @@ type: command
 # deviate — record an approved mid-run departure from the confirmed plan
 
 The skill is named **`deviate`**; it is the **execution-time leg** of the
-devague method — the *sixth* leg, sitting between the two execution skills:
+devague method — the *sixth* leg, sitting between the execution skills:
 
 ```text
-scope -> think -> spec-to-plan -> assign-to-workforce -> deviate -> summarize-delivery
+scope -> think -> challenge -> spec-to-plan -> assign-to-workforce -> deviate -> validate-delivery -> summarize-delivery
 ```
 
 Where `/assign-to-workforce` fans out a converged plan's waves and
@@ -154,15 +154,17 @@ record would land `proposed` and need an explicit
 `devague deviate --confirm d1` from the user before `/summarize-delivery`
 could cite it as approved.
 
-## After recording — resume, then hand off to /summarize-delivery
+## After recording — resume, then hand off through /validate-delivery to /summarize-delivery
 
 Once the affected task briefs are adjusted and the fan-out resumes, nothing
 further is needed from this skill — the record already lives in the delivery
-store. When the run reaches `/summarize-delivery`, that skill's Drift From
-Plan and Mid-work Decisions sections quote these records by their `dN` id
-instead of reconstructing drift from memory, so the connective tissue between
-the confirmed plan and the delivery summary is the ledger this skill wrote,
-not anyone's recollection of the run.
+store. When the waves finish merging, the run continues through
+`/validate-delivery` (running the plan's behavioral tests and filing evidence
+and behavioral deltas) before it reaches `/summarize-delivery`. That skill's
+Drift From Plan and Mid-work Decisions sections quote these deviation records
+by their `dN` id instead of reconstructing drift from memory, so the
+connective tissue between the confirmed plan and the delivery summary is the
+ledger this skill wrote, not anyone's recollection of the run.
 
 ## Provenance
 
