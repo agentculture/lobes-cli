@@ -20,17 +20,20 @@ type: command
 # summarize-delivery — turn a workforce run into an accountability artifact
 
 The skill is named **`summarize-delivery`**; it is the **delivery-side closure
-leg** that closes the devague method's six-leg flow:
+leg** that closes the devague method's eight-leg flow:
 
 ```text
-scope -> think -> spec-to-plan -> assign-to-workforce -> deviate -> summarize-delivery
+scope -> think -> challenge -> spec-to-plan -> assign-to-workforce -> deviate -> validate-delivery -> summarize-delivery
 ```
 
 It runs *after* the sibling **`/assign-to-workforce`** skill has executed (or
-attempted to execute) a converged plan — and after any **`/deviate`** records
-that run produced, since `/deviate` slots in **between**
-`/assign-to-workforce` and this skill, recording approved mid-run departures
-the moment they happen during the fan-out. Where `/assign-to-workforce` takes
+attempted to execute) a converged plan, after any **`/deviate`** records that
+run produced, and after **`/validate-delivery`** has run the plan's behavioral
+tests and filed the evidence and deltas this skill reads back — both of those
+slot in **between** `/assign-to-workforce` and this skill — `/deviate`
+recording approved mid-run departures the moment they happen during the
+fan-out, `/validate-delivery` filing what the merged waves actually do once
+they land. Where `/assign-to-workforce` takes
 the plan to delivery, this skill *summarizes* that delivery: it separates
 what was **planned** from what was **actually delivered**, records the
 **mid-work decisions** and **plan drift** the execution produced — quoting

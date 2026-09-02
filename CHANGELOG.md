@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.7] - 2026-09-02
+
+### Fixed
+
+- `.claude/skills/summarize-delivery/SKILL.md` and `.claude/skills/deviate/SKILL.md` — both opened with a stale six-leg flow chain omitting `challenge` and `validate-delivery`, contradicting the eight-leg chain stated further down `summarize-delivery`'s own Provenance section. An operator reading only the intro would have skipped the evidence leg this release adds.
+
 ## [0.73.6] - 2026-09-02
 
 ### Changed

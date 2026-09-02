@@ -18,10 +18,10 @@ type: command
 # deviate — record an approved mid-run departure from the confirmed plan
 
 The skill is named **`deviate`**; it is the **execution-time leg** of the
-devague method — the *sixth* leg, sitting between the two execution skills:
+devague method — the *sixth* leg, sitting between the execution skills:
 
 ```text
-scope -> think -> spec-to-plan -> assign-to-workforce -> deviate -> summarize-delivery
+scope -> think -> challenge -> spec-to-plan -> assign-to-workforce -> deviate -> validate-delivery -> summarize-delivery
 ```
 
 Where `/assign-to-workforce` fans out a converged plan's waves and

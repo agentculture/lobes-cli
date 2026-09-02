@@ -34,9 +34,9 @@ Two shapes ship upstream: **CLI-driving** skills (`think`, `spec-to-plan`,
 | `challenge` | method-only | `../guildmaster/.claude/skills/challenge/` | `agentculture/devague` | blind-spot pass between spec export and `plan new`. Verbatim copy — no divergence. |
 | `spec-to-plan` | CLI-driving | `../guildmaster/.claude/skills/spec-to-plan/` | `agentculture/devague` | spec→plan leg (drives `devague plan`). **One divergence** — see below. |
 | `assign-to-workforce` | CLI-driving | `../guildmaster/.claude/skills/assign-to-workforce/` | `agentculture/devague` | plan→parallel implementation leg. **One divergence** — see below. |
-| `deviate` | method-only | `../guildmaster/.claude/skills/deviate/` | `agentculture/devague` | execution-time: records human-approved departures from the confirmed plan. Verbatim copy — no divergence. |
+| `deviate` | method-only | `../guildmaster/.claude/skills/deviate/` | `agentculture/devague` | execution-time: records human-approved departures from the confirmed plan. **One divergence** — see below. |
 | `validate-delivery` | method-only | `../guildmaster/.claude/skills/validate-delivery/` | `agentculture/devague` | execution→evidence leg: runs the plan's behavioral tests agent-side, files evidence + behavioral deltas. Added 2026-09-02. Verbatim copy — no divergence. |
-| `summarize-delivery` | method-only | `../guildmaster/.claude/skills/summarize-delivery/` | `agentculture/devague` | closure leg: the committed accountability artifact. Verbatim copy — no divergence. |
+| `summarize-delivery` | method-only | `../guildmaster/.claude/skills/summarize-delivery/` | `agentculture/devague` | closure leg: the committed accountability artifact. **One divergence** — see below. |
 
 Runtime dependency (all eight): the `devague` CLI (`uv tool install devague`).
 The three CLI-driving wrappers resolve it portably — an installed `devague` on
@@ -45,7 +45,7 @@ dependency is added to `pyproject.toml`.
 
 ### Divergences from upstream
 
-Two, both filed upstream on `agentculture/devague` and both to be dropped when
+Three, all filed upstream on `agentculture/devague` and all to be dropped when
 an upstream fix lands:
 
 - **`assign-to-workforce/SKILL.md`** — upstream escapes backticks *inside* a
@@ -60,6 +60,14 @@ an upstream fix lands:
   the same file's own move table documents them; the advice also contradicts
   the family-wide rule never to hand-edit `.devague/` state. Replaced with the
   CLI moves.
+
+- **`summarize-delivery/SKILL.md` + `deviate/SKILL.md`** — both open with a
+  stale **six-leg** flow chain (`scope -> think -> spec-to-plan ->
+  assign-to-workforce -> deviate -> summarize-delivery`) that omits
+  `challenge` *and* `validate-delivery`, contradicting the eight-leg chain
+  `summarize-delivery`'s own Provenance section states further down the same
+  file. An operator reading only the intro would skip the evidence leg
+  entirely. Both chains corrected to eight legs.
 
 Refreshing these copies is otherwise a **wholesale re-vendor**, not a merge:
 apart from the two divergences above they carry no lobes-local content, so the
