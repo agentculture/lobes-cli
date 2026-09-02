@@ -32,8 +32,8 @@ Two shapes ship upstream: **CLI-driving** skills (`think`, `spec-to-plan`,
 | `scope` | method-only | `../guildmaster/.claude/skills/scope/` | `agentculture/devague` | idea→explored-scope leg (optional opener). Verbatim copy — no divergence. |
 | `think` | CLI-driving | `../guildmaster/.claude/skills/think/` | `agentculture/devague` | idea→spec leg. Verbatim copy, incl. `type: command` — no divergence. |
 | `challenge` | method-only | `../guildmaster/.claude/skills/challenge/` | `agentculture/devague` | blind-spot pass between spec export and `plan new`. Verbatim copy — no divergence. |
-| `spec-to-plan` | CLI-driving | `../guildmaster/.claude/skills/spec-to-plan/` | `agentculture/devague` | spec→plan leg (drives `devague plan`). Verbatim copy — no divergence. |
-| `assign-to-workforce` | CLI-driving | `../guildmaster/.claude/skills/assign-to-workforce/` | `agentculture/devague` | plan→parallel implementation leg. Verbatim copy — no divergence. |
+| `spec-to-plan` | CLI-driving | `../guildmaster/.claude/skills/spec-to-plan/` | `agentculture/devague` | spec→plan leg (drives `devague plan`). **One divergence** — see below. |
+| `assign-to-workforce` | CLI-driving | `../guildmaster/.claude/skills/assign-to-workforce/` | `agentculture/devague` | plan→parallel implementation leg. **One divergence** — see below. |
 | `deviate` | method-only | `../guildmaster/.claude/skills/deviate/` | `agentculture/devague` | execution-time: records human-approved departures from the confirmed plan. Verbatim copy — no divergence. |
 | `validate-delivery` | method-only | `../guildmaster/.claude/skills/validate-delivery/` | `agentculture/devague` | execution→evidence leg: runs the plan's behavioral tests agent-side, files evidence + behavioral deltas. Added 2026-09-02. Verbatim copy — no divergence. |
 | `summarize-delivery` | method-only | `../guildmaster/.claude/skills/summarize-delivery/` | `agentculture/devague` | closure leg: the committed accountability artifact. Verbatim copy — no divergence. |
@@ -43,11 +43,31 @@ The three CLI-driving wrappers resolve it portably — an installed `devague` on
 `PATH`, falling back to `uv run devague` inside a devague checkout — so no
 dependency is added to `pyproject.toml`.
 
-Refreshing these copies is a **wholesale re-vendor**, not a merge: they have no
-lobes-local divergence, so the update is `devague learn skills:<name>` for the
-source URL and a verbatim overwrite. `devague learn` is the authority on how
-many legs exist and what each one does; if it disagrees with the table above,
-`devague learn` is right and this table is stale.
+### Divergences from upstream
+
+Two, both filed upstream on `agentculture/devague` and both to be dropped when
+an upstream fix lands:
+
+- **`assign-to-workforce/SKILL.md`** — upstream escapes backticks *inside* a
+  code span (`` `... \`devague plan deliverables\` ...` ``). CommonMark does
+  not honour backslash escapes inside code spans, so the backticks mispair and
+  `markdownlint` MD038 fails. lobes lints every tracked `.md` in CI, so the
+  span is rewritten with double-backtick fencing. Rendering is unchanged.
+- **`spec-to-plan/SKILL.md`** — upstream's export-hygiene section says *"There
+  is no task-edit move yet, so fixing text after confirmation means
+  hand-editing state JSON."* Both moves exist (`devague plan amend
+  --summary/--accept-replace/--accept-remove`, `devague plan instruct`), and
+  the same file's own move table documents them; the advice also contradicts
+  the family-wide rule never to hand-edit `.devague/` state. Replaced with the
+  CLI moves.
+
+Refreshing these copies is otherwise a **wholesale re-vendor**, not a merge:
+apart from the two divergences above they carry no lobes-local content, so the
+update is `devague learn skills:<name>` for the source URL and a verbatim
+overwrite — then re-apply the two patches if upstream has not fixed them.
+`devague learn` is the authority on how many legs exist and what each one
+does; if it disagrees with the table above, `devague learn` is right and this
+table is stale.
 
 ## steward skills — origin `agentculture/steward`
 

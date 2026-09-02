@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.6] - 2026-09-02
+
+### Changed
+
+- `docs/skill-sources.md` gains a Divergences-from-upstream section recording both patches, so the next wholesale re-vendor knows to re-apply them if upstream has not fixed them.
+
+### Fixed
+
+- `.claude/skills/assign-to-workforce/SKILL.md` — replaced upstream's backslash-escaped backticks *inside* a code span with double-backtick fencing. CommonMark does not honour backslash escapes inside code spans, so the backticks mispaired and the repo-wide `markdownlint` MD038 gate failed on PR #242.
+- `.claude/skills/spec-to-plan/SKILL.md` — upstream's export-hygiene section claimed there is no task-edit move and told operators to hand-edit `.devague/` state JSON. `devague plan amend` and `devague plan instruct` both exist (and the same file's move table documents them); the section now names the CLI moves and their re-confirm behaviour.
+
 ## [0.73.5] - 2026-09-02
 
 ### Added

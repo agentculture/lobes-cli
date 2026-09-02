@@ -167,8 +167,10 @@ The exported plan-md must pass markdown lint. The plan's H1 inherits the
 *frame's* title — set a short, period-free `--title` at `devague new` time (see
 `/think`'s export-hygiene rules). And backtick angle-bracket placeholders in
 task text (`` `instruct <tN>` ``, not `instruct <tN>`) — bare ones fail MD033.
-There is no task-edit move yet, so fixing text after confirmation means
-hand-editing state JSON.
+Fixing task text after confirmation is a CLI move, never a hand edit of state
+JSON: `amend <tN> --summary "<text>"` (and its acceptance-criterion flags) for
+the summary and criteria, `instruct <tN> "<text>"` for the instruction. Both
+flip an already-`confirmed` task back to `proposed` so the user re-confirms.
 
 ### Small and crisply scoped
 
