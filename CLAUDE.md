@@ -973,14 +973,28 @@ Six skills are vendored from steward (the canonical upstream) under
 **`run-tests`**, **`sonarclaude`**, **`doc-test-alignment`**. This is
 *cite-don't-import*: copies are owned by this repo and may diverge from steward.
 
-Three more are vendored from **`agentculture/devague`** (re-broadcast via
-guildmaster) — the idea→spec→plan→implementation operator chain for the
-deterministic `devague` CLI: **`think`** (idea→spec), **`spec-to-plan`**
-(spec→plan), and **`assign-to-workforce`** (plan→parallel implementation). These
-three carry **`type: command`** in their frontmatter — load-bearing on the
-culture/agex backend (a `SKILL.md` without `type:` is silently skipped when the
-repo declares an agent in `culture.yaml`). They depend on the `devague` CLI at
-runtime (`uv tool install devague`), resolved portably by the wrappers.
+**Eight more** are vendored from **`agentculture/devague`** (re-broadcast via
+guildmaster) — the operator chain for the deterministic `devague` CLI, in flow
+order: **`scope`** (idea→explored scope, optional opener), **`think`**
+(idea→spec), **`challenge`** (blind-spot pass over the exported frame),
+**`spec-to-plan`** (spec→plan), **`assign-to-workforce`** (plan→parallel
+implementation), **`deviate`** (execution-time departures from the confirmed
+plan), **`validate-delivery`** (execution→evidence: run the plan's behavioral
+tests agent-side, file evidence + behavioral deltas), and
+**`summarize-delivery`** (the closure artifact). Three are **CLI-driving**
+(`think`, `spec-to-plan`, `assign-to-workforce`) and ship a
+`scripts/<name>.sh` portable resolver; the other five are **method-only** —
+`SKILL.md` alone, invoking the `devague` CLI directly. All eight carry
+**`type: command`** in their frontmatter — load-bearing on the culture/agex
+backend (a `SKILL.md` without `type:` is silently skipped when the repo
+declares an agent in `culture.yaml`). They depend on the `devague` CLI at
+runtime (`uv tool install devague`), resolved portably by the wrappers for the
+CLI-driving three.
+
+These copies carry **no lobes-local divergence**, so refreshing them is a
+wholesale re-vendor, not a merge: `devague learn skills:<name>` prints the
+source URL, and the copy is overwritten verbatim. `devague learn` — not this
+file — is the authority on how many legs the chain has.
 
 One skill is **local to this repo** (not vendored): **`model-runner`** — a thin
 pointer/shim to the `lobes` CLI for switching/serving/assessing the model. The
@@ -1018,7 +1032,7 @@ Bump the version (above) on every PR or CI's `version-check` job fails the run.
 - **Culture CLI:** `culture` — server lifecycle, agent start/stop, mesh linking.
   Path references assume siblings are checked out alongside this repo
   (`../culture`, `../daria`, `../steward`).
-- **steward owns the six steward-sourced skills** (the devague trio is owned
+- **steward owns the six steward-sourced skills** (the devague eight are owned
   upstream by `agentculture/devague`; see `docs/skill-sources.md`) and the
   sibling-pattern contract.
   steward files issues on siblings but never edits them — so scaffolding and
