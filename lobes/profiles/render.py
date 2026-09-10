@@ -138,12 +138,50 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     # side uniform means wiring a new lane's slot is a one-line change there,
     # not two changes that can drift apart.
     "speculative_config": "SPECULATIVE_CONFIG",
+    # --- the worker lane's recipe knobs (worker-recipe-knobs plan, t3) -------
+    # Each maps to a slot the `vllm-worker` compose command now expands (and,
+    # for TOOL_CALL_PARSER, one `vllm-associate` already did). The mapping is
+    # uniform across prefixes for the same reason speculative_config's is: the
+    # gate lives at LOAD time (schema.KNOB_LANE_ROLES), so a role whose lane
+    # has no slot is refused when the knob is DECLARED, with a message naming
+    # why -- rather than silently rendering a key nothing reads.
+    "moe_backend": "MOE_BACKEND",
+    "max_num_batched_tokens": "MAX_NUM_BATCHED_TOKENS",
+    "load_format": "LOAD_FORMAT",
+    # The three boolean toggles render the FULL flag text, not "true"/"false"
+    # -- see _BOOL_KNOB_TOKENS below.
+    "chunked_prefill": "CHUNKED_PREFILL",
+    "async_scheduling": "ASYNC_SCHEDULING",
+    "prefix_caching": "PREFIX_CACHING",
+    "tool_call_parser": "TOOL_CALL_PARSER",
 }
 
 # The two argparse.BooleanOptionalAction tokens vLLM's --enforce-eager /
 # --no-enforce-eager flag accepts — see RERANK_ENFORCE_EAGER in
 # lobes/templates/fleet/docker-compose.yml for the idiom this mirrors.
 _ENFORCE_EAGER_TOKEN = {True: "--enforce-eager", False: "--no-enforce-eager"}
+
+# Every BOOLEAN knob whose rendered `.env` value is the FULL flag text rather
+# than a bare "true"/"false": knob -> {True: on-token, False: off-token}.
+#
+# WHY the env var holds the token: the compose slot is a dash-only ${VAR-},
+# which either contributes one whole argv token or none at all. A bare "true"
+# could not be turned into a flag inside a shell-lexed string command without
+# a second substitution, and a bare "false" would have to become the `--no-`
+# spelling somewhere -- so the translation happens HERE, once, where the
+# spelling is written down next to the knob it belongs to.
+#
+# The `--no-` spellings are vLLM's own argparse.BooleanOptionalAction pairs.
+# `enforce_eager`/`prefix_caching`/`chunked_prefill` are the documented ones
+# and `--no-enable-prefix-caching` is already used by the vllm-associate lane
+# in this repo; `--no-async-scheduling` follows the same generated-CLI rule but
+# has NOT been exercised against a live engine here (#108).
+_BOOL_KNOB_TOKENS: dict[str, dict[bool, str]] = {
+    "enforce_eager": _ENFORCE_EAGER_TOKEN,
+    "chunked_prefill": {True: "--enable-chunked-prefill", False: "--no-enable-chunked-prefill"},
+    "async_scheduling": {True: "--async-scheduling", False: "--no-async-scheduling"},
+    "prefix_caching": {True: "--enable-prefix-caching", False: "--no-enable-prefix-caching"},
+}
 
 
 # --- the ENGINE axis (qwen3-8-gguf-llamacpp t5) ------------------------------
@@ -252,8 +290,8 @@ def _role_env(role: str, rp: RoleProfile) -> dict[str, str]:
         if value is None:
             continue
         env_name = f"{prefix}_{suffix}"
-        if field_name == "enforce_eager":
-            env[env_name] = _ENFORCE_EAGER_TOKEN[bool(value)]
+        if field_name in _BOOL_KNOB_TOKENS:
+            env[env_name] = _BOOL_KNOB_TOKENS[field_name][bool(value)]
         elif isinstance(value, bool):
             env[env_name] = "true" if value else "false"
         else:

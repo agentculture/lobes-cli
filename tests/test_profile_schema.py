@@ -55,6 +55,14 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "hf_overrides",
         "allow_long_max_model_len",
         "speculative_config",
+        # the worker lane's recipe knobs (worker-recipe-knobs plan, t3)
+        "moe_backend",
+        "max_num_batched_tokens",
+        "load_format",
+        "chunked_prefill",
+        "async_scheduling",
+        "prefix_caching",
+        "tool_call_parser",
     }
 
 

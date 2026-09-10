@@ -229,7 +229,18 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
     "vllm-rerank": "8fea9569d776f62385b87a0086131c8286df82accf7bb6b639dc275c2a168007",
-    "vllm-worker": "8251c941e0667600d1d306db5a65d90ee9216391efdb6e246cdcc64f866c96e6",
+    # Recomputed 2026-09-10 for the worker recipe knobs (worker-recipe-knobs
+    # t3): ONLY `vllm-worker` moved, and only its `command` string +
+    # environment comments — it grew the ${VAR:+…} / ${VAR-} slots for
+    # kv-cache-dtype, attention-config, moe-backend, load-format,
+    # max-num-seqs, max-num-batched-tokens, chunked-prefill,
+    # async-scheduling, prefix-caching and an env-carried
+    # --tool-call-parser (default unchanged: qwen3_coder). With none of
+    # those set the RENDERED argv is byte-identical to before (proved
+    # against real `docker compose config` in
+    # tests/test_worker_recipe_knobs.py); this tripwire is hashing the
+    # TEMPLATE text, which did change.
+    "vllm-worker": "09e073e516a3a86b310ef535cff53d66aebf369eebddfe75efad6f15d4d7b2d1",
 }
 
 
