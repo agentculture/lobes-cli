@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.3] - 2026-09-10
+
+### Changed
+
+- **The `thor-worker` shape points at `nvidia/Qwen3.6-35B-A3B-NVFP4` at its MEASURED budget** (#244 t15): `model`, `quantization=modelopt` (the ModelOpt MIXED_PRECISION export resolves to `modelopt_mixed`, where the outgoing unsloth export needed `compressed-tensors`), and `max_model_len=65536` — the window a live boot on the physical Thor actually proved on 2026-09-10, not the 262144 the previous occupant served. `gpu_mem_util` stays 0.45, which booted first try. 128K and native 262144 are UNMEASURED for this checkpoint and the TOML says so; raising the window is a re-measurement, not an edit.
+- The shape's `sm_110` MoE-backend note now records the measured REASON rather than the assumed one: with MTP on, the engine selects two MoE backends at once — MARLIN for the target's `W4A16_NVFP4` experts and TRITON for the drafter's unquantized ones — so the 2026-07-31 refusals were one forced value applied to two differently-quantized MoEs, never an sm_110 fact. `WORKER_MOE_BACKEND` still stays unset.
+- The superseded 2026-07-31 unsloth budget is kept in the header, explicitly labelled as belonging to a different checkpoint on a different engine, alongside the standing warning that a KV ceiling is not measured concurrency.
+
 ## [0.74.2] - 2026-09-10
 
 ### Added
