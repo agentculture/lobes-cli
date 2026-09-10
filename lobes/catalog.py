@@ -895,6 +895,21 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        # DEMOTED from role_hint="worker" to a kept candidate (issue #244, t1):
+        # the `worker` seat moves to nvidia/Qwen3.6-35B-A3B-NVFP4 below — see
+        # that entry's own comment for the checkpoint facts and rationale.
+        # Kept, not deleted (cite-don't-delete): this is the checkpoint the
+        # 2026-08-20..2026-09-10 worker-lane evidence transcripts (below) were
+        # measured against, and the `WORKER_MODEL`/`ASSOCIATE_MODEL` compose
+        # defaults still name it — it remains the deployed reality until a
+        # separate task re-points those envs. `associate` also still resolves
+        # to this entry when explicitly served by id (`_catalog_by_id`); only
+        # the *unwired-role canonical name* (`_catalog_by_role_hint("worker")`)
+        # changes with this demotion — a follow-up task (t2) is tracked to
+        # give `associate` its own role_hint so the two stop sharing one.
+        # Nothing below this comment changed — same fields, same facts, only
+        # role_hint moved.
+        #
         # The NEW `worker` gear (nemotron-lightning-worker plan, #187, t3),
         # replacing unsloth/Qwen3.6-35B-A3B-NVFP4 above (demoted to
         # role_hint="candidate", kept — cite-don't-delete). A fast, TEXT-ONLY,
@@ -978,7 +993,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. See
         # docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md and
         # docs/plans/2026-08-20-nemotron-lightning-worker.md.
-        role_hint="worker",
+        role_hint="candidate",
         shape="hybrid Mamba-2 + sparse-MoE (~3B active per token, text-only)",
         context="1M native (1,048,576 max_position_embeddings)",
         native_max_model_len=1048576,
@@ -999,6 +1014,93 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # No speculative_config: config.json carries no MTP/draft-head field
         # (see the long comment above) — the card's MTP/DSpark claim is
         # declared, UNMEASURED, and evaluated separately by plan task t2.
+        task="generate",
+    ),
+    SupportedModel(
+        id="nvidia/Qwen3.6-35B-A3B-NVFP4",
+        # The NEW `worker` gear (issue #244, t1), taking the seat back from
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 above (demoted to
+        # role_hint="candidate", kept — cite-don't-delete). A DISTINCT entry
+        # from BOTH other Qwen3.6-35B-A3B-NVFP4 catalog ids: unsloth/'s (the
+        # former worker, also a kept candidate, compressed-tensors quant) and
+        # mmangkad/'s (the 32K-native MoE candidate, marlin moe_backend) — same
+        # architecture family, three different orgs/exports.
+        #
+        # Verified against the checkpoint's ACTUAL config files, fetched
+        # 2026-09-10 (issue #244) — NOT card prose:
+        #   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/config.json
+        #     - architectures: ["Qwen3_5MoeForConditionalGeneration"], model_type
+        #       "qwen3_5_moe" — the SAME engine-support family as the mmangkad/
+        #       and unsloth/ 35B-A3B siblings and the 27B primary line, so this
+        #       is a checkpoint swap within a known-working family, not a new
+        #       architecture bring-up.
+        #     - text_config.max_position_embeddings = 262144 (native 256K),
+        #       text_config.num_hidden_layers = 40, hybrid layer_types
+        #       (linear_attention every 4th layer full_attention),
+        #       num_experts=256, num_experts_per_tok=8 — MoE, ~3B active/token.
+        #     - vision_config IS present (deepstack_visual_indexes, its own ViT
+        #       hidden_size/depth/patch_size fields), plus top-level
+        #       image_token_id=248056, video_token_id=248057,
+        #       vision_start_token_id=248053, vision_end_token_id=248054 — this
+        #       checkpoint is MULTIMODAL (image+video intake), unlike the
+        #       outgoing Nemotron worker which carried no vision_config at all.
+        #     - text_config.mtp_num_hidden_layers=1,
+        #       text_config.mtp_use_dedicated_embeddings=false, and the
+        #       embedded quantization_config.ignore list carries
+        #       ["mtp.layers.0*", "mtp*"] — the checkpoint's own MTP draft
+        #       weight tensors physically exist and are deliberately left
+        #       unquantized, confirming a self-hosted draft module (same
+        #       signature as unsloth/Qwen3.6-27B-NVFP4's and
+        #       unsloth/Qwen3.8-27B-NVFP4's own self-hosted MTP). No "-MTP"
+        #       suffix in this id despite shipping its own draft weights,
+        #       exactly like the unsloth 35B-A3B worker before it — see
+        #       tests/test_catalog.py's _SELF_HOSTED_MTP_WITHOUT_ID_MARKER.
+        #     - config.json ALSO embeds its own compressed-tensors-shaped
+        #       "quantization_config" block (quant_method="modelopt",
+        #       config_groups: group_0 = 8-bit float weights+activations on
+        #       linear_attn/self_attn projections, group_1 = 4-bit float
+        #       group_size=16 on lm_head + the MoE expert/shared-expert
+        #       projections) — the same MIXED_PRECISION shape the separate
+        #       hf_quant_config.json file below carries.
+        #   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/hf_quant_config.json
+        #     - producer.name="modelopt" (version 0.44.0); quant_algo=
+        #       "MIXED_PRECISION"; kv_cache_quant_algo="FP8". Per-layer
+        #       quantized_layers: FP8 on every linear_attn in_proj_qkv/
+        #       in_proj_z/out_proj (and self_attn q/k/v/o_proj on the four
+        #       full_attention layers), W4A16_NVFP4 group_size=16 on every
+        #       mlp.experts and mlp.shared_expert.{gate,up,down}_proj plus
+        #       lm_head; exclude_modules=["mtp.layers.0*", "mtp*"] — the MTP
+        #       module is excluded from quantization, matching config.json's
+        #       ignore list above. This is the SAME nvidia-modelopt family the
+        #       demoted Nemotron worker and the muse 31B gear use
+        #       (quantization="modelopt"), NOT the unsloth sibling's
+        #       compressed-tensors format.
+        #
+        # STATUS: untested on this repo's hardware (declared, not measured —
+        # issue #108). No gpu_mem_util or max_model_len knob is declared here
+        # for the same reason every other candidate/opt-in gear in this
+        # catalog omits them: on a unified-memory card those are MEASURED
+        # truths, not arithmetic (the thor-muse/thor-worker rule). moe_backend
+        # is left empty (auto-select) rather than carrying an untested guess
+        # forward — the outgoing unsloth 35B-A3B worker's own hard-won sm_110
+        # lesson was that every FORCED NVFP4 MoE backend was refused there.
+        role_hint="worker",
+        shape=(
+            "hybrid Mamba/linear-attn MoE (~3B active) + ViT "
+            "(text+image+video, self-hosted MTP draft)"
+        ),
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="modelopt",
+        status="configured",  # declared 2026-09-10 (issue #244); no live boot yet
+        doc="qwen3.6-35b-a3b-nvfp4.md",
+        moe_backend="",
+        # Self-hosted draft (no external "model"/"draft_model_id" key), same
+        # generic "mtp" method + n=2 declared default as the other self-hosted
+        # MTP siblings in this catalog (UNMEASURED acceptance on this specific
+        # checkpoint — a declared default, not a measured one).
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
