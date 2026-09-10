@@ -815,15 +815,20 @@ def test_qwen_worker_is_demoted_to_candidate_and_kept() -> None:
     assert outgoing.speculative_config == '{"method": "mtp", "num_speculative_tokens": 2}'
 
 
-def test_nemotron_worker_is_demoted_to_candidate_and_kept() -> None:
+def test_nemotron_worker_is_demoted_from_worker_to_its_own_associate_hint() -> None:
     # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — the FORMER worker
     # gear (nemotron-lightning-worker plan, #187, t3) — is KEPT
-    # (cite-don't-delete) but no longer carries role_hint="worker"; every
-    # other fact about it (its Spark validation, its Thor NO-GO) is untouched
-    # by the demotion.
+    # (cite-don't-delete) and no longer carries role_hint="worker", but it is
+    # NOT demoted to a plain candidate either: issue #244 t2 gives it its own
+    # role_hint="associate" (it is still the checkpoint the Orin's associate
+    # lane actually serves), so `worker`'s and `associate`'s catalog
+    # resolutions stop sharing one entry. Every other fact about it (its
+    # Spark validation, its Thor NO-GO) is untouched by the demotion.
     outgoing = next((m for m in SUPPORTED_MODELS if m.id == _NEMOTRON_ID), None)
     assert outgoing is not None, f"{_NEMOTRON_ID}: expected to remain in the catalog"
-    assert outgoing.role_hint == "candidate", f"{_NEMOTRON_ID}: expected demotion to 'candidate'"
+    assert (
+        outgoing.role_hint == "associate"
+    ), f"{_NEMOTRON_ID}: expected its own role_hint='associate'"
     assert outgoing.native_max_model_len == 1048576
     assert outgoing.quantization == "modelopt"
     assert outgoing.tool_parser == "qwen3_coder"

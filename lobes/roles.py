@@ -158,15 +158,24 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
-    # `associate` serves the SAME catalog gear the `worker` role_hint names
-    # (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — one checkpoint,
-    # two public addresses with different authority. The catalog holds ONE
-    # entry per checkpoint id (tests/test_catalog.py::test_catalog_ids_are_unique),
-    # so the honest mapping is a shared role_hint, not a duplicated entry —
-    # the same name↔role_hint indirection the pooling lanes already use
-    # (`embedder` → "embedding"). See lobes.catalog.BACKEND_ROLE_CATALOG_HINT,
-    # which carries the identical alias for the tier layer.
-    "associate": "worker",
+    # `associate` OWNS its own role_hint (issue #244, t2). It used to share
+    # the `worker` role_hint on the reasoning that both serve the SAME
+    # checkpoint (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — one
+    # gear, two public addresses with different authority. That sharing was
+    # itself the defect: promoting/demoting whichever catalog entry carried
+    # role_hint="worker" silently moved `associate`'s unwired-role canonical
+    # name along with it (issue #244 t1 moved `worker` to a different
+    # checkpoint and `associate`'s advertised default moved too, even though
+    # no box's associate lane changed). The catalog now gives the Lightning
+    # entry its own role_hint="associate" — additive, the catalog still holds
+    # exactly ONE entry per checkpoint id
+    # (tests/test_catalog.py::test_catalog_ids_are_unique), and `worker` still
+    # resolves that same checkpoint by explicit id via `_catalog_by_id` — so
+    # the two roles resolve independently. See
+    # lobes.catalog.BACKEND_ROLE_CATALOG_HINT, which carries the identical
+    # (now empty) alias table for the tier layer, kept as the generic
+    # mechanism a future role sharing a checkpoint could still use.
+    "associate": "associate",
     "hand": "hand",
     "embedder": "embedding",
     "reranker": "reranker",

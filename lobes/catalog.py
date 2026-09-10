@@ -895,18 +895,27 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-        # DEMOTED from role_hint="worker" to a kept candidate (issue #244, t1):
-        # the `worker` seat moves to nvidia/Qwen3.6-35B-A3B-NVFP4 below — see
-        # that entry's own comment for the checkpoint facts and rationale.
-        # Kept, not deleted (cite-don't-delete): this is the checkpoint the
+        # DEMOTED from role_hint="worker" to role_hint="associate" (issue
+        # #244, t1 then t2): the `worker` seat moves to
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 below — see that entry's own comment
+        # for the checkpoint facts and rationale. `associate` and `worker`
+        # sharing ONE catalog role_hint was a DEFECT (issue #244, t2): the two
+        # are different roles with different contracts (associate = worker
+        # minus repo_action), and a shared hint meant promoting/demoting the
+        # `worker` checkpoint silently moved the `associate` default with it
+        # — exactly what happened when t1 landed above. This entry now owns
+        # its OWN role_hint, "associate", so the two resolve independently:
+        # changing which checkpoint carries role_hint="worker" can no longer
+        # move what `_catalog_by_role_hint("associate")` names. Kept, not
+        # deleted (cite-don't-delete): this is the checkpoint the
         # 2026-08-20..2026-09-10 worker-lane evidence transcripts (below) were
-        # measured against, and the `WORKER_MODEL`/`ASSOCIATE_MODEL` compose
-        # defaults still name it — it remains the deployed reality until a
-        # separate task re-points those envs. `associate` also still resolves
-        # to this entry when explicitly served by id (`_catalog_by_id`); only
-        # the *unwired-role canonical name* (`_catalog_by_role_hint("worker")`)
-        # changes with this demotion — a follow-up task (t2) is tracked to
-        # give `associate` its own role_hint so the two stop sharing one.
+        # measured against — it is still the deployed reality on the Orin,
+        # which actually serves this checkpoint as `associate`
+        # (`docs/evidence/2026-08-26-accept-orin-associate.txt`) — and the
+        # `WORKER_MODEL`/`ASSOCIATE_MODEL` compose defaults still name it.
+        # `worker` also still resolves to this entry when explicitly served
+        # by id (`_catalog_by_id`); only the *unwired-role canonical name*
+        # for the `worker` role_hint moved off it, to the Qwen entry below.
         # Nothing below this comment changed — same fields, same facts, only
         # role_hint moved.
         #
@@ -993,7 +1002,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. See
         # docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md and
         # docs/plans/2026-08-20-nemotron-lightning-worker.md.
-        role_hint="candidate",
+        role_hint="associate",
         shape="hybrid Mamba-2 + sparse-MoE (~3B active per token, text-only)",
         context="1M native (1,048,576 max_position_embeddings)",
         native_max_model_len=1048576,
@@ -1374,27 +1383,34 @@ TIER_ROLE: dict[str, str] = {
     "cortex": "primary",
 }
 
-#: Backend role name -> the catalog ``role_hint`` that names its gear, for the
-#: roles where the two DIFFER. Empty for the nine roles that shipped before
-#: `associate`: each of them owns a catalog entry whose ``role_hint`` IS its
-#: backend role name, so :func:`resolve_tier` could look the role up directly.
+#: Backend role name -> the catalog ``role_hint`` that names its gear, for a
+#: role whose backend name DIFFERS from its own catalog ``role_hint``. Empty
+#: today: every role, `associate` included, owns a catalog entry whose
+#: ``role_hint`` IS its backend role name, so :func:`resolve_tier` looks each
+#: role up directly without indirection.
 #:
-#: `associate` breaks that 1:1 assumption honestly rather than by duplication.
-#: It serves the SAME checkpoint the `worker` seat holds
-#: (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``) — one gear, two
-#: public addresses with different authority (worker MAY act on a repo,
-#: associate may not). The catalog holds exactly one entry per checkpoint id
-#: (``tests/test_catalog.py::test_catalog_ids_are_unique``), so a second
-#: ``role_hint="associate"`` entry would mean a duplicated id — a lie about
-#: how many gears exist — while pointing the tier layer at the gear that IS
-#: served is simply true. :data:`lobes.roles.ROLE_ROLE_HINT` carries the
-#: identical alias for the role registry.
-#:
-#: A role added here MUST also be added there, or the two layers disagree
-#: about which model a role serves.
-BACKEND_ROLE_CATALOG_HINT: dict[str, str] = {
-    "associate": "worker",
-}
+#: `associate` used to break that 1:1 assumption: it shared the SAME catalog
+#: entry the `worker` seat named
+#: (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``) via an alias here
+#: (``"associate": "worker"``), on the reasoning that one gear, two public
+#: addresses with different authority (worker MAY act on a repo, associate
+#: may not), didn't need a second catalog entry. That alias was itself the
+#: DEFECT tracked as issue #244, t2: a shared ``role_hint`` meant promoting or
+#: demoting the checkpoint that carried ``role_hint="worker"`` silently moved
+#: `associate`'s own default along with it — visible the moment #244 t1
+#: repointed `worker`'s hint to a different checkpoint and `associate`'s
+#: advertised default moved too, even though the Orin's `associate` lane
+#: never stopped serving Lightning. The fix gave the Lightning entry its OWN
+#: ``role_hint="associate"`` (additive — the catalog still holds exactly one
+#: entry per checkpoint id,
+#: ``tests/test_catalog.py::test_catalog_ids_are_unique``, and `worker` still
+#: resolves that same checkpoint by explicit id via ``_catalog_by_id``), so
+#: this alias table is retained only as the GENERIC mechanism for a future
+#: role that genuinely needs one — :data:`lobes.roles.ROLE_ROLE_HINT` carries
+#: the identical alias table for the role registry, and a role added to one
+#: MUST be added to the other, or the two layers disagree about which model a
+#: role serves.
+BACKEND_ROLE_CATALOG_HINT: dict[str, str] = {}
 
 
 def resolve_tier(tier: str) -> "SupportedModel":
@@ -1416,8 +1432,9 @@ def resolve_tier(tier: str) -> "SupportedModel":
         known = ", ".join(sorted(TIER_ROLE))
         raise ValueError(f"unknown tier {tier!r} — must be one of: {known}")
     # A backend role whose gear is catalogued under a DIFFERENT role_hint
-    # (only `associate` today — it shares `worker`'s checkpoint) resolves
-    # through the alias; every other role is its own hint.
+    # would resolve through the alias here; none does today (issue #244, t2
+    # gave `associate` its own role_hint), so this is a no-op lookup kept for
+    # a future role that shares a checkpoint with another.
     hint = BACKEND_ROLE_CATALOG_HINT.get(role, role)
     for model in SUPPORTED_MODELS:
         if model.role_hint == hint and model.task == "generate":

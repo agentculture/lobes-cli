@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.1] - 2026-09-10
+
+### Added
+
+### Changed
+
+### Fixed
+
+- **`associate` no longer shares `worker`'s catalog `role_hint` (issue
+  #244, t2).** The Lightning checkpoint
+  (`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`) now carries its own
+  `role_hint="associate"` instead of being demoted to a plain `"candidate"`
+  when `worker`'s hint moved to a different checkpoint (#244 t1). Previously
+  `associate` resolved through `worker`'s hint via an alias
+  (`BACKEND_ROLE_CATALOG_HINT`/`ROLE_ROLE_HINT`), so a `worker` checkpoint
+  promotion silently moved `associate`'s advertised default with it — a real
+  defect, since the Orin's `associate` lane keeps serving Lightning
+  regardless of what `worker` serves. `lobes.gateway._config._DEFAULT_ASSOCIATE`
+  is now derived from `catalog.resolve_tier("associate")`, mirroring
+  `_DEFAULT_WORKER`, instead of a hardcoded literal id.
+
 ## [0.74.0] - 2026-09-10
 
 ### Added
