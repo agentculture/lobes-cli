@@ -1,0 +1,931 @@
+{
+  "slug": "thor-worker-arm-qwen3-6-35b-a3b-recipes",
+  "title": "thor worker arm: Qwen3.6-35B-A3B recipes",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-10T16:14:56Z",
+  "updated": "2026-09-10T20:12:18Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Thor gives up its local Qwen3.8 cortex and serves Qwen3.6-35B-A3B NVFP4 as the mesh's worker arm, on a Thor-MEASURED recipe rather than a copied one",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "falsifiable on the deployed box: model=worker answers 200 on the Thor's own gateway serving the nvidia 35B-A3B id, model=cortex no longer resolves locally there, and an acceptance transcript exists under docs/evidence/",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Ship as a PR chain off main, each with its own version bump (.claude/skills/version-bump/scripts/bump.py) and the repo PR workflow; the live Thor re-render is an operator-approved step, never taken unasked.",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "lobes/catalog.py gains a NEW SupportedModel for nvidia/Qwen3.6-35B-A3B-NVFP4 \u2014 it is absent today (catalog holds unsloth/Qwen3.6-35B-A3B-NVFP4 at :805-895, demoted to role_hint='candidate' at :866, and mmangkad/Qwen3.6-35B-A3B-NVFP4 at :391-408). role_hint is effectively unique: roles._catalog_by_role_hint (roles.py:548-550) returns the FIRST match, so promoting the nvidia entry to role_hint='worker' REQUIRES demoting the Nemotron Lightning entry (catalog.py:986) \u2014 and 'associate' shares ROLE_ROLE_HINT='worker' (roles.py:169), so the Orin's associate catalog default moves with it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the committed catalog entry's native_max_model_len / quantization / speculative_config / tool_parser are read from the checkpoint's own config.json + hf_quant_config.json at implementation time, not from the model card or this frame; and tests/test_catalog.py still passes its role_hint-uniqueness and parser-pairing guards",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add the entry with role_hint='worker'; demote the Nemotron entry to candidate (cite-don't-delete, keeping its Spark validation and Thor NO-GO comments); fix associate's resolution per c15 in the same PR.",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "the nvidia export is a DIFFERENT checkpoint from the unsloth one every Thor worker measurement used: fetched from HF 2026-09-10, nvidia/Qwen3.6-35B-A3B-NVFP4 is modelopt MIXED_PRECISION (experts W4A16_NVFP4 group_size 16 + FP8 linear_attn in/out_proj, kv_cache_quant_algo FP8 DECLARED), Qwen3_5MoeForConditionalGeneration, 262144 native, MULTIMODAL (vision_config + image/video token ids), 256 experts / 8 active, and it DOES carry an MTP head (text_config.mtp_num_hidden_layers) \u2014 but hf_quant_config.json exclude_modules is ['mtp.layers.0*','mtp*'], i.e. the MTP module is UNQUANTIZED, exactly the condition the 2026-07-31 Thor run recorded as marlin's refusal reason",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the issue's 15-flag recipe does NOT fit today's vllm-worker lane: docker-compose.yml:1501-1513 emits only --quantization/--max-model-len/--gpu-memory-utilization/--enable-auto-tool-choice plus two env-carried slots (WORKER_SPECULATIVE_CONFIG :1509, default-OFF; WORKER_REASONING_PARSER :1512, default nemotron_v3). NINE flags are not expressible without a template change \u2014 --kv-cache-dtype, --attention-backend, --moe-backend, --max-num-seqs, --max-num-batched-tokens, --enable-chunked-prefill, --async-scheduling, --enable-prefix-caching, --load-format \u2014 and --tool-call-parser=qwen3_coder is HARDCODED at :1511, so the issue's qwen3_xml is not selectable at all",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the flags actually added to the vllm-worker lane are exactly the ones an arm needed to run \u2014 each new knob traceable to a measured arm \u2014 and a rendered deployment with none of them set stays byte-identical to today's goldens",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add only the knobs an arm actually needed, each as an env-substituted token on the vllm-worker command; keep the shell-lexed STRING command form so an unset var leaves no argv token.",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "a recipe knob must land in BOTH the profile schema and the compose command or it is inert: schema.py KNOB_NAMES (:81-107) has no moe_backend/load_format/async_scheduling/chunked_prefill/prefix_caching/max_num_batched_tokens field, while WORKER_KV_CACHE_DTYPE / WORKER_ATTENTION_BACKEND / WORKER_MAX_NUM_SEQS ARE renderable (render.py:109-141 x ROLE_ENV_PREFIX:94) yet read by nothing on the worker lane \u2014 dead keys today (env.example:498 says WORKER_ATTENTION_BACKEND is deliberately unwired). There is no *_EXTRA_ARGS escape hatch anywhere; the only documented route for an unwired flag is hand-editing the rendered compose (switch.py:170-177 _moe_notice), which is exactly what issue #214 and the deployment lock exist to stop",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "every knob this work adds is reachable end-to-end: declared in schema.py, rendered by render.py, read by the compose command, and covered by a golden; no knob ships that renders a key nothing consumes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "For each new knob: schema.py KNOB_NAMES entry, render.py suffix mapping, compose substitution, env.example doc block, golden regeneration. Verify the deployment-lock allowlist picks it up (it derives from render.py's tables).",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "--moe-backend marlin (the issue's headline Thor recommendation) was MEASURED REFUSED on this box: docs/evidence/2026-07-31-accept-worker-thor.txt:5-11 records marlin 'not supported for unquantized MoE', flashinfer_b12x/flashinfer_cutlass 'kernel does not support current device cuda' (sm_121a/Spark-only), triton 'not supported for NvFP4 MoE' \u2014 only AUTO-SELECT booted, and thor-worker.toml:49-58 carries that as a standing rule. The nvidia export excludes mtp* from quantization too (c3), so the recorded refusal reason plausibly reproduces. Marlin is therefore a HYPOTHESIS to be accepted or refused live on the Thor, never a copied default",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the moe-backend question is settled by a live Thor boot, and whichever way it lands is committed with its verbatim engine error or success line in the evidence transcript \u2014 including the case where marlin is refused again for the same recorded reason",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run the moe-backend arms in this order on the live box: auto-select first (the known-good control), then marlin, then flashinfer. Capture the verbatim engine line for each, pass or fail.",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "MTP on this architecture is reachable on sm_110 despite the kernel gap: the fleet nightly 8bd082 (vLLM 0.26.1rc1.dev942) ships no sm_110 image for fused_gdn_decode_post_conv_mtp (docs/qwen3.6-35b-a3b-nvfp4.md:46-56; docs/machine-profiles.md:800-816), but VLLM_GDN_DECODE_KERNEL=triton routes around it \u2014 proven by the thor-cortex-speculation spike (docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt:29) and already live in the deployed Thor's ~/.lobes/.env:661. The MTP k-sweep the issue asks for is thus a config question, not a wall \u2014 but it is UNPROVEN for the 35B-A3B MoE, whose GDN-MTP failure was recorded separately from cortex's",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "61.2 tok/s is NOT a like-for-like acceptance threshold: docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt:1-28 measured it on the PHYSICAL Thor but with the unsloth export, the OLD 0.23.1rc1.dev672 engine (the fleet has since moved to 8bd082), util 0.45 / 262144, self-draft MTP on \u2014 a different checkpoint AND a different engine from this issue's target. The earlier 2026-07-31 acceptance on the same box read 50.8 tok/s with thinking / 73.5 without, MTP acceptance 89.1%. Per docs/model-switch-playbook.md the incumbent must be re-baselined same-day/same-harness rather than compared against an older figure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "no doc or PR body compares this lane against 61.2 tok/s without naming that the figure came from a different checkpoint on a different engine; the comparison the acceptance rests on is a same-day, same-harness measurement",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Capture the incumbent baseline transcript on this box BEFORE the flip, and quote 61.2 only alongside its checkpoint and engine whenever it appears.",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the measurement the issue demands does not exist yet: roles_measure.LLM_METRIC_KEYS (:79-89) carries no acceptance field; the only acceptance surface is scripts/spec-arms.py \u2014 NOT a registered lobes verb \u2014 which scrapes vllm:spec_decode_num_accepted/draft_tokens_total or greps the engine's SpecDecoding log line, both ENGINE-WIDE not per-request (:64-81), and its regex (:283-288) DROPS the per-position acceptance array vLLM already prints. Single-stream vs aggregate separation exists only in 'lobes benchmark --all-lobes --concurrency' (benchmark.py:69-133,383-390) and has never been pointed at a spec-arm sweep (docs/dspark-speculation.md:308)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "the acceptance numbers the sweep reports come from a repeatable harness committed in-tree (a verb or a committed script), not from a hand-run one-off, and the per-depth acceptance figures are read from vLLM's own metrics or log line rather than inferred from throughput",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend scripts/spec-arms.py to capture vLLM's per-position acceptance array (its regex already sees the line), and run the single-stream and concurrent legs as separate, separately-labelled measurements.",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "the Thor does NOT render the thor-worker shape today \u2014 it renders spark-lobe (docs/evidence/2026-08-20-accept-cortex-local-thor.txt:8, re-confirmed docs/specs/2026-08-25-thor-cortex-speculation.md:52,69), which is why it serves cortex locally. thor-worker.toml still declares the OLD unsloth model at util 0.45 / 262144 (:79-84) and hosts ['worker','hand','embedder','reranker','stt','tts'] (:70) \u2014 including hand, which thor.toml:109 declares feasible=false on this card. Re-arming worker here means re-pointing that shape (or adding one) and moving four goldens: tests/goldens/shapes/thor-worker__{base,orin,spark,thor}.env",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the shape change is byte-for-byte visible: the four thor-worker__*.env goldens are regenerated and reviewed for cross-machine bleed, and the shape TOML's committed budget is the value a live Thor boot measured, with any refused hypothesis recorded in its comments",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-point thor-worker.toml at the new checkpoint and regenerate the four thor-worker__*.env goldens; the live re-render on the physical Thor is a separate, operator-approved step.",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "'worker-fast' cannot be a second role or alias without new surface: Shape.overrides is one RoleProfile per role name (shapes.py:176,186-195), SHAPE_ROLES is a flat fixed vocabulary that REJECTS an unknown override key (shapes.py:135,247-256), schema.ROLES is a fixed nine-name tuple (:57-76), and OPT_IN_CORE_ACTIVATION_ENV / OPT_IN_CORE_COMPOSE_PROFILE map each role 1:1 to one compose service and one base URL (shape_render.py:139-165). So the reliable/fast split must ship as two SHAPES (or two env recipes) over the one worker role \u2014 matching the issue's own 'keep worker stable, do not silently replace the default'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "callers keep addressing model=worker throughout: no new role name, no new tier, no new public alias appears in lobes capabilities, GET /capabilities or /v1/models as a result of the fast profile",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Ship the fast gear as a shape or a documented env recipe over the one worker role; do not add a role, tier, alias or compose service for it.",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "giving up Thor's local cortex is not free, and the cost is MEASURED, not theoretical: the Spark+Thor cortex replica pool is the one VALIDATED #199 deployment (docs/gateway-fleet.md:757-780 \u2014 19.1 tok/s aggregate vs an 11.0 single-owner baseline, +74%, plus peer-down continuity), and the Orin hosts no cortex at all, reaching it through a peer-only pool that declares BOTH boxes (docs/gateway-fleet.md:797-800,860-870). Dropping cortex on the Thor collapses the pool to single-owner and leaves the Orin with one replica",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the pool teardown is executed deliberately and recorded: the Spark's and Orin's PRIMARY_PEER_* declarations are updated in the same change window, and a probe from each box after the change shows cortex still served (by the Spark) with no 5xx and no stale hosted_by",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does the operator accept collapsing the dual-cortex mesh \u2014 Thor's cortex off, the validated +74% Spark+Thor replica pool down to single-owner, and the Orin's peer-only pool down to one replica \u2014 as the price of a fast worker arm on the Thor? Or should worker co-reside with a trimmed cortex on the 128 GB box?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Operator decision (2026-09-10): ACCEPT the loss. Thor drops cortex; the Spark+Thor replica pool collapses to single-owner and the Orin falls back to one cortex replica. The concurrency loss is bought deliberately for a faster worker arm on this box."
+        }
+      ],
+      "links": [],
+      "instruction": "Update PRIMARY_PEER_* on the Spark and the Orin in the same window as the Thor flip, and probe cortex from all three boxes afterwards.",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "flipping the Thor's cortex to infeasible has a STARTUP TRAP, not just a throughput cost: server.py:3981-4028 (_check_pool_arming) requires any DROPPED role that still declares the plural PRIMARY_PEER_ORIGINS to ALSO declare the singular PRIMARY_PEER_ORIGIN, else build_replica_caches raises a named ReplicaConfigError and the gateway refuses to boot \u2014 and the deployed Thor .env declares PRIMARY_PEER_ORIGINS=http://spark... today with no singular origin. Separately, gateway/_config.py:60's _DEFAULT_WORKER is STALE ('unsloth/Qwen3.6-35B-A3B-NVFP4'), so an unset WORKER_SERVED_NAME already advertises a checkpoint no box serves",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the Thor's gateway boots after the flip \u2014 proving _check_pool_arming is satisfied \u2014 and an unset WORKER_SERVED_NAME no longer advertises a checkpoint no box serves",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Before the flip: either drop PRIMARY_PEER_ORIGINS on the Thor or declare a singular PRIMARY_PEER_ORIGIN alongside it. Also refresh gateway/_config.py:60's _DEFAULT_WORKER.",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "no new public role or alias: gateway has no generic <role>:<variant> derivation \u2014 hand:<domain> is LoRA-over-one-base, hardcoded to backend name 'hand' (_config.py:968, adapters at :828-861), and the only 'second named backend' pattern (_add_self_named_opt_in_aliases, _config.py:996-1013) is a hand-typed tuple ('multimodal-coder','embed-deep') that would NOT inherit worker's tier fallback, pressure shedding, or pool compatibility. Callers keep addressing model=worker; a fast gear is a serving recipe behind that one alias",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "worker and associate sharing ROLE_ROLE_HINT='worker' (roles.py:169) is a DEFECT to fix in this work, not a constraint to design around: they are different roles with different contracts (associate = worker minus repo_action), and the shared catalog role_hint means promoting a worker checkpoint silently moves the Orin's associate default with it. Give associate its own role_hint / catalog resolution",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "the split is proven by a test, not by inspection: a test asserts that changing the checkpoint on role_hint='worker' leaves the model 'associate' resolves to unchanged, and lobes capabilities on the Orin still names its own associate checkpoint after the worker promotion",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Give associate its own catalog resolution (its own role_hint or an explicit id) and add a test that promoting a worker checkpoint leaves associate's resolved model unchanged.",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "assumption",
+      "text": "the JetPack/L4T level on the Thor is in scope if the recipe needs it: an upgrade to JP7.2 is available to this work on request, so an sm_110 kernel gap that a newer JetPack/driver resolves is a decidable path rather than a hard boundary",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "audience",
+      "text": "the operator running the three physical boxes (Thor, Spark, Orin), plus every mesh consumer that addresses model=worker through a gateway \u2014 and the next engineer who reads a Thor recipe in this repo and needs to know which numbers were measured here and which were copied from a vendor page",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the evidence transcript and the per-model doc are written so an operator can re-run the recipe from them alone: image digest, JetPack/L4T, power mode, clocks, co-resident set and the exact argv are all present",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No implementation. Use this to decide who the evidence transcript and the docs are written for: an operator re-rendering a live box, not a new installer.",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "after_state",
+      "text": "the Thor serves nvidia/Qwen3.6-35B-A3B-NVFP4 as 'worker' at a Thor-MEASURED budget, reached from any box as model=worker; cortex is gone from this box; the vllm-worker lane can express the recipe knobs the measurement needed (not all fifteen \u2014 the ones the arms proved matter); a docs/evidence/ transcript records single-stream decode separately from concurrent throughput and records MTP acceptance per depth; and a second, named fast profile exists only if its gain was measured and repeatable",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "each item is checked against the merged tree and the live box, and anything that did not land is reported as not landed in the delivery summary rather than quietly dropped",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Check this list item by item against the merged tree and the deployed box at the end; anything not measured is reported as not measured, never as declared.",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "the Thor renders spark-lobe and serves cortex locally at 262144/util 0.58 (12.1 tok/s single-stream); WORKER_FEASIBLE=false, model=worker 404s role_infeasible on every gateway in the mesh, and the catalog's worker seat holds a checkpoint (Nemotron Lightning) that is a recorded NO-GO on this board. The nvidia 35B-A3B export exists in no catalog entry and has never been booted on any box in this fleet",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the before-state is captured as a transcript BEFORE the flip \u2014 the cortex figures on this box are unrecoverable afterwards, exactly the trap docs/model-switch-playbook.md records",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "This is the falsifiable present: docker ps + ~/.lobes/.env on the Thor, catalog.py:986, and a repo-wide grep for the nvidia id.",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "why_it_matters",
+      "text": "the mesh trades cortex concurrency for execution speed on purpose: the Thor's dense 27B decodes at 12.1 tok/s, while a ~3B-active MoE on this same board measured 61.2 tok/s on an older engine \u2014 a fast doer is worth more here than a second cortex replica, and the operator has accepted the pool loss (q1). The aim is 100 tok/s single-stream on this board, which is ~1.6x the best figure ever measured here and is NOT expected from the reliable MTP lane alone \u2014 reaching it is what the fast gear (deeper MTP or DFlash) has to earn. The speed claim is the whole point, so it is measured single-stream on this box or it is not claimed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "the forum and vendor throughput figures (190.7 / 239.1 / 116.5 tok/s) appear only as external references with their source named, never as this repo's acceptance thresholds",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Every speed sentence in the docs must cite a transcript under docs/evidence/ taken on this box; vendor and forum figures are cited as external reference only, never as acceptance.",
+      "revisions": [
+        {
+          "text": "the mesh trades cortex concurrency for execution speed on purpose: the Thor's dense 27B decodes at 12.1 tok/s, while a ~3B-active MoE on this same board measured 61.2 tok/s on an older engine \u2014 a fast doer is worth more here than a second cortex replica, and the operator has accepted the pool loss (q1). The speed claim is the whole point, so it is measured single-stream on this box or it is not claimed",
+          "kind": "why_it_matters",
+          "reason": "record the 100 tok/s aim and that it is above anything measured on this board, so the fast gear is load-bearing rather than optional"
+        }
+      ]
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "on the deployed Thor: model=worker answers 200 through the gateway with a tool call parsed into tool_calls (not content) and a separated reasoning trace; MTP is measured at k = off/1/3/5/7 with acceptance recorded per depth; and a peer box reaches the lane as model=worker with X-Lobes-Proxied-By. The THROUGHPUT TARGET is 100 tok/s single-stream decode on this box, with 61.2 tok/s (the old Thor figure) as the floor: below 61.2 is a regression and blocks acceptance; 61.2-100 is accepted only with the gap measured and the next lever named; at or above 100 the target is met. Concurrent throughput is reported separately and never substituted for the single-stream number",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "every listed signal is a checkable artifact: a chat transcript with a parsed tool_calls array, a docs/evidence/ file with the decode and acceptance tables, and a cross-box response carrying X-Lobes-Proxied-By",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-baseline same-day, same-harness per docs/model-switch-playbook.md; quote the server's own prompt_tokens; record power mode, clocks, co-resident set and image digest per docs/measuring-lane-performance.md.",
+      "revisions": [
+        {
+          "text": "on the deployed Thor: model=worker answers 200 through the gateway with a tool call parsed into tool_calls (not content) and a separated reasoning trace; a docs/evidence/ transcript records single-stream decode tok/s at >= 61.2 (the old Thor figure) or documents why this checkpoint/runtime cannot reach it; MTP is measured at k = off/1/3/5/7 with acceptance recorded per depth; and a peer box reaches the lane as model=worker with X-Lobes-Proxied-By",
+          "kind": "success_signal",
+          "reason": "operator raised the aim from bar-or-explain at 61.2 to a 100 tok/s target with 61.2 as the regression floor"
+        }
+      ]
+    },
+    {
+      "id": "c22",
+      "kind": "assumption",
+      "text": "the 100 tok/s target is not reachable by the reliable arm alone on today's evidence: the best single-stream figure ever measured on this board for this architecture is 61.2 tok/s (unsloth export, 0.23.1 engine, self-draft MTP), and the only external claim near the target is DFlash's ~116.5 tok/s concurrency-1 average on a physical Thor at 120W \u2014 an unreproduced third-party figure (v2). So the fast gear moves from 'optional second gate' to the path the target depends on, and if no arm reaches 100 the honest outcome is the measured best plus the named reason, not a moved goalpost",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "the target is reported against, not around: the acceptance transcript states the measured single-stream best, the arm that produced it, and its distance from 100 tok/s in the same table",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "If the sweep tops out below 100, report the measured best, the winning arm, and the specific next lever (engine version, JetPack 7.2, DFlash build) \u2014 never restate the target as met.",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "the Thor is not a lobes-only box: docker ps on it (2026-09-10) shows the Culture PRODUCTION stack co-resident \u2014 prod-postgres, prod-minio, prod-api, prod-scheduler, prod-worker, prod-notifier \u2014 alongside the lobes lanes, and every container is restart=unless-stopped. Any box-level action this work takes (a JetPack 7.2 upgrade, a reboot to reclaim leaked memory, a driver change) takes production down with it, so box-level moves are operator-scheduled events, never a step inside an arm loop",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "no step in this work stops, restarts or reboots the box without the operator scheduling it, and the production stack is verified running again afterwards",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "the arm loop needs memory-reclaim discipline, because THIS box has already lost ~80 GiB to a failed worker boot: on 2026-08-11 a CUDA 'unspecified launch failure' in vLLM's startup KV-cache profiling killed model-gear-vllm-worker with a clean exit 0 and leaked unified memory no process owned (nvidia-smi reports no devices on Jetson, so it is unattributable from userspace) \u2014 only a reboot reclaimed it. Between arms: drop caches BEFORE any heavy-lobe recreate, read tegrastats rather than MemAvailable or docker stats, and diagnose a leak by summing ps RSS against free",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the transcript records free/tegrastats before and after every arm, and any unexplained memory gap is reported rather than worked around",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Before each arm: sync; drop_caches; read tegrastats. After a failed boot: sum 'ps -eo rss' against 'free -g' and treat a large unexplained gap as a driver leak that only a reboot clears \u2014 and a reboot is an operator-scheduled event (production co-resides).",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "the gateway restart step must neutralise the Thor's inbound-key trap: this box's ~/.bashrc exports GATEWAY_API_KEY (the Spark's key) and docker compose interpolates shell env AHEAD of .env, so an ssh-driven 'docker compose up gateway' silently ARMS the inbound gate and every subsequent request 401s. Every compose invocation in this work runs as 'env -u GATEWAY_API_KEY docker compose ...'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "an unauthenticated probe after each gateway restart returns what the deployment intends \u2014 never an accidental 401",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Recorded live during the #199 pool rollout; verify after any gateway restart with one unauthenticated probe that must NOT 401 unless the deployment intends a gate.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "with cortex gone, this box needs a stated answer for the pressure floor: hand is declared feasible=false on the Thor (thor.toml:109), and worker sheds 429 under swap/iowait pressure exactly like cortex/senses/muse \u2014 so after the flip the Thor has NO servable generate floor and a pressure event turns every local generate request into a 429 with no cheaper rung. Either hand becomes feasible here, or the shape declares the floor's absence deliberately and the docs say so",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "after the flip, a pressure event on this box produces the documented behaviour: either a served hand response or a 429 that the docs already say to expect",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Decide explicitly rather than inheriting: measure hand on this board or record the floor's absence as a named property of the shape.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "declare WORKER_SPECULATIVE_CONFIG in .env rather than only in the compose command, so the lane's speculation is visible in the /capabilities fingerprint: issue #214 recorded exactly this lie on the cortex lanes \u2014 two boxes drafting differently (DSpark vs MTP) both reported speculative_config: unknown because neither declared the key. A worker arm sweep that changes drafting per arm is worthless as evidence if the advert cannot say which arm is live",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "each arm's /capabilities fingerprint names the speculative config that docker inspect proves is loaded",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "After each arm, read the lane's own /capabilities fingerprint and confirm it names the arm that is actually loaded; prove argv from docker inspect, never from .env.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the flip needs a rollout note and a raw-id audit, because per docs/model-switch-playbook.md no consumer in this mesh addresses the fleet by role name: dropping cortex from the Thor 404s every raw-id pinner that dials THIS box's gateway, silently and instantly. The precedent artifact is docs/worker-lightning-rollout-notes.md \u2014 the same note, written for this flip, addressed to every pinner the audit finds",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the rollout note exists before the flip and names every raw-id consumer the audit found, including the ones running on this box",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Audit before the flip, publish the note before the flip, and name the local consumers on this box specifically (the acp vllm-local provider and the eidetic embed client both dial this gateway).",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "back up the deployment dir and record the restore path before touching it: ~/.lobes on this box already carries two hand-edited compose backups (docker-compose.yml.bak-moe, .bak-20260828-161830), which is precisely the drift #214 was filed for, and the shape contract's byte-for-byte restorability only holds for a render, not for a hand-edit. The rollback to cortex-local is 're-render the previous shape and restore the saved .env', proven by restoring it once in a dry run before the flip is committed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "the reverse render is dry-run and shown to reproduce the pre-flip deployment before the forward flip is applied",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Copy ~/.lobes to a timestamped sibling before the first mutation, and dry-run the reverse render (no --apply) to prove the rollback path exists.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "assumption",
+      "text": "DFlash does NOT need a custom vLLM build on this fleet: probed live 2026-09-10 inside the running model-gear-vllm-primary container on the pinned nightly (vLLM 0.26.1rc1.dev942+g5a4c8d992), SpeculativeMethod's literal set already contains 'dflash' AND 'dspark' alongside 'mtp'/'qwen3_5_mtp'. The remaining DFlash unknown is therefore narrower than the issue states \u2014 sm_110 kernel coverage and a compatible draft checkpoint, not the existence of the method",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-run the same one-line probe against whatever image an arm actually uses; the method list is per-image, not per-fleet.",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "assumption",
+      "text": "qwen3_xml is NOT missing from the engine \u2014 it is missing from OUR lane: the same live probe shows both 'qwen3_coder' and 'qwen3_xml' among the pinned image's lazily-registered tool parsers, so the issue's parser choice is a template decision, not an engine limitation. Which of the two is correct for this checkpoint must still be settled the per-family way \u2014 live, with skip_special_tokens:false \u2014 never inferred from the model card",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Probe both parsers against the live lane with skip_special_tokens:false and keep whichever puts the call in tool_calls rather than content; record the losing one's output in the transcript.",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "decision",
+      "text": "worker's role contract re-widens with this checkpoint: responsibilities regain image_understanding and video_understanding (the checkpoint ships its own ViT) and code_authoring is REMOVED from forbidden_responsibilities \u2014 worker is a multimodal coder. forbidden stays final_decision + security_decision, so worker still never makes the final call or a security call. Adding responsibilities is contract-compatible; the #187 Lightning narrowing was the temporary state, not the contract",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Update ROLE_RESPONSIBILITIES['worker'] and ROLE_FORBIDDEN['worker'] in lobes/roles.py, the division-of-labour table in docs/colleague-stack.md, and every 'worker is text-only / non-coding' sentence left over from the Lightning rollout (docs/worker-lightning-rollout-notes.md, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md, CLAUDE.md).",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "serving worker multimodal is a LANE fact, not just a contract fact: the vllm-worker command must NOT pass --language-model-only (the unsloth worker era omitted it deliberately and validated image+video intake live), and image intake on worker has to be probed on this box before the widened responsibilities are advertised \u2014 a role that declares image_understanding and then 400s on an image is exactly the lie #108 forbids",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "capabilities lists image_understanding/video_understanding for worker only after a live image probe on this box passed with a negative control",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Probe a real image and a short video clip against model=worker with a negative control, as the 2026-07-31 worker acceptance did, and put both in the transcript.",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "boundary",
+      "text": "widening worker does not make it senses: this box declares MULTIMODAL_FEASIBLE=false and proxies model=senses to the Orin, and that stays true \u2014 worker gaining vision adds a second local vision-capable lane, it does not re-host the senses role or change what model=senses resolves to anywhere in the mesh",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "after the flip model=senses on the Thor still resolves to the Orin peer, byte-identically to today",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify after the flip: model=senses on the Thor still answers via the Orin with X-Lobes-Proxied-By, unchanged.",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "whether nvidia/Qwen3.6-35B-A3B-NVFP4 LOADS at all on the fleet's pinned 8bd082 nightly on sm_110 \u2014 no evidence file in this repo records a live boot of that id on any box, and docs/qwen3.6-35b-a3b-nvfp4.md:397-419 records why the fleet serves the mmangkad copy instead of nvidia's (its NVFP4 MoE experts would not load on the then-stock NGC vLLM). The load question gates every downstream recipe arm",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Operator decision (2026-09-10): v1 is answered by MEASUREMENT, not by analysis \u2014 the first task on the physical Thor is a load-only spike of nvidia/Qwen3.6-35B-A3B-NVFP4 on the pinned nightly. Recorded fallbacks if it will not load: a newer/other vLLM image, or a JetPack 7.2 upgrade on the Thor (c16). No committed value precedes its measurement.",
+      "resolution_claim_id": "c16"
+    },
+    {
+      "id": "v2",
+      "text": "DFlash on sm_110 \u2014 the issue's worker-fast second experiment needs a vLLM build carrying both the dflash speculative method and native sm_110a support; nothing in this repo pins or has built such an image, and the cited draft (patrickbdevaney/qwen-3.6-35b-a3b-dflash-jetson-agx-thor) is an external artifact with no in-tree provenance. Deliberately downstream of the reliable arm",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "whether worker and a trimmed cortex can CO-RESIDE on the 128 GB Thor: worker measured 24.81 GiB weights at util 0.45 (thor-worker.toml:26) and cortex currently runs util 0.58 at 262144 \u2014 no measurement exists for the pair, and the box's memory accounting is known-untrustworthy (docker stats under-reports; a driver leak of ~80 GiB was observed on this box on 2026-08-11)",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Operator decision (2026-09-10): not needed \u2014 cortex is dropped on this box, so worker never co-resides with it. The Thor's whole generate budget goes to worker.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "whether the pinned nightly's dflash kernels carry sm_110 images \u2014 the method is registered (c30) but this fleet has been bitten three separate times by kernels that exist for sm_121 and not sm_110 (GDN-MTP, LFM2 conv-hybrid, Mamba-2 SSD). Registration proves the code path, never the SASS",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/catalog.py + lobes/roles.py",
+      "finding": "nvidia/Qwen3.6-35B-A3B-NVFP4 is absent from the catalog; the two 35B-A3B entries present (unsloth :805-895, mmangkad :391-408) are both role_hint='candidate', and role_hint='worker' currently points at Nemotron Lightning (:986). _catalog_by_role_hint (roles.py:548-550) takes the FIRST match and associate shares the same role_hint (roles.py:169), so promotion is a three-way edit, not an addition",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4 config.json + hf_quant_config.json (fetched 2026-09-10)",
+      "finding": "modelopt MIXED_PRECISION: experts W4A16_NVFP4 (weight-only, group_size 16) + FP8 linear_attn projections, kv_cache_quant_algo FP8; 262144 native; multimodal (vision_config, video_token_id); 256 experts / 8 active; mtp_num_hidden_layers present BUT exclude_modules = ['mtp.layers.0*','mtp*'] \u2014 the MTP head is unquantized, the exact condition behind the recorded marlin refusal",
+      "seeds": [
+        "c3",
+        "c6"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml (vllm-worker, :1356-1513)",
+      "finding": "the lane emits 4 of the issue's flags outright, carries 2 via env (WORKER_SPECULATIVE_CONFIG :1509 default-off, WORKER_REASONING_PARSER :1512 default nemotron_v3), hardcodes --tool-call-parser=qwen3_coder (:1511), and expresses NONE of --kv-cache-dtype/--attention-backend/--moe-backend/--max-num-seqs/--max-num-batched-tokens/--enable-chunked-prefill/--async-scheduling/--enable-prefix-caching/--load-format. Image pinned by digest at :1370 (8bd082, shared fleet nightly)",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/profiles/schema.py + render.py + runtime/_lock.py",
+      "finding": "KNOB_NAMES (schema.py:81-107) has no field for six of the issue's flags; WORKER_KV_CACHE_DTYPE/ATTENTION_BACKEND/MAX_NUM_SEQS render (render.py:109-141 x :94) but nothing reads them on this lane; speculative_config is gated to {cortex,senses,worker} (schema.py:142) so worker CAN carry the MTP JSON; the deployment-lock allowlist derives from render.py's tables (_lock.py:67-71,126-162), so any new knob joins the lock automatically while compose-only vars like WORKER_REASONING_PARSER never do; no *_EXTRA_ARGS hatch exists",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "docs/evidence/2026-07-31-accept-worker-thor.txt + lobes/profiles/builtin_shapes/thor-worker.toml:49-58",
+      "finding": "every forced --moe-backend was refused live on Thor sm_110 for the unsloth export \u2014 marlin 'not supported for unquantized MoE', flashinfer_b12x/cutlass 'kernel does not support current device cuda', triton 'not supported for NvFP4 MoE'; only auto-select booted, and the shape file carries that as a standing rule",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "docs/machine-profiles.md:800-816 + docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt + ~/.lobes/.env:661",
+      "finding": "the 8bd082 nightly ships no sm_110 image for fused_gdn_decode_post_conv_mtp, but VLLM_GDN_DECODE_KERNEL=triton routes around it (spec transcript :29) and is already set on the deployed Thor; the same caveat records LFM2 conv-hybrid and Mamba-2 SSD decode as separate sm_110 no-gos, so the fault line is speculative/non-dense decode kernel coverage, not sm_110 generally",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt + docs/evidence/2026-07-31-accept-worker-thor.txt",
+      "finding": "61.2 tok/s was measured on the physical Thor but on the unsloth export and the OLD 0.23.1rc1.dev672 engine at util 0.45/262144 with self-draft MTP; the same box read 50.8 tok/s with thinking / 73.5 without and 89.1% MTP acceptance on 2026-07-31. Two checkpoints and two engines separate it from this issue's target",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/roles_measure.py + lobes/assess.py + scripts/spec-arms.py + docs/measuring-lane-performance.md",
+      "finding": "no lobes verb reports speculative acceptance; scripts/spec-arms.py (unregistered) is the only surface and reports engine-wide acceptance, discarding vLLM's per-position array its own regex sees (:283-288); single-stream vs aggregate separation exists only in 'benchmark --all-lobes --concurrency' and was never pointed at spec arms; measuring-lane-performance.md prescribes curve-not-point, pinned clocks, quiet box, and recorded conditions",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/evidence/2026-08-20-accept-cortex-local-thor.txt + lobes/profiles/builtin_shapes/thor-worker.toml + tests/goldens/shapes/",
+      "finding": "the Thor renders spark-lobe (cortex-local, d1), not thor-worker; thor-worker.toml still declares unsloth at util 0.45/262144 and hosts hand, which thor.toml:109 vetoes as infeasible on this card; re-arming worker moves the four thor-worker__{base,orin,spark,thor}.env goldens",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "lobes/profiles/shapes.py + shape_render.py + lobes/gateway/_config.py:996-1013",
+      "finding": "one RoleProfile per role name (shapes.py:176,186-195), SHAPE_ROLES rejects an unknown override key (:135,247-256), and OPT_IN_CORE_ACTIVATION_ENV/COMPOSE_PROFILE are 1:1 per role (shape_render.py:139-165); the gateway's only 'second named backend' pattern is a hand-typed tuple (_config.py:1010) that inherits none of worker's tier/pressure/pool treatment \u2014 so worker-fast is a shape or env recipe, not a role",
+      "seeds": [
+        "c11",
+        "c14"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "docs/gateway-fleet.md:757-780,797-800,860-870 + lobes/gateway/server.py:3981-4028 + ~/.lobes/.env",
+      "finding": "the Spark+Thor cortex pool is the one VALIDATED #199 deployment (+74% aggregate, peer-down continuity) and the Orin reaches cortex only through a peer-only pool naming both boxes; the deployed Thor declares PRIMARY_PEER_ORIGINS with no singular PRIMARY_PEER_ORIGIN, and _check_pool_arming refuses to boot a DROPPED pooled role in that state (ReplicaConfigError)",
+      "seeds": [
+        "c12",
+        "c13",
+        "q1"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "lobes/gateway/_replicas.py:196-201,297-321,602-626 + _config.py:60",
+      "finding": "pool compatibility disqualifies on served_id/quantization/max_model_len/runtime (parsers, kv_cache_dtype and speculative_config are informational only), so no cortex/worker checkpoint swap can stay pool-compatible with a peer on the old id; and _DEFAULT_WORKER is stale at 'unsloth/Qwen3.6-35B-A3B-NVFP4', so an unset WORKER_SERVED_NAME advertises a checkpoint no box serves",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "live Thor probe: docker ps + ~/.lobes/.env + ~/.lobes/docker-compose.yml.bak-moe (read-only, 2026-09-10)",
+      "finding": "the box runs model-gear-vllm-primary/embed/rerank + gateway on image 8bd082 with PRIMARY_MODEL=unsloth/Qwen3.8-27B-NVFP4 at 262144/util 0.58, WORKER_FEASIBLE=false, WORKER_MODEL still Nemotron, MULTIMODAL proxied to the Orin, VLLM_GDN_DECODE_KERNEL=triton set \u2014 and the deployment dir carries two hand-edited compose backups, so this box is exactly the drift case the deployment lock (#214) was written for",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / adjacent-systems lens: docker ps on the Thor + culture.yaml acp vllm-local provider + eidetic embed client",
+      "finding": "the box co-hosts the Culture production stack and two local consumers dial this gateway; box-level moves are production events and the cortex flip 404s local raw-id pinners",
+      "seeds": [
+        "c23",
+        "c28"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / failure-mode lens: eidetic record 'thor worker vllm profiling leak' (2026-08-11) + docs/machine-profiles.md boot-ordering caveat",
+      "finding": "a failed worker boot on this exact box leaked ~80 GiB unattributable unified memory and needed a reboot; MemAvailable and docker stats both lie here",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / security+operations lens: the Thor's ~/.bashrc GATEWAY_API_KEY export vs compose env precedence",
+      "finding": "shell env beats .env, so an ssh-driven gateway restart arms the inbound gate and 401s every request \u2014 recorded live during the #199 rollout",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / pressure+containment lens: lobes/profiles/builtin/thor.toml:109 + gateway/_pressure_policy.py",
+      "finding": "hand is infeasible on this card and worker sheds like any full tier, so dropping cortex leaves the box with no servable generate floor",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / observability lens: issue #214 fingerprint gap + gateway/_replicas.py Fingerprint",
+      "finding": "speculative_config is informational and read from declared env only, so an undeclared WORKER_SPECULATIVE_CONFIG makes an arm sweep unverifiable from the advert",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / reversibility lens: ~/.lobes on the Thor (two hand-edited compose backups) + the shape re-render contract",
+      "finding": "byte-for-byte restorability holds for a render, not a hand-edit; the rollback path must be dry-run before the forward flip",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / cheap probe: live 'docker exec model-gear-vllm-primary' introspection of the pinned nightly, 2026-09-10",
+      "finding": "SpeculativeMethod already includes dflash and dspark, and both qwen3_coder and qwen3_xml are registered tool parsers \u2014 so DFlash needs no custom build and qwen3_xml is a template choice; what stays unknown is sm_110 kernel coverage (v4), never the code path",
+      "seeds": [
+        "c30",
+        "c31"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / role-contract lens: docs/colleague-stack.md worker responsibilities + #187 narrowing + the nvidia checkpoint's vision_config",
+      "finding": "restoring a multimodal Qwen-coder-family checkpoint into a seat narrowed to text-only/non-coding needs an explicit widening decision \u2014 routed to the user as q1, not assumed",
+      "seeds": [
+        "q1"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / concurrency lens: gateway replica pools and the single-hop guard",
+      "finding": "clean pass \u2014 worker is single-owner here, the plural peer family stays undeclared for it, and the 508 single-hop guard is untouched by this work; residual risk only if worker is later pooled across boxes that differ in speed, which the 2026-08-30 Orin measurement already showed the model cannot express",
+      "seeds": []
+    }
+  ],
+  "lapses": [],
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c1",
+      "seam": "the Thor's gateway, model=worker and model=cortex",
+      "behavior": "worker answers 200 serving the nvidia id; cortex no longer resolves locally",
+      "source_text": "The Thor gives up its local Qwen3.8 cortex and serves Qwen3.6-35B-A3B NVFP4 as the mesh's worker arm, on a Thor-MEASURED recipe rather than a copied one",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c21",
+      "seam": "single-stream decode through the gateway",
+      "behavior": "decode tok/s at or above the 61.2 floor, target 100; tool call parses into tool_calls; a peer reaches the lane",
+      "source_text": "on the deployed Thor: model=worker answers 200 through the gateway with a tool call parsed into tool_calls (not content) and a separated reasoning trace; MTP is measured at k = off/1/3/5/7 with acceptance recorded per depth; and a peer box reaches the lane as model=worker with X-Lobes-Proxied-By. The THROUGHPUT TARGET is 100 tok/s single-stream decode on this box, with 61.2 tok/s (the old Thor figure) as the floor: below 61.2 is a regression and blocks acceptance; 61.2-100 is accepted only with the gap measured and the next lever named; at or above 100 the target is met. Concurrent throughput is reported separately and never substituted for the single-stream number",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c2",
+      "seam": "lobes/catalog.py role_hint resolution",
+      "behavior": "exactly one entry carries role_hint=worker and it is the nvidia checkpoint",
+      "source_text": "lobes/catalog.py gains a NEW SupportedModel for nvidia/Qwen3.6-35B-A3B-NVFP4 \u2014 it is absent today (catalog holds unsloth/Qwen3.6-35B-A3B-NVFP4 at :805-895, demoted to role_hint='candidate' at :866, and mmangkad/Qwen3.6-35B-A3B-NVFP4 at :391-408). role_hint is effectively unique: roles._catalog_by_role_hint (roles.py:548-550) returns the FIRST match, so promoting the nvidia entry to role_hint='worker' REQUIRES demoting the Nemotron Lightning entry (catalog.py:986) \u2014 and 'associate' shares ROLE_ROLE_HINT='worker' (roles.py:169), so the Orin's associate catalog default moves with it",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c5",
+      "seam": "profile schema -> render -> compose -> golden",
+      "behavior": "every added knob is reachable end to end and renders no key nothing reads",
+      "source_text": "a recipe knob must land in BOTH the profile schema and the compose command or it is inert: schema.py KNOB_NAMES (:81-107) has no moe_backend/load_format/async_scheduling/chunked_prefill/prefix_caching/max_num_batched_tokens field, while WORKER_KV_CACHE_DTYPE / WORKER_ATTENTION_BACKEND / WORKER_MAX_NUM_SEQS ARE renderable (render.py:109-141 x ROLE_ENV_PREFIX:94) yet read by nothing on the worker lane \u2014 dead keys today (env.example:498 says WORKER_ATTENTION_BACKEND is deliberately unwired). There is no *_EXTRA_ARGS escape hatch anywhere; the only documented route for an unwired flag is hand-editing the rendered compose (switch.py:170-177 _moe_notice), which is exactly what issue #214 and the deployment lock exist to stop",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c6",
+      "seam": "the vllm-worker MoE backend selection on sm_110",
+      "behavior": "the lane boots without a forced --moe-backend and the engine names what it selected",
+      "source_text": "--moe-backend marlin (the issue's headline Thor recommendation) was MEASURED REFUSED on this box: docs/evidence/2026-07-31-accept-worker-thor.txt:5-11 records marlin 'not supported for unquantized MoE', flashinfer_b12x/flashinfer_cutlass 'kernel does not support current device cuda' (sm_121a/Spark-only), triton 'not supported for NvFP4 MoE' \u2014 only AUTO-SELECT booted, and thor-worker.toml:49-58 carries that as a standing rule. The nvidia export excludes mtp* from quantization too (c3), so the recorded refusal reason plausibly reproduces. Marlin is therefore a HYPOTHESIS to be accepted or refused live on the Thor, never a copied default",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c15",
+      "seam": "associate catalog resolution",
+      "behavior": "changing the worker checkpoint leaves associate's resolved model unchanged",
+      "source_text": "worker and associate sharing ROLE_ROLE_HINT='worker' (roles.py:169) is a DEFECT to fix in this work, not a constraint to design around: they are different roles with different contracts (associate = worker minus repo_action), and the shared catalog role_hint means promoting a worker checkpoint silently moves the Orin's associate default with it. Give associate its own role_hint / catalog resolution",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c33",
+      "seam": "model=worker image intake",
+      "behavior": "an image is described correctly and a negative control discriminates",
+      "source_text": "serving worker multimodal is a LANE fact, not just a contract fact: the vllm-worker command must NOT pass --language-model-only (the unsloth worker era omitted it deliberately and validated image+video intake live), and image intake on worker has to be probed on this box before the widened responsibilities are advertised \u2014 a role that declares image_understanding and then 400s on an image is exactly the lie #108 forbids",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c34",
+      "seam": "model=senses on the Thor",
+      "behavior": "still resolves to the Orin peer, unchanged by the flip",
+      "source_text": "widening worker does not make it senses: this box declares MULTIMODAL_FEASIBLE=false and proxies model=senses to the Orin, and that stays true \u2014 worker gaining vision adds a second local vision-capable lane, it does not re-host the senses role or change what model=senses resolves to anywhere in the mesh",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c26",
+      "seam": "the pressure floor on a cortex-less Thor",
+      "behavior": "either hand serves or the floor's absence is documented",
+      "source_text": "with cortex gone, this box needs a stated answer for the pressure floor: hand is declared feasible=false on the Thor (thor.toml:109), and worker sheds 429 under swap/iowait pressure exactly like cortex/senses/muse \u2014 so after the flip the Thor has NO servable generate floor and a pressure event turns every local generate request into a 429 with no cheaper rung. Either hand becomes feasible here, or the shape declares the floor's absence deliberately and the docs say so",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
+}
