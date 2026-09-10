@@ -474,3 +474,227 @@ def test_main_requires_url_and_arm_without_combine(capsys) -> None:
         assert exc.code == 2
     else:
         raise AssertionError("expected argparse to exit on missing required args")
+
+
+# ---------------------------------------------------------------------------
+# Issue #244 t5 — per-position acceptance array, and the concurrent-aggregate
+# leg reusing lobes.assess rather than a second concurrency path.
+# ---------------------------------------------------------------------------
+
+_PER_POSITION_KEY = "per_position_acceptance_rate"
+
+_LOG_LINE_NO_PER_POSITION = (
+    "(APIServer pid=1) INFO 08-24 16:22:46 [metrics.py:120] SpecDecoding metrics: "
+    "Mean acceptance length: 2.77, Accepted throughput: 5.50 tokens/s, Drafted "
+    "throughput: 6.20 tokens/s, Accepted: 55 tokens, Drafted: 62 tokens, "
+    "Avg Draft acceptance rate: 88.7%"
+)
+
+
+def test_parse_acceptance_log_line_captures_per_position_array() -> None:
+    parsed = sa.parse_acceptance_log_line(_LOG_LINE)
+    assert parsed[_PER_POSITION_KEY] == [0.903, 0.871]
+
+
+def test_parse_acceptance_log_line_per_position_none_when_absent() -> None:
+    parsed = sa.parse_acceptance_log_line(_LOG_LINE_NO_PER_POSITION)
+    assert parsed is not None
+    assert parsed[_PER_POSITION_KEY] is None
+    # the rest of the line still parses normally
+    assert parsed[_ACCEPTED_KEY] == 55
+    assert parsed[_RATE_KEY] == 0.887
+
+
+def test_summarize_log_lines_computes_per_position_mean() -> None:
+    # second sample: per-position rates 0.7, 0.9 (mean with 0.903/0.871 above)
+    line2 = _LOG_LINE.replace(
+        "Per-position acceptance rate: 0.903, 0.871", "Per-position acceptance rate: 0.7, 0.9"
+    )
+    summary = sa.summarize_log_lines([_LOG_LINE, line2])
+    assert summary[f"{_PER_POSITION_KEY}_mean"] == [
+        round((0.903 + 0.7) / 2, 4),
+        round((0.871 + 0.9) / 2, 4),
+    ]
+    assert summary[f"{_PER_POSITION_KEY}_samples"] == [[0.903, 0.871], [0.7, 0.9]]
+    assert f"{_PER_POSITION_KEY}_note" not in summary
+
+
+def test_summarize_log_lines_per_position_mean_skips_lines_without_it() -> None:
+    summary = sa.summarize_log_lines([_LOG_LINE, _LOG_LINE_NO_PER_POSITION])
+    # only one sample carried a per-position array — still averaged over that one
+    assert summary[f"{_PER_POSITION_KEY}_mean"] == [0.903, 0.871]
+    assert summary[f"{_PER_POSITION_KEY}_samples"] == [[0.903, 0.871]]
+
+
+def test_summarize_log_lines_notes_mismatched_per_position_lengths() -> None:
+    line2 = _LOG_LINE.replace(
+        "Per-position acceptance rate: 0.903, 0.871", "Per-position acceptance rate: 0.7, 0.8, 0.9"
+    )
+    summary = sa.summarize_log_lines([_LOG_LINE, line2])
+    assert summary[f"{_PER_POSITION_KEY}_mean"] is None
+    assert summary[f"{_PER_POSITION_KEY}_samples"] == [[0.903, 0.871], [0.7, 0.8, 0.9]]
+    assert "differing lengths" in summary[f"{_PER_POSITION_KEY}_note"]
+
+
+def test_summarize_log_lines_per_position_absent_when_no_line_has_it() -> None:
+    summary = sa.summarize_log_lines([_LOG_LINE_NO_PER_POSITION])
+    assert summary[f"{_PER_POSITION_KEY}_mean"] is None
+    assert summary[f"{_PER_POSITION_KEY}_samples"] == []
+
+
+def test_measure_shape_labels_leg_single_stream(monkeypatch) -> None:
+    lines = [_sse("a"), _sse_usage(10), "data: [DONE]"]
+    row = _measure_with(monkeypatch, lines)
+    assert row["leg"] == sa.SINGLE_STREAM_LEG
+
+
+def test_measure_shape_error_path_also_labels_leg_single_stream(monkeypatch) -> None:
+    monkeypatch.setattr(sa.time, "perf_counter", _fake_clock(0.01))
+
+    def _raise(req, timeout=None):
+        raise sa.urllib.error.URLError("boom")
+
+    monkeypatch.setattr(sa.urllib.request, "urlopen", _raise)
+    row = sa.measure_shape("http://x", "cortex", "code", sa.SHAPES["code"], None, 60.0, 64)
+    assert row["leg"] == sa.SINGLE_STREAM_LEG
+    assert "error" in row
+
+
+def test_build_arg_parser_has_aggregate_flags_defaulting_off() -> None:
+    args = sa.build_arg_parser().parse_args(["--url", "http://x", "--arm", "none"])
+    assert args.aggregate_concurrency is None
+    assert args.aggregate_ramp is False
+    assert args.aggregate_max_tokens == 128
+
+
+def test_build_arg_parser_parses_aggregate_concurrency_levels() -> None:
+    args = sa.build_arg_parser().parse_args(
+        ["--url", "http://x", "--arm", "none", "--aggregate-concurrency", "1", "4", "8"]
+    )
+    assert args.aggregate_concurrency == [1, 4, 8]
+
+
+def test_run_aggregate_leg_none_when_not_requested() -> None:
+    assert sa.run_aggregate_leg("http://x", "cortex", None, None, False, 128) is None
+
+
+def test_run_aggregate_leg_reports_import_error_without_raising() -> None:
+    def _boom():
+        raise ImportError("no lobes here")
+
+    result = sa.run_aggregate_leg(
+        "http://x", "cortex", None, [1, 2], False, 128, _import_assess=_boom
+    )
+    assert result["leg"] == sa.CONCURRENT_AGGREGATE_LEG
+    assert "error" in result
+    assert "no lobes here" in result["error"]
+
+
+class _FakeAuthHeadersCM:
+    def __init__(self, calls: list) -> None:
+        self._calls = calls
+
+    def __call__(self, headers):
+        self._calls.append(headers)
+        return self
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_run_aggregate_leg_fixed_concurrency_uses_run_concurrent() -> None:
+    auth_calls: list = []
+    run_concurrent_calls: list = []
+
+    def _fake_run_concurrent(url, model, *, concurrency, max_tokens):
+        run_concurrent_calls.append((url, model, concurrency, max_tokens))
+        return {
+            "concurrency": concurrency,
+            "total_s": 2.0,
+            "total_completion_tokens": concurrency * 20,
+            "requests_per_s": 1.0,
+            "p50_latency_ms": 100.0,
+            "p95_latency_ms": 150.0,
+        }
+
+    def _fake_auto_ramp(*a, **kw):
+        raise AssertionError("auto_ramp_concurrency must not be called for a fixed run")
+
+    fake_auth_headers = _FakeAuthHeadersCM(auth_calls)
+
+    result = sa.run_aggregate_leg(
+        "http://x",
+        "cortex",
+        "secret-key",
+        [1, 4],
+        False,
+        128,
+        _import_assess=lambda: (fake_auth_headers, _fake_auto_ramp, _fake_run_concurrent),
+    )
+
+    assert result["leg"] == sa.CONCURRENT_AGGREGATE_LEG
+    assert result["mode"] == "fixed"
+    assert result["scope"] == sa.AGGREGATE_SCOPE
+    assert [c[2] for c in run_concurrent_calls] == [1, 4]
+    assert auth_calls == [{"Authorization": "Bearer secret-key"}]
+    # aggregate_tok_s derived from total_completion_tokens / total_s, never
+    # from run_concurrent's own per-request ms_per_token diagnostic
+    assert result["rows"][0]["aggregate_tok_s"] == 10.0
+    assert result["rows"][1]["aggregate_tok_s"] == 40.0
+
+
+def test_run_aggregate_leg_ramp_uses_auto_ramp_concurrency() -> None:
+    def _fake_run_concurrent(*a, **kw):
+        raise AssertionError("run_concurrent must not be called directly for a ramp")
+
+    def _fake_auto_ramp(url, model, *, max_tokens):
+        return {
+            "knee": 8,
+            "rows": [
+                {
+                    "concurrency": 8,
+                    "total_s": 1.0,
+                    "total_completion_tokens": 80,
+                    "requests_per_s": 8.0,
+                    "p50_latency_ms": 50.0,
+                    "p95_latency_ms": 60.0,
+                }
+            ],
+        }
+
+    fake_auth_headers = _FakeAuthHeadersCM([])
+
+    result = sa.run_aggregate_leg(
+        "http://x",
+        "cortex",
+        None,
+        None,
+        True,
+        128,
+        _import_assess=lambda: (fake_auth_headers, _fake_auto_ramp, _fake_run_concurrent),
+    )
+
+    assert result["mode"] == "ramp"
+    assert result["knee_concurrency"] == 8
+    assert result["rows"][0]["aggregate_tok_s"] == 80.0
+
+
+def test_fmt_aggregate_row_renders_aggregate_tok_s() -> None:
+    row = {
+        "concurrency": 4,
+        "aggregate_tok_s": 42.5,
+        "p50_latency_ms": 100.0,
+        "p95_latency_ms": 150.0,
+        "requests_per_s": 2.0,
+    }
+    line = sa._fmt_aggregate_row(row)
+    assert "42.5 tok/s" in line
+    assert "concurrency   4" in line
+
+
+def test_single_stream_and_aggregate_legs_never_share_a_label() -> None:
+    """Structural guard for c9/h7: the two legs' own 'leg' tags must differ."""
+    assert sa.SINGLE_STREAM_LEG != sa.CONCURRENT_AGGREGATE_LEG

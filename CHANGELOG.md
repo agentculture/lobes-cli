@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.9] - 2026-09-10
+
+### Added
+
+- `scripts/spec-arms.py` — captures vLLM's per-position speculative-decoding acceptance array (`per_position_acceptance_rate`, previously matched by the log-line regex and discarded) alongside the existing engine-wide acceptance rate, and adds an optional concurrent-aggregate leg (`--aggregate-concurrency` / `--aggregate-ramp`) that reuses `lobes.assess.run_concurrent`/`auto_ramp_concurrency` rather than a second concurrency implementation. Single-stream per-shape measurements and the concurrent-aggregate leg are tagged with distinct `leg` markers and never conflated in the transcript (issue #244 t5).
+
 ## [0.73.8] - 2026-09-10
 
 ### Added

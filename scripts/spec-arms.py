@@ -84,6 +84,33 @@ about that rather than hiding it:
 read, not merely urllib's per-operation socket timeout (Qodo finding 10): a
 shape that exceeds it is reported as TIMED OUT (an ``error`` entry carrying
 ``"timed_out": true``), never as a completed measurement.
+
+PER-POSITION ACCEPTANCE (issue #244 t5)
+-----------------------------------------
+The ``--docker-container`` surface's ``SpecDecoding metrics:`` log line also
+carries a "Per-position acceptance rate: 0.903, 0.871" array (one figure per
+draft-token slot), a strictly finer-grained signal than the single "Avg Draft
+acceptance rate" scalar next to it. It is captured under
+``per_position_acceptance_rate`` on each parsed sample and folded into the
+window summary as ``per_position_acceptance_rate_mean`` (elementwise mean,
+only when every sample in the window has the same array length) alongside
+``per_position_acceptance_rate_samples`` (every raw array seen, always kept).
+Like everything else on this surface it is ENGINE-WIDE, not per-request.
+
+SINGLE-STREAM vs. CONCURRENT-AGGREGATE (issue #244 t5)
+---------------------------------------------------------
+Every per-shape row above fires ONE request at a time and is tagged
+``"leg": "single_stream"``. An OPTIONAL second leg,
+``--aggregate-concurrency N [N ...]`` (fixed levels) or ``--aggregate-ramp``
+(vLLM's own throughput-plateau ramp), fires MANY requests concurrently and
+reports the whole batch's throughput, tagged ``"leg":
+"concurrent_aggregate"`` under the transcript's own ``"aggregate"`` key —
+never merged into the per-shape rows. Both flags REUSE
+``lobes.assess.run_concurrent``/``auto_ramp_concurrency`` rather than a
+second concurrency implementation in this script; that import is lazy and
+this is the only leg that needs the ``lobes`` package installed (run via
+``uv run``, or from this checked-out repo, which is added to ``sys.path`` as
+a fallback).
 """
 
 from __future__ import annotations
@@ -115,6 +142,23 @@ _CONTAMINATED_KEY = "contaminated"
 # Neither acceptance surface can attribute tokens to a single request — see the
 # module docstring's ACCEPTANCE-RATE SURFACES section.
 ENGINE_WIDE_SCOPE = "engine_wide_over_shape_window"
+
+# Every one of the per-shape throughput/acceptance legs below measures ONE
+# request at a time; the optional aggregate leg (see run_aggregate_leg) fires
+# MANY requests concurrently and reports the batch's throughput instead. The
+# two answer different questions (best-case single-user latency/decode-rate
+# vs. how throughput scales under concurrent load) and must never be printed,
+# stored, or compared under the same label — every measurement in this
+# script's output carries one of these two "leg" markers so the two are never
+# conflated (c9/h7).
+SINGLE_STREAM_LEG = "single_stream"
+CONCURRENT_AGGREGATE_LEG = "concurrent_aggregate"
+
+# Scope label for the aggregate leg's numbers — distinct from ENGINE_WIDE_SCOPE
+# above (which describes ONE engine-wide counter delta over ONE shape's
+# window): this describes a batch of N concurrently-issued requests whose
+# throughput is necessarily a property of the whole batch, not any one of them.
+AGGREGATE_SCOPE = "engine_wide_multi_request_batch"
 
 # Throughput basis markers (Qodo finding 3): a chunk count is NOT a token count.
 BASIS_USAGE = "usage_completion_tokens"
@@ -280,25 +324,77 @@ def acceptance_delta(
 #   5.50 tokens/s, Drafted throughput: 6.20 tokens/s, Accepted: 55 tokens,
 #   Drafted: 62 tokens, Per-position acceptance rate: 0.903, 0.871, Avg Draft
 #   acceptance rate: 88.7%
+#
+# The "Per-position acceptance rate: 0.903, 0.871" segment is one array entry
+# per speculative draft-token slot (index 0 = first drafted token, etc) — a
+# strictly finer-grained signal than the single "Avg Draft acceptance rate"
+# scalar below it, and previously matched by the ``.*?`` wildcards above and
+# silently discarded. It is captured here as its own group, kept OPTIONAL
+# (older/other vLLM builds may omit it) so a line without it still parses.
 _LOG_LINE_RE = re.compile(
     r"Mean acceptance length:\s*(?P<mean_len>[\d.]+).*?"
     r"Accepted:\s*(?P<accepted>\d+)\s*tokens.*?"
     r"Drafted:\s*(?P<drafted>\d+)\s*tokens.*?"
+    r"(?:Per-position acceptance rate:\s*(?P<per_position>[\d.,\s]+?),\s*)?"
     r"Avg Draft acceptance rate:\s*(?P<rate_pct>[\d.]+)%"
 )
 
+_PER_POSITION_KEY = "per_position_acceptance_rate"
+
 
 def parse_acceptance_log_line(line: str) -> dict | None:
-    """Parse one vLLM ``SpecDecoding metrics:`` log line, or ``None`` if it doesn't match."""
+    """Parse one vLLM ``SpecDecoding metrics:`` log line, or ``None`` if it doesn't match.
+
+    ``per_position_acceptance_rate`` is a ``list[float]`` (index 0 = first
+    drafted token's acceptance rate, etc) when the line carries the
+    "Per-position acceptance rate: ..." segment, else ``None`` — never a
+    fabricated/padded list.
+    """
     m = _LOG_LINE_RE.search(line)
     if not m:
         return None
+    per_position_raw = m.group("per_position")
+    per_position = (
+        [float(v) for v in per_position_raw.split(",") if v.strip()] if per_position_raw else None
+    )
     return {
         "mean_acceptance_length": float(m.group("mean_len")),
         _ACCEPTED_KEY: int(m.group("accepted")),
         _DRAFTED_KEY: int(m.group("drafted")),
         _RATE_KEY: round(float(m.group("rate_pct")) / 100.0, 4),
+        _PER_POSITION_KEY: per_position,
     }
+
+
+def _summarize_per_position(
+    parsed: list[dict],
+) -> tuple[list[float] | None, list[list[float]], str | None]:
+    """Elementwise mean of every sample's per-position array, honestly.
+
+    Returns ``(mean, samples, note)``. ``samples`` is every raw array seen
+    (engine-wide, one per log line) so nothing is lost even when a mean can't
+    be computed. A mean is only produced when every sample has the SAME
+    length — a differing length (e.g. ``num_speculative_tokens`` changed
+    mid-window, which should not happen within one arm's run but is not ruled
+    out) is reported via ``note`` rather than silently averaged over
+    mismatched positions or truncated (Qodo finding 9's "never fabricate"
+    rule, extended to this new field).
+    """
+    samples = [p[_PER_POSITION_KEY] for p in parsed if p.get(_PER_POSITION_KEY)]
+    if not samples:
+        return None, [], None
+    lengths = {len(s) for s in samples}
+    if len(lengths) != 1:
+        return (
+            None,
+            samples,
+            f"per-position arrays had differing lengths across samples "
+            f"{sorted(lengths)} in this window — not averaged; see the raw "
+            "per-position samples instead",
+        )
+    n = lengths.pop()
+    mean = [round(sum(s[i] for s in samples) / len(samples), 4) for i in range(n)]
+    return mean, samples, None
 
 
 def summarize_log_lines(lines: list[str]) -> dict | None:
@@ -308,14 +404,16 @@ def summarize_log_lines(lines: list[str]) -> dict | None:
     covers every request the engine served while the shape ran — and unlike the
     ``/metrics`` surface there is nothing to cross-check it against. Its
     ``contaminated`` is therefore always ``None`` (unknown), never ``False``
-    (Qodo finding 9).
+    (Qodo finding 9). The same engine-wide caveat applies to the per-position
+    figures folded in here.
     """
     parsed = [p for p in (parse_acceptance_log_line(ln) for ln in lines) if p]
     if not parsed:
         return None
     total_accepted = sum(p[_ACCEPTED_KEY] for p in parsed)
     total_drafted = sum(p[_DRAFTED_KEY] for p in parsed)
-    return {
+    per_position_mean, per_position_samples, per_position_note = _summarize_per_position(parsed)
+    out = {
         _ACCEPTED_KEY: total_accepted,
         _DRAFTED_KEY: total_drafted,
         _RATE_KEY: (round(total_accepted / total_drafted, 4) if total_drafted > 0 else None),
@@ -330,7 +428,12 @@ def summarize_log_lines(lines: list[str]) -> dict | None:
             "be shown clean; treat it as an upper bound unless the lane was "
             "known-quiescent"
         ),
+        f"{_PER_POSITION_KEY}_mean": per_position_mean,
+        f"{_PER_POSITION_KEY}_samples": per_position_samples,
     }
+    if per_position_note:
+        out[f"{_PER_POSITION_KEY}_note"] = per_position_note
+    return out
 
 
 def build_comparison(
@@ -531,9 +634,14 @@ def measure_shape(
                 resp, now=time.perf_counter, t0=t0, deadline=t0 + max_seconds
             )
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return {"shape": shape_name, "label": shape_spec["label"], "error": str(exc)}
+        return {
+            "shape": shape_name,
+            "label": shape_spec["label"],
+            "leg": SINGLE_STREAM_LEG,
+            "error": str(exc),
+        }
 
-    base = {"shape": shape_name, "label": shape_spec["label"]}
+    base = {"shape": shape_name, "label": shape_spec["label"], "leg": SINGLE_STREAM_LEG}
 
     # A shape that blew the wall-clock deadline is a TIMED-OUT shape, never a
     # completed measurement, even though partial content did stream (Qodo
@@ -659,6 +767,121 @@ def run_arm(
 
 
 # ---------------------------------------------------------------------------
+# Concurrent-aggregate leg — reuses lobes.assess rather than a second
+# concurrency implementation (issue #244 t5).
+# ---------------------------------------------------------------------------
+
+
+def _default_assess_imports():
+    """Import ``auth_headers``/``auto_ramp_concurrency``/``run_concurrent`` from ``lobes.assess``.
+
+    This script is otherwise stdlib-only and runnable as a bare file (see the
+    module docstring), so the import stays lazy and confined to the aggregate
+    leg — every other leg (single-stream decode, both acceptance surfaces)
+    still needs nothing beyond the standard library. When run from inside
+    this checked-out repo but outside an installed/``uv run`` environment,
+    the repo root (this file's grandparent) is added to ``sys.path`` as a
+    fallback so ``import lobes`` still resolves.
+    """
+    try:
+        from lobes.assess import auth_headers, auto_ramp_concurrency, run_concurrent
+    except ImportError:
+        import pathlib
+        import sys as _sys
+
+        repo_root = str(pathlib.Path(__file__).resolve().parent.parent)
+        if repo_root not in _sys.path:
+            _sys.path.insert(0, repo_root)
+        from lobes.assess import auth_headers, auto_ramp_concurrency, run_concurrent
+    return auth_headers, auto_ramp_concurrency, run_concurrent
+
+
+def run_aggregate_leg(
+    url: str,
+    model: str,
+    api_key: str | None,
+    concurrency_levels: list[int] | None,
+    ramp: bool,
+    max_tokens: int,
+    _import_assess=_default_assess_imports,
+) -> dict | None:
+    """The optional CONCURRENT-AGGREGATE leg, via ``lobes.assess`` (never a 2nd path).
+
+    Distinct in kind from every per-shape row above: those fire ONE request at
+    a time per content shape and report that request's own decode rate
+    (``leg: "single_stream"``); this fires *concurrency_levels* requests (or a
+    ramped schedule, via ``--aggregate-ramp``) AT ONCE and reports the whole
+    batch's aggregate throughput (``leg: "concurrent_aggregate"``) — a
+    fundamentally different measurement that must never be printed or stored
+    under the same label as the single-stream numbers (c9/h7).
+
+    Returns ``None`` when neither *concurrency_levels* nor *ramp* was
+    requested (the default — byte-identical to a pre-#244-t5 transcript).
+    Returns an ``{"error": ...}`` dict, never raises, when ``lobes.assess``
+    cannot be imported (this script's aggregate leg is the one place that
+    needs the package installed; every other leg stays stdlib-only).
+    """
+    if not concurrency_levels and not ramp:
+        return None
+    try:
+        auth_headers, auto_ramp_concurrency, run_concurrent = _import_assess()
+    except ImportError as exc:
+        return {
+            "leg": CONCURRENT_AGGREGATE_LEG,
+            "error": (
+                "--aggregate-concurrency/--aggregate-ramp reuse "
+                f"lobes.assess.run_concurrent/auto_ramp_concurrency, which could not be "
+                f"imported ({exc.__class__.__name__}: {exc}) — run this script via `uv run "
+                "python3 scripts/spec-arms.py ...` from the repo, or with the `lobes` "
+                "package installed"
+            ),
+        }
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    with auth_headers(headers):
+        if ramp:
+            ramp_result = auto_ramp_concurrency(url, model, max_tokens=max_tokens)
+            rows = ramp_result["rows"]
+            mode = "ramp"
+            extra = {"knee_concurrency": ramp_result["knee"]}
+        else:
+            rows = [
+                run_concurrent(url, model, concurrency=c, max_tokens=max_tokens)
+                for c in concurrency_levels
+            ]
+            mode = "fixed"
+            extra = {}
+
+    for row in rows:
+        total_s = row.get("total_s")
+        total_tokens = row.get("total_completion_tokens")
+        row["aggregate_tok_s"] = (
+            round(total_tokens / total_s, 2) if total_s and total_tokens is not None else None
+        )
+
+    return {
+        "leg": CONCURRENT_AGGREGATE_LEG,
+        "scope": AGGREGATE_SCOPE,
+        "mode": mode,
+        "max_tokens": max_tokens,
+        "rows": rows,
+        **extra,
+    }
+
+
+def _fmt_aggregate_row(row: dict) -> str:
+    tok_s = row.get("aggregate_tok_s")
+    tok_s_str = f"{tok_s} tok/s" if tok_s is not None else "n/a"
+    return (
+        f"  [concurrency {row.get('concurrency', '?'):>3}]  "
+        f"aggregate {tok_s_str:>14} | "
+        f"p50 {row.get('p50_latency_ms', '?'):>8} ms | "
+        f"p95 {row.get('p95_latency_ms', '?'):>8} ms | "
+        f"reqs/s {row.get('requests_per_s', '?')}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -690,13 +913,13 @@ def _fmt_row(shape_name: str, entry: dict) -> str:
     return (
         f"  [{label:>16} | {arm:>7}]  "
         f"ttft {entry.get('ttft_ms', '?'):>8} ms | "
-        f"decode {tok_s_str:>18} | "
+        f"single-stream decode {tok_s_str:>18} | "
         f"accept {rate_str:>7} (via {surface}) | "
         f"max_model_len {entry.get('max_model_len', '?')}"
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description="Measure one speculation arm across content shapes, or "
         "combine prior per-arm transcripts into a comparison."
@@ -739,6 +962,38 @@ def main(argv: list[str] | None = None) -> int:
         help="with --combine, exit 0 even when a (shape, arm) cell is MISSING "
         "or FAILED (default: exit 1; the rows are printed either way)",
     )
+    ap.add_argument(
+        "--aggregate-concurrency",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="N",
+        help="run a CONCURRENT-AGGREGATE leg (via lobes.assess.run_concurrent, "
+        "not a second concurrency implementation) at each given concurrency "
+        "level, reported separately from the single-stream per-shape legs "
+        "above and never conflated with them; requires the `lobes` package "
+        "importable (e.g. `uv run`)",
+    )
+    ap.add_argument(
+        "--aggregate-ramp",
+        action="store_true",
+        help="run the aggregate leg via lobes.assess.auto_ramp_concurrency's "
+        "default schedule instead of the fixed levels in "
+        "--aggregate-concurrency (mutually exclusive in effect: --aggregate-"
+        "concurrency is ignored when this is set)",
+    )
+    ap.add_argument(
+        "--aggregate-max-tokens",
+        type=int,
+        default=128,
+        help="max_tokens per request in the aggregate leg (default 128; "
+        "independent of --gen-tokens, which governs the single-stream legs)",
+    )
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_arg_parser()
     args = ap.parse_args(argv)
 
     if args.combine:
@@ -811,15 +1066,55 @@ def main(argv: list[str] | None = None) -> int:
         args.docker_container,
     )
 
+    # Every knob that shapes this measurement, recorded IN the transcript, so
+    # the run is reproducible from the JSON file alone without reaching back
+    # into shell history for the command line that produced it — never the
+    # --api-key value itself, which is a credential (Qodo finding 9's
+    # never-fabricate-but-also-never-leak counterpart).
+    result["config"] = {
+        "max_seconds": args.max_seconds,
+        "gen_tokens": args.gen_tokens,
+        "metrics_url": args.metrics_url,
+        "docker_container": args.docker_container,
+        "api_key_supplied": bool(args.api_key),
+        "aggregate_concurrency": args.aggregate_concurrency,
+        "aggregate_ramp": args.aggregate_ramp,
+        "aggregate_max_tokens": args.aggregate_max_tokens,
+    }
+
+    aggregate = run_aggregate_leg(
+        args.url,
+        args.model,
+        args.api_key,
+        args.aggregate_concurrency,
+        args.aggregate_ramp,
+        args.aggregate_max_tokens,
+    )
+    if aggregate is not None:
+        result["aggregate"] = aggregate
+
     if args.json:
         print(json.dumps(result, indent=2))
     else:
         print(f"arm: {result['arm']}  model: {result['model']}  url: {result['url']}")
+        print("-- single-stream (one request at a time), per content shape --")
         for shape_name, entry in result["shapes"].items():
             print(_fmt_row(shape_name, entry))
             sys.stdout.flush()
+        if aggregate is not None:
+            print("-- concurrent aggregate (many requests at once; NOT single-stream) --")
+            if "error" in aggregate:
+                print(f"  ERROR — {aggregate['error']}")
+            else:
+                for row in aggregate["rows"]:
+                    print(_fmt_aggregate_row(row))
+                if "knee_concurrency" in aggregate:
+                    print(f"  knee concurrency: {aggregate['knee_concurrency']}")
+            sys.stdout.flush()
 
     any_error = any("error" in e for e in result["shapes"].values())
+    if aggregate is not None and "error" in aggregate:
+        any_error = True
     return 1 if any_error else 0
 
 
