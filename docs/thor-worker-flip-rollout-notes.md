@@ -22,24 +22,34 @@ Thor `cortex`  (unsloth/Qwen3.8-27B-NVFP4, 262144, util 0.58)  ->  STOPS being s
 Thor `worker`  (WORKER_FEASIBLE=false today)                    ->  STARTS being served on Thor
 ```
 
-The plan context that produced this note names the new checkpoint
-`nvidia/Qwen3.6-35B-A3B-NVFP4`. **That exact id does not exist in this
-repo's catalog** (`lobes/catalog.py`) or in any evidence transcript found by
-this audit — the two `Qwen3.6-35B-A3B-NVFP4` catalog entries are
-`unsloth/Qwen3.6-35B-A3B-NVFP4` (the former Thor `worker` checkpoint,
-DEMOTED to a kept candidate 2026-08-20 by deviation d1, MULTIMODAL,
-self-hosted MTP) and `mmangkad/Qwen3.6-35B-A3B-NVFP4` (a 32K-native
-candidate whose own MTP is known not to load). Given the plan explicitly
-names `docs/qwen3.6-35b-a3b-nvfp4.md` as "the natural neighbour" for the new
-per-model doc, and that doc's only `worker`-shaped checkpoint is
-`unsloth/Qwen3.6-35B-A3B-NVFP4` — the one Thor already served as `worker`
-before deviation d1 moved `worker` to the Spark as Lightning — **this note
-and the accompanying per-model doc addition treat the flip as
-`unsloth/Qwen3.6-35B-A3B-NVFP4` re-taking the `worker` seat on Thor,
-re-promoting the demoted candidate**, not a never-before-seen checkpoint.
-**This is an assumption resolved from the available evidence, not a
-verified instruction — flag it before the flip actually runs** (see
-"Degraded-reasoning note" at the bottom).
+The new checkpoint is **`nvidia/Qwen3.6-35B-A3B-NVFP4`** — NVIDIA's own
+ModelOpt export, distinct from the two Qwen3.6-35B-A3B entries this repo
+already carried. Its metadata was read from the checkpoint's own
+`config.json` + `hf_quant_config.json` on 2026-09-10 (HF repo last modified
+2026-08-29) and committed to `lobes/catalog.py` in the same change series as
+this note:
+
+* `Qwen3_5MoeForConditionalGeneration`, `model_type qwen3_5_moe`
+* **262144 native**, 256 experts / 8 active, 40 layers
+* **MULTIMODAL** — `vision_config` present (deepstack ViT, image + video token ids)
+* ModelOpt `MIXED_PRECISION`: experts and shared-expert `W4A16_NVFP4`
+  (group_size 16, WEIGHT-only), FP8 on the `linear_attn`/`self_attn`
+  projections, `kv_cache_quant_algo: FP8` declared
+* `mtp_num_hidden_layers: 1` — it carries its own MTP head — but
+  `exclude_modules: ["mtp.layers.0*", "mtp*"]`, i.e. **the MTP module is
+  UNQUANTIZED**, which is precisely the condition the 2026-07-31 Thor run
+  recorded as marlin's refusal reason ("not supported for unquantized MoE")
+
+The two sibling entries are NOT the target and stay untouched candidates:
+`unsloth/Qwen3.6-35B-A3B-NVFP4` (the checkpoint Thor served as `worker`
+before deviation d1, `compressed-tensors`, self-hosted MTP — the source of
+every historical Thor worker measurement cited below) and
+`mmangkad/Qwen3.6-35B-A3B-NVFP4` (32K-native, MTP known not to load).
+
+**Every historical figure in this note and in the per-model doc was measured
+on the `unsloth/` export, not on this one.** No box in this fleet has ever
+booted `nvidia/Qwen3.6-35B-A3B-NVFP4`; whether it loads at all on the pinned
+nightly on sm_110 is the first thing the flip's live spike must answer.
 
 Consequences named in the task brief, restated here so they travel with the
 audit:
@@ -266,21 +276,18 @@ Two things below the surface of this note are assumption, not
 verification, and are flagged here rather than filed anywhere else, per
 the task's own instruction:
 
-1. **The new checkpoint identity is inferred, not confirmed.** The task
-   brief's context paragraph names `nvidia/Qwen3.6-35B-A3B-NVFP4` for the
-   Thor flip target — an id this audit could not find anywhere (not in
-   this repo's catalog, not in any evidence transcript, not in either
-   `Qwen3.6-35B-A3B-NVFP4` catalog entry's org prefix). This note and the
-   per-model doc addition both resolve it to `unsloth/Qwen3.6-35B-A3B-NVFP4`
-   (the org-matching, doc-matching, previously-Thor-hosted candidate) as
-   the most defensible reading, but that is this agent's inference from
-   available evidence, not something read off a source of truth. **Confirm
-   the exact target checkpoint id before running the flip** — if it is
-   actually the Lightning checkpoint (`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`,
-   whose org prefix DOES match "nvidia/") being additionally hosted on
-   Thor rather than only the Spark, this note's checkpoint-specific
-   sections (and the per-model doc addition) would need to be redone
-   against that checkpoint instead.
+1. **RESOLVED — the checkpoint identity is confirmed.** An earlier draft of
+   this note could not find `nvidia/Qwen3.6-35B-A3B-NVFP4` in the catalog
+   and resolved the flip target to `unsloth/Qwen3.6-35B-A3B-NVFP4` instead,
+   flagging the inference rather than hiding it. That inference was WRONG
+   and has been corrected throughout: the id is real (HF repo last modified
+   2026-08-29), its metadata was read directly from the checkpoint on
+   2026-09-10, and it is now a first-class catalog entry holding
+   `role_hint="worker"`. The reason the audit could not find it is simply
+   that the catalog entry did not exist yet when the audit ran. Recorded
+   here rather than quietly edited away, because the checkpoint-identity
+   question is exactly the kind a rollout note exists to settle.
+
 2. **Power mode / L4T / clocks were read live on 2026-09-10** (`nvpmodel
    -q` → `MAXN`; `/etc/nv_tegra_release` → `R38 (release), REVISION: 2.2`)
    for the per-model doc addition below, because no prior evidence

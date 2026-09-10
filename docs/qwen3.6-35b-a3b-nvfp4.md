@@ -228,14 +228,85 @@ box).
 
 ---
 
-## `unsloth/Qwen3.6-35B-A3B-NVFP4` re-taking Thor's `worker` seat (proposed, NOT YET FLIPPED)
+## `nvidia/Qwen3.6-35B-A3B-NVFP4` — the #244 Thor `worker` target (NOT YET BOOTED ANYWHERE)
+
+> **Status: DECLARED, never booted.** This is the checkpoint issue #244 puts
+> on Thor's `worker` seat. It is NVIDIA's own ModelOpt export and is a
+> DIFFERENT checkpoint from the `unsloth/` and `mmangkad/` siblings this doc
+> otherwise covers. **No box in this fleet has ever loaded it**, so this
+> section contains no throughput, no acceptance rate, and no budget — only
+> what the checkpoint's own files say.
+
+Read from the checkpoint's `config.json` + `hf_quant_config.json` on
+2026-09-10 (HF repo last modified 2026-08-29):
+
+| field | value |
+|---|---|
+| architecture | `Qwen3_5MoeForConditionalGeneration` (`qwen3_5_moe`) |
+| native context | **262144** |
+| experts | 256 total / 8 active, 40 layers |
+| modality | **MULTIMODAL** — `vision_config` present (deepstack ViT, image + video token ids) |
+| quantization | ModelOpt `MIXED_PRECISION`: experts + shared-expert `W4A16_NVFP4` (group_size 16, **weight-only**), FP8 on `linear_attn`/`self_attn` projections |
+| KV cache | `kv_cache_quant_algo: FP8` **declared** |
+| MTP | `mtp_num_hidden_layers: 1` — carries its own head — but `exclude_modules: ["mtp.layers.0*", "mtp*"]`, so **the MTP module is UNQUANTIZED** |
+
+That last row matters more than it looks. The 2026-07-31 Thor run recorded
+`marlin` failing with *"not supported for unquantized MoE — the self-hosted
+MTP experts are unquantized"*. This export has the same property, so the
+issue's headline `--moe-backend marlin` recommendation is a **hypothesis to
+test live, not a default to copy**. Note the counter-consideration: unlike
+the `unsloth/` export, this one's MAIN experts are `W4A16_NVFP4`
+(weight-only) — the same family that let Marlin work for Lightning on the
+Orin's sm_87 — so the arms genuinely have to be run rather than predicted.
+
+**What must be measured before anything here is claimed** (plan
+`docs/plans/2026-09-10-thor-worker-arm-qwen3-6-35b-a3b-recipes.md`, task
+t11): whether it loads at all on the pinned nightly on sm_110; which MoE
+backend boots; the gpu_mem_util / max_model_len budget; the parser pair
+verified live with `skip_special_tokens: false`; and image + video intake
+with a negative control.
+
+See `docs/thor-worker-flip-rollout-notes.md` for the raw-id consumer audit
+that must be published before the flip.
+
+### Prior art — this repo already failed to load this exact id once
+
+Read *"Why we serve the `mmangkad/` copy, not `nvidia/`"* further down this
+doc before running the spike. On **2026-05-31**, on the DGX Spark GB10, this
+same `nvidia/Qwen3.6-35B-A3B-NVFP4` id **would not load**: on vLLM 0.19.0 and
+0.21.0 the MoE expert loader failed with `KeyError:
+layers.0.mlp.experts.w2_input_scale` on `triton`/auto and *"not supported for
+unquantized MoE"* on `marlin`, under both `--quantization modelopt` and
+`modelopt_fp4`. That is the recorded origin of risk r1 in the #244 plan.
+
+Two things have changed since, and neither is proof either way:
+
+* the engine moved from 0.19/0.21 to the pinned `8bd082` nightly
+  (`0.26.1rc1.dev942`), which is four minor versions of NVFP4-MoE loader work
+  later; and
+* the HF repo itself was **re-uploaded 2026-08-29**, so the export on the hub
+  today is not necessarily the one that failed in May.
+
+The spike therefore has to actually run. If it fails the same way, that is a
+publishable result and the fallback recipe below is the answer — not a reason
+to quietly substitute a different checkpoint.
+
+
+
+## `unsloth/Qwen3.6-35B-A3B-NVFP4` re-taking Thor's `worker` seat — the FALLBACK recipe
+
+> **This section is the ROLLBACK/fallback path, not the #244 target.** It
+> describes re-promoting the demoted `unsloth/` candidate — the checkpoint
+> Thor actually served as `worker` before deviation d1 — and every figure in
+> it was measured on THAT export. It is kept because if the `nvidia/` target
+> above fails to load on sm_110, this is the known-good recipe to fall back
+> to.
 
 > **Status: UNMEASURED for this specific re-run.** A flip is proposed that
 > stops Thor's `cortex` (`unsloth/Qwen3.8-27B-NVFP4`) and re-promotes this
 > checkpoint back into Thor's `worker` seat — reversing the demotion above.
 > See `docs/thor-worker-flip-rollout-notes.md` for the raw-id consumer
-> audit and why the target checkpoint id had to be inferred rather than
-> read off a single source of truth. **Every number below either cites an
+> audit. **Every number below either cites an
 > existing evidence transcript from this checkpoint's PRIOR life as Thor's
 > `worker` (2026-07-31/2026-08-20, before deviation d1), or is marked
 > NOT YET MEASURED.** None of it is a claim about a post-flip boot that has
