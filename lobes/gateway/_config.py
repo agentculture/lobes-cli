@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from lobes.catalog import TIER_ROLE
+from lobes.catalog import TIER_ROLE, resolve_tier
 from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
@@ -51,13 +51,22 @@ _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 # and, like the worker gear below, it is INFEASIBLE by default when unwired
 # (see OPT_IN_BACKENDS).
 _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
-# The opt-in worker gear (unsloth Qwen3.6-35B-A3B-NVFP4, MoE with a
-# self-hosted MTP draft) — the eighth Colleague role's backend
+# The opt-in worker gear — the eighth Colleague role's backend
 # (thor-worker-lobe plan, t1/t3). Hosted only by a worker-hosting deployment
 # shape (never machine-as-brain), so its backend is wired only when
 # WORKER_BASE_URL is set — and, like muse above, it is INFEASIBLE by default
 # when unwired (see OPT_IN_BACKENDS).
-_DEFAULT_WORKER = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+#
+# DERIVED from the catalog's own role_hint="worker" entry (#244 t6) rather
+# than a literal id — the previous literal here
+# (``unsloth/Qwen3.6-35B-A3B-NVFP4``) went stale the moment deviation d1
+# re-checkpointed `worker` to Lightning
+# (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``, see CLAUDE.md and
+# catalog.py's role_hint="worker" entry): an unset WORKER_SERVED_NAME was
+# advertising a checkpoint no box in the mesh serves any more. Deriving
+# instead of hardcoding means the next checkpoint swap only has to update
+# the catalog, not this file too — see catalog.resolve_tier.
+_DEFAULT_WORKER = resolve_tier("worker").id
 # The opt-in associate gear (lightning-on-orin plan, t6) — the TENTH Colleague
 # role's backend. Deliberately the SAME checkpoint the `worker` seat holds:
 # associate is worker MINUS repo_action, a different AUTHORITY over the same

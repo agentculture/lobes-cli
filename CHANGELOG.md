@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.8] - 2026-09-10
+
+### Added
+
+- `lobes doctor` gains a `pool_arming` finding (#244 t6): it reuses the
+  gateway's own `_check_pool_arming` startup guard offline against the
+  deployed `.env`, so a dropped role declaring `<PREFIX>_PEER_ORIGINS`
+  without the singular `<PREFIX>_PEER_ORIGIN` is caught before the gateway
+  ever refuses to boot on it.
+
+### Changed
+
+- `lobes.gateway._config._DEFAULT_WORKER` is now derived from the catalog's
+  own `role_hint="worker"` entry (`catalog.resolve_tier("worker")`) instead
+  of a hardcoded checkpoint id, so it can never go stale the next time the
+  `worker` seat is re-checkpointed.
+
+### Fixed
+
+- The stale `_DEFAULT_WORKER` literal (`unsloth/Qwen3.6-35B-A3B-NVFP4`) no
+  longer advertises a checkpoint no box in the mesh currently serves.
+
 ## [0.73.7] - 2026-09-02
 
 ### Fixed
