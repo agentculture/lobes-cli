@@ -54,9 +54,11 @@ _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"  # the catalog multimodal default
 _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
-# the catalog worker default — nemotron-lightning-worker plan (#187, t3)
-# moved this from unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as candidate).
-_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# the catalog worker default — issue #244, t1 moved this from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as
+# candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
+# also a kept candidate).
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 _GATEWAY_URL = "http://localhost:8000"
 
 _THOR_ORIGIN = "http://thor.local:8001"
@@ -430,7 +432,7 @@ def test_peer_specs_unwired_worker_served_name_from_env() -> None:
 
 def test_peer_specs_unwired_worker_falls_back_to_catalog() -> None:
     # No WORKER_SERVED_NAME either → the catalog canonical id for role_hint
-    # "worker" (unsloth/Qwen3.6-35B-A3B-NVFP4), mirroring the multimodal case.
+    # "worker" (nvidia/Qwen3.6-35B-A3B-NVFP4), mirroring the multimodal case.
     _table, _cfg, specs = _build(_worker_unwired_env())
     assert set(specs) == {"worker"}
     assert specs["worker"].served_name == _WORKER_ID

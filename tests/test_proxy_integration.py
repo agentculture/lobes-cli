@@ -819,26 +819,26 @@ _GOLDEN_CAPABILITIES = {
         # The opt-in worker lobe: unwired in this no-knob deployment, so it is
         # honestly infeasible-by-default (OPT_IN_BACKENDS, exactly like muse
         # above) and named by its catalog default. Catalog worker moved to
-        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-        # (nemotron-lightning-worker plan, #187, t3) — text-only, 1M native
-        # ceiling, nvidia modelopt quant. mtp False: config.json carries no
-        # MTP/draft-head field for this checkpoint (unlike the demoted
-        # Qwen worker's self-hosted draft); the card's separate MTP/DSpark
-        # claim is declared, unmeasured (plan t2).
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 (issue #244, t1) — 256K native ceiling,
+        # nvidia modelopt quant, MULTIMODAL (image+video), self-hosted MTP
+        # draft (mtp True: config.json's mtp_num_hidden_layers=1 plus the
+        # ignore/exclude_modules "mtp*" pattern, declared/unmeasured on this
+        # engine). Demoted from role_hint="worker":
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (nemotron-
+        # lightning-worker plan, #187, t3) — text-only, 1M native, no MTP —
+        # kept as a candidate.
         #
         # NOTE: `responsibilities` below is roles.py's OWN static vocabulary
         # (ROLE_RESPONSIBILITIES), not derived from the catalog — it still
-        # names image_understanding/video_understanding here because the
-        # sibling nemotron-lightning-worker plan task t4 (roles.py) redefines
-        # that vocabulary for the new TEXT-ONLY checkpoint; this task (t3)
-        # only changes the catalog entry.
-        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        # names image_understanding/video_understanding here (unchanged by
+        # this task, which only touches the catalog entry).
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
         "quant": "modelopt",
-        "mtp": False,
+        "mtp": True,
         # True even though this deployment does not HOST worker: `tools` is a
         # fact about the model the role would serve (the catalog's
         # `qwen3_coder` tool parser — UNVALIDATED on our engine, cited from
@@ -881,13 +881,13 @@ _GOLDEN_CAPABILITIES = {
         # deployment, so honestly infeasible-by-default (OPT_IN_BACKENDS) and
         # named by the catalog gear it shares with `worker` — one checkpoint,
         # two public addresses with different authority.
-        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
         "quant": "modelopt",
-        "mtp": False,
+        "mtp": True,
         "tools": True,
         "responsibilities": [
             "execution",

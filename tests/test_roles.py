@@ -62,9 +62,11 @@ _EXPECTED_ROLES = {
     "tts",
 }
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
-# the catalog worker default — nemotron-lightning-worker plan (#187, t3)
-# moved this from unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as candidate).
-_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# the catalog worker default — issue #244, t1 moved this from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as
+# candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
+# also a kept candidate).
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 # The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
 # GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL

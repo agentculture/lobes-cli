@@ -232,10 +232,11 @@ def test_tier_role_capability_order_is_ascending_with_muse_worker_and_associate(
 # IS its tier, exactly like muse.
 # ---------------------------------------------------------------------------
 
-# nemotron-lightning-worker plan (#187, t3): the worker gear moved from
-# unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as a candidate) to
-# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.
-_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# issue #244, t1: the worker gear moved from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as a
+# candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
+# also a kept candidate) to nvidia/Qwen3.6-35B-A3B-NVFP4.
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 
 def test_tier_role_map_includes_worker_as_its_own_backend() -> None:

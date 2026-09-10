@@ -57,7 +57,12 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
 
-_LIGHTNING_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# issue #244, t1: the shared worker/associate gear moved from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as a
+# candidate) to nvidia/Qwen3.6-35B-A3B-NVFP4 — associate still shares
+# whichever catalog entry holds role_hint="worker" (the split is tracked as a
+# separate follow-up task, not fixed here).
+_LIGHTNING_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 #: The nine role names that existed BEFORE associate — the no-regression set.
 _PRE_EXISTING_ROLES: tuple[str, ...] = (
