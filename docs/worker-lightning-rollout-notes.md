@@ -1,5 +1,21 @@
 # Lightning worker rollout notes — read this before you see a 404
 
+> **SUPERSEDED — the text-only/non-coding contract narrowing below is no
+> longer current (issue #244, t4, 2026-09-10).** `worker`'s checkpoint moved
+> AGAIN, off Lightning onto `nvidia/Qwen3.6-35B-A3B-NVFP4` (catalog.py t1),
+> which ships its own ViT. Adding a responsibility is contract-compatible,
+> removing one is a break: the #187 narrowing recorded in this note was the
+> temporary state of the Lightning checkpoint swap, not a permanent
+> reduction of the `worker` contract. Current state: `worker` regains
+> `image_understanding`/`video_understanding` in
+> `ROLE_RESPONSIBILITIES['worker']` and `code_authoring` is REMOVED from
+> `ROLE_FORBIDDEN['worker']`; `final_decision`/`security_decision` remain
+> forbidden. Image intake was MEASURED live against negative controls
+> (`docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt`); video intake
+> is checkpoint-declared but UNMEASURED (#108). This note is kept
+> unmodified below as the historical record of the 2026-08-20 Lightning
+> flip (cite-don't-delete) — do not read it as the current contract.
+
 **LIVE as of 2026-08-20 — and the hosting box CHANGED mid-rollout.** This note
 was written ahead of the flip, when the plan still put Lightning on the Thor.
 Deviation **d1** (recorded in `.devague/deliveries/nemotron-lightning-worker.json`,

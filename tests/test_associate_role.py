@@ -122,19 +122,24 @@ def test_associate_responsibilities_are_exactly_the_declared_set() -> None:
     )
 
 
-def test_associate_forbidden_is_workers_plus_repo_action() -> None:
+def test_associate_forbidden_is_workers_plus_repo_action_and_code_authoring() -> None:
+    """Issue #244 (t4) re-widened worker's contract: worker's checkpoint
+    regained its ViT and `code_authoring` is no longer forbidden for worker.
+    associate serves a DIFFERENT, still text-only checkpoint (Nemotron 3.5
+    Lightning) and keeps the conservative pre-widening list — it is no longer
+    literally "worker's forbidden list plus repo_action", since worker's own
+    list shrank; associate's forbidden set is now worker's PLUS both
+    `repo_action` and `code_authoring`."""
     assert roles_mod.ROLE_FORBIDDEN["associate"] == (
         "final_decision",
         "security_decision",
         "code_authoring",
         "repo_action",
     )
-    # The load-bearing difference, stated as a relation and not just two
-    # literals: associate forbids everything worker forbids, PLUS repo_action.
     worker_forbidden = set(roles_mod.ROLE_FORBIDDEN["worker"])
     associate_forbidden = set(roles_mod.ROLE_FORBIDDEN["associate"])
     assert worker_forbidden < associate_forbidden
-    assert associate_forbidden - worker_forbidden == {"repo_action"}
+    assert associate_forbidden - worker_forbidden == {"repo_action", "code_authoring"}
 
 
 def test_associate_never_claims_a_responsibility_it_forbids() -> None:

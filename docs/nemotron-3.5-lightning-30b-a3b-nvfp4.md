@@ -1,5 +1,20 @@
 # NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 — the "worker" role
 
+> **SUPERSEDED as the `worker` role_hint (issue #244, t1/t4, 2026-09-10).**
+> The catalog's `worker` role_hint moved OFF this checkpoint onto
+> `nvidia/Qwen3.6-35B-A3B-NVFP4` (its own ViT, see
+> [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md)); this checkpoint is
+> demoted to a kept `candidate` (cite-don't-delete), still selectable by id.
+> `ROLE_RESPONSIBILITIES['worker']` regained `image_understanding`/
+> `video_understanding` and `code_authoring` is no longer forbidden for
+> `worker` — the TEXT-ONLY/non-coding framing below describes THIS
+> checkpoint's own properties (still accurate — it genuinely carries no
+> `vision_config`) but is no longer the *current* `worker` contract; treat
+> every "the worker role LOSES ..." sentence below as historical, from when
+> this checkpoint held that seat. `associate` still serves this checkpoint
+> and IS still text-only/non-coding — see
+> [`colleague-stack.md`](colleague-stack.md).
+>
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For
 > the catalog-vs-warm distinction — what you *can* load vs. what's loaded
 > *now* — see
@@ -32,12 +47,16 @@ Colleague role). Replaces `unsloth/Qwen3.6-35B-A3B-NVFP4` in this seat
 kept `candidate` (cite-don't-delete), not deleted. See
 [`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) for its own history
 and its 61.2 tok/s incumbent baseline, captured just before the flip.
-**Hosted on:** the **DGX Spark GB10** (`spark-f8a9`) as `worker`, and the
-**Jetson AGX Orin 64GB** as `associate` since 2026-08-26 — see "Live numbers —
-Jetson AGX Orin" below. Not the Thor the plan originally targeted — see deviation d1, above. **Text-only** — the
-worker role LOSES `image_understanding`/`video_understanding` on this swap
-(the outgoing Qwen worker was multimodal; this checkpoint carries no
-`vision_config` at all — see "What it is" below).
+**Hosted on:** the **DGX Spark GB10** (`spark-f8a9`) as measured
+2026-08-20, and the **Jetson AGX Orin 64GB** as `associate` since
+2026-08-26 — see "Live numbers — Jetson AGX Orin" below. Not the Thor the
+plan originally targeted — see deviation d1, above. This checkpoint is
+**text-only** — it carries no `vision_config` at all (see "What it is"
+below), so `associate`, which still serves it, has no
+`image_understanding`/`video_understanding`. The `worker` role_hint itself
+moved off this checkpoint (banner above, issue #244) onto one with its own
+ViT, so `worker` is no longer text-only even where a box's live `.env` has
+not yet been redeployed to follow that catalog default.
 **Status:** `load-tested` on the Spark (2026-08-20); NO-GO on the Thor on
 this fleet's current nightly digest (2026-08-20).
 
@@ -59,10 +78,13 @@ Checkpoint facts (read from the published config files, fetched 2026-08-20):
   deployed Spark boot serves a trimmed **65536** window as a progressive
   start (below) — nothing has yet exercised the full 1M.
 - **NO `vision_config` anywhere in the file** — this checkpoint is
-  **TEXT-ONLY**, unlike the outgoing worker's ViT (image+video) intake. The
-  `worker` role therefore LOSES `image_understanding`/`video_understanding`
-  on this swap; see [`colleague-stack.md`](colleague-stack.md) for the
-  current responsibility-token set.
+  **TEXT-ONLY**, unlike the outgoing (and, since issue #244, the current)
+  Qwen worker's ViT (image+video) intake. `associate`, which still serves
+  this checkpoint, has no `image_understanding`/`video_understanding`; the
+  `worker` role_hint itself moved off this checkpoint (banner above), so it
+  no longer loses those tokens. See
+  [`colleague-stack.md`](colleague-stack.md) for the current
+  responsibility-token set.
 - **`hf_quant_config.json`**: `producer.name = "modelopt"` (version
   `0.44.0rc5`); `quant_algo: "MIXED_PRECISION"` — FP8 on
   attention/lm_head-style projections, `W4A16_NVFP4` (`group_size: 16`) on

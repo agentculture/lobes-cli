@@ -48,7 +48,7 @@ below.
 | `cortex` | `primary` (generate, **hosted on the Jetson AGX Thor since d1**) | `POST /v1/chat/completions` | Reasoning, deciding, planning, tool use, repo actions — the final authority. |
 | `senses` | `multimodal` (generate) | `POST /v1/chat/completions` | Intake/perception (text+image) and speaking back to the user. Does **not** decide or act. |
 | `muse` | `muse` (generate, **opt-in hosting, currently DORMANT/unhosted**) | `POST /v1/chat/completions` | Creative generation, long-form writing, ideation, a divergent second opinion. Proposes; never decides or acts. |
-| `worker` | `worker` (generate, **opt-in hosting, Lightning on the DGX Spark since d1**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, repo inspection, running authorized commands — **and repo actions**, under `cortex`'s direction. TEXT-ONLY, non-coding (see the d1 callout above). Never the final decision or a security call. |
+| `worker` | `worker` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | Fast ground-work execution — bulk transforms, drafting, repo inspection, running authorized commands — **and repo actions**, under `cortex`'s direction. A multimodal coder (issue #244): the checkpoint behind `worker` ships its own ViT, so `image_understanding`/`video_understanding` are back and `code_authoring` is no longer forbidden. Never the final decision or a security call. |
 | `associate` | `associate` (generate, **opt-in hosting**) | `POST /v1/chat/completions` | The same fast ground-work as `worker` — execution, bulk transforms, drafting, repo **inspection**, running authorized commands — but it hands the result BACK instead of enacting it: `repo_action` is **forbidden**. "They do, but not act." |
 | `hand` | `hand` (generate, **default-hosted everywhere**) | `POST /v1/chat/completions` | The fine-tuning base and trained specialist — domain mastery via LoRA adapters. Also the `minor`/`cheap` tier and the pressure-policy **servable floor**. Never decides, acts on the repo, or makes a security call. |
 | `embedder` | `embed` (pooling) | `POST /v1/embeddings` | Dense text embeddings for memory/retrieval. |
@@ -139,8 +139,8 @@ whether a role did its job well; that judgment is Colleague's (see
 | `cortex` | `reasoning`, `deciding`, `planning`, `tool_use`, `code_repo_actions`, `validation`, `final_authority` | *(none — cortex is the final authority)* |
 | `senses` | `intake`, `normalize_input`, `classify_intent`, `prepare_context_packet`, `speak_back` | `final_decision`, `repo_action`, `security_decision` |
 | `muse` | `creative_generation`, `long_form_writing`, `ideation`, `style_variation`, `divergent_second_opinion`, `tool_use` | `final_decision`, `repo_action`, `security_decision` — muse proposes, cortex decides |
-| `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use`, `repo_action` | `final_decision`, `security_decision`, `code_authoring` — worker acts under cortex's direction, never on its own authority, and does not author code |
-| `associate` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use` | `final_decision`, `security_decision`, `code_authoring`, `repo_action` — worker's forbidden list PLUS `repo_action`: associate produces the work, cortex or worker enacts it |
+| `worker` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use`, `repo_action`, `image_understanding`, `video_understanding` | `final_decision`, `security_decision` — worker acts under cortex's direction, never on its own authority |
+| `associate` | `execution`, `ground_work`, `bulk_transform`, `drafting`, `repo_inspection`, `run_authorized_commands`, `tool_use` | `final_decision`, `security_decision`, `code_authoring`, `repo_action` — associate serves a different, still text-only checkpoint: it produces the work, cortex or worker enacts it, and it does not author code |
 | `embedder` | `vectorization`, `memory_retrieval_input` | *(none)* |
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
@@ -154,15 +154,22 @@ Every other non-`cortex` role (`senses`, `muse`, `embedder`, `reranker`,
 list still bars `final_decision` and `security_decision` — worker executes
 ground work (bulk transforms, drafting, repo inspection, running authorized
 commands) UNDER `cortex`'s direction, it never decides on its own authority.
-**Since deviation d1 (2026-08-20), `worker` is TEXT-ONLY and
-non-coding** — the checkpoint behind it
-(`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`, hosted on the DGX
-Spark) carries no vision tower, unlike the multimodal Qwen checkpoint it
-replaced, and `code_authoring` is forbidden outright. See
-[`nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md)
-for the checkpoint facts and
-[`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) for the demoted
-multimodal predecessor.
+**Issue #244 (t4) re-widened `worker` to a multimodal coder.** Issue #187
+had temporarily narrowed the contract to TEXT-ONLY/non-coding when `worker`
+moved to the Nemotron 3.5 Lightning checkpoint (no vision tower); that was
+the temporary state of a checkpoint swap, not the contract. The checkpoint
+now behind `worker` (`nvidia/Qwen3.6-35B-A3B-NVFP4`) ships its own ViT, so
+`worker` regains `image_understanding`/`video_understanding` and
+`code_authoring` is REMOVED from its forbidden list — adding a
+responsibility is contract-compatible, removing one is a break. Image
+intake was MEASURED live against negative controls
+(`docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt`); video intake is
+DECLARED by the checkpoint (`video_token_id`,
+`video_preprocessor_config.json`) but UNMEASURED (#108) — advertising either
+on `lobes capabilities` / `GET /capabilities` is a separate, later task. See
+[`qwen3.6-35b-a3b-nvfp4.md`](qwen3.6-35b-a3b-nvfp4.md) for the checkpoint
+facts and [`nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md)
+for the demoted, still text-only `associate` checkpoint.
 
 **`stt`'s `realtime_vad_session` responsibility is additive and
 honesty-gated (issue #149).** It names the `/v1/realtime` WebSocket
