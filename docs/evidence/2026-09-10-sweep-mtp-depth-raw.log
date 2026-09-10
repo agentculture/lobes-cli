@@ -1,0 +1,74 @@
+=== ARM k=1 ===
+mem before: 102 GiB avail
+(EngineCore pid=268) INFO 09-10 17:45:38 [kv_cache_utils.py:1916] GPU KV cache size: 1,569,667 tokens, Maximum concurrency for 65,536 tokens per request: 23.95x
+{"label": "known-answer", "ttft_ms": 2734.6, "deltas": 1, "completion_tokens": 2, "prompt_tokens": 24, "decode_tok_s": 699050.67, "e2e_tok_s": 0.73, "total_s": 2.73, "sample": "Paris"}
+{"label": "code-256 run1", "ttft_ms": 698.4, "deltas": 55, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 91.72, "e2e_tok_s": 58.11, "total_s": 1.88, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run2", "ttft_ms": 172.4, "deltas": 55, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 102.08, "e2e_tok_s": 88.59, "total_s": 1.23, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run3", "ttft_ms": 177.0, "deltas": 55, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 101.76, "e2e_tok_s": 88.02, "total_s": 1.24, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "deep-prompt", "ttft_ms": 3161.6, "deltas": 10, "completion_tokens": 19, "prompt_tokens": 9020, "decode_tok_s": 108.85, "e2e_tok_s": 5.71, "total_s": 3.33, "sample": "The text consists of the repeated phrase \"the quick brown fox jumps over the lazy dog.\""}
+--- acceptance (engine-wide) ---
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 176.0
+# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 172.0
+# HELP vllm:spec_decode_num_accepted_tokens_per_pos_total Accepted tokens per draft position.
+# TYPE vllm:spec_decode_num_accepted_tokens_per_pos_total counter
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="0"} 172.0
+--- SpecDecoding log ---
+(APIServer pid=1) INFO 09-10 17:48:11 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 1.98, Accepted throughput: 2.83 tokens/s, Drafted throughput: 2.90 tokens/s, Accepted: 167 tokens, Drafted: 171 tokens, Per-position acceptance rate: 0.977, Avg Draft acceptance rate: 97.7%
+mem after: 47 GiB avail
+=== ARM k=5 ===
+mem before: 102 GiB avail
+(EngineCore pid=267) INFO 09-10 17:54:28 [kv_cache_utils.py:1916] GPU KV cache size: 1,201,073 tokens, Maximum concurrency for 65,536 tokens per request: 18.33x
+{"label": "known-answer", "ttft_ms": 2302.2, "deltas": 1, "completion_tokens": 2, "prompt_tokens": 24, "decode_tok_s": 524288.0, "e2e_tok_s": 0.87, "total_s": 2.3, "sample": "Paris"}
+{"label": "code-256 run1", "ttft_ms": 125.5, "deltas": 20, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 117.47, "e2e_tok_s": 104.32, "total_s": 1.04, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run2", "ttft_ms": 107.4, "deltas": 20, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 137.74, "e2e_tok_s": 122.28, "total_s": 0.89, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run3", "ttft_ms": 109.5, "deltas": 20, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 136.7, "e2e_tok_s": 121.18, "total_s": 0.9, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "deep-prompt", "ttft_ms": 4290.7, "deltas": 5, "completion_tokens": 19, "prompt_tokens": 9020, "decode_tok_s": 113.7, "e2e_tok_s": 4.27, "total_s": 4.45, "sample": "The text consists of the repeated phrase \"the quick brown fox jumps over the lazy dog.\""}
+--- acceptance (engine-wide) ---
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 315.0
+# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 297.0
+# HELP vllm:spec_decode_num_accepted_tokens_per_pos_total Accepted tokens per draft position.
+# TYPE vllm:spec_decode_num_accepted_tokens_per_pos_total counter
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="0"} 62.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="1"} 62.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="2"} 62.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="3"} 58.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="4"} 53.0
+--- SpecDecoding log ---
+(APIServer pid=1) INFO 09-10 17:56:53 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.81, Accepted throughput: 3.53 tokens/s, Drafted throughput: 3.67 tokens/s, Accepted: 178 tokens, Drafted: 185 tokens, Per-position acceptance rate: 1.000, 1.000, 1.000, 0.946, 0.865, Avg Draft acceptance rate: 96.2%
+mem after: 46 GiB avail
+=== ARM k=7 ===
+mem before: 102 GiB avail
+(EngineCore pid=268) INFO 09-10 18:03:15 [kv_cache_utils.py:1916] GPU KV cache size: 1,079,619 tokens, Maximum concurrency for 65,536 tokens per request: 16.47x
+{"label": "known-answer", "ttft_ms": 2292.6, "deltas": 1, "completion_tokens": 2, "prompt_tokens": 24, "decode_tok_s": 322638.77, "e2e_tok_s": 0.87, "total_s": 2.29, "sample": "Paris"}
+{"label": "code-256 run1", "ttft_ms": 126.7, "deltas": 18, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 135.07, "e2e_tok_s": 117.67, "total_s": 0.93, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run2", "ttft_ms": 109.1, "deltas": 18, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 155.84, "e2e_tok_s": 135.9, "total_s": 0.8, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "code-256 run3", "ttft_ms": 107.9, "deltas": 18, "completion_tokens": 109, "prompt_tokens": 25, "decode_tok_s": 155.3, "e2e_tok_s": 135.68, "total_s": 0.8, "sample": "```python def merge_sorted_lists(list1, list2):     merged = []     i = j = 0     while i < len(list1) and j < len(list2):         if list1[i] <= list2[j]:     "}
+{"label": "deep-prompt", "ttft_ms": 3681.9, "deltas": 5, "completion_tokens": 22, "prompt_tokens": 9020, "decode_tok_s": 133.44, "e2e_tok_s": 5.73, "total_s": 3.84, "sample": "The text consists of the phrase \"the quick brown fox jumps over the lazy dog\" repeated numerous times."}
+--- acceptance (engine-wide) ---
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 392.0
+# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4"} 310.0
+# HELP vllm:spec_decode_num_accepted_tokens_per_pos_total Accepted tokens per draft position.
+# TYPE vllm:spec_decode_num_accepted_tokens_per_pos_total counter
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="0"} 56.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="1"} 53.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="2"} 53.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="3"} 49.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="4"} 45.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="5"} 29.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="nvidia/Qwen3.6-35B-A3B-NVFP4",position="6"} 25.0
+--- SpecDecoding log ---
+(APIServer pid=1) INFO 09-10 18:05:39 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 6.11, Accepted throughput: 0.94 tokens/s, Drafted throughput: 1.28 tokens/s, Accepted: 46 tokens, Drafted: 63 tokens, Per-position acceptance rate: 1.000, 1.000, 1.000, 0.889, 0.667, 0.333, 0.222, Avg Draft acceptance rate: 73.0%
+mem after: 46 GiB avail
+SWEEP DONE
