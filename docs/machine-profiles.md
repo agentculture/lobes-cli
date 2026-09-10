@@ -102,7 +102,7 @@ The seven roles and seven knobs map to env vars via `lobes/profiles/render.py`:
 | `cortex` | `PRIMARY_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | `KV_CACHE_DTYPE` | `ATTENTION_BACKEND` | `ENFORCE_EAGER` | `MAX_NUM_SEQS` |
 | `senses` | `MULTIMODAL_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | `KV_CACHE_DTYPE` | `ATTENTION_BACKEND` | (not used) | `MAX_NUM_SEQS` |
 | `muse` | `MUSE_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
-| `worker` | `WORKER_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
+| `worker` | `WORKER_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | `QUANTIZATION` | `KV_CACHE_DTYPE` | `ATTENTION_BACKEND` | (not used) | `MAX_NUM_SEQS` |
 | `embedder` | `EMBED_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | (not used) | (not used) | `ATTENTION_BACKEND` | (not used) | (not used) |
 | `reranker` | `RERANK_` | `FEASIBLE` | `MODEL` | `GPU_MEM_UTIL` | `MAX_MODEL_LEN` | (not used) | (not used) | `ATTENTION_BACKEND` | `ENFORCE_EAGER` | (not used) |
 
@@ -374,6 +374,34 @@ latency (higher tail latency per request).
   workload-tuned, not machine-tuned, so thor and spark match).
 - `thor` senses/embedder/reranker: omitted (same as spark).
 - `base` cortex/senses/embedder/reranker: omitted.
+
+#### The `worker` lane's recipe knobs (worker-recipe-knobs, t3)
+
+Seven further knobs exist **only** for `worker` (plus `tool_call_parser`, which
+`associate` also reads) — the vLLM serve flags that lane could not express
+before, so needing one meant hand-editing a deployment's `docker-compose.yml`:
+
+| knob | type | renders | flag |
+|---|---|---|---|
+| `moe_backend` | str | `WORKER_MOE_BACKEND` | `--moe-backend=<v>` |
+| `max_num_batched_tokens` | int | `WORKER_MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens=<v>` |
+| `load_format` | str | `WORKER_LOAD_FORMAT` | `--load-format=<v>` |
+| `chunked_prefill` | bool | `WORKER_CHUNKED_PREFILL` | `--enable-chunked-prefill` / `--no-enable-chunked-prefill` |
+| `async_scheduling` | bool | `WORKER_ASYNC_SCHEDULING` | `--async-scheduling` / `--no-async-scheduling` |
+| `prefix_caching` | bool | `WORKER_PREFIX_CACHING` | `--enable-prefix-caching` / `--no-enable-prefix-caching` |
+| `tool_call_parser` | str | `WORKER_TOOL_CALL_PARSER` | `--tool-call-parser=<v>` (default `qwen3_coder`) |
+
+Like `enforce_eager`, the three booleans render the **full flag text** into
+`.env`, not `true`/`false`.
+
+**Every one is unset in every built-in profile**, and that is the contract:
+with none of them declared the `vllm-worker` argv is byte-identical to what it
+rendered before they existed. They are also **gated**
+(`schema.KNOB_LANE_ROLES`): declaring one for a role whose compose lane has no
+slot for it is a LOAD ERROR naming why — the same rule
+`speculative_config` has followed since it landed, so a knob can never render
+an `.env` key nothing reads. None of the values has been measured on a worker
+box (#108); the lane can now *express* them, which is not a recommendation.
 
 ### `[host_env]` — card-level keys that belong to no role
 

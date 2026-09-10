@@ -9,12 +9,18 @@ This directory holds the **byte-for-byte** golden files
   `lobes/profiles/loader.py`). A future built-in profile picks up its own
   golden automatically (the test parametrizes over `builtin_names()`), but the
   golden file itself must still be generated and committed.
-* `template-defaults.env` — the `${VAR:-default}` substitution surface of
-  `lobes/templates/fleet/docker-compose.yml` (every var with an explicit
-  default, extracted by `regen.extract_template_defaults`). This is the "GB10
-  mostly runs on template defaults" surface — it catches a template edit that
-  silently changes what an UNRESOLVED profile knob renders to, which a
-  profile-only golden can't see.
+* `template-defaults.env` — the substitution surface of
+  `lobes/templates/fleet/docker-compose.yml` (extracted by
+  `regen.extract_template_defaults`): every var with an explicit `${VAR:-default}`,
+  written `VAR=default`, plus every CONDITIONAL `${VAR:+alternate}` slot,
+  written `VAR:+alternate`. This is the "GB10 mostly runs on template
+  defaults" surface — it catches a template edit that silently changes what an
+  UNRESOLVED profile knob renders to, which a profile-only golden can't see —
+  and, since the `:+` half landed, an edit to the flag a conditional knob
+  composes (`WORKER_MOE_BACKEND` renders nothing when unset, so nothing else
+  in this directory would move if its flag spelling changed). The dash-only
+  `${VAR-}` slots (`*_SPECULATIVE_CONFIG`, the worker boolean toggles) are
+  deliberately NOT here: they have no default to drift.
 
 Regenerate all three with:
 

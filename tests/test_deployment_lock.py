@@ -93,10 +93,19 @@ def test_no_secret_value_appears_anywhere_in_the_rendered_toml(card: str) -> Non
 
 
 def test_the_allowlist_itself_names_no_secret_shaped_key() -> None:
-    """Belt and braces: the derived key set carries no credential-shaped name."""
+    """Belt and braces: the derived key set carries no credential-shaped name.
+
+    ``TOKEN`` is matched as a whole trailing WORD (``HF_TOKEN``,
+    ``*_AUTH_TOKEN``), not as a bare substring: a substring test also flags
+    ``WORKER_MAX_NUM_BATCHED_TOKENS`` — a scheduler budget, and about as far
+    from a credential as a knob gets. Narrowing the pattern keeps every real
+    credential shape caught (a bearer key's name ENDS in the noun) without the
+    suite failing on an honest knob that happens to count tokens.
+    """
     for key in lock_keys():
         assert "API_KEY" not in key
-        assert "TOKEN" not in key
+        assert not key.endswith("_TOKEN"), key
+        assert "TOKEN_" not in key, key
         assert "PEER" not in key
         assert "SECRET" not in key
         assert "PASSWORD" not in key

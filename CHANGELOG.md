@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.0] - 2026-09-10
+
+### Added
+
+- **The `worker` lane can express its recipe.** `vllm-worker` emitted five
+  tunable flags and hardcoded `--tool-call-parser=qwen3_coder`; ten knobs now
+  reach it — `WORKER_KV_CACHE_DTYPE`, `WORKER_ATTENTION_BACKEND` (as the
+  `--attention-config` JSON, the same surface the embed/rerank/hand lanes use),
+  `WORKER_MAX_NUM_SEQS`, `WORKER_MOE_BACKEND`, `WORKER_MAX_NUM_BATCHED_TOKENS`,
+  `WORKER_LOAD_FORMAT`, `WORKER_CHUNKED_PREFILL`, `WORKER_ASYNC_SCHEDULING`,
+  `WORKER_PREFIX_CACHING` and `WORKER_TOOL_CALL_PARSER`. The first three were
+  ALREADY rendered by the profile layer and read by nothing on the lane; the
+  rest could not be expressed at all, so an arm that needed one meant
+  hand-editing a deployment's compose file — the drift `deployment.lock.toml`
+  exists to catch. Every one is default-absent: with none set, the rendered
+  argv is byte-identical to the pre-change lane (proved against real
+  `docker compose config`, `tests/test_worker_recipe_knobs.py`), the lane still
+  passes no `--language-model-only`, and every profile/shape golden is
+  unmoved. None of the values is measured on a worker box (#108) — the lane
+  can now express them, which is not a recommendation to set one.
+
+### Changed
+
+- `lobes/profiles/schema.py` — `KNOB_LANE_ROLES` generalises the
+  `SPECULATIVE_CONFIG_ROLES` rule: a knob may only be declared for a role whose
+  compose lane actually expands its slot, so a knob can never render an `.env`
+  key nothing reads. `moe_backend` / `max_num_batched_tokens` / `load_format` /
+  `chunked_prefill` / `async_scheduling` / `prefix_caching` are worker-only;
+  `tool_call_parser` is worker + associate.
+- `lobes/profiles/render.py` — `_BOOL_KNOB_TOKENS` generalises
+  `_ENFORCE_EAGER_TOKEN`: a boolean knob renders the FULL flag text
+  (`--enable-prefix-caching` / `--no-enable-prefix-caching`), which is what the
+  dash-only compose slot needs. `enforce_eager` renders exactly as before.
+- `tests/goldens/template-defaults.env` — the golden now also captures the
+  CONDITIONAL `${VAR:+alternate}` surface (written `VAR:+alternate`), so an
+  edit to the flag a default-absent knob composes moves a golden byte instead
+  of nothing.
+
+### Fixed
+
+- `lobes/templates/fleet/env.example` and the `vllm-worker` service comments
+  claimed `WORKER_ATTENTION_BACKEND` was "deliberately NOT wired" and that
+  pinning a MoE backend or another tool parser required a by-hand template
+  edit. All three statements now match the code.
+- `docs/machine-profiles.md` — the knob table said `worker` used neither
+  `KV_CACHE_DTYPE` nor `MAX_NUM_SEQS`; both render today.
+
 ## [0.73.10] - 2026-09-10
 
 ### Added

@@ -1404,10 +1404,11 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       # NOTE: worker rides the Qwen GENERATE lane, so — like vllm-primary and
       # UNLIKE the Gemma gears — it wires NO VLLM_ATTENTION_BACKEND: this nightly
-      # honours AttentionConfig, not that env, and a Qwen generate model needs no
-      # attention override on Thor (cortex's only sm_110 divergence is
-      # kv_cache_dtype). WORKER_ATTENTION_BACKEND is left unwired on purpose (t7
-      # confirms on sm_110); see env.example.
+      # honours AttentionConfig, not that env. The lane's attention backend is
+      # therefore a --attention-config FLAG on the command below
+      # (WORKER_ATTENTION_BACKEND, worker-recipe-knobs t3), the same surface
+      # vllm-embed/vllm-rerank/vllm-hand use — unset renders no flag at all, so
+      # vLLM keeps auto-selecting exactly as it did before the knob existed.
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
     volumes:
@@ -1453,7 +1454,9 @@ services:
     #     MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55
     #     was measured, not computed. Do NOT treat 0.30 as validated.
     #
-    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced: measured
+    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced by
+    #     DEFAULT (WORKER_MOE_BACKEND is unset, so its conditional slot renders no
+    #     flag and vLLM auto-selects): measured
     #     live on Thor sm_110 (2026-07-31,
     #     docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value
     #     was REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not
@@ -1463,8 +1466,8 @@ services:
     #     Only AUTO-SELECT boots: vLLM picks TRITON for the unquantized/fp8 MoE
     #     and a modular NVFP4 kernel for the main experts, and auto-picks the
     #     fastest SUPPORTED kernel on any card (incl. flashinfer_b12x on a
-    #     Spark). To pin a backend, add a `--moe-backend=<x>` line here by hand
-    #     (see env.example WORKER_MOE_BACKEND).
+    #     Spark). To pin a MEASURED backend, set WORKER_MOE_BACKEND=<x> in .env
+    #     (or declare `moe_backend` on a profile/shape) — no template edit.
     #
     #   WORKER_SPECULATIVE_CONFIG  DEFAULT-OFF (empty): the default Lightning
     #     worker's MTP/DSpark benefit is declared by its card but UNMEASURED on
@@ -1484,13 +1487,38 @@ services:
     #     on the Spark 2026-08-20, structured tool_calls PASS through the
     #     nemotron_v3 + qwen3_coder pair, see
     #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
-    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH
-    #     the default Nemotron worker and the demoted
-    #     unsloth/Qwen3.6-35B-A3B-NVFP4 candidate use it; only the reasoning
-    #     parser differs between the two. If you serve the demoted Qwen
-    #     candidate, override WORKER_REASONING_PARSER=qwen3 to match it —
-    #     nemotron_v3 is the wrong grammar for that checkpoint's thinking
-    #     traces (and vice versa).
+    #     --tool-call-parser DEFAULT stays qwen3_coder because BOTH the default
+    #     Nemotron worker and the demoted unsloth/Qwen3.6-35B-A3B-NVFP4
+    #     candidate use it; only the reasoning parser differs between the two.
+    #     It is no longer HARDCODED, though (worker-recipe-knobs t3): a
+    #     checkpoint that emits a different call shape — qwen3_xml, say — is a
+    #     WORKER_TOOL_CALL_PARSER line, not a template edit. If you serve the
+    #     demoted Qwen candidate, override WORKER_REASONING_PARSER=qwen3 to
+    #     match it — nemotron_v3 is the wrong grammar for that checkpoint's
+    #     thinking traces (and vice versa).
+    #
+    #   THE RECIPE KNOBS (worker-recipe-knobs t3) — every remaining flag below
+    #     is DEFAULT-ABSENT, and that is the whole contract: with none of them
+    #     set the argv is byte-identical to the pre-t3 lane. Two idioms:
+    #
+    #       VAR:+--flag=VAR  (a compose conditional slot) -- value-carrying knobs
+    #         (WORKER_KV_CACHE_DTYPE, WORKER_ATTENTION_BACKEND — rendered as
+    #         the --attention-config JSON, WORKER_MOE_BACKEND,
+    #         WORKER_LOAD_FORMAT, WORKER_MAX_NUM_SEQS,
+    #         WORKER_MAX_NUM_BATCHED_TOKENS). Unset OR empty renders NOTHING —
+    #         not an empty argv element, which `vllm serve` reads as a second
+    #         positional and dies on (see tests/test_senses_speculative_config.py).
+    #
+    #       VAR-  (the dash-only slot) -- boolean toggles whose value is the FULL flag text
+    #         (WORKER_CHUNKED_PREFILL, WORKER_ASYNC_SCHEDULING,
+    #         WORKER_PREFIX_CACHING) — the same idiom RERANK_ENFORCE_EAGER and
+    #         ASSOCIATE_PREFIX_CACHING already use, so an operator picks the
+    #         polarity (`--enable-prefix-caching` / `--no-enable-prefix-caching`)
+    #         and a profile's bool knob renders the token for them
+    #         (lobes/profiles/render.py's _BOOL_KNOB_TOKENS).
+    #
+    #     None of these values is MEASURED on a worker box yet (#108) — the
+    #     lane can now EXPRESS them, which is not the same as recommending one.
     #
     #   SECURITY: --trust-remote-code runs the model repo's code in-container
     #     (same posture as the 27B primary). The default Lightning worker is
@@ -1506,9 +1534,18 @@ services:
       --quantization=${WORKER_QUANTIZATION:-modelopt}
       --max-model-len=${WORKER_MAX_MODEL_LEN:-65536}
       --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
+      ${WORKER_KV_CACHE_DTYPE:+--kv-cache-dtype=${WORKER_KV_CACHE_DTYPE}}
+      ${WORKER_ATTENTION_BACKEND:+'--attention-config={"backend": "${WORKER_ATTENTION_BACKEND}"}'}
+      ${WORKER_MOE_BACKEND:+--moe-backend=${WORKER_MOE_BACKEND}}
+      ${WORKER_LOAD_FORMAT:+--load-format=${WORKER_LOAD_FORMAT}}
+      ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
+      ${WORKER_MAX_NUM_BATCHED_TOKENS:+--max-num-batched-tokens=${WORKER_MAX_NUM_BATCHED_TOKENS}}
+      ${WORKER_CHUNKED_PREFILL-}
+      ${WORKER_ASYNC_SCHEDULING-}
+      ${WORKER_PREFIX_CACHING-}
       ${WORKER_SPECULATIVE_CONFIG-}
       --enable-auto-tool-choice
-      --tool-call-parser=qwen3_coder
+      --tool-call-parser=${WORKER_TOOL_CALL_PARSER:-qwen3_coder}
       --reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}
       --trust-remote-code
     healthcheck:
@@ -2088,9 +2125,13 @@ services:
       - MUSE_REASONING_PARSER=${MUSE_REASONING_PARSER:-}
       - MUSE_TOOL_CALL_PARSER=${MUSE_TOOL_CALL_PARSER:-}
       - MUSE_SPECULATIVE_CONFIG=${MUSE_SPECULATIVE_CONFIG-}
-      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER: no such lane knobs
-      # exist — vllm-worker hardcodes --tool-call-parser=qwen3_coder (no
-      # --kv-cache-dtype override). Passed through anyway.
+      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER now reach the LANE
+      # too (worker-recipe-knobs t3): vllm-worker expands both above —
+      # --kv-cache-dtype only when set, --tool-call-parser with the shipped
+      # qwen3_coder default. They still ALSO arrive here, because the gateway
+      # reads them for the capabilities `tool_parser` field and the
+      # replica-pool fingerprint; a knob that fed only the passthrough would
+      # let `lobes capabilities` advertise a parser the lane is not running.
       - WORKER_QUANTIZATION=${WORKER_QUANTIZATION:-}
       - WORKER_KV_CACHE_DTYPE=${WORKER_KV_CACHE_DTYPE:-}
       - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
@@ -2103,8 +2144,8 @@ services:
       # (_config.py's FINGERPRINT_SUFFIXES), so a knob that fed only the
       # passthrough would let `lobes capabilities` ADVERTISE a parser the lane
       # is not actually running. That is worse than a dead knob -- it is a
-      # lying one. (WORKER_TOOL_CALL_PARSER still has the passthrough-only
-      # shape; pre-existing, not touched here.)
+      # lying one. (WORKER_TOOL_CALL_PARSER reaches both the same way since
+      # worker-recipe-knobs t3; before that it was passthrough-only.)
       - ASSOCIATE_QUANTIZATION=${ASSOCIATE_QUANTIZATION:-}
       - ASSOCIATE_KV_CACHE_DTYPE=${ASSOCIATE_KV_CACHE_DTYPE:-}
       - ASSOCIATE_REASONING_PARSER=${ASSOCIATE_REASONING_PARSER:-}
