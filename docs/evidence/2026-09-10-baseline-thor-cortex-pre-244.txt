@@ -1,0 +1,161 @@
+# Pre-flip baseline — Jetson AGX Thor `cortex` lane, captured BEFORE the #244 worker flip
+#
+# Plan task t9 (2026-09-10-thor-worker-arm-qwen3-6-35b-a3b-recipes), covering
+# c19/h14 (before-state, captured before it becomes unrecoverable) and c8/h6
+# (61.2 tok/s is not a like-for-like threshold).
+#
+# WHY THIS FILE EXISTS: docs/model-switch-playbook.md records that the
+# incumbent's numbers are unrecoverable after a swap. This is the incumbent,
+# measured same-day with the same harness the post-flip run will use.
+
+## 1. Conditions (docs/measuring-lane-performance.md rule 3)
+
+Box:            Jetson AGX Thor, sm_110, 122.8 GiB unified
+Power mode:     MAXN (`nvpmodel -q`)
+L4T:            R38 (release), REVISION 2.2, GCID 42205042, 2025-09-25
+Kernel:         6.8.12-tegra
+Memory at rest: total 122 / used 89 / free 1-3 / buff-cache 33 / available 33 (GiB, `free -g`)
+GPU devfreq:    /sys/class/devfreq/17000000.gpu/cur_freq read 0 — NOT a usable
+                clock reading on this board; recorded as unavailable rather than
+                as "0 Hz". Clocks were therefore NOT pinned or verified under
+                load. See LIMITATIONS below.
+Deployment:     ~/.lobes, LOBES_PROFILE=thor, shape spark-lobe (deviation d1)
+                MODEL_GEAR_VERSION=0.67.0.dev457 (deployed gateway wheel)
+                installed CLI on the box: lobes 0.61.2 (older than the deployment)
+Gateway:        http://127.0.0.1:8000  (NOT :8001 — that is the Spark)
+
+Co-resident at measurement time (`docker ps`):
+  model-gear-gateway        lobes-gateway:worker      Up 2 days (healthy)
+  model-gear-vllm-primary   8bd082c274fa              Up 2 days (healthy)
+  model-gear-vllm-embed     8bd082c274fa              Up 2 days (healthy)
+  model-gear-vllm-rerank    8bd082c274fa              Up 2 days (healthy)
+  prod-postgres-1 / prod-minio-1 / prod-api-1 / prod-worker-1 /
+  prod-scheduler-1 / prod-notifier-1 / prod-backup-1   (Culture production stack)
+
+The box was NOT quiesced: the Culture production stack was running throughout.
+This is the honest deployed condition, and the post-flip run must be taken
+under the same one for the comparison to hold.
+
+## 2. What is actually served (from `docker inspect`, never from .env)
+
+image: vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+
+argv:
+  vllm serve unsloth/Qwen3.8-27B-NVFP4
+  --served-model-name=unsloth/Qwen3.8-27B-NVFP4
+  --host=0.0.0.0 --port=8000
+  --quantization=compressed-tensors
+  --kv-cache-dtype=auto
+  --max-model-len=262144
+  --gpu-memory-utilization=0.58
+  --max-num-seqs=2
+  --reasoning-parser=qwen3
+  --default-chat-template-kwargs {"preserve_thinking": true}
+  --enable-auto-tool-choice
+  --tool-call-parser=qwen3_coder_thinking
+  --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
+  --enable-prefix-caching
+  --speculative-config={"method": "mtp", "num_speculative_tokens": 2}
+  --trust-remote-code
+  --hf-overrides={"text_config": {"rope_parameters": {"rope_type": "yarn",
+      "factor": 4.0, "original_max_position_embeddings": 262144,
+      "mrope_interleaved": true, "mrope_section": [11, 11, 10],
+      "partial_rotary_factor": 0.25, "rope_theta": 10000000}}}
+
+env: VLLM_GDN_DECODE_KERNEL=triton  (~/.lobes/.env:661)
+
+### FINDING — the committed docs are STALE about this lane
+
+CLAUDE.md and docs/evidence/2026-08-20-accept-cortex-local-thor.txt describe the
+Thor cortex as running with **MTP OFF** at the **full 1M YaRN window**, measured
+at **12.1 tok/s**. Neither is what the box runs today:
+
+  * MTP is **ON** (`--speculative-config method=mtp num_speculative_tokens=2`),
+    reachable because VLLM_GDN_DECODE_KERNEL=triton routes around the missing
+    sm_110 `fused_gdn_decode_post_conv_mtp` kernel image (the 2026-08-25
+    thor-cortex-speculation spike is what unlocked this).
+  * The served window is **262144**, not 1048576. The YaRN hf_overrides block is
+    still in force (factor 4.0) but max-model-len is the native ceiling.
+
+So the 12.1 tok/s figure in the docs is a **cuda-path, MTP-off** number and is
+NOT this lane's current rate. That is exactly why the playbook demands a
+same-day re-baseline instead of a citation.
+
+## 3. Measurements
+
+Harness: `uv run lobes benchmark` from the lobes-cli checkout at 94061c7
+(the same verb and version the post-flip run will use), through the gateway.
+
+### 3a. Single-stream decode + prefill, balanced shape
+
+    lobes benchmark --port 8000 --model unsloth/Qwen3.8-27B-NVFP4 \
+        --output-len 256 --runs 2 --json
+
+    {"model": "unsloth/Qwen3.8-27B-NVFP4",
+     "endpoint": "http://localhost:8000",
+     "max_model_len": null,
+     "purpose": "balanced", "input_len": 1000, "output_len": 256,
+     "decode_rates": [18.7, 17.2],
+     "prefill": {"prompt_tokens": 887, "seconds": 1.13},
+     "host": {"image": "?", "gpu_memory": "0 MiB"}}
+
+  decode, single-stream : 18.7 and 17.2 tok/s  (2 runs, batch 1)
+  prefill               : 887 server-reported prompt tokens in 1.13 s (~785 tok/s)
+  max_model_len         : null — the SAME harness gap README-dspark-arms.md
+                          records. NOT back-filled here. The true window is
+                          262144, sourced from docker inspect above, and is
+                          recorded in this prose rather than edited into the JSON.
+  host.gpu_memory       : "0 MiB" — nvidia-smi reports no devices on Jetson;
+                          this field is meaningless on this board, not a reading.
+
+### 3b. TTFT (streaming, first content delta, thinking disabled)
+
+  short prompt ("Say hello.")           : 398 / 6726 / 312 ms   -> median 398 ms
+  ~10k-token prompt (summarise request) : 6437 / 3899 / 4372 ms -> median 4372 ms
+
+  The 6726 ms short-prompt outlier is reported, not discarded: the box was
+  serving other traffic and the production stack was live.
+
+### 3c. Decode-heavy shape — NOT MEASURED (timed out)
+
+    lobes benchmark --port 8000 --model unsloth/Qwen3.8-27B-NVFP4 \
+        --purpose decode-heavy --runs 2 --json
+
+    {"code": 2, "message": "benchmark failed: timed out",
+     "remediation": "check 'lobes status' / 'docker logs model-gear-vllm'"}
+
+Exceeded a 900 s wall clock. This is recorded as a FAILED measurement, not
+omitted and not retried at a smaller shape to manufacture a number. At ~18 tok/s
+single-stream the decode-heavy output length does not complete two runs inside
+that budget — which is itself the honest characterisation of this lane.
+
+### 3d. Concurrent aggregate — NOT MEASURED
+
+Deliberately not run: the aggregate leg belongs to the post-flip comparison and
+would have loaded a box that is simultaneously serving the Culture production
+stack. The single-stream figures above are the ones the acceptance rests on.
+
+## 4. LIMITATIONS — read before citing any number here
+
+1. CLOCKS WERE NOT PINNED. docs/measuring-lane-performance.md rule 2 says pin the
+   clock or measure it under load; the devfreq node on this board read 0 and no
+   pin was applied. Every figure here is therefore an as-deployed figure under
+   the governor, not a clock-controlled one. The post-flip run must be taken the
+   same way, or both must be re-taken with clocks pinned.
+2. THE BOX WAS NOT QUIET. The Culture production stack ran throughout. Comparable
+   only against an equally-loaded post-flip run.
+3. NO DEPTH CURVE. Only one prompt depth (887 server-reported tokens) and two
+   TTFT depths were measured. Rule 1 of the same doc warns that a single shallow
+   point overstates the deep-context rate; this file does not claim a curve.
+4. n=2 for decode, n=3 for TTFT. Small samples, with the outlier reported.
+
+## 5. What this baseline establishes for #244
+
+  * The incumbent Thor cortex lane serves at 18.7 / 17.2 tok/s single-stream
+    with MTP n=2 on the triton GDN path at a 262144 window — NOT the 12.1 tok/s
+    the committed docs record.
+  * Any post-flip worker figure must be compared against THIS, taken today with
+    this harness, and not against either 12.1 (stale, different config) or
+    61.2 (a different checkpoint on a different engine — see c8/h6).
+  * The plan's 100 tok/s target is ~5.4x this lane's measured rate, and its
+    61.2 tok/s floor is ~3.3x it.
