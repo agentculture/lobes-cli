@@ -1103,7 +1103,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         tool_parser="qwen3_coder",
         quantization="modelopt",
         status="configured",  # declared 2026-09-10 (issue #244); no live boot yet
-        doc="qwen3.6-35b-a3b-nvfp4.md",
+        doc="nvidia-qwen3.6-35b-a3b-nvfp4.md",
         moe_backend="",
         # Self-hosted draft (no external "model"/"draft_model_id" key), same
         # generic "mtp" method + n=2 declared default as the other self-hosted

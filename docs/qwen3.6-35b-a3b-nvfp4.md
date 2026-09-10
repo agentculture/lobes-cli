@@ -228,7 +228,16 @@ box).
 
 ---
 
-## `nvidia/Qwen3.6-35B-A3B-NVFP4` — the #244 Thor `worker` target (NOT YET BOOTED ANYWHERE)
+## `nvidia/Qwen3.6-35B-A3B-NVFP4` — MOVED to its own doc
+
+> **This checkpoint is now VALIDATED and deployed as the Thor's `worker`.** Its
+> full recipe, docker/compose setup, measured budgets, speculation sweep and
+> operational traps live in
+> **[`nvidia-qwen3.6-35b-a3b-nvfp4.md`](nvidia-qwen3.6-35b-a3b-nvfp4.md)**.
+> The section below is the pre-boot summary written before it was measured;
+> the numbers that matter are in the dedicated doc.
+
+### (pre-boot summary, superseded)
 
 > **Status: DECLARED, never booted.** This is the checkpoint issue #244 puts
 > on Thor's `worker` seat. It is NVIDIA's own ModelOpt export and is a

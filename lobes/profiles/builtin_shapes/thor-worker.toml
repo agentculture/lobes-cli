@@ -96,16 +96,22 @@ model = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 #         MTP n=5        136.7   <- highest acceptance of the fast arms, 96.2%
 #         MTP n=7        155.3   <- fastest, but positions 5/6 accepted 33%/22%
 #
-# !!! 65536 IS THE MEASURED WINDOW, NOT A CEILING CLAIM !!!
-# The checkpoint's native window is 262144 and the previous occupant of this
-# shape served that. 128K and 262144 are UNMEASURED for this checkpoint (#108).
-# 65536 is committed because it is what a live boot actually proved. Raising it
-# is a re-measurement, not an edit.
+# !!! THE WINDOW IS 262144 — RAISED FROM 65536 BY A CONSUMER FAILURE !!!
+# The sweep above was measured at 65536, but the DEPLOYED lane serves the full
+# native 262144, because a real consumer broke on the smaller window: Qwen Code
+# requests 64000 output tokens by default and returned
+#   HTTP 400: maximum context length is 65536 ... you requested 64000 output
+# 262144 booted cleanly at the same util (KV pool 1,199,883 tokens = 4.58x
+# ceiling) and is what the box runs — see
+# docs/evidence/2026-09-10-accept-thor-worker-flip.txt. The 65536 sweep numbers
+# are still the honest speculation comparison; they are just not the window.
+# A window shrink breaks consumers that size max_tokens against the old window,
+# which no model-id audit catches.
 #
 # util 0.45 was the FIRST hypothesis and it booted, so it is "sufficient", not
 # "optimal" — no lower or higher budget was explored.
 gpu_mem_util = 0.45
-max_model_len = 65536
+max_model_len = 262144
 # ModelOpt MIXED_PRECISION resolves to `modelopt_mixed` in the engine; pass
 # `modelopt` (the outgoing unsloth export needed `compressed-tensors` — a
 # different quant family, and passing the wrong one fails on a method mismatch).

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.4] - 2026-09-10
+
+### Added
+
+- **`docs/nvidia-qwen3.6-35b-a3b-nvfp4.md`** — the per-model recipe doc for the Thor's deployed `worker` checkpoint, in the same shape as the other per-model docs: what the checkpoint is (read from its own config files, not card prose), the exact pinned image plus the pre-boot probes that narrow a load risk before spending a boot, the full `.env` and the rendered argv from `docker inspect`, the measured speculation sweep (none / MTP k=1,3,5,6,7 / DFlash k=12 with per-position acceptance), the deployed 262144 budget, the correctness probes, and five operational traps hit live during bring-up. Includes a concurrency sample taken under a real agentic review workload, explicitly labelled prefill-dominated and NOT comparable to the batch-1 figures.
+
+### Changed
+
+- **The `thor-worker` shape now serves the full native `max_model_len=262144`**, raised from the 65536 the sweep measured — because a real consumer broke on the smaller window (Qwen Code requests 64000 output tokens by default and returned HTTP 400). 262144 booted at the same util with a KV pool of 1,199,883 tokens (4.58x ceiling). The TOML records why, since a window shrink breaks consumers that no model-id audit catches.
+- `lobes/catalog.py` — the `nvidia/Qwen3.6-35B-A3B-NVFP4` entry points `doc=` at its own per-model file rather than the shared family doc.
+- `docs/qwen3.6-35b-a3b-nvfp4.md` — the pre-boot section for the nvidia export is marked superseded and cross-references the new doc.
+
 ## [0.74.3] - 2026-09-10
 
 ### Changed
