@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.10] - 2026-09-10
+
+### Added
+
+- `docs/thor-worker-flip-rollout-notes.md` (#244 t8) — the pre-flip rollout note and raw-id consumer audit for moving the Jetson AGX Thor off a local `cortex` onto the `worker` seat, naming every consumer found that pins the cortex checkpoint id or the Thor's own gateway origin (in-repo, on-box, and across the mesh's sibling repos).
+- `docs/qwen3.6-35b-a3b-nvfp4.md` — a re-run recipe section for the Qwen3.6-35B-A3B worker lane on the Thor: candidate image digests, exact argv, `.env` overrides, the sm_110 MoE-backend auto-select requirement, and live-read power mode / L4T, with every historical throughput figure cited to its evidence transcript.
+
 ## [0.73.9] - 2026-09-10
 
 ### Added
