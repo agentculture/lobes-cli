@@ -829,9 +829,12 @@ _GOLDEN_CAPABILITIES = {
         # kept as a candidate.
         #
         # NOTE: `responsibilities` below is roles.py's OWN static vocabulary
-        # (ROLE_RESPONSIBILITIES), not derived from the catalog — it still
-        # names image_understanding/video_understanding here (unchanged by
-        # this task, which only touches the catalog entry).
+        # (ROLE_RESPONSIBILITIES) — since issue #244 t4 it regains
+        # image_understanding/video_understanding (the checkpoint ships its
+        # own ViT) and code_authoring is REMOVED from forbidden: worker is a
+        # multimodal coder. Adding responsibilities is contract-compatible;
+        # the #187 Lightning narrowing was the temporary state, not the
+        # contract.
         "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
@@ -860,15 +863,17 @@ _GOLDEN_CAPABILITIES = {
             "run_authorized_commands",
             "tool_use",
             "repo_action",
+            "image_understanding",
+            "video_understanding",
         ],
         # Unlike muse/senses, worker MAY act on the repo — repo_action is
         # deliberately ABSENT here (it is only permitted, never forbidden).
-        # code_authoring IS forbidden (issue #187): "not coder" does not mean
-        # "cannot touch a repository" — worker may inspect/run, never author.
+        # code_authoring is likewise ABSENT (issue #244 t4 re-widening): the
+        # checkpoint behind worker ships its own ViT and is a multimodal
+        # coder now — final_decision/security_decision remain forbidden.
         "forbidden_responsibilities": [
             "final_decision",
             "security_decision",
-            "code_authoring",
         ],
         "feasible": False,
         "ready": False,

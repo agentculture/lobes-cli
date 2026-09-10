@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.2] - 2026-09-10
+
+### Added
+
+### Changed
+
+- `worker`'s role contract re-widens (issue #244, t4): `ROLE_RESPONSIBILITIES['worker']`
+  regains `image_understanding`/`video_understanding` and `code_authoring` is
+  removed from `ROLE_FORBIDDEN['worker']` — the checkpoint behind `worker`
+  ships its own ViT (image intake MEASURED live against negative controls,
+  2026-09-10; video intake is checkpoint-declared, unmeasured, #108).
+  `final_decision`/`security_decision` remain forbidden. The #187 Lightning
+  narrowing to text-only/non-coding was the temporary state of a checkpoint
+  swap, not the contract — adding a responsibility is contract-compatible,
+  removing one is a break. `senses`/`associate` are untouched.
+
+### Fixed
+
 ## [0.74.1] - 2026-09-10
 
 ### Added
