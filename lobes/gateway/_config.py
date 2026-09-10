@@ -68,14 +68,22 @@ _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
 # the catalog, not this file too — see catalog.resolve_tier.
 _DEFAULT_WORKER = resolve_tier("worker").id
 # The opt-in associate gear (lightning-on-orin plan, t6) — the TENTH Colleague
-# role's backend. Deliberately the SAME checkpoint the `worker` seat holds:
-# associate is worker MINUS repo_action, a different AUTHORITY over the same
-# gear, not a different model. Hosted only by an associate-hosting deployment
-# shape (never machine-as-brain), so its backend is wired only when
-# ASSOCIATE_BASE_URL is set — and, like muse/worker, it is INFEASIBLE by
-# default when unwired (see OPT_IN_BACKENDS). The compose lane's own default
-# (docker-compose.yml's vllm-associate) is this same id.
-_DEFAULT_ASSOCIATE = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# role's backend. It shares its checkpoint HISTORY with `worker` (associate is
+# worker MINUS repo_action, a different AUTHORITY, not a different model) but
+# NOT its catalog role_hint any more: issue #244 t2 gave the Lightning entry
+# its own role_hint="associate", precisely so a `worker` checkpoint swap
+# cannot silently move this default (the shared hint WAS the defect — #244
+# t1 repointed `worker` to a different checkpoint, and this literal, unlike
+# _DEFAULT_WORKER above, would otherwise never have noticed).
+#
+# DERIVED from the catalog's own role_hint="associate" entry, the same
+# pattern _DEFAULT_WORKER uses, rather than a literal id — see that comment
+# for the failure mode a hardcoded literal repeats. Hosted only by an
+# associate-hosting deployment shape (never machine-as-brain), so its backend
+# is wired only when ASSOCIATE_BASE_URL is set — and, like muse/worker, it is
+# INFEASIBLE by default when unwired (see OPT_IN_BACKENDS). The compose
+# lane's own default (docker-compose.yml's vllm-associate) is this same id.
+_DEFAULT_ASSOCIATE = resolve_tier("associate").id
 # The `hand` gear (LiquidAI LFM2.5-1.2B-Instruct) — the NINTH Colleague role's
 # backend and the fleet's designated fine-tuning base. Unlike muse/worker this
 # one is DEFAULT-HOSTED on every card (~2.4 GiB bf16 is cheap enough to always

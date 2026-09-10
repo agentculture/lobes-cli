@@ -879,15 +879,16 @@ _GOLDEN_CAPABILITIES = {
         # The TENTH Colleague role (lightning-on-orin plan, t6): worker MINUS
         # repo_action. Opt-in like muse/worker, unwired in this no-knob
         # deployment, so honestly infeasible-by-default (OPT_IN_BACKENDS) and
-        # named by the catalog gear it shares with `worker` — one checkpoint,
-        # two public addresses with different authority.
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        # named by its OWN catalog role_hint (issue #244, t2) — the Lightning
+        # checkpoint it actually serves (docs/evidence/2026-08-26-accept-orin-associate.txt),
+        # independent of whichever checkpoint carries `worker`'s role_hint.
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
         "quant": "modelopt",
-        "mtp": True,
+        "mtp": False,
         "tools": True,
         "responsibilities": [
             "execution",

@@ -909,10 +909,11 @@ _PEER_ROLE_HINT: dict[str, str] = {
     "multimodal": "multimodal",
     "muse": "muse",
     "worker": "worker",
-    # `associate` serves worker's checkpoint under a different authority, so
-    # it resolves through worker's catalog role_hint — the same alias
-    # lobes.roles.ROLE_ROLE_HINT and catalog.BACKEND_ROLE_CATALOG_HINT carry.
-    "associate": "worker",
+    # `associate` owns its own catalog role_hint (issue #244, t2) — it no
+    # longer resolves through worker's, so promoting/demoting the checkpoint
+    # carrying role_hint="worker" cannot move this resolution. Mirrors
+    # lobes.roles.ROLE_ROLE_HINT and catalog.BACKEND_ROLE_CATALOG_HINT.
+    "associate": "associate",
     "hand": "hand",  # d1 reversal — paired with _PEER_SERVED_NAME_ENV above (the 0.54.6 lesson)
     "embed": "embedding",
     "rerank": "reranker",

@@ -57,12 +57,16 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
 
-# issue #244, t1: the shared worker/associate gear moved from
-# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as a
-# candidate) to nvidia/Qwen3.6-35B-A3B-NVFP4 — associate still shares
-# whichever catalog entry holds role_hint="worker" (the split is tracked as a
-# separate follow-up task, not fixed here).
-_LIGHTNING_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# issue #244, t1: the `worker` seat moved from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 to
+# nvidia/Qwen3.6-35B-A3B-NVFP4. issue #244, t2 (this module's own subject):
+# `associate` no longer shares `worker`'s catalog role_hint — it resolves to
+# its OWN role_hint="associate" entry, which is still the Lightning
+# checkpoint (the Orin's associate lane actually serves it). The two roles'
+# catalog resolutions are independent as of t2: changing which checkpoint
+# carries role_hint="worker" cannot move associate's default.
+_LIGHTNING_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 #: The nine role names that existed BEFORE associate — the no-regression set.
 _PRE_EXISTING_ROLES: tuple[str, ...] = (
@@ -171,15 +175,55 @@ def test_tier_role_places_associate_at_the_highest_non_cortex_rung() -> None:
     assert ascending == ["hand", "multimodal", "worker", "muse", "associate", "primary"]
 
 
-def test_associate_resolves_to_the_lightning_gear_it_shares_with_worker() -> None:
-    # One checkpoint, two public addresses with different authority. The
-    # catalog holds ONE entry per id, so the tier layer resolves associate
-    # through the declared hint alias rather than a duplicated entry.
-    assert BACKEND_ROLE_CATALOG_HINT["associate"] == "worker"
+def test_associate_resolves_to_its_own_lightning_entry_independent_of_worker() -> None:
+    # issue #244, t2: `associate` owns its OWN catalog role_hint
+    # ("associate"), which still names the Lightning checkpoint (the Orin's
+    # associate lane actually serves it) — it no longer resolves through an
+    # alias to `worker`'s role_hint. `associate` and `worker` resolve to
+    # DIFFERENT catalog entries today (Lightning vs the Qwen worker gear),
+    # even though both checkpoints remain in the catalog.
     assert resolve_tier("associate").id == _LIGHTNING_ID
-    assert resolve_tier("associate").id == resolve_tier("worker").id
+    assert resolve_tier("worker").id == _WORKER_ID
+    assert resolve_tier("associate").id != resolve_tier("worker").id
+    # No alias needed any more: BACKEND_ROLE_CATALOG_HINT carries nothing for
+    # associate, so resolve_tier falls through to the role name itself.
+    assert "associate" not in BACKEND_ROLE_CATALOG_HINT
     # The role registry's own model naming agrees with the tier layer's.
-    assert roles_mod.ROLE_ROLE_HINT["associate"] == BACKEND_ROLE_CATALOG_HINT["associate"]
+    assert roles_mod.ROLE_ROLE_HINT["associate"] == "associate"
+
+
+def test_associates_default_survives_a_worker_checkpoint_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The acceptance criterion (issue #244, t2): changing which checkpoint
+    carries role_hint="worker" must leave associate's resolved model
+    unchanged — that shared hint was exactly the defect being fixed.
+    """
+    import dataclasses
+
+    import lobes.catalog as catalog_mod
+
+    before_associate = resolve_tier("associate").id
+    assert before_associate == _LIGHTNING_ID
+
+    # Simulate a worker-checkpoint promotion: swap role_hint="worker" onto a
+    # DIFFERENT catalog entry entirely (mirrors issue #244 t1's own swap).
+    # ``SupportedModel`` is a frozen dataclass, so build a replacement list
+    # rather than mutating entries in place, and monkeypatch the module
+    # global ``resolve_tier`` itself reads.
+    patched = []
+    for model in catalog_mod.SUPPORTED_MODELS:
+        if model.role_hint == "worker":
+            patched.append(dataclasses.replace(model, role_hint="candidate"))
+        elif model.id == "mmangkad/Qwen3.6-35B-A3B-NVFP4":
+            patched.append(dataclasses.replace(model, role_hint="worker"))
+        else:
+            patched.append(model)
+    monkeypatch.setattr(catalog_mod, "SUPPORTED_MODELS", patched)
+
+    assert catalog_mod.resolve_tier("worker").id == "mmangkad/Qwen3.6-35B-A3B-NVFP4"
+    # The whole point: associate's resolution did not move.
+    assert catalog_mod.resolve_tier("associate").id == before_associate == _LIGHTNING_ID
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +437,9 @@ def test_associate_resolves_a_peer_served_name_so_its_proxy_knob_is_not_inert() 
     # The 0.54.6 worker lesson: a role wired through _config's peer dicts but
     # missing from server.py's two peer tables proxies SILENTLY NOTHING.
     assert S._PEER_SERVED_NAME_ENV["associate"] == "ASSOCIATE_SERVED_NAME"
-    assert S._PEER_ROLE_HINT["associate"] == "worker"
+    # issue #244, t2: this resolves through associate's OWN role_hint now,
+    # not worker's — see test_associates_default_survives_a_worker_checkpoint_promotion.
+    assert S._PEER_ROLE_HINT["associate"] == "associate"
 
 
 def test_associate_replica_pool_channels_are_declared_positionally() -> None:

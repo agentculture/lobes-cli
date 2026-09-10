@@ -12,8 +12,8 @@
           "repo_action"
         ],
         "loaded": false,
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "mtp": true,
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "mtp": false,
         "path": "/v1/chat/completions",
         "quant": "modelopt",
         "ready": false,
