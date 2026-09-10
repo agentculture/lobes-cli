@@ -1,0 +1,107 @@
+# Pre-boot engine probes for nvidia/Qwen3.6-35B-A3B-NVFP4 on the Jetson AGX Thor
+#
+# Plan task t11, risk r1 ("the checkpoint may not load at all on the pinned
+# nightly on sm_110"). These are CHEAP, NON-DESTRUCTIVE probes run against the
+# pinned image before spending a boot. They do NOT prove the model loads —
+# only a boot does that. They narrow which failure modes are still possible.
+#
+# Box:   Jetson AGX Thor, sm_110, L4T R38.2.2, MAXN
+# Image: vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+#        vLLM 0.26.1rc1.dev942+g5a4c8d992
+# Method: `docker run --rm --entrypoint python3|bash <image>` — no GPU work,
+#         no lane touched, nothing on the deployment changed.
+
+## Probe 1 — architecture registration
+
+    from vllm.model_executor.models.registry import ModelRegistry
+    ModelRegistry.get_supported_archs()
+
+    Qwen3_5MoeForConditionalGeneration -> True      <-- this checkpoint's arch
+    Qwen3_5ForConditionalGeneration    -> True
+    Qwen3_5MTP                         -> True      <-- the MTP draft class
+
+## Probe 2 — quantization method vocabulary
+
+    from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
+
+    ['auto_awq', 'auto_gptq', 'awq', 'awq_marlin', 'compressed-tensors',
+     'deepseek_v4_fp8', 'experts_int8', 'fbgemm_fp8', 'fp8', 'fp8_per_block',
+     'fp8_per_channel', 'fp8_per_tensor', 'fp_quant', 'gpt_oss_mxfp4', 'gptq',
+     'gptq_marlin', 'humming', 'inc', 'int8_per_channel_weight_only',
+     'modelopt', 'modelopt_fp4', 'modelopt_mixed', 'modelopt_mxfp8',
+     'moe_wna16', 'mxfp4', 'mxfp8', 'nvfp4_per_token', 'online', 'quark',
+     'torchao']
+
+`modelopt_mixed` IS present. That is the method this checkpoint's
+`hf_quant_config.json` (`quant_algo: MIXED_PRECISION`) resolves to, and it is
+the same method that lets the Orin serve Lightning's W4A16_NVFP4 experts on
+sm_87.
+
+### Why this matters for r1
+
+`docs/qwen3.6-35b-a3b-nvfp4.md` records this EXACT id failing to load on
+2026-05-31, on the GB10, on vLLM 0.19.0 and 0.21.0: `marlin` /
+`flashinfer_trtllm` -> "not supported for unquantized MoE"; `triton` / auto ->
+`KeyError: layers.0.mlp.experts.w2_input_scale`. That note's own diagnosis was
+that the checkpoint "needs a vLLM build with NVFP4-MoE expert support that
+isn't installable on this box yet", and it says to revisit when one ships.
+
+On 0.21.0 the quant was already *recognised* as `modelopt_mixed` but the expert
+loader still failed. Four minor versions later the method is first-class. This
+does NOT prove the loader is fixed — the same KeyError is still a possible
+outcome — but the recorded blocker ("no such vLLM installable here") no longer
+holds: the engine is installed, pinned, and already serving three other lanes
+on this box.
+
+## Probe 3 — sm_110 SASS coverage in the compiled kernels
+
+    cuobjdump --list-elf <vllm>/_moe_C_stable_libtorch.abi3.so
+      -> sm_80 sm_87 sm_89 sm_90 sm_100 sm_110 sm_120
+
+    cuobjdump --list-elf <vllm>/_C_stable_libtorch.abi3.so
+      -> sm_80 sm_86 sm_87 sm_89 sm_90 sm_100 sm_110 sm_120
+
+**sm_110 images ARE present** in both the fused-MoE library and the core
+library of this pin. This is the check `docs/` records as the one that should
+precede trusting any pin (the cu128-vs-cu130 lesson that sank chatterbox on
+this board).
+
+Note carefully what this does and does not say: the three sm_110 no-gos this
+fleet has hit (GDN-MTP post-conv decode, LFM2 conv-hybrid decode, Mamba-2 SSD
+warmup) were NOT whole-library gaps — they were individual kernels, or a
+Triton-JIT path, missing coverage inside libraries that otherwise carry sm_110.
+A library-level `sm_110` therefore raises confidence without settling anything.
+
+## Probe 4 — supporting libraries and knobs
+
+    flashinfer -> 0.6.17  (present in the image)
+
+    MoE / GDN / speculative env knobs available:
+      VLLM_GDN_DECODE_KERNEL           <-- already set to `triton` on this box
+      VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE
+      VLLM_MOE_SKIP_PADDING, VLLM_MOE_USE_DEEP_GEMM,
+      VLLM_MOE_ROUTING_SIMULATION_STRATEGY, VLLM_USE_FLASHINFER_MOE_INT4,
+      VLLM_USE_FUSED_MOE_GROUPED_TOPK
+
+    Speculative methods registered (probed earlier, same image):
+      ... 'qwen3_5_mtp', 'mtp', 'gemma4_mtp', 'dflash', 'ngram_gpu', 'dspark'
+
+`dflash` and `dspark` are both already in this pin's `SpeculativeMethod`
+literal, which retires the issue's assumption that DFlash "may require a
+newer/custom vLLM build with DFlash and native sm_110a support". The build is
+here. Whether its kernels run on sm_110 is plan risk r2 and is untouched by
+this probe.
+
+## What is still unknown (r1 remains open)
+
+  * whether the MoE expert loader accepts THIS export's tensors (the 2026-05-31
+    `w2_input_scale` KeyError is still a live possibility);
+  * which MoE backend auto-select picks on sm_110 for W4A16_NVFP4 experts, and
+    whether a forced `marlin` is accepted or refused as it was on the
+    unsloth export (whose MTP experts are unquantized — this export's are too,
+    via `exclude_modules: ["mtp*"]`);
+  * whether the ViT loads and image intake works;
+  * every budget number.
+
+Only the boot answers those. This file exists so that if the boot fails, the
+failure can be attributed precisely instead of re-litigated.
