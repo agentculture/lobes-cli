@@ -355,12 +355,44 @@ class TestAnnounce:
         assert status == 200
         assert "wire-test" in routes.roster.members()
 
-    def test_announce_unapproved_403(self) -> None:
+    def test_announce_unlisted_name_with_key_is_admitted(self) -> None:
+        """A name with valid join key but NO ledger entry is admitted (200)."""
         routes = _make_routes()
+        # No _ensure_approved call — ledger is empty for "keyless-holder".
         body = encode(
             Announcement(
-                name="unapproved",
-                origin="http://unapproved.local",
+                name="keyless-holder",
+                origin="http://keyless.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
+            )
+        )
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 200
+        data = json.loads(resp)
+        assert data["status"] == "announced"
+        assert "keyless-holder" in routes.roster.members()
+
+    def test_announce_lapsed_grant_403(self) -> None:
+        """Approved with a short TTL that expires before announce."""
+        clock = _TickClock()
+        routes = _make_routes(clock=clock)
+        _ensure_approved(routes, "lapsed")
+        # Advance clock past the 99999s approval window (or just far enough).
+        # Actually: _ensure_approved uses expiry=99999, so advance past now.
+        # Better: approve with short expiry, advance clock past it.
+        routes.roster.ledger.entries.clear()  # reset from _ensure_approved
+        clock.t = 100.0
+        routes.roster.approve("lapsed", "operator", 150.0, now=100.0)  # expires at 150
+        assert routes.roster.is_approved("lapsed", now=120.0)
+        assert not routes.roster.is_approved("lapsed", now=200.0)
+        clock.t = 200.0
+        body = encode(
+            Announcement(
+                name="lapsed",
+                origin="http://lapsed.local",
                 schema_version=str(SCHEMA_MAJOR),
                 roles={},
             )
@@ -369,7 +401,35 @@ class TestAnnounce:
             _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
         )
         assert status == 403
-        assert json.loads(resp)["error"]["type"] == "approval_required"
+        assert json.loads(resp)["error"]["type"] == "approval_expired"
+
+    def test_announce_revoked_name_403(self) -> None:
+        """Approve then revoke → announce returns 403 approval_expired."""
+        routes = _make_routes()
+        _ensure_approved(routes, "revoked")
+        # Now revoke
+        routes.revoke(
+            _fake_handler(
+                "/mesh/revoke",
+                "POST",
+                json.dumps({"name": "revoked"}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        assert not routes.roster.is_approved("revoked")
+        body = encode(
+            Announcement(
+                name="revoked",
+                origin="http://revoked.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
+            )
+        )
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 403
+        assert json.loads(resp)["error"]["type"] == "approval_expired"
 
     def test_announce_schema_incompatible_400(self) -> None:
         routes = _make_routes()

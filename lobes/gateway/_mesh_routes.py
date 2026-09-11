@@ -329,29 +329,12 @@ class MeshRoutes:
                 json.dumps({"error": "name is required"}).encode(),
             )
 
-        # Finding 5: ledger approval check before roster mutation.
+        # Finding 5: ledger only RESTRICTS — an absent entry is "no
+        # restriction", key-holders are admitted permanently.  Only when an
+        # entry exists AND is not in force (expired/revoked) do we refuse.
         roster_now = self.roster.now()
-        if not self.roster.is_approved(name, now=roster_now):
-            entry = self.roster.ledger.entries.get(name)
-            if entry is not None:
-                # Approval existed but lapsed.
-                return (
-                    403,
-                    [
-                        ("Content-Type", "application/json"),
-                        ("Connection", "close"),
-                    ],
-                    json.dumps(
-                        {
-                            "error": {
-                                "message": "Approval has expired",
-                                "type": "approval_expired",
-                                "name": name,
-                            }
-                        }
-                    ).encode(),
-                )
-            # No approval entry at all.
+        entry = self.roster.ledger.entries.get(name)
+        if entry is not None and not self.roster.is_approved(name, now=roster_now):
             return (
                 403,
                 [
@@ -361,8 +344,8 @@ class MeshRoutes:
                 json.dumps(
                     {
                         "error": {
-                            "message": "Approval required",
-                            "type": "approval_required",
+                            "message": "Approval has expired",
+                            "type": "approval_expired",
                             "name": name,
                         }
                     }
