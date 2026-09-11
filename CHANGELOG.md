@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.2] - 2026-09-11
+
+### Added
+
+- Evidence `docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`: the DGX Spark reaching the Thor's `worker` lane (`nvidia/Qwen3.6-35B-A3B-NVFP4`, #244) by proxy — alias and raw id, streamed tool calls, image input, a 115,429-token prompt, the reverse `cortex` proxy, Qwen Code end-to-end (`qwen -m worker` against the Spark gateway), and serial queueing at width 3 under the by-design `WORKER_MAX_NUM_SEQS=1` (no 429, no timeout). Retires the checkpoint doc's open item "any peer reaching this lane cross-box".
+- `docs/nvidia-qwen3.6-35b-a3b-nvfp4.md`: a "Reaching the lane from another box" section (the Spark's `.env` knobs, and a `~/.qwen/settings.json` entry for pointing Qwen Code at the proxied lane at its real 262144 window).
+
+### Changed
+
+- CLAUDE.md: the `worker` hosting paragraph now records the current topology — hosted on the Thor, proxied from the Spark — and moves the deviation-d1 Lightning-on-Spark measurements into superseded history (cite-don't-delete); the proxy-lobes "Live as of" line is updated from 2026-07-31 to the 2026-09-11 mesh.
+
+### Fixed
+
+- Documented two stale-advert traps found while rolling both gateways from 0.67.0.dev457 to 0.75.1: a pre-#244 gateway image keeps advertising the retired text-only/non-coding `worker` contract even though routing works, and a proxied role's advertised `context` is the peer gateway's PROCESS env (the Thor advertised 65536 against a 262144 lane until its gateway was recreated). Fix: re-pin and re-image the front on every box that serves or proxies the role.
+- `tests/test_live_capabilities.py::test_colleague_discovers_and_dials_generate_roles` walked a hardcoded `("cortex", "senses", "muse")`, so against the worker-hosting Thor it reported "every generate lobe is flagged feasible:false — this box serves no brain". The role list is now derived from the registry (every role whose `ROLE_PATH` is `/v1/chat/completions`, so worker, associate and hand are included), and the gate passes live against the Thor.
+
 ## [0.75.1] - 2026-09-11
 
 ### Fixed

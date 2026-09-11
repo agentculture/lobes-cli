@@ -347,15 +347,76 @@ is busy prefilling, not because speculation misbehaves under batching.
    independently; a proxied `model=cortex` 401s with `X-Lobes-Proxied-By` set
    until the singular one is declared.
 
+## Reaching the lane from another box (proxy)
+
+The DGX Spark does not host `worker`; it forwards `model=worker` to the Thor
+(proxy-lobes, #115). Operator-typed on the Spark's `~/.lobes/.env`:
+
+```bash
+WORKER_FEASIBLE=false
+WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+WORKER_PEER_PROXY=true
+WORKER_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4   # must equal the Thor's served id
+WORKER_MAX_MODEL_LEN=262144                       # advertise-only for a proxied role
+# no WORKER_PEER_API_KEY while the Thor's gateway stays ungated
+```
+
+Both `model=worker` and the raw id route there, and every answer carries
+`X-Lobes-Proxied-By: <thor origin>`. Validated 2026-09-11 on 0.75.1 gateways
+(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`): plain and
+streamed tool calls, image input, a 115,429-token prompt, Qwen Code
+end-to-end, and serial queueing at width 3 (no 429, no timeout).
+
+**Two stale-advert traps, both hit on the way:**
+
+1. **An old gateway image advertises the old contract.** A gateway built
+   before #244 kept advertising the Lightning-era text-only, non-coding
+   worker contract, even though routing to the new lane already worked.
+   Re-pin and re-image the front on EVERY box that serves or proxies the
+   role:
+   `lobes doctor --repin-version --apply && lobes up gateway --build --apply`
+   (on the Thor, prefix `env -u GATEWAY_API_KEY`, see operational trap 4 above).
+2. **The advertised `context` is the gateway's process env, not the lane's.**
+   Changing `WORKER_MAX_MODEL_LEN` in `.env` has no effect until the gateway
+   container is recreated. Until then the Thor advertised 65536 against a
+   262144 lane, and the Spark relayed that value (#220). The field is not
+   enforced, but a caller that sizes its work from it will under-use the
+   window.
+
+### Pointing Qwen Code at it
+
+Add a second `modelProviders.openai[]` entry next to cortex in
+`~/.qwen/settings.json`, pointed at the **local** gateway (not the Thor), and
+select it with `qwen -m worker` or `/model`:
+
+```json
+{ "id": "worker",
+  "baseUrl": "http://localhost:8001/v1",
+  "envKey": "<the env var already holding this gateway's key>",
+  "contextLimit": 262144,
+  "generationConfig": { "contextWindowSize": 262144 } }
+```
+
+Keep `contextLimit` at the lane's real 262144. Qwen Code asks for 64000
+output tokens by default, so a 65536 window breaks it (operational trap 3 above). The
+lane serves one request at a time **by design** (`WORKER_MAX_NUM_SEQS=1`,
+above). A Qwen Code session that shares the lane with other callers queues
+behind them rather than failing.
+
 ## Status and gating
 
 * **VALIDATED** on the Thor for: load, MoE/attention backend selection, budget
   at both 65536 and 262144, single-stream throughput, speculation sweep,
   tool calls, image intake, and end-to-end agentic use.
-* **NOT validated:** any peer reaching this lane cross-box (no box declares
-  `WORKER_PEER_ORIGIN` pointing at the Thor); long-context retrieval at
-  262144; video intake; `--load-format fastsafetensors`; `--async-scheduling`;
-  concurrency beyond width 4.
+* **VALIDATED cross-box (2026-09-11):** the Spark reaching this lane by proxy.
+  Covers alias and raw id, streamed tool calls, image input, a 115,429-token
+  prompt, Qwen Code, and serial queueing at width 3. See
+  `docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`.
+* **NOT validated:** long-context retrieval at the full 262144 (115K is the
+  deepest measured, through the proxy); video intake;
+  `--load-format fastsafetensors`; `--async-scheduling`; concurrency beyond
+  width 4; any throughput claim for the proxied path.
 * Evidence: `docs/evidence/2026-09-10-*` (seven transcripts + the raw sweep
-  log). Delivery record:
+  log) and `docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`.
+  Delivery record:
   `docs/deliveries/2026-09-10-thor-worker-arm-qwen3-6-35b-a3b-recipes.md`.

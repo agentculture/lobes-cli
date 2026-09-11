@@ -1,0 +1,164 @@
+ACCEPTANCE — the Spark reaches the Thor's worker lane by proxy, and Qwen Code drives it
+Date: 2026-09-11
+Boxes: DGX Spark GB10 (spark-f8a9, gateway :8001) -> Jetson AGX Thor (thor, gateway :8000)
+Lane: worker = nvidia/Qwen3.6-35B-A3B-NVFP4 on the Thor (#244), vLLM max_model_len 262144,
+      WORKER_MAX_NUM_SEQS=1 (by design — see docs/nvidia-qwen3.6-35b-a3b-nvfp4.md "Why max_num_seqs=1")
+
+Retires the open item recorded in docs/nvidia-qwen3.6-35b-a3b-nvfp4.md "Status and gating":
+"NOT validated: any peer reaching this lane cross-box (no box declares
+WORKER_PEER_ORIGIN pointing at the Thor)". The Spark now declares it.
+
+================================================================================
+1. Topology (Spark ~/.lobes/.env, operator-typed; secrets omitted)
+================================================================================
+WORKER_FEASIBLE=false
+WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+WORKER_PEER_PROXY=true
+WORKER_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4     # == the Thor's served id (the forwarder rewrites `model` to it)
+WORKER_MAX_MODEL_LEN=262144                           # advertise-only for a proxied role
+(no WORKER_PEER_API_KEY: the Thor's gateway has no inbound key)
+COMPOSE_PROFILES=                                     # no `worker` profile -> vllm-worker never starts here
+
+Reverse direction, unchanged: the Thor proxies model=cortex to the Spark
+(PRIMARY_FEASIBLE=false, PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001).
+
+================================================================================
+2. Baseline — both gateways on lobes-cli 0.67.0.dev457 (pre-#244 image)
+================================================================================
+The routing already worked on the old image; the ADVERT did not.
+
+GET /capabilities -> roles.worker, both boxes:
+  context: 65536
+  forbidden_responsibilities: [final_decision, security_decision, code_authoring]
+  image_understanding in responsibilities: False
+
+Two distinct lies:
+  * the contract is the Lightning-era text-only/non-coding one #244 retired —
+    the running gateway image predates the roles.py change;
+  * context 65536 while the Thor lane serves 262144. Cause: the Thor gateway
+    container was created ~10 h before the Thor's .env moved
+    WORKER_MAX_MODEL_LEN to 262144, so its process env still carried 65536
+    (docker exec model-gear-gateway env -> WORKER_MAX_MODEL_LEN=65536), and
+    the Spark relays the peer's advert (#220). The lane itself, probed from
+    inside the Thor gateway: [('nvidia/Qwen3.6-35B-A3B-NVFP4', 262144)].
+    The field is advertise-only — a 115K-token prompt went through regardless
+    (probe 5 below was first run on the OLD image, same result).
+
+================================================================================
+3. Upgrade — both boxes, gateway only (no lane restarted)
+================================================================================
+uv tool install --force lobes-cli==0.75.1        # Spark was 0.67.1, Thor 0.61.2
+lobes doctor --repin-version --apply             # MODEL_GEAR_VERSION 0.67.0.dev457 -> 0.75.1
+# GATEWAY_PIP_EXTRA_INDEX_URL (TestPyPI dev lane) commented out: 0.75.1 is a PyPI release
+Thor:  env -u GATEWAY_API_KEY lobes up gateway --build --apply
+Spark: lobes up gateway --build --apply
+  -> docker compose -f docker-compose.yml -f docker-compose.shape.yml
+     -f docker-compose.override.yml up -d --no-deps --build gateway
+
+Post-recreate checks:
+  Thor  gateway: lobes-cli 0.75.1, inbound key UNSET (unchanged posture),
+                 WORKER_MAX_MODEL_LEN=262144; vllm-worker "Up 2 hours" (untouched)
+  Spark gateway: lobes-cli 0.75.1, inbound key SET (unchanged posture);
+                 vllm-primary / vllm-rerank "Up 24 minutes" (untouched)
+
+lobes doctor (Spark): healthy
+  [warn] profile_staleness: 20 keys missing — all audio-overlay keys; audio is off here
+  [warn] gateway_passthrough: MULTIMODAL_QUANTIZATION, WORKER_QUANTIZATION have no
+         passthrough in the hand-edited compose — informational fingerprint fields only
+  [ok]   gateway_version_match: gateway and CLI both report lobes-cli 0.75.1
+lobes doctor (Thor): healthy
+  [warn] scaffold_files: qwen3_reranker.jinja missing (#227 not yet rolled to the Thor;
+         the running reranker predates it and does not reference the file)
+  [ok]   gateway_version_match: gateway and CLI both report lobes-cli 0.75.1
+
+================================================================================
+4. After — GET /capabilities -> roles.worker
+================================================================================
+spark {'model': 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'context': 262144, 'feasible': False,
+       'ready': True, 'proxied': True, 'hosted_by': 'http://thor.tail0be7e0.ts.net:8000'}
+thor  {'model': 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'context': 262144, 'feasible': True,
+       'ready': True, 'proxied': None, 'hosted_by': None}
+both  responsibilities: [execution, ground_work, bulk_transform, drafting, action_selection,
+        retrieval_synthesis, summarization, log_digestion, structured_extraction,
+        repo_inspection, run_authorized_commands, tool_use, repo_action,
+        image_understanding, video_understanding]
+both  forbidden: [final_decision, security_decision]
+thor  cortex: {'context': 262144, 'feasible': False, 'ready': True, 'proxied': True,
+               'hosted_by': 'http://spark.tail0be7e0.ts.net:8001'}
+
+(video_understanding is ADVERTISED by the #244 contract; video intake itself
+remains UNMEASURED, #108.)
+
+================================================================================
+5. Probes through the 0.75.1 gateways
+================================================================================
+### 1. Spark model=worker (alias)
+ model: nvidia/Qwen3.6-35B-A3B-NVFP4 content: 'pong'
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### 2. Spark model=nvidia/Qwen3.6-35B-A3B-NVFP4 (raw id)
+ content: 'pong'
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### 3. Spark model=worker streamed tool call (stream:true, include_usage, 2 tools)
+ finish: tool_calls [DONE]: True calls: [('read_file', {'absolute_path': '/etc/hostname'})]
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+   (first run on the old image: 1.8 s wall, 91 completion tokens of which 60 reasoning)
+### 4. Spark model=worker image (64x64 solid blue PNG)
+ content: 'Blue'
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### 5. Spark model=worker 115K-token needle (thinking off)
+ prompt_tokens: 115429 content: 'AZURE-7731'
+ wall: 69s
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### 6. Thor model=cortex (reverse proxy, Thor -> Spark)
+ model: unsloth/Qwen3.8-27B-NVFP4 content: 'pong'
+X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+### 7. Thor model=worker served locally
+ content: 'pong'                                   (no proxy header — served locally)
+
+Thor vllm-worker access log during the first (old-image) run: 8 x
+"POST /v1/chat/completions HTTP/1.1" 200 OK from the gateway's bridge address.
+
+================================================================================
+6. Qwen Code (qwen 0.23.0) against the Spark gateway, model=worker
+================================================================================
+~/.qwen/settings.json, modelProviders.openai[] entry added beside cortex:
+  { "id": "worker",
+    "baseUrl": "http://localhost:8001/v1",          # the SPARK gateway, not the Thor
+    "envKey": <the same key env var the cortex entry uses — the Spark's GATEWAY_API_KEY>,
+    "contextLimit": 262144,
+    "generationConfig": { "contextWindowSize": 262144 } }
+
+Run A (old image):  one bug (add returns a - b)
+  qwen -m worker --approval-mode yolo "calc.py has a bug in add(). Read it, fix it,
+  then run: python3 -c 'from calc import add; print(add(2,3))' ..."
+  -> read_file, edit, run_shell_command; "Output: 5"; file fixed; 30 s wall.
+
+Run B (0.75.1):     two bugs (add returns a - b, mul returns a + b)
+  -> "Output: 5 6 — both bugs fixed and verified."; both fixed; 19 s wall.
+
+================================================================================
+7. One-at-a-time behaviour through the proxy (WORKER_MAX_NUM_SEQS=1, by design)
+================================================================================
+Distinct prompts (uuid nonce), thinking off, min_tokens=max_tokens=300, via the Spark:
+### single request baseline
+  (0, 200, 0.0, 8.01, 300, 'http://thor.tail0be7e0.ts.net:8000')
+### 3 concurrent
+  req 1 status 200 sent@ 0.0 s done@ 7.92 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
+  req 2 status 200 sent@ 0.0 s done@ 15.38 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
+  req 3 status 200 sent@ 0.0 s done@ 22.91 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
+
+Concurrent requests QUEUE at the engine and complete serially (~7.5 s apart,
+= the single-request time); no 429, no timeout, no 5xx through the hop. This
+records the queueing mechanics only — it is NOT a throughput measurement
+(prose with speculation on, not the #244 decode methodology), and the
+by-design cap is still to be evaluated under a real multi-agent load.
+
+================================================================================
+Honest scope
+================================================================================
+VALIDATED: cross-box proxy Spark -> Thor for worker (alias + raw id, non-stream,
+streamed tool calls, image intake, a 115,429-token prompt), the reverse cortex
+proxy, Qwen Code end-to-end, and serial queueing at width 3.
+NOT validated here: long-context retrieval AT the 262144 ceiling (115K only);
+video intake; Qwen Code's own parallel side-requests under contention; any
+throughput claim for the proxied path.
