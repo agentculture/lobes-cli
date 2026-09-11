@@ -86,12 +86,14 @@ Four families exist:
 | **machine-as-brain** (default) | `cortex`, `senses`, `embedder`, `reranker`, `stt`, `tts` — every role the card can serve | goldens | Zero overrides; composing it onto any card profile is a byte-identical no-op (pinned by `tests/goldens/shapes/` and `tests/test_shape_goldens.py`). This is the shape a bare `lobes init` has always rendered. |
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
-| **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or `STT_PEER_ORIGIN`/`TTS_PEER_ORIGIN`), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
+| **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or the mesh join / the retired per-role audio referral knobs — see the Retired section below), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
 | **orin-cortex** | `cortex`, `hand`, `embedder`, `reranker` — drops `senses`, and drops `stt`/`tts` (same sm_87 reason as `orin-lobe`) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-cortex.toml`), goldens-only. `orin-lobe` with the two heavy lobes swapped: it hosts `cortex` **locally**, on the **llama.cpp** lane rather than vLLM. That is possible because the Blackwell line is about the NVFP4 *checkpoint format* (activations quantized to FP4), not about the role — the `orin` card profile declares `cortex` on the catalog's GGUF gear (`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`, `engine = llama.cpp`), which is weight-only and decodes on Ampere. `senses` is dropped because the two do not co-reside: MEASURED 2026-08-23 on the physical board, the llama.cpp cortex holds ~33 GiB at its served 262144 window (weights 15.33 + KV 16.00, at 64 KiB/token — only 16 of 65 layers hold a per-token cache) against 61.3 GiB of unified memory with **zero swap**, while `senses` holds ~27.6 GiB. The shape declares **no overrides**: `llama-server` has no utilization knob to reclaim into and the context is already at the checkpoint's native ceiling. **No box has booted this shape**, and the t1 spike behind its numbers (`docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt`) returned *functional GO / throughput FAIL-AS-SPECIFIED* — correct decode, full context, tool calling and `reasoning_content` all PASS, at 2.61 tok/s single-stream, below the covering plan's >= 5 tok/s gate. Do not read this row as an Orin validation claim. See [`docs/qwen3.8-27b-gguf-llamacpp.md`](qwen3.8-27b-gguf-llamacpp.md). |
 | **orin-associate** | `associate`, `hand`, `embedder`, `reranker` — drops BOTH `cortex` and `senses`, hosts the opt-in `associate` lobe instead; no `stt`/`tts` (same sm_87 reason as `orin-lobe`/`orin-cortex`) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-associate.toml`), goldens-only. The Orin's THIRD answer to the `[cortex, senses, associate]` co-residency group (lightning-on-orin plan, t9): hosts the tenth Colleague role — `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` — with the FULL declaration in its own `[overrides.associate]` (approved deviation d1: the `orin` card marks `[roles.associate] feasible = false` and keeps the numbers as documentation only, mirroring how `thor-muse`/`thor-worker` carry their opt-in lobe's declaration). The checkpoint's own `hf_quant_config.json` is W4A16_NVFP4 (weight-only) on the experts plus FP8 elsewhere — NOT the W4A4 activation quantization that rules out `cortex`/`muse`'s NVFP4 exports on sm_87 — and vLLM v0.27.1 confirmed a full Marlin fallback stack live (`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`: known-answer PASS, tool calls PASS, ~78-81 tok/s). Budget MEASURED 2026-08-25 (`docs/evidence/2026-08-25-measure-associate-budget-orin.txt`): `gpu_mem_util=0.63` (the vendor's own 0.70 was REFUSED at boot by 0.05 GiB), `max_model_len=128000`, KV pool 1,249,280 tokens / 9.76x concurrency. **No box has booted this SHAPE**, and no acceptance transcript exists for it — do not read this row as an Orin validation claim, even though the lane and budget are measured. See [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md). |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
 | **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED, DORMANT** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) never passed and no transcript landed under `docs/evidence/` (#108). **Now additionally DORMANT** (thor-worker-lobe plan, operator decision): the physical Thor that measured this shape's budget moved to hosting `thor-worker` instead, and no box in the mesh currently renders `thor-muse`. The file, its TOML, and its goldens stay in-tree (cite-don't-delete) — do not read this row as a "muse is served" claim, now more than ever. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
 | **thor-worker** | `worker`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `worker` lobe instead | **validated live — but on the Spark card, not the Thor (deviation d1, 2026-08-20)** | Mirrors `thor-muse`'s structure: hosts the eighth Colleague role — now `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (Lightning, not the originally-planned `unsloth/Qwen3.6-35B-A3B-NVFP4`), the fast ground-work DOER — with the FULL worker declaration in its own `[overrides.worker]` (see "Opt-in core roles" below). The plan's original target, the Jetson AGX Thor, NO-GO'd live (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt` — the Mamba-2 SSD decode path wedges on this fleet's pinned nightly); deviation d1 rendered this SAME shape file on the **Spark** card instead (`lobes init --shape thor-worker --apply --force` on `spark-f8a9`), measuring `WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536`, KV pool 3,560,789 tokens / 54.33× concurrency, 75.1 tok/s decode (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`). See ["Shapes are card-agnostic data, proven live by d1"](#shapes-are-card-agnostic-data-proven-live-by-d1) below for what this means for the shape-name-vs-card-name assumption, and [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md) for the full measured numbers. |
+
+| **gateway-only** | none — `hosts = []` | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/gateway-only.toml`), no overrides — the first built-in shape with an empty `hosts` list. The consumer-only member of a mesh-brain deployment (mesh-brain-join plan): a box that serves nothing locally and answers every role request from the mesh join's auto-wired proxying (see "The mesh join replaces per-pair referral" below), never from a local lane. **No box has booted this shape yet** — the mesh-brain-join plan's fourth-member test is its first live run; do not read this row as a validation claim. See [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain) and [`docs/machine-profiles.md`](machine-profiles.md). |
 
 ## Shapes are card-agnostic data, proven live by d1
 
@@ -202,13 +204,15 @@ machine-as-brain. Concretely:
   — booted on the Spark card via `lobes init --shape thor-worker --apply
   --force` as part of deviation d1, 2026-08-20
   (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`).
-- **`MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` / `MUSE_PEER_API_KEY` and
-  `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY` all
-  exist** — just like every core role's referral/proxy channels, so a box
-  that doesn't host muse or worker can honestly refer (or transparently
-  proxy) callers to the box that does. In practice, as of this writing, no
-  box declares `MUSE_PEER_ORIGIN` anywhere in the mesh — `muse` is dormant,
-  not merely dropped-with-a-referral (see the support table above).
+- **Cross-box reachability for `muse` and `worker`** works the same way as
+  every core role: a box that has joined the mesh-brain (see
+  [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain))
+  and doesn't host `muse` or `worker` locally is auto-wired to whichever
+  verified mesh member does, with no per-role config to type. The retired,
+  hand-typed per-role referral/proxy channels these two roles also carry are
+  documented under the Retired section below. In practice, as of this
+  writing, no member of the mesh hosts `muse` — it is dormant, not merely
+  reachable-by-referral (see the support table above).
 
 ## Selecting a shape
 
@@ -305,6 +309,313 @@ half-served, never silently rerouted:
    `lobes up` reads the shape override, detects the target needs a dropped
    service, and errors with the override file and a remediation pointing at
    re-scaffolding with a shape that hosts it.
+
+## The mesh join replaces per-pair referral (opt-in)
+
+The decisions above shipped their cross-box story first as a hand-typed,
+per-role peer channel — honest referral, then proxy-lobes, then a replica
+pool on top of it. That whole mechanism is **RETIRED** as the documented
+operator contract (see the "Retired" section near the end of this document
+for its full reference detail, kept for its measured numbers and because the
+mesh generalizes the same design rather than inventing a new one).
+
+**The mesh-brain join is this repo's current answer.** Any box with the
+fleet's one shared `LOBES_MESH_KEY` (plus an operator-typed
+`LOBES_MESH_NAME` and, on a joining box, `LOBES_MESH_SEEDS`) becomes a member
+of a gossiped, hub-free roster — every member holds the same view, learned by
+announce/heartbeat rather than declared once per pair. A role a member lacks
+locally is auto-wired to whichever verified member announces it, with no
+per-role config to type at all; a role a member wants to keep off the mesh
+can be announced `private`. `lobes mesh status`/`request`/`approve`/`revoke`
+manage membership; the key alone admits, and a persisted approval ledger only
+RESTRICTS on top of that default (a lapsed or revoked name is refused, never
+an unlisted one). Full mechanism, wire detail, and the honest
+DECLARED/UNVALIDATED status are in
+[`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain),
+including the **Implementation status** note: the code has not yet fully cut
+over — the gateway still parses the retired per-role peer channel and the
+replica-pool dispatch path still reads it, pending a follow-on task
+(deviation d6).
+
+**`lobes init --shape gateway-only`** is the shape this mechanism unlocks: a
+box that hosts NOTHING locally (`hosts = []`) and answers every role request
+purely from the mesh. It is the first built-in shape with an empty `hosts`
+list — see the support table above and
+[`docs/machine-profiles.md`](machine-profiles.md) for its row. **DECLARED,
+UNVALIDATED (#108):** no box has booted it yet; the mesh-brain-join plan's
+fourth-member test (booting it on a candidate box and requesting
+`model=cortex` through it) is its first live run.
+
+## The co-residency tax and its measured repayment
+
+| box (mesh shape) | heavy lobe | co-resident context (machine-as-brain) | full-native context | repayment | measured `gpu_mem_util` | measured KV pool | measured concurrency |
+|---|---|---|---|---|---|---|---|
+| Spark GB10 (`spark-lobe`) | `cortex` | 131072 | 262144 | **2.0×** | 0.44 | **888,946 tokens** | **3.39×** at full 256K |
+| Jetson AGX Thor (`thor-lobe`) | `senses` | 32768 | 131072 | **4.0×** | 0.30 | **1,418,554 tokens** | **10.82×** at 131072 |
+
+All eight numbers above are read verbatim from the two `#113` acceptance
+transcripts (`docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt` phase 7,
+`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` phase 7) plus the
+deployed `.env` overrides they measured — none are estimated.
+
+**Before** (machine-as-brain, the default, on the GB10): every role
+co-resides, so each one is trimmed to fit alongside the others —
+`senses` 32768 @ util 0.14, `cortex` 131072 @ util 0.30, embedder/reranker
+at 0.06 each — total budget `0.30 + 0.14 + 0.06 + 0.06 = 0.56`.
+
+**spark-lobe** (measured live, 2026-07-14): dropping `senses` lets `cortex`
+reclaim budget. `PRIMARY_GPU_MEM_UTIL=0.44` / `PRIMARY_MAX_MODEL_LEN=262144`
+— its full native 256K context. Measured KV pool: **888,946 tokens**,
+**3.39×** concurrency at the full 256K request length. The historical 0.60
+solo value was **tried first and refused by vLLM on the live box**: the
+GB10's 121.7 GiB is *unified* memory shared with the host OS and other
+services, and the 2026-07-14 boot measured only **59.35 GiB free** at
+primary startup against the **73.01 GiB** that util 0.60 demands. 0.44
+(53.5 GiB) fits the measured reality with margin.
+
+**What `spark-lobe` declares TODAY is not that 0.44 / 262144 pair.** The table
+and paragraph above report the 2026-07-14 acceptance run and stay accurate as
+history. The shape has moved twice since: to `gpu_mem_util=0.58` at a
+YaRN-extended 1,048,576 window (2026-08-19), and then — deviation d4,
+2026-08-25 — back to the checkpoint's native **262144** at the same 0.58,
+adopting the **DSpark** block drafter, whose KV cost cannot co-exist with the
+1M window at that budget. Measured KV pool at the adopted pair: **760,806
+tokens**, **2.90×** concurrency at 262144. The reclaim *argument* this section
+makes is unchanged — dropping `senses` is still what funds the budget — only
+the numbers moved. See `docs/dspark-speculation.md#adopted-in-tree-2026-08-25`
+and the shape TOML's own d4 comment block.
+
+**thor-lobe** (measured live, 2026-07-14): dropping `cortex` lets `senses`
+reclaim budget. `MULTIMODAL_GPU_MEM_UTIL=0.30` /
+`MULTIMODAL_MAX_MODEL_LEN=131072` — its full native 128K context. Measured KV
+pool: **1,418,554 tokens**, **10.82×** concurrency at 131072. The
+reclaim-**sum** 0.14 (senses' own co-resident share) + 0.30 (dropped
+cortex's share) = 0.44 was likewise tried first and **refused**: the live
+Thor measured only **38.44 GiB free** at senses startup against the
+**54.04 GiB** that util 0.44 demands (Thor's unified memory carries heavier
+host workloads than the Spark's). 0.30 (36.85 GiB) is exactly the dropped
+cortex's own freed share, and it fits.
+
+**The lesson, stated plainly:** on unified-memory boxes the reclaim values
+are **measured truths, not arithmetic** — a naive "sum the freed shares" or
+"promote to the model's own solo default" both looked reasonable on paper
+and both were refused by vLLM on the physical box. The acceptance run
+(`scripts/accept-shape.sh`, below) is what validates a shape's budget on a
+given box; the shipped TOML overrides carry the measured value plus its
+provenance comment, not an estimate.
+
+## Before-state: the four core roles were unconditional
+
+The claim this feature starts from is checkable in the shipped tree: in
+`lobes/templates/fleet/docker-compose.yml`, the four core-role services
+(`vllm-primary`, `vllm-embed`, `vllm-rerank`, `vllm-multimodal`) carry **no**
+`profiles:` stanza — only the opt-in gears (`vllm-minor`, `vllm-middle`,
+`vllm-multimodal-coder`) do. Before this feature, "Spark drops Gemma" or
+"Thor drops Qwen" meant hand-editing `docker-compose.yml`, exactly the drift
+the #108 goldens exist to prevent. Shapes gate a dropped service via the
+**generated** `docker-compose.shape.yml` override layered on top — the base
+template itself stays unconditional, so `machine-as-brain` (the default)
+needs no override at all. Issue #109 (the GB10 verification this work
+depended on) is closed, with the GB10 trait findings recorded on the issue.
+
+## The dev lane
+
+`GATEWAY_PIP_EXTRA_INDEX_URL` in `.env` (default unset — a no-op on release
+builds) paired with a TestPyPI `.devN` `MODEL_GEAR_VERSION` lets a
+from-source box validate an unreleased branch end-to-end, with zero hand
+edits to the Dockerfiles. The gateway and realtime images install in **two
+steps**: first `pip install --no-cache-dir --no-deps --index-url
+"${LOBES_DEV_INDEX_URL}" "lobes-cli==${MODEL_GEAR_VERSION}"`, then the normal
+`pip install "lobes-cli==${MODEL_GEAR_VERSION}"` against real PyPI (which
+sees the pin already satisfied). The two-step, `--no-deps`-first shape exists
+because a plain extra-index install lets a TestPyPI name-squat (e.g.
+`FASTAPI-1.0`) outrank the real PyPI package of the same name — fetching the
+`.devN` wheel `--no-deps` from the dev index alone, then resolving every
+other dependency from real PyPI, avoids that entirely.
+
+## The acceptance script
+
+```bash
+scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|thor-muse|orin-small> [--audio] \
+  [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
+  [--dev-index URL] [--timeout SECS]
+scripts/accept-shape.sh --restore [--deploy-dir DIR]
+# `thor-worker` is live (deviation d1, 2026-08-20) but was accepted by a direct
+# `lobes init --shape thor-worker --apply --force` + probe run on the Spark
+# card, not yet by this harness's own `scripts/accept-shape.sh` path — that
+# formal run is a follow-up, not done here. Never pass `--audio` with
+# `orin-lobe` / `orin-cortex`: neither hosts stt/tts (no sm_87 Parakeet image).
+```
+
+One unattended, fail-not-skip command: back up the current deployment,
+scaffold the requested shape into a clean dir (dry-run shown first, then
+`--apply`), boot the fleet, prove dropped-lobe honesty and per-role
+correctness **live**, run the advertised-implies-reachable gate
+(`scripts/live-check.sh`), measure the reclaimed heavy-lobe budget, and leave
+a full transcript at `~/lobes-accept-<shape>-<UTC-stamp>.log`. `--restore`
+puts the previous deployment back. Phase 4b additionally checks the opt-in
+honest-referral surface (mesh-brain t3, issue #112) whenever the retired
+per-role peer-origin knob (see the Retired section below) is declared on the
+box under test — skipped, not failed, with zero peer config. This is the exact command sequence behind the
+two `#113` shape-validation transcripts in `docs/evidence/`:
+`2026-07-14-accept-spark-lobe-gb10.txt` and
+`2026-07-14-accept-thor-lobe-thor.txt`. The cross-box referral proof (a
+consumer actually reaching the peer that hosts a dropped role) needs two live
+boxes at once and so was run as a bespoke variant rather than a single
+`accept-shape.sh` invocation — see
+`docs/evidence/2026-07-14-accept-referral-thor.txt` and "The mesh-brain
+end-state" below.
+
+## The mesh-brain end-state (issue #112)
+
+The near-term spec that shipped shape selection plus `spark-lobe`/`thor-lobe`
+(`docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md`)
+deliberately left the cross-box question open. Its Decisions section says so
+explicitly:
+
+> Cross-box story is per-box honesty only for this change: each box
+> advertises only the lobes it hosts and consumers address each box directly
+> (how the Culture mesh already connects per machine); gateway proxying of
+> absent roles and a brain-level capabilities view are deferred to the #112
+> design work.
+
+Issue #112's own exported spec
+(`docs/specs/2026-07-14-lobes-serves-the-mesh-brain-end-state-one-lobe-per.md`)
+is the answer to that deferral. Its framing, in one line: **one heavy lobe
+per box, cheap gears co-reside, and the brain stays whole across the mesh via
+direct addressing plus honest referral.** Four decisions came out of it, all
+now shipped:
+
+1. **Cross-box reachability = direct addressing + opt-in honest referral.**
+   By default, no data-plane proxying: a consumer dials each box directly,
+   exactly as the Culture mesh does today; with opt-in peer config, a box's
+   `capabilities` and its `role_infeasible` 404s name the peer that hosts an
+   absent role (`hosted_by`, above). The #92 invariant holds throughout — a
+   box never serves what it does not host. *Following* a referral on the
+   caller's behalf was a deliberate non-goal **at the time this decision was
+   recorded** — it shipped first as its own hand-typed, per-role opt-in
+   extension (issues #115/#127, phase 1, now RETIRED as the documented
+   contract — see the Retired section below), and this repo's current answer
+   to it is the **mesh-brain join**: a box that joins the mesh
+   (`LOBES_MESH_KEY`/`LOBES_MESH_NAME`/`LOBES_MESH_SEEDS`) gets the same
+   auto-wired forwarding for FREE, with no per-role config to type — see
+   [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain).
+   Direct addressing remains the default; both the retired per-role
+   proxying and the mesh's auto-wired proxying are additive, never a
+   replacement for it. The mesh contract is DECLARED/UNVALIDATED (#108)
+   until its own cutover acceptance transcript lands — see that same section
+   for the code-vs-docs implementation-status caveat.
+2. **Cheap-gear placement = co-residence.** "One lobe per box" specializes
+   the heavy *generate* lobes only — `embedder` / `reranker` / `stt` / `tts`
+   may ride on every box that wants them (~0.06 util each, as today); no
+   gear is forced to move for the end-state to hold, and consumers keep
+   localhost embed/rerank/audio endpoints on every box.
+3. **The fleet's reference shape assignment.** The Spark GB10 gives its
+   whole machine to the Qwen `cortex` (shape `spark-lobe` — see the tax table
+   above: it already reaches `cortex`'s full native 262144 context, not a
+   partial reclaim); the Jetson AGX Thor 128GB gives its whole machine to the
+   Gemma `senses` (shape `thor-lobe` — likewise reaches `senses`'s full
+   native 131072); the Jetson AGX Orin 64GB hosts the small-model lobes
+   (shape `orin-small` — the opt-in `minor` gear plus the pooling gears, no
+   heavy 27B/12B at all). The two near-term shapes turned out to already *be*
+   their one-lobe-per-box reference instances once their reclaim was
+   measured; `orin-small` is the third reference instance, added by this
+   work as declared-but-unvalidated data (support table above).
+4. **The shape axis is mixable.** Backward compatible, just a design option:
+   either many machines (some cloud, if you want) each specialized to one
+   lobe, or some machines taking multiple roles, or any mix of the two —
+   `machine-as-brain` stays the default and the one-lobe shapes are the far
+   end of the same shape axis, not a mandate. A single-box operator running
+   bare `lobes init` is completely unaffected.
+
+**Live evidence for the cross-box surface.** Decisions 1–2 (referral +
+co-residence) were validated live on the physical Jetson AGX Thor
+(2026-07-14, `docs/evidence/2026-07-14-accept-referral-thor.txt`), dialing a
+real declared peer (the retired singular peer-origin knob for `cortex`,
+naming the box that hosts it — see the Retired section below for its exact
+spelling) from a from-source gateway on the Thor with
+`cortex` dropped. It proved, live: `capabilities` flags `cortex
+feasible:false` and carries `hosted_by`, not hidden; every dropped-`cortex`
+alias 404s `role_infeasible` with the same `hosted_by`; the hosted roles
+(`senses`, `embedder`) answer through the same gateway; a consumer that
+follows the referral and dials the peer directly reaches `cortex` there
+(`'cortex-on-spark-alive'`); and a shape move is byte-for-byte restorable
+(`machine-as-brain` → `thor-lobe` → `machine-as-brain`, tree hashes
+`965708cc23da1ea5…` / `0c8e921fd3b27689…` / `965708cc23da1ea5…`). The
+full-shape boots, per-role correctness probes, and measured reclaimed budgets
+that decision 3 depends on were **not** re-run for this evidence — they reuse
+the `#113` acceptance transcripts already cited in the tax table above (an
+explicit operator decision recorded in the transcript itself, since spinning
+up both physical boxes again would prove nothing new).
+
+That referral run also surfaced one honest, unrelated finding: the Thor box's
+*long-running* machine-as-brain deployment — the one left up to host the
+`senses`/`embedder`/`reranker` lanes the referral test dialed through —
+predates the `#110` per-machine-profile work, so its `.env` carries the
+pre-`#110` reranker knobs and its rerank lane hangs. This is deployment
+staleness on that one box, not a defect of the shapes or referral feature:
+`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` (a freshly-scaffolded
+`thor-lobe` deployment, `#113`) already shows the reranker probe passing
+under the correct `RERANK_ENFORCE_EAGER`/`TRITON_ATTN` knobs. The fix, when
+that box is next touched, is simply to re-scaffold with the current release.
+
+**What's still open:** proxy-lobes' phase-1 substrate (config channels,
+inbound auth, the data-plane forward, the PROXIED capabilities state — see
+[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+above) has landed, but its **live cross-box acceptance run** — the same kind
+of physical-pair proof the referral evidence above already has — has not; no
+doc here claims a proxied answer has been observed on physical hardware yet.
+Issue #127's own later phases (fan-out execution, a request-tracing store,
+latency-aware routing, policy plugins) remain explicitly out of scope for
+this delivery. Physical Jetson AGX Orin 64GB validation (decision 3's
+`orin-small` reference instance — declared, not yet booted) is also still
+open; see the support table above and the scope boundary below.
+
+## Scope boundary
+
+The near-term work (issue #113) shipped shape selection plus `spark-lobe` and
+`thor-lobe` (both validated live). The mesh-brain end-state (issue #112,
+spec+plan in PR #116) has since landed on top of it: the `orin-small`
+reference shape, the opt-in honest-referral surface, the per-(shape,
+dropped-role) contract-test matrix, and the live cross-box referral evidence
+above are all shipped. Two things remain explicitly out of scope, routed
+elsewhere:
+
+- **Proxy-lobes** (serving a "sleeping" lobe by following its own referral to
+  whichever peer box hosts it, on the caller's behalf) — the phase-1
+  substrate has shipped as an opt-in extension (issues #115/#127; see
+  [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+  above). Direct addressing + referral (decision 1, above) remains the
+  shipped **default**; a live cross-box acceptance run for the proxy path,
+  and #127's later phases (fan-out execution, request tracing, latency-aware
+  routing, policy plugins), are their own follow-ups, out of scope here.
+- **Jetson AGX Orin physical validation** — the `orin-small` shape (above)
+  ships as **declared, unvalidated data** (issue #112, mesh-brain end-state
+  t2), exactly like `lobes/profiles/builtin/base.toml`'s existing
+  conservative fallback for an unrecognised card: pure TOML + goldens, no
+  live boot. Physical Jetson AGX Orin 64GB validation is its own follow-up
+  with its own evidence — until it lands, no doc, support table, or `lobes
+  capabilities` output may claim Orin is validated.
+
+## Retired: the operator-typed peer family (`<PREFIX>_PEER_*`)
+
+Everything below this heading was the operator-facing contract for
+cross-box reachability **before** the mesh-brain join (above) replaced
+it. Kept, not deleted: the mechanisms it measured (fingerprint
+compatibility, capacity-relative selection, single-hop forwarding, the
+`X-Lobes-Proxied-By` marker convention) are exactly what the mesh's own
+verified-member pooling and auto-wired proxying build on. Every measured
+number and acceptance transcript cited below remains true of the retired
+mechanism as measured; none of it is a claim about the mesh, which is
+DECLARED/UNVALIDATED per the note above.
+
+**Operators: do not declare new peer-origin/peer-proxy/peer-api-key
+values.** Declare the mesh instead. `lobes doctor`'s `peer_family_retired`
+finding flags a deployment that still sets one of these keys. As of this
+branch the gateway still parses them (see the Implementation status note
+in `docs/gateway-fleet.md`), so an existing deployment that already
+declared them keeps working exactly as documented below until the
+follow-on code-removal task lands.
 
 ## Honest referral to the peer that hosts a dropped role (opt-in)
 
@@ -470,249 +781,6 @@ cortex-only** — the Spark+Thor NVFP4 pair is the one pool with a pending live
 acceptance transcript; the Orin's llama.cpp cortex is exempt, and any other
 pooled role (senses/muse/worker/embedder/reranker/hand/stt/tts) is
 declared/unvalidated data only, exactly like `thor-muse`/`orin-small` above.
-
-## The co-residency tax and its measured repayment
-
-| box (mesh shape) | heavy lobe | co-resident context (machine-as-brain) | full-native context | repayment | measured `gpu_mem_util` | measured KV pool | measured concurrency |
-|---|---|---|---|---|---|---|---|
-| Spark GB10 (`spark-lobe`) | `cortex` | 131072 | 262144 | **2.0×** | 0.44 | **888,946 tokens** | **3.39×** at full 256K |
-| Jetson AGX Thor (`thor-lobe`) | `senses` | 32768 | 131072 | **4.0×** | 0.30 | **1,418,554 tokens** | **10.82×** at 131072 |
-
-All eight numbers above are read verbatim from the two `#113` acceptance
-transcripts (`docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt` phase 7,
-`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` phase 7) plus the
-deployed `.env` overrides they measured — none are estimated.
-
-**Before** (machine-as-brain, the default, on the GB10): every role
-co-resides, so each one is trimmed to fit alongside the others —
-`senses` 32768 @ util 0.14, `cortex` 131072 @ util 0.30, embedder/reranker
-at 0.06 each — total budget `0.30 + 0.14 + 0.06 + 0.06 = 0.56`.
-
-**spark-lobe** (measured live, 2026-07-14): dropping `senses` lets `cortex`
-reclaim budget. `PRIMARY_GPU_MEM_UTIL=0.44` / `PRIMARY_MAX_MODEL_LEN=262144`
-— its full native 256K context. Measured KV pool: **888,946 tokens**,
-**3.39×** concurrency at the full 256K request length. The historical 0.60
-solo value was **tried first and refused by vLLM on the live box**: the
-GB10's 121.7 GiB is *unified* memory shared with the host OS and other
-services, and the 2026-07-14 boot measured only **59.35 GiB free** at
-primary startup against the **73.01 GiB** that util 0.60 demands. 0.44
-(53.5 GiB) fits the measured reality with margin.
-
-**What `spark-lobe` declares TODAY is not that 0.44 / 262144 pair.** The table
-and paragraph above report the 2026-07-14 acceptance run and stay accurate as
-history. The shape has moved twice since: to `gpu_mem_util=0.58` at a
-YaRN-extended 1,048,576 window (2026-08-19), and then — deviation d4,
-2026-08-25 — back to the checkpoint's native **262144** at the same 0.58,
-adopting the **DSpark** block drafter, whose KV cost cannot co-exist with the
-1M window at that budget. Measured KV pool at the adopted pair: **760,806
-tokens**, **2.90×** concurrency at 262144. The reclaim *argument* this section
-makes is unchanged — dropping `senses` is still what funds the budget — only
-the numbers moved. See `docs/dspark-speculation.md#adopted-in-tree-2026-08-25`
-and the shape TOML's own d4 comment block.
-
-**thor-lobe** (measured live, 2026-07-14): dropping `cortex` lets `senses`
-reclaim budget. `MULTIMODAL_GPU_MEM_UTIL=0.30` /
-`MULTIMODAL_MAX_MODEL_LEN=131072` — its full native 128K context. Measured KV
-pool: **1,418,554 tokens**, **10.82×** concurrency at 131072. The
-reclaim-**sum** 0.14 (senses' own co-resident share) + 0.30 (dropped
-cortex's share) = 0.44 was likewise tried first and **refused**: the live
-Thor measured only **38.44 GiB free** at senses startup against the
-**54.04 GiB** that util 0.44 demands (Thor's unified memory carries heavier
-host workloads than the Spark's). 0.30 (36.85 GiB) is exactly the dropped
-cortex's own freed share, and it fits.
-
-**The lesson, stated plainly:** on unified-memory boxes the reclaim values
-are **measured truths, not arithmetic** — a naive "sum the freed shares" or
-"promote to the model's own solo default" both looked reasonable on paper
-and both were refused by vLLM on the physical box. The acceptance run
-(`scripts/accept-shape.sh`, below) is what validates a shape's budget on a
-given box; the shipped TOML overrides carry the measured value plus its
-provenance comment, not an estimate.
-
-## Before-state: the four core roles were unconditional
-
-The claim this feature starts from is checkable in the shipped tree: in
-`lobes/templates/fleet/docker-compose.yml`, the four core-role services
-(`vllm-primary`, `vllm-embed`, `vllm-rerank`, `vllm-multimodal`) carry **no**
-`profiles:` stanza — only the opt-in gears (`vllm-minor`, `vllm-middle`,
-`vllm-multimodal-coder`) do. Before this feature, "Spark drops Gemma" or
-"Thor drops Qwen" meant hand-editing `docker-compose.yml`, exactly the drift
-the #108 goldens exist to prevent. Shapes gate a dropped service via the
-**generated** `docker-compose.shape.yml` override layered on top — the base
-template itself stays unconditional, so `machine-as-brain` (the default)
-needs no override at all. Issue #109 (the GB10 verification this work
-depended on) is closed, with the GB10 trait findings recorded on the issue.
-
-## The dev lane
-
-`GATEWAY_PIP_EXTRA_INDEX_URL` in `.env` (default unset — a no-op on release
-builds) paired with a TestPyPI `.devN` `MODEL_GEAR_VERSION` lets a
-from-source box validate an unreleased branch end-to-end, with zero hand
-edits to the Dockerfiles. The gateway and realtime images install in **two
-steps**: first `pip install --no-cache-dir --no-deps --index-url
-"${LOBES_DEV_INDEX_URL}" "lobes-cli==${MODEL_GEAR_VERSION}"`, then the normal
-`pip install "lobes-cli==${MODEL_GEAR_VERSION}"` against real PyPI (which
-sees the pin already satisfied). The two-step, `--no-deps`-first shape exists
-because a plain extra-index install lets a TestPyPI name-squat (e.g.
-`FASTAPI-1.0`) outrank the real PyPI package of the same name — fetching the
-`.devN` wheel `--no-deps` from the dev index alone, then resolving every
-other dependency from real PyPI, avoids that entirely.
-
-## The acceptance script
-
-```bash
-scripts/accept-shape.sh <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|thor-muse|orin-small> [--audio] \
-  [--deploy-dir DIR] [--port N] [--env KEY=VAL] [--dev-version V] \
-  [--dev-index URL] [--timeout SECS]
-scripts/accept-shape.sh --restore [--deploy-dir DIR]
-# `thor-worker` is live (deviation d1, 2026-08-20) but was accepted by a direct
-# `lobes init --shape thor-worker --apply --force` + probe run on the Spark
-# card, not yet by this harness's own `scripts/accept-shape.sh` path — that
-# formal run is a follow-up, not done here. Never pass `--audio` with
-# `orin-lobe` / `orin-cortex`: neither hosts stt/tts (no sm_87 Parakeet image).
-```
-
-One unattended, fail-not-skip command: back up the current deployment,
-scaffold the requested shape into a clean dir (dry-run shown first, then
-`--apply`), boot the fleet, prove dropped-lobe honesty and per-role
-correctness **live**, run the advertised-implies-reachable gate
-(`scripts/live-check.sh`), measure the reclaimed heavy-lobe budget, and leave
-a full transcript at `~/lobes-accept-<shape>-<UTC-stamp>.log`. `--restore`
-puts the previous deployment back. Phase 4b additionally checks the opt-in
-honest-referral surface (mesh-brain t3, issue #112) whenever a
-`<PREFIX>_PEER_ORIGIN` is declared on the box under test — skipped, not
-failed, with zero peer config. This is the exact command sequence behind the
-two `#113` shape-validation transcripts in `docs/evidence/`:
-`2026-07-14-accept-spark-lobe-gb10.txt` and
-`2026-07-14-accept-thor-lobe-thor.txt`. The cross-box referral proof (a
-consumer actually reaching the peer that hosts a dropped role) needs two live
-boxes at once and so was run as a bespoke variant rather than a single
-`accept-shape.sh` invocation — see
-`docs/evidence/2026-07-14-accept-referral-thor.txt` and "The mesh-brain
-end-state" below.
-
-## The mesh-brain end-state (issue #112)
-
-The near-term spec that shipped shape selection plus `spark-lobe`/`thor-lobe`
-(`docs/specs/2026-07-14-lobes-serves-the-brain-shape-you-choose-machine-as.md`)
-deliberately left the cross-box question open. Its Decisions section says so
-explicitly:
-
-> Cross-box story is per-box honesty only for this change: each box
-> advertises only the lobes it hosts and consumers address each box directly
-> (how the Culture mesh already connects per machine); gateway proxying of
-> absent roles and a brain-level capabilities view are deferred to the #112
-> design work.
-
-Issue #112's own exported spec
-(`docs/specs/2026-07-14-lobes-serves-the-mesh-brain-end-state-one-lobe-per.md`)
-is the answer to that deferral. Its framing, in one line: **one heavy lobe
-per box, cheap gears co-reside, and the brain stays whole across the mesh via
-direct addressing plus honest referral.** Four decisions came out of it, all
-now shipped:
-
-1. **Cross-box reachability = direct addressing + opt-in honest referral.**
-   By default, no data-plane proxying: a consumer dials each box directly,
-   exactly as the Culture mesh does today; with opt-in peer config, a box's
-   `capabilities` and its `role_infeasible` 404s name the peer that hosts an
-   absent role (`hosted_by`, above). The #92 invariant holds throughout — a
-   box never serves what it does not host. *Following* a referral on the
-   caller's behalf (a proxy-lobe) was a deliberate non-goal **at the time
-   this decision was recorded** — it has since landed as its own opt-in
-   extension (issues #115/#127, phase 1): see
-   [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
-   above. Direct addressing remains the default; proxying is additive, never
-   a replacement for it.
-2. **Cheap-gear placement = co-residence.** "One lobe per box" specializes
-   the heavy *generate* lobes only — `embedder` / `reranker` / `stt` / `tts`
-   may ride on every box that wants them (~0.06 util each, as today); no
-   gear is forced to move for the end-state to hold, and consumers keep
-   localhost embed/rerank/audio endpoints on every box.
-3. **The fleet's reference shape assignment.** The Spark GB10 gives its
-   whole machine to the Qwen `cortex` (shape `spark-lobe` — see the tax table
-   above: it already reaches `cortex`'s full native 262144 context, not a
-   partial reclaim); the Jetson AGX Thor 128GB gives its whole machine to the
-   Gemma `senses` (shape `thor-lobe` — likewise reaches `senses`'s full
-   native 131072); the Jetson AGX Orin 64GB hosts the small-model lobes
-   (shape `orin-small` — the opt-in `minor` gear plus the pooling gears, no
-   heavy 27B/12B at all). The two near-term shapes turned out to already *be*
-   their one-lobe-per-box reference instances once their reclaim was
-   measured; `orin-small` is the third reference instance, added by this
-   work as declared-but-unvalidated data (support table above).
-4. **The shape axis is mixable.** Backward compatible, just a design option:
-   either many machines (some cloud, if you want) each specialized to one
-   lobe, or some machines taking multiple roles, or any mix of the two —
-   `machine-as-brain` stays the default and the one-lobe shapes are the far
-   end of the same shape axis, not a mandate. A single-box operator running
-   bare `lobes init` is completely unaffected.
-
-**Live evidence for the cross-box surface.** Decisions 1–2 (referral +
-co-residence) were validated live on the physical Jetson AGX Thor
-(2026-07-14, `docs/evidence/2026-07-14-accept-referral-thor.txt`), dialing a
-real declared peer (`PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001`,
-the box that hosts `cortex`) from a from-source gateway on the Thor with
-`cortex` dropped. It proved, live: `capabilities` flags `cortex
-feasible:false` and carries `hosted_by`, not hidden; every dropped-`cortex`
-alias 404s `role_infeasible` with the same `hosted_by`; the hosted roles
-(`senses`, `embedder`) answer through the same gateway; a consumer that
-follows the referral and dials the peer directly reaches `cortex` there
-(`'cortex-on-spark-alive'`); and a shape move is byte-for-byte restorable
-(`machine-as-brain` → `thor-lobe` → `machine-as-brain`, tree hashes
-`965708cc23da1ea5…` / `0c8e921fd3b27689…` / `965708cc23da1ea5…`). The
-full-shape boots, per-role correctness probes, and measured reclaimed budgets
-that decision 3 depends on were **not** re-run for this evidence — they reuse
-the `#113` acceptance transcripts already cited in the tax table above (an
-explicit operator decision recorded in the transcript itself, since spinning
-up both physical boxes again would prove nothing new).
-
-That referral run also surfaced one honest, unrelated finding: the Thor box's
-*long-running* machine-as-brain deployment — the one left up to host the
-`senses`/`embedder`/`reranker` lanes the referral test dialed through —
-predates the `#110` per-machine-profile work, so its `.env` carries the
-pre-`#110` reranker knobs and its rerank lane hangs. This is deployment
-staleness on that one box, not a defect of the shapes or referral feature:
-`docs/evidence/2026-07-14-accept-thor-lobe-thor.txt` (a freshly-scaffolded
-`thor-lobe` deployment, `#113`) already shows the reranker probe passing
-under the correct `RERANK_ENFORCE_EAGER`/`TRITON_ATTN` knobs. The fix, when
-that box is next touched, is simply to re-scaffold with the current release.
-
-**What's still open:** proxy-lobes' phase-1 substrate (config channels,
-inbound auth, the data-plane forward, the PROXIED capabilities state — see
-[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
-above) has landed, but its **live cross-box acceptance run** — the same kind
-of physical-pair proof the referral evidence above already has — has not; no
-doc here claims a proxied answer has been observed on physical hardware yet.
-Issue #127's own later phases (fan-out execution, a request-tracing store,
-latency-aware routing, policy plugins) remain explicitly out of scope for
-this delivery. Physical Jetson AGX Orin 64GB validation (decision 3's
-`orin-small` reference instance — declared, not yet booted) is also still
-open; see the support table above and the scope boundary below.
-
-## Scope boundary
-
-The near-term work (issue #113) shipped shape selection plus `spark-lobe` and
-`thor-lobe` (both validated live). The mesh-brain end-state (issue #112,
-spec+plan in PR #116) has since landed on top of it: the `orin-small`
-reference shape, the opt-in honest-referral surface, the per-(shape,
-dropped-role) contract-test matrix, and the live cross-box referral evidence
-above are all shipped. Two things remain explicitly out of scope, routed
-elsewhere:
-
-- **Proxy-lobes** (serving a "sleeping" lobe by following its own referral to
-  whichever peer box hosts it, on the caller's behalf) — the phase-1
-  substrate has shipped as an opt-in extension (issues #115/#127; see
-  [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
-  above). Direct addressing + referral (decision 1, above) remains the
-  shipped **default**; a live cross-box acceptance run for the proxy path,
-  and #127's later phases (fan-out execution, request tracing, latency-aware
-  routing, policy plugins), are their own follow-ups, out of scope here.
-- **Jetson AGX Orin physical validation** — the `orin-small` shape (above)
-  ships as **declared, unvalidated data** (issue #112, mesh-brain end-state
-  t2), exactly like `lobes/profiles/builtin/base.toml`'s existing
-  conservative fallback for an unrecognised card: pure TOML + goldens, no
-  live boot. Physical Jetson AGX Orin 64GB validation is its own follow-up
-  with its own evidence — until it lands, no doc, support table, or `lobes
-  capabilities` output may claim Orin is validated.
 
 ## See also
 
