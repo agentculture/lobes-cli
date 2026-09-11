@@ -29,6 +29,7 @@ JSON contract: ``{healthy, checks:[{id, passed, severity, message, remediation}]
 from __future__ import annotations
 
 import argparse
+import os
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
@@ -510,6 +511,136 @@ def _pool_arming_check(deploy_dir: Path) -> dict:
     )
 
 
+# --- peer-family retirement + mesh checks (mesh-vs-peer plan, t9) -----------
+#
+# The mesh (LOBES_MESH_KEY/NAME/SEEDS/…) replaced the operator-typed
+# <PREFIX>_PEER_ORIGIN/_PEER_ORIGINS/_PEER_PROXY/_PEER_API_KEY/_PEER_API_KEYS
+# family — the parsing for that family is gone from lobes.gateway._config and
+# lobes.gateway._routing (this task), so a deployed .env that still carries
+# one of those keys is now silently inert rather than merely legacy. All
+# three checks below are READ-ONLY findings: none is ever touched by --fix,
+# because none of them is a missing-file/key heal — they name an operator
+# action (delete a stale key, fix a shell export, re-scaffold compose) that
+# --fix's append-only contract cannot safely automate.
+
+#: The five suffixes the retired peer family used, spelled out here (rather
+#: than imported from lobes.gateway._config, whose PEER_*_ENV dicts this task
+#: deletes) so this finding survives the parsing removal it is reporting on.
+_RETIRED_PEER_SUFFIXES: tuple[str, ...] = (
+    "PEER_ORIGIN",
+    "PEER_ORIGINS",
+    "PEER_PROXY",
+    "PEER_API_KEY",
+    "PEER_API_KEYS",
+)
+
+
+def _peer_family_retired_check(deploy_dir: Path) -> dict | None:
+    """A leftover ``<PREFIX>_PEER_*`` key in ``.env`` — dead since this task
+    removed the parsing that ever read it.
+
+    Returns ``None`` (no finding) when nothing leftover is set — the common
+    case for every deployment that never declared the retired family, and for
+    one already migrated to the mesh.
+    """
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    leftover = sorted(
+        f"{prefix}_{suffix}"
+        for prefix in _GATEWAY_ROLE_PREFIXES
+        for suffix in _RETIRED_PEER_SUFFIXES
+        if (deployed.get(f"{prefix}_{suffix}") or "").strip()
+    )
+    if not leftover:
+        return None
+    shown = ", ".join(leftover[:8])
+    more = "" if len(leftover) <= 8 else f" (+{len(leftover) - 8} more)"
+    return _check(
+        "peer_family_retired",
+        False,
+        "warn",
+        f"{len(leftover)} retired <PREFIX>_PEER_* key(s) still set in .env: {shown}{more}",
+        "delete the key; declare the mesh via LOBES_MESH_KEY/NAME/SEEDS",
+    )
+
+
+#: The one mesh key doctor compares between the invoking shell and ``.env`` —
+#: the shared secret every mesh member must present identically (mirrors the
+#: precedent set by _VERSION_PIN_KEY: one named, load-bearing key, not a
+#: denylist-scrubbed dump of the whole shell environment).
+_MESH_KEY_ENV_VAR = "LOBES_MESH_KEY"
+_MESH_KEY_PREFIX = "LOBES_MESH_"
+
+
+def _mesh_key_shell_mismatch_check(env_path: Path) -> dict | None:
+    """The invoking shell exports ``LOBES_MESH_KEY`` differing from ``.env``'s.
+
+    A real footgun: an operator's shell profile (or an ad-hoc ``export``)
+    carrying a stale/different mesh key never changes what the DEPLOYED
+    gateway container reads (that comes only from ``.env`` via compose's
+    ``env_file``), but it silently breaks any CLI verb this shell invokes
+    that dials the mesh directly with its own process environment. Returns
+    ``None`` (no finding) when the shell has not set the key at all, or when
+    both sides agree.
+    """
+    shell_value = (os.environ.get(_MESH_KEY_ENV_VAR) or "").strip()
+    if not shell_value:
+        return None
+    env_value = (_env.read_env(env_path, _MESH_KEY_ENV_VAR) or "").strip()
+    if not env_value or shell_value == env_value:
+        return None
+    return _check(
+        "mesh_key_shell_mismatch",
+        False,
+        "warn",
+        f"the invoking shell's {_MESH_KEY_ENV_VAR} differs from this deployment's .env",
+        f"export the same {_MESH_KEY_ENV_VAR} the deployment's .env carries "
+        "(or update .env to match) so CLI verbs and the deployed gateway agree "
+        "on the mesh secret",
+    )
+
+
+def _passthrough_missing_check(deploy_dir: Path) -> dict | None:
+    """A ``LOBES_MESH_*`` key set in ``.env`` but absent from the gateway
+    service's ``environment:`` block in ``docker-compose.yml`` — the same
+    2026-07-17 MUSE_* trap :func:`_gateway_passthrough_check` guards against,
+    scoped to the mesh key family this task introduces reporting for.
+
+    Fleet-only (mirrors ``_gateway_passthrough_check``'s own gate): the legacy
+    single-model scaffold has no gateway service at all. Returns ``None`` (no
+    finding) when no ``LOBES_MESH_*`` key is set, or every set one has a
+    passthrough somewhere in the scanned compose/overlay files.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return None
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    mesh_keys = sorted(
+        key
+        for key in deployed
+        if key.startswith(_MESH_KEY_PREFIX) and (deployed.get(key) or "").strip()
+    )
+    if not mesh_keys:
+        return None
+    compose_text = "\n".join(
+        _gateway_environment_block((deploy_dir / name).read_text(encoding="utf-8"))
+        for name in _PASSTHROUGH_COMPOSE_FILES
+        if (deploy_dir / name).is_file()
+    )
+    missing = [key for key in mesh_keys if not _has_passthrough(compose_text, key)]
+    if not missing:
+        return None
+    shown = ", ".join(missing[:8])
+    more = "" if len(missing) <= 8 else f" (+{len(missing) - 8} more)"
+    return _check(
+        "passthrough_missing",
+        False,
+        "warn",
+        f"{len(missing)} LOBES_MESH_* .env key(s) set but missing a gateway "
+        f"passthrough in docker-compose*.yml: {shown}{more}",
+        "re-scaffold docker-compose.yml from the packaged template "
+        "('lobes init --apply') — doctor never patches compose directly",
+    )
+
+
 # --- scaffold integrity + profile staleness (issue #119) --------------------
 
 _FIX_REMEDIATION = (
@@ -979,6 +1110,16 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
         env_path = deploy_dir / _compose.ENV_FILE
         checks.append(_env_coherence_check(env_path))
         port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
+        # Peer-family retirement + mesh checks (t9) — read-only, apply to
+        # every scaffolded deployment (not fleet-gated: a leftover PEER_* key
+        # or a shell/`.env` mesh-key mismatch is meaningful even on the
+        # legacy single-model scaffold's .env).
+        peer_retired_check = _peer_family_retired_check(deploy_dir)
+        if peer_retired_check is not None:
+            checks.append(peer_retired_check)
+        mesh_mismatch_check = _mesh_key_shell_mismatch_check(env_path)
+        if mesh_mismatch_check is not None:
+            checks.append(mesh_mismatch_check)
         # Scaffold integrity + profile staleness (issue #119) — fleet-only:
         # the legacy single-model scaffold has no per-role profile render.
         if _compose.is_fleet(deploy_dir):
@@ -991,6 +1132,9 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
             auth_gate = _associate_auth_gate_check(deploy_dir)
             if auth_gate is not None:
                 checks.append(auth_gate)
+            mesh_passthrough_check = _passthrough_missing_check(deploy_dir)
+            if mesh_passthrough_check is not None:
+                checks.append(mesh_passthrough_check)
             fix_plan = {"files": missing_files, "env": missing_env}
         # Committed deployment lock (deployment-lock-per-box plan, t8) — not
         # fleet-gated: a lock is orthogonal to topology, and a deployment that

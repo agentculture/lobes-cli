@@ -1970,6 +1970,26 @@ def _stamp_pool_headers(table: RoutingTable, reason: str) -> list[tuple[str, str
     ]
 
 
+def _local_mesh_member_marker() -> list[tuple[str, str]]:
+    """``X-Lobes-Mesh-Member`` naming THIS box, when the mesh join is armed.
+
+    Best-effort and mesh-scoped only (item B, t9): a mesh-disabled box (no
+    ``LOBES_MESH_KEY``) or one with no declared ``LOBES_MESH_NAME`` gets no
+    marker at all — never a fabricated name — and a malformed mesh config
+    (:class:`~lobes.gateway._mesh_config.MeshConfigError`) is swallowed the
+    same way every other on-demand ``_build_mesh_config()`` call site in this
+    module already tolerates it, so a local pooled answer is never turned
+    into an error by this purely cosmetic header.
+    """
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        return []
+    if not mesh_cfg.enabled or not mesh_cfg.name:
+        return []
+    return [(MESH_MEMBER_HEADER, mesh_cfg.name)]
+
+
 # --- the pooled dispatch loop (t8, issue #199) ------------------------------
 #
 # t7 placed a pooled request; t8 gives that placement its FAILURE semantics.
@@ -2293,11 +2313,19 @@ def _pool_marker_headers(
     ``X-Lobes-Mesh-Member`` naming it — the same marker the mesh-forward and
     suffixed-lane paths stamp, so every pooled/proxied/suffixed mesh answer
     carries one consistent header regardless of which code path served it.
+
+    A LOCAL pick is named too (item B, t9): when this box's own mesh join is
+    enabled and has a declared ``LOBES_MESH_NAME``, that name is stamped here
+    as well, so every mesh answer — local or forwarded — names its serving
+    member, not just the forwarded ones. A mesh-disabled or unnamed box keeps
+    the pre-existing markers unchanged (no ``MeshConfigError`` ever escapes
+    this best-effort lookup).
     """
     selection = placement.selection
     load = _route_load_header(placement)
     if selection.local:
-        return _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
+        base = _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
+        return base + _local_mesh_member_marker()
     member_marker: list[tuple[str, str]] = []
     if mesh_snapshot is not None and selection.origin:
         for m in mesh_snapshot.members:
@@ -4914,6 +4942,10 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         # Finding 1: build a real announcement from gateway data.
         # Finding 7: wire the RejectionLog for flood collapse.
         join_log = RejectionLog()
+        # Item C (t9): a second RejectionLog collapses repeated verification
+        # failures per-origin, mirroring join_log exactly — a flapping/
+        # unreachable peer no longer floods stderr with one line per probe.
+        verify_log = RejectionLog()
         mesh_routes, announcement = _build_mesh_routes(
             self_origin=_require_self_origin(cfg.self_origin),
             readiness_cache=readiness_cache,
@@ -4923,6 +4955,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
                 b.name: declared_lane_config(b.lane_fingerprints) for b in table.backends
             },
             join_log=join_log,
+            verify_log=verify_log,
             missed_max=_build_mesh_config().missed_max,
         )
         # Start the heartbeat daemon thread after the server is bound.

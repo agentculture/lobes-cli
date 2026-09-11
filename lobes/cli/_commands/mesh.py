@@ -139,7 +139,10 @@ def trigger_reannounce(port: int, env: dict[str, str]) -> None:
     best-effort: any failure to reach the local gateway (not yet up, wrong
     port, a transient error) is swallowed exactly like the heartbeat loop's
     own peer dials — a switch/up that already succeeded must never fail
-    because this hint could not be delivered.
+    because this hint could not be delivered. The caller is not left in the
+    dark, though (item D, t9): a failed delivery prints one stderr line
+    naming the reason, so a silently-not-reannounced mesh member is visible
+    without failing the command it rode in on.
     """
     key = _mesh_key(env)
     if not key:
@@ -149,8 +152,8 @@ def trigger_reannounce(port: int, env: dict[str, str]) -> None:
         _post_json(
             f"http://localhost:{port}", "/mesh/reannounce", {}, headers, _GATEWAY_TIMEOUT_SECONDS
         )
-    except (urllib.error.URLError, OSError, ValueError):
-        pass
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        emit_diagnostic(f"mesh: reannounce not delivered ({exc})")
 
 
 def _parse_duration_seconds(raw: str) -> float:
@@ -238,6 +241,13 @@ def _render_roster_table(members: list[dict]) -> str:
         roles = member.get("roles") or []
         roles_s = ", ".join(roles) if roles else "-"
         lines.append(f"{name:<20} {origin:<28} {age:>8}  {expiry:>8}  {status:<10}  {roles_s}")
+        # Item C (t9): a short, additive second line naming WHY the last
+        # verification probe found nothing verified — omitted entirely
+        # (no blank line) for a member with no reason, so an unaffected
+        # deployment's roster table is unchanged.
+        reason = member.get("unverified_reason")
+        if reason:
+            lines.append(f"{'':<20} {'':<28} {'':>8}  {'':>8}  unverified_reason: {reason}")
     return "\n".join(lines)
 
 

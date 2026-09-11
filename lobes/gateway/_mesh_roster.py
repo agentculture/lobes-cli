@@ -213,8 +213,12 @@ class Roster:
         self._lock = threading.Lock()  # Protects _roster, _approved_here, _flap_*
         self._ledger = Ledger(path=ledger_path, clock=self._clock)
         self._approved_here: set[str] = set()  # names explicitly approved on this node
-        self._flap_count: int = 0
-        self._flap_time: float = 0.0  # clock value of the most recent flap detection
+        # PER-NAME flap tracking (item A, t9) — was a single roster-wide
+        # counter/timestamp before this task, which meant one flapping
+        # member held out EVERY name. Keyed by member name so churn on one
+        # name never affects another's join/announce eligibility.
+        self._flap_counts: dict[str, int] = {}
+        self._flap_times: dict[str, float] = {}  # name -> clock value of last flap detection
         self._capacity_max: float = capacity_max
         # Finding 10: inject missed_max; None → fall back to module-level env default.
         self._missed_max_override: int | None = missed_max
@@ -231,7 +235,21 @@ class Roster:
     def announce(
         self, name: str, origin: str, capacity: object, *, now: float | None = None
     ) -> None:
-        """Register or update a member.  Refuses on name conflict or bad capacity."""
+        """Register or update a member.  Refuses on name conflict or bad capacity.
+
+        Item A (t9): a NEW registration (no existing record for *name*) is
+        the announce-path's equivalent of :meth:`join`'s join-transition, and
+        now carries the SAME per-name flap tracking ``join`` already had —
+        `/mesh/announce` is the only endpoint any live deployment drives, so
+        before this task the flap counter was dead code (nothing but the
+        unwired ``join`` ever touched it). A name that re-registers more
+        than :data:`_FLAPPING_THRESHOLD` times inside one hold-out window is
+        refused with :class:`MeshFlapping` for :data:`_FLAPPING_HOLD_TICKS`,
+        exactly mirroring ``join``'s contract. An UPDATE to an existing
+        record (same name, same origin — the common heartbeat case) never
+        touches flap state at all, matching ``join``'s never-flap-on-update
+        precedent and keeping every steady-state heartbeat byte-identical.
+        """
         now = now if now is not None else self._clock()
 
         with self._lock:
@@ -246,11 +264,21 @@ class Roster:
                 # Different origin → conflict
                 raise MeshNameConflict(f"name {name!r} already held by {existing.origin!r}")
 
+            # New registration — apply the per-name flap check (item A).
+            flap_count = self._flap_counts.get(name, 0)
+            flap_time = self._flap_times.get(name, 0.0)
+            if flap_count > 0 and now >= flap_time + _FLAPPING_HOLD_TICKS:
+                flap_count = 0
+            if flap_count >= _FLAPPING_THRESHOLD:
+                raise MeshFlapping(f"name {name!r} flapping — held out {_FLAPPING_HOLD_TICKS} tick")
+
             # New member — validate capacity first (refuses before adding)
             resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
             self._roster[name] = MemberRecord(
                 name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
             )
+            self._flap_counts[name] = flap_count + 1
+            self._flap_times[name] = now
 
     def tick(self, now: float | None = None) -> TickResult:
         """Check staleness; drop expired members.  Returns drop count."""
@@ -271,10 +299,15 @@ class Roster:
                 del self._roster[name]
                 dropped += 1
 
-            # Clear flapping count after a full tick (window resets)
-            if self._flap_count > 0:
-                if now >= self._flap_time + _FLAPPING_HOLD_TICKS:
-                    self._flap_count = 0
+            # Clear each name's flapping count once its own hold-out window
+            # has elapsed (item A: per-name, not the old single roster-wide
+            # counter).
+            for name in list(self._flap_counts):
+                if (
+                    self._flap_counts[name] > 0
+                    and now >= self._flap_times.get(name, 0.0) + _FLAPPING_HOLD_TICKS
+                ):
+                    self._flap_counts[name] = 0
 
         return TickResult(dropped=dropped)
 
@@ -336,10 +369,13 @@ class Roster:
                     )
                 raise MeshApprovalExpired(f"name {name!r} not approved")
 
-            # Check flapping — only join() counts; clear hold-out if period passed
-            if self._flap_count > 0 and now >= self._flap_time + _FLAPPING_HOLD_TICKS:
-                self._flap_count = 0
-            if self._flap_count >= _FLAPPING_THRESHOLD:
+            # Check flapping (item A: per-name state, shared with announce())
+            # — clear hold-out if the window already passed.
+            flap_count = self._flap_counts.get(name, 0)
+            flap_time = self._flap_times.get(name, 0.0)
+            if flap_count > 0 and now >= flap_time + _FLAPPING_HOLD_TICKS:
+                flap_count = 0
+            if flap_count >= _FLAPPING_THRESHOLD:
                 raise MeshFlapping(f"name {name!r} flapping — held out {_FLAPPING_HOLD_TICKS} tick")
 
             # Remove old entry if it exists (explicit leave counts as transition)
@@ -350,8 +386,8 @@ class Roster:
             self._roster[name] = MemberRecord(
                 name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
             )
-            self._flap_count += 1
-            self._flap_time = now
+            self._flap_counts[name] = flap_count + 1
+            self._flap_times[name] = now
 
     def leave(self, name: str, *, now: float | None = None) -> None:
         with self._lock:
