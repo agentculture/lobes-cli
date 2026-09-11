@@ -241,6 +241,13 @@ def _render_roster_table(members: list[dict]) -> str:
         roles = member.get("roles") or []
         roles_s = ", ".join(roles) if roles else "-"
         lines.append(f"{name:<20} {origin:<28} {age:>8}  {expiry:>8}  {status:<10}  {roles_s}")
+        # Item C (t9): a short, additive second line naming WHY the last
+        # verification probe found nothing verified — omitted entirely
+        # (no blank line) for a member with no reason, so an unaffected
+        # deployment's roster table is unchanged.
+        reason = member.get("unverified_reason")
+        if reason:
+            lines.append(f"{'':<20} {'':<28} {'':>8}  {'':>8}  unverified_reason: {reason}")
     return "\n".join(lines)
 
 

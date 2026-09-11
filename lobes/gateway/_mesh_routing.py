@@ -51,6 +51,14 @@ class MemberInfo:
         for a role must never receive forwarded traffic for it.
     capacity:
         Resolved capacity from the roster.
+    unverified_reason:
+        Short, operator-facing reason the last verification probe of this
+        member failed or found nothing verified (item C, t9) — e.g. an HTTP
+        status or an exception class name from the ``/capabilities`` dial.
+        ``None`` when the member has never been probed, or its last probe
+        succeeded. Never derived from the member's own credential or
+        response body verbatim (mirrors the ``RejectionLog`` reason
+        convention) — just a short, stable category for triage.
     """
 
     name: str
@@ -58,6 +66,7 @@ class MemberInfo:
     announced_roles: tuple[str, ...]
     verified_roles: tuple[str, ...]
     capacity: float
+    unverified_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -238,6 +247,11 @@ def build_snapshot(
     # (verified_roles is empty).  When omitted, every member is treated as
     # unverified.
     verified_roles: Mapping[str, "frozenset[str]"] | None = None,
+    # Optional per-origin reason the last verification probe failed (item C,
+    # t9) — keys are member origins, values are short operator-facing
+    # strings (see MemberInfo.unverified_reason). Carried straight onto the
+    # matching MemberInfo; an origin absent here simply gets None.
+    unverified_reasons: Mapping[str, str] | None = None,
 ) -> RoutingSnapshot:
     """Build a :class:`RoutingSnapshot` from *roster* + probe data.
 
@@ -269,6 +283,7 @@ def build_snapshot(
     """
     ann_map: dict[str, Announcement] = {} if announcements is None else dict(announcements)
     ver_map: dict[str, frozenset[str]] = {} if verified_roles is None else dict(verified_roles)
+    reason_map: dict[str, str] = {} if unverified_reasons is None else dict(unverified_reasons)
 
     # Collect the set of known origins from the roster so we can prune stale data.
     roster_origins: set[str] = set()
@@ -313,6 +328,7 @@ def build_snapshot(
                 announced_roles=announced,
                 verified_roles=verified,
                 capacity=rec.capacity,
+                unverified_reason=reason_map.get(origin),
             )
         )
 

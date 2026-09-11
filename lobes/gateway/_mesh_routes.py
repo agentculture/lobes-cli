@@ -91,12 +91,18 @@ class MeshRoutes:
         roster: "Roster",
         # Private: for collapsed flood logging on /mesh/join.
         _join_log: RejectionLog | None = None,
+        # Private: for collapsed flood logging of failed verification probes
+        # (item C, t9) — mirrors _join_log exactly: None (the default) keeps
+        # verification silent-on-failure, unchanged from before this task;
+        # server.py's real wiring passes a live RejectionLog.
+        _verify_log: RejectionLog | None = None,
     ) -> None:
         self.config = config
         self.roster = roster
         self._announcement: Announcement | None = None
         self._announcement_bytes: bytes | None = None
         self._join_log = _join_log
+        self._verify_log = _verify_log
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -490,6 +496,9 @@ class MeshRoutes:
                 # — so this is honestly `False` on every deployment today, and
                 # becomes accurate the moment `join()` is wired to an endpoint.
                 flapping = bool(getattr(self.roster, "_flap_count", 0) >= _FLAPPING_THRESHOLD)
+                unverified_reason = (
+                    member_info.unverified_reason if member_info is not None else None
+                )
                 member_records[mname] = {
                     "name": rec.name,
                     "origin": rec.origin,
@@ -499,6 +508,10 @@ class MeshRoutes:
                     "verified": verified,
                     "flapping": flapping,
                     "roles": roles,
+                    # Item C (t9): a short, operator-facing reason the last
+                    # verification probe found nothing verified, or None on
+                    # a clean/never-probed member.
+                    "unverified_reason": unverified_reason,
                 }
 
         # Finding 3: return per-member objects with name AND origin.
@@ -902,6 +915,7 @@ def build_mesh_routes(
     local_capacities: dict[str, float] | None = None,
     declared_lane_configs: dict[str, dict[str, str]] | None = None,
     join_log: RejectionLog | None = None,
+    verify_log: RejectionLog | None = None,
     missed_max: int | None = None,
 ) -> tuple["MeshRoutes", Announcement]:
     """Build and return a :class:`MeshRoutes` + the initial heartbeat announcement.
@@ -928,7 +942,7 @@ def build_mesh_routes(
     if missed_max is not None:
         roster = _Roster(clock=clock, ledger_path=config.ledger_path, missed_max=missed_max)
 
-    routes = MeshRoutes(config, roster, _join_log=join_log)
+    routes = MeshRoutes(config, roster, _join_log=join_log, _verify_log=verify_log)
     # Create the snapshot holder and attach it to routes.
     from lobes.gateway._mesh_routing import SnapshotHolder
 
@@ -1300,8 +1314,14 @@ def verify_members(
 
     # Probe all members in parallel.
     verified_by_origin: dict[str, frozenset[str]] = {}
+    # Item C (t9): every probe that fails to verify anything carries a short
+    # reason string instead of vanishing into a bare `except: pass`. `None`
+    # means "verified cleanly" — never logged, never stored on the member.
+    reason_by_origin: dict[str, str | None] = {}
 
-    def _probe_peer(member_data: tuple[str, str, Announcement]) -> tuple[str, frozenset[str]]:
+    def _probe_peer(
+        member_data: tuple[str, str, Announcement],
+    ) -> tuple[str, frozenset[str], str | None]:
         """Probe one member's /capabilities and verify roles."""
         _mname, origin, ann = member_data
         try:
@@ -1312,7 +1332,7 @@ def verify_members(
                 key,
             )
             if status != 200:
-                return origin, frozenset()
+                return origin, frozenset(), f"HTTP {status}"
 
             payload = json.loads(body)
             roles_data = payload.get("roles", {})
@@ -1330,27 +1350,35 @@ def verify_members(
 
             # Compare announced vs probed fingerprints.
             verified = verify_member_roles(ann, probed_roles)
-            return origin, verified
+            reason = None if verified else "no announced role verified against /capabilities"
+            return origin, verified, reason
 
-        except Exception:  # nosec B110 — best-effort: probe never blocks
-            return origin, frozenset()
+        except Exception as exc:  # nosec B110 — best-effort: probe never blocks
+            return origin, frozenset(), type(exc).__name__
 
     max_workers = min(8, len(members_to_verify))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_probe_peer, md): md for md in members_to_verify}
         for fut in as_completed(futures):
+            mname, origin, _ann = futures[fut]
             try:
-                origin, verified = fut.result(timeout=probe_timeout)
-                if verified:
-                    verified_by_origin[origin] = verified
-            except Exception:  # nosec B110 — best-effort: drop failed probes
-                pass
+                origin, verified, reason = fut.result(timeout=probe_timeout)
+            except Exception as exc:  # nosec B110 — best-effort: drop failed probes
+                verified, reason = frozenset(), type(exc).__name__
+            if verified:
+                verified_by_origin[origin] = verified
+            reason_by_origin[origin] = reason
+            if reason is not None and routes._verify_log is not None:
+                line = routes._verify_log.record(origin, "GET", "/capabilities", reason)
+                if line is not None:
+                    sys.stderr.write(f"[gateway] mesh verify {mname}: {line}\n")
 
     # Build the verified_roles mapping for build_snapshot.
     snap = build_snapshot(
         routes.roster,
         announcements=routes._announcements,
         verified_roles=verified_by_origin,
+        unverified_reasons={o: r for o, r in reason_by_origin.items() if r is not None},
     )
     holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 

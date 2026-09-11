@@ -4942,6 +4942,10 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         # Finding 1: build a real announcement from gateway data.
         # Finding 7: wire the RejectionLog for flood collapse.
         join_log = RejectionLog()
+        # Item C (t9): a second RejectionLog collapses repeated verification
+        # failures per-origin, mirroring join_log exactly — a flapping/
+        # unreachable peer no longer floods stderr with one line per probe.
+        verify_log = RejectionLog()
         mesh_routes, announcement = _build_mesh_routes(
             self_origin=_require_self_origin(cfg.self_origin),
             readiness_cache=readiness_cache,
@@ -4951,6 +4955,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
                 b.name: declared_lane_config(b.lane_fingerprints) for b in table.backends
             },
             join_log=join_log,
+            verify_log=verify_log,
             missed_max=_build_mesh_config().missed_max,
         )
         # Start the heartbeat daemon thread after the server is bound.
