@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T20:29:42Z",
+  "updated": "2026-09-11T21:58:46Z",
   "deviations": [
     {
       "id": "d1",
@@ -84,6 +84,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Scope gap found at t9: the replica-pool and auto-proxy dispatch still SOURCE their peers from the env-declared <PREFIX>_PEER_ORIGIN(S) routing-table fields; t7's wiring layered the mesh snapshot beside them and its end-to-end tests set PRIMARY_PEER_ORIGIN/ORIGINS in their fixtures. A mesh-only deployment (zero peer keys) does not pool or forward, so the confirmed 'replace' decision (c22) is not delivered and the cutover t12 cannot run yet. PROPOSED: add t13 'swap the peer source' (build_replica_caches / peer specs / forward targets built from the mesh RoutingSnapshot; end-to-end tests with NO peer keys; byte-identical tests intact) and t14 'delete the env peer parsing and rewrite the six test files', both Sonnet, sequential, before t12; t11 proceeds now. ALTERNATIVE (operator's call): ship this PR with the family retained as a documented fallback and retire it in a follow-up PR \u2014 that reverses c22 for this release.",
+      "task_ref": "t9",
+      "reason": "t9's agent (Sonnet) declined AC1 after measuring >100 call sites reading table.replica_origins/peer_* and reported it honestly; the merger verified the wiring tests' fixtures depend on the env keys.",
+      "affects": [
+        "t9",
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 6
     }
   ],
   "evidence": [],

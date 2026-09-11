@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-11T11:30:15Z",
-  "updated": "2026-09-11T16:46:07Z",
+  "updated": "2026-09-11T21:58:47Z",
   "targets": [
     {
       "id": "c1",
@@ -902,6 +902,30 @@
       "text": "Wire contract for t8: lobes mesh status (t10, merged) renders roster members from fields last_seen_age, expiry, verified, flapping, roles, and lobes capabilities renders per-role member and suffixed_lanes \u2014 t8 must emit exactly these names on GET /mesh/roster and /capabilities (or t10's renderer is amended in the same wave).",
       "kind": "unknown_nonblocking",
       "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "Observability gap found by the associate facts pass on t7: verification probe failures in _mesh_routes.py (_heartbeat_loop verify pass, verify_members probe and future loop) are swallowed by bare 'except Exception: pass' with no log, so an 'unverified' member gives the operator no reason. t9 adds one collapsed log line per failing origin (RejectionLog pattern) and a 'reason' on the roster entry that lobes mesh status shows.",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "Found by t8's own report: the flapping hold-out (c53/h43) lives only in Roster.join, which no live handler calls \u2014 /mesh/announce drives Roster.announce, so flapping is inert on the real path and GET /mesh/roster reports a roster-wide False. t9 wires flap tracking per name into the announce path.",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r10",
+      "text": "Found by the associate facts pass on t8: a pooled request served LOCALLY carries no X-Lobes-Mesh-Member, while the spec says every mesh answer names its serving member \u2014 for a local pick that is this box's own LOBES_MESH_NAME. t9 adds it.",
+      "kind": "follow_up",
+      "task_id": "t9",
       "resolved": false,
       "resolution": ""
     }
