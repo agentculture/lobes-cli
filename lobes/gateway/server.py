@@ -73,6 +73,16 @@ from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
+from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
+from lobes.gateway._mesh_routes import (
+    MeshRoutes,
+)
+from lobes.gateway._mesh_routes import build_mesh_routes as _build_mesh_routes
+from lobes.gateway._mesh_routes import (
+    dispatch_mesh,
+)
+from lobes.gateway._mesh_routes import is_mesh_route as _is_mesh_route
+from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._realtime import (
@@ -3399,11 +3409,23 @@ class _Handler(BaseHTTPRequestHandler):
         gateway. With a key set, the credential must be a well-formed
         ``Bearer`` token that matches it timing-safely — see
         :func:`bearer_token_matches`.
+
+        Mesh-enabled servers additionally accept the mesh join key so that
+        mesh-authenticated callers can reach data-plane routes without needing
+        a separate gateway key.
         """
         api_key = self.server_config.api_key
         if api_key is None:
             return True
-        return bearer_token_matches(api_key, self.headers.get("Authorization"))
+        if bearer_token_matches(api_key, self.headers.get("Authorization")):
+            return True
+        # Mesh join key: when mesh is enabled and the mesh config carries a
+        # key, accept it so mesh-authenticated callers can reach data-plane
+        # routes (mesh-brain-join t6).
+        mr = getattr(self, "mesh_routes", None)
+        if mr is not None and mr.config.key is not None:
+            return bearer_token_matches(mr.config.key, self.headers.get("Authorization"))
+        return False
 
     def _rejection_source(self) -> str:
         """The peer address to name in the rejection log (#228).
@@ -3485,6 +3507,15 @@ class _Handler(BaseHTTPRequestHandler):
     # --- GET: /health, /status, /v1/models, /v1/models/supported ---
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
+        # Mesh routes (t6): gate on the join key via the mesh handler; when
+        # mesh is disabled no thread starts and every /mesh/* path falls
+        # through to the normal 404 below.
+        if _is_mesh_route(route) and self.mesh_routes is not None:
+            result = dispatch_mesh(self, self.mesh_routes)
+            if result is not None:
+                status, headers, body = result
+                self._send_simple(status, headers, body)
+                return
         # Inbound auth (opt-in, #127): the GET /v1/* namespace is DATA PLANE —
         # the model listings are part of the OpenAI surface callers script
         # against. /health, /capabilities and /status stay KEYLESS by design
@@ -3743,6 +3774,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --- POST: proxy /v1/* to a backend ---
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        route = self.path.split("?", 1)[0]
+        # Mesh routes (t6): gate on the join key via the mesh handler; when
+        # mesh is disabled no thread starts and every /mesh/* path falls
+        # through to the normal auth gate below.
+        if _is_mesh_route(route) and self.mesh_routes is not None:
+            result = dispatch_mesh(self, self.mesh_routes)
+            if result is not None:
+                status, headers, body = result
+                self._send_simple(status, headers, body)
+                return
         # Inbound auth (opt-in, #127): EVERY POST route is data plane — each
         # one is a forward to a backend (chat/completions, completions,
         # embeddings, rerank, score, audio/*). The gate runs before the body
@@ -4227,6 +4268,7 @@ def _make_handler(
     replica_snapshot: ReplicaSnapshot | None = None,
     replica_caches: Mapping[str, ReplicaCache] | None = None,
     counter: DispatchCounter | None = None,
+    mesh_routes: MeshRoutes | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
@@ -4239,6 +4281,7 @@ def _make_handler(
             # One per server, shared across handler threads (#228).
             "rejection_log": RejectionLog(),
             "peer_specs": peer_specs,
+            "mesh_routes": mesh_routes,
             # `staticmethod` is load-bearing, not decoration: `replica_snapshot`
             # is the ONLY class attribute here that is a plain function, so it
             # is the only one the descriptor protocol would turn into a BOUND
@@ -4305,6 +4348,14 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         capacities=cfg.local_capacities,
         capacity_kill_switch=cfg.capacity_kill_switch,
     )
+    # Mesh (t6): build the mesh routes when the join key is set; when
+    # disabled (no key) every /mesh/* path falls through to the 404 below.
+    mesh_routes: MeshRoutes | None = None
+    if _build_mesh_config().enabled:
+        mesh_routes, announcement = _build_mesh_routes()
+        # Start the heartbeat daemon thread after the server is bound so
+        # the announcement payload can include members already in the roster.
+        _start_mesh(mesh_routes, announcement)
     httpd = ThreadingHTTPServer(
         (cfg.host, cfg.port),
         _make_handler(
@@ -4316,6 +4367,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
             replica_snapshot_provider(replica_caches),
             replica_caches,
             dispatch_counter(replica_caches),
+            mesh_routes,
         ),
     )
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
@@ -4326,3 +4378,8 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         # never blocks exit. Mirrors ReadinessCache's own stop() contract.
         for cache in replica_caches.values():
             cache.stop()
+        # Stop the mesh heartbeat thread when the server exits.
+        if mesh_routes is not None:
+            mesh_routes._stop.set()  # noqa: SLF001
+            if mesh_routes._thread is not None:  # noqa: SLF001
+                mesh_routes._thread.join(timeout=3)  # noqa: SLF001
