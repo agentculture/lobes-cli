@@ -13,16 +13,17 @@ do I do, in what order, and how do I know each step actually worked?**
 
 Two facts make the answer bigger than "generate a new key":
 
-1. **The blast radius is bigger than one box.** Under proxy-lobes and the
-   cortex replica pool, the credential model is pairwise-by-copy, not
-   per-pairing: each box has exactly ONE inbound key
+1. **The blast radius can be bigger than one box.** Under the retired
+   pairwise peer-key family (see the Retired section below), the credential
+   model is pairwise-by-copy: each box has exactly ONE inbound key
    (`GATEWAY_API_KEY`, with `CULTURE_VLLM_API_KEY` as a fallback source —
    see `docs/gateway-fleet.md#auth-opt-in-bearer-gate`), and every peer that
-   dials it holds a **copy** of that same value as its own outbound
-   `<PREFIX>_PEER_API_KEY` (singular peer) or a positional slot in
-   `<PREFIX>_PEER_API_KEYS` (replica-pool plural peer). Rotating a leaked key
-   is therefore not one edit — it is one edit on the box that owns the key,
-   plus one edit on every peer holding a copy of it.
+   dials it holds a **copy** of that same value as its own retired outbound
+   peer-key. Rotating a leaked key under that model is therefore not one
+   edit — it is one edit on the box that owns the key, plus one edit on
+   every peer holding a copy of it. The mesh join's single shared key (see
+   "Mesh join key" below) inverts this shape entirely: one value, every
+   member, rotated by a fleet-wide restart rather than N peer edits.
 2. **`git rm` does not remove a committed secret.** Deleting the file (or the
    line) in a new commit only stops it appearing in the *current* checkout —
    the value is still readable in every commit before that one, in
@@ -35,6 +36,62 @@ If you take one thing from this page: **rotating the value always comes
 before, or at worst alongside, cleaning up where it was exposed.** A key
 still valid after a leak is still a leak, no matter how thoroughly the
 commit that exposed it gets scrubbed.
+
+## Mesh join key
+
+The mesh-brain join's `LOBES_MESH_KEY` (see
+[`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain))
+is a SINGLE fleet-wide shared secret, unlike the pairwise-by-copy peer-key
+model the rest of this page documents (below, now the Retired drill) — every
+member of the mesh presents the same value. That collapses the blast radius
+in one direction (one key, not one per pairing) and widens it in another
+(leaking it exposes every member at once, not just the pairs that copied a
+credential). **Rotating it is therefore a fleet-wide restart, not a per-peer
+edit:**
+
+1. Mint a fresh value (`scripts/gen-api-key.py`, or any 256-bit random
+   string) and write it into `LOBES_MESH_KEY` on **every** member's `.env`
+   or `.secrets.env` — the same value everywhere, never a per-box variant.
+2. Restart every member's gateway (`lobes serve --apply` /
+   `lobes fleet up --apply`) so the new value takes effect. Until every
+   member is restarted, members on the old key and members on the new key
+   cannot announce to each other — a member still running the old key
+   simply stops appearing in the roster of a member that has already
+   rotated, rather than announcing with a rejected credential (the key is
+   presented on `POST /mesh/join`/`/mesh/announce`, not compared per-field).
+3. `lobes mesh status` on each member is the verification: every expected
+   member should reappear in the roster within one heartbeat interval
+   (`LOBES_MESH_HEARTBEAT_S`, default 60) of the last member restarting.
+   `lobes doctor`'s `mesh_key_shell_mismatch` finding catches the common
+   half-done case — an invoking shell still exporting the OLD key, which
+   never changes what the deployed, restarted gateway dials with, but is a
+   meaningful staleness signal on the operator's own machine.
+4. The persisted approval ledger (`LOBES_MESH_LEDGER_PATH`) is untouched by
+   a key rotation — approvals are keyed by member NAME, not by the join key
+   presented, so a rotated fleet keeps every existing `lobes mesh approve`
+   grant without re-approving anyone.
+
+There is no partial rotation: because the key alone admits a member (the
+ledger only restricts, never grants — see `docs/gateway-fleet.md`), a stale
+copy left on even one box is a live credential for the whole mesh until that
+box is caught up, exactly like the "confirm nothing else still authenticates
+with the old value" step in the retired per-peer drill below.
+
+**This mesh-key procedure is DECLARED, not exercised end-to-end against a
+live fleet (#108)** — the mesh join itself is DECLARED/UNVALIDATED, so this
+rotation drill inherits that status until a live cutover transcript exists
+under `docs/evidence/`.
+
+## Retired: the operator-typed peer-key rotation drill
+
+Everything below this heading documents rotating the **retired**,
+pairwise-by-copy peer-key family (`<PREFIX>_PEER_API_KEY` /
+`<PREFIX>_PEER_API_KEYS`) — the credential model the mesh join (above) is
+replacing as the documented contract. It is kept, not deleted: as of this
+branch the gateway still parses and uses these keys (see the Implementation
+status note in `docs/gateway-fleet.md`), so an existing deployment wired the
+old way still needs this exact drill until the follow-on code-removal task
+lands. Do not wire a NEW deployment this way — declare the mesh instead.
 
 ## Every place a copy of a key lives
 
