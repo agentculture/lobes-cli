@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-11T11:30:15Z",
-  "updated": "2026-09-11T21:59:38Z",
+  "updated": "2026-09-11T23:38:38Z",
   "targets": [
     {
       "id": "c1",
@@ -975,6 +975,14 @@
       "text": "Found by the associate facts pass on t8: a pooled request served LOCALLY carries no X-Lobes-Mesh-Member, while the spec says every mesh answer names its serving member \u2014 for a local pick that is this box's own LOBES_MESH_NAME. t9 adds it.",
       "kind": "follow_up",
       "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r11",
+      "text": "Post-t14: lobes.roles.annotate_peer_referrals still reads table.peer_origins (always empty) for /capabilities hosted_by; the CLI shows the serving member via t8's member field, but the JSON hosted_by is never mesh-sourced. Follow-up: make annotate_peer_referrals consult the mesh snapshot.",
+      "kind": "follow_up",
+      "task_id": "t12",
       "resolved": false,
       "resolution": ""
     }
