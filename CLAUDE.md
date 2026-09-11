@@ -339,34 +339,46 @@ exactly (`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
 like `muse`). Under pressure `worker` sheds (429) exactly like
 cortex/senses/muse.
 
-**Now hosted on the DGX Spark GB10, not the Thor.** The `thor-worker`
-deployment shape's data rendered on the **Spark** card (`lobes init --shape
-thor-worker --apply --force` on `spark-f8a9`) after a same-day Thor NO-GO —
-Lightning's Mamba-2 SSD decode path wedges indefinitely on this fleet's
-pinned nightly on sm_110
-(`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`; a Thor-specific
-recipe on the newer release image `v0.27.1` is unexplored, see that
-transcript's addendum). Measured on the Spark, 2026-08-20
-(`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`):
-`WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536` (a progressive
-start; 1M is a ceiling, not yet exercised), weights 17.85 GiB loaded, KV
-pool 3,560,789 tokens (54.33× concurrency at 65K), `fp8_e4m3` KV cache,
-**75.1 tok/s** decode single-stream (no MTP), tool calls PASS via the
-`nemotron_v3` reasoning parser + `qwen3_coder` tool parser (the NVIDIA
-recipe's pairing, validated live). TTFT medians 75 ms (short) / 77 ms
-(long). Against the incumbent Qwen worker's final baseline (61.2 tok/s,
-captured just before the swap — see `docs/qwen3.6-35b-a3b-nvfp4.md`), this
-is +23% decode and ~7× faster short-turn latency through the proxy hop —
-an honest deployed-topology comparison, not a same-silicon A/B. Lightning's
-own self-hosted MTP/DSpark and strict-tools arming remain UNEVALUATED. See
-`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
+**Hosted on the Jetson AGX Thor again (#244); the DGX Spark reaches it by
+proxy (2026-09-11).** The Thor serves the lane locally through the
+`thor-worker` shape at `gpu_mem_util=0.45`, full `max_model_len=262144`,
+DFlash speculation, and `WORKER_MAX_NUM_SEQS=1`. One request at a time is
+**by design** and is still to be tested under a real multi-agent load. See
+`docs/nvidia-qwen3.6-35b-a3b-nvfp4.md` for the recipe and the 196.6 tok/s
+measurement. The Spark does not host it: `WORKER_FEASIBLE=false` plus
+`WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` forward `model=worker` (and the
+raw id) to the Thor, with `X-Lobes-Proxied-By` on every answer. This was
+validated live on 0.75.1 gateways
+(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`): streamed
+tool calls, image input, a 115,429-token prompt, **Qwen Code end-to-end**
+(`qwen -m worker` against the Spark's gateway), and serial queueing at
+width 3. That run also found two stale-advert traps:
 
-**The Thor reaches it by proxy**, mirroring the pre-d1 direction reversed:
-`WORKER_PEER_ORIGIN` + `WORKER_PEER_PROXY` on the Thor forward `model=worker`
-to the Spark and relay the answer with `X-Lobes-Proxied-By` — validated live
-the same day (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`'s
-proxy-chain probe, run from the Thor's own gateway).
+- **A pre-#244 gateway image advertises the retired contract.** It kept
+  listing `code_authoring` as forbidden and dropping image/video, even
+  though routing already worked.
+- **A proxied role's `context` comes from the peer gateway's process env.**
+  The Thor had not been recreated after its `.env` changed, so it advertised
+  65536 against a 262144 lane.
 
+Re-image the front on every box that serves or proxies the role.
+
+> **Superseded history (deviation d1, 2026-08-20 → 2026-09-10):** Lightning
+> was hosted on the **DGX Spark**, not the Thor. The `thor-worker` shape's
+> data rendered on the Spark card (`lobes init --shape thor-worker --apply
+> --force` on `spark-f8a9`) after a same-day Thor NO-GO: Lightning's
+> Mamba-2 SSD decode path wedges indefinitely on the fleet's pinned
+> nightly on sm_110 (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`).
+> Measured on the Spark (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`):
+> `WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536`, weights
+> 17.85 GiB, KV pool 3,560,789 tokens (54.33× at 65K), **75.1 tok/s**
+> single-stream decode (no MTP), and tool calls PASS via
+> `nemotron_v3` + `qwen3_coder`. TTFT medians were 75/77 ms, which was +23%
+> decode and ~7× faster short turns than the Qwen worker it replaced (a
+> deployed-topology comparison, not a same-silicon A/B). The Thor reached
+> it by proxy, the reverse of today's direction. See
+> `docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
+>
 > **Superseded history (pre-d1, kept for the record — 2026-07-31):** the
 > `worker` role was previously `unsloth/Qwen3.6-35B-A3B-NVFP4` (MULTIMODAL,
 > image+video via its own ViT, self-hosted MTP draft), hosted LOCALLY on
@@ -728,10 +740,16 @@ public internet (no TLS termination happens at this layer). With no
 `<PREFIX>_PEER_PROXY` set anywhere — every pre-#115 deployment — every response
 stays byte-identical to the pre-proxy contract.
 
-**Live as of 2026-07-31:** the DGX Spark (`spark-lobe`) proxies TWO roles —
-`senses` → the AGX Orin and `worker` → the Jetson AGX Thor — so a caller
-addresses either on the Spark's own gateway and never dials the peer box.
-Both answer 200 with `X-Lobes-Proxied-By`, image input included. **A proxied
+**Live as of 2026-09-11:** the DGX Spark hosts `cortex` and proxies
+`worker` and `embedder` to the Jetson AGX Thor, and `associate` to the AGX
+Orin. The Thor in turn proxies `cortex` to the Spark. A caller addresses any
+of these on its own box's gateway and never dials the peer. Proxied answers
+carry `X-Lobes-Proxied-By`, image input included
+(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`). The Spark's
+former `senses` → Orin proxy was withdrawn because the Orin does not host
+`senses` either, so `model=senses` on the Spark now 404s `role_infeasible`
+with no `hosted_by`. The 2026-07-31 layout proxied `senses` → Orin and
+`worker` → Thor. **A proxied
 role's `ready` and `context` are the PEER's own advert (issue #220):** the
 background probe reads the peer's `GET /capabilities` and relays that role
 entry, falling back to the old `/v1/models` served-id check only for a peer

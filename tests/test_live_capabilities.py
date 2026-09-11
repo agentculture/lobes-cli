@@ -100,7 +100,14 @@ from dataclasses import dataclass
 import pytest
 
 from lobes import __version__ as LOBES_VERSION
-from lobes.roles import ROLES
+from lobes.roles import ROLE_PATH, ROLES
+
+# Every generate-family role, derived from the registry rather than hardcoded:
+# a literal ("cortex", "senses", "muse") predated worker/associate/hand and
+# failed a worker-hosting Thor as "serves no brain" (2026-09-11).
+_GENERATE_ROLES: tuple[str, ...] = tuple(
+    r for r in ROLES if ROLE_PATH.get(r) == "/v1/chat/completions"
+)
 
 # ---------------------------------------------------------------------------
 # Module gate — armed iff LOBES_SMOKE_BASE_URL is set (fail-not-skip below it).
@@ -518,7 +525,7 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
     answers: list[str] = []
     faults: list[str] = []
     dialed = 0
-    for role in ("cortex", "senses", "muse"):
+    for role in _GENERATE_ROLES:
         info = caps[role]
         if info.get("feasible") is False:
             probe = _dial(
