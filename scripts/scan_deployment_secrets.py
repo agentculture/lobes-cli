@@ -53,6 +53,12 @@ _EXACT_SECRET_KEYS = frozenset(
         "LOBES_MESH_KEY",
     }
 )
+# Retired names, kept as TRIPWIRES (t14): lobes.gateway._config no longer
+# parses any *_PEER_API_KEY(S)/*_PEER_ORIGIN(S) key — build_config silently
+# ignores all of them now — but a committed value under one of these names
+# is still exactly the shape of a real credential/origin an operator typed
+# by habit into a deployment artifact this scanner covers, so the pattern
+# stays armed even though the key itself does nothing.
 _SECRET_KEY_SUFFIXES = ("_PEER_API_KEY", "_PEER_API_KEYS", "_PEER_ORIGIN", "_PEER_ORIGINS")
 
 # Glob patterns, relative to the scan root, naming every committed
