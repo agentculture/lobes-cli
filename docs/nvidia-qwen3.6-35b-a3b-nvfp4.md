@@ -88,7 +88,7 @@ WORKER_QUANTIZATION=modelopt
 WORKER_MAX_MODEL_LEN=262144
 WORKER_GPU_MEM_UTIL=0.45
 WORKER_KV_CACHE_DTYPE=fp8
-WORKER_MAX_NUM_SEQS=4
+WORKER_MAX_NUM_SEQS=1
 WORKER_REASONING_PARSER=qwen3
 WORKER_BASE_URL=http://vllm-worker:8000
 WORKER_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dflash\", \"num_speculative_tokens\": 12, \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\"}'"
@@ -119,7 +119,7 @@ vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 \
   --max-model-len=262144 \
   --gpu-memory-utilization=0.45 \
   --kv-cache-dtype=fp8 \
-  --max-num-seqs=4 \
+  --max-num-seqs=1 \
   --speculative-config={"method": "dflash", "num_speculative_tokens": 12, "model": "z-lab/Qwen3.6-35B-A3B-DFlash"} \
   --enable-auto-tool-choice \
   --tool-call-parser=qwen3_coder \
@@ -228,48 +228,83 @@ External reference, **not** an acceptance threshold: the Thor field guide at
 conc=1 for this model with a custom from-source build. Our measurement exceeds
 it on the stock pinned image.
 
-### Concurrency — MEASURED, and it scales
+### Concurrency and prompt depth — read this before quoting 196.6 tok/s
 
-Pure-decode sweep through the gateway, `max_num_seqs=4`, identical 109-token
-code prompts, `max_model_len=262144`, DFlash k=12. Per-stream decode is the
-same metric as everywhere else; aggregate is total completion tokens over
-wall-clock for the whole batch.
+**The headline decode rate is a SHORT-PROMPT number.** Decode speed on this lane
+depends strongly on prompt depth, and agentic work is deep-prompt work:
 
-| width | per-stream decode tok/s | aggregate tok/s | TTFT ms |
-|---|---|---|---|
-| 1 | 164.8 | 61.2 | 1124 (cold) |
-| 2 | 154.5 / 139.8 | 203.3 | 372 / 298 |
-| 4 | 131.7 / 131.3 / 131.5 / 131.4 | **348.1** | 356–429 |
+| prompt | decode tok/s | TTFT |
+|---|---|---|
+| 25 tokens (the headline probe) | **185–197** | 230–430 ms |
+| 8,786 tokens, distinct content | **41.5–46.5** | 2.7–3.9 s |
 
-**Width 4 buys 5.7x the aggregate for a 20% per-stream cost**, and the four
-streams come back within 0.4 tok/s of each other — the scheduler shares evenly.
-`max_num_seqs=4` is therefore the right setting; dropping to 1 would throw away
-most of the box's capacity for a ~25% single-stream gain.
+That is a ~4x difference from depth alone, before any concurrency. Quote the
+short-prompt figure only as a short-prompt figure.
 
-At `max_num_seqs=1` the lane measured 182.4 / 183.8 tok/s single-stream, i.e.
-capping the batch does NOT meaningfully raise single-stream speed — it only
-removes headroom.
+#### Width sweep with DISTINCT long prompts — the agentic-realistic one
 
-#### A prefill-heavy workload looks nothing like this — do not confuse them
+Each stream gets its own ~8.8k-token pseudo-source file, with a per-invocation
+nonce so prefix caching cannot dedupe across streams or across runs
+(`max_num_seqs=4`, DFlash k=12, 262144 window):
+
+| width | per-stream decode tok/s | **aggregate decode** | aggregate prefill | TTFT |
+|---|---|---|---|---|
+| 1 | 46.5 | 12.1 | 2,375 | 2,715 ms |
+| 2 | 45.7 / 13.2 (mean 29.5) | 10.4 | 3,036 | 3,639 / 5,070 ms |
+| 4 | 31.9 / 14.1 / 8.3 / 7.0 (mean 15.3) | 13.3 | 3,249 | 4,169 → 9,836 ms |
+
+**Aggregate decode is FLAT (12.1 → 10.4 → 13.3).** Concurrency buys no extra
+total throughput here; it divides the same work into slower, markedly uneven
+streams (7.0 to 31.9 tok/s at width 4 — the stream that finishes first inherits
+the tail) and pushes worst-case TTFT from 2.7 s to 9.8 s.
+
+**The lane is PREFILL-BOUND for deep prompts**, saturating around 2.4–3.2k
+tok/s of prefill. That ceiling, not decode, is what multi-agent capacity
+planning must budget.
+
+#### A correction, recorded rather than quietly fixed
+
+An earlier revision of this document reported "concurrency scales: 348.1 tok/s
+aggregate at width 4". **That was wrong.** It came from sending four IDENTICAL
+short prompts with `--enable-prefix-caching` on, so all four streams shared one
+cached prefix and the box was doing roughly one prompt's work. Repeating the
+sweep with distinct prompts produced the flat aggregate above. The lesson is
+general: **any concurrency benchmark that reuses one prompt across streams
+measures the prefix cache, not the engine.**
+
+#### Why `max_num_seqs=1`
+
+Given a flat aggregate, the cap costs no total throughput and buys the best
+per-request latency, which is what an interactive agent experiences. Measured
+at `max_num_seqs=1`: 185.2 tok/s short-prompt (vs 196.6 at cap 4 — within
+run-to-run variance), 41.5 tok/s on an 8.8k-token prompt.
+
+The setting is `WORKER_MAX_NUM_SEQS=1`. Raise it only with a distinct-prompt
+measurement that shows an aggregate gain; the identical-prompt sweep will
+always flatter it.
+
+#### Caveat in the other direction — real agents DO share prefixes
+
+The distinct-prompt test is deliberately the pessimistic bound: it gives every
+stream unique content. A real agent re-sends a growing conversation, so
+successive turns of the SAME session share a long prefix and hit the cache.
+Truth for a given deployment sits between the two tests, nearer the distinct
+one whenever several independent agents run at once. Neither number is the
+whole answer, which is why both are recorded.
+
+#### The agentic sample that started this
 
 Sampled while Qwen Code drove an agentic PR review against this lane
-(`max_num_seqs=4`, 4 running + 6 queued), 180 s window:
+(4 running + 6 queued), 180 s window:
 
 ```text
 generation tokens 26,625 -> 38,608   = 11,983 in 180 s =   66.6 tok/s aggregate
 prompt tokens  3,033,992 -> 3,273,132 = 239,140 in 180 s = 1,328 tok/s prefill
 ```
 
-vLLM's own `Avg generation throughput` read 33–53 tok/s over the same period.
-That is **20x** the prefill volume against generation, so the lane was almost
-entirely prefilling; the low decode aggregate is a property of the WORKLOAD,
-not of speculation under batching. The controlled sweep above is the
-concurrency answer; this sample is the agentic-workload answer, and quoting
-either as the other would be wrong.
-
-What this pair does establish: **an agentic workload on this lane is
-prefill-bound, not decode-bound.** Capacity planning for multi-agent use should
-budget the ~1.3k tok/s prefill rate, not the 196.6 tok/s decode headline.
+20x more prefill than generation. Consistent with the distinct-prompt sweep:
+the workload is prefill-bound and the decode aggregate is low because the lane
+is busy prefilling, not because speculation misbehaves under batching.
 
 ## Correctness
 

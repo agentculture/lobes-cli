@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.6] - 2026-09-11
+
+### Fixed
+
+- **CORRECTION: the concurrency result published in 0.74.5 was wrong.** It reported "concurrency scales: 348.1 tok/s aggregate at width 4". That measurement sent four IDENTICAL short prompts with `--enable-prefix-caching` on, so every stream shared one cached prefix and the box did roughly one prompt's work. Repeated with DISTINCT ~8.8k-token prompts and a per-invocation nonce, **aggregate decode is FLAT** - 12.1 / 10.4 / 13.3 tok/s at widths 1 / 2 / 4 - while per-stream decode falls (46.5 to a mean of 15.3) and worst-case TTFT rises from 2.7 s to 9.8 s. The general lesson is recorded in the doc: any concurrency benchmark that reuses one prompt across streams measures the prefix cache, not the engine.
+
+### Changed
+
+- **`WORKER_MAX_NUM_SEQS=1`** is now the documented and deployed setting. With a flat aggregate the cap costs no total throughput and buys the best per-request latency, which is what an interactive agent experiences.
+- The per-model doc separates decode rate BY PROMPT DEPTH, because the two differ ~4x and agentic work is deep-prompt work: 185-197 tok/s at a 25-token prompt versus **41.5-46.5 tok/s at 8,786 tokens**. The headline figure is labelled a short-prompt figure throughout.
+- Recorded the counter-caveat too: a real agent re-sends a growing conversation and so DOES share prefixes turn to turn, making the distinct-prompt sweep a pessimistic bound. Both bounds are documented rather than one presented as the answer.
+
+### Added
+
+- `scripts/concurrency-probe.py` - the distinct-prompt, nonce-per-run concurrency harness, committed so the correction is re-runnable rather than merely asserted.
+
 ## [0.74.5] - 2026-09-11
 
 ### Added
