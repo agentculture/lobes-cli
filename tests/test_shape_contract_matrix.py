@@ -187,6 +187,17 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
     drops.
     """
     assert set(CELLS) == {
+        # gateway-only (mesh-brain-join t5) is the consumer-only member: it
+        # hosts NOTHING, so it drops every generate role and contributes a
+        # cell for each — every alias 404s role_infeasible dialing nothing
+        # (the cell tests below prove it), and the relaxed order_backends
+        # invariant keeps no local lane from owning the request.
+        ("gateway-only", "cortex"),
+        ("gateway-only", "senses"),
+        ("gateway-only", "muse"),
+        ("gateway-only", "worker"),
+        ("gateway-only", "associate"),
+        ("gateway-only", "hand"),
         ("machine-as-brain", "muse"),
         ("machine-as-brain", "worker"),
         ("machine-as-brain", "associate"),
@@ -457,8 +468,9 @@ def test_cell_concrete_model_id_is_never_served_4xx_without_a_dial(
 @pytest.mark.parametrize("shape_name", sorted({shape for shape, _ in CELLS}))
 def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) -> None:
     """Whatever generate gear a shape hosts still answers: cortex on spark-lobe,
-    senses on thor-lobe, and `hand` — which EVERY shape hosts — under all three
-    of its tier spellings."""
+    senses on thor-lobe, and `hand` — which every shape BUT gateway-only hosts —
+    under all three of its tier spellings (gateway-only hosts nothing, so it
+    early-returns below: the consumer-only member's contract is the cell tests)."""
     shape = resolve_shape(shape_name)
     table, cfg = build_config(_gateway_env(shape))
     expected: list[tuple[str, str]] = []
@@ -488,7 +500,13 @@ def test_hosted_generate_lane_still_routes_on_every_mesh_shape(shape_name: str) 
     # `minor` TIER resolves to — that alias belongs to `hand` now. The 4B gear
     # remains addressable by its explicit model id, exactly like the legacy 14B
     # `middle` gear, so there is no alias of its own left to assert.
-    assert expected, f"{shape_name} hosts no generate lane at all?"
+    if not expected:
+        # gateway-only (mesh-brain-join t5) hosts NO generate lane at all —
+        # the consumer-only member. This test is vacuous for it by design;
+        # its contract is the flip side, proven per-cell above: every alias
+        # 404s role_infeasible dialing nothing, and the relaxed order_backends
+        # invariant keeps no local lane from owning the request.
+        return
     for alias, backend in expected:
         resp, calls = _post(table, cfg, alias)
         assert resp.status == 200, (shape_name, alias)

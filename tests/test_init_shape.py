@@ -225,6 +225,9 @@ def test_unknown_shape_dry_run_also_errors_before_writing(tmp_path, capsys) -> N
 def test_builtin_shape_names_are_sorted() -> None:
     assert list(builtin_shape_names()) == sorted(builtin_shape_names())
     assert builtin_shape_names() == (
+        # The consumer-only member (mesh-brain-join t5): hosts=[] — the first
+        # built-in shape that hosts nothing at all.
+        "gateway-only",
         "machine-as-brain",
         "orin-associate",
         "orin-cortex",

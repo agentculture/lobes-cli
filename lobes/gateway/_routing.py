@@ -430,10 +430,18 @@ def order_backends(table: RoutingTable, served_name: str) -> list[Backend]:
     — that remains a single backend, not a chain.
     """
     owner = _backend_for(table, served_name) or _backend_for(table, table.default_model)
-    # Invariant: a built table always has a primary backend and default_model
-    # resolves to it, so owner is non-None in practice. We degrade gracefully (an
-    # empty list → handle_post returns a 502) rather than assert, so a malformed
-    # table can never crash the long-lived gateway process.
+    # A built table may have NO usable local backend (mesh-brain-join t5): the
+    # gateway-only shape (hosts=[]) renders <PREFIX>_FEASIBLE=false for every
+    # core role, so the only entry build_config wires for it is an infeasible
+    # one, and a mesh-routed table (t7) carries the mesh's lanes instead of
+    # local ones. An infeasible owner is not a local lane — the box declared it
+    # cannot run (#92) — so it yields nothing locally; the mesh/proxy layer
+    # owns such requests, and one that still reaches here takes the terminal
+    # 502 (handle_post) rather than a dial to a lane the box declared it cannot
+    # serve. We degrade gracefully (an empty list) rather than assert, so a
+    # table with no local backend can never crash the long-lived gateway.
+    if owner is not None and owner.name in table.infeasible:
+        owner = None
     return [owner] if owner is not None else []
 
 
