@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T20:13:31Z",
+  "updated": "2026-09-11T20:29:42Z",
   "deviations": [
     {
       "id": "d1",
@@ -68,6 +68,22 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Amendment to d4: pi+associate stays in as a read-only FACTS pass on every Sonnet diff (t7 completion, t8, t9, t11), run in parallel with the main agent's review so it never gates a merge. Rules: facts only, quoted lines not line numbers, output to a scratch file, verdict line ignored. Retained only if the merger acts on at least one fact associate alone found; otherwise dropped at the end of the plan.",
+      "task_ref": "t8",
+      "reason": "Operator decision 2026-09-11: keep associate as an independent fact-check between lanes while the build/merge path is Claude-only.",
+      "affects": [
+        "t7",
+        "t8",
+        "t9",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],
