@@ -201,9 +201,7 @@ def decode(data: bytes) -> Announcement:
                 private=bool(role_obj.get("private", False)),
             )
         except (KeyError, ValueError) as exc:
-            raise ValueError(
-                f"malformed role {role_name!r}: {exc}"
-            ) from exc
+            raise ValueError(f"malformed role {role_name!r}: {exc}") from exc
 
     return Announcement(
         name=obj["name"],

@@ -407,6 +407,36 @@ class TestAnnouncementFields:
 
 
 # ---------------------------------------------------------------------------
+# D8: decode() must never leak a bare KeyError on a malformed role
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedRole:
+    """D8: a malformed role object (missing fingerprint/model/…) is a 400
+    (ValueError), never a 500 (an escaping KeyError)."""
+
+    def test_decode_malformed_role_raises_value_error(self) -> None:
+        a = _minimal()
+        obj = json.loads(encode(a))
+        del obj["roles"]["cortex"]["fingerprint"]
+        with pytest.raises(ValueError):
+            decode(json.dumps(obj).encode())
+
+    def test_decode_malformed_role_is_not_bare_key_error(self) -> None:
+        """The raised ValueError must not itself BE a KeyError — a caller
+        catching (JSONDecodeError, ValueError, TypeError) must catch this."""
+        a = _minimal()
+        obj = json.loads(encode(a))
+        del obj["roles"]["cortex"]["model"]
+        try:
+            decode(json.dumps(obj).encode())
+        except ValueError as exc:
+            assert not isinstance(exc, KeyError)
+        else:
+            pytest.fail("expected ValueError")
+
+
+# ---------------------------------------------------------------------------
 # MeshSchemaIncompatible exception
 # ---------------------------------------------------------------------------
 

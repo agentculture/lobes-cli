@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from lobes.gateway._mesh_roster import Roster
     from lobes.gateway._mesh_wire import Announcement, Fingerprint
-    from lobes.gateway._replicas import Fingerprint as ReplicaFingerprint, ReplicaState
+    from lobes.gateway._replicas import Fingerprint as ReplicaFingerprint
+    from lobes.gateway._replicas import ReplicaState
 
 
 # ---------------------------------------------------------------------------
@@ -152,22 +153,16 @@ def verify_member_roles(
 
         # Convert both to replica Fingerprint for comparison.
         announced_replica_fp: ReplicaFingerprint | None = (
-            _wire_fingerprint_to_replica(announced_fp)
-            if announced_fp is not None
-            else None
+            _wire_fingerprint_to_replica(announced_fp) if announced_fp is not None else None
         )
         probed_replica_fp: ReplicaFingerprint | None = (
-            _wire_fingerprint_to_replica(probed_fp_data)
-            if probed_fp_data is not None
-            else None
+            _wire_fingerprint_to_replica(probed_fp_data) if probed_fp_data is not None else None
         )
 
         # Run comparison.
         from lobes.gateway._replicas import compare_fingerprints
 
-        compatible, _reason = compare_fingerprints(
-            announced_replica_fp, probed_replica_fp
-        )
+        compatible, _reason = compare_fingerprints(announced_replica_fp, probed_replica_fp)
         if compatible:
             verified.append(role_name)
 
@@ -180,13 +175,19 @@ def verify_member_roles(
 
 
 def _wire_fingerprint_to_replica(
-    fp: "Fingerprint | None",
+    fp: "Fingerprint | Mapping[str, object] | None",
 ) -> "lobes.gateway._replicas.Fingerprint | None":  # noqa: F821 — resolved at runtime
-    """Convert a wire :class:`~lobes.gateway._mesh_wire.Fingerprint` to a
-    replica :class:`~lobes.gateway._replicas.Fingerprint`.
+    """Convert a wire-shaped fingerprint to a replica :class:`~lobes.gateway._replicas.Fingerprint`.
 
-    Conversions:
-    * ``max_model_len=0`` → ``None`` (unknown)
+    *fp* may be either a decoded :class:`~lobes.gateway._mesh_wire.Fingerprint`
+    (the announced side, from a stored :class:`Announcement`) or a plain
+    ``dict`` parsed straight off a peer's ``GET /capabilities`` JSON body (the
+    probed side) — both shapes carry the same four field names, so this reads
+    them uniformly via ``.get``/``getattr`` rather than assuming one type.
+
+    Conversions (D7):
+    * ``max_model_len=0`` → ``None`` (unknown; ``0`` is the wire's "N/A", not
+      a real window)
     * ``null`` / ``""`` fields → ``None`` (unknown)
     * Otherwise pass through.
     """
@@ -195,11 +196,22 @@ def _wire_fingerprint_to_replica(
 
     from lobes.gateway._replicas import Fingerprint as ReplicaFingerprint
 
+    if isinstance(fp, Mapping):
+        served_id = fp.get("served_id")
+        max_model_len = fp.get("max_model_len")
+        runtime = fp.get("runtime")
+        quantization = fp.get("quantization")
+    else:
+        served_id = fp.served_id
+        max_model_len = fp.max_model_len
+        runtime = fp.runtime
+        quantization = fp.quantization
+
     return ReplicaFingerprint(
-        served_id=fp.served_id if fp.served_id else None,  # type: ignore[arg-type]
-        max_model_len=None if fp.max_model_len == 0 else fp.max_model_len,
-        runtime=fp.runtime if fp.runtime else None,  # type: ignore[arg-type]
-        quantization=fp.quantization if fp.quantization else None,  # type: ignore[arg-type]
+        served_id=served_id if served_id else None,
+        max_model_len=None if not max_model_len else max_model_len,
+        runtime=runtime if runtime else None,
+        quantization=quantization if quantization else None,
         kv_cache_dtype="",
         reasoning_parser="",
         tool_parser="",
@@ -367,11 +379,8 @@ class SnapshotHolder:
         Convenience method: read the roster under the lock, build, and replace
         atomically.  Returns the new :class:`MeshRoutingView`.
         """
-        # Read roster members under lock.
-        with self._lock:
-            roster_members = list(self._roster.members())
-
-        # Build the snapshot outside the lock.
+        # Build the snapshot (build_snapshot reads the roster via its own
+        # public, lock-protected accessors — see D4/D3).
         new_snap = build_snapshot(self._roster, **kwargs)
         view = MeshRoutingView(
             snapshot=new_snap,

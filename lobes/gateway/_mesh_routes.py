@@ -42,8 +42,8 @@ from typing import TYPE_CHECKING
 
 from lobes.gateway._authlog import RejectionLog
 from lobes.gateway._mesh_config import MeshConfig, MeshConfigError, build_mesh_config
-from lobes.gateway._mesh_routing import build_snapshot
 from lobes.gateway._mesh_roster import TickResult
+from lobes.gateway._mesh_routing import build_snapshot
 from lobes.gateway._mesh_wire import (
     SCHEMA_MAJOR,
     Announcement,
@@ -54,6 +54,7 @@ from lobes.gateway._mesh_wire import (
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routing import SnapshotHolder
 
 
 # --- internal data ----------------------------------------------------------
@@ -368,8 +369,7 @@ class MeshRoutes:
                 if rec is not None:
                     current_origin = rec.origin
                     stale_origins = [
-                        o for o, a in self._announcements.items()
-                        if a.origin != current_origin
+                        o for o, a in self._announcements.items() if a.origin != current_origin
                     ]
                     for o in stale_origins:
                         self._announcements.pop(o, None)
@@ -580,9 +580,7 @@ class MeshRoutes:
             if self._holder is not None:
                 from lobes.gateway._mesh_routing import MeshRoutingView
 
-                self._holder.replace(
-                    MeshRoutingView(snapshot=snap, peer_states={})
-                )
+                self._holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
         return (
             200,
             [("Content-Type", "application/json")],
@@ -689,7 +687,9 @@ def _build_announcement(
         # Use readiness cache to determine which roles are ready.
         # current() returns a flat dict[str, bool|None], not a nested dict.
         try:
-            ready_roles: dict[str, bool | None] = readiness_cache.current()  # type: ignore[assignment]
+            ready_roles: dict[str, bool | None] = (
+                readiness_cache.current()
+            )  # type: ignore[assignment]
         except (AttributeError, TypeError):
             ready_roles = {}
     else:
@@ -704,10 +704,13 @@ def _build_announcement(
         if ready_roles and ready_roles.get(role_name) is not True:
             continue
 
-        # Get live fingerprint from replica cache if available.
+        # Get live fingerprint from replica cache if available. `replica_caches`
+        # (build_replica_caches) is keyed by BACKEND name, never role name —
+        # look it up the same way the pool itself does, not by `role_name`
+        # (a mismatch here would silently miss every live fingerprint).
         fp = None
-        if replica_caches and role_name in replica_caches:
-            cache = replica_caches[role_name]
+        if replica_caches and backend_name in replica_caches:
+            cache = replica_caches[backend_name]
             try:
                 # cache.current() returns tuple[ReplicaState]; find local=True.
                 states = cache.current()
@@ -735,6 +738,19 @@ def _build_announcement(
         forbidden_list = lane_config.get("forbidden_responsibilities", [])
         if isinstance(forbidden_list, str):
             forbidden_list = [forbidden_list]
+
+        # No live replica-cache entry (the common case: no *_PEER_ORIGINS pool
+        # declared anywhere means build_replica_caches returns {} outright) —
+        # fall back to the DECLARED lane fields so a plain, unpooled box still
+        # announces a real, comparable fingerprint instead of an all-empty one
+        # that can never be verified by a peer's probe.
+        if fp is None:
+            fp = {
+                "served_id": model,
+                "quantization": quant,
+                "max_model_len": context,
+                "runtime": runtime,
+            }
 
         roles[role_name] = RoleInfo(
             model=model,
@@ -959,9 +975,7 @@ def _heartbeat_loop(
                             rec = routes.roster._roster.get(mname)  # noqa: SLF001
                             if rec is not None:
                                 routes._announcements.pop(rec.origin, None)
-                        snap = build_snapshot(
-                            routes.roster, announcements=routes._announcements
-                        )
+                        snap = build_snapshot(routes.roster, announcements=routes._announcements)
                         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
                     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
                         pass
@@ -1088,7 +1102,9 @@ def _fetch_seed_roster(
                                 if mname and morigin:
                                     if routes is not None:
                                         with roster._lock:
-                                            roster.announce(mname, morigin, None, now=time.monotonic())
+                                            roster.announce(
+                                                mname, morigin, None, now=time.monotonic()
+                                            )
                                     else:
                                         roster.announce(mname, morigin, None, now=time.monotonic())
                 except (json.JSONDecodeError, TypeError, KeyError):
@@ -1141,7 +1157,6 @@ def verify_members(
         _PEER_PROBE_TIMEOUT,
         _default_peer_opener,
     )
-    from lobes.gateway._mesh_wire import decode
 
     key = join_key or (routes.config.key if hasattr(routes.config, "key") else None)
     probe_timeout = timeout or _PEER_PROBE_TIMEOUT
@@ -1203,9 +1218,7 @@ def verify_members(
 
     max_workers = min(8, len(members_to_verify))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_probe_peer, md): md for md in members_to_verify
-        }
+        futures = {pool.submit(_probe_peer, md): md for md in members_to_verify}
         for fut in as_completed(futures):
             try:
                 origin, verified = fut.result(timeout=probe_timeout)

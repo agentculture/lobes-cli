@@ -25,25 +25,16 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
-
-import pytest
 
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 from lobes.gateway._mesh_config import build_mesh_config
-from lobes.gateway._mesh_routing import (
-    MeshRoutingView,
-    build_snapshot,
-    origins_for_role,
-)
 from lobes.gateway._mesh_roster import Roster
-from lobes.gateway._mesh_routes import MeshRoutes, build_mesh_routes, verify_members
-from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo, encode
-from lobes.gateway._replicas import compare_fingerprints, ReplicaState
+from lobes.gateway._mesh_routes import MeshRoutes, verify_members
+from lobes.gateway._mesh_routing import build_snapshot, origins_for_role
+from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_routing import RoutingSnapshot
@@ -101,18 +92,21 @@ class _FakeMemberGateway:
         handler.send_response(200)
         handler.send_header("Content-Type", "application/json")
         handler.end_headers()
-        body = json.dumps({
-            "load": self._load,
-            "busy": self._busy,
-            "capacity": self._capacity,
-        }).encode()
+        body = json.dumps(
+            {
+                "load": self._load,
+                "busy": self._busy,
+                "capacity": self._capacity,
+            }
+        ).encode()
         handler.wfile.write(body)
 
     def _handle_completions(self, handler) -> None:
         cl = int(handler.headers.get("Content-Length", 0))
         body = handler.rfile.read(cl) if cl > 0 else b""
         headers_list = [
-            (k, handler.headers[k]) for k in handler.headers
+            (k, handler.headers[k])
+            for k in handler.headers
             if k.lower() not in ("transfer-encoding", "content-length")
         ]
         self._recorded_request = {
@@ -271,11 +265,10 @@ def _probe_verification(
     compare the announced fingerprint with the probed fingerprint from
     /capabilities. Returns {origin: frozenset_of_verified_role_names}.
     """
-    import urllib.request
     import ssl
-    from lobes.gateway._mesh_routing import verify_member_roles, _wire_fingerprint_to_replica
-    from lobes.gateway._mesh_wire import Fingerprint as WireFingerprint
-    from lobes.gateway._replicas import Fingerprint as ReplicasFingerprint
+    import urllib.request
+
+    from lobes.gateway._mesh_routing import verify_member_roles
 
     verified: dict[str, frozenset[str]] = {}
     ctx = ssl.create_default_context()
@@ -291,6 +284,7 @@ def _probe_verification(
             with urllib.request.urlopen(req, timeout=2.0, context=ctx) as resp:
                 if resp.status == 200:
                     import json
+
                     payload = json.loads(resp.read())
                     roles_data = payload.get("roles", {})
 
@@ -311,7 +305,6 @@ def _probe_verification(
                         }
 
                     # Build an Announcement-like object for verify_member_roles
-                    from lobes.gateway._mesh_wire import Announcement, RoleInfo as WireRoleInfo
                     ann = Announcement(
                         name="test",
                         origin=origin,
@@ -351,7 +344,9 @@ def _build_mesh_snapshot(
     announcements: dict[str, Announcement] = {}
     for i, origin in enumerate(member_origins):
         roster_members.append((member_names[i], origin, 4.0))
-        roles = announced_roles.get(origin, {"cortex": _role("cortex", fingerprint=fingerprints.get(origin, _fp()))})
+        roles = announced_roles.get(
+            origin, {"cortex": _role("cortex", fingerprint=fingerprints.get(origin, _fp()))}
+        )
         announcements[origin] = _ann(member_names[i], origin, roles)
 
     roster = _FakeRoster(roster_members)
@@ -376,24 +371,30 @@ def _setup_mesh(
     if member_names is None:
         member_names = [f"member-{i}" for i in range(len(member_origins))]
 
-    mesh_cfg = build_mesh_config({
-        "LOBES_MESH_KEY": join_key,
-        "LOBES_MESH_NAME": "me",
-        "LOBES_MESH_SEEDS": "",
-        "LOBES_MESH_HEARTBEAT_S": "60",
-        "LOBES_MESH_MISSED_MAX": "3",
-    })
+    mesh_cfg = build_mesh_config(
+        {
+            "LOBES_MESH_KEY": join_key,
+            "LOBES_MESH_NAME": "me",
+            "LOBES_MESH_SEEDS": "",
+            "LOBES_MESH_HEARTBEAT_S": "60",
+            "LOBES_MESH_MISSED_MAX": "3",
+        }
+    )
     roster = Roster()
     routes = MeshRoutes(mesh_cfg, roster)
     for i, origin in enumerate(member_origins):
         routes.roster.announce(member_names[i], origin, 4.0)
     for origin, roles in (announced_roles or {}).items():
-        routes._announcements[origin] = _ann(f"member", origin, roles)
+        routes._announcements[origin] = _ann("member", origin, roles)
 
-    holder = type("Holder", (), {
-        "replace": lambda s, v: None,
-        "current": lambda s: None,
-    })()
+    holder = type(
+        "Holder",
+        (),
+        {
+            "replace": lambda s, v: None,
+            "current": lambda s: None,
+        },
+    )()
     routes._holder = holder
     verify_members(routes, holder, join_key=join_key, timeout=2.0)
 
@@ -407,11 +408,16 @@ def _setup_mesh(
     # by re-probing (matching what the probe actually returns).
     snap = _build_mesh_snapshot(
         member_origins,
-        announced_roles=announced_roles or {o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins},
+        announced_roles=announced_roles
+        or {o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins},
         # Probe the members and do fingerprint comparison, just like verify_members.
         verified_roles=_probe_verification(
-            member_origins, join_key,
-            announced_roles or {o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins},
+            member_origins,
+            join_key,
+            announced_roles
+            or {
+                o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins
+            },
         ),
         member_names=member_names,
     )
@@ -437,17 +443,19 @@ class TestAnnounceVerifyForward:
             member_origin = f"http://127.0.0.1:{port}"
 
             # Member's /capabilities serves matching fingerprint.
-            member.set_capabilities({
-                "cortex": {
-                    "fingerprint": {
-                        "served_id": "unsloth/Qwen3.8-27B-NVFP4",
-                        "quantization": "NVFP4",
-                        "max_model_len": 262144,
-                        "runtime": "vllm",
+            member.set_capabilities(
+                {
+                    "cortex": {
+                        "fingerprint": {
+                            "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                            "quantization": "NVFP4",
+                            "max_model_len": 262144,
+                            "runtime": "vllm",
+                        },
+                        "ready": True,
                     },
-                    "ready": True,
-                },
-            })
+                }
+            )
 
             # Build MeshRoutes, announce, verify.
             # Use "primary" as the mesh member name so _mesh_roles() maps it
@@ -473,12 +481,14 @@ class TestAnnounceVerifyForward:
             opener_calls = []
 
             def fake_open(backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
-                opener_calls.append({
-                    "backend": backend,
-                    "path": path,
-                    "body": fwd_body,
-                    "headers": list(headers),
-                })
+                opener_calls.append(
+                    {
+                        "backend": backend,
+                        "path": path,
+                        "body": fwd_body,
+                        "headers": list(headers),
+                    }
+                )
                 return _FakeUpstream(200, b'{"choices": [{"text": "ok"}]}')
 
             monkeypatch.setattr(S, "open_upstream", fake_open)
@@ -500,7 +510,9 @@ class TestAnnounceVerifyForward:
             # Request "cortex" — infeasible, but mesh has verified members.
             # peer_specs is empty so mesh is the only forward path.
             resp = S.handle_post(
-                table, cfg, "/v1/chat/completions",
+                table,
+                cfg,
+                "/v1/chat/completions",
                 [("Authorization", "Bearer sk-caller")],
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
@@ -548,17 +560,19 @@ class TestMismatchVariant:
             member_origin = f"http://127.0.0.1:{port}"
 
             # Member's /capabilities serves fp Y (mismatch with announced fp X).
-            member.set_capabilities({
-                "cortex": {
-                    "fingerprint": {
-                        "served_id": fp_y.served_id,
-                        "quantization": fp_y.quantization,
-                        "max_model_len": fp_y.max_model_len,
-                        "runtime": fp_y.runtime,
+            member.set_capabilities(
+                {
+                    "cortex": {
+                        "fingerprint": {
+                            "served_id": fp_y.served_id,
+                            "quantization": fp_y.quantization,
+                            "max_model_len": fp_y.max_model_len,
+                            "runtime": fp_y.runtime,
+                        },
+                        "ready": True,
                     },
-                    "ready": True,
-                },
-            })
+                }
+            )
 
             # Build MeshRoutes, announce, verify.
             # Use "primary" as the mesh member name so _mesh_roles() maps it
@@ -598,7 +612,9 @@ class TestMismatchVariant:
                 return ()
 
             resp = S.handle_post(
-                table, cfg, "/v1/chat/completions",
+                table,
+                cfg,
+                "/v1/chat/completions",
                 [("Authorization", "Bearer sk-caller")],
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
@@ -639,17 +655,19 @@ class TestTwoEqualMembers:
                 port = m._server.server_address[1]
                 origin = f"http://127.0.0.1:{port}"
                 origins.append(origin)
-                m.set_capabilities({
-                    "cortex": {
-                        "fingerprint": {
-                            "served_id": fp.served_id,
-                            "quantization": fp.quantization,
-                            "max_model_len": fp.max_model_len,
-                            "runtime": fp.runtime,
+                m.set_capabilities(
+                    {
+                        "cortex": {
+                            "fingerprint": {
+                                "served_id": fp.served_id,
+                                "quantization": fp.quantization,
+                                "max_model_len": fp.max_model_len,
+                                "runtime": fp.runtime,
+                            },
+                            "ready": True,
                         },
-                        "ready": True,
-                    },
-                })
+                    }
+                )
 
             # Build MeshRoutes, announce both, verify both.
             # Use distinct member names — both have cortex verified.
@@ -695,7 +713,9 @@ class TestTwoEqualMembers:
                 return ()
 
             resp = S.handle_post(
-                table, cfg, "/v1/chat/completions",
+                table,
+                cfg,
+                "/v1/chat/completions",
                 [("Authorization", "Bearer sk-caller")],
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
@@ -734,28 +754,32 @@ class Test508Chain:
             port_b = member_b._server.server_address[1]
             origin_b = f"http://127.0.0.1:{port_b}"
 
-            member_a.set_capabilities({
-                "cortex": {
-                    "fingerprint": {
-                        "served_id": "unsloth/Qwen3.8-27B-NVFP4",
-                        "quantization": "NVFP4",
-                        "max_model_len": 262144,
-                        "runtime": "vllm",
+            member_a.set_capabilities(
+                {
+                    "cortex": {
+                        "fingerprint": {
+                            "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                            "quantization": "NVFP4",
+                            "max_model_len": 262144,
+                            "runtime": "vllm",
+                        },
+                        "ready": True,
                     },
-                    "ready": True,
-                },
-            })
-            member_b.set_capabilities({
-                "cortex": {
-                    "fingerprint": {
-                        "served_id": "unsloth/Qwen3.8-27B-NVFP4",
-                        "quantization": "NVFP4",
-                        "max_model_len": 262144,
-                        "runtime": "vllm",
+                }
+            )
+            member_b.set_capabilities(
+                {
+                    "cortex": {
+                        "fingerprint": {
+                            "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                            "quantization": "NVFP4",
+                            "max_model_len": 262144,
+                            "runtime": "vllm",
+                        },
+                        "ready": True,
                     },
-                    "ready": True,
-                },
-            })
+                }
+            )
 
             # A's snapshot: A lacks cortex, B has cortex verified.
             # Use "no-cortex" for A (not a backend name) and "primary" for B.
@@ -790,27 +814,31 @@ class Test508Chain:
 
             def fake_open(backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
                 call_count[0] += 1
-                opener_calls.append({
-                    "backend": backend,
-                    "path": path,
-                    "body": fwd_body,
-                    "headers": list(headers),
-                })
+                opener_calls.append(
+                    {
+                        "backend": backend,
+                        "path": path,
+                        "body": fwd_body,
+                        "headers": list(headers),
+                    }
+                )
                 # First call: A→B forward.
                 if call_count[0] == 1:
                     # Simulate B returning 508 proxy_loop.
-                    loop_body = json.dumps({
-                        "error": {
-                            "message": (
-                                "refusing to proxy: this request already crossed one lobes "
-                                "proxy hop (X-Lobes-Proxied: cortex); forwarding it again "
-                                f"to `{origin_b}` for role `cortex` could loop — peer "
-                                "proxying is single-hop only (issues #115/#127)."
-                            ),
-                            "type": "proxy_loop",
-                            "code": "proxy_loop",
+                    loop_body = json.dumps(
+                        {
+                            "error": {
+                                "message": (
+                                    "refusing to proxy: this request already crossed one lobes "
+                                    "proxy hop (X-Lobes-Proxied: cortex); forwarding it again "
+                                    f"to `{origin_b}` for role `cortex` could loop — peer "
+                                    "proxying is single-hop only (issues #115/#127)."
+                                ),
+                                "type": "proxy_loop",
+                                "code": "proxy_loop",
+                            }
                         }
-                    }).encode()
+                    ).encode()
                     return _FakeUpstream(508, loop_body)
                 return _FakeUpstream(500, b'{"error": "unexpected dial"}')
 
@@ -820,7 +848,9 @@ class Test508Chain:
                 return ()
 
             resp = S.handle_post(
-                table, cfg, "/v1/chat/completions",
+                table,
+                cfg,
+                "/v1/chat/completions",
                 [("Authorization", "Bearer sk-caller")],
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
@@ -861,7 +891,8 @@ class TestDropMember:
             _FakeRoster([("primary", "http://alpha.local:8001", 1.0)]),
             announcements={
                 "http://alpha.local:8001": _ann(
-                    "primary", "http://alpha.local:8001",
+                    "primary",
+                    "http://alpha.local:8001",
                     {"cortex": _role("cortex", fingerprint=fp)},
                 ),
             },
@@ -900,7 +931,9 @@ class TestDropMember:
             return ()
 
         resp = S.handle_post(
-            table, cfg, "/v1/chat/completions",
+            table,
+            cfg,
+            "/v1/chat/completions",
             [("Authorization", "Bearer sk-caller")],
             json.dumps({"model": "cortex"}).encode(),
             fake_open,
@@ -939,7 +972,9 @@ class TestInertMesh:
         monkeypatch.setattr(S, "open_upstream", fake_open)
 
         resp = S.handle_post(
-            table, cfg, "/v1/chat/completions",
+            table,
+            cfg,
+            "/v1/chat/completions",
             [("Authorization", "Bearer sk-caller")],
             json.dumps({"model": "cortex"}).encode(),
             fake_open,
@@ -976,7 +1011,9 @@ class TestInertMeshReferral:
         monkeypatch.setattr(S, "open_upstream", fake_open)
 
         resp = S.handle_post(
-            table, cfg, "/v1/chat/completions",
+            table,
+            cfg,
+            "/v1/chat/completions",
             [("Authorization", "Bearer sk-caller")],
             json.dumps({"model": "multimodal"}).encode(),
             fake_open,

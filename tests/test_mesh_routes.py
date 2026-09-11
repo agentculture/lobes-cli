@@ -843,6 +843,114 @@ class TestAnnouncementConstruction:
         assert role.model == "sentence-transformers/all-MiniLM-L6-v2"
 
 
+class TestAnnouncementFingerprints:
+    """D1/D2: the self-announcement carries live fingerprints, keyed by ROLE
+    name — never an empty ``Fingerprint("", "", 0, "")`` and never a raw
+    backend name (``primary``/``multimodal``)."""
+
+    def test_announcement_roles_are_role_names(self) -> None:
+        """D2: declared_lane_configs is keyed by BACKEND name (``primary``);
+        the wire announcement must key roles by ROLE name (``cortex``) so a
+        peer's own role-keyed /capabilities can ever match it."""
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-3"),
+            self_origin="http://box-3.local:8000",
+            declared_lane_configs={
+                "primary": {
+                    "model": "unsloth/Qwen3.8-27B-NVFP4",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"primary": 4.0},
+        )
+        assert "cortex" in announcement.roles
+        assert "primary" not in announcement.roles
+
+    def test_build_announcement_carries_live_fingerprints(self) -> None:
+        """D1: a live ReplicaCache entry (keyed by BACKEND name, per
+        build_replica_caches) supplies the announced fingerprint."""
+        live_fp = Fingerprint(
+            served_id="unsloth/Qwen3.8-27B-NVFP4",
+            quantization="NVFP4",
+            max_model_len=262144,
+            runtime="vllm",
+        )
+        local_state = SimpleNamespace(local=True, fingerprint=live_fp)
+        fake_cache = SimpleNamespace(current=lambda: (local_state,))
+
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-4"),
+            self_origin="http://box-4.local:8000",
+            declared_lane_configs={
+                "primary": {
+                    "model": "unsloth/Qwen3.8-27B-NVFP4",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"primary": 4.0},
+            replica_caches={"primary": fake_cache},
+        )
+        role = announcement.roles["cortex"]
+        assert role.fingerprint == live_fp
+
+    def test_build_announcement_falls_back_to_declared_fingerprint(self) -> None:
+        """D1: no replica_caches entry (the common no-pool deployment, where
+        build_replica_caches returns {} outright) — the fingerprint still
+        carries the DECLARED lane data, never an all-empty/all-unknown one."""
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-5"),
+            self_origin="http://box-5.local:8000",
+            declared_lane_configs={
+                "primary": {
+                    "model": "unsloth/Qwen3.8-27B-NVFP4",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"primary": 4.0},
+            replica_caches=None,
+        )
+        role = announcement.roles["cortex"]
+        assert role.fingerprint.served_id == "unsloth/Qwen3.8-27B-NVFP4"
+        assert role.fingerprint.quantization == "NVFP4"
+        assert role.fingerprint.max_model_len == 262144
+        assert role.fingerprint.runtime == "vllm"
+
+    def test_announcement_omits_not_ready_role(self) -> None:
+        """readiness_cache says the role is not ready → omitted entirely
+        (D1's readiness-filter half: the flat dict[str, bool|None], not the
+        always-{} nested `.get("roles", {})` the pre-fix code read)."""
+        readiness_cache = SimpleNamespace(current=lambda: {"cortex": False})
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-6"),
+            self_origin="http://box-6.local:8000",
+            declared_lane_configs={
+                "primary": {
+                    "model": "unsloth/Qwen3.8-27B-NVFP4",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"primary": 4.0},
+            readiness_cache=readiness_cache,
+        )
+        assert "cortex" not in announcement.roles
+
+
 # ===========================================================================
 # Finding 2: Auth header on outbound dials
 # ===========================================================================
@@ -994,6 +1102,21 @@ class TestTickChurn:
         result = routes.roster.tick(now=clock.t + 1)
         assert result.dropped == 1
         assert "test-member" not in routes.roster.members()
+
+    def test_build_mesh_routes_clamps_announced_capacity(self) -> None:
+        """D9: build_mesh_routes must pass missed_max straight into Roster's
+        own constructor param — NOT rebuild the roster with
+        capacity_max=1_000_000.0 (a workaround that silently bypassed
+        CAPACITY_CLAMP_MAX=64.0 on mesh-ingested capacity)."""
+        from lobes.gateway._mesh_roster import Roster
+
+        clock = _TickClock()
+        roster = Roster(clock=clock, ledger_path=tempfile.mktemp(suffix=".json"))
+        routes, _ = build_mesh_routes(env=_mesh_key_env(name="test"), roster=roster, missed_max=2)
+        routes.roster.announce("huge", "http://huge.local", 1e9, now=clock.t)
+        member = routes.roster._roster["huge"]  # noqa: SLF001 — read-only assertion
+        assert member.capacity == 64.0
+        assert routes.roster._missed_max_override == 2  # noqa: SLF001
 
 
 # ===========================================================================

@@ -73,7 +73,8 @@ from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
-from lobes.gateway._mesh_config import MeshConfigError, build_mesh_config as _build_mesh_config
+from lobes.gateway._mesh_config import MeshConfigError
+from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
     MeshRoutes,
 )
@@ -175,8 +176,6 @@ def _first_stt_origin(snapshot: "RoutingSnapshot | None") -> str | None:
     """Return the first verified stt origin, or first announced-only stt origin."""
     if snapshot is None:
         return None
-    from lobes.gateway._mesh_routing import RoutingSnapshot
-
     origins = snapshot.member_origins("stt")
     if origins:
         return origins[0]
@@ -1491,7 +1490,10 @@ def _relay_to_target(
             up.close()
             try:
                 err_data = json.loads(raw)
-                if isinstance(err_data, dict) and err_data.get("error", {}).get("type") == "proxy_loop":
+                if (
+                    isinstance(err_data, dict)
+                    and err_data.get("error", {}).get("type") == "proxy_loop"
+                ):
                     return GatewayResponse(
                         status=508,
                         headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
@@ -2785,9 +2787,8 @@ def handle_post(
             # stays byte-identical (h1/h5).
             fallthrough = (
                 [(ROUTE_REASON_HEADER, REASON_NONE)]
-                if proxied_name in pooled_backends(
-                    table, replica_snapshot, mesh_snapshot=mesh_snapshot
-                )
+                if proxied_name
+                in pooled_backends(table, replica_snapshot, mesh_snapshot=mesh_snapshot)
                 else []
             )
             return _proxy_to_peer(
@@ -2864,9 +2865,7 @@ def handle_post(
                     rewrite=True,
                     extra_response_headers=(
                         [(PROXIED_BY_HEADER, member_origin)]
-                        + mesh_markers(
-                            mesh_snapshot, role, chosen_origin=member_origin
-                        )
+                        + mesh_markers(mesh_snapshot, role, chosen_origin=member_origin)
                         + [(ROUTE_REASON_HEADER, "mesh-forwarded")]
                     ),
                 )
@@ -3917,7 +3916,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(404, _not_found_body(route))
 
     # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
-    def _handle_realtime(self, mesh_stt_origin: str | None = None) -> None:  # pragma: no cover - opens a socket; see below
+    def _handle_realtime(
+        self, mesh_stt_origin: str | None = None
+    ) -> None:  # pragma: no cover - opens a socket; see below
         """Tunnel a realtime WebSocket session to the local bridge.
 
         The refusal paths and the byte pump are unit-tested in
@@ -3932,7 +3933,10 @@ class _Handler(BaseHTTPRequestHandler):
         strand it (spec claim c26).
         """
         decision = plan_realtime_upgrade(
-            self.table, self.server_config, self.path, list(self.headers.items()),
+            self.table,
+            self.server_config,
+            self.path,
+            list(self.headers.items()),
             mesh_stt_origin=mesh_stt_origin,
         )
         if isinstance(decision, RealtimeRefusal):
@@ -4204,7 +4208,7 @@ class _Handler(BaseHTTPRequestHandler):
                 peer_specs=self.peer_specs,
                 replica_snapshot=self.replica_snapshot,
                 dispatch_counter=self.dispatch_counter,
-                mesh_snapshot=self.mesh_snapshot(),
+                mesh_snapshot=mesh_snapshot,
             )
         # The pool's in-flight release (t5) fires HERE, not where the answer
         # was built: a relayed upstream is a one-shot byte tunnel this loop
@@ -4647,16 +4651,6 @@ def _make_handler(
     mesh_routes: MeshRoutes | None = None,
     mesh_snapshot_holder: SnapshotHolder | None = None,
 ) -> type[_Handler]:
-    def _mesh_snapshot_fn() -> "RoutingSnapshot | None":
-        """Read the current mesh snapshot from the holder."""
-        holder = getattr(_Handler, "mesh_snapshot_holder", None)
-        if holder is None:
-            return None
-        view = holder.current()
-        if view is None:
-            return None
-        return view.snapshot
-
     bound = type(
         "_BoundHandler",
         (_Handler,),
@@ -4684,9 +4678,6 @@ def _make_handler(
             # `staticmethod` for the same descriptor-protocol reason as
             # `replica_snapshot` above: it is a plain function too.
             "dispatch_counter": (None if counter is None else staticmethod(counter)),
-            # Mesh routing snapshot — read from the holder at call time so it
-            # reflects roster updates between requests.
-            "mesh_snapshot": staticmethod(_mesh_snapshot_fn),
         },
     )
     return bound

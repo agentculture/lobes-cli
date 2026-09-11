@@ -291,9 +291,7 @@ class Roster:
     def records(self) -> list[tuple[str, str, float]]:
         """Return ``(name, origin, capacity)`` for every member."""
         with self._lock:
-            return [
-                (m.name, m.origin, m.capacity) for m in self._roster.values()
-            ]
+            return [(m.name, m.origin, m.capacity) for m in self._roster.values()]
 
     # -- Ledger passthrough --------------------------------------------------
 

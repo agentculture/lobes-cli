@@ -548,6 +548,10 @@ class TestMemberDrop:
         # build_snapshot iterates roster.members(), so alpha is not included.
         assert snap2.member_count() == 0
         assert origins_for_role(snap2, "cortex") == ()
+        # D5: a dropped member's stale announcement must be PRUNED, not just
+        # unreachable via .members() — otherwise a verify pass driven by
+        # snapshot.announcements would re-dial a dead origin.
+        assert len(snap2.announcements) == 0
 
     def test_404_for_role_after_drop(self):
         """When a member is dropped and no other member has the role,
@@ -732,3 +736,136 @@ class TestAnnouncementTuples:
         roster = _FakeRoster([("alpha", "http://alpha.local:8001", 1.0)])
         snap = build_snapshot(roster)
         assert len(snap.announcements) == 0
+
+
+# ---------------------------------------------------------------------------
+# D6/D7: verify_member_roles is the single fingerprint-comparison entry point
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyMemberRoles:
+    """D6: verification is a single entry point (`verify_member_roles`),
+    running `compare_fingerprints` per announced role — not merely a
+    role-*name* subset check."""
+
+    def test_verify_requires_fingerprint_match(self) -> None:
+        from lobes.gateway._mesh_routing import verify_member_roles
+
+        fp_a = _fp(served_id="unsloth/Qwen3.8-27B-NVFP4")
+        fp_b = _fp(served_id="unsloth/Qwen3.6-27B-NVFP4")  # different served_id
+        ann = _ann(
+            "alpha", "http://alpha.local:8001", {"cortex": _role("cortex", fingerprint=fp_a)}
+        )
+        probed_roles = {
+            "cortex": {
+                "fingerprint": {
+                    "served_id": fp_b.served_id,
+                    "quantization": fp_b.quantization,
+                    "max_model_len": fp_b.max_model_len,
+                    "runtime": fp_b.runtime,
+                },
+                "ready": True,
+            }
+        }
+        assert verify_member_roles(ann, probed_roles) == frozenset()
+
+    def test_verify_accepts_matching_fingerprint(self) -> None:
+        from lobes.gateway._mesh_routing import verify_member_roles
+
+        fp = _fp()
+        ann = _ann("alpha", "http://alpha.local:8001", {"cortex": _role("cortex", fingerprint=fp)})
+        probed_roles = {
+            "cortex": {
+                "fingerprint": {
+                    "served_id": fp.served_id,
+                    "quantization": fp.quantization,
+                    "max_model_len": fp.max_model_len,
+                    "runtime": fp.runtime,
+                },
+                "ready": True,
+            }
+        }
+        assert verify_member_roles(ann, probed_roles) == frozenset({"cortex"})
+
+    def test_verify_not_ready_excluded(self) -> None:
+        """A role whose /capabilities entry reports ready is False is never
+        verified even when the fingerprint matches (W6: compatible AND
+        ready)."""
+        from lobes.gateway._mesh_routing import verify_member_roles
+
+        fp = _fp()
+        ann = _ann("alpha", "http://alpha.local:8001", {"cortex": _role("cortex", fingerprint=fp)})
+        probed_roles = {
+            "cortex": {
+                "fingerprint": {
+                    "served_id": fp.served_id,
+                    "quantization": fp.quantization,
+                    "max_model_len": fp.max_model_len,
+                    "runtime": fp.runtime,
+                },
+                "ready": False,
+            }
+        }
+        assert verify_member_roles(ann, probed_roles) == frozenset()
+
+
+class TestWireFingerprintConversion:
+    """D7: the wire<->replica fingerprint conversion maps the wire's
+    ``0``/``null``/``""`` "N/A" sentinels to `None` (unknown) on BOTH the
+    announced (dataclass) and probed (raw dict) sides."""
+
+    def test_wire_fingerprint_zero_window_is_unknown(self) -> None:
+        from lobes.gateway._mesh_routing import _wire_fingerprint_to_replica
+
+        wire_fp = Fingerprint(
+            served_id="unsloth/Qwen3.8-27B-NVFP4",
+            quantization="NVFP4",
+            max_model_len=0,  # the wire's "N/A"
+            runtime="vllm",
+        )
+        replica_fp = _wire_fingerprint_to_replica(wire_fp)
+        assert replica_fp.max_model_len is None
+
+    def test_probed_dict_zero_window_is_unknown(self) -> None:
+        """The probed side arrives as a plain dict off JSON, not a
+        Fingerprint dataclass — 0/null there must convert identically."""
+        from lobes.gateway._mesh_routing import _wire_fingerprint_to_replica
+
+        replica_fp = _wire_fingerprint_to_replica(
+            {
+                "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                "quantization": "NVFP4",
+                "max_model_len": 0,
+                "runtime": None,
+            }
+        )
+        assert replica_fp.max_model_len is None
+        assert replica_fp.runtime is None
+
+    def test_empty_string_fields_are_unknown(self) -> None:
+        from lobes.gateway._mesh_routing import _wire_fingerprint_to_replica
+
+        replica_fp = _wire_fingerprint_to_replica(
+            Fingerprint(served_id="", quantization="", max_model_len=262144, runtime="")
+        )
+        assert replica_fp.served_id is None
+        assert replica_fp.quantization is None
+        assert replica_fp.runtime is None
+        assert replica_fp.max_model_len == 262144
+
+    def test_zero_window_never_compares_compatible(self) -> None:
+        """The regression D7 exists to prevent: a wire ``0`` must not compare
+        as a KNOWN value (`0 != 128000`) — it must be UNKNOWN, and an unknown
+        value on either side is always incompatible (spec h11)."""
+        from lobes.gateway._mesh_routing import _wire_fingerprint_to_replica
+        from lobes.gateway._replicas import compare_fingerprints
+
+        zero_fp = _wire_fingerprint_to_replica(
+            Fingerprint(served_id="m", quantization="q", max_model_len=0, runtime="vllm")
+        )
+        real_fp = _wire_fingerprint_to_replica(
+            Fingerprint(served_id="m", quantization="q", max_model_len=128000, runtime="vllm")
+        )
+        compatible, reason = compare_fingerprints(zero_fp, real_fp)
+        assert compatible is False
+        assert "max_model_len" in reason
