@@ -113,20 +113,30 @@ def test_each_audience_mechanism_names_something_real() -> None:
 def test_the_doc_declares_an_unvalidated_section() -> None:
     text = _doc()
     assert "## What is not validated" in text
-    for marker in ("No real box has been captured", "Serve-after-restore is unmeasured"):
+    for marker in (
+        "The catalog holds one variation",
+        "Serve-after-restore is unmeasured",
+    ):
         assert marker in text
 
 
-def test_no_captured_variation_exists_so_the_empty_catalog_claim_holds() -> None:
-    """The doc says the catalog ships ZERO variations. If a real one ever
-    lands, this fails and the claim must be rewritten rather than left to rot."""
-    assert "zero variations" in _doc().lower()
-    entries = [
-        path
+def test_catalog_claim_matches_reality() -> None:
+    """The doc's claim about the catalog is checked against what actually
+    lives under ``deployments/`` so a future re-count can't leave the
+    sentence and the directory out of sync."""
+    entries = sorted(
+        path.name
         for path in CATALOG_ROOT.iterdir()
         if path.is_dir() and not path.name.startswith((".", "_"))
-    ]
-    assert entries == [], f"a variation landed; docs/deployment-lock.md must be updated: {entries}"
+    )
+    doc_lower = _doc().lower()
+    if entries:
+        # The doc must NOT still claim zero variations once a real one exists.
+        assert (
+            "zero variations" not in doc_lower
+        ), f"the catalog now has {entries} but the doc still claims zero variations"
+    else:
+        assert "zero variations" in doc_lower, "the catalog is empty but the doc does not say so"
 
 
 def test_no_capture_verb_exists_so_the_library_only_claim_holds() -> None:

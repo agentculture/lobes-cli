@@ -396,7 +396,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=32768,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
-        status="configured",
+        status="load-tested",
         doc="qwen3.6-35b-a3b-nvfp4.md",
         # MoE-only serve extra: the marlin MoE kernel — verified to load this
         # checkpoint *solo* on the GB10 (2026-05-31, util 0.70). lobes switch

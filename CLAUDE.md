@@ -894,12 +894,15 @@ record"; issue #214).
   every verbatim-committed compose/override/Dockerfile — the half the
   allowlist cannot protect. Leak recovery: `docs/secret-rotation.md`.
 
-**Honesty (#108) — read this before citing any of it as working.** **No real
-box has been captured**: `deployments/` ships a README and a template and
-ZERO variations, and every catalog behaviour is exercised against fixtures
-under `tests/fixtures/deployments/`. **There is no capture verb** — the lock
-writer is a library with no CLI caller, so every "re-capture the lock"
-instruction means calling it. **Serve-after-restore is unmeasured**: the
+**Honesty (#108) — read this before citing any of it as working.** **One real
+box has now been captured** (#244, 2026-09-11): `deployments/jetson-agx-thor__thor-worker/`
+holds the live Thor's lock, its verbatim compose/Dockerfiles/scaffold files and
+a `VARIATION.md` citing its acceptance transcript — the catalog's first
+non-fixture entry. Every *other* catalog behaviour is still exercised only
+against fixtures under `tests/fixtures/deployments/`. **There is still no
+capture verb** — the lock writer is a library with no CLI caller, so that
+capture was made by calling `lobes.runtime._lock.capture_lock` directly, and
+every "re-capture the lock" instruction still means calling it. **Serve-after-restore is unmeasured**: the
 mechanism guarantees byte-identical files and a merge-only `.env` (both
 test-proven), but no box has been restored and then served. A lock-restored
 **fresh** box is not yet servable (**deviation d2**): the fleet compose

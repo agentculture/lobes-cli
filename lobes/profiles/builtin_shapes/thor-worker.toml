@@ -116,3 +116,6 @@ max_model_len = 262144
 # `modelopt` (the outgoing unsloth export needed `compressed-tensors` — a
 # different quant family, and passing the wrong one fails on a method mismatch).
 quantization = "modelopt"
+kv_cache_dtype = "fp8"
+max_num_seqs = 1
+speculative_config = '''"'--speculative-config={\"method\": \"dflash\", \"num_speculative_tokens\": 12, \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\"}'"'''

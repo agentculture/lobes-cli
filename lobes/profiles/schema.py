@@ -184,11 +184,11 @@ _WORKER_ONLY: frozenset[str] = frozenset({"worker"})
 KNOB_LANE_ROLES: dict[str, frozenset[str]] = {
     "speculative_config": SPECULATIVE_CONFIG_ROLES,
     "moe_backend": _WORKER_ONLY,
-    "max_num_batched_tokens": _WORKER_ONLY,
+    "max_num_batched_tokens": _WORKER_ONLY | frozenset({"associate"}),
     "load_format": _WORKER_ONLY,
     "chunked_prefill": _WORKER_ONLY,
     "async_scheduling": _WORKER_ONLY,
-    "prefix_caching": _WORKER_ONLY,
+    "prefix_caching": _WORKER_ONLY | frozenset({"associate"}),
     "tool_call_parser": frozenset({"worker", "associate"}),
 }
 

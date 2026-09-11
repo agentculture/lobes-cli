@@ -487,8 +487,8 @@ def _pool_arming_check(deploy_dir: Path) -> dict:
             "pool arming check applies to fleet deployments only",
         )
     deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
-    table, _cfg = build_config(deployed)
     try:
+        table, _cfg = build_config(deployed)
         _check_pool_arming(table)
     except ReplicaConfigError as err:
         return _check(

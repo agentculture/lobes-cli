@@ -94,7 +94,13 @@ def test_published_catalog_readme_states_no_box_captured_yet() -> None:
 def test_info_template_is_not_itself_a_variation() -> None:
     """The template must not be mistaken for a published variation."""
     assert (PUBLISHED_CATALOG / vc.INFO_TEMPLATE_FILENAME).is_file()
-    assert vc.variation_dirs(PUBLISHED_CATALOG) == []
+    # INFO_TEMPLATE_FILENAME is a plain file (not a directory); even so,
+    # verify that variation_dirs never yields it — the property that the
+    # template cannot be mis-identified as a variation must hold regardless
+    # of how many real variations live in the catalog.
+    dirs = vc.variation_dirs(PUBLISHED_CATALOG)
+    names = {d.name for d in dirs}
+    assert vc.INFO_TEMPLATE_FILENAME not in names
 
 
 # --- acceptance criterion 1: complete enough for a restore -------------------

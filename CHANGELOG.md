@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.0] - 2026-09-11
+
+### Added
+
+- **The variation catalog has its first real entry**: `deployments/jetson-agx-thor__thor-worker/` captures the live Jetson AGX Thor serving `worker` — its `deployment.lock.toml`, its verbatim compose/override/shape files, both Dockerfiles, `mg-logwrap.sh` and the tool-parser plugin, plus a `VARIATION.md` citing the acceptance transcript. Until now `deployments/` shipped only a README and a template, and every catalog behaviour was exercised against fixtures. The point of the capture is reproducibility **without re-rendering**: two settings that make the measured numbers reproducible (`WORKER_KV_CACHE_DTYPE`, `WORKER_MAX_NUM_SEQS`) only became renderable in 0.74.0, and the captured compose was hand-patched to carry their slots — so a render of an older tree cannot reproduce it, but `--from-lock` can. `.env` is deliberately NOT carried (gitignored, credential-bearing); the restorable settings live in the lock's allowlisted `[env]`.
+
+### Changed
+
+- **`thor-worker` now renders the whole measured recipe, not just the checkpoint.** The shape gained `kv_cache_dtype="fp8"`, `max_num_seqs=1` and the DFlash `speculative_config`; without them a fresh render started the lane with no speculation, no fp8 KV, and the compose default `nemotron_v3` reasoning parser applied to a Qwen checkpoint.
+- `lobes/catalog.py` — the nvidia entry moves from `status="configured"` to `"load-tested"`, matching the live boot and measurements now committed.
+- `CLAUDE.md` and `docs/deployment-lock.md` — the "no real box has been captured / ZERO variations" honesty claims are now false and are corrected. There is still no capture verb; the capture was made by calling `capture_lock` directly, and the docs say so.
+- `.gitignore` — ignore `.qwen/`, the scratch state `qwen review` writes into the repo root.
+
+### Fixed
+
+- `lobes/cli/_commands/doctor.py` — `_pool_arming_check` called `build_config()` outside its `try`, so a malformed fleet `.env` aborted the entire doctor run instead of producing a finding.
+- `lobes/profiles/schema.py` — `max_num_batched_tokens` and `prefix_caching` were gated worker-only although the `associate` compose lane already consumes `ASSOCIATE_*` forms of both, leaving profile authors unable to set what the lane reads.
+- `scripts/spec-arms.py` — reject non-positive `--aggregate-concurrency` before it reaches `ThreadPoolExecutor`; catch aggregate-leg failures so one bad request no longer discards a completed single-stream transcript; and make the per-position sample count match the samples actually averaged.
+- `scripts/stream-measure.py` — surface a gateway error SSE event instead of returning a zero-rate row that looks like a successful measurement, and stop falling back from `usage.completion_tokens` to the SSE delta count (deltas are not tokens).
+
 ## [0.74.6] - 2026-09-11
 
 ### Fixed

@@ -239,3 +239,7 @@ docs/steward/
 .claude/worktrees/
 
 .devague/questions/
+
+# Qwen Code scratch state (review worktrees, fetched PR context).
+# Written into the repo root by `qwen review`; never part of the tree.
+.qwen/

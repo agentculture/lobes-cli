@@ -383,6 +383,7 @@ def _summarize_per_position(
     samples = [p[_PER_POSITION_KEY] for p in parsed if p.get(_PER_POSITION_KEY)]
     if not samples:
         return None, [], None
+    count_reported = len(samples)
     lengths = {len(s) for s in samples}
     if len(lengths) != 1:
         return (
@@ -393,7 +394,7 @@ def _summarize_per_position(
             "per-position samples instead",
         )
     n = lengths.pop()
-    mean = [round(sum(s[i] for s in samples) / len(samples), 4) for i in range(n)]
+    mean = [round(sum(s[i] for s in samples) / count_reported, 4) for i in range(n)]
     return mean, samples, None
 
 
@@ -845,10 +846,17 @@ def run_aggregate_leg(
             mode = "ramp"
             extra = {"knee_concurrency": ramp_result["knee"]}
         else:
-            rows = [
-                run_concurrent(url, model, concurrency=c, max_tokens=max_tokens)
-                for c in concurrency_levels
-            ]
+            rows = []
+            for c in concurrency_levels:
+                try:
+                    rows.append(run_concurrent(url, model, concurrency=c, max_tokens=max_tokens))
+                except Exception as exc:
+                    rows.append(
+                        {
+                            "concurrency": c,
+                            "error": str(exc),
+                        }
+                    )
             mode = "fixed"
             extra = {}
 
@@ -1055,6 +1063,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.url or not args.arm:
         ap.error("--url and --arm are required unless --combine is given")
 
+    if args.aggregate_concurrency and any(c <= 0 for c in args.aggregate_concurrency):
+        print(
+            "error: --aggregate-concurrency values must be positive integers "
+            f"(got {args.aggregate_concurrency})",
+            file=sys.stderr,
+        )
+        return 2
+
     result = run_arm(
         args.url,
         args.model,
@@ -1113,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.flush()
 
     any_error = any("error" in e for e in result["shapes"].values())
-    if aggregate is not None and "error" in aggregate:
+    if isinstance(aggregate, dict) and "error" in aggregate:
         any_error = True
     return 1 if any_error else 0
 
