@@ -2208,7 +2208,6 @@ services:
       - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
       - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
       - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
-      - LOBES_MESH_DIR=${LOBES_MESH_DIR:-}
     volumes:
       # The mesh runtime directory (mesh-brain-join, t4 / c9): the gateway's
       # FIRST bind mount. Mesh state — the approval ledger file lives here —

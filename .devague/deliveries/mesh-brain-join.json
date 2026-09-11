@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T13:20:04Z",
+  "updated": "2026-09-11T13:36:28Z",
   "deviations": [
     {
       "id": "d1",
@@ -21,6 +21,24 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Experiment on wave 2 (t6): worker (qwen-code, worker lane) builds first; cortex reviews the committed diff via ask-colleague review and returns feedback/instructions ONLY (no fixing); worker applies the fixes. Timings recorded per leg to compare against d1's Sonnet path; the winner runs waves 3-6.",
+      "task_ref": "t6",
+      "reason": "Operator hypothesis 2026-09-11: worker is the fast implementer, cortex the better judge; the loop puts each lane on its strength. Supersedes d1 for t6 only; d1 stands for t7-t11 pending the result.",
+      "affects": [
+        "t6",
+        "t7",
+        "t8",
+        "t9",
+        "t10",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
     }
   ],
   "evidence": [],

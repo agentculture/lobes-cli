@@ -359,7 +359,6 @@ class TestGoldens:
         golden (verified at commit time by the regen diff)."""
         lines = set(template_defaults_text().splitlines())
         expected = {
-            "LOBES_MESH_DIR=",
             "LOBES_MESH_DIR=./mesh",
             "LOBES_MESH_KEY=",
             "LOBES_MESH_NAME=",

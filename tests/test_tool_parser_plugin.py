@@ -209,7 +209,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (./mesh:/home/gateway/mesh), and the LOBES_MESH_LEDGER_PATH passthrough
     # gained a default (/home/gateway/mesh/ledger.json). LOBES_MESH_DIR is
     # also added to the passthrough. See tests/test_mesh_templates.py.
-    "gateway": "65f1f2e6775e385013f1bc902760cda5ea7884320ae698559643bc47bdc63547",
+    "gateway": "db68c8b451ce8be1d845b3c2e75968cd01d4f4bc9d774ff69e7324132325a37b",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
