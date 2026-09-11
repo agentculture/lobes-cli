@@ -399,46 +399,38 @@ Keeping the port private (Cloudflare Access, an IP allowlist, `lobes tunnel`)
 is now defense-in-depth on top of the gate, not the only protection. See
 `docs/gateway-fleet.md#auth-opt-in-bearer-gate` and `lobes explain tunnel`.
 
-## Proxy-lobes (opt-in, the third lobe state)
+## Mesh join (opt-in, the current cross-box mechanism)
 
 A dropped role can be **awake** (hosted), **asleep** (referral-only 404
-naming the peer), or **proxy** — this box forwards the request to its
-declared peer instead of 404ing. Arming it needs BOTH a declared
-`<PREFIX>_PEER_ORIGIN` AND the matching `<PREFIX>_PEER_PROXY=true`; the
-outbound credential (`<PREFIX>_PEER_API_KEY`) is always a copy of the peer's
-own inbound `GATEWAY_API_KEY`, never a value minted per pairing — key
-material scales with the number of machines, not the number of proxy links.
-The caller's own `Authorization` never travels past this box. Every proxied
-answer carries `X-Lobes-Proxied-By: <peer origin>`; a single-hop guard
-refuses (`508 proxy_loop`) a request that would re-proxy. Default off,
-byte-identical. See `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`
-and `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`.
+naming the peer), or **proxy** — a member forwards the request on the
+caller's behalf. The mesh-brain join is how a box reaches proxy state today:
+join with the fleet's one shared `LOBES_MESH_KEY` (plus `LOBES_MESH_NAME`,
+and `LOBES_MESH_SEEDS` on a joining box) and a role this box lacks is
+auto-wired to whichever verified mesh member announces it — no per-role
+origin/proxy/key knob to type. The key alone admits; a persisted approval
+ledger only restricts on top of that. Every mesh-forwarded answer carries
+`X-Lobes-Mesh-Member: <name>`; a single-hop guard still refuses (`508
+proxy_loop`) a request that would re-proxy. See `lobes explain mesh` and
+`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`
+— including its honest **Implementation status** note: the code has not
+fully cut over yet (deviation d6), and the mesh is DECLARED/UNVALIDATED
+(#108) until a cutover transcript lands.
 
-## Replica pools (opt-in, VALIDATED live for cortex on Spark+Thor — issue #199)
+## Retired: proxy-lobes and replica pools (the per-pair peer family)
 
-Beside proxy-lobes' one-peer-per-dropped-role, a role this box ALSO HOSTS
-can pool with N compatible peer replicas: declare `<PREFIX>_PEER_ORIGINS`
-(comma-separated, plural) with positionally-paired `<PREFIX>_PEER_API_KEYS`
-(an empty slot is legal — "this peer has no inbound gate"; a shorter/longer
-key list is a startup config error) and an operator-typed
-`GATEWAY_SELF_ORIGIN`. A background `ReplicaCache` thread live-probes each
-peer's `GET /status` (load) and `GET /capabilities` (fingerprint); two
-replicas are compatible only when served id, quantization, max context and
-runtime all agree (`kv_cache_dtype`/parsers/speculative config are
-informational, never disqualifying). A pooled request is served by whichever
-compatible, ready, non-busy replica is least loaded — local wins ties, an
-`X-Lobes-Affinity` header stickies within a margin — and carries
-`X-Lobes-Served-By` (local) or `X-Lobes-Proxied-By` (forwarded) plus
-`X-Lobes-Route-Reason` on every answer. Under local pressure a pooled request
-forwards to a selectable peer instead of shedding 429; only "no replica
-anywhere is selectable" still sheds. A pool composes on top of the awake/
-proxy states above, not a fourth one; with no `*_PEER_ORIGINS` declared,
-every response stays byte-identical. **Validated live only for `cortex` on
-the Spark+Thor NVFP4 pair** (`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`
-is the pre-pool baseline; the pooled acceptance transcript is pending) — the
-Orin's llama.cpp cortex is exempt, and any other pooled role is
-declared/unvalidated. See
-`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
+Before the mesh join (above), a dropped role's proxy state was armed by a
+hand-typed, per-role peer channel — one declared origin, one proxy flag, one
+outbound key per role — and a role this box ALSO HOSTS could pool with N
+compatible peer replicas via a plural form of the same channel (issue #199,
+VALIDATED live 2026-08-25 for `cortex` only on the Spark+Thor NVFP4 pair).
+Both stages are RETIRED as the documented operator contract — declare the
+mesh instead — but as of this release the gateway still parses and uses
+this family (see the mesh join's Implementation status note above), so an
+existing deployment wired the old way keeps working exactly as documented in
+`docs/gateway-fleet.md`'s Retired section (proxy-lobes' pairwise credential
+model, the single-hop guard, `X-Lobes-Proxied-By`, and the replica pool's
+fingerprint-compatibility and capacity-relative selection detail all live
+there, kept for their measured numbers).
 """
 
 _TUNNEL = """\
@@ -941,11 +933,18 @@ naive reclaim-sum or the model's own solo default was refused by vLLM on
 the live box (unified memory is shared with the host), so the shipped TOML
 carries the value that fit, with a provenance comment.
 
+- **`gateway-only`** — hosts NOTHING (`hosts = []`, the first built-in shape
+  with an empty list). No overrides — there is nothing left to reclaim into.
+  The consumer-only mesh-brain member: every role request is answered
+  purely from the mesh join's auto-wired proxying (see the mesh section
+  above). **Declared, UNVALIDATED** — no box of any card has booted it yet.
+
 ## Selecting a shape
 
 ```bash
 lobes init --shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe
-                   |orin-cortex|orin-small|thor-muse|thor-worker> [--apply]
+                   |orin-cortex|orin-associate|orin-small|thor-muse
+                   |thor-worker|gateway-only> [--apply]
 ```
 
 Dry-run by default (prints the resolved profile, the shape's `hosts` list,
@@ -969,63 +968,65 @@ therefore started every heavy lane, dropped or not);
 `role_infeasible`; and `lobes up <dropped-role>` is a user error naming the
 shape rather than an opaque compose failure.
 
-## Honest referral (opt-in)
+## The mesh-brain join replaces per-pair referral (opt-in)
 
-Declare, per dropped role, the peer box that hosts it — one operator-set env
-var per core role in the deployment's `.env`, mirroring the `*_FEASIBLE`
-flags (e.g. `MULTIMODAL_PEER_ORIGIN=http://thor.local:8001` on `spark-lobe`,
-`PRIMARY_PEER_ORIGIN=http://spark.local:8001` on `thor-lobe`) — and the two
-honesty surfaces name it: capabilities gains `hosted_by` on the unhosted
-role, and the 404 `role_infeasible` body carries the same referral. The
-origin is always operator-declared, never derived (#92). Declaring the
-origin alone is annotation only: the gateway does NOT forward a request to a
-peer on the strength of the origin alone, and with no peer config every
-response is byte-identical to the pre-referral contract. A box CAN be opted
-into actually following its own referral — see `lobes explain gateway`'s
-"Proxy-lobes" section for the second, separate `<PREFIX>_PEER_PROXY` opt-in.
-See `docs/deployment-shapes.md`.
+Cross-box reachability for a dropped role now has a fleet-wide answer: join
+the mesh (`LOBES_MESH_KEY` + `LOBES_MESH_NAME`, plus `LOBES_MESH_SEEDS` on a
+joining box) and a role this box lacks is auto-wired to whichever verified
+mesh member announces it — no per-role config to type. The key alone admits;
+a persisted approval ledger (`lobes mesh approve <name> [--for <duration>]` /
+`revoke`) only RESTRICTS on top of that default. `lobes mesh status` is the
+read-only roster view. See `lobes explain mesh` and
+`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`
+for the full contract, including the honest **Implementation status**
+caveat: the code has not fully cut over to it yet (deviation d6), and every
+mesh behaviour is DECLARED/UNVALIDATED (#108) until a cutover transcript
+lands.
 
-## Replica pools compose on top of a state, not a fourth one (issue #199)
+## Retired: honest referral and replica pools (the per-pair peer family)
 
-A pool answers a different question than the shape axis above: not "which
-role does this box host" but "which of the boxes that already host an
-equivalent replica of a hosted role should serve THIS request". Declaring
-the plural `<PREFIX>_PEER_ORIGINS` beside the singular `<PREFIX>_PEER_ORIGIN`
-lets a box that HOSTS a role (awake) also forward some of its requests to an
-equally-compatible peer when that peer is less loaded — `hosted_by` stays a
-string, never a list, and the awake/asleep/proxy vocabulary is unchanged.
-**VALIDATED live 2026-08-25 for cortex only (#108)**: the Spark+Thor
-NVFP4 `cortex` pair has its acceptance transcript
-(`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`); the Orin's
-llama.cpp cortex is exempt, and any other pooled role is
-declared/unvalidated data only, exactly like `orin-small`/`thor-muse` above.
-See `lobes explain gateway`'s "Replica pools" section and
+Before the mesh join (above), cross-box reachability was a hand-typed,
+per-role env var per core role in the deployment's `.env` — honest referral
+(`<PREFIX>_PEER_ORIGIN`, mirroring the `*_FEASIBLE` flags), then a second
+opt-in to actually forward on the caller's behalf
+(`<PREFIX>_PEER_PROXY`/`<PREFIX>_PEER_API_KEY`, see `lobes explain gateway`'s
+"Proxy-lobes" section), then a plural replica-pool form
+(`<PREFIX>_PEER_ORIGINS`/`<PREFIX>_PEER_API_KEYS`, VALIDATED live 2026-08-25
+for `cortex` only on the Spark+Thor NVFP4 pair — see `lobes explain
+gateway`'s "Replica pools" section). This family is RETIRED as the
+documented operator contract — declare the mesh instead — but as of this
+release the gateway still parses and uses it (see the Implementation status
+note above), so an existing deployment wired the old way keeps working
+exactly as before. See `docs/deployment-shapes.md`'s Retired section and
 `docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
 
 ## The mesh-brain end-state (issue #112)
 
 One heavy lobe per box, cheap gears co-reside, the brain stays whole across
 the mesh — four decisions, all shipped: (1) cross-box reachability is
-**direct + opt-in honest referral** by default, with an opt-in extension to
-actually follow that referral (proxy-lobes, issues #115/#127 phase 1 —
-`lobes explain gateway`); (2) cheap gears (`embedder`/`reranker`/`stt`/
+**direct addressing + the mesh-brain join** (above) — the join's auto-wired
+proxying is this repo's current answer to "follow the referral on the
+caller's behalf", superseding the retired per-role proxy-lobes extension;
+(2) cheap gears (`embedder`/`reranker`/`stt`/
 `tts`) **co-reside** on every box that wants them; (3) the reference shape
 assignment is Spark GB10 = `cortex` via `spark-lobe`, Thor = `senses` via
 `thor-lobe`, Orin 64GB = small-model lobes via `orin-small`; (4) the shape
 axis is **mixable** — specialized, multi-role, and mixed boxes compose into
-one brain, and `machine-as-brain` stays the default. `orin-small` ships as
-declared-but-unvalidated data only — physical Jetson AGX Orin validation is
-its own follow-up.
+one brain, and `machine-as-brain` stays the default; a `gateway-only` box can
+also host NOTHING and draw on every role via the mesh. `orin-small` and
+`gateway-only` both ship as declared-but-unvalidated data only — physical
+boot validation is its own follow-up for each.
 
 ## See also
 
 - `docs/deployment-shapes.md` — the deep reference (support table, the
   co-residency tax numbers, the mesh-brain end-state decisions, the
   acceptance script, the dev lane)
+- `lobes explain mesh` — the mesh-brain join contract
 - `lobes explain profiles` — the per-machine tuning axis this composes with
 - `lobes explain roles` — the ten-role Colleague contract
 - `lobes/profiles/shapes.py` / `shape_render.py` — the schema + renderer
-- `lobes/profiles/builtin_shapes/*.toml` — the five shipped shapes
+- `lobes/profiles/builtin_shapes/*.toml` — the ten shipped shapes
 - `scripts/accept-shape.sh` — the live acceptance script
 """
 
@@ -1367,23 +1368,27 @@ distinct URLs. An unwired role is never omitted, only `loaded: false`.
 
 A `feasible: false` role (this box's shape dropped it — `lobes explain
 shapes`) gains an optional `hosted_by: "<peer origin>"` when a peer is
-declared, and a further `proxied: true` when this box also opted in to
-forwarding that role's requests there (proxy-lobes, opt-in — `lobes explain
-gateway`). A proxied role's `ready` reflects a live probe of the PEER, not a
-local boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
+declared (a mesh member the roster verified, or — retired — a hand-typed
+peer), and a further `proxied: true` when this box also forwards that
+role's requests there (today: the mesh join's auto-wired proxying; before
+it: the retired opt-in proxy-lobes channel — see `lobes explain gateway`).
+A proxied role's `ready` reflects a live probe of the PEER, not a local
+boolean. See `docs/colleague-stack.md#a-third-role-state-proxied`.
 
 A role a box HOSTS can additionally be pooled with N peer replicas (issue
-#199, opt-in, VALIDATED live for `cortex` on Spark+Thor, declared-only elsewhere): declaring
-`<PREFIX>_PEER_ORIGINS` (plural) adds an ADDITIVE `replicas` list (per
+#199, opt-in, VALIDATED live for `cortex` on Spark+Thor, declared-only
+elsewhere, and RETIRED as the documented contract — see `lobes explain
+gateway`'s "Retired" section): declaring the retired plural peer-origins
+channel adds an ADDITIVE `replicas` list (per
 candidate: origin, local, ready, busy, running, waiting, compatible, reason,
 fingerprint) and a `fingerprint` object to that role's entry — every existing
 key (`feasible`, `hosted_by`, `proxied`, `ready`, `loaded`) keeps its
-documented meaning; no `*_PEER_ORIGINS` declared means no `replicas` key at
+documented meaning; no pool declared means no `replicas` key at
 all. `lobes capabilities --replicas` / `lobes endpoint <role> --replicas`
 render each candidate plus a "would choose: `<origin>` (`<reason>`)" line
 from the same selection function the gateway uses; `lobes route` (the
 task→tier classifier) is unrelated and untouched. See `lobes explain
-gateway`'s "Replica pools" section and `docs/colleague-stack.md`'s
+gateway`'s "Retired" section and `docs/colleague-stack.md`'s
 capabilities schema.
 
 ## Serving and measuring
@@ -1423,6 +1428,96 @@ judgment is Colleague's job, not lobes'.
 See `docs/colleague-stack.md` (the full contract + client-flow example),
 `lobes explain fleet`, `lobes explain gateway`, and `docs/gateway-fleet.md`
 (topology, tier-alias fallback, pressure policy).
+"""
+
+_MESH = """\
+# lobes mesh — the mesh-brain join
+
+A home fleet of `lobes`-run boxes forms ONE mesh brain: every member holds
+the same replicated roster, learned by gossip-style announce/heartbeat — no
+hub, no elected leader, no per-pair config. This is the current, documented
+answer to cross-box reachability, replacing the retired hand-typed
+`<PREFIX>_PEER_*` family (`lobes explain gateway`'s "Retired" section;
+`lobes explain shapes`' matching section).
+
+## Joining
+
+`LOBES_MESH_KEY` is ONE shared fleet-wide join key (a SECRET — mint once,
+never commit it). `LOBES_MESH_NAME` is REQUIRED alongside it — an
+operator-typed short name, never derived from the hostname — and is both the
+approval-ledger key and the `{role}-{machine-name}` suffix source for a
+divergent lane. `LOBES_MESH_SEEDS` is typed ONCE, on the box that is
+joining: the comma-separated origins of at least one existing member; after
+the first successful keyless `GET /mesh/detect` the roster propagates every
+other member, so an established member needs no seeds. `GATEWAY_SELF_ORIGIN`
+(operator-typed, never derived) is REQUIRED on every member.
+
+## Key alone admits; the ledger only restricts
+
+Presenting the correct `LOBES_MESH_KEY` is sufficient to join and announce.
+The persisted approval ledger (`LOBES_MESH_LEDGER_PATH`, inside the mounted
+`LOBES_MESH_DIR` — `chown 10001 <dir>` before enabling, since Docker creates
+it root-owned on first recreate) is a RESTRICTION on top of that default,
+never a second gate: `lobes mesh approve <name> [--for <duration>]` records
+a timed-or-permanent approval, `lobes mesh revoke <name>` removes one, and a
+LAPSED OR REVOKED name is refused — an UNLISTED name still joins on the key
+alone. Heartbeats run every `LOBES_MESH_HEARTBEAT_S` (default 60); a member
+missing `LOBES_MESH_MISSED_MAX` (default 3) consecutive heartbeats is
+dropped. `lobes mesh status` is the read-only roster view; `request` /
+`approve` / `revoke` are the write verbs, dry-run by default.
+
+## Trust-but-verify, then auto-wired proxying
+
+Each member announces its roles with a fingerprint (served id, quantization,
+max context, runtime) and a capacity, but an announcement is never trusted
+on arrival: the receiving side probes the announcer's own `GET /capabilities`
+and compares fingerprints. An unverified member's roles receive nothing and
+show an `unverified_reason`. Verified members whose fingerprint for a role
+AGREES form one plain pool; a member that DISAGREES is exposed only under
+`{role}-{machine-name}`, and the plain raw checkpoint id 404s on a box with
+any divergent lane, listing every divergent name. A role a member LACKS is
+auto-wired to whichever verified member announces it — `hand` included, no
+never-proxied carve-out on this path — with no per-role config to type;
+`GET /v1/realtime` is the one route NEVER proxied mesh-wide. Every forward is
+single hop (`X-Lobes-Proxied` arriving twice refuses `508 proxy_loop`) and
+carries `X-Lobes-Mesh-Member: <name>`. A role can be announced `private` to
+stay off the mesh's auto-wiring entirely.
+
+## The consumer-only shape
+
+`lobes init --shape gateway-only` hosts NOTHING locally (`hosts = []`) and
+answers every role purely from the mesh. See `lobes explain shapes` and
+`docs/machine-profiles.md`.
+
+## doctor findings
+
+`peer_family_retired` (a deployment still setting a retired
+`<PREFIX>_PEER_*` key — delete it, declare the mesh instead),
+`mesh_key_shell_mismatch` (the invoking shell's `LOBES_MESH_KEY` disagrees
+with the deployed `.env`), `passthrough_missing` (a `.env` mesh key with no
+matching compose passthrough line).
+
+## Rotating the key
+
+Rotating `LOBES_MESH_KEY` is a FLEET-WIDE RESTART, not a per-pair credential
+swap — every member gets the same new value, then every member's gateway
+restarts. See `docs/secret-rotation.md#mesh-join-key`.
+
+## Implementation status (deviation d6)
+
+The contract above is what this repo's docs, `lobes explain`, and `lobes
+doctor` now hold operators to. As of this release the CODE has not fully cut
+over: the gateway still parses the retired peer family and the replica-pool
+dispatch path still reads it as its peer source, pending a follow-on task
+that swaps the source to the mesh roster and deletes the retired parsing.
+**No mesh behaviour above has been live-validated** — every one of it is
+DECLARED/UNVALIDATED (#108) until an acceptance transcript for the actual
+join/heartbeat/approve/verify/pool/auto-proxy cutover lands under
+`docs/evidence/`.
+
+See `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`
+(the deep reference), `docs/deployment-shapes.md`, `lobes explain gateway`,
+`lobes explain shapes`, and `lobes/cli/_commands/mesh.py`.
 """
 
 _LOCK = """\
@@ -1568,4 +1663,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("lock",): _LOCK,
     ("deployment-lock",): _LOCK,
     ("variations",): _LOCK,
+    ("mesh",): _MESH,
+    ("mesh-brain",): _MESH,
+    ("mesh-join",): _MESH,
 }
