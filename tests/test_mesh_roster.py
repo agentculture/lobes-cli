@@ -20,6 +20,7 @@ from lobes.gateway._mesh_roster import (
     MeshFlapping,
     MeshNameConflict,
     MeshRoster,
+    Roster,
 )
 
 # --- injected clock ----------------------------------------------------------
@@ -142,29 +143,32 @@ class TestCriterion2:
 
 
 # =============================================================================
-# Criterion 3 — ledger merge: lapsed name refused
+# Criterion 3 — gossip merge grants; lapsed name refused
 # =============================================================================
 
 
 class TestCriterion3:
-    """ledger.merge(peer_ledger): lapsed name refused on member that never saw approve;
-    expired entry refused with mesh_approval_expired even when join key is presented."""
+    """A lapsed name is refused on a member that never saw the approve call.
 
-    def test_lapsed_name_refused_on_merge(self, roster: MeshRoster, clock: _TickClock) -> None:
-        # Approve alice, then let it lapse (expiry=0 means already expired)
-        roster.approve("alice", "admin", 0.0, now=clock())
-        # Create peer ledger with alice still valid
-        peer = Ledger(clock=clock)
-        peer.approve("alice", "peer-admin", 9999.0)
-        # Merge — alice is lapsed here; we never approved after merge
+    Gossip from a peer grants permission (merged approval), but a lapsed
+    expiry still refuses.
+    """
+
+    def test_lapsed_name_refused_on_merge(self, roster: Roster, clock: _TickClock) -> None:
+        # A approves alice with expiry at t=10
+        roster.approve("alice", "admin", 10.0, now=0.0)
+        # B merges A's ledger (alice granted at t=0, expires t=10)
+        peer = Ledger(clock=_TickClock())
+        peer.approve("alice", "admin", 10.0, now=0.0)
         roster.merge(peer)
-        with pytest.raises(MeshApprovalExpired):
-            roster.join("alice", "origin-a", 4, now=clock())
+        # At t=5 the merged approval still grants
+        assert roster.is_approved("alice", now=5.0) is True
+        # At t=11 the merged approval has lapsed
+        assert roster.is_approved("alice", now=11.0) is False
 
-    def test_expired_entry_refused(self, roster: MeshRoster, clock: _TickClock) -> None:
+    def test_expired_entry_refused(self, roster: Roster, clock: _TickClock) -> None:
         roster.approve("alice", "admin", 0.0, now=clock())  # expired immediately
-        with pytest.raises(MeshApprovalExpired):
-            roster.join("alice", "origin-a", 4, now=clock())
+        assert roster.is_approved("alice") is False
 
 
 # =============================================================================
@@ -226,6 +230,54 @@ class TestLedgerPersistence:
         ld2 = Ledger(path=str(ledger_path), clock=clock)
         assert ld2.is_approved("alice")
 
+    def test_updated_at_persists(self, ledger_path: Path, clock: _TickClock) -> None:
+        ld1 = Ledger(path=str(ledger_path), clock=clock)
+        ld1.approve("alice", "admin", 9999.0, now=10.0)
+        ld1.save()
+        ld2 = Ledger(path=str(ledger_path), clock=_TickClock())
+        assert ld2.entries["alice"].updated_at == 10.0
+
+    def test_legacy_load_updated_at_defaults_to_zero(self, ledger_path: Path) -> None:
+        # Write legacy JSON without updated_at
+        ledger_path.write_text(
+            json.dumps({"alice": {"approved_by": "admin", "expiry": 9999.0}}),
+            encoding="utf-8",
+        )
+        ld = Ledger(path=str(ledger_path), clock=_TickClock())
+        assert ld.entries["alice"].updated_at == 0.0
+
+
+# =============================================================================
+# Defect 2 — revocation wins over older, longer grant
+# =============================================================================
+
+
+class TestDefect2:
+    """Revocation (later updated_at) beats an older, longer approval."""
+
+    def test_revocation_wins(self, clock: _TickClock) -> None:
+        # A approves X for 1 h at t=0
+        roster_a = Roster(clock=clock)
+        roster_a.approve("alice", "admin", 3600.0, now=0.0)
+        # B is clean
+        roster_b = Roster(clock=_TickClock())
+        roster_b.merge(roster_a.ledger)
+        # at t=10 A revokes
+        roster_a.revoke("alice", now=10.0)
+        # B merges again -> B refuses X even though previous expiry was 3600
+        roster_b.merge(roster_a.ledger)
+        assert roster_b.is_approved("alice", now=9.0) is False
+
+    def test_revocation_persisted(self, ledger_path: Path, clock: _TickClock) -> None:
+        ld1 = Ledger(path=str(ledger_path), clock=clock)
+        ld1.approve("alice", "admin", 3600.0, now=0.0)
+        ld1.revoke("alice", now=10.0)
+        ld1.save()
+        ld2 = Ledger(path=str(ledger_path), clock=_TickClock())
+        assert ld2.is_approved("alice") is False
+        assert ld2.entries["alice"].expiry == 0.0
+        assert ld2.entries["alice"].updated_at == 10.0
+
 
 # --- Edge cases --------------------------------------------------------------
 
@@ -286,13 +338,14 @@ class TestMergeEdgeCases:
         roster.merge(Ledger(clock=clock))  # empty
         assert roster.is_approved("alice")
 
-    def test_merge_updates_expiry(self, roster: MeshRoster, clock: _TickClock) -> None:
-        roster.approve("alice", "admin", 50.0, now=clock())
-        peer = Ledger(clock=clock)
-        peer.approve("alice", "peer-admin", 100.0)
+    def test_merge_updates_expiry(self, roster: Roster, clock: _TickClock) -> None:
+        roster.approve("alice", "admin", 50.0, now=0.0)
+        peer = Ledger(clock=_TickClock())
+        peer.approve("alice", "peer-admin", 100.0, now=0.0)
         roster.merge(peer)
-        # The longer expiry should win (100.0 > 50.0)
-        assert roster._ledger.entries["alice"].expiry == 100.0
+        # Same updated_at: local wins, expiry stays at 50.0
+        assert roster._ledger.entries["alice"].expiry == 50.0
+        assert roster.is_approved("alice")
 
 
 # --- Flapping hold-out expiry ------------------------------------------------

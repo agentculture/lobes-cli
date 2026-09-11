@@ -12,8 +12,9 @@ because capacity validation is a single entry-point shared across the gateway.
 
 API
 ---
-- ``MeshRoster`` — combines Roster + Ledger with join/leave/announce/tick.
-- ``Roster`` — in-memory member tracking (name, origin, capacity, staleness).
+- ``Roster`` — in-memory member tracking with join/leave/announce/tick and
+  ledger passthrough (approve, revoke, is_approved).
+- ``MeshRoster`` — backward-compatible alias for ``Roster``.
 - ``Ledger`` — name approval registry with JSON persistence and gossip merge.
 - Pure errors: ``MeshNameConflict``, ``MeshApprovalExpired``, ``MeshFlapping``.
 
@@ -67,6 +68,7 @@ class MeshFlapping(MeshError):
 class _LedgerEntry:
     approved_by: str
     expiry: float
+    updated_at: float
 
 
 @dataclass
@@ -92,7 +94,7 @@ class MemberRecord:
 
 
 class Ledger:
-    """Name → approved_by / expiry registry.
+    """Name → approved_by / expiry / updated_at registry.
 
     Persists to JSON at *path* when :meth:`save` is called.  Writes via
     ``tempfile`` + ``os.replace`` for atomicity.
@@ -110,7 +112,19 @@ class Ledger:
         self, name: str, approved_by: str, expiry: float, *, now: float | None = None
     ) -> None:
         now = now if now is not None else self._clock()
-        self.entries[name] = _LedgerEntry(approved_by=approved_by, expiry=expiry)
+        self.entries[name] = _LedgerEntry(
+            approved_by=approved_by,
+            expiry=expiry,
+            updated_at=now,
+        )
+
+    def revoke(self, name: str, *, now: float | None = None, approved_by: str = "system") -> None:
+        now = now if now is not None else self._clock()
+        self.entries[name] = _LedgerEntry(
+            approved_by=approved_by,
+            expiry=0.0,
+            updated_at=now,
+        )
 
     def is_approved(self, name: str, *, now: float | None = None) -> bool:
         now = now if now is not None else self._clock()
@@ -124,10 +138,11 @@ class Ledger:
         return self.entries[name].approved_by if self.is_approved(name) else None
 
     def merge(self, peer: "Ledger") -> None:
-        """Gossip-merge *peer*'s entries.  The **later expiry wins**."""
+        """Gossip-merge *peer*'s entries.  The entry with the greater
+        ``updated_at`` wins (ties: keep local)."""
         for name, entry in peer.entries.items():
             existing = self.entries.get(name)
-            if existing is None or entry.expiry > existing.expiry:
+            if existing is None or entry.updated_at > existing.updated_at:
                 self.entries[name] = entry
 
     def save(self) -> None:
@@ -135,7 +150,12 @@ class Ledger:
         if self.path is None:
             return
         data = {
-            n: {"approved_by": e.approved_by, "expiry": e.expiry} for n, e in self.entries.items()
+            n: {
+                "approved_by": e.approved_by,
+                "expiry": e.expiry,
+                "updated_at": e.updated_at,
+            }
+            for n, e in self.entries.items()
         }
         dirn = os.path.dirname(self.path) or "."
         fd, tmp = tempfile.mkstemp(dir=dirn, suffix=".tmp")
@@ -160,7 +180,9 @@ class Ledger:
             data = json.load(f)
         for name, info in data.items():
             self.entries[name] = _LedgerEntry(
-                approved_by=info["approved_by"], expiry=info["expiry"]
+                approved_by=info["approved_by"],
+                expiry=info["expiry"],
+                updated_at=info.get("updated_at", 0.0),
             )
 
 
@@ -177,18 +199,20 @@ class Roster:
 
     _roster: dict[str, MemberRecord]  # back-stop for property setter
 
-    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] | None = None,
+        ledger_path: str | None = None,
+        capacity_max: float = CAPACITY_CLAMP_MAX,
+    ) -> None:
         self._clock = clock or (lambda: 0.0)
         self._roster = {}
-        self._ledger = Ledger(clock=self._clock)
+        self._ledger = Ledger(path=ledger_path, clock=self._clock)
         self._approved_here: set[str] = set()  # names explicitly approved on this node
-        self._approved_since_merge: set[str] = (
-            set()
-        )  # approved after last merge (for merge validation)
-        # Flapping: number of join/leave transitions in the current window.
         self._flap_count: int = 0
         self._flap_time: float = 0.0  # clock value of the most recent flap detection
-        self._capacity_max: float = CAPACITY_CLAMP_MAX
+        self._capacity_max: float = capacity_max
 
     # -- public API (Roster) ------------------------------------------------
 
@@ -252,23 +276,21 @@ class Roster:
         return self._ledger
 
     def is_approved(self, name: str, *, now: float | None = None) -> bool:
-        # A name is approved only if: it's in the ledger AND we approved it
-        # AFTER the last merge. This ensures a merge that extends expiry
-        # doesn't grant join permission for a name we never approved ourselves.
-        return name in self._approved_since_merge and self._ledger.is_approved(name, now=now)
+        """A name is approved if it exists in the ledger and has not expired."""
+        return self._ledger.is_approved(name, now=now)
 
     def approve(
         self, name: str, approved_by: str, expiry: float, *, now: float | None = None
     ) -> None:
         self._approved_here.add(name)
-        self._approved_since_merge.add(name)
         self._ledger.approve(name, approved_by, expiry, now=now)
 
+    def revoke(self, name: str, *, now: float | None = None, approved_by: str = "system") -> None:
+        """Revoke approval for *name*.  Delegates to :meth:`Ledger.revoke`."""
+        self._ledger.revoke(name, now=now, approved_by=approved_by)
+
     def merge(self, peer: "Ledger") -> None:
-        """Merge a peer's ledger into ours. Clears post-merge approval tracker
-        only when the peer brings new data."""
-        if peer.entries:
-            self._approved_since_merge.clear()
+        """Merge a peer's ledger into ours."""
         self._ledger.merge(peer)
 
     def save(self) -> None:
@@ -277,86 +299,11 @@ class Roster:
     def load(self) -> None:
         self._ledger.load()
 
-    # -- helpers -------------------------------------------------------------
-
-    def _update_capacity(self, member: MemberRecord, capacity: object) -> None:
-        resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
-        member.capacity = resolved
-
-
-# --- MeshRoster — joins the Roster and Ledger --------------------------------
-
-
-class MeshRoster(Roster):
-    """Roster + Ledger with join/leave lifecycle.
-
-    A member must be **approved** in the Ledger before :meth:`join` succeeds.
-    ``announce()`` registers / updates a member; ``tick()`` prunes stale ones.
-    ``join()`` and ``leave()`` are explicit state transitions tracked for
-    flapping detection.
-    """
-
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], float] | None = None,
-        ledger_path: str | None = None,
-        capacity_max: float = CAPACITY_CLAMP_MAX,
-    ) -> None:
-        super().__init__(clock=clock)
-        self._capacity_max = capacity_max
-        if ledger_path:
-            self._ledger.path = ledger_path
-            self.load()
-
-    def announce(
-        self, name: str, origin: str, capacity: object, *, now: float | None = None
-    ) -> None:
-        now = now if now is not None else self._clock()
-
-        existing = list(self._roster.values())
-        for member in existing:
-            if member.name == name:
-                if member.origin != origin:
-                    raise MeshNameConflict(f"name {name!r} already held by {member.origin!r}")
-                # Same origin → update capacity (resolved) and last_seen
-                resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
-                member.capacity = resolved
-                member.last_seen = now
-                member.missed = 0
-                return
-
-        # New member: validate capacity before adding
-        resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
-        self._roster[name] = MemberRecord(
-            name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
-        )
-
-    def tick(self, now: float | None = None) -> TickResult:
-        now = now if now is not None else self._clock()
-
-        # Drop expired members
-        to_remove: list[str] = []
-        for name, member in self._roster.items():
-            member.missed += 1
-            if member.missed >= _MISSED_MAX:
-                to_remove.append(name)
-
-        for name in to_remove:
-            del self._roster[name]
-
-        # Clear flapping hold-out if the hold-out period has passed
-        if self._flap_count > 0 and now >= self._flap_time + _FLAPPING_HOLD_TICKS:
-            self._flap_count = 0
-
-        return TickResult(dropped=len(to_remove))
-
     def join(self, name: str, origin: str, capacity: object, *, now: float | None = None) -> None:
         now = now if now is not None else self._clock()
 
         # Check approval first
         if not self.is_approved(name, now=now):
-            # Try to give a better error
             entry = self._ledger.entries.get(name)
             if entry is not None:
                 raise MeshApprovalExpired(
@@ -382,16 +329,17 @@ class MeshRoster(Roster):
         self._flap_time = now
 
     def leave(self, name: str, *, now: float | None = None) -> None:
-        now = now if now is not None else self._clock()
         if name in self._roster:
             del self._roster[name]
 
-    def is_joined(self, name: str) -> bool:
-        return name in self._roster
-
-    def members(self) -> list[str]:
-        return list(self._roster.keys())
+    # -- helpers -------------------------------------------------------------
 
     def _update_capacity(self, member: MemberRecord, capacity: object) -> None:
         resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
         member.capacity = resolved
+
+
+# --- MeshRoster — backward-compatible alias for Roster ---------------------
+
+
+MeshRoster = Roster
