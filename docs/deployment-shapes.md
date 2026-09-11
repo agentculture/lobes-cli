@@ -617,7 +617,7 @@ in `docs/gateway-fleet.md`), so an existing deployment that already
 declared them keeps working exactly as documented below until the
 follow-on code-removal task lands.
 
-## Honest referral to the peer that hosts a dropped role (opt-in)
+### Honest referral to the peer that hosts a dropped role (opt-in)
 
 A box that dropped a role can additionally *tell callers who does host it* —
 the confirmed cross-box decision for the mesh-brain end-state (issue #112):
@@ -670,7 +670,7 @@ below. With no `*_PEER_PROXY` armed anywhere (every deployment that predates
 that feature, and every referral-only deployment today) this boundary holds
 exactly as described here.
 
-## Following the referral: proxy-lobes (opt-in)
+### Following the referral: proxy-lobes (opt-in)
 
 Referral answers "who hosts this?"; proxy-lobes (issues #115/#127, phase 1)
 answers the next question — "will you get it for me?" — with a third lobe
@@ -751,7 +751,7 @@ failure modes, pressure semantics) and
 [`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied) for
 how a proxied role shows up in the role contract.
 
-## Replica pools compose ON TOP of a state, they are not a fourth one
+### Replica pools compose ON TOP of a state, they are not a fourth one
 
 Issue #199's cortex replica pool answers a different question than the three
 states above: not "who hosts this role" but "which of the boxes that already

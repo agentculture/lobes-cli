@@ -93,7 +93,7 @@ status note in `docs/gateway-fleet.md`), so an existing deployment wired the
 old way still needs this exact drill until the follow-on code-removal task
 lands. Do not wire a NEW deployment this way — declare the mesh instead.
 
-## Every place a copy of a key lives
+### Every place a copy of a key lives
 
 There is exactly one *inbound* credential per box, and it is copied outward
 to every peer that talks to that box. Before touching anything, work out
@@ -140,7 +140,7 @@ exercised end-to-end against a live fleet box as part of writing it. Treat
 each command as reviewed-correct against the current tree, not as a run
 transcript.
 
-## Find every copy
+### Find every copy
 
 Before rotating, enumerate what actually needs changing. On the box that
 owns the leaked key:
@@ -160,7 +160,7 @@ Cross-reference the non-blank `<PREFIX>_PEER_ORIGIN`/`<PREFIX>_PEER_ORIGINS`
 values against the leaked box's own address to confirm which peer entries
 are actually copies of *this* box's key, as opposed to some other box's.
 
-## The leaked-key drill
+### The leaked-key drill
 
 Run these in order. Each step names its own verification — do not move to
 the next step until the current one's check passes.
