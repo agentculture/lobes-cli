@@ -26,9 +26,9 @@ Edit the Owner/Model columns before approving gate 2 — the default Model is a 
 | `t6` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
 | `t7` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
 | `t10` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
-| `t8` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
-| `t9` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
-| `t11` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t8` | Claude Sonnet subagent (deviation d4: Claude-only after the local-loop measurement) | sonnet |
+| `t9` | Claude Sonnet subagent (deviation d4: Claude-only after the local-loop measurement) | sonnet |
+| `t11` | Claude Sonnet subagent (deviation d4: Claude-only after the local-loop measurement) | sonnet |
 | `t12` | main agent (Claude) in-house: live ssh cutover with downtime | claude-fable-5-1 |
 
 ## Wave 1

@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T14:21:21Z",
+  "updated": "2026-09-11T20:13:31Z",
   "deviations": [
     {
       "id": "d1",
@@ -52,6 +52,22 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "Waves 4-6 (t8, t9, t11) run on Claude-only agents: Sonnet subagents build in isolated worktrees, the main agent (Claude) reviews and merges. No local-lane legs (no worker, cortex or associate) for the remaining tasks. t7's in-flight worker fix leg is allowed to finish; if it has not reported within 30 minutes of this record it is cut and t7 is completed by a Sonnet subagent from the committed state.",
+      "task_ref": "t8",
+      "reason": "Operator decision 2026-09-11 after the measured comparison: Sonnet control (t10) 10 min merged as-is vs local loop 146 min (t6) and 3 h+ (t7); the local-lane architecture that would fix this is filed as colleague#497 and is out of scope for this plan.",
+      "affects": [
+        "t7",
+        "t8",
+        "t9",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
     }
   ],
   "evidence": [],

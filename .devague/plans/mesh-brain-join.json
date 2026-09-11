@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-11T11:30:15Z",
-  "updated": "2026-09-11T13:46:04Z",
+  "updated": "2026-09-11T16:46:07Z",
   "targets": [
     {
       "id": "c1",
@@ -894,6 +894,14 @@
       "text": "The mesh runtime directory bind mount (default ./mesh beside the compose) is auto-created by Docker as root-owned on the first gateway recreate; the unprivileged gateway (uid 10001) cannot write the ledger until the operator chowns it. Cutover (t12) must chown on all three boxes; a later task could have lobes init pre-create it.",
       "kind": "follow_up",
       "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "Wire contract for t8: lobes mesh status (t10, merged) renders roster members from fields last_seen_age, expiry, verified, flapping, roles, and lobes capabilities renders per-role member and suffixed_lanes \u2014 t8 must emit exactly these names on GET /mesh/roster and /capabilities (or t10's renderer is amended in the same wave).",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
       "resolved": false,
       "resolution": ""
     }
