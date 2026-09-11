@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Default heartbeat interval (seconds).
 _DEFAULT_HEARTBEAT_S: int = 60
@@ -44,7 +44,7 @@ class MeshMissedMaxError(ValueError):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class MeshConfig:
     """Immutable mesh-join configuration parsed from env vars.
 
@@ -54,7 +54,7 @@ class MeshConfig:
     """
 
     enabled: bool
-    key: str | None
+    key: str | None = field(repr=False)
     name: str | None
     seeds: tuple[str, ...]
     heartbeat_s: int
