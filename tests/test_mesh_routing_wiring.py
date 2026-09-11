@@ -35,6 +35,7 @@ from lobes.gateway._mesh_roster import Roster
 from lobes.gateway._mesh_routes import MeshRoutes, verify_members
 from lobes.gateway._mesh_routing import build_snapshot, origins_for_role
 from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo
+from lobes.gateway._replicas import ReplicaState
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_routing import RoutingSnapshot
@@ -458,8 +459,8 @@ class TestAnnounceVerifyForward:
             )
 
             # Build MeshRoutes, announce, verify.
-            # Use "primary" as the mesh member name so _mesh_roles() maps it
-            # to the "cortex" role via BACKEND_ROLE.
+            # Use "primary" as the mesh member name so the header assertions
+            # below can tell the mesh-sourced replica apart from a local one.
             routes, snap = _setup_mesh(
                 [member_origin],
                 join_key,
@@ -467,14 +468,14 @@ class TestAnnounceVerifyForward:
                 member_names=["primary"],
             )
 
-            # Build config: primary infeasible, peer origin AND origins declared.
-            # PRIMARY_PEER_ORIGINS (plural) populates table.replica_origins which
-            # _pool_selection checks first.  PRIMARY_PEER_ORIGIN is used by
-            # _mesh_roles for the infeasibility check.
+            # NO *_PEER_* keys anywhere (t13/AC1): "primary" is infeasible on
+            # this box (a pure hardware/shape fact) and the mesh is the ONLY
+            # source of a candidate for it — `pooled_backends`/`_pool_selection`
+            # must find the mesh-verified member without any env-declared peer
+            # origin at all.
             env = {
                 "PRIMARY_FEASIBLE": "false",
-                "PRIMARY_PEER_ORIGIN": member_origin,
-                "PRIMARY_PEER_ORIGINS": member_origin,
+                "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
             }
             table, cfg = build_config(env)
 
@@ -493,7 +494,7 @@ class TestAnnounceVerifyForward:
 
             monkeypatch.setattr(S, "open_upstream", fake_open)
 
-            # peer_specs is empty (no PRIMARY_PEER_PROXY).
+            # peer_specs is empty — no env peer config declared at all.
             specs = S.peer_specs_from_table(table)
             assert "primary" not in specs, f"Expected 'primary' not in specs: {list(specs.keys())}"
 
@@ -502,13 +503,9 @@ class TestAnnounceVerifyForward:
             monkeypatch.setenv("LOBES_MESH_KEY", join_key)
             monkeypatch.setenv("LOBES_MESH_NAME", "me")
 
-            # Provide a replica_snapshot callback: return empty candidates
-            # so mesh members become the only selection candidates.
-            def fake_replica_snapshot(backend_name):
-                return ()  # no local replicas
-
-            # Request "cortex" — infeasible, but mesh has verified members.
-            # peer_specs is empty so mesh is the only forward path.
+            # No env-sourced ReplicaCache at all (no *_PEER_ORIGINS declared) —
+            # `replica_snapshot` itself is None, exactly what a mesh-only box's
+            # `replica_snapshot_provider` returns for an empty cache map.
             resp = S.handle_post(
                 table,
                 cfg,
@@ -517,11 +514,11 @@ class TestAnnounceVerifyForward:
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
                 peer_specs=specs,
-                replica_snapshot=fake_replica_snapshot,
+                replica_snapshot=None,
                 mesh_snapshot=snap,
             )
 
-            # Forwarded to member via mesh pool path.
+            # Forwarded to member via the mesh-sourced pool path.
             assert resp.status == 200
             assert len(opener_calls) == 1
             call = opener_calls[0]
@@ -531,11 +528,13 @@ class TestAnnounceVerifyForward:
             # Check client's bearer is absent.
             caller_auth = [v for k, v in call["headers"] if "sk-caller" in v]
             assert len(caller_auth) == 0, f"Client token leaked: {caller_auth}"
-            # Check X-Lobes-Proxied present.
+            # Check X-Lobes-Proxied present, naming the BACKEND (not the role).
             proxied_vals = [v for k, v in call["headers"] if k.lower() == "x-lobes-proxied"]
-            assert "cortex" in proxied_vals
-            # Response carries X-Lobes-Proxied-By.
+            assert "primary" in proxied_vals
+            # Response carries X-Lobes-Proxied-By and X-Lobes-Mesh-Member.
             assert any(k.lower() == "x-lobes-proxied-by" for k, _ in resp.headers)
+            member_headers = [v for k, v in resp.headers if k.lower() == "x-lobes-mesh-member"]
+            assert member_headers == ["primary"]
         finally:
             member.stop()
 
@@ -575,8 +574,6 @@ class TestMismatchVariant:
             )
 
             # Build MeshRoutes, announce, verify.
-            # Use "primary" as the mesh member name so _mesh_roles() maps it
-            # to the "cortex" role via BACKEND_ROLE.
             routes, snap = _setup_mesh(
                 [member_origin],
                 join_key,
@@ -585,13 +582,13 @@ class TestMismatchVariant:
                 member_names=["primary"],
             )
 
-            # Build config: primary infeasible, peer origin and origins declared,
-            # peer proxy disabled — so peer_specs is empty.  Mesh verified set
-            # is empty (fingerprint mismatch) → no mesh forward path.
+            # NO *_PEER_* keys (t13/AC1): "primary" is infeasible and the mesh
+            # verified set is empty (fingerprint mismatch) → no mesh forward
+            # path AND no env forward path → the pre-mesh referral 404, with
+            # no `hosted_by` since nothing declared one.
             env = {
                 "PRIMARY_FEASIBLE": "false",
-                "PRIMARY_PEER_ORIGIN": member_origin,
-                "PRIMARY_PEER_ORIGINS": member_origin,
+                "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
             }
             table, cfg = build_config(env)
             specs = S.peer_specs_from_table(table)
@@ -608,9 +605,6 @@ class TestMismatchVariant:
 
             monkeypatch.setattr(S, "open_upstream", fake_open)
 
-            def fake_replica_snapshot(backend_name):
-                return ()
-
             resp = S.handle_post(
                 table,
                 cfg,
@@ -619,7 +613,7 @@ class TestMismatchVariant:
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
                 peer_specs=specs,
-                replica_snapshot=fake_replica_snapshot,
+                replica_snapshot=None,
                 mesh_snapshot=snap,
             )
 
@@ -686,20 +680,18 @@ class TestTwoEqualMembers:
             assert origins[0] in mesh_origins
             assert origins[1] in mesh_origins
 
-            # Verify via handle_post: primary infeasible, peer origin and origins
-            # declared.  peer_specs provides the forward target; mesh snapshot
-            # is present but member names don't map to any infeasible role,
-            # so the peer_specs path is used instead.
+            # NO *_PEER_* keys anywhere (t13/AC1): "primary" is infeasible and
+            # BOTH mesh members are the only candidates — `_pool_selection`
+            # must rank across them with no env-declared origin at all.
             env = {
                 "PRIMARY_FEASIBLE": "false",
-                "PRIMARY_PEER_ORIGIN": origins[0],
-                "PRIMARY_PEER_ORIGINS": origins[0],
-                "PRIMARY_PEER_PROXY": "true",
+                "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
             }
             table, cfg = build_config(env)
             specs = S.peer_specs_from_table(table)
-            assert "primary" in specs
+            assert "primary" not in specs
             monkeypatch.setenv("LOBES_MESH_KEY", join_key)
+            monkeypatch.setenv("LOBES_MESH_NAME", "me")
 
             opener_calls = []
 
@@ -709,9 +701,6 @@ class TestTwoEqualMembers:
 
             monkeypatch.setattr(S, "open_upstream", fake_open)
 
-            def fake_replica_snapshot(backend_name):
-                return ()
-
             resp = S.handle_post(
                 table,
                 cfg,
@@ -720,13 +709,17 @@ class TestTwoEqualMembers:
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
                 peer_specs=specs,
-                replica_snapshot=fake_replica_snapshot,
+                replica_snapshot=None,
                 mesh_snapshot=snap,
             )
 
-            # Mesh has verified members → forwarded, zero local dials.
+            # Mesh has TWO verified members forming one pool → forwarded to
+            # exactly one of them (select_replica's deterministic ranking),
+            # zero local dials, and the served member is named on the wire.
             assert resp.status == 200
             assert len(opener_calls) == 1  # one dial to one mesh member
+            member_headers = [v for k, v in resp.headers if k.lower() == "x-lobes-mesh-member"]
+            assert member_headers == ["box-a"] or member_headers == ["box-b"]
         finally:
             for m in members:
                 m.stop()
@@ -796,12 +789,11 @@ class Test508Chain:
                 member_names=["no-cortex", "primary"],
             )
 
-            # Config: primary infeasible, peer origin and origins declared, NO proxy
-            # so peer_specs empty.  Mesh has B (named "primary") as a verified member.
+            # NO *_PEER_* keys (t13/AC1): "primary" is infeasible and mesh
+            # member B (named "primary") is the only source of a candidate.
             env = {
                 "PRIMARY_FEASIBLE": "false",
-                "PRIMARY_PEER_ORIGIN": origin_b,
-                "PRIMARY_PEER_ORIGINS": origin_b,
+                "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
             }
             table, cfg = build_config(env)
             specs = S.peer_specs_from_table(table)
@@ -844,9 +836,6 @@ class Test508Chain:
 
             monkeypatch.setattr(S, "open_upstream", fake_open)
 
-            def fake_replica_snapshot(backend_name):
-                return ()
-
             resp = S.handle_post(
                 table,
                 cfg,
@@ -855,7 +844,7 @@ class Test508Chain:
                 json.dumps({"model": "cortex"}).encode(),
                 fake_open,
                 peer_specs=specs,
-                replica_snapshot=fake_replica_snapshot,
+                replica_snapshot=None,
                 mesh_snapshot=snap,
             )
 
@@ -906,12 +895,14 @@ class TestDropMember:
         snap_after = build_snapshot(_FakeRoster([]))
         assert origins_for_role(snap_after, "cortex") == ()
 
-        # Config: primary infeasible, peer origin and origins declared, NO proxy.
-        # Without mesh members, falls through to referral 404.
+        # NO *_PEER_* keys (t13/AC1): "primary" is infeasible, no env referral
+        # is declared, and the member that used to verify it has been DROPPED
+        # from the roster — there is genuinely nothing left to place this
+        # request on, so it must fall through to a 404 role_infeasible with
+        # NO `hosted_by` (nothing ever declared one) and zero dials.
         env = {
             "PRIMARY_FEASIBLE": "false",
-            "PRIMARY_PEER_ORIGIN": "http://alpha.local:8001",
-            "PRIMARY_PEER_ORIGINS": "http://alpha.local:8001",
+            "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
         }
         table, cfg = build_config(env)
         specs = S.peer_specs_from_table(table)
@@ -927,9 +918,6 @@ class TestDropMember:
 
         monkeypatch.setattr(S, "open_upstream", fake_open)
 
-        def fake_replica_snapshot(backend_name):
-            return ()
-
         resp = S.handle_post(
             table,
             cfg,
@@ -938,7 +926,7 @@ class TestDropMember:
             json.dumps({"model": "cortex"}).encode(),
             fake_open,
             peer_specs=specs,
-            replica_snapshot=fake_replica_snapshot,
+            replica_snapshot=None,
             mesh_snapshot=snap_after,
         )
 
@@ -946,8 +934,8 @@ class TestDropMember:
         assert len(opener_calls) == 0  # zero dials
         body = json.loads(resp.body)
         assert body["error"]["type"] == "role_infeasible"
-        # peer origin annotation present from config.
-        assert body.get("error", {}).get("hosted_by") == "http://alpha.local:8001"
+        # No env referral was ever declared, so no `hosted_by` at all.
+        assert body.get("error", {}).get("hosted_by") is None
 
 
 # ---------------------------------------------------------------------------
@@ -990,44 +978,106 @@ class TestInertMesh:
         assert len(opener_calls) == 1  # dialed locally
 
 
-class TestInertMeshReferral:
-    """W12-6b: mesh disabled, declared peer origin for infeasible role —
-    pre-mesh referral 404 with hosted_by, zero mesh headers."""
+# ---------------------------------------------------------------------------
+# t13: hosted-role busy dispatch forwards to a mesh replica, no *_PEER_* keys
+# ---------------------------------------------------------------------------
 
-    def test_inert_peer_referral(self, monkeypatch):
-        # Build config with a role that's wired, infeasible, and has a peer origin.
-        env = {
-            "MULTIMODAL_FEASIBLE": "false",
-            "MULTIMODAL_PEER_ORIGIN": "http://peer.local:8001",
-        }
-        table, cfg = build_config(env)
 
-        opener_calls = []
+class TestBusyDispatchForwardsToMesh:
+    """A role THIS BOX HOSTS, under swap pressure, forwards to a mesh-verified
+    replica of the same role — `_pooled_busy_dispatch`/`_pool_selection`
+    sourcing candidates purely from the mesh RoutingSnapshot, no
+    `<PREFIX>_PEER_ORIGINS` declared anywhere (t13, spec c7/h9)."""
 
-        def fake_open(backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
-            opener_calls.append(True)
-            return _FakeUpstream(200, b'{"choices": [{"text": "ok"}]}')
+    def test_swap_pressure_forwards_to_mesh_replica(self, monkeypatch):
+        join_key = "sk-mesh-join-key"
 
-        monkeypatch.setattr(S, "open_upstream", fake_open)
+        member = _FakeMemberGateway()
+        member.start(0)
+        try:
+            port = member._server.server_address[1]
+            member_origin = f"http://127.0.0.1:{port}"
+            member.set_capabilities(
+                {
+                    "cortex": {
+                        "fingerprint": {
+                            "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                            "quantization": "NVFP4",
+                            "max_model_len": 262144,
+                            "runtime": "vllm",
+                        },
+                        "ready": True,
+                    },
+                }
+            )
 
-        resp = S.handle_post(
-            table,
-            cfg,
-            "/v1/chat/completions",
-            [("Authorization", "Bearer sk-caller")],
-            json.dumps({"model": "multimodal"}).encode(),
-            fake_open,
-            mesh_snapshot=None,  # mesh disabled
-        )
+            routes, snap = _setup_mesh(
+                [member_origin],
+                join_key,
+                announced_roles={member_origin: {"cortex": _role("cortex")}},
+                member_names=["primary"],
+            )
 
-        # Pre-mesh referral: 404 with hosted_by annotation.
-        assert resp.status == 404
-        body = json.loads(resp.body)
-        assert body["error"]["type"] == "role_infeasible"
-        # No X-Lobes-Mesh-* headers anywhere.
-        mesh_headers = [k for k, _ in resp.headers if "lobes-mesh" in k.lower()]
-        assert len(mesh_headers) == 0
-        # Declared hosted_by present.
-        assert body.get("error", {}).get("hosted_by") == "http://peer.local:8001"
-        # Zero outbound dials (referral 404, no proxy).
-        assert len(opener_calls) == 0
+            # "primary" is HOSTED here (no *_FEASIBLE=false, no *_PEER_* keys
+            # anywhere) — the mesh member is a REPLICA of the same role, not a
+            # referral for a dropped one.
+            env = {"GATEWAY_SELF_ORIGIN": "http://me.local:8000"}
+            table, cfg = build_config(env)
+            monkeypatch.setenv("LOBES_MESH_KEY", join_key)
+            monkeypatch.setenv("LOBES_MESH_NAME", "me")
+
+            def local_replica_snapshot(backend_name):
+                if backend_name != "primary":
+                    return ()
+                return (
+                    ReplicaState(
+                        origin="local",
+                        local=True,
+                        ready=True,
+                        busy=False,
+                        health="ok",
+                        running=0,
+                        waiting=0,
+                        fingerprint=None,
+                        compatible=True,
+                        reason="",
+                        last_seen=0.0,
+                        weight=8.0,
+                        calibrated=True,
+                    ),
+                )
+
+            opener_calls = []
+
+            def fake_open(backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
+                opener_calls.append({"backend": backend, "headers": list(headers)})
+                return _FakeUpstream(200, b'{"choices": [{"text": "ok"}]}')
+
+            monkeypatch.setattr(S, "open_upstream", fake_open)
+
+            # Swap pressure alone sheds an UNPOOLED request; a mesh-sourced
+            # pooled one is forwarded instead of shed (c7/h9).
+            resp = S.handle_post(
+                table,
+                cfg,
+                "/v1/chat/completions",
+                [("Authorization", "Bearer sk-caller")],
+                json.dumps({"model": "cortex"}).encode(),
+                fake_open,
+                pressure={"swap_used_percent": 90.0, "iowait_percent": 0.0},
+                replica_snapshot=local_replica_snapshot,
+                mesh_snapshot=snap,
+            )
+
+            assert resp.status == 200
+            assert len(opener_calls) == 1  # forwarded, zero local dial
+            call = opener_calls[0]
+            auth_headers = [v for k, v in call["headers"] if k.lower() == "authorization"]
+            assert f"Bearer {join_key}" in auth_headers
+            caller_auth = [v for k, v in call["headers"] if "sk-caller" in v]
+            assert len(caller_auth) == 0
+            assert any(k.lower() == "x-lobes-proxied-by" for k, _ in resp.headers)
+            member_headers = [v for k, v in resp.headers if k.lower() == "x-lobes-mesh-member"]
+            assert member_headers == ["primary"]
+        finally:
+            member.stop()
