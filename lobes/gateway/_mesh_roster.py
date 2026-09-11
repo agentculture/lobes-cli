@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from typing import Callable
 
@@ -209,6 +210,7 @@ class Roster:
     ) -> None:
         self._clock = clock or (lambda: 0.0)
         self._roster = {}
+        self._lock = threading.Lock()  # Protects _roster, _approved_here, _flap_*
         self._ledger = Ledger(path=ledger_path, clock=self._clock)
         self._approved_here: set[str] = set()  # names explicitly approved on this node
         self._flap_count: int = 0
@@ -232,57 +234,64 @@ class Roster:
         """Register or update a member.  Refuses on name conflict or bad capacity."""
         now = now if now is not None else self._clock()
 
-        existing = self._roster.get(name)
-        if existing is not None:
-            # Same origin → update in place
-            if existing.origin == origin:
-                self._update_capacity(existing, capacity)
-                existing.last_seen = now
-                existing.missed = 0
-                return
-            # Different origin → conflict
-            raise MeshNameConflict(f"name {name!r} already held by {existing.origin!r}")
+        with self._lock:
+            existing = self._roster.get(name)
+            if existing is not None:
+                # Same origin → update in place
+                if existing.origin == origin:
+                    self._update_capacity(existing, capacity)
+                    existing.last_seen = now
+                    existing.missed = 0
+                    return
+                # Different origin → conflict
+                raise MeshNameConflict(f"name {name!r} already held by {existing.origin!r}")
 
-        # New member — validate capacity first (refuses before adding)
-        resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
-        self._roster[name] = MemberRecord(
-            name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
-        )
+            # New member — validate capacity first (refuses before adding)
+            resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
+            self._roster[name] = MemberRecord(
+                name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
+            )
 
     def tick(self, now: float | None = None) -> TickResult:
         """Check staleness; drop expired members.  Returns drop count."""
         now = now if now is not None else self._clock()
-        dropped: int = 0
-        to_remove: list[str] = []
+        with self._lock:
+            local_missed_max = (
+                self._missed_max_override if self._missed_max_override is not None else _MISSED_MAX
+            )
+            dropped: int = 0
+            to_remove: list[str] = []
 
-        # Finding 10: use injected missed_max when available, else env default.
-        local_missed_max = (
-            self._missed_max_override if self._missed_max_override is not None else _MISSED_MAX
-        )
+            for name, member in self._roster.items():
+                member.missed += 1
+                if member.missed >= local_missed_max:
+                    to_remove.append(name)
 
-        for name, member in self._roster.items():
-            member.missed += 1
-            if member.missed >= local_missed_max:
-                to_remove.append(name)
+            for name in to_remove:
+                del self._roster[name]
+                dropped += 1
 
-        for name in to_remove:
-            del self._roster[name]
-            dropped += 1
-
-        # Clear flapping count after a full tick (window resets)
-        if self._flap_count > 0:
-            if now >= self._flap_time + _FLAPPING_HOLD_TICKS:
-                self._flap_count = 0
+            # Clear flapping count after a full tick (window resets)
+            if self._flap_count > 0:
+                if now >= self._flap_time + _FLAPPING_HOLD_TICKS:
+                    self._flap_count = 0
 
         return TickResult(dropped=dropped)
 
     def is_joined(self, name: str) -> bool:
         """Is the member currently in the roster?"""
-        return name in self._roster
+        with self._lock:
+            return name in self._roster
 
     def members(self) -> list[str]:
         """List all member names."""
-        return list(self._roster.keys())
+        with self._lock:
+            return list(self._roster.keys())
+
+    def records(self) -> list[tuple[str, str, float]]:
+        """Return ``(name, origin, capacity)`` for every member."""
+        with self._lock:
+            return [(m.name, m.origin, m.capacity) for m in self._roster.values()]
 
     # -- Ledger passthrough --------------------------------------------------
 
@@ -317,35 +326,37 @@ class Roster:
     def join(self, name: str, origin: str, capacity: object, *, now: float | None = None) -> None:
         now = now if now is not None else self._clock()
 
-        # Check approval first
-        if not self.is_approved(name, now=now):
-            entry = self._ledger.entries.get(name)
-            if entry is not None:
-                raise MeshApprovalExpired(
-                    f"name {name!r} approval expired (approved_by={entry.approved_by!r})"
-                )
-            raise MeshApprovalExpired(f"name {name!r} not approved")
+        with self._lock:
+            # Check approval first
+            if not self.is_approved(name, now=now):
+                entry = self._ledger.entries.get(name)
+                if entry is not None:
+                    raise MeshApprovalExpired(
+                        f"name {name!r} approval expired (approved_by={entry.approved_by!r})"
+                    )
+                raise MeshApprovalExpired(f"name {name!r} not approved")
 
-        # Check flapping — only join() counts; clear hold-out if period passed
-        if self._flap_count > 0 and now >= self._flap_time + _FLAPPING_HOLD_TICKS:
-            self._flap_count = 0
-        if self._flap_count >= _FLAPPING_THRESHOLD:
-            raise MeshFlapping(f"name {name!r} flapping — held out {_FLAPPING_HOLD_TICKS} tick")
+            # Check flapping — only join() counts; clear hold-out if period passed
+            if self._flap_count > 0 and now >= self._flap_time + _FLAPPING_HOLD_TICKS:
+                self._flap_count = 0
+            if self._flap_count >= _FLAPPING_THRESHOLD:
+                raise MeshFlapping(f"name {name!r} flapping — held out {_FLAPPING_HOLD_TICKS} tick")
 
-        # Remove old entry if it exists (explicit leave counts as transition)
-        if name in self._roster:
-            del self._roster[name]
+            # Remove old entry if it exists (explicit leave counts as transition)
+            if name in self._roster:
+                del self._roster[name]
 
-        resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
-        self._roster[name] = MemberRecord(
-            name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
-        )
-        self._flap_count += 1
-        self._flap_time = now
+            resolved, _note = resolve_capacity(capacity, capacity_max=self._capacity_max)
+            self._roster[name] = MemberRecord(
+                name=name, origin=origin, capacity=resolved, last_seen=now, missed=0
+            )
+            self._flap_count += 1
+            self._flap_time = now
 
     def leave(self, name: str, *, now: float | None = None) -> None:
-        if name in self._roster:
-            del self._roster[name]
+        with self._lock:
+            if name in self._roster:
+                del self._roster[name]
 
     # -- helpers -------------------------------------------------------------
 
