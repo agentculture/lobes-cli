@@ -718,149 +718,80 @@ or cloud) compose into one brain, with `machine-as-brain` staying the default
 and one-box users unaffected. The referral surface is live-validated
 cross-box on the physical Thor
 (`docs/evidence/2026-07-14-accept-referral-thor.txt`); physical Orin
-validation remains open. See `docs/deployment-shapes.md` (the deep
+validation remains open. Decision (1)'s "actually follow that referral"
+step originally shipped as a hand-typed, per-role extension (proxy-lobes,
+below, now Retired); the mesh-brain join (next) is this repo's current
+answer to it. See `docs/deployment-shapes.md` (the deep
 reference) and `lobes explain shapes` (in-CLI).
 
-**Proxy-lobes (issues #115/#127, phase 1 — landed on top of referral).** A
-dropped role can go beyond referral-only to a third state, **proxy**: this
-box forwards the request to its declared peer instead of 404ing, so the
-caller never has to know it moved. Two knobs, both opt-in and both required
-together: `<PREFIX>_PEER_PROXY=true` (arms the forward; inert without a
-declared `<PREFIX>_PEER_ORIGIN`) and `<PREFIX>_PEER_API_KEY` (the outbound
-credential — always **a copy of the peer's own inbound `GATEWAY_API_KEY`**,
-never a value minted per pairing, so key material scales **O(machines)**,
-not O(pairs)). The caller's own `Authorization` (validated by this box's own
-opt-in `GATEWAY_API_KEY` inbound gate) is stripped before every forward and
-never reaches a peer. Proxying is single-hop — a request that arrives already
-marked `X-Lobes-Proxied` is refused (`508 proxy_loop`) rather than re-forwarded
-— and every proxied answer carries `X-Lobes-Proxied-By: <peer origin>` so a
-caller can always tell a forwarded answer from a locally-served one. Peer
-origins are assumed reachable over a private/tailnet transport, never the
-public internet (no TLS termination happens at this layer). With no
-`<PREFIX>_PEER_PROXY` set anywhere — every pre-#115 deployment — every response
-stays byte-identical to the pre-proxy contract.
+**The mesh-brain join (mesh-brain-join plan) — every member is the brain.**
+A home fleet of `lobes`-run boxes forms ONE mesh brain with no hub and no
+elected leader: every member holds the same replicated roster, learned by
+gossip-style announce/heartbeat. ONE shared `LOBES_MESH_KEY` (a SECRET) plus
+an operator-typed `LOBES_MESH_NAME` (never derived from the hostname) admits
+a box to the mesh; `LOBES_MESH_SEEDS` is typed once, on the joining box only.
+**Key alone admits; a persisted approval ledger only RESTRICTS**:
+`lobes mesh approve <name> [--for <duration>]` / `revoke` manage a
+timed-or-permanent approval on top of that default-admit posture — a lapsed
+or revoked name is refused, an unlisted one still joins on the key alone.
+Heartbeats (`LOBES_MESH_HEARTBEAT_S`, default 60) drop a member after
+`LOBES_MESH_MISSED_MAX` (default 3) misses. Every announcement is
+**trust-but-verify**: the receiving side probes the announcer's own `GET
+/capabilities` and compares fingerprints before routing anything to it — an
+unverified member's roles receive nothing and show an `unverified_reason`.
+Verified members with an agreeing fingerprint form one pool per role; a
+disagreeing member is exposed only under `{role}-{machine-name}`, and the
+plain raw checkpoint id 404s on a box with any divergent lane, listing every
+divergent name. A role a member lacks is **auto-wired** to whichever
+verified member announces it — `hand` included, no per-role config to type
+— except `GET /v1/realtime`, never proxied mesh-wide; every forward is
+single hop and carries `X-Lobes-Mesh-Member: <name>`. A role can be
+announced `private` to opt out of the mesh's auto-wiring. `lobes init
+--shape gateway-only` hosts NOTHING locally and answers every role purely
+from the mesh. `lobes doctor` carries `peer_family_retired` /
+`mesh_key_shell_mismatch` / `passthrough_missing`. **Rotating the join key
+is a fleet-wide restart**, not a per-pair credential swap — see
+`docs/secret-rotation.md#mesh-join-key`. See
+`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`,
+`docs/deployment-shapes.md`, and `lobes explain mesh`.
 
-**Live as of 2026-09-11:** the DGX Spark hosts `cortex` and proxies
-`worker` and `embedder` to the Jetson AGX Thor, and `associate` to the AGX
-Orin. The Thor in turn proxies `cortex` to the Spark. A caller addresses any
-of these on its own box's gateway and never dials the peer. Proxied answers
-carry `X-Lobes-Proxied-By`, image input included
-(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`). Both the
-Spark and the Thor withdrew their `senses` → Orin proxies, because the Orin
-does not host `senses` either. `model=senses` on either box now 404s
-`role_infeasible` with no `hosted_by`
-(`docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`),
-so no box in the mesh serves `senses` today. The 2026-07-31 layout proxied `senses` → Orin and
-`worker` → Thor. **A proxied
-role's `ready` and `context` are the PEER's own advert (issue #220):** the
-background probe reads the peer's `GET /capabilities` and relays that role
-entry, falling back to the old `/v1/models` served-id check only for a peer
-with no such entry. Both halves fixed a measured lie — on the Spark,
-2026-08-27, `associate` advertised `ready:false, context:1048576` against an
-Orin reporting `ready:true, context:128000` — with two distinct causes: the
-`/v1/models` check is unsatisfiable for a box forwarding an ALIAS (which
-`associate` must do, sharing a checkpoint with `worker`), and a role this box
-does not host has no `<PREFIX>_MAX_MODEL_LEN` to read, so context fell through
-to the catalog's native ceiling. That collision is also why **role-name
-addressing (`model=associate`) is the documented proxied path** — the raw
-checkpoint id is ambiguous and resolves to the local `worker` lane. Note a
-proxied role reports `feasible: false` **by design** (it means "this box does not *host*
-it", not "you cannot use it here"); `proxied: true` + `hosted_by` + `ready` are
-the fields that say it is usable, and `loaded` is a *wiring* fact, not a
-running one. See `docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`
-and `docs/deployment-shapes.md#following-the-referral-proxy-lobes-opt-in`.
+> **Implementation status (deviation d6).** The paragraph above is the
+> CONTRACT — the retired peer family below is no longer the documented way
+> to wire cross-box reachability. As of this branch the CODE has not fully
+> cut over: the gateway still parses the retired peer keys and the
+> replica-pool dispatch still reads them as its peer source, pending a
+> follow-on task that swaps the source to the mesh roster and deletes the
+> retired parsing. **No mesh behaviour above has been live-validated** —
+> every one of it is DECLARED/UNVALIDATED (the #108 rule) until an
+> acceptance transcript for the actual cutover lands under `docs/evidence/`.
 
-**The cortex replica pool (issue #199) — landed and VALIDATED live
-2026-08-25 on the Spark+Thor NVFP4 pair, cortex-only.** Where proxy-lobes forwards a *dropped* role to its one peer,
-a replica pool lets a box that already HOSTS a role forward *some* of that
-role's requests to an equally-compatible peer replica when the peer is less
-loaded — the mirror case, and a property of the awake/proxy states, not a
-fourth one. Declaring the plural `<PREFIX>_PEER_ORIGINS` (positionally
-paired with `<PREFIX>_PEER_API_KEYS`, an empty key slot legal) beside the
-existing singular `<PREFIX>_PEER_ORIGIN`, plus an operator-typed
-`GATEWAY_SELF_ORIGIN`, arms a background `ReplicaCache` that live-probes
-each peer's `GET /status` (load) and `GET /capabilities` (fingerprint) and
-picks the least-loaded compatible, ready, non-busy replica — local wins
-ties, an `X-Lobes-Affinity` header stickies within a margin, and every
-pooled answer carries `X-Lobes-Served-By` (local) or `X-Lobes-Proxied-By`
-(forwarded) plus `X-Lobes-Route-Reason` on both. Under local pressure a
-pooled request forwards to a selectable peer instead of shedding 429; only
-"no replica anywhere is selectable" still sheds, and at most one forward
-happens per request. Compatibility is a live-probed fingerprint (served id +
-quantization + max context + runtime), never the catalog — `kv_cache_dtype`/
-parsers/speculative config are informational only. With no
-`*_PEER_ORIGINS` declared, every response stays byte-identical to the
-pre-pool contract. **Status: VALIDATED live (#108)** — `docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`:
-three concurrent requests to the Spark front, with the Spark under organic
-iowait pressure, were all served by the Thor at **19.1 tok/s aggregate vs
-the 11.0 tok/s single-owner baseline (+74%)** with
-`X-Lobes-Route-Reason: local-busy-forwarded`; with the Thor's gateway
-stopped the Spark kept serving alias and raw id (`sole-ready`); a marked
-arrival at the Thor never re-forwarded. Two divergences are recorded, not
-hidden: a **raw-id request under local PRESSURE is not forwarded** (the
-pressure gate is tier-alias-only, #85 → issue #215; under load alone raw id
-and alias place identically), and affinity yields whenever the preferred
-replica's box flips busy. The drafter difference (DSpark vs MTP) is NOT
-visible in the fingerprint yet because neither box declares
-`PRIMARY_SPECULATIVE_CONFIG` in `.env` (#214). The pre-pool baseline is captured
-(`docs/evidence/2026-08-25-baseline-cortex-single-owner.txt`: an 8-way
-flood of raw-id requests to one gateway queued at 11.0 tok/s aggregate —
-the same as a single request — while the peer idled at `running=0`, and
-organic iowait pressure shed three concurrent `model=cortex` alias
-requests 429 without consulting it), Validated scope is `cortex` on the Spark+Thor
-NVFP4 pair only — the Orin's llama.cpp cortex is exempt (a separate
-candidate), and any other pooled role (senses/muse/worker/embedder/
-reranker/hand/stt/tts) is declared/unvalidated data only, even though the
-plural peer family is generic across all nine role prefixes. See
-`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`,
-`docs/deployment-shapes.md`, and `docs/colleague-stack.md` (capabilities
-schema: additive `replicas`/`fingerprint` fields).
-
-**Peer-only pools — a role the box hosts NOWHERE (DECLARED, not validated).**
-The pool above forwards a role a box *hosts*; a box that hosts it nowhere took
-the referral/proxy branch, which dials the **singular**
-`<PREFIX>_PEER_ORIGIN` and therefore pins every request to one peer. Measured
-on the Jetson AGX Orin 2026-08-30: every `model=cortex` request answered 200
-with `X-Lobes-Proxied-By` naming the same peer, while the Spark and Thor each
-published two compatible ready cortex replicas. Declaring the plural family on
-a `FEASIBLE=false` role now places each request across the declared replicas
-instead. Four rules, each a recorded decision: **peers agree with each other**
-(no local lane means no reference, so the first READY peer in DECLARATION
-order supplies the fingerprint every other peer is compared to, published as
-`reason: "fingerprint reference"`; disagreement leaves nothing compatible,
-which is #199 h11 restated); **the singular origin is REQUIRED** (`hosted_by`
-reads it,
-so plural-without-singular is refused at startup with a named
-`ReplicaConfigError` — a pool on a role the box HOSTS needs no singular
-origin, publishing no referral at all); **never worse than today** (nothing
-selectable falls through to the existing singular forward, and with no
-singular origin the 404 `role_infeasible` is byte-identical); and **the
-singular credential is inherited** by the replica whose origin IS the singular
-peer, since the two key channels parse independently and an upgraded box would
-otherwise start sending no `Authorization` to a peer it was already
-authenticated to. `/capabilities` folds the advert across the set (`ready` =
-any compatible replica ready; `context` = the fingerprint-agreed window, not
-the catalog ceiling) and `/v1/models` lists a pooled dropped role on that same
-evidence; `feasible` stays `false` — pooling never makes a box a host. Local
-pressure is not re-applied and the single-hop 508 guard is unchanged.
-**Status: MECHANISM VALIDATED live 2026-08-30 on the Orin against the
-Spark and Thor (`docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`);
-THROUGHPUT BENEFIT DISPROVEN on that pair** — placement across both peers,
-the reference rule, credential inheritance, the fall-through, the advert
-fold (`ready` false→true, `context` 1048576→262144) and continuity with a
-replica down all measured, but aggregate throughput came in **51% slower at
-4 concurrent and 3.5% slower at 8** than pinning, because the pool balances
-by QUEUE DEPTH while the two replicas differ in SPEED by 4.4x (Spark 48.9
-vs Thor 11.0 tok/s single-stream). Both DO publish a calibrated capacity
-(2.0 each, by design), but `<PREFIX>_MAX_ACTIVE` is CONCURRENCY — equal slot
-counts rank equal however differently the boxes produce tokens, and nothing
-in the model expresses SERVICE RATE; `build_replica_caches` also builds each
-`PeerReplica` with no weight, so a pooling box has no channel to declare a
-peer's worth even if it knew (both gaps in #199's capacity half, inherited
-not caused). **No throughput benefit may be claimed for a
-heterogeneous pair.** Baseline:
-`docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt`; spec/plan under
-`docs/specs/` and `docs/plans/2026-08-30-peer-only-replica-pools.md`.
+**Retired: the operator-typed peer family (proxy-lobes, the cortex replica
+pool, and peer-only pools).** Before the mesh-brain join (above), cross-box
+reachability was a hand-typed, per-role env var per core role
+(`<PREFIX>_PEER_ORIGIN` for referral, plus `_PEER_PROXY`/`_PEER_API_KEY` to
+actually forward — issues #115/#127) and, for a role a box already hosts, a
+plural replica-pool form (`_PEER_ORIGINS`/`_PEER_API_KEYS`, issue #199,
+**VALIDATED live 2026-08-25 for `cortex` only** on the Spark+Thor NVFP4 pair,
+`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`) with
+capacity-relative selection (`<PREFIX>_MAX_ACTIVE`, a MEASURED throughput
+knee, never vLLM's `MAX_NUM_SEQS` OOM cap or the KV-derived concurrency
+ceiling). A **peer-only pool** extended the same plural family to a box that
+hosts a role NOWHERE, placing requests across several declared peers instead
+of pinning to one — **MECHANISM VALIDATED live 2026-08-30 on the Jetson AGX
+Orin against the Spark and Thor**
+(`docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`), but
+**THROUGHPUT BENEFIT DISPROVEN on that heterogeneous pair** (51% slower at 4
+concurrent, 3.5% slower at 8, because the pool balances by queue depth while
+the two replicas differ 4.4× in raw speed — do not claim a throughput
+benefit for a heterogeneous pair). This entire family is **RETIRED as the
+documented operator contract** — declare the mesh instead — but as of this
+branch the gateway still parses and uses it (see the Implementation status
+note above), so an existing deployment wired the old way keeps working
+exactly as measured above until the follow-on code-removal task lands. Full
+mechanism detail, every marker header, and the complete measured numbers
+live in `docs/gateway-fleet.md`'s Retired section (kept there, not deleted,
+for their measured numbers and because the mesh generalizes the same
+design).
 
 ## The deployment lock and the variation catalog
 

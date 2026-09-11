@@ -164,26 +164,27 @@ def test_explain_roles(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_explain_gateway_replica_pool(capsys: pytest.CaptureFixture[str]) -> None:
-    # issue #199 t10: the replica-pool section must render under `explain
-    # gateway` and name the honest markers plus its declared/unvalidated
-    # (cortex-only) status.
+    # mesh-brain-join t11: the mesh join replaces proxy-lobes/replica-pools as
+    # the documented `explain gateway` contract; the retired mechanism (issue
+    # #199's replica pool, cortex-only VALIDATED) is condensed under Retired.
     rc = main(["explain", "gateway"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Replica pools" in out
-    assert "X-Lobes-Served-By" in out
-    assert "X-Lobes-Route-Reason" in out
+    assert "Mesh join" in out
+    assert "Retired" in out
+    assert "replica pools" in out.lower()
     assert "cortex" in out
     assert "VALIDATED" in out
-    assert "unvalidated" in out.lower()
+    assert "unvalidated" in out.lower() or "UNVALIDATED" in out
 
 
 def test_explain_shapes_replica_pool(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain", "shapes"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Replica pools" in out
+    assert "replica pools" in out.lower()
     assert "not a fourth" in out.lower()
+    assert "Retired" in out
 
 
 def test_explain_api_replica_headers(capsys: pytest.CaptureFixture[str]) -> None:
